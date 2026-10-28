@@ -155,24 +155,12 @@ public sealed class PublicDemoEdgeMiddleware(
         // that browsers do not attach one to. Nothing to verify - the safe
         // methods it can carry stay bounded by the read allowlist below.
         if (string.IsNullOrEmpty(origin)) return true;
-        if (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri)
-            || !string.IsNullOrEmpty(originUri.UserInfo)
-            || originUri.AbsolutePath != "/"
-            || !string.IsNullOrEmpty(originUri.Query)
-            || !string.IsNullOrEmpty(originUri.Fragment))
-            return false;
-
-        var requestPort = request.Host.Port ?? (request.IsHttps ? 443 : 80);
-        var originPort = originUri.IsDefaultPort
-            ? string.Equals(originUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ? 443 : 80
-            : originUri.Port;
-        return string.Equals(originUri.Scheme, request.Scheme, StringComparison.OrdinalIgnoreCase)
-               && string.Equals(originUri.Host, request.Host.Host, StringComparison.OrdinalIgnoreCase)
-               && originPort == requestPort;
+        return BrowserOriginPolicy.OriginMatches(origin, request.Scheme, request.Host);
     }
 
     private static bool IsHealthCheck(string path)
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/healthz/container", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
 

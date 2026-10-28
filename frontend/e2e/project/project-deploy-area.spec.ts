@@ -60,6 +60,15 @@ const HOST_ONLY = { status: MISSING, releases: MISSING, deployments: MISSING };
 
 async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route('**/api/**', route => route.fulfill(json([])).catch(() => undefined));
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill(json({
+    negotiateVersion: 1, connectionId: 'deploy-area-mock', connectionToken: 'deploy-area-mock',
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+  })));
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
+    socket.onMessage(message => {
+      if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send('{}\u001e');
+    });
+  });
   await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
@@ -84,6 +93,9 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   // An empty project list opens the first-run settings over the restored Deploy tab.
   await page.route('**/api/v1/projects', route => route.fulfill(json([project])));
   await page.route(`**/api/projects/${PROJECT}/environments`, route => route.fulfill(json(deploy.environments)));
+  await page.route(`**/api/projects/${PROJECT}/environments/*/volumes`, route => route.fulfill(json({
+    database: null, volumes: [], schedules: [], audit: [], adapterReady: false,
+  })));
   await page.route(`**/api/projects/${PROJECT}/environments/health`, route => answer(route, deploy.health ?? {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
@@ -100,6 +112,24 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
     const offset = Number(params.get('offset') ?? 0);
     const limit = Number(params.get('limit') ?? 25);
     return answer(route, { items: releases.slice(offset, offset + limit), offset, limit, total: releases.length });
+  });
+  await page.route(`**${DEPLOY}/releases/*/page?*`, route => {
+    if (deploy.releases === MISSING || (deploy.releases && typeof deploy.releases === 'object' && 'status' in deploy.releases))
+      return answer(route, deploy.releases);
+    const releases = deploy.releases as { id: string }[];
+    const id = route.request().url().split('/').at(-2)!;
+    const index = releases.findIndex(item => item.id === id);
+    if (index < 0) return answer(route, { status: 404, body: { error: 'Unknown release.' } });
+    const offset = Math.floor(index / 25) * 25;
+    return answer(route, { items: releases.slice(offset, offset + 25), offset, limit: 25, total: releases.length });
+  });
+  await page.route(`**${DEPLOY}/releases/*/notes`, route => {
+    if (!Array.isArray(deploy.releases)) return answer(route, MISSING);
+    const id = route.request().url().split('/').at(-2);
+    const release = deploy.releases.find(item => item.id === id);
+    return release ? answer(route, { releaseId: release.id, version: release.version, preview: true,
+      notes: release.cardKeys.map(cardKey => ({ cardKey, text: cardKey === 'WEB-35' ? 'Faster project search' : `Delivered ${cardKey}` })) })
+      : answer(route, MISSING);
   });
   await page.route(`**${DEPLOY}/deployments/page?*`, route => {
     if (deploy.deployments === MISSING || (deploy.deployments && typeof deploy.deployments === 'object' && 'status' in deploy.deployments))
@@ -130,7 +160,7 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route(`**/api/projects/${PROJECT}/pipeline-definition`, route => answer(route, deploy.pipelineDefinition));
 }
 
-async function openDeploy(page: Page, deploy: DeployMocks): Promise<void> {
+async function openDeploy(page: Page, deploy: DeployMocks, navigationTimeoutMs = 30_000): Promise<void> {
   page.on('dialog', dialog => dialog.accept());
   await page.clock.setFixedTime(new Date(DEPLOY_FIXTURE_NOW));
   await page.addInitScript(({ project }) => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
@@ -139,7 +169,7 @@ async function openDeploy(page: Page, deploy: DeployMocks): Promise<void> {
     activeKey: `hub:${project}`,
   })), { project: PROJECT });
   await mockApp(page, deploy);
-  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: navigationTimeoutMs });
   await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"], vite-error-overlay')
     .forEach(element => ((element as HTMLElement).style.display = 'none')));
   await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 60_000 });
@@ -156,6 +186,127 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('shows the pre-delivery verdict and candidate SHA on the release header', async ({ page }) => {
+    const releases = deployReleasesFixture();
+    releases[0].preDeliveryVerdict = { project: PROJECT, commitSha: 'c'.repeat(40),
+      commandDigest: 'd'.repeat(64), status: 'green', finishedAtUtc: '2026-10-19T12:00:00Z' };
+    await openDeploy(page, fullMocks({ releases }));
+    await page.getByTestId('deploy-tab-releases').click();
+    await expect(page.getByTestId('deploy-release-verdict')).toContainText(`Full suite: green · SHA ${'c'.repeat(40)}`);
+    await setTheme(page, 'light');
+    await capture(page, 'release-verdict-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'release-verdict-dark');
+  });
+
+  test('opens the Runbooks tab with current-page semantics', async ({ page }) => {
+    test.setTimeout(180_000);
+    await openDeploy(page, fullMocks(), 90_000);
+    await page.route(`**${DEPLOY}/runbooks`, route => route.fulfill(json([
+      { name: 'restart', steps: ['restart-container'], environments: [] },
+    ])));
+    await page.route(`**${DEPLOY}/runbooks/runs?*`, route => route.fulfill(json([])));
+
+    const tab = page.getByTestId('deploy-tab-runbooks');
+    await expect(tab).toBeEnabled();
+    await tab.click();
+    await expect(tab).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByTestId('deploy-tab-overview')).not.toHaveAttribute('aria-current', 'page');
+    await expect(page.getByTestId('project-deploy-area').getByTestId('environment-runbooks').first()).toContainText('restart');
+    await setTheme(page, 'light');
+    await capture(page, 'runbooks-tab-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'runbooks-tab-dark');
+  });
+
+  test('Operations rail opens an older release on a fresh Deploy mount without fetching the first page', async ({ page }) => {
+    const base = deployReleasesFixture()[0];
+    const releases = Array.from({ length: 40 }, (_, index) => ({ ...base,
+      id: `release-${index}`, version: `version-${index}`,
+      createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    }));
+    await openDeploy(page, fullMocks({ releases }));
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: [{ environment: { id: 'production', name: 'Production', kind: 'production' },
+        telemetryAvailable: false, metrics: null,
+        markers: [{ deploymentId: 'run-old', releaseId: 'release-35', version: 'version-35',
+          atUtc: '2026-10-19T10:00:00Z', trigger: 'deploy', state: 'succeeded', cardKeys: [] }] }],
+      dora: { successfulProductionDeploys: 1, deploysPerWeek: 0.25, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: 0, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    await page.getByTestId(`studio-explorer-project-operations-${PROJECT}`).click();
+    await expect(page.getByTestId('operations-release-release-35')).toBeVisible();
+    const firstPageRequests: string[] = [];
+    await page.route(`**${DEPLOY}/releases/page?*`, route => {
+      firstPageRequests.push(route.request().url());
+      return answer(route, { items: releases.slice(0, 25), offset: 0, limit: 25, total: releases.length });
+    });
+    const containing: string[] = [];
+    await page.route(`**${DEPLOY}/releases/*/page?*`, async route => {
+      containing.push(route.request().url());
+      const offset = 25;
+      await answer(route, { items: releases.slice(offset), offset, limit: 25, total: releases.length });
+    });
+    await page.getByTestId('operations-release-release-35').click();
+    await expect(page.getByTestId('deploy-release-detail')).toContainText('version-35');
+    expect(containing).toHaveLength(1);
+    expect(firstPageRequests).toHaveLength(0);
+    await expect(page.getByTestId('deploy-release-detail')).toContainText('version-35');
+    await capture(page, 'operations-older-release');
+  });
+
+  test('Operations shows deploy markers, DORA and telemetry empty state in both themes', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    const release = deployReleasesFixture()[0];
+    await page.route(`**${DEPLOY}/releases`, route => answer(route, deployReleasesFixture()));
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: [{ environment: { id: 'production', name: 'Production', kind: 'production' },
+        telemetryAvailable: false, metrics: null,
+        markers: [{ deploymentId: 'rollback-1', releaseId: release.id, version: release.version,
+          atUtc: '2026-10-19T10:00:00Z', trigger: 'rollback', state: 'succeeded', cardKeys: release.cardKeys }] },
+        { environment: { id: 'stage', name: 'Staging', kind: 'staging' },
+          telemetryAvailable: false, metrics: null, markers: [] }],
+      dora: { successfulProductionDeploys: 2, deploysPerWeek: 0.5, medianCardToProductionHours: 12,
+        cardsMeasured: 1, changeFailureRate: 0.25, medianRecoveryHours: 3, recoveriesMeasured: 1 },
+    }));
+    await page.route(`**${DEPLOY}/operations/logs?*`, route => answer(route, { telemetryAvailable: false, lines: [] }));
+    await page.getByTestId('deploy-tab-operations').click();
+    const operations = page.getByTestId('project-operations');
+    await expect(operations).toContainText('Telemetry is not available yet');
+    await expect(operations.getByTestId('operations-dora')).toContainText('0.5 per week');
+    await expect(page.getByTestId('hosted-data-panel')).toContainText('No persistent volumes declared.');
+    await operations.getByTestId('operations-search-logs').click();
+    await expect(operations.getByTestId('operations-logs-empty')).toBeVisible();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      fs.mkdirSync(results, { recursive: true });
+      await operations.screenshot({ path: path.join(results, `operations-${theme}--mocked.png`) });
+    }
+    await page.route(`**${DEPLOY}/operations/logs?*`, route => answer(route, { telemetryAvailable: true,
+      lines: [{ at: '2026-10-20T00:00:00Z', level: 'error', message: 'Old production error', releaseId: null }] }));
+    await operations.getByTestId('operations-search-logs').click();
+    await expect(operations).toContainText('Old production error');
+    await operations.getByTestId('operations-log-environment').selectOption('stage');
+    await expect(operations).not.toContainText('Old production error');
+    let finishSearch: (() => void) | undefined;
+    await page.route(`**${DEPLOY}/operations/logs?*`, async route => {
+      await new Promise<void>(resolve => { finishSearch = resolve; });
+      await answer(route, { telemetryAvailable: true,
+        lines: [{ at: '2026-10-20T00:00:00Z', level: 'error', message: 'Stale stage error', releaseId: null }] });
+    });
+    await operations.getByTestId('operations-search-logs').click();
+    await expect.poll(() => Boolean(finishSearch)).toBe(true);
+    await operations.getByPlaceholder('Search text').fill('new');
+    const staleResponse = page.waitForResponse(response => response.url().includes('/operations/logs') && response.status() === 200);
+    finishSearch!();
+    await staleResponse;
+    await expect(operations).not.toContainText('Stale stage error');
+    await operations.getByTestId(`operations-release-${release.id}`).click();
+    await expect(page.getByTestId('deploy-release-detail')).toContainText(release.version);
+  });
+
   test('shows guided failure on the environment card and sends a reasoned skip', async ({ page }) => {
     const deployments = deployDeploymentsFixture().map(item => item.id === 'run-b-stage' ? {
       ...item, state: 'waiting-for-intervention', createdAtUtc: new Date(DEPLOY_FIXTURE_NOW).toISOString(),
@@ -444,6 +595,8 @@ test.describe('Project Deploy area (mocked)', () => {
         await capture(page, `deploy-overview-${width}-${theme}`);
         await page.getByTestId('deploy-tab-releases').click();
         await expect(page.getByTestId('deploy-release-detail')).toContainText('WEB-35');
+        await expect(page.getByRole('list', { name: 'Releases, newest first' }).getByRole('button').first()).toContainText('default');
+        await expect(page.getByTestId('deploy-release-notes')).toContainText('Faster project search');
         await capture(page, `deploy-releases-${width}-${theme}`);
         await page.getByTestId('deploy-tab-pipeline').click();
         await expect(page.getByTestId('pipeline-node-staging')).toBeVisible();
@@ -474,4 +627,36 @@ test.describe('Project Deploy area (mocked)', () => {
     await setTheme(page, 'light');
     await capture(page, 'deploy-history-empty-light');
   });
+});
+
+test('Project Secrets shows approval for a custom-id Production environment and keeps values write-only', async ({ page }) => {
+  const environments = deployEnvironmentsFixture();
+  environments.environments[1].declaration.id = 'live-eu';
+  await openDeploy(page, fullMocks({ environments }));
+  await page.route('**/api/secrets', route => route.fulfill({ json: {
+    store: 'builtin', keySource: 'key-file', canWriteWorkspace: true, secrets: [], unreadable: [],
+  } }));
+  await page.route(/\/api\/projects\/[^/]+\/secret-bindings\/[^/]+$/, async route => {
+    const url = new URL(route.request().url());
+    const environment = url.pathname.split('/')[5];
+    const reference = `secret://${PROJECT}/live-eu/DATABASE_URL`;
+    await route.fulfill({ json: {
+      project: PROJECT, environment, ready: environment !== 'live-eu', bindings: [],
+      missing: environment === 'live-eu'
+        ? [{ name: 'DATABASE_URL', reference, scope: `${PROJECT}/live-eu`, reason: 'not-bound' }] : [],
+    } });
+  });
+  await page.getByTestId('deploy-tab-secrets').click();
+  const secrets = page.getByTestId('project-secrets-page');
+  await expect(secrets).toBeVisible();
+  await secrets.getByTestId('project-secrets-environment').selectOption('live-eu');
+  await expect(secrets.getByTestId('project-secrets-missing')).toContainText('not-bound');
+  await secrets.getByRole('button', { name: 'Bind DATABASE_URL' }).click();
+  await secrets.getByTestId('project-secrets-approve').check();
+  await expect(secrets.getByTestId('project-secrets-reference')).toHaveValue(`secret://${PROJECT}/live-eu/DATABASE_URL`);
+  await expect(secrets.getByTestId('project-secrets-bind')).toBeEnabled();
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await capture(page, `deploy-secrets-${theme}`);
+  }
 });

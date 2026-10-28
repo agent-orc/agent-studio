@@ -1,7 +1,8 @@
 import { HttpClient } from '@angular/common/http';
-import { DestroyRef, Injectable, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { timer } from 'rxjs';
+import { AuthSessionState } from '../../services/auth.service';
 
 export interface CredentialInventoryItem {
   id: string;
@@ -29,19 +30,41 @@ export interface CredentialInventory {
 export class CredentialInventoryService {
   private readonly http = inject(HttpClient, { optional: true });
   private readonly destroyRef = inject(DestroyRef);
+  private readonly auth = inject(AuthSessionState);
   readonly inventory = signal<CredentialInventory | null>(null);
-  readonly state = signal<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
+  readonly state = signal<'idle' | 'loading' | 'ready' | 'unavailable' | 'unsupported'>('idle');
   private polling = false;
+  private waitingForProfile = false;
+
+  constructor() {
+    effect(() => {
+      if (this.auth.status()?.profile && this.waitingForProfile) {
+        this.waitingForProfile = false;
+        untracked(() => this.load());
+      }
+    });
+  }
 
   ensureLoaded(): void {
     if (this.state() === 'idle') this.load();
   }
 
   load(): void {
+    // The local monolith has no Task Server credential inventory route.
+    const profile = this.auth.status()?.profile;
+    if (!profile) {
+      this.waitingForProfile = true;
+      return;
+    }
+    if (profile && profile !== 'networked') {
+      this.inventory.set(null);
+      this.state.set('unsupported');
+      return;
+    }
     if (!this.polling) {
       this.polling = true;
       timer(60_000, 60_000).pipe(takeUntilDestroyed(this.destroyRef))
-        .subscribe(() => this.refresh());
+        .subscribe(() => this.load());
     }
     this.refresh();
   }

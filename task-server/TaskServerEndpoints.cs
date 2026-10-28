@@ -283,6 +283,30 @@ public static class TaskServerEndpoints
                 Actor(context),
                 ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        hosts.MapGet("/{hostId}/placement-advertisement", async (
+            string hostId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetHostPlacementAsync(hostId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        hosts.MapPut("/{hostId}/placement-advertisement", async (
+            HttpContext context, string hostId, UpsertHostPlacementRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.UpsertHostPlacementAsync(
+                hostId, request, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
+        hosts.MapGet("/placement-shadow", async (
+            string? taskId, int? limit, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(async () =>
+            {
+                var receipts = await store.ListPlacementShadowReceiptsAsync(taskId, limit ?? 100, ct);
+                return new
+                {
+                    receipts,
+                    differenceCount = receipts.Count(item =>
+                        item.ActualStatus == "claimed" && item.ShadowStatus != "eligible"
+                        || item.ActualStatus != "claimed" && item.ShadowStatus == "eligible"),
+                };
+            }))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         hosts.MapGet("/{hostId}/project-policy", async (
             string hostId,
             HostProjectPolicyService projectPolicy,
@@ -313,12 +337,16 @@ public static class TaskServerEndpoints
             => await InvokeNullableAsync(() => store.GetTaskHistoryAsync(projectId, taskIdentity, after ?? 0, ct)));
         api.MapPost("/projects/{projectId}/tasks", async (
             HttpContext context, string projectId, CreateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await CreateTaskAsync(context, request.CompatibilityFields,
-                () => store.CreateTaskAsync(projectId, request, Actor(context), ct)))
+            => StudioProductSession.IsProduct(context) && !StudioProductSession.AllowsCreate(request.State)
+                ? StudioProductSession.Denied()
+                : await CreateTaskAsync(context, request.CompatibilityFields,
+                    () => store.CreateTaskAsync(projectId, request, Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         api.MapPut("/projects/{projectId}/tasks/{taskIdentity}", async (
             HttpContext context, string projectId, string taskIdentity, UpdateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeNullableAsync(() => store.UpdateTaskAsync(projectId, taskIdentity, request, Actor(context), ct)))
+            => await StudioProductSession.AllowsUpdateAsync(context, store, projectId, taskIdentity, request, ct)
+                ? await InvokeNullableAsync(() => store.UpdateTaskAsync(projectId, taskIdentity, request, Actor(context), ct))
+                : StudioProductSession.Denied())
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         var runners = api.MapGroup("/runners")

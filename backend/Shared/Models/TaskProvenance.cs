@@ -185,6 +185,13 @@ public record TaskProvenanceView
     /// Live branch-only WIP and remembered merge attempts are not included.
     /// </summary>
     public List<TaskCommitMembership> Commits { get; init; } = [];
+
+    /// <summary>
+    /// AGT-3318: null for the legacy live-Git read. Under derived source facts
+    /// it is <c>ready</c>, <c>warming</c> (a fact is still being produced) or
+    /// <c>unavailable</c> (the Task Server could not be read).
+    /// </summary>
+    public string? SourceFacts { get; init; }
 }
 
 /// <summary>

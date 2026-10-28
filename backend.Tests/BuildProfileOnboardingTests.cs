@@ -242,6 +242,21 @@ public sealed class BuildProfileValidationWorkspaceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Local_process_runner_preserves_the_operator_environment()
+    {
+        var key = OperatingSystem.IsWindows() ? "USERPROFILE" : "HOME";
+        var expected = Environment.GetEnvironmentVariable(key);
+        Assert.False(string.IsNullOrWhiteSpace(expected));
+
+        var result = await new ProcessBuildCommandRunner().RunAsync(
+            _root, $"printf '%s' \"${{{key}}}\"", CancellationToken.None);
+
+        Assert.True(result.Succeeded, result.Output);
+        Assert.Equal(expected, result.Output.Trim());
+    }
+
+    [Fact]
     public void Resolve_PrefersRealRepositoryOverTaskWorkspace()
     {
         var repository = Path.Combine(_root, "repository");

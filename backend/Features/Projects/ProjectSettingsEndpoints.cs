@@ -327,6 +327,8 @@ public static class ProjectSettingsEndpoints
                     pipelineSteps = PipelineTypeSettings.ForType(kv.Value, PipelineTypes.Task)?.PipelineSteps
                         ?? new Dictionary<string, PipelineStepSetting>(),
                     testExecution = kv.Value.TestExecution,
+                    testingPerCard = PerCardTestModes.Resolve(kv.Value),
+                    testingMode = IntegrationTestModes.Resolve(kv.Value),
                     pipelineStepOrder = PipelineTypeSettings.ForType(kv.Value, PipelineTypes.Task)?.PipelineStepOrder
                         ?? Array.Empty<string>(),
                     pipelineStepsByType = kv.Value.PipelineStepsByType
@@ -368,10 +370,12 @@ public static class ProjectSettingsEndpoints
         // The Settings panel reads this to render one control per step
         // without hardcoding the step list on the frontend.
         app.MapGet("/api/projects/pipeline-catalogue", (
+            HttpContext context,
             string? projectName,
             string? pipelineType,
             ProjectSettingsService settings,
-            TaskScannerService scanner) =>
+            TaskScannerService scanner,
+            ProjectRegistry projects) =>
         {
             if (!string.IsNullOrWhiteSpace(pipelineType) && !PipelineTypes.IsValid(pipelineType))
                 return Results.BadRequest(new { error = $"Unknown pipeline type '{pipelineType}'" });
@@ -383,6 +387,8 @@ public static class ProjectSettingsEndpoints
             {
                 project = scanner.GetWatchPaths().FirstOrDefault(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
                 if (project is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+                if (!ProjectAccessAuthorization.AllowsTasks(context, [project.Name], IamPermissions.ProjectRead, projects))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
                 projectSettings = PipelineTypeSettings.ForType(settings.Get(projectName.Trim()), type);
                 repositoryPath = string.IsNullOrWhiteSpace(project.RepositoryPath) ? project.RootPath : project.RepositoryPath;
             }
@@ -959,7 +965,7 @@ public static class ProjectSettingsEndpoints
         // and the canonical pickupMode + executionLocation pair.
         app.MapPut("/api/projects/{projectName}/execution-runner", (string projectName, SetExecutionRunnerRequest req,
             ProjectSettingsService settings, TaskScannerService scanner, ClientIdentityStore clients,
-            TaskRunnerService runners) =>
+            TaskRunnerService runners, HttpContext context, IConfiguration configuration) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
@@ -1000,6 +1006,16 @@ public static class ProjectSettingsEndpoints
                         && req.RemoteExecutionEnabled != false)
                         pickupMode ??= PickupModes.Auto;
                 }
+
+                var currentLocation = ProjectExecutionPolicy.ResolveExecutionLocation(settings.Get(projectName));
+                var targetLocation = req.RemoteExecutionEnabled == false
+                    ? ExecutionLocations.Local
+                    : executionLocation ?? currentLocation;
+                var role = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role;
+                if (!ProjectExecutionSecurityPolicy.MaySelectLocation(
+                        SecurityProfiles.IsNetworked(configuration), role, currentLocation, targetLocation))
+                    return Results.Json(new { code = "owner-required", error = "Only the Owner can turn off remote execution in the networked profile." },
+                        statusCode: StatusCodes.Status403Forbidden);
 
                 settings.SetExecutionSettings(
                     projectName,
@@ -1121,7 +1137,7 @@ public static class ProjectSettingsEndpoints
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             var profile = settings.Get(projectName).BuildProfile;
             return Results.Ok(new { profile, pickupAllowed = BuildProfileGate.AllowsAutoPickup(profile) });
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapPut("/api/projects/{projectName}/test-execution", (string projectName, TestExecutionPolicy req, ProjectSettingsService settings, TaskScannerService scanner) =>
         {
@@ -1140,6 +1156,35 @@ public static class ProjectSettingsEndpoints
             settings.SetTestExecution(projectName, null);
             return Results.Ok(new { cleared = true });
         });
+
+        // AGT-3310: per-card test placement (testing.perCard). The settings page
+        // shows it read-only; the operator switches it here. Queued review
+        // plans are rebuilt so the next claim runs the chosen tier.
+        app.MapPut("/api/projects/{projectName}/testing", (
+            string projectName,
+            ProjectTestingSettings req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner,
+            ProjectRegistry projects,
+            GitService git,
+            RemoteReviewPlanBuilder remoteReviewPlans,
+            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
+        {
+            var known = scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (req.PerCard is not null && !PerCardTestModes.IsKnown(req.PerCard))
+                return Results.BadRequest(new { error = "perCard must be 'affected' or 'full'." });
+            if (req.Mode is not null && !IntegrationTestModes.IsKnown(req.Mode))
+                return Results.BadRequest(new { error = "mode must be 'pre-merge' or 'post-merge'." });
+            settings.SetTesting(projectName, req);
+            ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
+            return Results.Ok(new
+            {
+                perCard = PerCardTestModes.Resolve(settings.Get(projectName)),
+                mode = IntegrationTestModes.Resolve(settings.Get(projectName)),
+            });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapGet("/api/projects/{projectName}/batch-gate", (string projectName,
             ProjectSettingsService settings, TaskScannerService scanner) =>
@@ -1272,14 +1317,16 @@ public static class ProjectSettingsEndpoints
             settings.SetBuildProfile(projectName, null);
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(new { cleared = true });
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         // POST runs the validation dry-run (install + build in the project's
         // checkout). On green the profile flips to pipeline-ready and the runner
         // may auto-pick the project; on red it lands in validation-failed with a
         // recorded reason. Synchronous: the caller waits for the verdict.
-        app.MapPost("/api/projects/{projectName}/build-profile/validate", async (string projectName, ProjectSettingsService settings, TaskScannerService scanner, BuildProfileValidationService validator, CancellationToken ct) =>
+        app.MapPost("/api/projects/{projectName}/build-profile/validate", async (string projectName, ProjectSettingsService settings, TaskScannerService scanner, BuildProfileValidationService validator, IConfiguration configuration, CancellationToken ct) =>
         {
+            if (SecurityProfiles.IsNetworked(configuration))
+                return Results.Conflict(new { error = RemoteExecutionRequirement.Code, message = RemoteExecutionRequirement.Message });
             var entry = scanner.GetWatchPaths().FirstOrDefault(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (entry is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
 
@@ -1305,7 +1352,7 @@ public static class ProjectSettingsEndpoints
                 profile,
                 pickupAllowed = BuildProfileGate.AllowsAutoPickup(profile),
             });
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        }).RequireStudioRole(StudioRoles.Owner).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
         // The orchestrator's model can be tuned per project. Defaults to
         // Opus when null. This is the only knob today; per-call overrides

@@ -27,8 +27,11 @@ public sealed class TransitionDecisionBoundaryTests
         "AiOperatorDecisionPolicy", "RunLivenessPolicy", "SteerTimeoutPolicy", "StaleProgressPolicy",
         "GateEnvironmentRetryPolicy", "GateEnvironmentContinuationPolicy",
         "DeliveryChainPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy", "AcceptanceRailDecisionPolicy",
+        // AGT-3207: interventions on operational stall events.
+        "StallInterventionPolicy",
         // AGT-3219: queue overrun, backlog and release rule of the batch gate.
         "GateQueueStallPolicy",
+        "RedDevelopRepairPolicy",
     ];
 
     [Fact]
@@ -45,6 +48,7 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.Equal(assembly, typeof(GateEnvironmentRetryPolicy).Assembly);
         Assert.Equal(assembly, typeof(DeliveryChainPolicy).Assembly);
         Assert.Equal(assembly, typeof(AcceptanceRailDecisionPolicy).Assembly);
+        Assert.Equal(assembly, typeof(RedDevelopRepairPolicy).Assembly);
         var referenced = assembly.GetReferencedAssemblies().Select(item => item.Name!).ToArray();
         Assert.DoesNotContain(referenced, name => name is "OrchestratorApi" or "task-server" or "orchestrator-engine"
             || name.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)

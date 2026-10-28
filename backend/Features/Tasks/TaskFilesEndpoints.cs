@@ -59,17 +59,31 @@ public static class TaskFilesEndpoints
             [FromQuery] string? at,
             [FromQuery] string? scope,
             TaskFileHistoryService files,
-            AgentStudio.Registry.ProjectRegistry projects) =>
+            AgentStudio.Registry.ProjectRegistry projects,
+            HttpContext ctx) =>
         {
+            if (ContributorAccessPolicy.IsProductSession(ctx))
+            {
+                if (scope is not null && !scope.Equals(TaskFileSources.Workspace, StringComparison.OrdinalIgnoreCase))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                scope = TaskFileSources.Workspace;
+            }
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (TryStripOperationSuffix(path, "history", out var historyPath))
             {
-                var history = files.GetHistory(jobId, watchPath, historyPath, scope);
-                return HistoryResult(history);
+                var (history, state) = files.GetIndexedHistory(jobId, watchPath, historyPath, scope);
+                ctx.Response.Headers[SourceFactsStateHeader] = state;
+                return HistoryResult(history, ctx);
             }
 
-            var content = files.ReadFile(jobId, watchPath, path, at, scope);
-            return FileContentResult(content);
+            if (!string.IsNullOrWhiteSpace(at))
+            {
+                var (historical, state) = files.ReadIndexedFile(jobId, watchPath, path, at, scope);
+                ctx.Response.Headers[SourceFactsStateHeader] = state;
+                return FileContentResult(historical, ctx);
+            }
+            var content = files.ReadLiveFile(jobId, watchPath, path, scope);
+            return FileContentResult(content, ctx);
         });
 
         // Dev-seat twin of `/{jobId}/files/{**path}` for the `scope=code`
@@ -81,25 +95,41 @@ public static class TaskFilesEndpoints
         // never has to resolve or serve live repository content - only this
         // dev-seat route does, and the query-string `scope` is fixed here
         // rather than caller-selectable.
-        group.MapGet("/{jobId}/checkout/{**path}", (
+        group.MapGet("/{jobId}/checkout/{**path}", async (
             string jobId,
             string path,
             [FromQuery] string? project,
             [FromQuery] string? watchPath,
             [FromQuery] string? at,
             TaskFileHistoryService files,
-            AgentStudio.Registry.ProjectRegistry projects) =>
+            AgentStudio.Registry.ProjectRegistry projects,
+            HttpContext context,
+            CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (TryStripOperationSuffix(path, "history", out var historyPath))
             {
-                var history = files.GetHistory(jobId, watchPath, historyPath, TaskFileSources.Code);
-                return HistoryResult(history);
+                if (files.ReadsDerivedCodeHistory)
+                {
+                    var (derived, derivedState) = await files.GetDerivedCodeHistoryAsync(
+                        jobId, watchPath, historyPath, ct);
+                    context.Response.Headers[SourceFactsStateHeader] = derivedState;
+                    return HistoryResult(derived, context);
+                }
+                var (history, state) = files.GetIndexedHistory(jobId, watchPath, historyPath, TaskFileSources.Code);
+                context.Response.Headers[SourceFactsStateHeader] = state;
+                return HistoryResult(history, context);
             }
 
-            var content = files.ReadFile(jobId, watchPath, path, at, TaskFileSources.Code);
-            return FileContentResult(content);
-        });
+            if (!string.IsNullOrWhiteSpace(at))
+            {
+                var (historical, state) = files.ReadIndexedFile(jobId, watchPath, path, at, TaskFileSources.Code);
+                context.Response.Headers[SourceFactsStateHeader] = state;
+                return FileContentResult(historical, context);
+            }
+            var content = files.ReadLiveFile(jobId, watchPath, path, TaskFileSources.Code);
+            return FileContentResult(content, context);
+        }).AddEndpointFilter<AgentStudio.Git.GitSpawnCountFilter>();
 
         // Lists supported documents directly in the job root (status.md
         // excluded). Drives the detail view's Files tab (F48): prompt, aspect
@@ -171,17 +201,22 @@ public static class TaskFilesEndpoints
         // report HTML inline plus nested result artifacts linked from Activity,
         // Task, Result, and Docs. Unknown types retain octet-stream/download
         // behavior. ResolveResult confines every path to the current task.
-        group.MapGet("/{jobId}/results/{**path}", (string jobId, string path, string? project, string? watchPath, HttpResponse response, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapGet("/{jobId}/results/{**path}", (string jobId, string path, string? project, string? watchPath, HttpContext ctx, HttpResponse response, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            var product = ContributorAccessPolicy.IsProductSession(ctx);
+            if (product && !ContributorAccessPolicy.AllowsResultFile(path))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var (resolved, contentType) = scanner.ResolveResult(jobId, path, watchPath);
             if (resolved is null) return Results.NotFound();
+            if (product && !ContributorAccessPolicy.AllowsResultFile(resolved))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (contentType?.StartsWith("text/html", StringComparison.OrdinalIgnoreCase) == true)
             {
                 response.Headers.ContentDisposition = "inline";
                 response.Headers.ContentSecurityPolicy =
                     "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; " +
-                    "style-src 'unsafe-inline'; img-src data: blob:; font-src data:";
+                    "style-src 'unsafe-inline'; img-src data: blob:; font-src data:; frame-ancestors 'self'";
                 response.Headers.XContentTypeOptions = "nosniff";
             }
             return Results.File(resolved, contentType, enableRangeProcessing: true);
@@ -274,21 +309,26 @@ public static class TaskFilesEndpoints
         return !string.IsNullOrWhiteSpace(filePath);
     }
 
-    private static IResult HistoryResult(TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>> result)
+    /// <summary>Response header that names the derived source facts state: ready, warming or unavailable.</summary>
+    public const string SourceFactsStateHeader = "X-Source-Facts-State";
+
+    private static IResult HistoryResult(TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>> result, HttpContext context)
     {
-        if (!result.Success) return ErrorResult(result);
+        if (!result.Success) return ErrorResult(result, context);
         return Results.Ok(result.Value ?? []);
     }
 
-    private static IResult FileContentResult(TaskFileLookupResult<TaskFileContent> result)
+    private static IResult FileContentResult(TaskFileLookupResult<TaskFileContent> result, HttpContext context)
     {
-        if (!result.Success) return ErrorResult(result);
+        if (!result.Success) return ErrorResult(result, context);
         var content = result.Value!;
         return Results.Text(content.Content, content.ContentType, Encoding.UTF8);
     }
 
-    private static IResult ErrorResult<T>(TaskFileLookupResult<T> result)
+    private static IResult ErrorResult<T>(TaskFileLookupResult<T> result, HttpContext? context = null)
     {
+        if (result.StatusCode == StatusCodes.Status503ServiceUnavailable && context is not null)
+            context.Response.Headers["Retry-After"] = "1";
         var body = new { error = result.Error ?? "File lookup failed." };
         return result.StatusCode switch
         {

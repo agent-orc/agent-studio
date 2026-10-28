@@ -127,6 +127,12 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public void SetIndexCache(TaskIndexCache cache) => _indexCache = cache;
 
+    /// <summary>Resident identity facts for create admission; only a cold index waits for its first publication.</summary>
+    public IReadOnlyList<TaskInfo> GetResidentIdentityFacts()
+        => _indexCache is null || _indexCache.Generation == 0
+            ? ScanAllJobsWithArchive()
+            : _indexCache.GetAllResidentTasks();
+
     private AgentStudio.Runner.MonolithOrchestrationStore? _orchestration;
 
     public void SetOrchestrationStore(AgentStudio.Runner.MonolithOrchestrationStore store)
@@ -182,6 +188,24 @@ public class TaskScannerService : ITaskScanner
         => _indexCache is null
             ? null
             : await _indexCache.AcquireBoardReadAsync(clientId, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// The non-waiting board acquire (S5). False only on a cold start with a
+    /// cache wired: the first publication has been started in the background
+    /// and the caller may answer from the persisted board instead of waiting.
+    /// True with a null publication when no cache is wired.
+    /// </summary>
+    public bool TryAcquireBoardRead(out TaskIndexPublication? publication)
+    {
+        publication = _indexCache?.TryAcquireBoardRead();
+        return _indexCache is null || publication is not null;
+    }
+
+    /// <summary>The published generation without refreshing, or null before the first one.</summary>
+    public TaskIndexPublication? TryGetPublishedBoard() => _indexCache?.TryGetPublished();
+
+    /// <summary>A board read was answered from the persisted board; see <see cref="TaskIndexCache.NoteRestoredBoardServed"/>.</summary>
+    public void NoteRestoredBoardServed() => _indexCache?.NoteRestoredBoardServed();
 
     /// <summary>
     /// Pins <paramref name="publication"/> for the current flow: every index

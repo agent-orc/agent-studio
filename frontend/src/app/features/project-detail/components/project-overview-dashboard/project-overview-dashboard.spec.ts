@@ -30,12 +30,16 @@ describe('ProjectOverviewDashboardComponent', () => {
     const fixture = TestBed.createComponent(ProjectOverviewDashboardComponent);
     fixture.componentRef.setInput('projectName', 'Demo Project');
     const openedTasks: { jobId: string; watchPath: string }[] = [];
+    const openedRails: string[] = [];
     fixture.componentInstance.openTask.subscribe(task => openedTasks.push(task));
+    fixture.componentInstance.openRail.subscribe(rail => openedRails.push(rail));
     fixture.detectChanges();
 
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Demo%20Project/throughput').flush(throughput());
     http.expectOne('/api/projects/Demo%20Project/token-usage/summary').flush(tokenSummary());
+    http.match(request => request.url === '/api/projects/Demo%20Project/token-usage/reviews')
+      .forEach(request => request.flush(emptyReviews()));
     http.expectOne('/api/projects/Demo%20Project/deployment/summary').flush({
       project: 'Demo Project', available: true, reason: null,
       source: 'logs/stable-restarts.jsonl', pendingCount: 3,
@@ -80,6 +84,8 @@ describe('ProjectOverviewDashboardComponent', () => {
     expect(host.querySelector('[data-testid="project-overview-branch-task-agt-2200"]')).toBeTruthy();
     host.querySelector<HTMLButtonElement>('[data-testid="project-overview-planning-agt-2200"]')!.click();
     expect(openedTasks).toEqual([{ jobId: 'agt-2200', watchPath: 'C:/tasks/demo' }]);
+    host.querySelector<HTMLButtonElement>('[data-testid="project-overview-open-operations"]')!.click();
+    expect(openedRails).toContain('operations');
 
     const text = host.textContent ?? '';
     expect(text).not.toContain('Watch path');
@@ -225,6 +231,8 @@ function snapshot() {
 function flushEmpty(http: HttpTestingController): void {
   http.expectOne('/api/projects/Demo%20Project/throughput').flush(throughput());
   http.expectOne('/api/projects/Demo%20Project/token-usage/summary').flush(tokenSummary());
+  http.match(request => request.url === '/api/projects/Demo%20Project/token-usage/reviews')
+    .forEach(request => request.flush(emptyReviews()));
   http.expectOne('/api/projects/Demo%20Project/deployment/summary').flush({
     project: 'Demo Project', available: false, reason: 'No history.', source: 'logs/stable-restarts.jsonl',
     lastDeployment: null, pendingCount: null, pendingCommits: [],
@@ -236,6 +244,14 @@ function flushEmpty(http: HttpTestingController): void {
     project: 'Demo Project', capturedAt: '2026-07-11T12:00:00Z', unseenCount: 0, items: [],
   });
   http.expectOne('/api/v1/workspaces').flush([]);
+}
+
+function emptyReviews() {
+  const metric = { median: null, p90: null, samples: 0, last7d: [], last30d: [] };
+  return { deliveryTokens: metric, deliveryUsd: metric, roundsUntilAcceptance: metric,
+    tokensPerAcceptedCard: metric, usdPerAcceptedCard: metric, reviewSharePercent: metric,
+    byStepTokens: {}, byStepUsd: {}, byModelLevelTokens: {}, byModelLevelUsd: {},
+    acceptedCards: [], reviews: [], warning: null };
 }
 
 function throughput() {

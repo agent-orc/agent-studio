@@ -79,7 +79,7 @@ public static class TransitionDecisionPolicy
         else if (review.Escalate)
         {
             action = TransitionAction.Escalate;
-            reason = "The card round budget is spent with an open test block.";
+            reason = "The review requires operator attention for a repeated finding or an open test block.";
         }
         else if (review.ShouldDegrade)
         {

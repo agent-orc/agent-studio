@@ -107,7 +107,9 @@
           <app-appearance-settings />
         }
         @case ('access') {
-          <app-access-settings />
+          @defer (on immediate) {
+            <app-access-area />
+          }
         }
         @case ('first-run') {
           <app-first-run-checklist (openProjectSettings)="openProjectSettings.emit($event)" />
@@ -125,7 +127,9 @@
           <app-credential-inventory />
         }
         @case ('secrets') {
-          <app-secrets-panel [projects]="watchPaths()" />
+          @defer (on immediate) {
+            <app-secrets-panel [projects]="watchPaths()" />
+          }
         }
         @case ('remote-hosts') {
           <app-remote-hosts-panel [workspaces]="watchPaths()" (openTask)="openJobDetail.emit($event)" />

@@ -280,9 +280,11 @@ public static class StudioEndpoints
 
         tasks.MapPost("/move", async (
             string projectId, string taskIdentity, HttpContext context, MoveTaskRequest request,
-            StudioLifecycleCoordinator coordinator, CancellationToken ct)
-            => await TaskServerEndpoints.InvokeAsync(
-                () => coordinator.MoveTaskAsync(projectId, taskIdentity, request, TaskServerEndpoints.Actor(context), ct)))
+            TaskServerStore store, StudioLifecycleCoordinator coordinator, CancellationToken ct)
+            => await StudioProductSession.AllowsMoveAsync(context, store, projectId, taskIdentity, request.TargetState, ct)
+                ? await TaskServerEndpoints.InvokeAsync(
+                    () => coordinator.MoveTaskAsync(projectId, taskIdentity, request, TaskServerEndpoints.Actor(context), ct))
+                : StudioProductSession.Denied())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start)
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
@@ -317,9 +319,11 @@ public static class StudioEndpoints
 
         tasks.MapPut("/state", async (
             string projectId, string taskIdentity, HttpContext context, MoveTaskRequest request,
-            StudioLifecycleCoordinator coordinator, CancellationToken ct)
-            => await TaskServerEndpoints.InvokeAsync(
-                () => coordinator.MoveTaskAsync(projectId, taskIdentity, request, TaskServerEndpoints.Actor(context), ct)))
+            TaskServerStore store, StudioLifecycleCoordinator coordinator, CancellationToken ct)
+            => await StudioProductSession.AllowsMoveAsync(context, store, projectId, taskIdentity, request.TargetState, ct)
+                ? await TaskServerEndpoints.InvokeAsync(
+                    () => coordinator.MoveTaskAsync(projectId, taskIdentity, request, TaskServerEndpoints.Actor(context), ct))
+                : StudioProductSession.Denied())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start)
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 

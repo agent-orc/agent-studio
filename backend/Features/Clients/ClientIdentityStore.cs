@@ -510,6 +510,27 @@ public class ClientIdentityStore
         }
     }
 
+    /// <summary>
+    /// Atomically changes the ceiling only while it still reads
+    /// <paramref name="expected"/> and, when given, nobody saved the capacity
+    /// since <paramref name="expectedUpdatedAt"/> (a person who set the same
+    /// value again is not overwritten). Returns the capacity stamp of this
+    /// write, or null when the ceiling was refused.
+    /// </summary>
+    public DateTime? TrySetRunnerCapacity(string id, int expected, int replacement, DateTime? expectedUpdatedAt = null)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            if (!_byId.TryGetValue(id, out var existing)
+                || existing.Kind == ClientIdentityKind.Retired
+                || existing.RunnerDesiredMaxParallelism != expected
+                || expectedUpdatedAt is { } stamp && existing.RunnerCapacityUpdatedAt != stamp) return null;
+            var updated = SetRunnerCapacity(id, replacement, null, null);
+            return updated?.RunnerDesiredMaxParallelism == replacement ? updated.RunnerCapacityUpdatedAt : null;
+        }
+    }
+
     private static int? PositiveCeiling(int? value)
         => value is > 0 ? HostCapacityPolicy.ClampCeiling(value.Value) : null;
 

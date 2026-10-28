@@ -46,6 +46,11 @@ a baseline exception list.
   and asks a person instead of taking an A3 action. The authority applies an
   Act or Ask receipt through the decider's `IAiOperatorEffect`; each effect
   checks the lane and the frozen facts again before it writes.
+- `stall-intervention` keys an occurrence on the stall case or the checked
+  intervention per five-minute period, and the occurrence's task id is the
+  stall subject (`host:<name>`, `gate:<project>:<plan>`), not a card. Its
+  effect implements `IAiOperatorProposalEffect`, so an engine Propose receipt
+  also writes the A2 proposal receipt.
 - The residual deciders `delivery-chain`, `cause-breaker`, `intake-routing` and
   `acceptance-rail` key their occurrences on a hash of the facts
   (`AiOperatorDecisionGateway.FactsSubjectKey`): unchanged facts map to one
@@ -74,12 +79,16 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 |---|---|---|---|
 | MonolithOrchestrationRecoveryService | always | apply-recover | Authority. Activates prepared occurrences, replays `applying` receipts, alerts on engine outages, and applies the rollout's rollback to the monolith policy. Re-arms the batch admission of a completed engine `DeferToBatch` decision whose card waits in Auto Review without a queue entry or ownership past admission, and clears wait markers that name a finished occurrence. |
 | OrchestrationEngineReadinessService | always | report | Authority host. Reports engine readiness and alerts when a profile selects the engine and no engine is live. |
+| EngineApplierCanaryService | always | apply-recover | Authority. Probes the effects of the first engine decisions after a rollout switch (AGT-3218), passes the applier canary, or rolls the profile back to the monolith and raises an operator alert with the card and its manual redrive when an effect is missing after its deadline (apply deadline while the applier runs, effect window after completion). |
 | LinkSupervisor | always | infra | Authority host |
 | OrchestratorChatLegacyMigrationHostedService | !PD | infra | Authority host |
 | DecisionReminderSweepHostedService | always | report | Authority host |
 | DeliveryChainReconciler | always | decide, operator | AI Operator decider `delivery-chain` (`DeliveryChainPolicy`). Effect: `DeliveryChainReconciler` moves the card; a red merge gate is still routed by `GateFailureRouter` before it may park (gate triage, a host rule in the baseline). |
 | BatchMoveJobCoordinator | !PD | apply-recover | Authority (applies an operator command) |
 | TaskIndexCacheDiagnosticsService | always | infra | Authority host |
+| BoardSummaryPersister | always | infra | Authority host. Single writer of the persisted slim board (`board-summaries.db`, Git facts S5): after each task index publication it writes the changed projects' board cards, which a cold board read serves as `restored`. Makes no transition decision. |
+| BoardShadowWorker | always | infra | Authority host. Idle unless `Board:Source` is `task-server-shadow` or `task-server`; then it mirrors the published task index generation into the Task Server board read model and records shadow differences by card and field (AGT-3317). Makes no transition decision. |
+| TaskFileMirrorWorker | always | infra | Authority host. Idle unless `TaskArtifacts:Source` is `task-server-shadow` or `task-server`; then it copies task folder files into the Task Server's `task_files` by content hash, off the request path, until the write cutover (AGT-3320). Makes no transition decision. |
 | OperatorCandidateAuditRepair | always | apply-recover | Authority host. Restores missing timeline audits from persisted operator candidate receipts at startup; makes no transition decision. |
 | ResultSummaryRetryScheduler | !PD | apply-recover | Authority |
 | AttemptArchiveIndexWarmupService | always | infra | Authority host |
@@ -101,10 +110,11 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | OrchestratorPrepHostedService | !PD, off by default | decide, local | Monolith until an engine occurrence can apply its prep verdict. |
 | ChatNoteHostedService | !PD | report | Authority host |
 | PipelineHealthService | always | report | Authority host |
+| PublishEnvironmentReconciliationService | always | infra | Authority host. Polls website deployment state and releases stopped hosting reservations; no lane transition. |
 | RemoteGateOrphanSweepService | always | infra | Authority host. Cancels unowned SSH gate runs from prior Studio process instances and clears their durable records once the remote run directory is gone. |
-| WorkspaceArtifactPushWorker | !PD | infra | Authority host |
+| WorkspaceArtifactPushWorker | !PD | infra | Authority host. Pushes nothing into the TaskRepository while `TaskArtifacts:Source = task-server` (AGT-3320). |
 | WorkspaceRepositoryMaintenanceWorker | !PD | infra | Authority host |
-| WorkspaceEvidenceWorker | !PD | infra | Authority host |
+| WorkspaceEvidenceWorker | !PD | infra | Authority host. Commits nothing while `TaskArtifacts:Source = task-server`; the Task Server export job writes the workspace repository (AGT-3320). |
 | ReviewDecisionOrchestrator | loop | decide, switched | Remote coding completion, review report and gate result follow their profiles (`CodingCompletion`, `ReviewReport`, `GateResult`). The local legacy review loop (`ProcessDoneAsync`, `ProcessNoOpAsync`) retires with local execution (D16, I11). |
 | AutoReviewPostProcessingWorker | loop | decide, switched | Same as ReviewDecisionOrchestrator: it decides through `ReviewDecisionOrchestrator.ProcessCardAsync`. |
 | AutoReviewPostProcessingRecoveryService | loop | apply-recover | Authority |
@@ -128,6 +138,8 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | OperatorSweepHostedService | !PD | decide, switched | `OperatorSweep` profile (`OperatorSweepPolicy`). Effect: `MonolithOrchestrationApplier` with `OperatorSweepActions`. |
 | WatcherHostedService | !PD, off by default | report | Authority host (drafts proposals, no lane move) |
 | EnvironmentHealthWorker | !PD, not Test | report | Authority host (IP-14 environment health checks; opens incident and certificate cards in Backlog and comments on them, no lane move) |
+| StallInterventionHostedService | !PD | decide, operator | AI Operator decider `stall-intervention` (`StallInterventionPolicy`, AGT-3207) on the AGT-3206 stall cases and due follow-up checks. Effect: `StallInterventionEffect` lowers or restores coding admission, restarts an allowlisted service through the Operations Server, reroutes a provider, reconciles the batch gate queue or pins the last delivery; it records A2 proposals and escalations. `StallIntervention:Mode` `observe` (default, "would do" receipts only), `act` or `off`; per-action switches. Held decisions are evaluated in process and never submitted. |
+| HostedVolumeBackupWorker | !PD, not Test | infra | Authority host (IP-D5 daily declared-volume backups through the host adapter; no lane decision) |
 | CardPreviewSweep | !PD, not Test | infra | Authority host. Reconciles green deliveries, integration and expiry into fenced preview deploy and removal jobs; it does not move cards. |
 | DeploymentInterventionWorker | !PD, not Test | infra | Authority host. Runs deployment intervention timeout reconciliation each minute; it does not move task lanes. |
 | OrphanReaperHostedService | !PD | infra | Authority host |

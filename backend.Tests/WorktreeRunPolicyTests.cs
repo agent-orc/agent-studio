@@ -74,7 +74,6 @@ public sealed class WorktreeRunPolicyTests
     public void RequiresWorktree_ConceptMode_True()
         => Assert.True(WorktreeRunPolicy.RequiresWorktree(TaskModes.Concept));
 
-
     // --- IsMainCheckoutViolation -------------------------------------------
 
     [Fact]

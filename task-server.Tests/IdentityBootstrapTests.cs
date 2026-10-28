@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
@@ -27,6 +29,43 @@ public sealed class IdentityBootstrapTests
     private const string OwnerPassword = "owner password long enough";
 
     // ---- Pure policy matrices -------------------------------------------------
+
+    [Theory]
+    [InlineData(StudioTaskLanes.Backlog, StudioTaskLanes.Ready, true, true)]
+    [InlineData(StudioTaskLanes.Ready, StudioTaskLanes.Backlog, true, true)]
+    [InlineData(StudioTaskLanes.Ready, StudioTaskLanes.Ready, true, true)]
+    [InlineData(StudioTaskLanes.HumanReview, StudioTaskLanes.Completed, false, true)]
+    [InlineData(StudioTaskLanes.HumanReview, StudioTaskLanes.HumanReview, false, false)]
+    [InlineData(StudioTaskLanes.HumanReview, StudioTaskLanes.Backlog, false, false)]
+    [InlineData(StudioTaskLanes.Ready, StudioTaskLanes.Progress, false, false)]
+    [InlineData(StudioTaskLanes.Backlog, StudioTaskLanes.HumanReview, false, false)]
+    [InlineData(StudioTaskLanes.Progress, StudioTaskLanes.Completed, false, false)]
+    [InlineData(StudioTaskLanes.Backlog, null, false, false)]
+    public void Product_lane_policy_keeps_edits_in_backlog_or_ready_and_accepts_only_human_review(
+        string current, string? target, bool edit, bool move)
+        => Assert.Equal((edit, move),
+            (StudioProductSession.AllowsEdit(current, target), StudioProductSession.AllowsMove(current, target)));
+
+    [Theory]
+    [InlineData(StudioTaskLanes.Backlog, true)]
+    [InlineData(StudioTaskLanes.Ready, true)]
+    [InlineData(StudioTaskLanes.HumanReview, false)]
+    [InlineData(StudioTaskLanes.Progress, false)]
+    [InlineData(null, false)]
+    public void Product_create_policy_admits_only_backlog_or_ready(string? state, bool allowed)
+        => Assert.Equal(allowed, StudioProductSession.AllowsCreate(state));
+
+    [Theory]
+    [InlineData("report.html", true)]
+    [InlineData("screens/final.PNG", true)]
+    [InlineData("notes.md", true)]
+    [InlineData("run.log", false)]
+    [InlineData("tests.trx", false)]
+    [InlineData("events.jsonl", false)]
+    [InlineData("bundle.png/raw.log", false)]
+    [InlineData("screens", false)]
+    public void Product_result_policy_admits_images_reports_and_markdown(string path, bool allowed)
+        => Assert.Equal(allowed, StudioProductSession.AllowsResult(path));
 
     [Theory]
     [InlineData(true, null, "h1", OwnerBootstrapPolicy.ArmDecision.Closed)]
@@ -460,6 +499,11 @@ public sealed class IdentityBootstrapTests
         Assert.Single((await (await product.GetAsync("/api/v1/projects")).Content.ReadFromJsonAsync<ProjectDto[]>())!);
         Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync("/api/v1/projects/prj-foreign/tasks")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync("/api/v1/projects/prj-assigned/placement")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await product.GetAsync("/api/v1/projects/prj-assigned/board")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await product.GetAsync("/api/v1/projects/prj-assigned/board/changes")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync("/api/v1/projects/prj-foreign/board")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.PutAsJsonAsync("/api/v1/projects/prj-assigned/board/workspace-import",
+            new BoardWorkspaceImportRequest(1, [], []))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await product.PostAsJsonAsync(
             "/api/v1/studio/runner/project:prj-assigned/orchestrator-chat",
             new StudioOrchestratorChatMessageRequest("Please review the preview."))).StatusCode);
@@ -475,7 +519,11 @@ public sealed class IdentityBootstrapTests
             $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/agent-work-detail")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
             $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history")).StatusCode);
-        foreach (var segment in new[] { "HiStOrY", "AgEnT-WoRk-DeTaIl", "OuTpUt", "LoGs", "RaW-LoGs" })
+        foreach (var segment in new[]
+                 {
+                     "HiStOrY", "AgEnT-WoRk-DeTaIl", "OuTpUt", "LoGs", "RaW-LoGs",
+                     "session-events", "Session-Events", "SESSION-EVENTS"
+                 })
         {
             Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
                 $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/{segment}")).StatusCode);
@@ -527,6 +575,161 @@ public sealed class IdentityBootstrapTests
         var expiredToken = new Uri("https://studio.example" + expiring.SignInLink).Query.Split('=', 2)[1];
         Assert.Equal(HttpStatusCode.Unauthorized, (await edge.PostAsJsonAsync("/api/v1/studio/auth/invite/accept",
             new StudioAcceptInvitationRequest(expiredToken, "later password long enough"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Product_moves_bind_one_target_lane_and_deny_duplicate_case_variant_or_malformed_keys()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero));
+        await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
+        using var session = await SignInProductAsync(factory);
+        var wish = await CreateTaskAsync(session.Product, """{"title":"A product wish"}""");
+
+        foreach (var (method, route) in new[] { (HttpMethod.Post, "move"), (HttpMethod.Put, "state") })
+        {
+            foreach (var body in new[]
+                     {
+                         """{"targetState":"0-backlog","TargetState":"5-human-review"}""",
+                         """{"TargetState":"2-ready","targetState":"6-completed"}""",
+                         """{"targetState":"2-ready","targetState":"5-human-review"}""",
+                         """{"TARGETSTATE":"5-human-review"}""",
+                         """{"targetState":"3-progress"}""",
+                         """{"targetState":"0-backlog",""",
+                     })
+            {
+                Assert.Equal(HttpStatusCode.Forbidden, (await SendJsonAsync(
+                    session.Product, method, $"{ProductTasksPath}/{wish.TaskId}/{route}", body)).StatusCode);
+            }
+            Assert.Equal(StudioTaskLanes.Backlog, (await ReadTaskAsync(session.Owner, wish.TaskId)).State);
+        }
+        Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(session.Product, HttpMethod.Post,
+            $"{ProductTasksPath}/{wish.TaskId}/move", """{"TargetState":"2-ready"}""")).StatusCode);
+        Assert.Equal(StudioTaskLanes.Ready, (await ReadTaskAsync(session.Owner, wish.TaskId)).State);
+        // The binder rejects case-variant duplicates for every caller, not only Product.
+        Assert.Equal(HttpStatusCode.BadRequest, (await SendJsonAsync(session.Owner, HttpMethod.Post,
+            $"{ProductTasksPath}/{wish.TaskId}/move", """{"targetState":"0-backlog","TargetState":"5-human-review"}""")).StatusCode);
+        Assert.Equal(StudioTaskLanes.Ready, (await ReadTaskAsync(session.Owner, wish.TaskId)).State);
+
+        var delivery = await CreateTaskAsync(session.Owner, """{"title":"A delivery"}""");
+        Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(session.Owner, HttpMethod.Post,
+            $"{ProductTasksPath}/{delivery.TaskId}/move", """{"targetState":"5-human-review"}""")).StatusCode);
+        foreach (var body in new[]
+                 {
+                     """{"targetState":"6-completed","TargetState":"7-archive"}""",
+                     """{"TargetState":"6-completed","targetState":"0-backlog"}""",
+                     """{"targetState":"0-backlog"}""",
+                 })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await SendJsonAsync(session.Product, HttpMethod.Put,
+                $"{ProductTasksPath}/{delivery.TaskId}/state", body)).StatusCode);
+        }
+        Assert.Equal(StudioTaskLanes.HumanReview, (await ReadTaskAsync(session.Owner, delivery.TaskId)).State);
+        Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(session.Product, HttpMethod.Put,
+            $"{ProductTasksPath}/{delivery.TaskId}/state", """{"targetState":"6-completed"}""")).StatusCode);
+        Assert.Equal(StudioTaskLanes.Completed, (await ReadTaskAsync(session.Owner, delivery.TaskId)).State);
+    }
+
+    [Fact]
+    public async Task Product_create_and_update_bind_one_lane_and_no_mechanical_delta()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero));
+        await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
+        using var session = await SignInProductAsync(factory);
+
+        foreach (var body in new[]
+                 {
+                     """{"title":"Wish","state":"0-backlog","State":"5-human-review"}""",
+                     """{"title":"Wish","State":"2-ready","state":"6-completed"}""",
+                     """{"title":"Wish","STATE":"5-human-review"}""",
+                     """{"title":"Wish","state":null}""",
+                     """{"title":"Wish",""",
+                 })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await SendJsonAsync(
+                session.Product, HttpMethod.Post, ProductTasksPath, body)).StatusCode);
+        }
+        Assert.Empty((await session.Owner.GetFromJsonAsync<TaskDto[]>(ProductTasksPath))!);
+
+        var wish = await CreateTaskAsync(session.Product, """{"Title":"Wish","STATE":"2-ready"}""");
+        Assert.Equal(StudioTaskLanes.Ready, wish.State);
+        foreach (var body in new[]
+                 {
+                     $$"""{"title":"Renamed","state":"0-backlog","State":"5-human-review","expectedVersion":{{wish.Version}}}""",
+                     $$"""{"title":"Renamed","STATE":"6-completed","expectedVersion":{{wish.Version}}}""",
+                     $$"""{"title":"Renamed","state":"2-ready","mechanicalDelta":null,"MechanicalDelta":{"reason":"run control"},"expectedVersion":{{wish.Version}}}""",
+                     $$"""{"title":"Renamed","state":"2-ready","MECHANICALDELTA":{"reason":"run control"},"expectedVersion":{{wish.Version}}}""",
+                     """{"title":"Renamed","expectedVersion":""",
+                 })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await SendJsonAsync(
+                session.Product, HttpMethod.Put, $"{ProductTasksPath}/{wish.TaskId}", body)).StatusCode);
+        }
+        var unchanged = await ReadTaskAsync(session.Owner, wish.TaskId);
+        Assert.Equal((wish.Version, "Wish", StudioTaskLanes.Ready), (unchanged.Version, unchanged.Title, unchanged.State));
+
+        Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(session.Product, HttpMethod.Put, $"{ProductTasksPath}/{wish.TaskId}",
+            $$"""{"Title":"Renamed","State":"0-backlog","ExpectedVersion":{{wish.Version}}}""")).StatusCode);
+        var renamed = await ReadTaskAsync(session.Owner, wish.TaskId);
+        Assert.Equal(("Renamed", StudioTaskLanes.Backlog), (renamed.Title, renamed.State));
+    }
+
+    [Fact]
+    public async Task Product_result_reads_serve_screenshots_reports_and_markdown_but_not_raw_output()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero));
+        await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
+        using var session = await SignInProductAsync(factory);
+        var task = await CreateTaskAsync(session.Owner, """{"title":"A delivery","state":"2-ready"}""");
+        const string runnerId = "host-product-results";
+        using var edge = Client(factory, StudioToken);
+        var installationId = (await edge.GetFromJsonAsync<InstallationIdentityDto>("/api/v1/installation"))!.InstallationId;
+        var enrolment = await EnrolAsync(session.Owner, "runner:" + runnerId, runnerId);
+        using var anonymous = Client(factory, credential: null);
+        var exchanged = await anonymous.PostAsJsonAsync("/api/v1/enrolments/exchange",
+            new ExchangeEnrolmentRequest(enrolment.EnrolmentCode, installationId));
+        using var engine = Client(factory, (await exchanged.Content.ReadFromJsonAsync<ExchangedEnrolment>())!.Issued.Credential);
+        (await engine.PutAsJsonAsync($"/api/v1/runners/{runnerId}", new RegisterRunnerRequest(
+            "runner", "host-" + runnerId, "instance-" + runnerId, "1.0.0", TaskServerProtocol.Current,
+            [ReviewCapabilities.CodingExecutor]))).EnsureSuccessStatusCode();
+        var claimed = await engine.PostAsJsonAsync($"/api/v1/runners/{runnerId}/claims",
+            new ClaimRequest(runnerId, "instance-" + runnerId));
+        var claim = (await claimed.Content.ReadFromJsonAsync<ClaimResponse>())!;
+        Assert.Equal("claimed", claim.Status);
+        var artifacts = new (string Name, string MediaType)[]
+        {
+            ("results/report.html", "text/html"), ("results/notes.md", "text/markdown"),
+            ("results/screens/final.png", "image/png"), ("results/run.log", "text/plain"),
+            ("results/tests.trx", "application/xml"), ("results/events.jsonl", "application/x-ndjson"),
+            ("results/bundle.png/raw.log", "text/plain"),
+        };
+        foreach (var (name, mediaType) in artifacts)
+        {
+            var content = Encoding.UTF8.GetBytes("content of " + name);
+            (await engine.PostAsJsonAsync($"/api/v1/runs/{claim.Run!.RunId}/artifacts", new ArtifactIngestRequest(
+                "artifact-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(name)))[..12].ToLowerInvariant(),
+                name, mediaType, Convert.ToBase64String(content),
+                Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant(),
+                "idem-" + name, claim.Lease!.Fence))).EnsureSuccessStatusCode();
+        }
+
+        foreach (var path in new[] { "report.html", "notes.md", "screens/final.png" })
+        {
+            var response = await session.Product.GetAsync($"{ProductTasksPath}/{task.TaskId}/results/{path}");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("content of results/" + path, await response.Content.ReadAsStringAsync());
+        }
+        foreach (var path in new[] { "run.log", "RUN.LOG", "tests.trx", "events.jsonl", "bundle.png", "screens" })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await session.Product.GetAsync(
+                $"{ProductTasksPath}/{task.TaskId}/results/{path}")).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.Forbidden, (await session.Product.GetAsync(
+            $"{ProductTasksPath}/{task.TaskId}/RESULTS/run.log")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await session.Owner.GetAsync(
+            $"{ProductTasksPath}/{task.TaskId}/results/run.log")).StatusCode);
     }
 
     [Fact]
@@ -705,6 +908,57 @@ public sealed class IdentityBootstrapTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return (await response.Content.ReadFromJsonAsync<StudioOwnerBootstrapSessionDto>())!;
     }
+
+    private const string ProductTasksPath = "/api/v1/projects/prj-assigned/tasks";
+
+    private sealed record ProductSession(HttpClient Owner, HttpClient Product) : IDisposable
+    {
+        public void Dispose()
+        {
+            Owner.Dispose();
+            Product.Dispose();
+        }
+    }
+
+    /// <summary>An owner session and a Product session assigned to <c>prj-assigned</c>.</summary>
+    private static async Task<ProductSession> SignInProductAsync(IdentityFactory factory)
+    {
+        using var edge = Client(factory, StudioToken);
+        var owner = await BootstrapOwnerAsync(edge);
+        var ownerClient = Client(factory, StudioToken, owner.SessionToken);
+        var workspace = (await (await ownerClient.PostAsJsonAsync("/api/v1/workspaces",
+            new CreateWorkspaceRequest("Main"))).Content.ReadFromJsonAsync<WorkspaceDto>())!;
+        Assert.Equal(HttpStatusCode.Created, (await ownerClient.PostAsJsonAsync("/api/v1/projects",
+            new CreateProjectRequest(workspace.WorkspaceId, "Assigned", "ASS", "prj-assigned"))).StatusCode);
+        var invited = (await (await ownerClient.PostAsJsonAsync("/api/v1/studio/auth/invitations",
+            new StudioInviteUserRequest("product", StudioUserRoles.Contributor, ["prj-assigned"])))
+            .Content.ReadFromJsonAsync<StudioInviteResult>())!;
+        var token = new Uri("https://studio.example" + invited.SignInLink).Query.Split('=', 2)[1];
+        var accepted = await edge.PostAsJsonAsync("/api/v1/studio/auth/invite/accept",
+            new StudioAcceptInvitationRequest(token, "product password long enough"));
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        var session = (await accepted.Content.ReadFromJsonAsync<StudioAuthSessionDto>())!;
+        return new ProductSession(ownerClient, Client(factory, StudioToken, session.SessionToken));
+    }
+
+    private static async Task<HttpResponseMessage> SendJsonAsync(HttpClient client, HttpMethod method, string path, string json)
+    {
+        using var request = new HttpRequestMessage(method, path)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<TaskDto> CreateTaskAsync(HttpClient client, string json)
+    {
+        var response = await SendJsonAsync(client, HttpMethod.Post, ProductTasksPath, json);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<TaskDto>())!;
+    }
+
+    private static async Task<TaskDto> ReadTaskAsync(HttpClient client, string taskId)
+        => (await client.GetFromJsonAsync<TaskDto>($"{ProductTasksPath}/{taskId}"))!;
 
     private static async Task<IssuedEnrolment> EnrolAsync(
         HttpClient owner, string principalId, string? runnerId, string kind = TaskServerPrincipalKinds.Runner, int? ttl = null)

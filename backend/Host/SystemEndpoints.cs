@@ -179,17 +179,35 @@ public static class SystemEndpoints
         // First-class integration object: accepted-card queue, curated publisher
         // merges on origin/develop, and the card-granular develop -> main
         // promotion delta. This is deliberately separate from the transient
-        // per-card mergeSignal projection.
+        // per-card mergeSignal projection. AGT-3323 (Git facts S3): served
+        // from the view the Git fact producer published for the current
+        // ref/config and task generation, with its generation, age and ETag;
+        // before the first publication it answers warming, never a live build.
         app.MapGet("/api/git/integration", (
             string project,
             HttpContext context,
-            ProjectIntegrationViewService integration,
+            GitCardFactReader facts,
+            ProjectSettingsService settings,
             ProjectRegistry projects) =>
         {
             if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 && !ProjectAccessAuthorization.Allows(human.User, project, projects))
                 return Results.Forbid();
-            return Results.Ok(integration.Build(project));
+            var lookup = facts.ReadProject(project);
+            if (!lookup.Known && projects.FindByIdOrDisplayName(project) is { } record)
+                lookup = facts.ReadProject(record.StorageLocation) is { Known: true } byPath ? byPath
+                    : facts.ReadProject(record.DisplayName);
+            if (!lookup.Known)
+            {
+                var configured = settings.Get(project).IntegrationBranch?.Trim();
+                return Results.Ok(ProjectIntegrationViewService.Empty(project,
+                    string.IsNullOrWhiteSpace(configured) ? "origin/HEAD"
+                        : configured.StartsWith("origin/", StringComparison.Ordinal) ? configured : "origin/" + configured,
+                    BoardMergeStatusService.ReleaseBranch, "Project has no readable git repository."));
+            }
+            return lookup.Facts?.ProjectView is { } view
+                ? GitFactsResults.Ok(view.View, lookup.Facts)
+                : GitFactsResults.Warming(new { project }, lookup.Facts);
         });
 
         // Changed-file list for a commit browsed in the project Git View,
@@ -250,13 +268,28 @@ public static class SystemEndpoints
             return Results.Ok();
         });
 
-        app.MapGet("/healthz", (HttpContext context, PublishedArtifactSha published) =>
+        app.MapGet("/healthz", (HttpContext context, PublishedArtifactSha published,
+            IConfiguration configuration, AgentStudio.Security.NetworkedLoginAddressHealth loginAddressHealth) =>
         {
             var identity = ReadBuildIdentity();
             context.Response.Headers["X-Agent-Studio-Tag"] = identity.Tag;
             if (published.Value is not null)
                 context.Response.Headers["X-Agent-Studio-Commit"] = published.Value;
-            return Results.Ok("ok");
+            IResult result = AgentStudio.Security.SecurityProfiles.IsNetworked(configuration) && !loginAddressHealth.Healthy
+                ? Results.Problem("A login resolved to a trusted proxy or private address.", statusCode: 503)
+                : Results.Ok("ok");
+            return result;
+        });
+
+        // Docker probes the loopback listener so a private login diagnostic does
+        // not hold the dependent frontend and edge containers unhealthy.
+        app.MapGet("/healthz/container", (HttpContext context) =>
+        {
+            IResult result = System.Net.IPAddress.IsLoopback(
+                context.Connection.RemoteIpAddress ?? System.Net.IPAddress.None)
+                ? Results.Ok("ok")
+                : Results.NotFound();
+            return result;
         });
 
         // External stable-process watchdogs consult this immediately before a

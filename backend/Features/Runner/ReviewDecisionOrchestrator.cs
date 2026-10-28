@@ -175,7 +175,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// Args: cliBinary, model, prompt, timeout, ct → captured stdout/stderr.
     /// </summary>
     public Func<string, string, string, TimeSpan, CancellationToken, Task<string>> CliRunner { get; set; }
-        = DefaultRunCliAsync;
 
     internal Func<int, TimeSpan> BuildTestGateRetryBackoff { get; set; }
         = PostProcessingOutcomeTaxonomy.RetryBackoff;
@@ -297,6 +296,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _aspectRunner = aspectRunner;
         _statusSnapshot = statusSnapshot;
         _configuration = configuration;
+        CliRunner = DefaultRunCliAsync;
         _taskMutations = taskMutations;
         _logger = logger;
         _usage = usage;
@@ -352,7 +352,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var cliType = NormalizeReviewCliType(cli);
         var oneShot = _oneShotRegistry?.Get(cliType);
-        if (oneShot == null) return await DefaultRunCliAsync(cli, model, prompt, timeout, ct);
+        if (oneShot == null) return await CliRunner(cli, model, prompt, timeout, ct);
 
         var result = await oneShot.RunAsync(new AgentStudio.Cli.CliOneShotRequest(
             CliType: cliType,
@@ -2240,7 +2240,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
-
         var isResearch = TaskModes.Normalize(current.Mode) == TaskModes.Research;
         var primaryReport = Path.Combine(current.FolderPath, "results", "report.html");
         var hasPrimaryResult = isResearch
@@ -2381,6 +2380,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
+        inputs = inputs with { ReviewAttemptId = pipelineRecord?.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture) };
 
         // Post-core completeness gate. Persist the exact requirement source,
         // machine evidence, blockers, and lifecycle states before review. Never
@@ -2514,6 +2514,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (gateMode == OrchestrationExecutionMode.Engine
                 && buildGateResult.Verdict == BuildTestGateVerdict.Fail)
                 throw new InvalidDataException("A failed engine gate cannot continue through the monolith gate handler.");
+            // AGT-3218: the durable gate dispatch the applier canary checks.
+            if (gateMode == OrchestrationExecutionMode.Engine && _timeline is not null)
+                EngineGateDispatchReceipt.Record(_timeline, current.FolderPath, occurrence.RunId);
         }
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail)
         {
@@ -5329,6 +5332,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 DeferGradeWrites = true,
                 Commit = commitLabel,
                 ThinkingLevel = thinkingLevel,
+                ReviewAttemptId = _pipelineLog?.Read(job.FolderPath)?.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ResultsInventory = ResultsInventory.Render(job.FolderPath),
                 CardMode = ReviewCardMode.Describe(job.Mode),
             };
@@ -8362,29 +8366,28 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return value.ToLowerInvariant();
     }
 
-    private static async Task<string> DefaultRunCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
+    private async Task<string> DefaultRunCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
+        if (NormalizeReviewCliType(cli) != CliTypes.Claude) return string.Empty;
+        var networked = !SecurityProfiles.IsLocal(_configuration);
+        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new ProcessStartInfo
         {
             FileName = cli,
+            WorkingDirectory = networked ? workspace!.Path : Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("-p");
-        psi.ArgumentList.Add("--output-format");
-        psi.ArgumentList.Add("json");
-        psi.ArgumentList.Add("--model");
-        psi.ArgumentList.Add(model);
-        psi.ArgumentList.Add("--dangerously-skip-permissions");
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model, networked: networked);
 
-        using var p = Process.Start(psi);
+        using var p = HostCliSpawnGuard.Start(psi, networked, CliTypes.Claude);
         if (p == null) return string.Empty;
         try
         {
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            await p.StandardInput.WriteAsync(HostOneShotIsolation.PreparePrompt(prompt, networked).AsMemory(), ct);
             p.StandardInput.Close();
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "ReviewDecisionOrchestrator: stdin may already be closed by CLI"); /* stdin may already be closed by CLI */ }

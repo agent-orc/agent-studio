@@ -94,6 +94,15 @@ public sealed class RemoteRunnerDaemon
             RunnerActiveAttemptReporter.Coding(state.LoadAll()));
         var hostJournal = new HostOrchestratorJournal(
             Path.Combine(_options.StateDir, "host-orchestrator.json"));
+        if (!_options.HostAdapter
+            && CodingDrainGuard.ReadRequest(_options.StateDir) is { } startupDrain
+            && state.LoadAll().Count == 0
+            && hostJournal.RecoverAcceptedWork().Count == 0)
+        {
+            CodingDrainGuard.Acknowledge(_options.StateDir, startupDrain, 0);
+            _log("coding daemon drained before Task Server registration");
+            return;
+        }
         var persistedAtStartup = state.LoadAll();
         using var startupAuthorityWatch = CancellationTokenSource.CreateLinkedTokenSource(
             shutdown);
@@ -371,7 +380,6 @@ public sealed class RemoteRunnerDaemon
                 }
             }, shutdown);
         }
-        if (_options.Role is "coding" or "review") StartModelAcceptanceProbe();
         var capabilityGeneration = DateTime.UtcNow.Ticks;
         var telemetry = new HostTelemetrySampler();
         // Claim admission and salvage deletion share this gate. A claim is
@@ -396,7 +404,8 @@ public sealed class RemoteRunnerDaemon
                 _log,
                 runAdmissionGate: salvageAdmissionGate)
             : null;
-        var salvageSweep = salvage?.RunAsync(shutdown) ?? Task.CompletedTask;
+        using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
+        var salvageSweep = salvage?.RunAsync(auxiliaryStop.Token) ?? Task.CompletedTask;
         HostTelemetrySample? latestTelemetry = telemetry.SampleIfDue(
             active.Count,
             connectivity.Snapshot);
@@ -425,6 +434,7 @@ public sealed class RemoteRunnerDaemon
             TimeSpan.FromSeconds(_options.ServerRequestTimeoutSeconds),
             _log,
             shutdown);
+        if (_options.Role == "coding") StartModelAcceptanceProbe();
         if (!gitCapability.CanPush)
         {
             // Diagnosis only: read-only admission is already decided above, so a
@@ -471,12 +481,16 @@ public sealed class RemoteRunnerDaemon
         var consecutiveFaults = 0;
         var cliUpdateAttempted = false;
         var interactiveChat = new InteractiveChatAdmission(_options, _client, _log);
-        var interactivePoll = interactiveChat.PollAsync(shutdown);
-        var decisionPoll = new OrchestratorDecisionJobAdmission(_options, _client, _log).PollAsync(shutdown);
+        var interactivePoll = interactiveChat.PollAsync(auxiliaryStop.Token);
+        var decisionPoll = new OrchestratorDecisionJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
-            new PlatformRepositoryGitProof(_ => null, _options.StateDir), _log).PollAsync(shutdown);
-        var deviceLoginPoll = new RunnerDeviceLoginAgent(_options, _client, _log).PollAsync(shutdown);
-        var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log).PollAsync(shutdown);
+            new PlatformRepositoryGitProof(_ => null, _options.StateDir), _log).PollAsync(auxiliaryStop.Token);
+        var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log).PollAsync(auxiliaryStop.Token);
+        var sourceFactsPoll = new AgentRunner.SourceFacts.SourceFactsDemandSweep(
+            _options,
+            new AgentRunner.SourceFacts.SourceFactsProducer(
+                _client, $"{_options.RunnerId}:{_client.RunnerInstanceId}", _log),
+            _log).PollAsync(auxiliaryStop.Token);
         while (!shutdown.IsCancellationRequested)
         {
             idleWatchdog.RecordActiveSlots(active.Count);
@@ -509,7 +523,30 @@ public sealed class RemoteRunnerDaemon
                     admittedCardKeys.TryAdd(redrive.TaskKey, 0);
                     idleWatchdog.RecordActiveSlots(active.Count);
                 }
-                var cliUpdate = await _client.GetCliUpdateAsync(shutdown);
+                // The migration marker is checked after every in-flight claim has
+                // returned to this loop and after durable finalization recovery.
+                // Acknowledgement is the barrier the host agent waits for.
+                var drain = _options.HostAdapter ? null : CodingDrainGuard.ReadRequest(_options.StateDir);
+                var hostDrain = _options.HostAdapter
+                    ? HostRoleDrainControl.ReadRequest(_options.StateDir, "coding") : null;
+                var draining = drain is not null || hostDrain is not null;
+                if (draining)
+                {
+                    auxiliaryStop.Cancel();
+                    var persisted = state.LoadAll();
+                    var occupied = Math.Max(active.Count, persisted.Count)
+                                   + hostJournal.RecoverAcceptedWork().Count;
+                    if (drain is not null)
+                        CodingDrainGuard.Acknowledge(_options.StateDir, drain, occupied);
+                    if (hostDrain is not null)
+                        HostRoleDrainControl.Acknowledge(_options.StateDir, "coding", hostDrain, occupied);
+                    if (occupied == 0)
+                    {
+                        _log("coding daemon drained: no persisted attempts remain");
+                        break;
+                    }
+                }
+                var cliUpdate = draining ? null : await _client.GetCliUpdateAsync(shutdown);
                 if (cliUpdate is not null)
                 {
                     var advertised = RunnerCapabilityProbe.Advertise(
@@ -572,7 +609,6 @@ public sealed class RemoteRunnerDaemon
                 }
                 if (DateTime.UtcNow >= nextCapabilityAdvertisement)
                 {
-                    if (_options.Role is "coding" or "review") StartModelAcceptanceProbe();
                     await RunnerCapabilityProbe.RefreshDueCanariesAsync(_options, _client, _log, shutdown);
                     var capabilityTelemetry = TakeTelemetry();
                     var generation = ++capabilityGeneration;
@@ -598,6 +634,7 @@ public sealed class RemoteRunnerDaemon
                         TimeSpan.FromSeconds(_options.ServerRequestTimeoutSeconds),
                         _log,
                         shutdown);
+                    if (_options.Role == "coding") StartModelAcceptanceProbe();
                     nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
                 }
                 // Record the attempt before entering any claim-path HTTP call.
@@ -664,7 +701,7 @@ public sealed class RemoteRunnerDaemon
                         InteractiveChatAdmission.FreeCodingSlots(
                             _client.HostMaxParallelism, active.Count,
                             interactiveChat.HeavyCount) - hostJournal.QueuedCount);
-                    if (!loadDecision.Throttle && availableQueueSlots > 0)
+                    if (!draining && !loadDecision.Throttle && availableQueueSlots > 0)
                     {
                         foreach (var permit in hostReport.AvailableWork.Take(availableQueueSlots))
                         {
@@ -701,7 +738,7 @@ public sealed class RemoteRunnerDaemon
                         }
                     }
                 }
-                if (loadDecision.Throttle)
+                if (loadDecision.Throttle && !(draining && hostJournal.QueuedCount > 0))
                 {
                     _log(
                         $"claim-load-gate closed loadPerCore={loadDecision.LoadPerCore:0.00} " +
@@ -753,6 +790,7 @@ public sealed class RemoteRunnerDaemon
                 while (InteractiveChatAdmission.FreeCodingSlots(
                            _client.HostMaxParallelism, active.Count,
                            interactiveChat.HeavyCount) > 0
+                       && (!draining || _client.UsesHostOrchestrator)
                        && !shutdown.IsCancellationRequested)
                 {
                     if (_client.UsesHostOrchestrator)
@@ -960,6 +998,7 @@ public sealed class RemoteRunnerDaemon
         // atomically flushed at claim/process/output boundaries and detached
         // workers are intentionally left alive for the replacement daemon.
         state.Flush();
+        auxiliaryStop.Cancel();
         var codingHandoffs = active
             .Where(slot => slot.TaskKey is not null)
             .Select(slot => slot.Execution)
@@ -969,8 +1008,8 @@ public sealed class RemoteRunnerDaemon
         await interactivePoll;
         await decisionPoll;
         await repositoryProbePoll;
-        await deviceLoginPoll;
         await gitSetupPoll;
+        await sourceFactsPoll;
         await salvageSweep;
         try { await interactiveChat.DrainAsync(); }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }

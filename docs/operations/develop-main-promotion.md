@@ -1,8 +1,8 @@
 # Develop to main promotion
 
 `develop` is the work line. `main` is the release line. The standard promotion
-train fixes the fetched `develop` tip as its exact candidate, runs the complete
-blocking gate against that commit, publishes an annotated release marker with
+train fixes the fetched `develop` tip as its exact candidate, checks the
+pre-delivery verdict for that commit and command digest, publishes an annotated release marker with
 `main`, and hands the new `main` SHA to the external Stable deploy watcher.
 With `--release-dir` it also packages that SHA for deployment from the same
 gated worktree, so a deploy does not run the full gate a second time (see
@@ -24,9 +24,10 @@ The command fails closed when any of these facts is false:
 - the annotated `release/*` marker does not already exist;
 - the candidate is a descendant of `main` before the gate and remains a
   descendant of the freshly fetched `main` immediately before the push;
-- every command in
+- the candidate has a green post-merge check and either a matching green
+  pre-delivery verdict or every suite command in
   [promotion-full-gate.sh](../../scripts/release/promotion-full-gate.sh) passes
-  against the exact candidate commit;
+  against that commit; build and packaging commands still run when the suite verdict is reused;
 - the gate emits its completion marker and leaves the candidate checkout clean;
 - the server accepts one atomic push containing both `main` and the annotated
   release marker; and
@@ -93,7 +94,7 @@ removed before retrying the same marker.
    package then lands in `<directory>/<candidate sha>/`; see
    [One-gate deploy package](#one-gate-deploy-package).
 
-6. Verify `promotion-record.json` says `status=promoted`, `gate=passed`, and
+6. Verify `promotion-record.json` says `status=promoted`, `gate=passed` or `gate=reused`, and
    `atomicPush=true`. Verify the remote `main` and peeled tag resolve to the
    recorded `candidateSha`. With `--release-dir`, also verify
    `releasePackage.status=written`.
@@ -208,15 +209,16 @@ not publish versioned binaries. It runs, in order:
    exists, `OrchestratorApi.csproj` requires its NuGet lock file, and a locked
    restore does not rewrite it;
 2. .NET solution restore: restores `agent-taskboard.sln` with `--locked-mode`;
-3. Frontend dependency install: installs dependencies with `npm ci`;
-4. Production dependency audit: checks production dependencies for critical
-   vulnerabilities;
+3. Frontend dependency install: installs dependencies with the npm 11.21.1
+   version declared by `frontend/package.json` via Corepack;
+4. Production dependency audit: checks production dependencies for high and
+   critical vulnerabilities;
 5. Release shell contract tests: runs the release scripts test suite, including
    promotion and deploy-watcher tests;
 6. .NET Release build: builds the solution in Release configuration without
    restoring again;
-7. .NET full non-machine-bound suite: runs every non-machine-bound .NET test in
-   the solution, including the
+7. .NET full non-machine-bound suite: runs every solution test project in
+   bounded parallel shards, including the
    legacy-plane completion contract test
    (`backend.Tests/LegacyRunnerCompletionContractTests.cs`);
 8. Deployment regression scenario (smoke): runs the
@@ -227,6 +229,17 @@ not publish versioned binaries. It runs, in order:
 10. Frontend type-check: checks frontend types;
 11. Frontend unit tests: runs the CI unit test command; and
 12. Frontend production build: builds the production frontend.
+
+For a project with `delivery.fullSuite: required`, a production declaration
+defaults the setting to `required`; without production it defaults to
+`optional`. Explicit values are `required`, `optional`, and `off`. The release
+endpoint requires a green post-merge candidate before it accepts a release
+unless the setting is `off`. A red suite verdict always blocks; `required`
+also blocks a missing verdict. The Task Server stores the verdict by project,
+candidate SHA, and a digest of the committed `project.yml` and gate script.
+On an exact green match the train records `gate=reused`, skips the .NET and
+frontend test suites, and still restores, builds, lints, audits, and packages
+the candidate. A command digest change runs the suites again.
 
 The script is the source of truth; a step added to or removed from it must be
 mirrored in this list in the same change.
@@ -446,6 +459,33 @@ container target, pass `--deploy-image-ref <registry tag>` and
 `--deploy-dockerfile <relative path>`; the train builds and pushes that image
 from the gated checkout and records the returned registry digest. A prebuilt
 image with a matching revision label does not qualify.
+
+### Release evidence and registry handoff
+
+The backend reads five files from
+`<Deploy:ReleaseEvidenceRoot>/<candidate sha>/` when the build job calls
+`POST /api/deploy/gate-releases`. They must describe the same candidate:
+
+| File | Required evidence |
+|---|---|
+| `release.tar.gz` and `release.sha256` | The archive hashes to the 64-character lowercase SHA-256 in the digest file. |
+| `full-gate.log` | Contains the exact line `PROMOTION_FULL_GATE=passed`. |
+| `promotion-record.json` | `status=promoted`, `gate=passed` or `gate=reused`, `candidateSha=<candidate sha>`, `atomicPush=true`, and `releasePackage.status=written` with `releasePackage.sha256` equal to `release.sha256`. Its `gateRunId` is the release tag recorded as provenance. |
+| `deploy-artifact.json` | `project`, `commit`, `artifact`, and `sourceSha256` match the request and package digest. For a static package, `artifact` is `release-package@sha256:<package digest>`; for a container it is the pushed image reference with its registry digest. |
+
+The train writes `deploy-artifact.json` and copies the final promotion record
+after packaging. It then sends JSON `{ "project": "...", "artifact": "...",
+"commit": "<candidate sha>" }` with its `runner.release` service credential.
+The backend also requires that commit on the project's integration branch.
+Only this credential can push into the release registry. The backend takes
+`builderIdentity` from the authenticated runner ID, not from the JSON body.
+A successful request returns `202` with the release and queues Staging;
+invalid or unverified evidence returns `400`. A release superseded by a newer
+commit returns `409`
+with `"reason":"superseded"`; the train logs that one response and treats
+other refusals as failures. The operator release route can select only a
+previously registered digest for the exact commit, so it cannot supply missing
+build evidence. See the [registry and leased transfer contract](../concepts/deployment-first-class.md#release-artifact-registry-ip-d3-a).
 
 ## Branch reclaim after promotion
 

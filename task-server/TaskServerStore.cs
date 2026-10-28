@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -55,8 +56,10 @@ public sealed partial class TaskServerStore
     // and the continuation base reason of the standalone review loop (I11).
     // 36 adds one-time Studio invitations and per-project production approval.
     // 37 removes retired parent tables and their task metadata field.
-    // Older binaries must reject this store before reading task metadata.
-    public const int CurrentSchemaVersion = 37;
+    // 38 stores release candidate full-suite verdicts by project, SHA, and command digest.
+    // 39 adds placement advertisements and allocation versions. Version 37
+    // remains the retired-schema downgrade guard for older binaries.
+    public const int CurrentSchemaVersion = 39;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -87,6 +90,8 @@ public sealed partial class TaskServerStore
     private readonly IResultFinalizationSummaryGenerator _resultSummaries;
     private readonly ITaskServerEventPublisher? _operationalEvents;
     private readonly ILogger<TaskServerStore>? _logger;
+    private readonly WorkspaceQuotaVerdictCache? _quotaVerdicts;
+    private readonly ConcurrentDictionary<QuotaClaimKind, Task> _quotaRefreshes = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly DateTime _startedAt;
     private static readonly JsonSerializerOptions OutcomeJson = CreateOutcomeJson();
@@ -120,13 +125,15 @@ public sealed partial class TaskServerStore
         TimeProvider clock,
         IResultFinalizationSummaryGenerator resultSummaries,
         ITaskServerEventPublisher? operationalEvents,
-        ILogger<TaskServerStore>? logger)
+        ILogger<TaskServerStore>? logger,
+        IWorkspaceQuotaAdmission? workspaceQuota = null)
     {
         _options = options.Value;
         _clock = clock;
         _resultSummaries = resultSummaries;
         _operationalEvents = operationalEvents;
         _logger = logger;
+        _quotaVerdicts = workspaceQuota is null ? null : new WorkspaceQuotaVerdictCache(workspaceQuota, clock);
         _startedAt = UtcNow;
     }
 
@@ -137,6 +144,137 @@ public sealed partial class TaskServerStore
     public string ServerId => _serverId;
     public TaskServerMode Mode => _mode;
     private DateTime UtcNow => _clock.GetUtcNow().UtcDateTime;
+
+    /// <summary>"off" without a configured meter, else "on" or "unreachable" (see <see cref="WorkspaceQuotaAdmissionStates"/>).</summary>
+    public string QuotaAdmissionState => _quotaVerdicts?.State ?? WorkspaceQuotaAdmissionStates.Off;
+
+    private enum QuotaClaimKind { Coding, Review, Gate }
+
+    /// <summary>Projects whose next claim of the kind needs a quota verdict.</summary>
+    private static string QuotaProjectsSql(QuotaClaimKind kind) => kind switch
+    {
+        QuotaClaimKind.Coding => """
+            SELECT DISTINCT p.name FROM tasks t JOIN projects p ON p.id = t.project_id
+             WHERE t.state = '2-ready'
+               AND NOT EXISTS (
+                   SELECT 1 FROM leases l
+                    WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'));
+            """,
+        QuotaClaimKind.Review => """
+            SELECT DISTINCT p.name
+              FROM review_attempts a
+              JOIN tasks t ON t.id = a.task_id
+              JOIN projects p ON p.id = t.project_id
+             WHERE (a.status IN ('queued', 'process-unknown') OR (a.status = 'leased' AND a.expires_at <= $now))
+               AND t.state = '4-auto-review';
+            """,
+        _ => """
+            SELECT DISTINCT p.name
+              FROM gate_attempts a
+              JOIN gate_subjects s ON s.id = a.subject_id
+              JOIN tasks t ON t.id = s.task_id
+              JOIN projects p ON p.id = t.project_id
+             WHERE a.state = 'queued';
+            """,
+    };
+
+    private bool QuotaAdmissionOn => _quotaVerdicts is not null;
+
+    /// <summary>
+    /// Stale-while-revalidate: a plain local read lists the projects a claim of
+    /// this kind may pick, then the meter is asked in the background, so no
+    /// claim waits on the monolith. Claims read the cached verdict, or admit a
+    /// project that has none yet. One refresh per claim kind runs at a time, and
+    /// the cache asks each project at most once per TTL.
+    /// </summary>
+    private async Task StartWorkspaceQuotaRefreshAsync(QuotaClaimKind kind, string actorId, CancellationToken ct)
+    {
+        if (_quotaVerdicts is null) return;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_quotaRefreshes.TryAdd(kind, done.Task)) return;
+        void Finish()
+        {
+            _quotaRefreshes.TryRemove(kind, out _);
+            done.SetResult();
+        }
+        var names = new List<string>();
+        try
+        {
+            await using var connection = await OpenReadyAsync(ct);
+            await using var command = kind == QuotaClaimKind.Review
+                ? Command(connection, QuotaProjectsSql(kind), ("$now", Iso(UtcNow)))
+                : Command(connection, QuotaProjectsSql(kind));
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                names.Add(reader.GetString(0));
+        }
+        catch
+        {
+            Finish();
+            throw;
+        }
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await RefreshWorkspaceQuotaAsync(names, actorId);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                _logger?.LogWarning(ex, "quota-verdict-refresh-failed kind={Kind}", kind);
+            }
+            finally
+            {
+                Finish();
+            }
+        }, CancellationToken.None);
+    }
+
+    /// <summary>Starts the refresh of every claim kind, so the first claims after a start find verdicts.</summary>
+    internal async Task StartWorkspaceQuotaRefreshesAsync(string actorId, CancellationToken ct = default)
+    {
+        foreach (var kind in Enum.GetValues<QuotaClaimKind>()) await StartWorkspaceQuotaRefreshAsync(kind, actorId, ct);
+    }
+
+    /// <summary>Completes when no background verdict refresh is running.</summary>
+    internal Task WorkspaceQuotaRefreshesIdle() => Task.WhenAll(_quotaRefreshes.Values);
+
+    /// <summary>
+    /// The background part: the meter is asked outside any transaction, and
+    /// only availability transitions raise an operational event and a log line
+    /// (once per outage and once per recovery).
+    /// </summary>
+    private async Task RefreshWorkspaceQuotaAsync(IReadOnlyList<string> names, string actorId)
+    {
+        var transitions = await _quotaVerdicts!.RefreshAsync(names, CancellationToken.None);
+        foreach (var transition in transitions)
+            if (transition.MeterUnavailable)
+                _logger?.LogWarning("quota-meter-unavailable project={Project} detail={Detail}",
+                    transition.ProjectName, transition.Message);
+            else
+                _logger?.LogInformation("quota-meter-recovered project={Project}", transition.ProjectName);
+        await PublishOperationalEventsAsync(transitions.Select(transition => new TaskServerOperationalEvent(
+            transition.MeterUnavailable ? "quota.meter-unavailable" : "quota.meter-recovered", UtcNow, actorId,
+            new { project = transition.ProjectName, message = transition.Message })).ToList(), CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Cached verdict only (no I/O). Admission off, or a project without a
+    /// verdict yet, admits without an event; an unresolved project is admitted
+    /// with a meter warning that names the card.
+    /// </summary>
+    private WorkspaceQuotaVerdict CachedWorkspaceQuota(string? projectName, string subject)
+    {
+        if (_quotaVerdicts is null) return new WorkspaceQuotaVerdict(true, null);
+        if (projectName is null)
+            return new WorkspaceQuotaVerdict(true,
+                $"{subject} could not be resolved to a project; quota admission is off for it.", true);
+        return _quotaVerdicts.Read(projectName) ?? new WorkspaceQuotaVerdict(true, null);
+    }
+
+    /// <summary>The outage message for the first claimed card of a project after its meter became unavailable.</summary>
+    private string? ConsumeQuotaCardNotice(string? projectName)
+        => projectName is null ? null : _quotaVerdicts?.TryConsumeCardNotice(projectName);
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
         => await InitializeCoreAsync(quarantineActiveAuthority: true, cancellationToken);
@@ -272,7 +410,8 @@ public sealed partial class TaskServerStore
             _startedAt,
             _outboxBacklog,
             _oldestUnacknowledgedSequence,
-            _finalHandoffStates);
+            _finalHandoffStates,
+            QuotaAdmissionState);
     }
 
     public async Task<WorkspaceDto> CreateWorkspaceAsync(CreateWorkspaceRequest request, string actorId, CancellationToken ct)
@@ -1317,6 +1456,7 @@ public sealed partial class TaskServerStore
         else
             RequireWritable();
         ClaimResponse? response = null;
+        if (request.AvailableSlots > 0) await StartWorkspaceQuotaRefreshAsync(QuotaClaimKind.Coding, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             await ValidateRunnerAsync(connection, transaction, request.RunnerId, request.InstanceId, ct);
@@ -1375,7 +1515,7 @@ public sealed partial class TaskServerStore
                 ("$effective", reportedMaxParallelism),
                 ("$confirms", adoption.ConfirmsDesired ? 1 : 0),
                 ("$newConfirmation", adoption.EmitAudit ? 1 : 0),
-                ("$appliedVersion", runtimeCapacity.Version),
+                ("$appliedVersion", runtimeCapacity.AllocationVersion),
                 ("$id", request.RunnerId));
             if (adoption.EmitAudit)
             {
@@ -1391,6 +1531,7 @@ public sealed partial class TaskServerStore
                         runtimeCapacity.HostId,
                         request.InstanceId,
                         runtimeCapacity.Version,
+                        runtimeCapacity.AllocationVersion,
                         runtimeCapacity.MaxParallelism,
                     }),
                     ct);
@@ -1463,8 +1604,20 @@ public sealed partial class TaskServerStore
                 ? null
                 : JsonSerializer.Deserialize<HostTelemetrySnapshotDto>(telemetryJson)?.CpuPercent;
             var hostAdmission = capabilityAdmission;
+            var quotaProjectNames = new Dictionary<string, string>(StringComparer.Ordinal);
             async Task<ClaimPlacementVerdict> EvaluateProjectAsync(string projectId)
             {
+                if (QuotaAdmissionOn)
+                {
+                    var projectName = await ScalarAsync(connection,
+                        "SELECT name FROM projects WHERE id = $project;", ct, transaction,
+                        ("$project", projectId)) as string;
+                    var quota = CachedWorkspaceQuota(projectName, "Project " + projectId);
+                    if (!quota.Allowed)
+                        return new ClaimPlacementVerdict(projectId,
+                            quota.Message ?? "Workspace quota reached.", null, null);
+                    if (projectName is not null) quotaProjectNames[projectId] = projectName;
+                }
                 var registered = Convert.ToInt64(await ScalarAsync(connection, """
                     SELECT count(*) FROM project_repositories WHERE project_id = $project;
                     """, ct, transaction, ("$project", projectId))) > 0;
@@ -1516,7 +1669,9 @@ public sealed partial class TaskServerStore
             string? modelRefusal = null;
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
                 WhereModelAcceptedAsync(
-                    ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                    ExceptHeldModelRoutesAsync(connection, transaction,
+                        ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                        request.RunnerId, UtcNow, ct),
                     connection, transaction, request.RunnerId,
                     reason => modelRefusal ??= reason, ct),
                 async projectId =>
@@ -1549,21 +1704,39 @@ public sealed partial class TaskServerStore
             }
             capabilityAdmission = selected!.Admission!;
 
+            // DP-S1 compares the new host decision at the existing claim
+            // authority. Shadow is observational; canary is an explicit switch.
+            var placementRequirements = (request.RequiredCapabilities ?? [])
+                .Concat(selectedPlacement?.RequiredCapabilities ?? [])
+                .Distinct(StringComparer.Ordinal).ToArray();
+            var shadowPlacement = await EvaluateHostPlacementAsync(
+                connection, transaction, capabilityRunner.HostId, request.RunnerId, request.InstanceId,
+                task.ProjectId, placementRequirements, task.CreatedAt,
+                adoption.ConfirmsDesired,
+                occupiedHostSlots < runtimeCapacity.MaxParallelism, ct);
+            if (string.Equals(_options.DynamicPlacementMode, "canary", StringComparison.Ordinal)
+                && _options.DynamicPlacementCanaryHostIds.Contains(
+                    capabilityRunner.HostId, StringComparer.Ordinal)
+                && (!shadowPlacement.Eligible || shadowPlacement.WarmPreferenceActive))
+            {
+                await RecordPlacementShadowAsync(connection, transaction, task.TaskId,
+                    request.RunnerId, capabilityRunner.HostId, "empty", shadowPlacement,
+                    runtimeCapacity.AllocationVersion, 0, null, null, UtcNow, ct);
+                response = new ClaimResponse("empty",
+                    Message: "Host placement is not admitted.",
+                    ReconciliationActions: reconciliationActions,
+                    RuntimeCapacity: runtimeCapacity,
+                    PlacementReason: shadowPlacement.WarmPreferenceActive
+                        ? "warm-repository-preference"
+                        : string.Join(",", shadowPlacement.Rejected));
+                return;
+            }
+
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
                 connection, transaction, task.TaskId, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
-            SessionContinuationLedgerEntry? previousSession = null;
-            var priorSessionJson = Convert.ToString(await ScalarAsync(connection, """
-                SELECT payload_json FROM events
-                 WHERE task_id = $task AND kind = 'session.continuation'
-                 ORDER BY rowid DESC LIMIT 1;
-                """, ct, transaction, ("$task", task.TaskId)), CultureInfo.InvariantCulture);
-            if (!string.IsNullOrWhiteSpace(priorSessionJson))
-            {
-                try { previousSession = JsonSerializer.Deserialize<SessionContinuationLedgerEntry>(priorSessionJson); }
-                catch (JsonException) { /* Corrupt evidence never authorizes a resume. */ }
-            }
+            var previousSession = await ReadPreviousSessionAsync(connection, transaction, task.TaskId, ct);
             var mechanicalFreshRoute = await ReadMechanicalFreshRouteAsync(
                 connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct);
             var mechanicalBase = MechanicalFallbackBase(previousSession);
@@ -1643,6 +1816,19 @@ public sealed partial class TaskServerStore
                     placementVersion = selectedPlacement?.Version,
                     placementReason,
                 }), ct);
+            await RecordPlacementShadowAsync(connection, transaction, task.TaskId,
+                request.RunnerId, capabilityRunner.HostId, "claimed", shadowPlacement,
+                runtimeCapacity.AllocationVersion, 2, leaseId, fence, now, ct);
+            string? quotaWarning = null;
+            if (quotaProjectNames.TryGetValue(task.ProjectId, out var claimedProjectName))
+            {
+                var claimedQuota = CachedWorkspaceQuota(claimedProjectName, "Project " + task.ProjectId);
+                quotaWarning = claimedQuota.MeterUnavailable ? claimedQuota.Message : null;
+                var cardNotice = ConsumeQuotaCardNotice(claimedProjectName);
+                if (cardNotice is not null)
+                    await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
+                        "quota.meter-unavailable", new { message = cardNotice }, ct);
+            }
 
             var run = new RunDto(runId, task.TaskId, "running", request.RunnerId, fence, now, now, null,
                 BriefVersion: briefVersion);
@@ -1652,6 +1838,7 @@ public sealed partial class TaskServerStore
                 run,
                 task with { State = "3-progress", Version = task.Version + 1, UpdatedAt = now },
                 lease,
+                Message: quotaWarning,
                 ReconciliationActions: reconciliationActions,
                 RequiredCapabilities: capabilityAdmission.Required,
                 CanaryCapabilities: capabilityAdmission.Canaries,
@@ -2540,14 +2727,18 @@ public sealed partial class TaskServerStore
                 "artifact",
                 ct);
             var now = UtcNow;
+            // Above the inline limit the bytes go to the content object store and the row keeps the hash.
+            var objectStored = ContentObjects.Spills(content.LongLength);
+            if (objectStored) ContentObjects.Put(actualSha, content);
             var inserted = await ExecuteAsync(connection, """
-                INSERT INTO artifacts(id, run_id, name, media_type, sha256, content, size_bytes, idempotency_key, fence, created_at, sequence)
-                VALUES ($id, $run, $name, $media, $sha, $content, $size, $key, $fence, $now, $sequence)
+                INSERT INTO artifacts(id, run_id, name, media_type, sha256, content, size_bytes, idempotency_key, fence, created_at, sequence, object_stored)
+                VALUES ($id, $run, $name, $media, $sha, $content, $size, $key, $fence, $now, $sequence, $object)
                 ON CONFLICT(idempotency_key) DO NOTHING;
                 """, ct, transaction,
                 ("$id", request.ArtifactId), ("$run", runId), ("$name", request.Name), ("$media", request.MediaType),
-                ("$sha", actualSha), ("$content", content), ("$size", content.LongLength), ("$key", request.IdempotencyKey),
-                ("$fence", request.Fence), ("$now", Iso(now)), ("$sequence", request.Sequence));
+                ("$sha", actualSha), ("$content", objectStored ? Array.Empty<byte>() : content), ("$size", content.LongLength),
+                ("$key", request.IdempotencyKey), ("$fence", request.Fence), ("$now", Iso(now)), ("$sequence", request.Sequence),
+                ("$object", objectStored ? 1 : 0));
             result = await ReadArtifactByIdempotencyKeyAsync(connection, transaction, request.IdempotencyKey, ct);
             ValidateArtifactReplay(result, runId, request, actualSha, content.LongLength);
             if (inserted > 0)
@@ -3684,8 +3875,35 @@ public sealed partial class TaskServerStore
                 target_load_percent INTEGER NOT NULL,
                 ramp_strategy TEXT NOT NULL,
                 version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                allocation_version INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS host_placement_advertisements(
+                host_id TEXT PRIMARY KEY,
+                runner_id TEXT NOT NULL,
+                instance_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                version INTEGER NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS placement_shadow_receipts(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                runner_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                actual_status TEXT NOT NULL,
+                shadow_status TEXT NOT NULL,
+                matched_json TEXT NOT NULL,
+                rejected_json TEXT NOT NULL,
+                allocation_version INTEGER NOT NULL,
+                grant_half_cores INTEGER NOT NULL,
+                lease_id TEXT,
+                fence INTEGER,
+                authority_epoch INTEGER NOT NULL,
+                observed_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_placement_shadow_receipts_task
+                ON placement_shadow_receipts(task_id, id DESC);
             CREATE TABLE IF NOT EXISTS host_project_policies(
                 host_id TEXT PRIMARY KEY,
                 allow_all_projects INTEGER NOT NULL,
@@ -4411,6 +4629,8 @@ public sealed partial class TaskServerStore
         await ApplyReviewMigrationAsync(connection, ct);
         await ApplyGateMigrationAsync(connection, ct);
         await ApplyFailureFingerprintMigrationAsync(connection, ct);
+        await ApplySourceFactsMigrationAsync(connection, ct);
+        await ApplyReleaseSuiteVerdictMigrationAsync(connection, ct);
         // Studio route-ownership P1 "task detail and hosts" bundle
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.
@@ -4420,8 +4640,10 @@ public sealed partial class TaskServerStore
         await ApplyStudioProjectMetaMigrationAsync(connection, ct);
         await ApplyStudioRunnerOrchestratorMigrationAsync(connection, ct);
         await ApplyStudioTaskMetadataMigrationAsync(connection, ct);
+        await EnsureAllocationVersionColumnAsync(connection, ct);
         await ApplyStudioTaskLifecycleExtrasMigrationAsync(connection, ct);
         await ApplyStudioTaskArtifactsMigrationAsync(connection, ct);
+        await ApplyTaskContentMigrationAsync(connection, ct);
         await ApplyStudioTaskHistoryMigrationAsync(connection, ct);
         await ApplyStudioTaskReviewMigrationAsync(connection, ct);
         await ApplyStudioWorkspaceMigrationAsync(connection, ct);
@@ -4437,6 +4659,8 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_studio_sessions_user ON studio_sessions(user_id, revoked_at);
             CREATE INDEX IF NOT EXISTS ix_studio_stream_events_project ON studio_stream_events(project_id, cursor);
             """, ct);
+        // Board change triggers name tasks.rank, so they follow its column.
+        await ApplyBoardReadModelMigrationAsync(connection, ct);
         await ApplyWorkbenchContextMigrationAsync(connection, ct);
         // Operator archive marker for orchestrator chat contexts. Added after
         // the workbench rebuild so a pre-workbench table is rebuilt first and
@@ -4574,6 +4798,28 @@ public sealed partial class TaskServerStore
             CultureInfo.InvariantCulture);
         if (foreignKeyErrors != 0)
             throw new InvalidOperationException($"Artifact retention migration left {foreignKeyErrors} foreign-key violation(s).");
+    }
+
+    private static async Task EnsureAllocationVersionColumnAsync(
+        SqliteConnection connection,
+        CancellationToken ct)
+    {
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct);
+        var exists = Convert.ToInt64(await ScalarAsync(connection, """
+            SELECT COUNT(*) FROM pragma_table_info('runtime_capacity_settings')
+             WHERE name = 'allocation_version';
+            """, ct, transaction) ?? 0L, CultureInfo.InvariantCulture) != 0;
+        if (!exists)
+        {
+            // Existing hosts acknowledged the policy version before this column existed.
+            await ExecuteAsync(connection, """
+                ALTER TABLE runtime_capacity_settings
+                    ADD COLUMN allocation_version INTEGER NOT NULL DEFAULT 1;
+                UPDATE runtime_capacity_settings
+                   SET allocation_version = version;
+                """, ct, transaction);
+        }
+        await transaction.CommitAsync(ct);
     }
 
     private static async Task EnsureColumnAsync(

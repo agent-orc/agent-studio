@@ -179,7 +179,8 @@ public sealed class GlobalSearchService(
     /// <paramref name="ct"/> stops scheduling further repositories.
     /// </summary>
     public async IAsyncEnumerable<GlobalSearchStreamEvent> StreamAsync(
-        string query, ISet<string> domains, int limit, [EnumeratorCancellation] CancellationToken ct)
+        string query, ISet<string> domains, int limit, [EnumeratorCancellation] CancellationToken ct,
+        Func<string, bool>? allowedProject = null)
     {
         var timer = Stopwatch.StartNew();
         limit = Math.Clamp(limit, 1, MaxPerDomain);
@@ -212,6 +213,8 @@ public sealed class GlobalSearchService(
         // A palette that already moved on must not pay for the repository scan.
         ct.ThrowIfCancellationRequested();
         var targets = domains.Overlaps(GitDomains) ? ResolveTargets(colors) : [];
+        if (allowedProject is not null)
+            targets = targets.Where(target => allowedProject(target.Name)).ToList();
         yield return new GlobalSearchStreamEvent("progress", new GlobalSearchProgressFrame(0, targets.Count));
 
         var repositoriesTimer = Stopwatch.StartNew();

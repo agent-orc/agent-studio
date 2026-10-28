@@ -41,16 +41,19 @@ public sealed partial class BatchGatePilotService
     private readonly IServiceProvider? _services;
     private readonly IConfiguration? _configuration;
     private readonly TimelineLog? _timeline;
+    private readonly PostMergeModeService? _postMergeMode;
     private readonly ConcurrentDictionary<string, byte> _pushAgeAlerts =
         new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _tick = new(1, 1);
     private readonly Dictionary<string, Task> _fallbackFlights = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _fallbackClearEjectOnFinish = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Task> _runningBatches = new(StringComparer.OrdinalIgnoreCase);
     private readonly GateQueueStallMonitor _queueStalls;
 
     /// <summary>Coordinator lease renewal cadence; well inside the two-minute grant.</summary>
     internal TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(30);
     internal bool WaitForFlightsInTick { get; set; }
+    internal Action? AfterAssemblyForTesting { get; set; }
 
     /// <summary>Per-task gate starts per review generation before GateInfra (D8).</summary>
     internal const int FallbackGateStartBudget = 2;
@@ -71,10 +74,11 @@ public sealed partial class BatchGatePilotService
         GateSlotUsageTracker? gateSlots = null,
         PipelineHealthDetector? pipelineHealth = null,
         IServiceProvider? services = null, IConfiguration? configuration = null,
-        TimelineLog? timeline = null)
+        TimelineLog? timeline = null, PostMergeModeService? postMergeMode = null)
     {
         _store = store;
         _timeline = timeline;
+        _postMergeMode = postMergeMode;
         _leases = leases;
         _refLeases = refLeases;
         _git = git;
@@ -278,6 +282,46 @@ public sealed partial class BatchGatePilotService
 
     public void RequestCloseNow(string project) => _store.RequestCloseNow(project);
 
+    /// <summary>
+    /// AGT-3207: drops a pending member whose card is already completed or
+    /// left Auto Review. It runs under the pass lock, so a forming batch never
+    /// takes the member while it is dropped; a member that a formed batch owns
+    /// stays with that batch. <paramref name="droppable"/> decides on the
+    /// card's lane read from disk under that lock (null when the folder is
+    /// gone). Returns false when nothing was dropped.
+    /// </summary>
+    public bool DropPendingMember(string reviewAttemptId, string reason, Func<string?, bool>? droppable = null)
+    {
+        if (!_tick.Wait(TimeSpan.FromSeconds(30)))
+        {
+            _logger.LogInformation("batch-gate-drop-deferred attempt={AttemptId} reason=pilot-pass-running", reviewAttemptId);
+            return false;
+        }
+        try
+        {
+            var pending = _store.ListPending().FirstOrDefault(item => item.ReviewAttemptId == reviewAttemptId);
+            if (pending is null) return false;
+            var folder = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath)?.FolderPath ?? pending.JobFolderPath;
+            if (BatchGateOwnershipStore.Read(folder)?.BatchId is not null) return false;
+            if (droppable is not null && !droppable(Directory.Exists(folder) ? LaneOf(folder) : null)) return false;
+            ResolveSuperseded(pending, reason);
+            return true;
+        }
+        finally
+        {
+            _tick.Release();
+        }
+    }
+
+    /// <summary>The lane folder a card folder sits in (archive cards may be nested), or null.</summary>
+    private static string? LaneOf(string folder)
+    {
+        for (var directory = Path.GetDirectoryName(folder); directory is not null; directory = Path.GetDirectoryName(directory))
+            if (TaskStates.All.FirstOrDefault(state => string.Equals(state, Path.GetFileName(directory),
+                    StringComparison.OrdinalIgnoreCase)) is { } lane) return lane;
+        return null;
+    }
+
     public object State(string project, int history = 10)
     {
         var options = _settings.Get(project).BatchGate;
@@ -298,7 +342,7 @@ public sealed partial class BatchGatePilotService
     private bool CodeBatchEnabled(string project)
     {
         var options = _settings.Get(project).BatchGate;
-        return options.Enabled && options.EffectiveScope == "code";
+        return BatchEnabled(project) && options.EffectiveScope == "code";
     }
 
     /// <summary>
@@ -407,7 +451,7 @@ public sealed partial class BatchGatePilotService
                 ct.ThrowIfCancellationRequested();
                 var first = group.First();
                 var options = _settings.Get(first.Subject.Project).BatchGate;
-                if (!options.Enabled)
+                if (!BatchEnabled(first.Subject.Project))
                 {
                     _store.ClearCloseNow(first.Subject.Project);
                     foreach (var item in group)
@@ -720,7 +764,7 @@ public sealed partial class BatchGatePilotService
             {
                 var paused = _store.LatestState(manifest.BatchId);
                 var options = _settings.Get(manifest.Scope.Project).BatchGate;
-                if (paused.Reason == "integration-branch-red" && options.Enabled
+                if (paused.Reason == "integration-branch-red" && BatchEnabled(manifest.Scope.Project)
                     && (options.EffectiveScope == "code"
                         || manifest.Members.All(member => member.DocumentationOnly)))
                 {
@@ -1129,6 +1173,7 @@ public sealed partial class BatchGatePilotService
             }
             var assembly = new BatchGateAssembler(_store, _git, repo, _time)
                 .Assemble(manifest.BatchId, lease.Fence);
+            AfterAssemblyForTesting?.Invoke();
             if (!RouteEnabled())
             {
                 AbandonRollback();
@@ -1918,12 +1963,8 @@ public sealed partial class BatchGatePilotService
     {
         var flight = RunPerTaskFallbackAsync(pending, ct, containedInSha: containedInSha,
             clearEject: clearEject);
-        // The continuation still clears the eject for a caller that joined a
-        // flight started without clearEject.
         return flight.ContinueWith(done =>
         {
-            if (done.IsCompletedSuccessfully && clearEject)
-                _store.ClearEject(pending.Subject.Project, pending.Subject.TaskKey);
             if (done.Exception is { } error)
                 _logger.LogError(error, "batch-fallback-flight-failed task={TaskKey}",
                     pending.Subject.TaskKey);
@@ -1938,10 +1979,11 @@ public sealed partial class BatchGatePilotService
         Task flight;
         lock (_fallbackFlights)
         {
+            if (clearEject) _fallbackClearEjectOnFinish.Add(pending.ReviewAttemptId);
             if (!_fallbackFlights.TryGetValue(pending.ReviewAttemptId, out flight!))
             {
                 flight = RunFallbackFlightAsync(pending, recordInStore, containedInSha,
-                    clearEject, ct);
+                    ct);
                 _fallbackFlights[pending.ReviewAttemptId] = flight;
             }
         }
@@ -1954,25 +1996,34 @@ public sealed partial class BatchGatePilotService
     }
 
     private async Task RunFallbackFlightAsync(BatchGatePendingRecord pending,
-        bool recordInStore, string? containedInSha, bool clearEject, CancellationToken ct)
+        bool recordInStore, string? containedInSha, CancellationToken ct)
     {
         // Yield first so the flight is registered before it can complete.
         await Task.Yield();
+        var settled = false;
         try
         {
-            await RunPerTaskFallbackCoreAsync(pending, ct, recordInStore, containedInSha).ConfigureAwait(false);
-            // AGT-3195: clear the eject before the flight leaves the registry.
-            // Cleared only by the continuation, a tick between both steps saw
-            // the eject without a flight and started a second per-task gate.
-            if (clearEject) _store.ClearEject(pending.Subject.Project, pending.Subject.TaskKey);
+            settled = await RunPerTaskFallbackCoreAsync(pending, ct, recordInStore, containedInSha).ConfigureAwait(false);
         }
         finally
         {
-            lock (_fallbackFlights) _fallbackFlights.Remove(pending.ReviewAttemptId);
+            lock (_fallbackFlights)
+            {
+                try
+                {
+                    if (settled && _fallbackClearEjectOnFinish.Contains(pending.ReviewAttemptId))
+                        _store.ClearEject(pending.Subject.Project, pending.Subject.TaskKey);
+                }
+                finally
+                {
+                    _fallbackFlights.Remove(pending.ReviewAttemptId);
+                    _fallbackClearEjectOnFinish.Remove(pending.ReviewAttemptId);
+                }
+            }
         }
     }
 
-    private async Task RunPerTaskFallbackCoreAsync(BatchGatePendingRecord pending,
+    private async Task<bool> RunPerTaskFallbackCoreAsync(BatchGatePendingRecord pending,
         CancellationToken ct, bool recordInStore, string? containedInSha = null)
     {
         var refreshed = Refresh(pending);
@@ -1981,10 +2032,10 @@ public sealed partial class BatchGatePilotService
             if (recordInStore) ResolveSuperseded(pending, "superseded");
             else BatchGateOwnershipStore.ClearIfReviewAttempt(pending.JobFolderPath,
                 pending.ReviewAttemptId);
-            return;
+            return true;
         }
         var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
-        if (task is null || task.State != TaskStates.AutoReview) return;
+        if (task is null || task.State != TaskStates.AutoReview) return task is not null;
         var evidence = Path.Combine(TaskPaths.LogsDir(task.FolderPath),
             $"batch-fallback-{pending.ReviewAttemptId}.json");
         var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
@@ -1999,7 +2050,7 @@ public sealed partial class BatchGatePilotService
         // release or a red gate, holds the card until the engine applies it.
         if (EngineDecisionPending(FallbackReleaseKey(pending, containedInSha))
             || EngineDecisionPending(FallbackRedKey(pending)))
-            return;
+            return false;
         var alreadyPassed = ownership?.ReviewAttemptId == pending.ReviewAttemptId
             && string.Equals(ownership.FallbackTestedSha, pending.Subject.ResultSha,
                 StringComparison.OrdinalIgnoreCase)
@@ -2028,7 +2079,7 @@ public sealed partial class BatchGatePilotService
                 await EscalateFallbackAsync(task, pending,
                     $"GateInfra: per-task gate interrupted {starts} times", infrastructure: true,
                     recordInStore, ct).ConfigureAwait(false);
-                return;
+                return FallbackSettled(pending);
             }
             BatchGateOwnershipStore.Write(task.FolderPath,
                 new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
@@ -2076,7 +2127,7 @@ public sealed partial class BatchGatePilotService
                 // The active marker stays; the next tick resumes this gate.
                 _logger.LogWarning(ex, "batch-fallback-gate-interrupted task={TaskKey} attempt={AttemptId} start={Start}",
                     pending.Subject.TaskKey, pending.ReviewAttemptId, starts + 1);
-                return;
+                return false;
             }
             finally
             {
@@ -2088,7 +2139,7 @@ public sealed partial class BatchGatePilotService
             // keeps its own classification below, which supersedes a stale one.
             if (await ResolveBeforeSettlementAsync(task, pending, gate, evidence, started, recordInStore, ct)
                     .ConfigureAwait(false))
-                return;
+                return FallbackSettled(pending);
             if (!recordInStore && !ct.IsCancellationRequested
                 && gate.FailureKind == BuildTestGateFailureKind.Cancellation)
             {
@@ -2106,7 +2157,7 @@ public sealed partial class BatchGatePilotService
                 _logger.LogWarning(
                     "batch-emergency-fallback-cancelled task={TaskKey} attempt={AttemptId} reason={Reason}",
                     pending.Subject.TaskKey, pending.ReviewAttemptId, "gate-interrupted");
-                return;
+                return false;
             }
             if (gate.FailureKind == BuildTestGateFailureKind.Cancellation)
             {
@@ -2130,12 +2181,12 @@ public sealed partial class BatchGatePilotService
             if (gate.CancellationReason == GateCancellationReasons.Superseded)
             {
                 SupersedeFallbackResult(task, pending, recordInStore);
-                return;
+                return true;
             }
             // Keep the durable active marker. The next host tick spends the
             // second and final start in the existing interrupted-gate budget.
             if (gate.CancellationReason == GateCancellationReasons.Shutdown && starts + 1 < FallbackGateStartBudget)
-                return;
+                return false;
             if (gate.Verdict != BuildTestGateVerdict.Ok
                 || !string.Equals(gate.TestedSha, pending.Subject.ResultSha,
                     StringComparison.OrdinalIgnoreCase))
@@ -2144,7 +2195,7 @@ public sealed partial class BatchGatePilotService
                     gate.Reason ?? (gate.IsInfrastructureFailure
                         ? "GateInfra" : "deterministic-suite-red"), gate.IsInfrastructureFailure,
                     recordInStore, ct).ConfigureAwait(false);
-                return;
+                return FallbackSettled(pending);
             }
             ownership = new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
                 FallbackTestedSha: gate.TestedSha,
@@ -2169,7 +2220,7 @@ public sealed partial class BatchGatePilotService
                     await EscalateFallbackAsync(task, pending,
                         result.Error ?? "integration-unverified", infrastructure: false,
                         recordInStore, ct).ConfigureAwait(false);
-                return;
+                return FallbackSettled(pending);
             }
             BatchGateOwnershipStore.Write(task.FolderPath,
                 ownership! with { FallbackIntegrated = true });
@@ -2178,7 +2229,7 @@ public sealed partial class BatchGatePilotService
             containedInSha is null
                 ? "Per-task fallback gate passed on the immutable result SHA."
                 : "The integration branch already contained the result SHA.");
-        if (HoldForEngineBatchDecision(task, pending.ReviewAttemptId, fallbackRelease)) return;
+        if (HoldForEngineBatchDecision(task, pending.ReviewAttemptId, fallbackRelease)) return false;
         RecordBatchShadowIntent(task, pending.ReviewAttemptId, fallbackRelease);
         var moved = await _transitions.MoveAsync(task.Id, TaskStates.HumanReview,
             task.WatchPath, ct, cause: $"batch-fallback:{pending.ReviewAttemptId}",
@@ -2201,7 +2252,11 @@ public sealed partial class BatchGatePilotService
                       + "no batch candidate and no gate ran.");
         }
         else WithdrawBatchShadowIntent(fallbackRelease);
+        return moved.Status == MoveJobStatus.Success;
     }
+
+    private bool FallbackSettled(BatchGatePendingRecord pending)
+        => _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath) is { State: not TaskStates.AutoReview };
 
     private void RecordFallbackExecution(BatchGatePendingRecord pending, BuildTestGateResult gate,
         string evidence, DateTimeOffset started)
@@ -2571,10 +2626,18 @@ public sealed partial class BatchGatePilotService
             new { fingerprint = BuildProfileValidationFingerprint.Create(profile), commands })));
     }
 
+    private bool BatchEnabled(string project)
+    {
+        var settings = _settings.Get(project);
+        return settings.BatchGate.Enabled
+            && (_postMergeMode?.Resolve(project, settings)
+                ?? IntegrationTestModes.Resolve(settings)) != IntegrationTestModes.PostMerge;
+    }
+
     private bool BatchRouteEnabled(BatchGateManifest manifest)
     {
         var options = _settings.Get(manifest.Scope.Project).BatchGate;
-        return options.Enabled && (options.EffectiveScope == "code"
+        return BatchEnabled(manifest.Scope.Project) && (options.EffectiveScope == "code"
             || manifest.Members.All(member => member.DocumentationOnly));
     }
 

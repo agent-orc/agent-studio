@@ -2,6 +2,9 @@ using AgentRunner;
 using AgentStudio.CliHosting;
 using System.Runtime.InteropServices;
 
+if (WindowsProviderBridge.IsBridgeProcess(Environment.ProcessPath, out var bridgeProvider))
+    return await WindowsProviderBridge.RunAsync(bridgeProvider, args);
+
 // Standalone agent host. With a task key it performs the RM-5 one-shot run;
 // without one (or with --poll) it continuously fills bounded host slots. See
 // docs/operations/setup/linux-runner-host.md.
@@ -10,6 +13,20 @@ if (args is ["--version"])
 {
     Console.WriteLine($"agent-host {RunnerReleaseIdentity.Current}");
     return 0;
+}
+
+if (args is ["host-agent", ..])
+{
+    using var hostStop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; hostStop.Cancel(); };
+    using var hostSigterm = OperatingSystem.IsWindows() ? null
+        : PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
+        {
+            context.Cancel = true;
+            hostStop.Cancel();
+        });
+    return await HostAgentSupervisor.ExecuteAsync(args[1..],
+        message => Console.Error.WriteLine($"[host-agent] {message}"), hostStop.Token);
 }
 
 if (args is ["--enroll", var installationUrl, var enrollmentCode])
@@ -76,6 +93,16 @@ if (args is ["coverage-run", ..])
         Console.Error.WriteLine("coverage-run cancelled");
         return 130;
     }
+}
+
+if (args is ["post-merge-run", ..])
+{
+    using var stop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
+    using var postMergeSigterm = OperatingSystem.IsWindows() ? null
+        : PosixSignalRegistration.Create(PosixSignal.SIGTERM, context => { context.Cancel = true; stop.Cancel(); });
+    try { return await PostMergeRunCommand.RunAsync(args[1..], Console.Out, Console.Error, stop.Token); }
+    catch (OperationCanceledException) when (stop.IsCancellationRequested) { return 130; }
 }
 
 if (args.Length == 3 && args[0] == "--rebind-provider-auth"
@@ -168,12 +195,18 @@ ProviderAuthProbe.Shared.UseLauncher(
     (fileName, arguments, ct) =>
     {
         var invocation = ProviderAuthProbe.LowPriorityInvocation(fileName, arguments);
-        var context = AuthProbeContext(RunnerCapabilityProbe.Provider(fileName));
+        var provider = RunnerCapabilityProbe.Provider(fileName);
+        var context = AuthProbeContext(provider);
+        var environment = context?.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value)
+            ?? new Dictionary<string, string?>();
+        // A device sign-in probes its unverified Claude token in this child only (AGT-3225).
+        if (ProviderAuthEnvironment.TryGetForCli(provider, out var authName, out var authValue))
+            environment[authName] = authValue;
         return ProcessRunner.RunAsync(
             invocation.FileName,
             invocation.Arguments,
             workingDirectory: context?.HomePath,
-            environment: context?.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value),
+            environment: environment,
             ct: ct);
     },
     Log);
@@ -234,15 +267,19 @@ ProviderAuthProbe.Shared.UseRealRequest(
     options.Hostname);
 ProviderAuthProbe.Shared.UseCanaryPermit(client.ReserveProviderCanaryAsync);
 
-// Environment credentials cannot change in this daemon process. When the
-// operator has not supplied a generation label, the process lifetime is the
-// safe cache boundary; a renewed environment login restarts the daemon.
+// An operator-supplied generation labels an environment login. Otherwise the
+// daemon session is the fallback identity; completed device logins invalidate
+// its cached model verdicts, and session-bound ready verdicts are rechecked.
 var environmentCredentialGeneration = $"daemon-session:{Guid.NewGuid():N}";
 string? ModelProbeCredentialGeneration(string provider)
 {
     var credential = ProviderCredentialMonitor.Inspect(provider);
     return credential.CredentialGeneration
-           ?? (credential.EffectiveSource == "environment-file" ? environmentCredentialGeneration : null);
+           // A CLI can authenticate through a store the metadata reader does
+           // not recognize. Keep probing that login instead of advertising
+           // every named model as unknown forever. Session evidence is
+           // periodically rechecked in RunnerModelAcceptanceProbe.
+           ?? environmentCredentialGeneration;
 }
 RunnerModelAcceptanceProbe.Shared.Configure(
     async (provider, model, ct) =>
@@ -350,11 +387,37 @@ if (options.HealthCheckOnly)
 
 try
 {
+    // A host supervisor can restart after a crash while its prior child is
+    // still alive. The role-local lock keeps the replacement from registering
+    // or reattaching until that exact executor process has exited.
+    using var hostAdapterLock = options.HostAdapter && daemonMode && options.Role is "coding" or "review"
+        ? AcquireHostAdapterLock(options)
+        : null;
+    // IP-1: a run target talks to Studio's deploy routes only, never to Task
+    // Server work queues, and opens no listener.
+    if (options.Role == "run-target")
+    {
+        if (!daemonMode)
+            throw new ArgumentException("Run target runs as a polling service and does not accept coding task keys.");
+        var runTarget = AgentRunner.RunTargets.RunTargetOptions.From(options, Environment.GetEnvironmentVariable);
+        using var studio = new HttpClient(TaskServerClient.CreateServiceHandler(options))
+        {
+            BaseAddress = new Uri(options.ServerUrl.TrimEnd('/') + "/"),
+            Timeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds),
+        };
+        studio.DefaultRequestHeaders.TryAddWithoutValidation("X-Principal-Consumer-Id", options.RunnerId);
+        if (!string.IsNullOrWhiteSpace(options.AuthToken) && string.IsNullOrWhiteSpace(options.AuthTokenFile))
+            studio.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.AuthToken);
+        await AgentRunner.RunTargets.RunTargetDaemon.Create(runTarget, studio, Log).RunAsync(shutdown.Token);
+        Log("run-target daemon stopped");
+        return 0;
+    }
     await client.EnsureCompatibleAsync(shutdown.Token);
     // The host polls for device-login commands independently of task slots.
     // Only coding and review service identities own provider CLI homes.
     var deviceLoginPoll = daemonMode && options.Role is ("coding" or "review")
-        ? new DeviceLoginPoller(client, Log, options.StateDir).RunAsync(shutdown.Token)
+        ? new DeviceLoginPoller(client, Log, options.StateDir, options.CodexCliBin, options.ClaudeCliBin)
+            .RunAsync(shutdown.Token)
         : Task.CompletedTask;
     _ = deviceLoginPoll.ContinueWith(task => Log($"device-login poll stopped: {task.Exception?.GetBaseException().GetType().Name}"),
         CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
@@ -393,6 +456,7 @@ try
     Log($"done, exit code {exitCode}");
     return exitCode;
 }
+
 catch (OperationCanceledException)
 {
     Log("cancelled");
@@ -412,6 +476,13 @@ catch (Exception ex)
 {
     Log($"unhandled error: {ex}");
     return 1;
+}
+
+static FileStream AcquireHostAdapterLock(RunnerOptions options)
+{
+    Directory.CreateDirectory(options.StateDir);
+    return new FileStream(Path.Combine(options.StateDir, $"host-{options.Role}-adapter.lock"),
+        FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 }
 
 static void PrintUsage()
@@ -453,7 +524,8 @@ static void PrintUsage()
           --server <url>          Task Server base URL       (RUNNER_SERVER_URL)
           --runner-id <id>        Stable runner identity     (RUNNER_ID)
           --runner-name <name>    Board-facing runner name   (RUNNER_NAME)
-          --role <coding|review|gate>  Separate service role (RUNNER_ROLE)
+          --role <coding|review|gate|integration|run-target>
+                                  Separate service role (RUNNER_ROLE)
           --client-id <id>        Attribution label only     (RUNNER_CLIENT_ID)
           --git-remote <url>      Startup probe/one-shot URL  (RUNNER_GIT_REMOTE)
           --git-push-remote <url> Probe/one-shot push URL     (RUNNER_GIT_PUSH_REMOTE)

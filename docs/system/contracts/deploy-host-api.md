@@ -26,33 +26,66 @@ responses. The public demo denies these execution routes.
 The claim response supplies `id`, `project`, `environmentId`, `hostId`,
 `artifact`, `template`, `destination`, `healthUrl`, `secretRefs`, `containerPort`,
 `previousArtifact`, `status`, `leaseToken`, timestamps, and claim metadata.
-Schema 2 jobs also carry `sshSteps`, `variables`, and `artifacts` from the
-release snapshot. Each `sshSteps` item contains its `step` (`static-site` or
+It also carries a nullable `tenant`. Released jobs carry selected plain values
+in `resolvedVariables` and a `secretVariableRefs` map from workload variable
+name to provider entry name; secret values do not appear in the claim. Schema 2
+jobs carry `sshSteps` and `artifacts` from the release snapshot. Each `sshSteps`
+item contains its `step` (`static-site` or
 `container`), `artifact`, `target`, destination (`directory` or `composeFile`
 and `service`), `healthUrl`, `healthTimeoutSeconds`, and environment scope.
-Each variable has a `name` and either a plain `value` or a secret *name* in
-`secret`; the claim never contains a resolved secret value. The deploy host
-uses the snapshot, not the repository's current working tree, to execute the
+Non-release jobs may still carry `variables`; each one has a `name` and either
+a plain `value` or a secret name in `secret`. The deploy host uses the snapshot,
+not the repository's current working tree, to execute the
 job. A claim for a release's environment goes to its currently registered host.
 The SSH executor requires each snapshotted step's `target` to equal that host.
 If host registration changes after the release, an old release's step fails
 this check; create a new release with the new target before deploying there.
+Schema 2 jobs use the `ssh-v2` template so an older deploy host refuses them
+instead of running its local Docker or static template. Deploy the backend
+before installing the new agent-host binary on deploy hosts. Then switch
+projects to schema 2. The backend supports the old host's `/renew` 404
+compatibility path during this rollout.
+Artifact provenance still names the underlying `container` or `static` kind.
+All SSH steps in one release must use the same artifact kind.
+
+A tenant deployment requires a `tenantTargets[tenant]` entry in the release's
+committed environment declaration. Its `destination` and `healthUrl` must be
+distinct from the project target and every other tenant target. A missing or
+colliding target is refused before queueing. The host uses a distinct container
+name for a tenant template job. For SSH steps, it uses a tenant directory under
+the declared static directory or compose file parent. A container SSH step
+also supplies a stable tenant-specific Docker Compose project name. The host
+checks that tenant's health URL and reports the result on that tenant's run.
+Before a host claims the job, release verification checks the routed target,
+SSH steps, plain variables and secret variable-name mappings against the
+release snapshot for that tenant.
+Tenant routing on an edge-hosted declaration is refused until the run target
+supports an isolated tenant target.
 
 One host receives one job at a time. A claim is live for five minutes; the host
-renews it every minute while executing. A renewal failure cancels execution
-and prevents a stale report. After expiry the same host can reclaim the job
-and receives a new lease token. A job
-without a report or reclaim for fifteen minutes fails as `host-lost`. A
-reclaimed, cancelled, or completed job rejects an old report. Reports, renewals,
-and step logs require a live, unexpired
-five-minute claim as well as its token. The host polls again
+renews it every minute while executing. A `409` renewal means the lease was
+lost and cancels execution. The host retries network errors and other HTTP
+failures for up to four minutes after its last successful renewal. A `404`
+from an older backend means renewal is unsupported and allows that job to
+finish. After expiry the same host can reclaim the job and receives a new
+lease token. A job fails as `host-lost` after three claims without a report,
+or after fifteen minutes without a report or reclaim. A
+reclaimed, cancelled, or completed job rejects an old report. Schema 2 reports,
+renewals, and step logs require a live, unexpired five-minute claim as well as
+its token. A schema 1 host can report after five minutes without renewal only
+while its original token has not been reclaimed and the job has not reached
+`host-lost`. The host polls again
 after `200 null`; it must not treat that response as a failure.
+Legacy template health polling ends after 60 seconds and reports a health
+failure if the URL has not recovered, even while the claim remains renewable.
 
 For each SSH step, the host logs against its exact ordered name
 `deploy[index]:kind`, where `index` is zero-based. A log message must be
 nonempty, at most 512 characters, and contain no control characters; the step
 name must be at most 80 characters and belong to the claimed job. The log
 endpoint writes each accepted message into the corresponding deployment run.
+It accepts at most thirty messages per job per minute. Failed SSH and SCP
+commands contribute a bounded stderr tail with resolved variable values masked.
 The report's `steps` is an ordered prefix of those same names. Only its last
 entry may fail. `healthy: true` requires every step to appear and succeed.
 The accepted evidence codes are `health-ok`, `health-http-failed`, and
@@ -61,14 +94,16 @@ failure code. The run shows each reported step result. A failed deploy can
 queue the previous healthy artifact for rollback when no newer job is waiting
 for that environment.
 
-To resolve a schema 2 secret variable, the deploy host calls
+To resolve a schema 2 secret variable or a `secretVariableRefs` mapping, the deploy host calls
 `POST /api/runner/secrets/resolve` with a Runner bearer, `purpose: "deploy"`,
 `reference: "secret://{project}/{environmentId}/{secretName}"`, and a
 `workload` of `{ "kind": "deploy-job", "project": "...", "jobId": "...",
 "leaseToken": "..." }`. The secret provider verifies the live job lease
 and scope before returning the value. The value must not be copied into a
 deploy log, report, or release snapshot. The old host-local `secretRefs` store
-remains for legacy template jobs; schema 2 variables use the secret provider.
+remains for legacy template jobs; schema 2 SSH steps use the secret provider.
+The workload receives the mapped variable name even when the provider entry
+has a different name.
 
 `agent-host deploy-poll <server-url> <host-id> <token-file> <artifact-store>
 [secret-store]` makes one claim; `deploy-loop` repeats it every five seconds.
@@ -77,6 +112,12 @@ the secret provider route. The SSH target needs Python 3; container targets
 also need Docker Compose. The host checks each step's health URL before starting
 the next step, using its `healthTimeoutSeconds`, and reports a failed step when
 health does not pass. Failed static copies remove remote staging before a retry.
+The local SSH step limit is five minutes, longer than both remote compose
+timeouts plus margin. A remote lock serializes each compose service or static
+site switch. The remote helper starts Docker with a minimal environment and
+refuses deploy variables that control Docker, Compose, dynamic loading, or
+the executable search path. Static switches retain the latest three releases
+and remove old temporary entries.
 Operators read run state and logs through
 `GET /api/projects/{project}/deploy/deployments/{deploymentId}` and
 `GET .../log[?step=]`, without exposing the claim token.

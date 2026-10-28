@@ -51,6 +51,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Topic | Start here |
 |---|---|
 | Product installer for Windows and Linux | [operations/setup/install.md](../operations/setup/install.md) |
+| Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
@@ -63,6 +64,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Quality Studio pipeline analysis policy | [pipeline domain](../system/domains/pipeline.md#quality-studio-analysis-steps) · [JSON schema](../app/schemas/quality-analysis-policy.schema.json) |
 | Runtime prompt registry, review companions, call telemetry, and costs | [contracts/runtime-prompts.md](../system/contracts/runtime-prompts.md) |
 | Workspace repository lifecycle and backlog recovery | [operations/workspace-repository-lifecycle.md](../operations/workspace-repository-lifecycle.md) |
+| Board read model on the Task Server: `Board:Source` shadow and cutover, change feed, differences card and 7-day gate (pipeline delivery target M1 and M2, AGT-3317) | [operations/board-source-cutover.md](../operations/board-source-cutover.md) |
 | Temp and cache hygiene on a runner host: the suite temp root, the review executor's per-command purge, the bounded product-owned preparation cache, and how to reset each (AGT-2858) | [operations/temp-and-cache-hygiene.md](../operations/temp-and-cache-hygiene.md) |
 | Torn NuGet preparation cache: recognition, automatic eviction, and integration replay (AGT-2901) | [operations/common-problems/torn-preparation-cache/](../operations/common-problems/torn-preparation-cache/README.md) |
 | `localhost` costs 0.2 to 2 s per new connection: Studio ports serve both loopbacks, backend 5030/5031 stays on `127.0.0.1`, API clients spell `127.0.0.1` (AGT-3092) | [operations/common-problems/localhost-ipv6-connect-delay/](../operations/common-problems/localhost-ipv6-connect-delay/README.md) |
@@ -112,6 +114,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Async validation and test staging lane proposal | [interactive Dossier](../operations/async-validation-staging-lane/index.html) · [brief](../operations/async-validation-staging-lane/brief.md) |
 | Gates theme Dossier: batch gate, remote gate ownership, and the validation-economy principles in one current record, with the 847-task time-economy baseline and the reissue-convergence negative result as an evidence appendix (AGT-2801, consolidates AGT-W36, AGT-W18, AGT-W2) | [decision dossier](../operations/gates/index.html) |
 | Merge gate economics and integration lane throughput measurement (AGT-3070) | [gate Dossier](../merge-gate-economics/index.html) · [lane Dossier](../integration-lane-throughput/index.html) · [measurement note](../integration-lane-throughput/measurement-agt-3070.md) |
+| Pipeline target picture: affected tests per card, full suite after merge, nightly and before delivery, red-develop repair, Delivery section per environment, and a central source API instead of request-time git; D1 to D10 decided on the recommended options (AGT-3276) | [decision dossier](../operations/pipeline-delivery-target/index.html) |
 | Gates D10 prerequisite estimate from historical pipeline data, including sample limits and the same-SHA counter | [measurement](../operations/gates/d10-measurement.md) |
 | Batch gate code-card delivery state, API, rollout, and remaining pilot evidence | [batch gate](../operations/gates/batch-gate.md) |
 | Batch Gate decision dossier: one single-flight full suite for a closed delivery wave, with exact-SHA publication, per-member evidence, bounded red isolation, and promotion-train authority (AGT-2648) | [decision dossier](../operations/batch-gate-concept/index.html) |
@@ -228,7 +231,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Single-host Task Server rehearsal handoff: daily health, backup verification, update, rollback, and maintenance-window checklist | [operations/setup/single-host-task-server.md](../operations/setup/single-host-task-server.md) |
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
 | Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
-| Secret provider: `secret://` references, scopes, versions, rotation, revocation, write without read, built-in envelope-encrypted store, key custody, audit and log scrubbing (IP-6) | [operations/security/secret-provider.md](../operations/security/secret-provider.md) |
+| Secret provider: `secret://` references, scopes, versions, rotation, revocation, write without read, built-in envelope-encrypted store, scoped Vault/OpenBao and 1Password Connect adapters, key custody, audit and log scrubbing (IP-6, IP-9) | [operations/security/secret-provider.md](../operations/security/secret-provider.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |
 | Background polling leaves an open HTTP request at `verify()` | [system/common-problems/open-http-request-at-verify-from-chat-polling/](../system/common-problems/open-http-request-at-verify-from-chat-polling/) |
 | Background chat polling test measure | [system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md](../system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md) |
@@ -257,6 +260,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | MVP presentation capture runbook | [operations/setup/presentation-capture.md](../operations/setup/presentation-capture.md) |
 | MVP presentation storyboard and shot list | [product/mvp-presentation-storyboard.md](../concepts/mvp-presentation-storyboard.md) |
 | Quota snapshot events at run start/end (cap-forecast data collection) | [concepts/quota-snapshot-run-events.md](../concepts/quota-snapshot-run-events.md) |
+| Workspace and project limits for tokens, compute, and hosting; metering, admission, and owner overrides (AGT-3177) | [concepts/workspace-quotas.md](../concepts/workspace-quotas.md) |
 | Quota fallback operator help (caps, preference, catalogue routes, evidence) | [app/help/quota-fallback.md](../app/help/quota-fallback.md) |
 | Quota forecast: weekly curve, 3-hour burn rate, time of 100 %, armed fallback, and the `/api/cli/quota/history` series (AGT-3001) | [app/help/quota-forecast.md](../app/help/quota-forecast.md) |
 | Runtime prompt usage audit | [concepts/runtime-prompt-usage-audit.html](../concepts/runtime-prompt-usage-audit.html) |

@@ -25,7 +25,7 @@ public sealed record HostHeartbeatFact(string Host, string Role, DateTime LastSe
 
 public sealed record HostStallFact(string Host, DateTime SinceUtc, double? LoadPerCore,
     double? CpuPercent, double? MemoryUsedPercent, double? SwapBytesPerSecond,
-    int BlockedCards = 0, string? Evidence = null, double? TargetPercent = null);
+    int BlockedCards = 0, string? Evidence = null, double? TargetPercent = null, string? ClientId = null);
 public sealed record CapacityStallFact(string Project, string Host, string Role, int FreeSlots,
     int WaitingCount, DateTime OldestWaitUtc, IReadOnlyList<string> Cards);
 public sealed record ClaimStallFact(string Project, string Reason, DateTime SinceUtc,
@@ -62,7 +62,8 @@ public static class OperationalStallDetector
                 heartbeat.LastSeenUtc, $"{heartbeat.Role} on {heartbeat.Host} "
                     + (heartbeat.Stopped ? "is stopped." : "stopped reporting."),
                 heartbeat.WaitingCards.Count, "Check the host or container and restore its heartbeat.",
-                $"lastSeenUtc={heartbeat.LastSeenUtc:O}", cards: heartbeat.WaitingCards);
+                $"lastSeenUtc={heartbeat.LastSeenUtc:O}", [("stopped", heartbeat.Stopped ? "true" : "false")],
+                cards: heartbeat.WaitingCards);
         }
         foreach (var legacy in facts.LegacyModelHosts ?? [])
             AddScoped("host-model-upgrade-required", $"host:{legacy.Host}:{legacy.Role}", "warning",
@@ -110,12 +111,14 @@ public static class OperationalStallDetector
                 Add("host-overload", $"host:{host.Host}", "critical", host.SinceUtc,
                     $"Host {host.Host} exceeds its {target:0}% CPU target.",
                     host.BlockedCards, "Reduce admission or move work to a host with headroom.", host.Evidence,
-                    ("loadPerCore", host.LoadPerCore), ("cpuPercent", host.CpuPercent), ("targetPercent", target));
+                    ("loadPerCore", host.LoadPerCore), ("cpuPercent", host.CpuPercent), ("targetPercent", target),
+                    ("clientId", host.ClientId));
             if (sustained && memory)
                 Add("memory-pressure", $"host:{host.Host}", "critical", host.SinceUtc,
                     $"Host {host.Host} is under memory pressure.", host.BlockedCards,
                     "Reduce admission and inspect memory or swap usage.", host.Evidence,
-                    ("memoryUsedPercent", host.MemoryUsedPercent), ("swapBytesPerSecond", host.SwapBytesPerSecond));
+                    ("memoryUsedPercent", host.MemoryUsedPercent), ("swapBytesPerSecond", host.SwapBytesPerSecond),
+                    ("clientId", host.ClientId));
         }
         foreach (var capacity in facts.Capacity.Where(x => x.FreeSlots > 0 && x.WaitingCount > 0
             && nowUtc - x.OldestWaitUtc >= TimeSpan.FromMinutes(thresholds.IdleWaitMinutes)))
@@ -174,6 +177,8 @@ public static class OperationalStallDetector
             var details = (numbers ?? []).Where(x => x.Value is not null)
                 .ToDictionary(x => x.Key, x => Convert.ToString(x.Value, System.Globalization.CultureInfo.InvariantCulture)!, StringComparer.Ordinal);
             if (excerpt is not null) details["logExcerpt"] = excerpt.Length <= 500 ? excerpt : excerpt[..500];
+            // AGT-3207: the AI Operator reads the stall kind from the case.
+            details["stallKind"] = kind;
             result.Add(new WatcherSignalObservation
             {
                 DetectorClass = kind is "host-offline" or "host-overload" or "memory-pressure"

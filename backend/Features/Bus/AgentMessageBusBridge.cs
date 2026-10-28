@@ -800,8 +800,12 @@ public sealed class AgentMessageBusBridge
     /// <c>true</c> once the row is in the ledger and <c>false</c> when it was
     /// not written (append failure or no workspace), so a caller whose only
     /// usage record is this row can observe the loss (AGT-2986).
+    /// <paramref name="attributedProject"/> names the project of a row that
+    /// stays in the workspace scope (ad-hoc calls): it rides as a
+    /// <see cref="TokenUsageAttribution.ProjectTagPrefix"/> tag so cost views
+    /// can attribute the row without moving it out of the workspace ledger.
     /// </summary>
-    public Task<bool> EmitTokenUsageAsync(string? project, string? jobId, string participantId, string? topic, OrchestratorTokenUsage usage, DateTime? createdAt = null, CancellationToken ct = default)
+    public Task<bool> EmitTokenUsageAsync(string? project, string? jobId, string participantId, string? topic, OrchestratorTokenUsage usage, DateTime? createdAt = null, CancellationToken ct = default, string? attributedProject = null)
     {
         if (usage == null) return Task.FromResult(false);
         var input  = (long)usage.InputTokens;
@@ -822,6 +826,7 @@ public sealed class AgentMessageBusBridge
             PinnedModel: usage.PinnedModel,
             ModelMismatch: usage.ModelMismatch,
             CliType: usage.CliType,
+            ReasoningOutput: usage.ReasoningTokens,
             // Producers on another host (remote chat turns) set Host; every
             // other caller runs in-process on the workstation (AGT-2986).
             Host: string.IsNullOrWhiteSpace(usage.Host) ? TokenUsageHost.Local : usage.Host);
@@ -837,7 +842,9 @@ public sealed class AgentMessageBusBridge
             summary: TruncateSummary($"tokens: in={input} out={output} model={usage.Model ?? "?"}"),
             createdAt: createdAt,
             tokens: tokens,
-            tags: new[] { "token-usage" });
+            tags: string.IsNullOrWhiteSpace(project) && !string.IsNullOrWhiteSpace(attributedProject)
+                ? new[] { "token-usage", TokenUsageAttribution.ProjectTagPrefix + attributedProject.Trim() }
+                : new[] { "token-usage" });
         return TryEmitAsync(msg, ct);
     }
 

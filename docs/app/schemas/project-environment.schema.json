@@ -4,15 +4,23 @@
   "title": "Project deployment environment",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "name", "kind", "targetHostId", "address", "template", "destination", "healthUrl"],
+  "allOf": [{ "if": { "properties": { "template": { "const": "static" } }, "required": ["template"] },
+              "then": { "not": { "required": ["data"] } } }],
+  "required": ["id"],
+  "if": { "required": ["removed"] },
+  "then": { "propertyNames": { "enum": ["id", "removed"] } },
+  "else": { "required": ["id", "name", "kind", "targetHostId", "address", "template", "destination", "healthUrl"] },
   "properties": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+    "removed": { "const": true,
+      "description": "Tombstone: { \"id\": ..., \"removed\": true } declares nothing and tells every run target to take that environment id down. It is the repository's removal decision for production and stage; without it, or an operator confirmation, they stay up." },
     "name": { "type": "string", "minLength": 1 },
-    "kind": { "enum": ["stage", "production", "other"] },
+    "kind": { "enum": ["stage", "production", "preview", "other"] },
     "targetHostId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
     "address": { "type": "string", "minLength": 1 },
     "template": { "enum": ["container", "static"] },
-    "destination": { "type": "string", "minLength": 1 },
+    "destination": { "type": "string", "minLength": 1,
+      "description": "Container: a local proxy port for agent-host deploy-loop, or \"edge\" for the run-target role. Static: the served release directory." },
     "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8080 },
     "healthUrl": { "type": "string", "format": "uri" },
     "approval": { "enum": ["person", "stage-healthy-10m"] },
@@ -20,6 +28,63 @@
     "interventionTimeoutMinutes": { "type": "integer", "minimum": 1, "maximum": 10080, "default": 60 },
     "secretRefs": { "type": "array", "uniqueItems": true,
       "items": { "type": "string", "pattern": "^[a-z0-9A-Z][a-z0-9A-Z._-]{0,63}$" } },
+    "tenantTargets": {
+      "description": "Physical target and health URL for each tenant that may deploy to this environment. Every tenant target must be isolated from the project target and other tenants.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["destination", "healthUrl"],
+        "properties": {
+          "destination": { "type": "string", "minLength": 1 },
+          "healthUrl": { "type": "string", "format": "uri" }
+        }
+      }
+    },
+    "data": {
+      "description": "Container data. The database is operator provided through an AGT-3222 secret reference. Named volumes retain identity across releases.",
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "database": {
+          "type": "object", "additionalProperties": false,
+          "required": ["secretRef", "environmentVariable"],
+          "properties": {
+            "secretRef": { "type": "string", "pattern": "^secret://[A-Za-z0-9._-]+/[a-z0-9][a-z0-9._-]{0,63}/[A-Za-z][A-Za-z0-9._-]{0,63}(?:@[1-9][0-9]*)?$" },
+            "environmentVariable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
+          }
+        },
+        "volumes": {
+          "type": "array", "uniqueItems": true,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["name", "mountPath"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$" },
+              "mountPath": { "type": "string", "pattern": "^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$",
+                "not": { "pattern": "(?:^|/)\\.{1,2}(?:/|$)" } }
+            }
+          }
+        }
+      }
+    },
+    "domains": { "type": "array", "uniqueItems": true,
+      "description": "Run-target hosting (destination \"edge\" only): public domains the edge Caddy routes to the app.",
+      "items": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$" } },
+    "edge": { "enum": ["acme", "cloudflare"], "default": "acme",
+      "description": "acme: automatic HTTPS. cloudflare: behind the Cloudflare proxy, origin certificate or Caddy internal CA." },
+    "healthPath": { "type": "string", "pattern": "^/[A-Za-z0-9._~/-]{0,255}$",
+      "description": "Health path checked through the edge before traffic switches. Defaults to the path of healthUrl." },
+    "variables": { "type": "object",
+      "description": "Plain, non-secret environment variables. Secrets stay in secretRefs; on an edge host each one is mounted at /run/secrets/<ref> and named by <NAME>_FILE, which a variable must not shadow.",
+      "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]{0,63}$" },
+      "additionalProperties": { "type": "string", "maxLength": 4096 } },
+    "resources": { "type": "object", "additionalProperties": false,
+      "properties": {
+        "cpus": { "type": "number", "minimum": 0.1, "maximum": 64, "default": 1 },
+        "memoryMb": { "type": "integer", "minimum": 32, "maximum": 262144, "default": 512 },
+        "pidsLimit": { "type": "integer", "minimum": 16, "maximum": 32768, "default": 256 }
+      } },
     "healthChecksAllowPrivateNetwork": {
       "description": "Lets this environment's health checks reach RFC 1918, shared (100.64.0.0/10) and IPv6 unique-local addresses. Loopback, link-local, metadata and unspecified addresses stay refused.",
       "type": "boolean",

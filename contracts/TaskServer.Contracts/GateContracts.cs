@@ -56,7 +56,10 @@ public sealed record GatePlan(
     string CleanupPolicy,
     [property: System.Text.Json.Serialization.JsonIgnore(
         Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    string? SubjectBindingDigest = null);
+    string? SubjectBindingDigest = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<string>? SourcePaths = null);
 
 public sealed record GateSubject(
     string SubjectId,

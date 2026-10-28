@@ -1,0 +1,16 @@
+.develop-state {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .2rem .55rem;
+  border-radius: 999px;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-muted);
+  font-size: .75rem;
+  white-space: nowrap;
+}
+
+i { width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; }
+[data-state="green"] { color: var(--studio-success); background: color-mix(in srgb, var(--studio-success) 12%, var(--studio-bg-elevated)); }
+[data-state="running"] { color: var(--studio-warning); background: color-mix(in srgb, var(--studio-warning) 12%, var(--studio-bg-elevated)); }
+[data-state="red"] { color: var(--studio-danger); background: color-mix(in srgb, var(--studio-danger) 12%, var(--studio-bg-elevated)); }

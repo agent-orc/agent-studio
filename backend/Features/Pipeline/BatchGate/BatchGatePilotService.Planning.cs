@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -24,11 +23,6 @@ public sealed partial class BatchGatePilotService
     private const string BatchPlanSourceState = "batch-plan";
     private static readonly TimeSpan EngineIntentLifetime = TimeSpan.FromMinutes(5);
     private static readonly JsonSerializerOptions PlanJson = new(JsonSerializerDefaults.Web);
-    private readonly ConcurrentDictionary<string, EngineBatchPlan> _engineBatchPlans =
-        new(StringComparer.Ordinal);
-
-    private sealed record EngineBatchPlan(string RunId, BatchPlanDecision Decision, DateTimeOffset AtUtc);
-
     private int _batchPlanRefusalLogged;
 
     /// <summary>
@@ -60,9 +54,12 @@ public sealed partial class BatchGatePilotService
     /// <summary>Occurrence task id of one project scope; it never names a card.</summary>
     public static string BatchPlanTaskId(string scopeKey) => "batch-plan:" + scopeKey;
 
-    /// <summary>Records an applied engine intent. The next tick validates it against current facts.</summary>
+    /// <summary>
+    /// Records an applied engine intent durably (AGT-3218), so a restart before
+    /// the next tick keeps it. The next tick validates it against current facts.
+    /// </summary>
     public void AcceptEngineBatchPlan(string runId, string taskId, BatchPlanDecision decision)
-        => _engineBatchPlans[taskId] = new EngineBatchPlan(runId, decision, _time.GetUtcNow());
+        => _store.WriteEngineIntent(new BatchGateEngineIntent(runId, taskId, decision, _time.GetUtcNow()));
 
     private async Task<BatchPlanDecision?> PlanLookAheadAsync(string project, string scopeKey,
         BatchPlanInput snapshot, CancellationToken ct)
@@ -100,17 +97,29 @@ public sealed partial class BatchGatePilotService
         ProjectSettings settings, BatchPlanFacts facts, CancellationToken ct)
     {
         var taskId = BatchPlanTaskId(facts.ScopeKey);
-        if (_engineBatchPlans.TryRemove(taskId, out var proposed))
+        if (_store.TakeEngineIntent(taskId) is { } proposed)
         {
-            if (_time.GetUtcNow() - proposed.AtUtc > EngineIntentLifetime)
+            var now = _time.GetUtcNow();
+            if (now - proposed.AtUtc > EngineIntentLifetime)
+            {
                 _logger.LogWarning("batch-plan-engine-intent-expired project={Project} run={RunId}",
                     facts.Project, proposed.RunId);
+                _store.RecordEngineIntentReceipt(new(proposed.RunId, taskId, "expired",
+                    $"The tick took the plan after {EngineIntentLifetime.TotalMinutes:0} minutes.", now));
+            }
             else if (MonolithTransitionAdapter.BatchPlanDecisionPolicyAdmissible(facts, proposed.Decision, out var error))
+            {
+                _store.RecordEngineIntentReceipt(new(proposed.RunId, taskId, "applied",
+                    proposed.Decision.Decision, now));
                 return proposed.Decision;
+            }
             else
+            {
                 _logger.LogWarning(
                     "batch-plan-engine-intent-rejected project={Project} run={RunId} reason={Reason}",
                     facts.Project, proposed.RunId, error);
+                _store.RecordEngineIntentReceipt(new(proposed.RunId, taskId, "rejected", error, now));
+            }
         }
         if (occurrences.List(facts.Project, null).Any(run => run.TaskId == taskId
                 && run.CurrentStage == OrchestrationStage.BatchPlan

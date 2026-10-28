@@ -20,6 +20,8 @@ public sealed record SecretRecord
     public DateTime? LastUsedAt { get; init; }
     public string? LastUsedBy { get; init; }
     public string? LastUsedPurpose { get; init; }
+    /// <summary>The current item revision in an external store; metadata updates may advance it without adding a value version.</summary>
+    public int? StoreRevision { get; init; }
     public List<SecretVersionRecord> Versions { get; init; } = [];
 
     [JsonIgnore]
@@ -62,13 +64,20 @@ public sealed record SecretVersionRecord
 public sealed record SecretActor(SecretActorKind Kind, string Id)
 {
     public static SecretActor Human(string id) => new(SecretActorKind.Human, id);
+    public static SecretActor ServiceAccount(string id) => new(SecretActorKind.ServiceAccount, id);
     public static SecretActor Workload(string id) => new(SecretActorKind.Workload, id);
-    public override string ToString() => (Kind == SecretActorKind.Human ? "human:" : "workload:") + Id;
+    public override string ToString() => Kind switch
+    {
+        SecretActorKind.Human => "human:" + Id,
+        SecretActorKind.ServiceAccount => "service-account:" + Id,
+        _ => "workload:" + Id,
+    };
 }
 
 public enum SecretActorKind
 {
     Human,
+    ServiceAccount,
     Workload
 }
 
@@ -83,7 +92,8 @@ public sealed record SecretWorkload(
     string Identity,
     string Project,
     string? Environment,
-    IReadOnlyCollection<string>? DeclaredNames = null)
+    IReadOnlyCollection<string>? DeclaredNames = null,
+    IReadOnlyDictionary<string, string>? DeclaredReferences = null)
 {
     public const string DeployJob = "deploy-job";
     public const string TaskRun = "task-run";

@@ -107,6 +107,12 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
             Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Secret);
+        using (var tokenRefused = await client.PostAsJsonAsync(path, summary))
+            Assert.Equal(HttpStatusCode.Forbidden, tokenRefused.StatusCode);
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={owner.SessionToken}");
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", owner.CsrfToken);
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
         using var first = await client.PostAsJsonAsync(path, summary);
         first.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
@@ -139,13 +145,9 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         var mappedCard = scanner.FindJob("AGT-3166", watchPath)!;
         var status = factory.Services.GetRequiredService<TaskIntegrationStatusService>()
             .BuildLookup([mappedCard])[mappedCard.TaskKey];
-        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
-        Assert.Equal(IntegrationVerificationStates.Verified, status.Verification?.State);
-        Assert.True(new IntegrationGenerationReconcileSweep(factory.Services.GetRequiredService<TaskMutationService>())
-            .Reconcile(mappedCard, status));
-        using (var reconciled = JsonDocument.Parse(File.ReadAllText(Path.Combine(mappedCard.FolderPath, "task.json"))))
-            Assert.Equal(CommitIntegrationRules.IntegratedByContent, reconciled.RootElement.GetProperty("commits")[0]
-                .GetProperty("integrationRule").GetString());
+        // The new attribution was not in the immutable candidate receipt.
+        // Status projection does not launch git to infer patch equivalence.
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
 
         TaskJsonFile.UpdateFieldOrThrow(cardFolder, "commits", new[]
         {

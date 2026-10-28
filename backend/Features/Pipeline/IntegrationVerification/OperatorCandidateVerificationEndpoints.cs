@@ -64,13 +64,13 @@ public static class OperatorCandidateVerificationEndpoints
                 $"{suite.Command}: {suite.Passed} passed, {suite.Failed} failed, {suite.Skipped} skipped"));
             var now = clock.GetUtcNow().UtcDateTime;
             var results = new List<OperatorCandidateCardResult>();
+            using var lane = lanes.Acquire(registered.StorageLocation, Timeout.InfiniteTimeSpan);
+            var cards = scanner.ScanAllJobsRaw();
             foreach (var address in request.Cards.Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 // Legacy lane folders move under this project mutex. Keep the
                 // record and its audit event in the same folder across a move.
-                using var lane = lanes.Acquire(registered.StorageLocation, Timeout.InfiniteTimeSpan);
-                scanner.InvalidateCache();
-                var resolution = TaskIntegrationRecordAddressResolver.Resolve(scanner, address, registered.StorageLocation);
+                var resolution = TaskIntegrationRecordAddressResolver.Resolve(cards, address, registered.StorageLocation);
                 if (resolution.Ambiguous)
                 {
                     results.Add(new(address, false, "Card address is ambiguous."));
@@ -105,7 +105,7 @@ public static class OperatorCandidateVerificationEndpoints
                     SourceSha = delivery,
                     DeliveryEpoch = subject!.RunAttemptId,
                     CommitShas = card.Commits.Where(commit => ReviewSubjectStore.IsValidResultSha(commit.Sha)
-                            && git.IsAncestor(root, commit.Sha, delivery!))
+                            && git.IsDeliveryInPublished(root, commit.Sha, sha))
                         .Select(commit => commit.Sha).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                     Actor = TimelineActors.Human(principal.User.Id),
                     VerificationHost = request.VerificationHost.Trim(),
@@ -142,6 +142,7 @@ public static class OperatorCandidateVerificationEndpoints
                 }
                 results.Add(new(address, true, write.Appended ? "Recorded." : "Already recorded."));
             }
+            scanner.InvalidateCache();
             return Results.Ok(new { candidateSha = sha, integrationBranch = branch, results });
         }).RequireStudioRole(StudioRoles.Operator)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
@@ -176,11 +177,14 @@ public static class OperatorCandidateVerificationPolicy
     }
 
     public static bool HasOperatorAuthority(HttpContext context)
-        => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal principal
-           && principal.User.Role is StudioRoles.Owner or StudioRoles.Operator
+        => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal
+           && context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is null
+           && context.Items[AccessSecurityMiddleware.RequestAccessItem] is not RequestAccess
+               { Subject.Kind: IamPrincipalKind.ServiceAccount }
+           && ProjectAccessAuthorization.HasOperatorAuthority(context)
            && context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is null;
 
     public static bool HasWorkspaceScope(HttpContext context)
-        => context.Items[AccessSecurityMiddleware.ApiTokenPrincipalItem] is not ApiTokenPrincipal token
-           || token.Token.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal);
+        => context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
+           && access.Allows(IamPermissions.WorkspaceOperate, PermissionTarget.WorkspaceWide);
 }

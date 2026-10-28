@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Net;
 
 namespace AgentStudio.Security;
 
@@ -7,12 +8,14 @@ namespace AgentStudio.Security;
 /// Small-organization security store. The state file contains password, session,
 /// enrollment, API token, and Runner credential hashes only. Plaintext credentials are
 /// returned once by the operation that creates them and are never persisted.
+/// Role bindings, groups, and service accounts live in the same state file;
+/// see <c>Iam/AccessSecurityStore.Iam.cs</c>.
 /// </summary>
 public sealed partial class AccessSecurityStore
 {
     public const string SessionCookieName = "__Host-agentstudio-session";
-    // __Host- verlangt Secure+HTTPS; im lokalen HTTP-Dev-Betrieb verwirft der
-    // Browser solche Cookies stumm. HTTP-Requests bekommen daher diese Namen.
+    // Browsers reject __Host- cookies over local HTTP. Only the local profile
+    // uses this fallback name; the networked profile accepts __Host- only.
     public const string InsecureSessionCookieName = "agentstudio-session";
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -26,6 +29,8 @@ public sealed partial class AccessSecurityStore
     private readonly TimeProvider _clock;
     private readonly object _gate = new();
     private readonly Dictionary<string, LoginAttempt> _clientLoginAttempts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, LoginAttempt> _networkLoginAttempts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, LoginAttempt> _passwordChangeAttempts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LoginAttempt> _usernameLoginAttempts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _recentSuccessfulLogins = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _usernameClientDelays = new(StringComparer.Ordinal);
@@ -35,6 +40,7 @@ public sealed partial class AccessSecurityStore
     private readonly HashSet<string> _clientsHashing = new(StringComparer.Ordinal);
     private DateTime _nextLoginPruneAt = DateTime.MinValue;
     private readonly SemaphoreSlim _passwordHashSlots;
+    private readonly SemaphoreSlim _returningClientHashSlot = new(1, 1);
     private readonly Func<string, string, bool> _verifyPassword;
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
@@ -99,8 +105,13 @@ public sealed partial class AccessSecurityStore
                 PasswordChangedAt = now
             };
             state.Users.Add(user);
+            var binding = NewBinding(IamPrincipalKind.User, user.Id,
+                new IamGrantRequest(IamRoles.Owner, IamScope.Workspace), IamBindingSources.Bootstrap, user.Id);
+            state.RoleBindings.Add(binding);
+            state.IamVersion = CurrentIamVersion;
             var created = CreateSessionLocked(state, user);
             SaveLocked(state);
+            AuditBindings(user.Id, "binding.add", [binding]);
             return (user, created.Token, created.Csrf);
         }
     }
@@ -113,12 +124,20 @@ public sealed partial class AccessSecurityStore
         if (clientKey.Length > 64)
             throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
         var loginKey = normalized is null ? null : normalized + "|" + clientKey;
+        var networkKey = SecurityProfiles.IsNetworked(_configuration) ? NetworkThrottleKey(clientKey) : null;
         var overflowDelay = TimeSpan.FromSeconds(_configuration.GetValue("Security:LoginThrottle:UsernameDelaySeconds", 2));
+        bool recentSuccess;
         StudioUser? candidate;
         lock (_gate)
         {
             var now = Now;
             PruneLoginStateLocked(now);
+            recentSuccess = loginKey is not null && _recentSuccessfulLogins.TryGetValue(loginKey, out var lastSuccess)
+                && now - lastSuccess <= RecentSuccessWindow;
+            if (networkKey is not null && !recentSuccess
+                && _networkLoginAttempts.TryGetValue(networkKey, out var networkAttempt)
+                && networkAttempt.LockedUntil > now)
+                throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
             if (_clientLoginAttempts.TryGetValue(clientKey, out var attempt) && attempt.LockedUntil > now)
                 throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
             if (normalized is null || !IsValidUsername(normalized))
@@ -126,6 +145,7 @@ public sealed partial class AccessSecurityStore
                 var recorded = RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
                     _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10),
                     TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)), MaxTrackedClients);
+                RecordNetworkFailureLocked(networkKey, now);
                 throw recorded
                     ? new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.")
                     : new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
@@ -179,8 +199,15 @@ public sealed partial class AccessSecurityStore
 
         try
         {
+            // Returning clients have one independent slot even when unknown clients
+            // saturate the general pool. Neither wait holds the state lock.
+            var reserved = false;
             if (!_passwordHashSlots.Wait(0))
-                throw new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
+            {
+                if (!recentSuccess || !_returningClientHashSlot.Wait(TimeSpan.FromSeconds(2)))
+                    throw new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
+                reserved = true;
+            }
             bool passwordMatches;
             try
             {
@@ -188,7 +215,7 @@ public sealed partial class AccessSecurityStore
                 passwordMatches = passwordCandidate.Length <= 128 && _verifyPassword(
                     passwordCandidate, candidate?.PasswordHash ?? DummyPasswordHash);
             }
-            finally { _passwordHashSlots.Release(); }
+            finally { if (reserved) _returningClientHashSlot.Release(); else _passwordHashSlots.Release(); }
 
             lock (_gate)
             {
@@ -209,6 +236,7 @@ public sealed partial class AccessSecurityStore
                     if (!clientRecorded)
                         _overflowClientAttempts.RecordFailure(clientKey, clientKey, now, LoginWindow,
                             _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10), overflowDelay, ClientLockout);
+                    RecordNetworkFailureLocked(networkKey, now);
                     if (!usernameRecorded)
                         _overflowUsernameAttempts.RecordFailure(normalized, loginKey!, now, LoginWindow,
                             _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), overflowDelay);
@@ -275,23 +303,50 @@ public sealed partial class AccessSecurityStore
     public StudioUser ChangePassword(HumanPrincipal principal, ChangePasswordRequest request)
     {
         ValidatePassword(request.NewPassword, principal.User.Username);
+        StudioUser user;
+        var userId = principal.User.Id;
         lock (_gate)
         {
             var state = StateLocked();
-            var user = state.Users.First(x => x.Id == principal.User.Id);
-            if (!PasswordSecretHasher.VerifyPassword(request.CurrentPassword ?? string.Empty, user.PasswordHash))
-                throw new SecurityOperationException(400, "current-password-invalid", "Current password is incorrect.");
-            var updated = user with
-            {
-                PasswordHash = PasswordSecretHasher.HashPassword(request.NewPassword ?? string.Empty),
-                PasswordChangedAt = Now,
-                MustChangePassword = false
-            };
-            state.Users[state.Users.IndexOf(user)] = updated;
-            state.Sessions.RemoveAll(x => x.UserId == user.Id && x.Id != principal.Session.Id);
-            SaveLocked(state);
-            return updated;
+            user = state.Users.FirstOrDefault(x => x.Id == userId && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            if (_passwordChangeAttempts.TryGetValue(userId, out var attempt) && attempt.LockedUntil > Now)
+                throw new SecurityOperationException(429, "password-change-throttled", "Too many failed attempts. Try again later.");
+            if (!_clientsHashing.Add("password-change:" + userId))
+                throw new SecurityOperationException(429, "password-change-throttled", "Password change is busy.");
         }
+        try
+        {
+            var matches = (request.CurrentPassword?.Length ?? 0) <= 128
+                && _verifyPassword(request.CurrentPassword ?? string.Empty, user.PasswordHash);
+            var newHash = matches ? PasswordSecretHasher.HashPassword(request.NewPassword ?? string.Empty) : null;
+            lock (_gate)
+            {
+                var state = StateLocked();
+                var current = state.Users.FirstOrDefault(x => x.Id == userId && !x.Disabled);
+                if (!ReferenceEquals(current, user))
+                    throw new SecurityOperationException(409, "password-changed", "Password changed. Sign in again.");
+                if (!matches)
+                {
+                    RegisterLoginFailureLocked(_passwordChangeAttempts, userId, Now,
+                        _configuration.GetValue("Security:PasswordChange:MaxFailures", 5),
+                        TimeSpan.FromMinutes(_configuration.GetValue("Security:PasswordChange:LockoutMinutes", 15)), MaxTrackedUsernames);
+                    throw new SecurityOperationException(400, "current-password-invalid", "Current password is incorrect.");
+                }
+                _passwordChangeAttempts.Remove(userId);
+                var updated = user with
+                {
+                    PasswordHash = newHash!,
+                    PasswordChangedAt = Now,
+                    MustChangePassword = false
+                };
+                state.Users[state.Users.IndexOf(user)] = updated;
+                state.Sessions.RemoveAll(x => x.UserId == user.Id && x.Id != principal.Session.Id);
+                SaveLocked(state);
+                return updated;
+            }
+        }
+        finally { lock (_gate) _clientsHashing.Remove("password-change:" + userId); }
     }
 
     public IReadOnlyList<StudioUser> ListUsers()
@@ -299,94 +354,10 @@ public sealed partial class AccessSecurityStore
         lock (_gate) return StateLocked().Users.OrderBy(x => x.Username).ToList();
     }
 
-    public (StudioApiToken Token, string Secret) CreateApiToken(CreateApiTokenRequest request, string creatorId)
-    {
-        if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 100)
-            throw new SecurityOperationException(400, "invalid-name", "Token name must be 1 to 100 characters.");
-        if (request.Role is not StudioRoles.Operator and not StudioRoles.Viewer)
-            throw new SecurityOperationException(400, "invalid-role", "API tokens must use the operator or viewer role.");
-        var now = Now;
-        if (request.ExpiresAt <= now || request.ExpiresAt > now.AddDays(365))
-            throw new SecurityOperationException(400, "invalid-expiry", "Token expiry must be within the next 365 days.");
-        var projects = NormalizeProjects(request.Projects);
-        if (projects.Count == 0)
-            throw new SecurityOperationException(400, "project-required", "Choose at least one project or the all-projects grant.");
-        var id = Guid.NewGuid().ToString("N");
-        var secret = $"api.{id}.{PasswordSecretHasher.RandomToken()}";
-        var token = new StudioApiToken
-        {
-            Id = id, Name = request.Name.Trim(), Role = request.Role, Projects = projects,
-            SecretHash = PasswordSecretHasher.HashSecret(secret), CreatedBy = creatorId,
-            CreatedAt = now, ExpiresAt = request.ExpiresAt
-        };
-        lock (_gate) { var state = StateLocked(); state.ApiTokens.Add(token); SaveLocked(state); }
-        return (token, secret);
-    }
-
-    public IReadOnlyList<StudioApiToken> ListApiTokens()
-    {
-        lock (_gate) return StateLocked().ApiTokens.OrderBy(x => x.Name).ToList();
-    }
-
-    public void RevokeApiToken(string id)
-    {
-        lock (_gate)
-        {
-            var state = StateLocked();
-            var token = state.ApiTokens.FirstOrDefault(x => x.Id == id)
-                ?? throw new SecurityOperationException(404, "token-not-found", "API token not found.");
-            state.ApiTokens[state.ApiTokens.IndexOf(token)] = token with { RevokedAt = token.RevokedAt ?? Now };
-            SaveLocked(state);
-        }
-    }
-
-    public ApiTokenPrincipal? AuthenticateApiToken(string? bearer)
-    {
-        if (!TryTokenParts(bearer, "api", out var id)) return null;
-        lock (_gate)
-        {
-            var state = StateLocked();
-            var token = state.ApiTokens.FirstOrDefault(x => x.Id == id);
-            if (token is null || token.RevokedAt is not null || token.ExpiresAt <= Now
-                || !PasswordSecretHasher.VerifySecret(bearer!, token.SecretHash)) return null;
-            var creator = state.Users.FirstOrDefault(x => x.Id == token.CreatedBy && !x.Disabled);
-            if (creator is null) return null;
-            var now = Now;
-            // A token is a service identity: its own role and grants never inherit
-            // a later expansion of the creator's human account.
-            var user = creator with
-            {
-                Id = $"api:{token.Id}", Role = token.Role, Projects = token.Projects,
-                ProductionApprovalProjects = [], PasswordHash = string.Empty
-            };
-            state.ApiTokens[state.ApiTokens.IndexOf(token)] = token with { LastUsedAt = now };
-            SaveLocked(state);
-            return new ApiTokenPrincipal(token with { LastUsedAt = now }, user);
-        }
-    }
-
-    public void AppendApiTokenAudit(StudioApiToken token, string method, string path, int status)
-    {
-        lock (_gate)
-        {
-            Directory.CreateDirectory(SecurityFolder);
-            var file = Path.Combine(SecurityFolder, "api-token-audit.jsonl");
-            File.AppendAllText(file, JsonSerializer.Serialize(new
-            {
-                timestamp = Now, tokenId = token.Id, tokenName = token.Name, actor = $"api:{token.Id}",
-                token.CreatedBy, method, path, status
-            }) + Environment.NewLine);
-            RestrictPermissions(file);
-        }
-    }
-
-    public (StudioUser User, string TemporaryPassword) CreateUser(CreateUserRequest request)
+    public (StudioUser User, string TemporaryPassword) CreateUser(CreateUserRequest request, string? actingUserId = null)
     {
         ValidateUsername(request.Username);
-        if (!StudioRoles.IsValid(request.Role)) throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, contributor, or viewer.");
-        if (request.Role == StudioRoles.Contributor && (request.Projects is null || request.Projects.Count == 0
-            || request.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal)))
-            throw new SecurityOperationException(400, "invalid-projects", "Product users need explicit assigned projects.");
+        var grants = InitialGrants(request.Role, request.Projects, request.Bindings);
         var temporary = string.IsNullOrWhiteSpace(request.TemporaryPassword) ? GenerateTemporaryPassword() : request.TemporaryPassword;
         ValidatePassword(temporary, request.Username);
         lock (_gate)
@@ -403,19 +374,17 @@ public sealed partial class AccessSecurityStore
                 MustChangePassword = true, CreatedAt = now, PasswordChangedAt = now
             };
             state.Users.Add(user);
+            (user, var bindings) = AddUserGrantsLocked(state, user, grants, actingUserId);
             SaveLocked(state);
+            AuditBindings(actingUserId, "binding.add", bindings);
             return (user, temporary);
         }
     }
 
-    public (StudioUser User, string Token, DateTime ExpiresAt) InviteUser(InviteUserRequest request)
+    public (StudioUser User, string Token, DateTime ExpiresAt) InviteUser(InviteUserRequest request, string? actingUserId = null)
     {
         ValidateUsername(request.Username);
-        if (!StudioRoles.IsValid(request.Role))
-            throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, contributor, or viewer.");
-        if (request.Role == StudioRoles.Contributor && (request.Projects is null || request.Projects.Count == 0
-            || request.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal)))
-            throw new SecurityOperationException(400, "invalid-projects", "Product users need explicit assigned projects.");
+        var grants = InitialGrants(request.Role, request.Projects, request.Bindings);
         lock (_gate)
         {
             var state = StateLocked();
@@ -435,11 +404,13 @@ public sealed partial class AccessSecurityStore
             var token = $"inv.{id}.{PasswordSecretHasher.RandomToken()}";
             var expiresAt = now.AddHours(24);
             state.Users.Add(user);
+            (user, var bindings) = AddUserGrantsLocked(state, user, grants, actingUserId);
             state.Invitations.Add(new StudioInvitation
             {
                 Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), ExpiresAt = expiresAt
             });
             SaveLocked(state);
+            AuditBindings(actingUserId, "binding.add", bindings);
             return (user, token, expiresAt);
         }
     }
@@ -471,41 +442,49 @@ public sealed partial class AccessSecurityStore
         }
     }
 
+    /// <summary>
+    /// Renames, disables, or assigns a legacy role. Validation runs on a copy
+    /// and the change commits once: any refusal, last-owner protection
+    /// included, leaves the state untouched. Bindings change only when the
+    /// legacy role, projects, or approvals differ from the current summary.
+    /// </summary>
     public StudioUser UpdateUser(string id, UpdateUserRequest request, string actingUserId)
     {
         lock (_gate)
         {
-            var state = StateLocked();
-            var user = state.Users.FirstOrDefault(x => x.Id == id)
+            var next = Copy(StateLocked());
+            var user = next.Users.FirstOrDefault(x => x.Id == id)
                 ?? throw new SecurityOperationException(404, "user-not-found", "User not found.");
-            var role = request.Role ?? user.Role;
-            if (!StudioRoles.IsValid(role)) throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, contributor, or viewer.");
             var disabled = request.Disabled ?? user.Disabled;
-            if (id == actingUserId && (disabled || role != StudioRoles.Owner))
+            if (id == actingUserId && disabled)
                 throw new SecurityOperationException(409, "last-owner-protection", "An owner cannot disable or demote their current account.");
-            if (user.Role == StudioRoles.Owner && (disabled || role != StudioRoles.Owner)
-                && state.Users.Count(x => x.Role == StudioRoles.Owner && !x.Disabled && x.Id != id) == 0)
-                throw new SecurityOperationException(409, "last-owner-protection", "At least one active owner is required.");
-            var memberships = request.Projects is null ? user.Projects : NormalizeProjects(request.Projects);
-            if (role == StudioRoles.Contributor && (memberships.Count == 0
-                || memberships.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal)))
-                throw new SecurityOperationException(400, "invalid-projects", "Product users need explicit assigned projects.");
-            var approvalProjects = role == StudioRoles.Contributor
-                ? (request.ProductionApprovalProjects is null ? user.ProductionApprovalProjects : NormalizeProjects(request.ProductionApprovalProjects))
-                : [];
-            if (approvalProjects.Any(project => project == ProjectAccessAuthorization.AllProjectsGrant
-                || !memberships.Contains(project, StringComparer.OrdinalIgnoreCase)))
-                throw new SecurityOperationException(400, "invalid-production-approval", "Production approval must name an assigned project.");
-            var updated = user with
+            var renamed = user with
             {
                 DisplayName = request.DisplayName is null ? user.DisplayName : request.DisplayName.Trim(),
-                Role = role, Projects = memberships, Disabled = disabled,
-                ProductionApprovalProjects = approvalProjects
+                Disabled = disabled,
             };
-            state.Users[state.Users.IndexOf(user)] = updated;
-            if (disabled) state.Sessions.RemoveAll(x => x.UserId == id);
-            SaveLocked(state);
-            return updated;
+            var bindings = LegacyRoleBindings(next, user, request,
+                grant => NewBinding(IamPrincipalKind.User, id, grant, IamBindingSources.RoleAssignment, actingUserId));
+            var users = next.Users.Select(candidate => candidate.Id == id ? renamed : candidate).ToList();
+            var previous = next.RoleBindings.Where(binding => binding.PrincipalKind == IamPrincipalKind.User && binding.PrincipalId == id).ToList();
+            CommitIamLocked(next, users, bindings ?? next.RoleBindings.ToList(), next.Groups.ToList(), actingUserId);
+            if (disabled) next.Sessions.RemoveAll(x => x.UserId == id);
+            SaveLocked(next);
+            if (request.Role is not null || request.Projects is not null || request.ProductionApprovalProjects is not null)
+                AppendIamAudit(actingUserId, "user.legacy-role", "user", id, new
+                {
+                    request.Role, request.Projects, request.ProductionApprovalProjects,
+                    bindings = bindings is null ? "unchanged" : "replaced",
+                });
+            if (bindings is not null)
+            {
+                AuditBindings(actingUserId, "binding.remove", previous);
+                AuditBindings(actingUserId, "binding.add",
+                    next.RoleBindings.Where(binding => binding.PrincipalKind == IamPrincipalKind.User && binding.PrincipalId == id));
+            }
+            if (disabled != user.Disabled)
+                AppendIamAudit(actingUserId, disabled ? "user.disable" : "user.enable", "user", id, null);
+            return next.Users.First(candidate => candidate.Id == id);
         }
     }
 
@@ -765,6 +744,24 @@ public sealed partial class AccessSecurityStore
     private TimeSpan LoginWindow => TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:WindowMinutes", 15));
     private TimeSpan ClientLockout => TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15));
 
+    internal static string? NetworkThrottleKey(string clientKey)
+    {
+        var addressPart = clientKey.EndsWith("/64", StringComparison.Ordinal) ? clientKey[..^3] : clientKey;
+        if (!IPAddress.TryParse(addressPart, out var address)) return null;
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        var bytes = address.GetAddressBytes();
+        if (bytes.Length == 4) return $"{bytes[0]}.{bytes[1]}.{bytes[2]}.0/24";
+        Array.Clear(bytes, 6, 10);
+        return new IPAddress(bytes) + "/48";
+    }
+
+    private void RecordNetworkFailureLocked(string? key, DateTime now)
+    {
+        if (key is null) return;
+        RegisterLoginFailureLocked(_networkLoginAttempts, key, now,
+            _configuration.GetValue("Security:LoginThrottle:NetworkMaxFailures", 40), ClientLockout, MaxTrackedClients);
+    }
+
     private bool RegisterLoginFailureLocked(Dictionary<string, LoginAttempt> attempts, string key, DateTime now,
         int maxFailures, TimeSpan? lockout, int capacity)
     {
@@ -790,6 +787,12 @@ public sealed partial class AccessSecurityStore
         foreach (var key in _usernameLoginAttempts.Where(x => now - x.Value.WindowStartedAt > LoginWindow)
             .Select(x => x.Key).ToArray())
             _usernameLoginAttempts.Remove(key);
+        foreach (var key in _networkLoginAttempts.Where(x => now - x.Value.WindowStartedAt > LoginWindow
+            && (x.Value.LockedUntil is not { } until || until <= now)).Select(x => x.Key).ToArray())
+            _networkLoginAttempts.Remove(key);
+        foreach (var key in _passwordChangeAttempts.Where(x => now - x.Value.WindowStartedAt > LoginWindow
+            && (x.Value.LockedUntil is not { } until || until <= now)).Select(x => x.Key).ToArray())
+            _passwordChangeAttempts.Remove(key);
         foreach (var key in _recentSuccessfulLogins.Where(x => now - x.Value > RecentSuccessWindow)
             .Select(x => x.Key).ToArray())
             _recentSuccessfulLogins.Remove(key);
@@ -804,9 +807,38 @@ public sealed partial class AccessSecurityStore
         if (_state is not null) return _state;
         Directory.CreateDirectory(SecurityFolder);
         RestrictDirectoryPermissions(SecurityFolder);
-        try { _state = File.Exists(StatePath) ? JsonSerializer.Deserialize<SecurityState>(File.ReadAllText(StatePath), Json) ?? new() : new(); }
+        var persisted = File.Exists(StatePath);
+        SecurityState loaded;
+        try { loaded = persisted ? JsonSerializer.Deserialize<SecurityState>(File.ReadAllText(StatePath), Json) ?? new() : new(); }
         catch (Exception ex) { throw new InvalidOperationException($"Security state at '{StatePath}' cannot be read safely.", ex); }
-        return _state;
+        if (!NeedsIamMigration(loaded))
+        {
+            _state = loaded;
+            return _state;
+        }
+
+        // Migrate a copy. The live state is assigned only once the backup and
+        // the save succeeded, so a crash in between retries from the
+        // unchanged file on the next load.
+        var fromVersion = loaded.IamVersion;
+        var migrated = Copy(loaded);
+        MigrateToRoleBindings(migrated);
+        if (!persisted)
+        {
+            _state = migrated;
+            return _state;
+        }
+        var backup = WriteMigrationBackup(fromVersion);
+        SaveLocked(migrated);
+        AppendIamAudit(null, "migration", "state", $"v{fromVersion}-v{CurrentIamVersion}", new
+        {
+            users = migrated.Users.Count, bindings = migrated.RoleBindings.Count,
+            serviceAccounts = migrated.ServiceAccounts.Count, backup = Path.GetFileName(backup),
+        });
+        _logger.LogInformation(
+            "Migrated access state from IAM version {From} to {To}: {Users} users, {Bindings} bindings, {Accounts} service accounts; legacy copy at {Backup}",
+            fromVersion, CurrentIamVersion, migrated.Users.Count, migrated.RoleBindings.Count, migrated.ServiceAccounts.Count, backup);
+        return _state!;
     }
 
     private void SaveLocked(SecurityState state)

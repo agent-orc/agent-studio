@@ -9,6 +9,10 @@ namespace AgentStudio.Runner;
 public static class MonolithTransitionAdapter
 {
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
+    public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
+        => RedDevelopRepairPolicy.Decide(facts);
+    public static bool MayCreateRelease(bool developRed)
+        => RedDevelopRepairPolicy.MayCreateRelease(developRed);
     public static ReviewBudgetDecision ReviewBudget(ReviewBudgetFacts facts) => ReviewBudgetPolicy.Decide(facts);
     public static DeepReviewDecision DeepReview(DeepReviewGrounds facts, string mode,
         string? ruleVersionId = null, bool? ruleSelection = null, string? ruleModel = null,
@@ -19,6 +23,9 @@ public static class MonolithTransitionAdapter
     public static IReadOnlyList<ReviewFollowUpFinding> MergeReviewFindings(
         IEnumerable<ReviewFollowUpFinding> findings)
         => ReviewFindingMergePolicy.Merge(findings);
+    public static IReadOnlyList<ReviewVerdictDto> MergeReviewVerdicts(
+        IEnumerable<ReviewVerdictDto> verdicts)
+        => ReviewFindingMergePolicy.MergeVerdicts(verdicts);
     public static IReadOnlyList<string> BlockingReviewFindingKeys(
         IEnumerable<ReviewFollowUpFinding> findings)
         => ReviewFindingMergePolicy.BlockingFingerprints(findings);

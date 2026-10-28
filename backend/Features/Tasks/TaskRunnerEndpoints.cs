@@ -396,7 +396,8 @@ public static class TaskRunnerEndpoints
         // test pins. Index is 1-based to match RunRecord.Index.
         group.MapGet("/{jobId}/runs/{index:int}/commits", (
             string jobId, int index, string? project, string? watchPath,
-            TaskReader reader, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskReader reader, GitCardFactReader facts, ProjectSettingsService settings,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var model = reader.Read(jobId, watchPath);
@@ -404,30 +405,40 @@ public static class TaskRunnerEndpoints
             var run = model.ResolveRun(index, out var error);
             if (run == null) return Results.NotFound(new { error });
 
-            var commits = !string.IsNullOrWhiteSpace(run.HeadShaBefore) && !string.IsNullOrWhiteSpace(run.HeadShaAfter)
-                ? git.GetCommitsInShaRange(jobId, watchPath, run.HeadShaBefore, run.HeadShaAfter)
-                : git.GetCommitsBetween(jobId, watchPath, run.StartedAt, run.EndedAt ?? DateTime.UtcNow);
-
-            return Results.Ok(new
+            // AGT-3323 (Git facts S3): the run's commits come from the stored
+            // range (or wall-clock window) and commit facts; no read starts Git.
+            var bySha = !string.IsNullOrWhiteSpace(run.HeadShaBefore) && !string.IsNullOrWhiteSpace(run.HeadShaAfter);
+            var published = TaskGitFactReads.Facts(facts, model.Info, settings);
+            var misses = new List<GitFactWork>();
+            var commits = published is null ? []
+                : bySha ? GitCardFactJoins.RangeCommits(run.HeadShaBefore!, run.HeadShaAfter!, published, misses)
+                : GitCardFactJoins.WindowCommits(run.StartedAt, run.EndedAt, published, misses);
+            var body = new
             {
                 runIndex = run.Index,
                 startedAt = run.StartedAt,
                 endedAt = run.EndedAt,
                 headShaBefore = run.HeadShaBefore,
                 headShaAfter = run.HeadShaAfter,
-                source = !string.IsNullOrWhiteSpace(run.HeadShaBefore) && !string.IsNullOrWhiteSpace(run.HeadShaAfter)
-                    ? "sha-range"
-                    : "wall-clock",
-                commits
-            });
+                source = bySha ? "sha-range" : "wall-clock",
+                commits,
+            };
+            // An open run's window answers from its last read while a fresh one is queued.
+            var stale = !bySha && run.EndedAt is null && commits.Count > 0;
+            if (published is null) return GitFactsResults.Warming(body, null);
+            return TaskGitFactReads.Queue(facts, model.Info, misses) && !stale
+                ? GitFactsResults.Warming(body, published)
+                : GitFactsResults.Ok(body, published);
         });
 
-        // Aggregated file list for a run: every path touched by any
-        // commit in HeadShaBefore..HeadShaAfter, with combined +/-
-        // counts. Drives the file-tree side of the run's git viewer.
+        // Aggregated file list for a run: every path the tree diff of
+        // HeadShaBefore..HeadShaAfter touches, with its +/- counts, from the
+        // run's immutable range diff object. Drives the file-tree side of the
+        // run's git viewer.
         group.MapGet("/{jobId}/runs/{index:int}/files", (
             string jobId, int index, string? project, string? watchPath,
-            TaskReader reader, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskReader reader, GitCardFactReader facts, ProjectSettingsService settings,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var model = reader.Read(jobId, watchPath);
@@ -447,22 +458,35 @@ public static class TaskRunnerEndpoints
                 });
             }
 
-            var files = git.GetFilesChangedInShaRange(jobId, watchPath, run.HeadShaBefore, run.HeadShaAfter);
-            return Results.Ok(new
+            var published = TaskGitFactReads.Facts(facts, model.Info, settings);
+            var misses = new List<GitFactWork>();
+            var manifest = published is null ? null
+                : TaskGitFactReads.RangeObject(facts, published, run.HeadShaBefore, run.HeadShaAfter, misses);
+            var files = manifest?.Files
+                .Where(file => file.Status.Length > 0 && "ACDMR".Contains(file.Status[0]))
+                .Select(file => new GitFileChange(file.Status, file.Path, file.Added, file.Removed))
+                .OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+                .ToList() ?? [];
+            var body = new
             {
                 runIndex = run.Index,
                 headShaBefore = run.HeadShaBefore,
                 headShaAfter = run.HeadShaAfter,
                 files
-            });
+            };
+            if (published is null) return GitFactsResults.Warming(body, null);
+            return TaskGitFactReads.Queue(facts, model.Info, misses)
+                ? GitFactsResults.Warming(body, published)
+                : GitFactsResults.Ok(body, published);
         });
 
-        // Unified diff for one path across the run's SHA range. Returns
-        // the raw diff body so the frontend's existing diff renderer
-        // can consume it without re-parsing.
+        // Unified diff for one path across the run's SHA range, from the same
+        // range diff object. Returns the raw diff body so the frontend's
+        // existing diff renderer can consume it without re-parsing.
         group.MapGet("/{jobId}/runs/{index:int}/diff", (
             string jobId, int index, string? path, string? project, string? watchPath,
-            TaskReader reader, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskReader reader, GitCardFactReader facts, ProjectSettingsService settings,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var model = reader.Read(jobId, watchPath);
@@ -473,8 +497,14 @@ public static class TaskRunnerEndpoints
             if (string.IsNullOrWhiteSpace(run.HeadShaBefore) || string.IsNullOrWhiteSpace(run.HeadShaAfter))
                 return Results.Ok(new { diff = "", note = "Run has no captured SHAs." });
 
-            var diff = git.GetDiffInShaRange(jobId, watchPath, run.HeadShaBefore, run.HeadShaAfter, path);
-            return Results.Ok(new { diff });
+            var published = TaskGitFactReads.Facts(facts, model.Info, settings);
+            var misses = new List<GitFactWork>();
+            var manifest = published is null ? null
+                : TaskGitFactReads.RangeObject(facts, published, run.HeadShaBefore, run.HeadShaAfter, misses);
+            if (published is null) return GitFactsResults.Warming(new { diff = "" }, null);
+            if (TaskGitFactReads.Queue(facts, model.Info, misses) || manifest is null)
+                return GitFactsResults.Warming(new { diff = "" }, published);
+            return GitFactsResults.Ok(new { diff = TaskGitFactReads.RangeDiff(facts, published, manifest, path) }, published);
         });
 
         // The exact context handed to the agent for run #index: the rendered

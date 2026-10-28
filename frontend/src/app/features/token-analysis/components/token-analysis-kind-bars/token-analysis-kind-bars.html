@@ -1,0 +1,32 @@
+<section class="kb" data-testid="token-analysis-kind-bars" aria-labelledby="kb-title">
+  <header class="kb__head">
+    <h3 id="kb-title">Usage kinds per card</h3>
+    <p>Top {{ rows().length }} cards by tokens</p>
+  </header>
+  <ul class="kb__legend" aria-label="Usage kinds">
+    @for (item of legend(); track item.kind) {
+      <li><span class="kb__swatch" [style.background]="item.color"></span>{{ item.label }}</li>
+    }
+  </ul>
+  <ol class="kb__rows">
+    @for (row of rows(); track row.id) {
+      <li class="kb__row" [class.kb__row--selected]="row.id === selectedId()">
+        <button type="button" class="kb__label" [attr.aria-pressed]="row.id === selectedId()"
+                [appTooltip]="row.title" (click)="cardSelect.emit(row.id)"
+                [attr.data-testid]="'token-analysis-kind-row-' + row.label">
+          {{ row.label }}
+        </button>
+        <span class="kb__track" role="img"
+              [attr.aria-label]="row.label + ': ' + fmt(row.total) + ' tokens'">
+          <span class="kb__stack" [style.width]="width(row.total)">
+            @for (segment of row.segments; track segment.key) {
+              <span class="kb__segment" [style.flex-grow]="segment.value" [style.background]="segment.color"
+                    [appTooltip]="segmentTip(row, segment.label, segment.value)"></span>
+            }
+          </span>
+        </span>
+        <span class="kb__total">{{ fmt(row.total) }}</span>
+      </li>
+    }
+  </ol>
+</section>

@@ -143,6 +143,8 @@ public sealed class WorkspaceArtifactCommitService
                 : workspaceRoot;
             if (string.IsNullOrWhiteSpace(workspaceRoot) || !Directory.Exists(workspaceRoot))
                 return WorkspaceArtifactCommitResult.Skipped("workspace-missing");
+            if (AgentStudio.Tasks.TaskArtifactsSourceSetting.IsExportedWorkspacePath(_configuration, workspaceRoot))
+                return WorkspaceArtifactCommitResult.Skipped(AgentStudio.Tasks.TaskArtifactsSourceSetting.ExportSkipReason);
 
             var gitRoot = ResolveGitRoot(workspaceRoot);
             if (gitRoot == null)
@@ -420,6 +422,8 @@ public sealed class WorkspaceArtifactCommitService
         {
             if (string.IsNullOrWhiteSpace(gitRoot) || !Directory.Exists(gitRoot))
                 return WorkspaceArtifactCommitResult.Skipped("workspace-missing");
+            if (AgentStudio.Tasks.TaskArtifactsSourceSetting.IsExportedWorkspacePath(_configuration, gitRoot))
+                return WorkspaceArtifactCommitResult.Skipped(AgentStudio.Tasks.TaskArtifactsSourceSetting.ExportSkipReason);
 
             var pathspecs = new List<string>();
             foreach (var wp in watchPaths)
@@ -528,6 +532,8 @@ public sealed class WorkspaceArtifactCommitService
     {
         try
         {
+            if (AgentStudio.Tasks.TaskArtifactsSourceSetting.IsExportedWorkspacePath(_configuration, workspaceRoot))
+                return WorkspaceArtifactCommitResult.Skipped(AgentStudio.Tasks.TaskArtifactsSourceSetting.ExportSkipReason);
             var gitRoot = ResolveWorkspaceGitRoot(workspaceRoot);
             if (gitRoot == null)
                 return WorkspaceArtifactCommitResult.Skipped("not-a-git-repo");
@@ -817,17 +823,8 @@ public sealed class WorkspaceArtifactCommitService
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
-        using var tracked = AgentStudio.Git.GitChildProcessRegistry.Track(cwd);
-        using var p = Process.Start(psi)!;
-        if (stdin != null)
-        {
-            p.StandardInput.Write(stdin);
-            p.StandardInput.Close();
-        }
-        var stdout = p.StandardOutput.ReadToEnd();
-        var stderr = p.StandardError.ReadToEnd();
-        p.WaitForExit(30_000);
-        return new GitProcessResult(stdout, stderr, p.ExitCode);
+        var result = AgentStudio.Git.GitProcessBoundary.Run(psi, stdin, TimeSpan.FromSeconds(30));
+        return new GitProcessResult(result.StandardOutput, result.StandardError, result.ExitCode);
     }
 
     internal sealed record GitProcessResult(string Out, string Err, int Code)

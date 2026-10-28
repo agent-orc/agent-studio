@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Pipeline;
 
@@ -10,7 +11,8 @@ public sealed record PullGateHost(string Id, string Name, int Slots, int Process
 }
 public sealed record PullGateClaim(string RunId, string Lease, DateTimeOffset ExpiresAt);
 internal sealed record PullGateJob(string RunId, string BundleSha256, string State,
-    string? HostId, string? Lease, DateTimeOffset ExpiresAt, string? Progress);
+    string? HostId, string? Lease, DateTimeOffset ExpiresAt, string? Progress,
+    DateTimeOffset? EnqueuedAt = null);
 
 /// <summary>Durable bundle and result authority. Every mutation is serialized and lease fenced.</summary>
 public sealed class PullGateStore
@@ -24,6 +26,7 @@ public sealed class PullGateStore
     private readonly IConfiguration? _configuration;
     private readonly Dictionary<string, PullGateJob> _jobs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PullGateHost> _hosts = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _restartFences = new(StringComparer.Ordinal);
 
     public PullGateStore(string root, TimeProvider clock, IConfiguration? configuration = null)
     {
@@ -31,6 +34,7 @@ public sealed class PullGateStore
         _clock = clock;
         _configuration = configuration;
         Directory.CreateDirectory(root);
+        LoadRestartFences();
         foreach (var file in Directory.EnumerateFiles(root, "job.json", SearchOption.AllDirectories))
         {
             var job = JsonSerializer.Deserialize<PullGateJob>(File.ReadAllText(file), Json);
@@ -52,6 +56,99 @@ public sealed class PullGateStore
     {
         lock (_gate) return _hosts.Values.Where(host => Now - host.LastHeartbeat < HealthyTime)
             .Select(SnapshotHost).ToArray();
+    }
+
+    /// <summary>Only queued jobs can be claimed by an idle pull gate worker.</summary>
+    public (int Busy, int Queued)? Workload(string hostId)
+    {
+        lock (_gate)
+        {
+            if (!_hosts.ContainsKey(hostId)) return null;
+            // An expired lease is still potentially executing on the host.
+            return (_jobs.Values.Count(job => job.HostId == hostId && job.State == "claimed"),
+                _jobs.Values.Count(job => job.State == "queued"));
+        }
+    }
+
+    public DateTime? OldestQueuedAtUtc()
+    {
+        lock (_gate) return _jobs.Values.Where(job => job.State == "queued" && job.EnqueuedAt is not null)
+            .Select(job => (DateTime?)job.EnqueuedAt!.Value.UtcDateTime).OrderBy(value => value).FirstOrDefault();
+    }
+
+    public IDisposable? TryFenceHostClaims(string hostId)
+    {
+        lock (_gate)
+        {
+            if (_restartFences.Contains("*") || _restartFences.Contains(hostId) || Workload(hostId) is not { Busy: 0 })
+                return null;
+            _restartFences.Add(hostId);
+            try { SaveRestartFences(); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _restartFences.Remove(hostId);
+                return null;
+            }
+            return new GateRestartFence(this, hostId);
+        }
+    }
+
+    public bool HasRestartFence(string hostId)
+    {
+        lock (_gate) return _restartFences.Contains("*") || _restartFences.Contains(hostId);
+    }
+
+    public void ReleaseRestartFence(string hostId)
+    {
+        lock (_gate)
+        {
+            if (!_restartFences.Remove(hostId)) return;
+            try { SaveRestartFences(); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { _restartFences.Add(hostId); }
+        }
+    }
+
+    private sealed class GateRestartFence(PullGateStore owner, string hostId) : IRestartClaimFence
+    {
+        private bool _retained;
+        public void Retain() => _retained = true;
+        public void ConfirmTerminal() => _retained = false;
+        public void Dispose()
+        {
+            if (_retained) return;
+            lock (owner._gate)
+            {
+                owner._restartFences.Remove(hostId);
+                try { owner.SaveRestartFences(); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { owner._restartFences.Add(hostId); }
+            }
+        }
+    }
+
+    private string RestartFencePath => Path.Combine(_root, "restart-fences.json");
+    private void LoadRestartFences()
+    {
+        if (!File.Exists(RestartFencePath)) return;
+        try
+        {
+            foreach (var host in JsonSerializer.Deserialize<string[]>(File.ReadAllText(RestartFencePath)) ?? [])
+                if (!string.IsNullOrWhiteSpace(host)) _restartFences.Add(host);
+        }
+        catch (Exception exception) when (exception is IOException or JsonException)
+        {
+            _restartFences.Add("*");
+        }
+    }
+
+    private void SaveRestartFences()
+    {
+        var temporary = RestartFencePath + ".tmp";
+        using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(stream, _restartFences.OrderBy(host => host).ToArray());
+            stream.Flush(flushToDisk: true);
+        }
+        File.Move(temporary, RestartFencePath, overwrite: true);
     }
 
     private PullGateHost SnapshotHost(PullGateHost host)
@@ -94,7 +191,7 @@ public sealed class PullGateStore
         lock (_gate)
         {
             var job = new PullGateJob(invocation.RunId, invocation.BundleSha256, "queued",
-                null, null, default, null);
+                null, null, default, null, Now);
             Save(job);
             return job.RunId;
         }
@@ -104,6 +201,7 @@ public sealed class PullGateStore
     {
         lock (_gate)
         {
+            if (_restartFences.Contains("*") || _restartFences.Contains(hostId)) return null;
             if (!_hosts.TryGetValue(hostId, out var host) || Now - host.LastHeartbeat >= HealthyTime)
                 return null;
             var used = _jobs.Values.Count(job => job.HostId == hostId && job.State == "claimed"
@@ -160,6 +258,48 @@ public sealed class PullGateStore
             RequireLease(hostId, runId, lease);
             return Path.Combine(Folder(runId), name);
         }
+    }
+
+    /// <summary>Serve only the objects newer than a verified host tip when it is an ancestor.</summary>
+    public async Task<(string Path, string Digest)> BundleForLeaseAsync(string hostId, string runId,
+        string lease, string? baseSha, CancellationToken ct)
+    {
+        var full = FileForLease(hostId, runId, lease, "source.bundle");
+        var fullDigest = JsonSerializer.Deserialize<RemoteGateInvocation>(
+            await File.ReadAllTextAsync(FileForLease(hostId, runId, lease, "request.json"), ct), Json)!
+            .BundleSha256;
+        if (baseSha is null) return (full, fullDigest);
+        if (!RemoteBuildTestGateRunner.ValidSha(baseSha))
+            throw new ArgumentException("Invalid source cache tip.", nameof(baseSha));
+        var folder = Folder(runId);
+        var thin = Path.Combine(folder, "source-" + baseSha.ToLowerInvariant() + ".bundle");
+        if (File.Exists(thin)) return (thin, await DigestAsync(thin, ct));
+        var temporary = Path.Combine(folder, "thin-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temporary);
+        try
+        {
+            var repository = Path.Combine(temporary, "source.git");
+            await RemoteGateProcess.RunAsync("git", ["clone", "--bare", "--quiet", full, repository],
+                temporary, TimeSpan.FromMinutes(2), ct);
+            try
+            {
+                await RemoteGateProcess.RunAsync("git", ["-C", repository, "merge-base", "--is-ancestor",
+                    baseSha, "refs/heads/gate-subject"], temporary, TimeSpan.FromMinutes(2), ct);
+            }
+            catch (IOException) { return (full, fullDigest); }
+            var output = Path.Combine(temporary, "source.bundle");
+            await RemoteGateProcess.RunAsync("git", RemoteGateTransport.BundleArguments(repository,
+                output, [baseSha]), temporary, TimeSpan.FromMinutes(2), ct);
+            File.Move(output, thin, overwrite: true);
+            return (thin, await DigestAsync(thin, ct));
+        }
+        finally { Directory.Delete(temporary, recursive: true); }
+    }
+
+    private static async Task<string> DigestAsync(string path, CancellationToken ct)
+    {
+        await using var input = File.OpenRead(path);
+        return Convert.ToHexStringLower(await SHA256.HashDataAsync(input, ct));
     }
 
     public void UploadArtifact(string hostId, string runId, string lease, string name, Stream input)

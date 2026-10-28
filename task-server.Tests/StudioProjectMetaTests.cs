@@ -26,7 +26,6 @@ namespace TaskServer.Tests;
 public sealed class StudioProjectMetaTests
 {
 
-
     [Fact]
     public async Task Tags_create_list_reject_duplicate_names_and_delete()
     {

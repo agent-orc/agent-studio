@@ -39,6 +39,12 @@ public interface IAiOperatorEffect
     Task ApplyAsync(AiOperatorApplication application, CancellationToken ct);
 }
 
+/// <summary>
+/// An effect that also records the decider's A2 proposals itself (AGT-3207).
+/// Without it, an engine Propose receipt is only written to the card's feed.
+/// </summary>
+public interface IAiOperatorProposalEffect : IAiOperatorEffect;
+
 public sealed record AiOperatorApplication(
     string RunId,
     string ProjectId,
@@ -115,6 +121,18 @@ public sealed class AiOperatorDecisionGateway
             request.ExpectedSourceState, request.AuthorityAttemptId ?? request.TaskId,
             request.AuthorityFence, request.AuthorityEpoch, request.Period);
         return new(run, null);
+    }
+
+    /// <summary>
+    /// Evaluates the shared decision library in process without recording an
+    /// occurrence (AGT-3207). A periodic decider submits only the decisions
+    /// that act, propose or ask: a held decision changes nothing, and asking
+    /// the engine for it would add one occurrence per subject and period.
+    /// </summary>
+    public AiOperatorDecision Preview(AiOperatorDecisionPayload payload)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        return MonolithTransitionAdapter.Operator(payload);
     }
 
     /// <summary>

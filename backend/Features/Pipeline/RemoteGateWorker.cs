@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -15,7 +16,8 @@ public static class RemoteGateWorker
     internal static readonly TimeSpan HeartbeatPollInterval = TimeSpan.FromSeconds(2);
 
     public static async Task<int> RunAsync(string requestPath,
-        Action<string>? progress = null, CancellationToken shutdown = default)
+        Action<string>? progress = null, CancellationToken shutdown = default,
+        Func<ILogger<BuildTestGateRunner>, BuildTestGateRunner>? runnerFactory = null)
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -36,6 +38,9 @@ public static class RemoteGateWorker
         var repository = Path.Combine(directory, "source.git");
         var bundle = Path.Combine(directory, "source.bundle");
         var artifactDirectory = Path.Combine(directory, "artifacts");
+        var sourceTimer = Stopwatch.StartNew();
+        var bareReady = TimeSpan.Zero;
+        var acquiredAt = TimeSpan.Zero;
         Directory.CreateDirectory(artifactDirectory);
         var slotHeld = 0;
         var request = invocation.Request with
@@ -53,7 +58,15 @@ public static class RemoteGateWorker
                 Interlocked.Exchange(ref slotHeld, 1);
                 Report($"REMOTE_GATE_SLOT {invocation.RunId} {slot}/{total}");
             },
-            OnMachineGateAcquired = () => Report("REMOTE_GATE_ACQUIRED " + invocation.RunId),
+            OnMachineGateAcquired = () =>
+            {
+                acquiredAt = sourceTimer.Elapsed;
+                Report("REMOTE_GATE_ACQUIRED " + invocation.RunId);
+            },
+            OnSourceReady = () => Report($"REMOTE_GATE_SOURCE_READY {invocation.RunId} "
+                + Math.Max(0, (acquiredAt == TimeSpan.Zero ? sourceTimer.Elapsed
+                        : bareReady + sourceTimer.Elapsed - acquiredAt).TotalMilliseconds)
+                    .ToString("F0", System.Globalization.CultureInfo.InvariantCulture)),
             GateSlots = invocation.GateSlots,
         };
         void Report(string line)
@@ -84,24 +97,40 @@ public static class RemoteGateWorker
         BuildTestGateResult result;
         var sessionLost = false;
         var cleanupFailed = false;
+        FileStream? cacheLease = null;
         try
         {
-            await using (var source = File.OpenRead(bundle))
+            if (!invocation.SourceFromCache)
             {
-                var actual = Convert.ToHexString(await SHA256.HashDataAsync(source, lifetime.Token)).ToLowerInvariant();
-                if (!string.Equals(actual, invocation.BundleSha256, StringComparison.Ordinal))
+                await using var source = File.OpenRead(bundle);
+                var actual = Convert.ToHexStringLower(await SHA256.HashDataAsync(source, lifetime.Token));
+                if (!string.Equals(actual, invocation.TransferBundleSha256 ?? invocation.BundleSha256,
+                    StringComparison.Ordinal))
                     throw new InvalidDataException("Remote gate source bundle digest mismatch.");
             }
             // The clone is private to this GUID invocation. Its only advertised
             // branch was created from the requested exact commit, never a live
             // integration ref. BuildTestGateRunner independently proves HEAD.
-            if (invocation.CachePath is { } cache && Directory.Exists(cache))
+            if (invocation.CachePath is { } cache)
             {
+                if (invocation.SourceCacheKey is null)
+                    cacheLease = await GateSourceCacheRetention.LockAsync(cache + ".lock", lifetime.Token);
+                if (!Directory.Exists(cache))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(cache)!);
+                    await RemoteGateProcess.RunAsync("git", ["init", "--bare", "--quiet", cache],
+                        directory, request.InfrastructureTimeout, lifetime.Token);
+                }
                 await RemoteGateProcess.RunAsync("git", ["clone", "--bare", "--quiet", cache, repository],
                     directory, request.InfrastructureTimeout, lifetime.Token);
-                await RemoteGateProcess.RunAsync("git", ["-C", repository, "fetch", "--no-tags", bundle,
-                    "refs/heads/gate-subject:refs/heads/gate-subject"],
-                    directory, request.InfrastructureTimeout, lifetime.Token);
+                if (!invocation.SourceFromCache)
+                    await RemoteGateProcess.RunAsync("git", ["-C", repository, "fetch", "--no-tags", bundle,
+                        "refs/heads/gate-subject:refs/heads/gate-subject"],
+                        directory, request.InfrastructureTimeout, lifetime.Token);
+                else
+                    await RemoteGateProcess.RunAsync("git", ["-C", repository, "update-ref",
+                        "refs/heads/gate-subject", request.ExpectedSha!],
+                        directory, request.InfrastructureTimeout, lifetime.Token);
                 await RemoteGateProcess.RunAsync("git", ["-C", repository, "symbolic-ref", "HEAD", "refs/heads/gate-subject"],
                     directory, request.InfrastructureTimeout, lifetime.Token);
                 try
@@ -117,10 +146,33 @@ public static class RemoteGateWorker
             }
             else
             {
+                if (invocation.SourceFromCache)
+                    throw new InvalidDataException("Verified host source cache is missing.");
                 await RemoteGateProcess.RunAsync("git", ["clone", "--bare", "--quiet", bundle, repository],
                     directory, request.InfrastructureTimeout, lifetime.Token);
             }
-            var runner = new BuildTestGateRunner(logging.CreateLogger<BuildTestGateRunner>());
+            await RemoteGateProcess.RunAsync("git", ["-C", repository, "fsck", "--full",
+                "--no-reflogs", "--no-progress"], directory, request.InfrastructureTimeout, lifetime.Token);
+            await RemoteGateProcess.RunAsync("git", ["-C", repository, "rev-parse", "--verify",
+                request.ExpectedSha! + "^{commit}"], directory, request.InfrastructureTimeout, lifetime.Token);
+            bareReady = sourceTimer.Elapsed;
+            Report("REMOTE_GATE_OBJECTS_READY " + invocation.RunId);
+            cacheLease?.Dispose();
+            cacheLease = null;
+            if (invocation.CachePath is { } sweepCache && invocation.SourceCacheKey is null)
+            {
+                try
+                {
+                    GateSourceCacheRetention.Sweep(Path.GetDirectoryName(sweepCache)!, sweepCache,
+                        TimeProvider.System.GetUtcNow().UtcDateTime);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    logger.LogWarning(exception, "remote_gate_source_cache_sweep_failed run_id={RunId}", invocation.RunId);
+                }
+            }
+            var runnerLogger = logging.CreateLogger<BuildTestGateRunner>();
+            var runner = runnerFactory?.Invoke(runnerLogger) ?? new BuildTestGateRunner(runnerLogger);
             var previousArtifactDirectory = GateArtifactOutput.Current;
             GateArtifactOutput.Current = artifactDirectory;
             try
@@ -143,6 +195,7 @@ public static class RemoteGateWorker
         }
         finally
         {
+            cacheLease?.Dispose();
             if (Volatile.Read(ref slotHeld) != 0 && lifetime.IsCancellationRequested)
                 Report($"REMOTE_GATE_SLOT {invocation.RunId} release");
             cancelWatcher.Cancel();
@@ -196,6 +249,8 @@ public static class RemoteGateWorker
             || (invocation.InstallationId.Length > 0
                 && !Regex.IsMatch(invocation.InstallationId, "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"))
             || !Regex.IsMatch(invocation.BundleSha256, "^[0-9a-f]{64}$")
+            || (invocation.TransferBundleSha256 is { } transferDigest
+                && !Regex.IsMatch(transferDigest, "^[0-9a-f]{64}$"))
             || invocation.Request is null || !invocation.Request.RequireExactSubject
             || !RemoteBuildTestGateRunner.ValidSha(invocation.Request.ExpectedSha)
             || invocation.TimeoutSeconds is < 1 or > 43200
@@ -204,6 +259,8 @@ public static class RemoteGateWorker
             || invocation.Request.InfrastructureTimeout <= TimeSpan.Zero
             || invocation.GateSlots is < 1 or > 64
             || invocation.ProcessorCount is < 1 or > 64
+            || (invocation.SourceFromCache && invocation.CachePath is null)
+            || (invocation.SourceCacheKey is { } key && !Regex.IsMatch(key, "^[0-9a-f]{64}$"))
             || (invocation.CachePath is { } cachePath
                 && (!Regex.IsMatch(cachePath, "^/[a-zA-Z0-9_./-]+/cache/[0-9a-f]{64}$")
                     || cachePath.Split('/').Any(part => part is "." or "..")))

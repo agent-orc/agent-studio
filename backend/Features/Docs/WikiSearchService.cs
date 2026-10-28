@@ -100,6 +100,8 @@ public class WikiSearchService
         using var _t = GitProcessTelemetry.BeginRequest("wiki/search", _logger);
 
         var wikiDir = Path.GetFullPath(Path.Combine(baseDir, ProjectDocsService.WikiRel));
+        if (!ProjectDocsService.IsLinkFreePath(baseDir, wikiDir))
+            return new WikiSearchResponse(query, false, [], sw.ElapsedMilliseconds, []);
         var index = GetOrBuildIndex(projectName, wikiDir);
 
         var queryTerms = Tokenize(query).Distinct(StringComparer.Ordinal).ToList();
@@ -145,6 +147,7 @@ public class WikiSearchService
         if (baseDir == null) return null;
 
         var wikiDir = Path.GetFullPath(Path.Combine(baseDir, ProjectDocsService.WikiRel));
+        if (!ProjectDocsService.IsLinkFreePath(baseDir, wikiDir)) return [];
         var index = GetOrBuildIndex(projectName, wikiDir);
         return index.Docs
             .Select(doc => new
@@ -402,8 +405,10 @@ public class WikiSearchService
         var pages = new List<FileInfo>();
         if (!Directory.Exists(wikiDir)) return pages;
         var root = Path.GetFullPath(wikiDir);
-        foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        foreach (var path in Directory.EnumerateFiles(root, "*",
+                     new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
         {
+            if (!ProjectDocsService.IsLinkFreePath(root, path)) continue;
             if (!PageExtensions.Contains(Path.GetExtension(path))) continue;
             var rel = Path.GetRelativePath(root, path).Replace('\\', '/');
             if (rel.EndsWith(".report.html", StringComparison.OrdinalIgnoreCase)

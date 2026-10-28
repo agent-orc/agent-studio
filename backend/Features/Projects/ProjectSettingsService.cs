@@ -192,6 +192,20 @@ public class ProjectSettingsService
         }
     }
 
+    /// <summary>IP-1: replaces the project's allowed run-target domain suffixes; the caller normalizes them.</summary>
+    public void SetRunTargetDomainSuffixes(string projectName, IReadOnlyList<string> suffixes)
+    {
+        ArgumentNullException.ThrowIfNull(suffixes);
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { RunTargetDomainSuffixes = suffixes.Count == 0 ? null : suffixes.ToArray() };
+            Persist();
+        }
+    }
+
     public void SetBatchGate(string projectName, AgentStudio.Pipeline.BatchGateFormationOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -1620,6 +1634,40 @@ public class ProjectSettingsService
         }
         _logger.LogInformation("Staged test policy {Action} for project {Project}",
             policy is null ? "cleared" : "updated", projectName);
+    }
+
+    /// <summary>
+    /// AGT-3310: stores <c>testing.perCard</c>. Null or <c>full</c> clears the
+    /// section, so the default plan stays byte-identical to a project that
+    /// never set it.
+    /// </summary>
+    public void SetTesting(string projectName, ProjectTestingSettings? testing)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var settings) ? settings : new ProjectSettings();
+            var mode = IntegrationTestModes.Normalize(
+                testing is null ? null : testing.Mode ?? current.Testing?.Mode);
+            var perCard = mode == IntegrationTestModes.PostMerge
+                ? PerCardTestModes.Affected
+                : PerCardTestModes.Normalize(testing is null
+                    ? null : testing.PerCard ?? current.Testing?.PerCard);
+            _cache[key] = current with
+            {
+                Testing = perCard == PerCardTestModes.Affected || mode == IntegrationTestModes.PostMerge
+                    ? new ProjectTestingSettings
+                    {
+                        PerCard = perCard == PerCardTestModes.Affected ? perCard : null,
+                        Mode = mode == IntegrationTestModes.PostMerge ? mode : null,
+                    }
+                    : null,
+            };
+            Persist();
+            _logger.LogInformation("Testing set to {PerCard} and {Mode} for project {Project}",
+                perCard, mode, projectName);
+        }
     }
 
     /// <summary>

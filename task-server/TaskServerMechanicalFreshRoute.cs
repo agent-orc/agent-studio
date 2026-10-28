@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Data.Sqlite;
@@ -20,6 +22,24 @@ public sealed partial class TaskServerStore
             || !sha.All(Uri.IsHexDigit))
             return (null, null);
         return (previous.ResultRef, sha);
+    }
+
+    /// <summary>The latest session ledger entry; corrupt evidence reads as none.</summary>
+    private static async Task<SessionContinuationLedgerEntry?> ReadPreviousSessionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string taskId,
+        CancellationToken ct)
+    {
+        var json = Convert.ToString(await ScalarAsync(connection, """
+            SELECT payload_json FROM events
+             WHERE task_id = $task AND kind = 'session.continuation'
+             ORDER BY rowid DESC LIMIT 1;
+            """, ct, transaction, ("$task", taskId)), CultureInfo.InvariantCulture);
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<SessionContinuationLedgerEntry>(json); }
+        // Corrupt evidence never authorizes a resume.
+        catch (JsonException) { return null; }
     }
 
     private static async Task<MechanicalFreshRunRoute?> ReadMechanicalFreshRouteAsync(

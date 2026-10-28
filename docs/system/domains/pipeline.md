@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-10-15
+Version: 2026-10-27
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -29,6 +29,92 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+### Per-project integration test placement (AGT-3314)
+
+`testing.mode` defaults to `pre-merge`. That path retains the existing
+per-card integration gate and optional pre-merge batch gate. In `post-merge`
+the Remote Review runs the affected T1 plan, the batch route is disabled, and
+the integration gate compiles the exact merged tree. It repeats the affected
+selection when develop moved over a path changed by the reviewed delivery,
+or when review and merge evidence cannot prove a disjoint merge. Merge and
+publication locks are keyed by project and integration branch; the aggregate
+merge-busy flag still drains stable deployment.
+The post-merge worker reads its window size and age from the project's
+look-ahead settings through the runner state endpoint.
+
+An attribution repair card created with `creationSource: post-merge-attribution`
+is classified by the `HumanReviewEscalation` funnel when its normal run path
+escalates it. The funnel records the card ID in the post-merge run state.
+While that card is in Escalated, or a red develop has lasted at least
+two hours, the project temporarily resolves to `pre-merge`. A green T3 receipt
+clears the recorded card ID. Agent Studio remains in `pre-merge` until its T1 replay
+median is at most ten minutes. The gate-economics seven-day view reports lead
+time and gate minutes per card for comparison after a project switches.
+
+### Post-merge develop checks (T3, AGT-3311)
+
+`agent-host post-merge-run --mode window|nightly` is a scheduled, project-scoped
+runner unit. The window timer polls each minute; the pure close rule runs after
+six first-parent integration commits or 30 minutes from the oldest pending
+commit, whichever comes first. The worker fetches develop once and pins
+`FETCH_HEAD` before selecting the union of changed-path test projects. Unknown
+paths run every routine suite. The nightly timer runs at 02:15 and 04:15 in
+the existing coverage slot window. It runs the routine full suite on the same
+exact-tip rule, using AGT-3232 class partitions across free local host slots.
+T3 treats a suite without `shards` as `auto`; a declared shard count still
+controls that suite. T1's opt-in sharding policy is unchanged.
+The timers use a dedicated checkout and a local exclusive claim file; the
+server fences the active run ID. A second claim waits, and an abandoned server
+claim expires after four hours for windows or fourteen hours for the nightly
+suite. The worker keeps its service token out of test
+process environments. `--dry-run` prints the fetch and command plan without
+claiming, fetching, or running tests.
+
+The Runner service posts start, terminal, and skip receipts to
+`/api/runner/post-merge/projects/{project}/runs`. `PostMergeRunStore` persists
+the exact tip, window range, command verdicts, timestamps, last green SHA,
+last completed window tip, and `developState` per project outside card folders.
+Only a matching active run can complete. Green advances last green; red keeps
+the previous green; an unchanged tip records a skip. The gate-economics row
+projects the state, last green SHA, nightly verdict, and red duration. The board
+header reads the smaller `/api/develop-states` projection. The state is evidence for the separate red
+develop repair and release-hold cards; this unit does not open a repair card or
+alter integration transitions.
+
+The Dossier's recorded working decisions are D1 T-B, D2 A, D3 A, D4 A,
+D5 L-B, D6 A, D7 A-B, D8 A, D9 A, and D10 A. This card implements T3 under
+D1 T-B and retains D3 A as the before-delivery policy for its later card.
+
+### Red develop repair (AGT-3312)
+
+This slice implements the Dossier's recorded D2 option A (`revert-first`). A
+terminal red T3 receipt carries failing tests, a bounded log excerpt, the
+first-parent suspects since the last green SHA, changed paths, and the result
+of a clean revert check. The runner excludes active test quarantines and
+re-runs a focused failure at the same SHA before attribution. It intersects
+suspect paths with the failing test project's tracked reference graph and
+tests merge points, bisecting when several candidates remain. Unknown graph
+edges retain the suspect. `RedDevelopRepairPolicy` in the pure decision
+library chooses revert for one clean independent suspect, fix forward
+otherwise, and Human Operator escalation at two hours. A repair card carries
+the evidence and uses the normal integration path, whose publication lease
+guards the eventual revert. The card starts at the front of Preparation.
+
+The project post-merge store keeps one open incident per fingerprint. A repeat
+red receipt reuses that card; a green receipt closes open incidents and records
+their red duration. A red terminal verdict blocks release creation. The
+scheduled runner invokes an escalation check even when the checkout is busy;
+it escalates an incident that has remained red for two hours and offers the
+project's pre-merge batch gate as the fallback.
+The integration executor reads that project state before publication. While
+the latest terminal T3 verdict is red, it compares the delivery's changed
+paths with open incident paths under its publication lease. An overlap
+requeues the command without spending its publication retry budget and places
+it behind other queued integrations; an unrelated delivery continues. A
+direct Task Server runner sets `RUNNER_POST_MERGE_STATE_URL` to the Studio API
+so this check reads the same durable T3 state.
+
+
 An operator override that accepts a published delivery writes an append-only
 `integrated-verified` record on the completed card. The record names the actor,
 written reason, delivery SHA, and published containing SHA. The acceptance
@@ -42,14 +128,16 @@ An operator candidate verification is an immutable, per-card
 verification host, suite totals, and log hash. The write route fetches origin
 and requires candidate ancestry in the refreshed branch. Patch-equivalent
 deliveries use the recorded review attempt and a containment check against
-the candidate tree for each current attributed commit. This keeps board
-status and integration reconciliation correct after late attribution. A later
+the candidate tree for each attributed commit at verification time. The write
+records covered commit SHAs so status projection does not invoke git. A commit
+attributed only after verification remains pending until it receives explicit
+mapping evidence. A later
 review attempt cannot inherit that mapping; a branch rewrite that removes
 the candidate invalidates it. Idempotency comparison and append share the
 task write lock, so concurrent posts with different evidence cannot both
-report success or replace the first record. An audit repair pass at startup
+report success or replace the first record. An audit repair pass after startup
 fills a missing timeline event from each persisted receipt under the lane
-move mutex.
+move mutex using one task snapshot.
 
 Operators can attach an external suite result with
 `POST /api/projects/{project}/external-verifications`. The body supplies
@@ -66,6 +154,50 @@ publication fence or push fails remains a gate run, but contributes no merge
 minutes or reuse rate. Published batch members use the batch publication
 record. Batch gate waiting and acquisition callbacks emit lane events for
 each gated member, including the holding project when one is known.
+
+Each row also carries the delivery-target `baseline` of the
+[pipeline Dossier](../../pipeline-delivery-target/index.html) section 07
+(AGT-3309). These metrics only read evidence. They change no gate, review or
+board read. A missing input is null (Unknown), never zero.
+
+- **Lead time to develop** runs from the review pass of a card's last round
+  to its integrated push. The review pass is the `deliveredAtUtc` of the
+  latest `enqueued` or `agent-round-re-entry` lane event. The push is the
+  `published` event. Median and p90 are taken per publication in the window.
+- **Gate minutes per card** add T1 and T2 minutes spent since the card's
+  previous publication, without queue wait. T1 is the executed `verify-N`
+  verification commands of its Remote Review reports. T2 is the receipt
+  `durationMs` of its pre-develop gates, or its share of the published batch
+  run. Cache hits, exact review reuse and reused review results ran nothing.
+  A card is unknown when a report lacks a command budget or has no gate
+  evidence.
+- **Full-suite runs** count executed `testLevel=full` gate receipts, batch
+  gate runs, and completed T3 nightly suites, per window and per day.
+- **Red develop time** reads T3 red-to-green intervals from post-merge receipts;
+  it stays null until one such interval is observed.
+- **Gate source** reads transferred bytes from the `Source bundle N bytes
+  transferred in Xs` receipt suffix. New receipts use `Source ready Ys` for
+  checkout-ready time; old receipts retain transfer time as their proxy.
+
+### Host source object cache (M5, AGT-3319)
+
+The recorded D8 choice is A. Gate and Remote Review hosts keep bounded, evictable
+Git object caches outside attempt folders. The cache is a local copy only;
+the canonical repository or an immutable source bundle remains the source of
+truth. A warm exact SHA avoids source bundle transfer. The pull transport
+prepares a `gate-subject`-only bundle and transfers it on a miss; SSH creates
+its thin bundle against an ancestor tip only on a miss. Workers verify the complete object graph with
+`git fsck` before starting a gate. Reviews copy objects into an independent
+attempt checkout, so cache eviction cannot change an active review. A frozen
+gate plan can provide project `SourcePaths` for a cone sparse checkout; without
+an explicit safe path set the full tree is materialized. Per-run receipts log
+source bytes and checkout-ready seconds for the gate economics baseline.
+- **Board read** is a response-level list for the board, card list and board
+  status handlers. It covers all projects over the git telemetry window and
+  reads `GitProcessTelemetry`, the source of `/api/admin/git-telemetry`.
+
+The all-projects row is computed over the same folders as the visible project
+rows, so its counts equal the sum of those rows.
 
 ## Gate cancellation ownership
 
@@ -102,6 +234,17 @@ gate started, or a delivery published while it waited, records
 `gate-result-superseded` on the live card and cannot apply its failure step or
 move the card. With guarded delivery on, the acceptance worker leaves a
 completed card in place when an older gate failure arrives.
+The merge gate also checks completion and publication before settling a verdict
+and again inside its publication fence. It captures whether the delivery was
+already published before verification began; that existing publication cannot
+make this attempt's gate result stale, including when the local merge reports a
+fresh outcome for a patch-equivalent delivery. A publication that appears during
+verification supersedes the result.
+An unavailable initial publication fetch leaves the baseline unknown until a
+successful pre-gate check. Only confirmed absence can make later containment
+new publication. A stale verdict restores each advanced local integration ref
+unless origin contains that exact commit; an equivalent tree does not preserve
+an unpublished local merge.
 Local aspect review also checks the captured subject after its asynchronous
 verdict and grade work. A superseded review records `review-result-superseded`
 with the original aspect statuses and leaves the newer round alone.
@@ -1364,11 +1507,43 @@ comparison before Quality Studio's verdict contract can decide a review.
   uncovered source directory. The gate also runs the full suite and returns a
   red code verdict for a stale configured map. A missing map, an unmapped changed path, an
   unavailable mapped test project, or a change spanning mapped modules runs
-  the declared full suite. A newly added test file (`A` in the Git diff) runs
+  the declared full suite. A change spanning several mapped modules runs the
+  union of their mapped test commands (AGT-3310). A global input
+  (`Directory.Build.*`, `global.json`, `.agent-studio/**`, `testsupport/**`)
+  always runs the full suite. A newly added test file (`A` in the Git diff) runs
   with its whole mapped project. The gate audit records the diff, statuses,
   selected commands, fallback reasons, and SHA-256 `digest`; the verdict also
   carries `testSelectionAuditDigest` for the future gate subject.
   Model-based test selection is rejected by the Gates Dossier section 5.
+- `backend/Features/Pipeline/PerCardVerifyPlanner.cs`,
+  `GeneratedTestProjectMap.cs` and `FastCheckPlanner.cs`: tier T1 of the
+  [pipeline Dossier](../../pipeline-delivery-target/index.html) (decision D1,
+  option T-B; AGT-3310). The project setting `testing.perCard` is `full` by
+  default, which keeps the Remote Review plan byte-identical. With `affected`,
+  the plan builds `folderToTestProjects` at plan time from the `.csproj`
+  `ProjectReference` graph (every project directory maps to the test projects
+  whose transitive closure contains it, process-level references included) and
+  maps a Node package directory to the routine `testSuites` named after it
+  (`frontend/` to `frontend-unit`). The audit records the map's
+  `projectMapDigest`, and the digest joins the selection digest. A configured
+  `testExecution.folderToTestProjects` map takes the place of the generated
+  one. Inside a selected .NET test project the classes are narrowed by type
+  reference (`DotNetReferenceSelection`) when the change is the project's own
+  or in a directly referenced project; a change that reaches the project only
+  transitively keeps it whole. A project whose classes name none of the changed
+  types gets no per-card command. A diff that edits a `.csproj` makes the
+  generated map stale. A stale map, a global input, an unmapped path or a
+  missing diff keeps the full plan. Fast checks: the declared lint commands run
+  as before; a touched Node package adds its `typecheck` and `format:check`
+  scripts (through the package's declared `... run` invocation when there is
+  one); .NET code is type-checked by the build and has no declared format
+  check. A Remote Review with this per-card selection records `testLevel:
+  work-package` in `review-verification.json`, and the integration gate then
+  does not reuse it (`IntegrationGateReusePolicy`), so the integration gate
+  keeps its own test stage until the project switches to post-merge checks
+  (Dossier P7). Operators switch the setting with `PUT
+  /api/projects/{name}/testing` (`{"perCard":"affected"}`); the settings page
+  shows it read-only.
 - `backend/Features/Pipeline/PreMainTestGate.cs`: fail-closed release boundary
   that forces the full test level before a configured merge can advance
   `main`, irrespective of lane settings, diff input, or history.
@@ -2411,8 +2586,10 @@ broken. An operator had to requeue every one by hand.
   salvage commit SHA, the delivery already exists and only lacks its finishing
   round, so `RunTimeoutContinuationService` starts one automatic continuation
   round instead of escalating. The round appends the finishing instruction to
-  `prompt.md` (fetch the salvage, rebase, build, run the touched tests, write
-  `results/status.md`, deliver), saves the matching `steer` intent, pins a clean
+  `prompt.md` (continue from the salvage, merge the current integration branch,
+  build, run the touched tests, write `results/status.md`, deliver), saves the
+  salvage ref and SHA as the next claim's required worktree base, saves the
+  matching `steer` intent, pins a clean
   CLI context because a salvaged worktree leaves no resumable session, keeps the
   card's own model, returns the card to the front of `2-ready` under the
   completing attempt's authority write, and records
@@ -2649,7 +2826,7 @@ green delivery can replace an expired preview; the same SHA cannot recreate it.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
-`environments`, `lifecycles.standard`, `deploy`, and `variables`. Existing
+`environments`, `lifecycles.standard`, `deploy`, `tenants`, and `variables`. Existing
 `commands` and `testSuites` remain the execution source until the pipeline
 engine is extended.
 Each release hashes these sections at its commit into its process and
@@ -2662,7 +2839,7 @@ in
   registry `image` without tag or digest). Artifact paths are
   repository-relative. Their segments contain only letters, digits, `.`, `_`, and
   `-`; no segment is empty, `.`, or `..`, or starts with `-`. A lone `.` names
-  the repository root as a build context.
+  the repository root only for a container build context.
 - `environments` are ordered and exactly Staging, then Production. Production
   must be `protected`: every deploy, redeploy, or rollback into it needs an
   Owner or Maintainer approval. Staging deploys automatically after
@@ -2673,6 +2850,12 @@ in
   and the standard lifecycle.
 - `lifecycles.standard`: Staging is automatic after integration; Production
   requires successful Staging and approval by Owner or Maintainer.
+- `tenants` declare customer installations with a unique portable `name`,
+  optional unique `tags`, and a nonempty list of participating `environments`.
+  Every listed environment must be declared in the project. A tenant in
+  Production must also participate in Staging. Releases snapshot these
+  declarations; the [tenant deployment API contract](../../concepts/deployment-first-class.md#tenant-deployment-api-contract-agt-3261)
+  describes tenant selection and status responses.
 - `deploy` steps in P1 (AGT-3221) run from the release's committed schema 2
   snapshot. `static-site` describes
   copying a static artifact to a `directory` on an SSH `target`. `container`
@@ -2685,17 +2868,29 @@ in
   digits, `.`, `_`, and `-`, and no segment that is empty, `.`, or `..`, or
   starts with `-`. `composeFile` also ends in `.yml` or `.yaml`. `target` and
   `service` are lower-case identifiers; credentials never appear in the file.
+  A static bundle `path` must name a directory below the repository root,
+  and `dockerfile` must name a file there; only a container build context may
+  be `.`.
   When the pipeline-definition API reads, validates, or migrates a file, it
   checks each `target` against the project's effective environment hosts for
   every environment the step deploys to. Schema 2 steps supply those hosts
   when no legacy JSON declaration exists. A target missing from an existing
-  registration is reported as `deploy-target-unregistered`. Preparation reads
-  only the checkout and checks just the target's shape. The AGT-3198 steps `publish-static`,
+  registration is reported as `deploy-target-unregistered`. An unreadable
+  declaration set produces one `declarations-unreadable` issue instead of
+  target registration errors. Preparation reads only the checkout and checks
+  just the target's shape. The AGT-3198 steps `publish-static`,
   `start-container` (configuration placeholder), `run`, `health`, and
   `approval` stay valid for the pipeline diagram, but a release with these
   step kinds is refused until they have an executor.
 - `variables` hold either a plain `value` or a `secret` name for the secret
-  provider, optionally scoped to `environments`. A plain value is refused as
+  provider, optionally scoped to `environments`, `channels`, `tenants`, and `tenantTags`.
+  Values within one scope list match by OR; nonempty lists of different kinds
+  combine by AND. A matching definition with more scope kinds wins. At the
+  same number of kinds, explicit tenant scope outranks tenant tag, which
+  outranks environment and then channel; smaller lists within a kind win. Validation refuses
+  equally ranked definitions that overlap for a tenant and environment. A
+  deploy job receives resolved plain values and secret reference names from
+  the release snapshot. A plain value is refused as
   `secret-value-inline` in two cases. The first is a sensitive name: its last
   segment (split at `_` and camelCase) is in a curated list (`PASSWORD`,
   `PASSWD`, `PASS`, `PWD`, `PASSPHRASE`, `SECRET`, `TOKEN`, `KEY`, `APIKEY`,
@@ -2716,6 +2911,19 @@ The editor contract is
 variable keys, and its remote path, compose suffix, artifact path, identifier,
 and secret name patterns equal to `ProjectDeploymentVocabulary`.
 
+Release card attribution first matches archived integration-verification SHAs
+against the commits added since the previous release. A retained card key in
+an added commit message also matches after a rebase or squash. When the
+rewrite keeps neither, an added commit whose tree equals an integration-branch
+commit carries the verified cards behind that commit. Neither fallback repeats
+a card already included in an earlier release. The release
+stores that card-key delta immutably. Environment card badges project that
+delta through successful deployments and mark cards withdrawn by rollback.
+Release notes use the included cards' titles captured at release creation;
+a failed Production deployment
+creates an idempotent backlog bug card naming the release, deployment and
+included card keys.
+
 `/api/projects/{projectName}/pipeline-definition` serves the parsed diagram
 (gate, artifacts, environments with their steps and variables) with the issues.
 `POST .../validate` validates edited text without writing. For a valid schema 1
@@ -2724,12 +2932,14 @@ text stays as it is apart from the `schemaVersion` line, the new sections are
 appended with the file's own line ending, Staging and Production deploy steps
 come from the AGT-3176 declarations under `docs/deployments/environments/`, and
 every default the proposal had to choose is listed as a note.
+Static destinations outside `/srv/` stay quoted in the proposal and receive
+an explicit note that they must be changed before confirmation.
 The migration proposal is the one-time conversion of legacy declarations into
 schema 2. After migration, existing JSON declarations are checked for
 divergence; a project may run from schema 2 without JSON. project.yml owns
 hosts, protection, lifecycle, variables and
 SSH steps. Release creation compares the committed JSON declaration's host,
-template, health URL, static directory and secret names with project.yml and
+template, health URL, static directory and unscoped secret names with project.yml and
 refuses divergence. The effective schema 2 definition is stored in the release
 snapshot and copied to each host job. The host checks SSH host keys strictly,
 copies static bundles to a version directory before switching `current`, or
@@ -2766,6 +2976,10 @@ environments:
   - name: staging
   - name: production
     protected: true
+tenants:
+  - name: acme
+    tags: [premium]
+    environments: [staging, production]
 deploy:
   - step: static-site
     artifact: site
@@ -2788,6 +3002,7 @@ variables:
   - name: DATABASE_URL
     secret: DATABASE_URL
     environments: [production]
+    tenantTags: [premium]
 ```
 
 A static deploy example uses a branch pulled by the web target:
@@ -2817,6 +3032,8 @@ To import legacy `docs/deployments/**/deployment.json` descriptors once, run
 from the Studio checkout. The command converts executable legacy commands to
 Production `run` steps and Caddy site templates to `publish-static` steps, validates the result, and writes `project.yml` while
 preserving its line endings. Legacy descriptors remain in place for review.
+The imported static artifact uses `dist` as a safe placeholder; set it to the
+actual bundle directory before enabling a static publish.
 When a deployment section already exists, the import is a no-op. Unsupported descriptors
 yield a clear error and leave the repository unchanged.
 Review the generated process before committing it; imported commands retain

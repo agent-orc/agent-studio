@@ -210,12 +210,18 @@ public sealed class TaskCoreEndpointTests : IDisposable
         var source = registry.FindByStorageLocation(Jobs)!;
         var target = registry.EnsureProjectForStorage(destination,
             "Destination Project", DefaultWorkspace.Id);
+        var occupiedKey = target.ShortCode + "-1";
+        var occupied = Path.Combine(destination, TaskStates.Ready, occupiedKey);
+        Directory.CreateDirectory(occupied);
+        File.WriteAllText(Path.Combine(occupied, "task.json"),
+            JsonSerializer.Serialize(new { id = occupiedKey, title = "Legacy key collision",
+                state = TaskStates.Ready, order = 1 }));
         await WarmIndexAsync(factory, "AGT-transfer");
 
         using (var move = await client.PostAsJsonAsync(
             $"/api/tasks/AGT-transfer/change-project?project={source.Id}",
             new { targetProject = target.Id }))
-            move.EnsureSuccessStatusCode();
+            Assert.True(move.IsSuccessStatusCode, await move.Content.ReadAsStringAsync());
         using (var old = await client.GetAsync($"/api/tasks/AGT-transfer?project={source.Id}"))
             Assert.Equal(HttpStatusCode.NotFound, old.StatusCode);
         using (var oldCore = await client.GetAsync($"/api/tasks/AGT-transfer/core?project={source.Id}"))
@@ -228,6 +234,8 @@ public sealed class TaskCoreEndpointTests : IDisposable
             using var body = JsonDocument.Parse(await moved.Content.ReadAsStringAsync());
             Assert.Equal(destination, body.RootElement.GetProperty("info")
                 .GetProperty("watchPath").GetString());
+            Assert.Equal(target.ShortCode + "-2", body.RootElement.GetProperty("info")
+                .GetProperty("key").GetString());
         }
     }
 
@@ -814,6 +822,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TaskRepository"] = Path.Combine(_root, "workspace"),
+                ["ErrorHandling:IncludeExceptionDetails"] = "true",
                 ["WatchPaths:0:Name"] = "Core Project",
                 ["WatchPaths:0:Path"] = Jobs,
                 ["WatchPaths:0:RootPath"] = _root,
@@ -859,6 +868,6 @@ public sealed class TaskCoreEndpointTests : IDisposable
     public void Dispose()
     {
         try { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
-        catch (IOException) { /* Watcher disposal may complete after the test. */ }
+        catch (IOException ex) { SilentCatch.Note(ex, "Watcher disposal may complete after the test."); }
     }
 }

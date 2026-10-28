@@ -45,6 +45,7 @@ public sealed class SecretEndpointTests : IDisposable
     [
         "GET /api/secrets",
         "GET /api/secrets/audit",
+        "PUT /api/secrets/backends",
         .. ScopeRoutes("/api/secrets/workspace"),
         .. ScopeRoutes("/api/projects/{project}/secrets"),
         .. ScopeRoutes("/api/projects/{project}/environments/{environment}/secrets"),
@@ -101,6 +102,10 @@ public sealed class SecretEndpointTests : IDisposable
         }
         await Expect(HttpStatusCode.OK, "GET", "/api/secrets", "/api/secrets");
         await Expect(HttpStatusCode.OK, "GET", "/api/secrets/audit", "/api/secrets/audit");
+        await Expect(HttpStatusCode.OK, "PUT", "/api/secrets/backends", "/api/secrets/backends",
+            new { scope = "workspace", kind = "builtin", url = "", mount = (string?)null,
+                vaultId = (string?)null, credentialReference = (string?)null,
+                credentialEnvironmentVariable = (string?)null, ttlSeconds = 30 });
 
         var resolve = await Send(client, "POST", SecretEndpoints.ResolvePath, Resolve($"secret://{Project}/MAIL_KEY"), owner);
         Assert.Equal(HttpStatusCode.Unauthorized, resolve.Status);
@@ -229,17 +234,29 @@ public sealed class SecretEndpointTests : IDisposable
             new { name = "DATABASE_URL", value = NewValue() }, operatorSession)).Status);
         var workspaceWrite = await Send(client, "POST", "/api/secrets/workspace", new { name = "OWN", value = NewValue() }, operatorSession);
         Assert.Equal(HttpStatusCode.Forbidden, workspaceWrite.Status);
+        var backendWrite = await Send(client, "PUT", "/api/secrets/backends", new
+        {
+            scope = Project, kind = "vault", url = "https://vault.example.test", mount = "secret", vaultId = (string?)null,
+            credentialReference = "secret://workspace/VAULT_TOKEN", credentialEnvironmentVariable = (string?)null, ttlSeconds = 30
+        }, operatorSession);
+        Assert.Equal(HttpStatusCode.Forbidden, backendWrite.Status);
         Assert.Contains("project-scope-denied", workspaceWrite.Body, StringComparison.Ordinal);
 
         var overview = await Send(client, "GET", "/api/secrets", null, operatorSession);
-        Assert.Contains("SHARED", overview.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("SHARED", overview.Body, StringComparison.Ordinal);
         Assert.Contains("DATABASE_URL", overview.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("FOREIGN", overview.Body, StringComparison.Ordinal);
         Assert.Contains("\"canWriteWorkspace\":false", overview.Body, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await Send(client, "GET", "/api/secrets/workspace", null, operatorSession)).Status);
         Assert.Equal(HttpStatusCode.Forbidden, (await Send(client, "GET", "/api/secrets/audit?scope=other", null, operatorSession)).Status);
-        Assert.DoesNotContain("secret://other/", (await Send(client, "GET", "/api/secrets/audit", null, operatorSession)).Body, StringComparison.Ordinal);
+        var visibleAudit = (await Send(client, "GET", "/api/secrets/audit", null, operatorSession)).Body;
+        Assert.DoesNotContain("secret://other/", visibleAudit, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret://workspace/SHARED", visibleAudit, StringComparison.Ordinal);
 
-        // Refused by the access middleware (foreign project) and by the scope rights check (workspace): both audited.
+        // Both writes are refused by the access middleware, which audits them:
+        // the workspace scope needs a workspace binding (AGT-3228), and the
+        // middleware does not read the body, so a refused put names its scope only.
         using var audit = JsonDocument.Parse((await Send(client, "GET", "/api/secrets/audit", null, owner)).Body);
         var refused = audit.RootElement.GetProperty("entries").EnumerateArray()
             .Where(entry => entry.GetProperty("actor").GetString() == "human:team.operator"
@@ -248,7 +265,7 @@ public sealed class SecretEndpointTests : IDisposable
             .ToList();
         Assert.Equal(
         [
-            ("put", "secret://workspace/OWN", "denied:project-scope-denied"),
+            ("put", "secret://workspace/", "denied:project-scope-denied"),
             ("put", "secret://other/", "denied:project-scope-denied"),
         ], refused);
     }
@@ -430,6 +447,7 @@ public sealed class SecretEndpointTests : IDisposable
         {
             request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session.Token}");
             request.Headers.Add("X-CSRF-Token", session.Csrf);
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
         }
         if (bearer is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
         using var response = await client.SendAsync(request);

@@ -37,6 +37,15 @@ public record ProjectSettings
     /// </summary>
     public Dictionary<string, string>? PublishAutomation { get; init; }
 
+    /// <summary>
+    /// IP-1: operator-owned domain suffixes the project's edge-hosted
+    /// environments may claim on a run target. <c>example.com</c> covers
+    /// <c>example.com</c> and <c>shop.example.com</c>. Kept in Studio settings,
+    /// never in the repository, so a declaration cannot widen it. Null or empty
+    /// allows no domain.
+    /// </summary>
+    public IReadOnlyList<string>? RunTargetDomainSuffixes { get; init; }
+
     /// <summary>When true, transition <c>3-progress → 4-auto-review</c> auto-commits and stamps the SHA on the job.</summary>
     public bool AutoCommit { get; init; } = true;
 
@@ -325,6 +334,12 @@ public record ProjectSettings
     /// the lane policy with <c>full</c>.
     /// </summary>
     public TestExecutionPolicy? TestExecution { get; init; }
+
+    /// <summary>
+    /// Per-card test placement (<c>testing.perCard</c>, AGT-3310). Null keeps
+    /// <see cref="PerCardTestModes.Full"/>, so the Remote Review plan stays as it was.
+    /// </summary>
+    public ProjectTestingSettings? Testing { get; init; }
 
     /// <summary>
     /// Per-CLI permission / sandbox mode override. Map of <see cref="CliTypes"/>
@@ -1146,6 +1161,53 @@ public sealed record TestExecutionPolicy
     /// <summary>Roots whose immediate source folders must all have a mapping entry.</summary>
     public IReadOnlyList<string>? MappedSourceRoots { get; init; }
     public string? TestHubHistoryPath { get; init; }
+}
+
+/// <summary>Project-level test placement settings (pipeline Dossier AGT-3276, decision D1).</summary>
+public sealed record ProjectTestingSettings
+{
+    /// <summary><c>affected</c> or <c>full</c> (default); see <see cref="PerCardTestModes"/>.</summary>
+    public string? PerCard { get; init; }
+    /// <summary>Integration verification placement; absent means pre-merge.</summary>
+    public string? Mode { get; init; }
+}
+
+public static class IntegrationTestModes
+{
+    public const string PreMerge = "pre-merge";
+    public const string PostMerge = "post-merge";
+
+    public static bool IsKnown(string? value)
+        => value is not null && (string.Equals(value.Trim(), PreMerge, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value.Trim(), PostMerge, StringComparison.OrdinalIgnoreCase));
+
+    public static string Normalize(string? value)
+        => string.Equals(value?.Trim(), PostMerge, StringComparison.OrdinalIgnoreCase)
+            ? PostMerge : PreMerge;
+
+    public static string Resolve(ProjectSettings? settings)
+        => Normalize(settings?.Testing?.Mode);
+}
+
+/// <summary>
+/// What the Remote Review runs per card. <see cref="Full"/> keeps the declared
+/// test commands. <see cref="Affected"/> runs the build, the fast checks of the
+/// touched areas, and the tests the generated project map selects (tier T1).
+/// </summary>
+public static class PerCardTestModes
+{
+    public const string Affected = "affected";
+    public const string Full = "full";
+
+    /// <summary>The stored value; anything but <see cref="Affected"/> is <see cref="Full"/>.</summary>
+    public static string Normalize(string? value)
+        => string.Equals(value?.Trim(), Affected, StringComparison.OrdinalIgnoreCase) ? Affected : Full;
+
+    public static string Resolve(ProjectSettings? settings) => Normalize(settings?.Testing?.PerCard);
+
+    public static bool IsKnown(string? value)
+        => string.Equals(value?.Trim(), Affected, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value?.Trim(), Full, StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed record TestFolderMapping

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
 using AgentStudio.Diagnostics;
 using AgentStudio.Security;
@@ -292,6 +293,9 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         var registry = factory.Services.GetRequiredService<ProjectRegistry>();
         var urlId = Assert.Single(registry.FindById(project)!.Urls).Id;
         var auditCount = registry.RepositoryAudit().Count;
+        var registryGate = typeof(ProjectRegistry).GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(registryGate);
+        stopper.RegistryLockHeld = () => Monitor.IsEntered(registryGate.GetValue(registry)!);
 
         using var rejected = await Send(HttpMethod.Delete, path + "/" + urlId, null, oper);
         Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
@@ -301,6 +305,7 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode);
         Assert.Contains("Could not stop the process", await failed.Content.ReadAsStringAsync());
         Assert.Equal(1, stopper.Calls);
+        Assert.False(stopper.WasRegistryLockHeldAtStop);
         Assert.Single(registry.FindById(project)!.Urls);
         Assert.Equal(auditCount, registry.RepositoryAudit().Count);
 
@@ -549,10 +554,13 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
     {
         public string State { get; set; } = ProjectUrlProcessStates.Failed;
         public int Calls { get; private set; }
+        public Func<bool>? RegistryLockHeld { get; set; }
+        public bool? WasRegistryLockHeldAtStop { get; private set; }
 
         public ProjectUrlProcessSnapshot Stop(string projectId, string urlId)
         {
             Calls++;
+            WasRegistryLockHeldAtStop = RegistryLockHeld?.Invoke();
             return new ProjectUrlProcessSnapshot(projectId, urlId, "preview", "/tmp", State,
                 1234, clock.GetUtcNow(), null, null, []);
         }

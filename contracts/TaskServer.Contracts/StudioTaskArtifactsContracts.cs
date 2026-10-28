@@ -30,12 +30,15 @@ public sealed record TaskFileDto(
     string MediaType,
     long Version,
     long SizeBytes,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    string? Sha256 = null);
 
 public sealed record TaskFileRevisionDto(
     long Version,
     DateTime UpdatedAt,
-    string? ActorId);
+    string? ActorId,
+    string? Sha256 = null,
+    long? SizeBytes = null);
 
 public sealed record TaskFileHistoryResponse(
     string TaskId,

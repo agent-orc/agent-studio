@@ -65,8 +65,6 @@ public sealed class RemoteReviewDaemon
             idleWatchdog.AbortToken);
         shutdown = daemonStop.Token;
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
-        var deviceLoginPoll = new RunnerDeviceLoginAgent(_options, _client, _log)
-            .PollAsync(auxiliaryStop.Token);
         var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log)
             .PollAsync(auxiliaryStop.Token);
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
@@ -99,6 +97,26 @@ public sealed class RemoteReviewDaemon
         HostTelemetrySample? latestTelemetry = null;
         var nextSlotHygieneLog = DateTime.MinValue;
         var nextSlotReconciliation = DateTime.MinValue;
+
+        void StartModelAcceptanceProbe()
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await RunnerModelAcceptanceProbe.Shared.RefreshAsync(
+                        RunnerCapabilityProbe.ModelCandidates(_options), shutdown);
+                }
+                catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+                {
+                    _log("model acceptance probe stopped with the review daemon");
+                }
+                catch (Exception exception)
+                {
+                    _log($"model acceptance probe failed: {exception.Message}");
+                }
+            }, shutdown);
+        }
 
         // AGT-2820: the workspaces this daemon still owns, in the shape the
         // orphan sweep compares against. A durable worker survives a daemon
@@ -229,7 +247,7 @@ public sealed class RemoteReviewDaemon
 
         async Task HonorControlBeforeClaimsAsync(CancellationToken ct)
         {
-            var request = ReviewDrainGuard.ReadDrainRequest(_options.StateDir);
+            var request = _options.HostAdapter ? null : ReviewDrainGuard.ReadDrainRequest(_options.StateDir);
             if (request is null)
             {
                 if (startupControlRequestId is not null)
@@ -405,6 +423,7 @@ public sealed class RemoteReviewDaemon
 
             var capabilityGeneration = DateTime.UtcNow.Ticks;
             await AdvertiseCapabilitiesWithControlAsync(capabilityGeneration, shutdown);
+            StartModelAcceptanceProbe();
 
             var nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
             var admissionClosed = false;
@@ -442,7 +461,24 @@ public sealed class RemoteReviewDaemon
                 // A drain stops claiming immediately and lets the running reviews
                 // finish. Exiting on an empty slot set deliberately stops the role;
                 // only a later guarded replacement clears the marker and claims.
-                var controlRequest = ReviewDrainGuard.ReadDrainRequest(_options.StateDir);
+                var controlRequest = _options.HostAdapter ? null : ReviewDrainGuard.ReadDrainRequest(_options.StateDir);
+                var hostDrain = _options.HostAdapter
+                    ? HostRoleDrainControl.ReadRequest(_options.StateDir, "review") : null;
+                if (hostDrain is not null)
+                {
+                    var persisted = ReviewDrainGuard.Inspect(_options.StateDir);
+                    var occupied = Math.Max(active.Count, persisted.Busy + persisted.Unreadable);
+                    HostRoleDrainControl.Acknowledge(_options.StateDir, "review", hostDrain, occupied);
+                    idleWatchdog.RecordPollStarted();
+                    if (occupied == 0)
+                    {
+                        drainedToStop = true;
+                        _log("review host adapter drained: no persisted attempts remain");
+                        break;
+                    }
+                    await DelayThroughShutdown(TimeSpan.FromSeconds(_options.PollSeconds), shutdown);
+                    continue;
+                }
                 if (controlRequest is not null)
                 {
                     // This acknowledgement is the admission barrier for the
@@ -539,12 +575,13 @@ public sealed class RemoteReviewDaemon
                         await RunnerCapabilityProbe.RefreshDueCanariesAsync(_options, _client, _log, shutdown);
                         var generation = ++capabilityGeneration;
                         await AdvertiseCapabilitiesWithControlAsync(generation, shutdown);
+                        StartModelAcceptanceProbe();
                         observedServer = true;
                         nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
                         // The concurrent control observer may have acknowledged a
                         // barrier just before advertisement won the race. Yield to
                         // the loop's control branch before any claim in that case.
-                        if (ReviewDrainGuard.ReadDrainRequest(_options.StateDir) is not null)
+                        if (!_options.HostAdapter && ReviewDrainGuard.ReadDrainRequest(_options.StateDir) is not null)
                             continue;
                     }
 
@@ -748,7 +785,6 @@ public sealed class RemoteReviewDaemon
 
         state.Flush();
         auxiliaryStop.Cancel();
-        await deviceLoginPoll;
         await gitSetupPoll;
         await repositoryProbePoll;
         if (active.Count > 0)

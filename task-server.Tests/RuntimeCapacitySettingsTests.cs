@@ -1,5 +1,6 @@
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -103,6 +104,70 @@ public sealed class RuntimeCapacitySettingsTests
             new UpdateRuntimeCapacitySettingsRequest(8, 80, "balanced", current.Version),
             "operator",
             default));
+    }
+
+    [Fact]
+    public async Task Upgraded_host_preserves_its_capacity_version_for_allocation_acknowledgment()
+    {
+        using var temp = new TempDirectory();
+        var original = Store(temp.Path);
+        await original.InitializeAsync();
+        var service = new RuntimeCapacitySettingsService(original);
+        var first = await service.UpdateAsync("host-a",
+            new UpdateRuntimeCapacitySettingsRequest(4, 80, "balanced", 0), "operator");
+        var second = await service.UpdateAsync("host-a",
+            new UpdateRuntimeCapacitySettingsRequest(5, 80, "balanced", first.Version), "operator");
+        var latest = await service.UpdateAsync("host-a",
+            new UpdateRuntimeCapacitySettingsRequest(6, 80, "balanced", second.Version), "operator");
+
+        await using (var connection = new SqliteConnection(
+                         $"Data Source={original.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                ALTER TABLE runtime_capacity_settings DROP COLUMN allocation_version;
+                CREATE TABLE epics(id TEXT PRIMARY KEY);
+                CREATE TABLE epic_tasks(epic_id TEXT, task_id TEXT);
+                ALTER TABLE task_studio_fields ADD COLUMN epic_id TEXT;
+                UPDATE meta SET value = '36' WHERE key = 'schema_version';
+                DELETE FROM schema_migrations WHERE version = 37;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var upgraded = Store(temp.Path);
+        await upgraded.InitializeAsync();
+        var capacity = (await upgraded.GetRuntimeCapacitySettingsAsync("host-a", default))!;
+        Assert.Equal(latest.Version, capacity.Version);
+        Assert.Equal(latest.Version, capacity.AllocationVersion);
+        await using (var connection = new SqliteConnection(
+                         $"Data Source={upgraded.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('epics','epic_tasks'))
+                     + (SELECT COUNT(*) FROM pragma_table_info('task_studio_fields') WHERE name='epic_id');
+                """;
+            Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+            command.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
+            Assert.Equal(TaskServerStore.CurrentSchemaVersion.ToString(),
+                (string)(await command.ExecuteScalarAsync())!);
+        }
+
+        await upgraded.RegisterRunnerAsync("runner-a", Runner("runner-a:1", bootstrap: 2),
+            "test", default);
+        await upgraded.ClaimAsync(new ClaimRequest("runner-a", "runner-a:1",
+            AvailableSlots: 0, EffectiveMaxParallelism: 6,
+            RuntimeCapacityAppliedVersion: latest.Version), "runner-a", default);
+        var snapshot = Assert.Single(await upgraded.ListRunnerCapabilitySnapshotsAsync(default));
+        Assert.Equal(latest.Version, snapshot.RuntimeCapacityAppliedVersion);
+        Assert.NotNull(snapshot.RuntimeCapacityAppliedAt);
+
+        await upgraded.InitializeAsync();
+        Assert.Equal(latest.Version,
+            (await upgraded.GetRuntimeCapacitySettingsAsync("host-a", default))!.AllocationVersion);
     }
 
     [Fact]

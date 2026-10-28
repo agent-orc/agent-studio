@@ -50,12 +50,18 @@ builder.Services
             options.RetentionArchivePath = configuration["ARCHIVE_PATH"];
     });
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddHttpClient(nameof(HttpWorkspaceQuotaAdmission), client =>
+    client.Timeout = TimeSpan.FromSeconds(3));
+// Without a meter URL quota admission is off: no admission object, no per-claim event, one startup log line.
+if (!string.IsNullOrWhiteSpace(builder.Configuration["TaskServer:QuotaAdmissionBaseUrl"]))
+    builder.Services.AddSingleton<IWorkspaceQuotaAdmission, HttpWorkspaceQuotaAdmission>();
 builder.Services.AddSignalR();
+// The contributor lane check reads the same single property the binder binds.
+builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.AllowDuplicateProperties = false);
 builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationResultFinalizationSummaryGenerator>();
 builder.Services.AddSingleton<TaskServerStore>();
 builder.Services.AddSingleton<DeviceLoginSessions>();
 builder.Services.AddHostedService<DeviceLoginAuditSweep>();
-builder.Services.AddSingleton<RunnerDeviceLoginStore>();
 builder.Services.AddSingleton<RunnerGitSetupStore>();
 builder.Services.AddSingleton<RuntimeCapacitySettingsService>();
 builder.Services.AddSingleton<HostProjectPolicyService>();
@@ -73,6 +79,9 @@ builder.Services.AddHostedService<TaskServerInvariantReconciliationService>();
 builder.Services.AddHostedService<ResultRefGcHostedService>();
 builder.Services.AddHostedService<RetentionSchedulerHostedService>();
 builder.Services.AddHostedService<CredentialReminderHostedService>();
+builder.Services.AddSingleton<WorkspaceExportService>();
+builder.Services.AddSingleton<WorkspaceExportStatus>();
+builder.Services.AddHostedService<WorkspaceExportHostedService>();
 
 var configuredUrl = builder.Configuration["LISTEN_URL"]
                     ?? builder.Configuration[$"{TaskServerOptions.SectionName}:ListenUrl"];
@@ -143,6 +152,29 @@ if (command.Kind == TaskServerCommandKind.Import)
     }
 }
 
+if (command.Kind == TaskServerCommandKind.Export)
+{
+    try
+    {
+        // Read-only on the store: no lease quarantine, so it may run beside a live server.
+        await store.InitializeForBackupAsync();
+        var target = Path.GetFullPath(command.ExportTarget!);
+        var exported = await app.Services.GetRequiredService<WorkspaceExportService>().ExportAsync(target, default);
+        WorkspaceExportCommit? committed = null;
+        if (command.ExportCommit && WorkspaceExportGit.IsRepository(target))
+            committed = await new WorkspaceExportGit(
+                    app.Services.GetRequiredService<IOptions<TaskServerOptions>>().Value.GitCommand)
+                .CommitAsync(target, exported, default);
+        Console.WriteLine(JsonSerializer.Serialize(new { export = exported, commit = committed }, commandJson));
+        return committed?.Error is null ? 0 : 1;
+    }
+    catch (Exception exception)
+    {
+        Console.Error.WriteLine($"Task Server export failed: {exception.Message}");
+        return 1;
+    }
+}
+
 if (command.Kind == TaskServerCommandKind.Backup)
 {
     try
@@ -193,6 +225,12 @@ if (command.Kind == TaskServerCommandKind.Recovery)
         command.Recovery!, store, app.Services.GetRequiredService<IOptions<TaskServerOptions>>().Value, default);
 
 await store.InitializeAsync(app.Lifetime.ApplicationStopping);
+if (store.QuotaAdmissionState == WorkspaceQuotaAdmissionStates.Off)
+    app.Logger.LogWarning(
+        "quota-admission off: TaskServer:QuotaAdmissionBaseUrl is not configured; coding, review and gate claims are not metered.");
+else
+    // Warm the verdict cache in the background so the first claims after a start find verdicts.
+    await store.StartWorkspaceQuotaRefreshesAsync("task-server", app.Lifetime.ApplicationStopping);
 var bootstrap = app.Services.GetRequiredService<TaskServerBootstrapOptions>();
 if (bootstrap.RequiresAuthentication)
 {
@@ -249,6 +287,10 @@ app.UseMiddleware<StudioContributorMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.UseMiddleware<ArtifactRequestLimitMiddleware>();
 app.MapTaskServerEndpoints();
+app.MapSourceFactsEndpoints();
+app.MapReleaseSuiteVerdictEndpoints();
+app.MapBoardReadModelEndpoints();
+app.MapTaskArtifactsEndpoints();
 app.MapOperationPermitEndpoints();
 app.MapCredentialRunbookEndpoints();
 app.MapStudioEndpoints();
@@ -273,7 +315,6 @@ app.MapStudioP2Endpoints();
 // reads a table a P0-P2 bundle already owns.
 app.MapStudioP3AdministrationEndpoints();
 app.MapIdentityBootstrapEndpoints();
-app.MapRunnerDeviceLoginEndpoints();
 app.MapRunnerGitSetupEndpoints();
 app.MapHostJoinTokenEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
@@ -297,9 +338,11 @@ static async Task BootstrapPrincipalAsync(
         configuredCredential,
         runnerId,
         cancellationToken);
-    if (issued is not null)
+    if (issued is not null && configuredCredential is null)
         Console.WriteLine(
             $"INITIAL {kind.ToUpperInvariant()} CREDENTIAL (shown once): {issued.Credential}");
+    else if (issued is not null)
+        Console.WriteLine($"Initial {kind} principal created with the configured credential file.");
 }
 
 await app.RunAsync();

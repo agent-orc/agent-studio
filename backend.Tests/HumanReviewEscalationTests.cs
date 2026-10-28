@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using AgentStudio.Pipeline;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -234,6 +236,46 @@ public sealed class HumanReviewEscalationTests : IDisposable
     }
 
     [Fact]
+    public async Task PostMergeRepairEscalationFallsBackWhileCardIsEscalated()
+    {
+        const string jobId = "post-merge-repair";
+        WriteJob(TaskStates.Progress, jobId,
+            HumanReviewEscalationCategories.PostMergeRepairCreationSource);
+        var projects = new ProjectRegistry(_config, NullLogger<ProjectRegistry>.Instance);
+        var clock = new FakeTimeProvider();
+        var project = projects.EnsureProjectForStorage(_watchPath, ProjectName, DefaultWorkspace.Id, clock);
+        var runs = new PostMergeRunStore(Path.Combine(_workspaceRoot, "post-merge-state"));
+        var mode = new PostMergeModeService(projects, runs, _scanner, clock);
+        var settings = new ProjectSettings
+        {
+            Testing = new ProjectTestingSettings { Mode = IntegrationTestModes.PostMerge },
+        };
+        Assert.Equal(IntegrationTestModes.PostMerge, mode.Resolve(ProjectName, settings));
+
+        var funnel = new HumanReviewEscalation(_states, _transitions, _workspaceRoot,
+            NullLogger<HumanReviewEscalation>.Instance, _scanner, postMergeRuns: runs,
+            projects: projects);
+        const string ordinaryId = "ordinary-blocked-card";
+        WriteJob(TaskStates.Progress, ordinaryId);
+        var ordinary = await funnel.EscalateAsync(ordinaryId, _watchPath, ProjectName,
+            HumanReviewEscalationCategories.AgentBlocked, "ordinary blocker");
+        Assert.Equal(MoveJobStatus.Success, ordinary.Status);
+        Assert.Null(runs.Read(project.Id).AttributionEscalatedTaskId);
+
+        var outcome = await funnel.EscalateAsync(jobId, _watchPath, ProjectName,
+            HumanReviewEscalationCategories.AgentBlocked, "repair needs operator help");
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        Assert.Equal(jobId, runs.Read(project.Id).AttributionEscalatedTaskId);
+        Assert.Equal(IntegrationTestModes.PreMerge, mode.Resolve(ProjectName, settings));
+        Assert.Equal(IntegrationTestModes.PreMerge, mode.Resolve(ProjectName,
+            new ProjectSettings
+            {
+                Testing = new ProjectTestingSettings { Mode = IntegrationTestModes.PreMerge },
+            }));
+    }
+
+    [Fact]
     public void RecordVerdictAndStatus_ReplacesPendingPlaceholderWithEscalationReason()
     {
         const string jobId = "pending-before-run";
@@ -276,13 +318,14 @@ public sealed class HumanReviewEscalationTests : IDisposable
         Assert.Contains(reason, status);
     }
 
-    private void WriteJob(string state, string slug)
+    private void WriteJob(string state, string slug, string? creationSource = null)
     {
         var dir = Path.Combine(_watchPath, state, slug);
         Directory.CreateDirectory(dir);
         File.WriteAllText(
             Path.Combine(dir, "task.json"),
             $"{{\"id\":\"{slug}\",\"title\":\"{slug}\",\"state\":\"{state}\"," +
-            "\"agent\":\"claude\",\"cliType\":\"claude\",\"ownerClientId\":\"local-default\"}");
+            "\"agent\":\"claude\",\"cliType\":\"claude\",\"ownerClientId\":\"local-default\"" +
+            (creationSource is null ? "" : $",\"creationSource\":\"{creationSource}\"") + "}");
     }
 }

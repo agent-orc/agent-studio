@@ -52,10 +52,13 @@ public static class AiOperatorDeciders
     public const string IntakeRouting = "intake-routing";
     public const string AcceptanceRail = "acceptance-rail";
 
+    /// <summary>AGT-3207: interventions on operational stall events of hosts, containers, gates and queues.</summary>
+    public const string StallIntervention = "stall-intervention";
+
     public static readonly IReadOnlyList<string> All =
     [
         RunLiveness, StaleProgress, SteerTimeout, TimeoutSalvage, GateEnvironmentRetry,
-        DeliveryChain, CauseBreaker, IntakeRouting, AcceptanceRail,
+        DeliveryChain, CauseBreaker, IntakeRouting, AcceptanceRail, StallIntervention,
     ];
 }
 
@@ -104,7 +107,8 @@ public sealed record AiOperatorDecisionPayload(
     DeliveryChainOperatorFacts? DeliveryChain = null,
     CauseBreakerOperatorFacts? CauseBreaker = null,
     IntakeOperatorFacts? IntakeRouting = null,
-    AcceptanceRailOperatorFacts? AcceptanceRail = null);
+    AcceptanceRailOperatorFacts? AcceptanceRail = null,
+    StallInterventionFacts? StallIntervention = null);
 
 /// <summary>The receipt-bearing answer of one AI Operator occurrence.</summary>
 public sealed record AiOperatorDecision(
@@ -115,7 +119,8 @@ public sealed record AiOperatorDecision(
     string Effect,
     string ReasonCode,
     string Detail,
-    string? AnswerText = null)
+    string? AnswerText = null,
+    StallInterventionPlan? Intervention = null)
 {
     /// <summary>The action recorded on the occurrence receipt.</summary>
     public string ReceiptAction => $"{Disposition}:{Effect}";
@@ -152,6 +157,8 @@ public static class AiOperatorDecisionPolicy
                 Required(payload.IntakeRouting, payload.Decider)),
             AiOperatorDeciders.AcceptanceRail => AcceptanceRail(payload,
                 Required(payload.AcceptanceRail, payload.Decider)),
+            AiOperatorDeciders.StallIntervention => StallIntervention(payload,
+                Required(payload.StallIntervention, payload.Decider)),
             _ => throw new ArgumentOutOfRangeException(nameof(payload), payload.Decider,
                 "Unknown AI Operator decider."),
         };
@@ -288,6 +295,26 @@ public static class AiOperatorDecisionPolicy
                 => Effect(payload, AutonomyClass.A0, AiOperatorEffects.RecordHeldBounce, verdict.Reason, detail),
             _ => Hold(payload, verdict.Reason, detail),
         };
+    }
+
+    /// <summary>
+    /// AGT-3207: A0 and A1 interventions act, A2 interventions become
+    /// proposals, an escalation asks a person. The plan never names an A3 action.
+    /// </summary>
+    private static AiOperatorDecision StallIntervention(AiOperatorDecisionPayload payload,
+        StallInterventionFacts facts)
+    {
+        var plan = StallInterventionPolicy.Decide(facts);
+        var disposition = plan.Action switch
+        {
+            StallInterventionActions.None => AiOperatorDisposition.Hold,
+            StallInterventionActions.Escalate => AiOperatorDisposition.Ask,
+            _ => Limit(plan.Autonomy),
+        };
+        return new AiOperatorDecision(payload.Decider, payload.SubjectKey, disposition,
+            disposition == AiOperatorDisposition.Hold ? AutonomyClass.A0 : plan.Autonomy,
+            plan.Action == StallInterventionActions.None ? AiOperatorEffects.None : plan.Action,
+            plan.ReasonCode, plan.Receipt, Intervention: plan);
     }
 
     private static AiOperatorDecision Effect(AiOperatorDecisionPayload payload, AutonomyClass autonomy,

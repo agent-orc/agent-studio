@@ -24,6 +24,7 @@
                 <button type="button" class="releases__row" [attr.aria-current]="selected()?.id === release.id ? 'true' : null"
                         [attr.data-testid]="'deploy-release-' + release.id" (click)="select(release.id)">
                   <strong>{{ release.version }}</strong>
+                  <span>{{ release.channel }}</span>
                   <span class="releases__numeric">{{ age(release.createdAtUtc) }}</span>
                   <span class="releases__muted">{{ release.cardKeys.length }} {{ release.cardKeys.length === 1 ? 'card' : 'cards' }} · {{ shortSha(release.commitSha) }}</span>
                 </button>
@@ -33,6 +34,9 @@
           @if (selected(); as release) {
             <article class="releases__detail" data-testid="deploy-release-detail" aria-labelledby="deploy-release-detail-title">
               <h3 id="deploy-release-detail-title">Release {{ release.version }}</h3>
+              @if (release.preDeliveryVerdict; as verdict) {
+                <p class="releases__verdict" data-testid="deploy-release-verdict">Full suite: {{ verdict.status }} · SHA <code>{{ verdict.commitSha }}</code></p>
+              }
               <dl class="releases__facts">
                 <dt>Created</dt><dd><time [attr.datetime]="release.createdAtUtc">{{ release.createdAtUtc | date:'medium' }}</time></dd>
                 <dt>Commit</dt><dd><code>{{ release.commitSha }}</code></dd>
@@ -44,6 +48,7 @@
                 <dd><ul class="releases__digests">@for (digest of release.artifactDigests; track digest) { <li><code>{{ digest }}</code></li> }</ul></dd>
                 <dt>Running in</dt><dd data-testid="deploy-release-live-in">{{ liveIn().length ? liveIn().join(', ') : 'No environment' }}</dd>
               </dl>
+              @defer (on immediate) { <app-project-deploy-release-notes [release]="release" /> }
             </article>
           }
         </div>

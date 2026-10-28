@@ -3,30 +3,96 @@
 Version: 2026-10-22
 Status: System-of-record map for runner-side changes.
 
+## Dynamic placement host agent, DP-S2
+
+Selected working decision: dynamic placement D2 option A, one supervised host
+agent per physical machine with coding and review adapters. The AGT-3019 D5
+option A allocation remains the single host budget; this slice consumes the
+DP-S1 shadow admission contract and does not activate a new placement policy.
+The host agent starts with both roles disabled. A role is enabled only after
+its old daemon has acknowledged a claim barrier, every persisted attempt has
+reached a fenced terminal or cleanup state, and that daemon process has exited.
+The role adapter runs the existing `RemoteRunnerDaemon` or
+`RemoteReviewDaemon` in a child process with its original runner identity,
+state directory, Task Server client, and lease protocol. Separate child
+processes preserve provider CLI home and probe isolation. The host inventory
+is an atomically persisted projection of role slot files, not a lease store.
+Each adapter also holds a role-local process lock so a host-agent restart
+cannot create a second reattacher while its earlier child is alive. A release
+or protocol mismatch holds that adapter until a host-agent restart. See the
+[host-agent migration runbook](../../operations/setup/linux-runner-host.md#host-agent-role-migration)
+for the canary, drain, and rollback sequence. Linux per-attempt containers are
+the subsequent DP-S3 executor slice; DP-S2 retains the current process and
+cgroup executor.
+
 Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
-## Host-owned Codex device login
+Unknown or interrupted attempts that publish salvage hand its exact ref and SHA
+to the next coding claim. The runner starts that worktree at the salvage commit;
+an unavailable or moved ref fails preparation instead of selecting the
+integration branch. The continuation prompt directs a merge of the current
+integration branch so the salvaged commit remains an ancestor of the result.
+If the delivery fence still finds that the recorded base is not an ancestor of
+the result, the legacy completion path withholds the stamp and returns the card
+to Ready. Its next claim starts at the refused result and its prompt names both
+the missing base and the result for an explicit merge.
 
-The Access and Execution Hosts sign-in actions create a 15-minute, one-at-a-time
-Codex login session for a registered host. Task Server holds the browser URL and
-one-time code only in memory. A random session key is returned solely to the
-initiating browser session and is required to read or cancel those instructions.
-The runner claims the command through its outbound Task Server channel, holds a
-local provider login lock, starts `codex login --device-auth` in its own service
-account, and reports the URL and
-code without logging them. A changed local `auth.json` and a successful real
-provider probe are required before completion. Terminal results are audited
-with actor, host, provider and outcome, without the code. Timeout and cancel
-clear the instructions. Each runner keeps its own native credential store;
-neither Task Server nor Studio distributes ChatGPT login files.
+## Host-owned provider device login
 
-The coding host also probes the small set of primary and fallback model ids
-with a real request in an isolated scratch context. It adds the valid model ids
-the server returns as operator-configured quota routes or ready-card models in
-the capability response. Each verdict is bound to
+One device-login service serves the first-run checklist and the Access and
+Execution Hosts sign-in actions (AGT-3225 merged the AGT-3214 and AGT-3156
+paths). Both surfaces call `/api/v1/management/device-logins`; runners poll
+`/api/v1/runners/{runnerId}/device-login`. `DeviceLoginRouteTests` fails if a
+second device-login route appears. Only an Owner may start, read or cancel a
+sign-in, because it authorizes the host's provider credentials. A start creates
+a 15-minute Codex or Claude login session for a registered host, one at a time
+per host and provider. The optional `targetRunnerId` pins it to one active
+runner of that host: the coding and the review identity of a host own separate
+CLI homes, so the first-run checklist and the Access and Execution Hosts actions
+pass the badge's runner, and only that runner can claim the session. Task
+Server holds the browser URL and one-time code only in memory. A random session
+key is returned solely to the initiating browser session and is required to
+read or cancel those instructions. Closing the dialog or leaving the first-run
+checklist cancels a queued or running session. A runner on that host claims the
+command through its outbound Task Server channel, holds a local provider login
+lock and starts `codex login --device-auth` or `claude setup-token` in its own
+service account through `DeviceLoginExecutor`, the only device-login launcher.
+The child gets a closed stdin pipe. The runner reports the URL and code without
+logging child output. While the CLI runs, the runner reads the session state
+every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
+only). A Studio cancel, a Task Server timeout or a failed instruction publish
+stops the process tree, accepts no credential and reports `failed`; on runner
+shutdown the completion is sent with its own short timeout. Completion requires
+a changed credential file and a successful real provider probe: Codex must
+rewrite its `auth.json`; for Claude only the probe child sees the new setup
+token. The Claude candidate probe makes a fresh real request without the shared
+advertisement cache or daily request budget. The runner checks the session state
+again before writing the token, and restores the previous file and process token
+if completion is rejected. The runner replaces its `provider-auth/claude-token`
+file and its process-wide `CLAUDE_CODE_OAUTH_TOKEN` only after the probe succeeds. At start
+that file wins over a `CLAUDE_CODE_OAUTH_TOKEN` from `runner.env`, because it is
+written only after a verified sign-in; delete it to return to the `runner.env`
+token. The runner logs which source is active, never the value. Terminal
+results are audited with actor, host, provider and outcome, without the code.
+Timeout and cancel clear the instructions. Each runner keeps its own native credential store; neither
+Task Server nor Studio distributes ChatGPT login files.
+
+Coding and review hosts probe routed model ids with a real request in an
+isolated scratch context. Coding routes include configured primary and fallback
+models and ready-card pins. Review routes include the configured aspect default,
+active deep-review default, pinned models in pending review plans, and quota
+fallback routes for the CLIs those plans use. The
+built-in catalogue is used only when the server supplies no route. Each verdict is bound to
 the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
+When a CLI authenticates through a store without readable generation metadata,
+the probe uses the daemon session as its generation and rechecks accepted models
+every 6 hours. Inconclusive verdicts retry after 10 minutes. The daemon starts
+the probe after receiving server routes in its first capability response.
+A completed host device login invalidates that provider's cached model verdicts
+before the next advertisement; an in-flight probe from the old login cannot
+restore them.
 The quota view lists accepted models by host. A launch-time model refusal with
 no salvage marks that host model unavailable and puts the card back in Ready.
 Task Server claims and work-permit offers and acceptances require fresh
@@ -41,6 +107,9 @@ A refused model stays held until the same runner instance advertises it as not
 ready and then advertises a ready verdict with a larger runner-local probe
 sequence. Runner and server clock order never clears the hold. A refused
 fallback does not hold the card once quota admission can use its primary route.
+The claim hold matches the route handed to the runner: a required mechanical
+route, an operator-selected continuation, a provider-refusal sibling, or the
+stored primary. A refused primary does not hide a card using another route.
 
 The deploy contract for backend features that require an agent-host release is
 [`runner-release-requirements.json`](../../../contracts/TaskServer.Contracts/runner-release-requirements.json).
@@ -52,17 +121,31 @@ unverifiable host unless `ATP_FORCE_HOST_COMPATIBILITY=1` is set, and writes a
 record under `release-records/<target-sha>.json` with the minimum release and
 the affected hosts. A forced rollout retains the legacy claim path and warning.
 
-For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
-denies local coding, `PickupHoldPolicy` projects an unsatisfiable
-`execution-placement` hold. The picker skips it before `RunCliAsync`, records
+A review claim with a named model waits for a fresh ready acceptance verdict
+from a review executor that advertises the protocol. A legacy executor may
+claim its primary route. An unknown verdict beyond the startup grace or an
+unavailable verdict names the model capability and host in the unclaimable
+response and in the auto-review queue's oldest pending reason. The lane-drain
+alarm repeats that reason. Claim deferral logs only when the attempt's reason
+changes, and the observation clears on claim.
+
+For a Ready agent card placed at `local`, `PickupHoldPolicy` projects an
+unsatisfiable `execution-placement` hold when local admission denies its mode.
+The networked profile denies every agent mode. In the local profile,
+`ILocalCodingAdmissionPolicy` still gates modes that need a worktree; planning
+and research keep their existing local admission behavior. The picker skips the
+held card before `RunCliAsync`, records
 the hold reason as `lastPickReason`, and logs one refusal per card and reason
 until the card leaves Ready. The queue-starvation view includes these cards
 even with zero remote slots. Route the project with
 `PUT /api/projects/{projectName}/execution-runner` and a remote runner ID;
 the system does not change placement automatically. The project settings
 projection exposes `localCodingAdmitted` for the placement warning. Explicit
-`POST /api/tasks/{id}/start` checks this refusal before queueing for another
-reason and returns `remote-execution-required` without spawning a CLI.
+`POST /api/tasks/{id}/start` and continuation check this refusal before
+mutating the card and return `remote-execution-required` without spawning a CLI.
+New networked projects without a remote runner start paused. Only the Owner
+may explicitly select local placement in the networked profile, including
+through the project registry update route; local placement remains unrunnable.
 
 Prelaunch infrastructure faults use the per-card fingerprint budget described
 in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infrastructure-failures).
@@ -185,6 +268,173 @@ whose digest matches the result envelope and includes its artifact ID and digest
 in the review subject. The Review Executor fetches that artifact and verifies
 its digest and HEAD before reporting. Completion leaves no review subject when
 the matching artifact is unavailable.
+
+### Run-target host (app hosting, IP-1)
+
+`RUNNER_ROLE=run-target` starts `RunTargetDaemon` (`runner/RunTargets/`).
+It hosts long-lived app containers for the container environments declared
+with `"destination": "edge"` and `targetHostId` equal to its `RUNNER_ID`
+([environment schema](../../app/schemas/project-environment.schema.json)).
+It is separate from the coding, review, gate, and integration roles and runs on
+a run host, not on a work host
+([Integrated platform §5, §7](../../operations/integrierte-plattform/index.html)).
+The protocol is outbound-only. Every `RUN_TARGET_POLL_SECONDS` (default 15) it
+reads `GET /api/deploy/run-targets/{hostId}/desired-state` from Studio.
+It then reports each answered AGT-3176 deploy job on
+`POST /api/deploy/jobs/{project}/{jobId}/report`, and the observed state and
+events on `POST /api/deploy/run-targets/{hostId}/observed-state`. All routes
+require `runner.deploy`, and in the networked profile the caller's Runner ID
+must equal `hostId`. The desired-state read claims the open deploy job, or
+renews its lease. A run target holds one job for at most 30 minutes from its
+first claim; after that Studio records it as `deploy-step-failed` and queues
+the usual automatic rollback. Without an open job, an environment keeps its
+last healthy or rolled-back artifact. Each job stores its approved hosting
+settings (domains, edge mode, health path, variables, and resources), port,
+and secret references. Desired state uses the open job's snapshot, then the
+last healthy job's snapshot. A rollback restores that earlier snapshot even
+if the declaration changed since approval. The legacy `deploy-loop` never claims an
+edge job. Studio writes a project's deploy state and the host's domain claims
+only when they changed.
+
+Only an explicit removal takes an app off the host. A project whose checkout,
+environments folder, declaration files, or deploy state Studio cannot read
+adds neither specs nor removals. When the project has a placement on the
+polling host, it is listed in that host's `skipped` (`checkout-missing`,
+`declarations-missing`, `declaration-invalid`, `declaration-unreadable`). With
+unreadable deploy state the placements are unknown, so no host is told.
+Studio records each placement: environment, host, and the environment kind
+of its last declaration. When a complete read no longer places the
+environment on the host, the placement is pending removal and is listed in
+`runTargetRemovals` of `GET /api/projects/{project}/environments`. Studio
+sends it in `removals` only on a decision:
+
+- `tombstone`: the repository holds `{ "id": "<id>", "removed": true }` in
+  `docs/deployments/environments/`. A tombstone for an id that is still
+  declared makes the declarations invalid.
+- `operator`: an operator calls
+  `POST /api/projects/{project}/environments/{id}/run-target-removal/confirm`
+  (optional body `{ "hostId": ... }`). The actor is recorded.
+- `grace`: kind `other` only, after 10 minutes missing.
+
+Deleting, renaming, or retargeting a `production` or `stage` declaration
+therefore removes nothing by itself. It stays `pending-confirmation`, and
+placements recorded before kinds were kept are treated the same way. A
+declaration that comes back clears the pending removal. The host takes both
+revisions down, each slot cleared as soon as it is gone, so a retry continues
+where a failure stopped. It then removes the app network and confirms with an
+observation in state `removed` only after Docker confirms network removal.
+Failed candidate and replaced-revision teardown stays in the host's durable
+`pendingCleanup` list; failed stops of replaced revisions stay in `pendingStops`.
+Every reconciliation pass retries them, including passes
+while Studio is unreachable. A revision awaiting teardown cannot be started
+again until cleanup succeeds. Studio drops the placement and keeps the last
+20 removals, with decision and actor, in `runTargetRemovals`. An app the
+desired state does not mention is kept as it is, with its route, its previous
+revision, and crash supervision. So is an app whose environment has no
+healthy artifact in Studio; it is still supervised and attached to the edge.
+A host talking to an older Studio without these fields never removes anything.
+
+Supervision does not depend on Studio. When the desired-state read fails,
+the daemon runs a supervise-only pass from its persisted state: every app is
+held, so crash restarts, crash rollbacks, and secret files after a reboot
+proceed without Studio. A failure of any type ends only the cycle, never the
+daemon. The host writes `state.json` through a flushed temporary file and a
+rename, and keeps the same content in `state.last-good.json`. A torn or
+unparsable `state.json` falls back to that copy. Studio flushes the domain
+claims file the same way before its rename.
+
+An app key (`rt-<project>-<environment>-<80-bit hash>`) belongs to the project
+environment stored under it. A spec or removal for another environment that
+maps to the same key is refused and its job reported failed. So are specs that
+share a key within one desired state. The stored app stays as it is, and
+secrets resolve only for the spec's own project after that check.
+
+`RunTargetReconciler` converges each environment through Docker Compose. A
+revision (artifact, port, health path, variables, secret names, resources) is
+pulled and started as its own compose project on the environment's internal
+Docker bridge network. Docker rejects an existing routable network with the
+same name. Only the edge joins both the app network and the public edge
+network, so apps have no route to the host's control-plane network. The app
+is health-checked from inside the edge container, so the check
+uses the same path as public traffic. Traffic switches only after the check
+passes. The replaced revision is stopped and kept, so a rollback restarts it.
+The revision before it is removed. A failed check removes the candidate and
+leaves the running revision serving. Studio then queues the previous artifact,
+which the host already runs. Docker's `on-failure:3` covers short crashes.
+After that the host restarts with `RunTargetCrashPolicy` backoff: 10 s
+doubling to 5 min. From the fifth attempt it reports `crash-loop`, and it
+forgets the attempts after two minutes of stable running. When the current
+revision restarts five times (Docker's and the host's restarts together)
+within 10 minutes and a previous revision is kept, the host restores the
+previous revision behind the same health check. It reports `crash-rollback`
+with the crashing artifact, then Studio queues a rollback job to the last
+healthy artifact. Studio acts on each `crash-rollback` event once, so an
+event still in the host's event list does not roll back a later redeploy of
+the same artifact. Until then the host does not return to the crashing
+revision; only a new deploy job brings it back. Apps get `cpus`,
+`mem_limit`, `memswap_limit`, `pids_limit`, and `no-new-privileges`. They
+publish no port, use no host network, and mount nothing from the host other
+than their secret files. They drop `NET_RAW` and `MKNOD`. Logs are capped
+at three 10 MB files. The writable layer has no size limit of its own,
+because Docker's `storage_opt size` works only on overlay2 over xfs with
+`pquota`. Bound it by placing `/var/lib/docker` on its own file system (or
+xfs with project quotas) sized for the apps of the host, so a growing
+container cannot fill the host's root file system.
+
+The edge is the `rt-edge` Caddy container. `RUN_TARGET_EDGE_IMAGE` must be
+pinned by digest, like app images. The default is `caddy:2.11-alpine` at
+the digest of `caddy:2-alpine` on 2026-10-20, and the image needs `wget` for
+the health check. It publishes
+`RUN_TARGET_HTTP_PORT`/`RUN_TARGET_HTTPS_PORT` (80/443) and joins each app
+network with `docker network connect`. When the edge is (re)started, the host
+connects it again to the network of every app with a current revision, held
+apps included. `RunTargetCaddyfile` gives `acme` sites
+automatic HTTPS (`RUN_TARGET_ACME_EMAIL`). `cloudflare` sites use the origin
+certificate in `RUN_TARGET_CLOUDFLARE_CERT_DIR` (`origin.pem`, `origin.key`;
+SSL mode Full strict) or else Caddy's internal CA (SSL mode Full). With
+`RUN_TARGET_CLOUDFLARE_TRUSTED_PROXIES` set, the client IP comes from
+`CF-Connecting-IP`. Studio offers a declared domain only when it falls under one
+of the project's operator-owned suffixes. They are set with
+`PUT /api/projects/{project}/run-target-domain-suffixes`
+(`{ "suffixes": ["example.com"] }`) and kept in Studio's project settings,
+never in the repository. `example.com` covers itself and its subdomains;
+without a suffix a project claims no domain. A domain belongs to the first
+environment that claims it on a host. Studio persists the claims per host
+(`deployments/run-targets/<host>.json`). It sends a later claimant the domain
+in `refusedDomains`, not in `domains`. A claim ends when its owner no longer
+declares the domain. It stays while the owner's project is skipped or its
+removal is unconfirmed. The host also persists first-claim ownership
+(`domainOwners` in its state) and routes a domain only to its owner, whatever
+key sorts first. Either refusal shows as `domain-conflict` on the other
+environment.
+
+Secret references are resolved on the host just in time, each project from
+its own root: `RUN_TARGET_SECRET_DIR/<project>/<secretRef>`. The default root
+is `/etc/agent-host/secrets`, and the project directory is the lowercased,
+URL-escaped project name, as in Studio's deploy store. A project cannot read
+another project's secret, and a host-wide file directly under the root is
+never used. The host writes each value to a file under
+`RUN_TARGET_SECRET_RUNTIME_DIR` (default `/run/agent-host/run-target-secrets`,
+directory `0700`, files `0444` so any container user can read them). It
+refuses unless `/proc/self/mounts` shows that path on `tmpfs` or `ramfs`. Run
+the service with `RuntimeDirectory=agent-host` and `RuntimeDirectoryPreserve=yes`,
+or point the variable at another tmpfs. Without `RuntimeDirectoryPreserve`,
+systemd deletes the directory when the agent stops, and Docker cannot restart
+an app container on its own until the agent writes the files again. Compose mounts each file read-only at `/run/secrets/<secretRef>`.
+The container gets only the path, in `<NAME>_FILE` (for example
+`DATABASE_URL_FILE`), so the app reads the value from that file. Docker's
+container configuration (`config.v2.json`) therefore holds paths, not values.
+A revision's files exist only while it may run: they go when it is stopped,
+discarded, or removed, and are written again before a restart, restore, or
+rollback. After a reboot the files are gone until the host restarts the app,
+which its supervision does even while Studio is unreachable.
+Values never enter compose files, host state (`RUN_TARGET_STATE_DIR`, default
+`$RUNNER_STATE_DIR/run-target`), Docker's container configuration, Studio, or
+logs; every diagnostic is masked before it is logged. Values exist on the host
+only in that tmpfs, in the agent's memory, and inside the running container.
+Every free-text value in a generated compose file has `$` doubled, so Compose
+interpolates no variable from the agent's environment. Egress allowlists and
+host firewall rules for the run zone belong to IP-2.
 
 ### Integration host (standalone review loop)
 
@@ -476,7 +726,10 @@ unreported claim expires with its lease and is queued again.
 - `backend/Features/Runner/OrchestratorChat.cs` and `OrchestratorRunner.cs`:
   side-sheet chat dispatch. This operating mode accepts the effective model and
   reasoning choice from the live Codex catalogue, executes through the Codex
-  one-shot registry, and rejects non-GPT models without a Claude fallback.
+  one-shot registry, and rejects non-GPT models without a Claude fallback. In
+  the networked profile it never executes Codex on the Studio host: an absent
+  or unreachable assigned runner produces a failed turn with a clear reason.
+  Changing a remotely placed project to local execution requires the Owner.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
@@ -901,8 +1154,10 @@ unreported claim expires with its lease and is queued again.
   The stop route targets the card's canonical authority key for both remote and
   local leases. A local lease can remain held while preparation or
   post-processing runs without a CLI process. Its owner observes a fenced stop
-  before starting the next step, releases the lease with outcome `Stopped`, and
-  settles the stop receipt so the card shows the stopped attempt. The endpoint
+  before starting the next step, settles the stop receipt, and releases the
+  lease with outcome `Stopped` so the card shows the stopped attempt. The matching
+  receipt is retired while the lease is still held, before a reader can see it
+  as free. Remote lease release follows the same order. The endpoint
   shares a gate with CLI launch and review moves. A stop accepted while visual
   QA is running is checked before the UI card can enter Human Review. The store
   resolves `TaskRepository` on first use, so a host without it still starts:
@@ -2124,6 +2379,26 @@ the endpoint answers `409` with the reason while the intent stays persisted.
 The preservation half is the detector, so a run that legitimately finishes in
 under a second is never reported as lost.
 
+## Source facts producer (AGT-3318)
+
+`runner/SourceFacts/SourceFactsProducer.cs` is the only Git client behind the
+derived source data that review and card open read (pipeline-delivery target
+P11, decision D7 A-B). After the durable result handoff is acknowledged and
+before the worktree is torn down, `RemoteTaskRunner` publishes, within a 90 s
+budget, the merge-base diff object of the result within the review budget of
+200 files and 12,000 lines, and path history and blame for up to 40 touched
+files. A failure is logged and never fails the run; the review falls back and
+records a demand instead.
+
+`SourceFactsDemandSweep` runs in the coding daemon every 30 s. It finds the
+shared checkouts of this host by the `source-facts-repository-id` marker beside
+`<workdir>/<project>/repo` and answers pending demands: diff objects, path
+history, blame and reachability of commits in a target branch, fetching the
+named result ref when a commit is missing. Every publish carries the
+repository's producer epoch from `POST /api/v1/source-facts/{repositoryId}/producer/lease`;
+another host takes the lease only after it expires and fences the previous
+holder. `RUNNER_SOURCE_FACTS_PRODUCER=0` turns the producer off on a host.
+
 ## Operational stall monitoring (AGT-3206)
 
 The Watcher runs an operational sweep every five minutes by default, including
@@ -2132,7 +2407,8 @@ the separate kill switch (default `true`). The observe-first option from the
 Watcher dossier is implemented: a finding enters Activity with evidence and a
 suggested intervention; creating a proposal card still requires
 `Watcher:Enabled`. No capacity, credential, gate, or deployment mutation is
-authorized by a detector observation alone.
+authorized by a detector observation alone; the AI Operator decides on the
+open cases (AGT-3207, below).
 
 The sweep reads the existing host telemetry, review-host capability and slot
 advertisements, the authoritative remote gate slot tracker, pending review
@@ -2154,6 +2430,198 @@ not labelled as drift. The policy accepts a deployment start error when one is
 provided by a release source; the current collector does not yet receive
 compose errors or image digests for arbitrary containers.
 
+## AI Operator stall interventions (AGT-3207)
+
+`StallInterventionHostedService` subscribes to the open operational cases of
+AGT-3206 every `StallIntervention:IntervalSeconds` (60) and submits frozen
+facts through `AiOperatorDecisionGateway` as the AI Operator decider
+`stall-intervention`. `StallInterventionPolicy` in the decision library
+decides; the `OperatorDecision` switch selects whether the monolith decides in
+process (default) or the Orchestrator Engine does. The policy follows the
+Nordstern autonomy classes: A0 and A1 act, A2 is a proposal for a person, and
+no stall plans an A3 action.
+
+`StallIntervention:Mode` selects how far it goes: `observe` (the default)
+decides and writes one "would do" receipt per case episode and action without
+changing anything, `act` lets A0/A1 interventions act, and `off` (or the old
+`Enabled=false`) stops the service. In `act` mode each mutating action has its
+own switch, `StallIntervention:Actions:<action>` (for example
+`lower-admission=false`); a switched-off action writes a "would do" receipt.
+Proposals and escalations are recorded in every mode except `off`.
+
+| Stall | Intervention | Class | Effect measured afterwards |
+|---|---|---|---|
+| `host-overload`, `memory-pressure` | Lower the coding host's admission by a quarter of the person's baseline (8 to 6), floor `MinAdmission` (1), only when telemetry from the last 10 minutes still shows overload or memory pressure. The admission is the ceiling a person set in Settings > Capacity; a host without one gets a proposal. The host is addressed by its client identity id (`clientId` on the case), never by display name. An admission the AI Operator already lowered is never lowered again: a new episode becomes a proposal | A1 | The identity store reads the new value back |
+| Load back after a lowering | Restore the baseline once the load per core stayed under target x `RestoreBelowTargetFraction` (0.8) for `CalmMinutesBeforeRestore` (15). This also runs for a reduction whose follow-up already escalated, as long as the live admission still reads the lowered value and nobody saved the capacity since; a value a person changed or saved again is never restored over. When it is applied, the load must still be calm by telemetry from the last 10 minutes, otherwise the restore waits for the next pass | A1 | Same |
+| `host-offline`, `idle-capacity` of a review daemon or pull gate worker | Restart the allowlisted service through the Operations Server (`service.restart`) only while the host is drained and waiting work is claimable. Review needs fresh zero-slot telemetry and no host-owned review lease; a pull gate worker needs zero claimed jobs and a queued pull gate job. When SSH fallback uses the same host, its remote slot sample must also be fresh and empty. Pending batch members do not count | A1 | The Operations Server attempt reports `restarted` |
+| The same with running or unknown work, or nothing claimable (pending batch gate members wait for the batch plan, not for the gate worker) | Proposal to restart once the work finished or to check the worker | A2 | None |
+| Gate host reports every slot busy while this Studio holds none and runs no batch or per-task gate (orphaned gate workers after a Studio restart) | Proposal to stop the orphaned workers (`propose-release-gate-slots`; the automatic release is AGT-3237) | A2 | None |
+| `provider-auth-invalid` on a review host with healthy hosts | Route the provider away from the host until its login works again, and propose the renewal | A1 + A2 | The review registry no longer admits `provider-auth:<provider>` on the host |
+| `provider-auth-invalid` on a coding host | Proposal to renew the login | A2 | None |
+| `provider-rate-limited` | For each affected card in Ready whose last run ended on a rate limit and whose next run would start without a base or from an empty salvage: pin the last completed, reviewed delivery (immutable result ref and SHA) as `continuation-base.json` | A1 | The pin reads back, or the card already started from it |
+| `batch-gate-stuck` | Drop the frozen review attempts whose card (found by its authority key) is completed or positively left review; close the forming batch when its oldest Auto Review member waits past `GateMemberDeadlineHours` (6). A member with no readable card holds; Human Review and Escalated members stay with the pilot | A1 | No dropped attempt is still pending |
+| `deploy-drift` with a start error and no known missing variable | Start the service again through the Operations Server, which validates the compose configuration first | A1 | The attempt reports `restarted` |
+| `deploy-drift` with known missing variables, or without a retry path | Proposal `propose-deploy-fix`: set the variables, then deploy again | A2 | None |
+| Admission at its floor, no Operations Agent, missing toolchain, credential refusal | Proposal: move work for longer, add the toolchain to the review image, renew the login | A2 | None |
+| `lane-stall` | Never submitted; the card deciders own it | - | None |
+
+Every intervention writes a receipt (`.watcher/interventions/<id>.json`): what
+was observed with numbers, what was done, why, before and after, and how to
+undo it. The receipt appears in the Activity feed next to the finding (typed
+field `intervention`), as a `stall_intervention_recorded` timeline entry on
+each affected card, and on Execution Hosts next to the stall
+(`GET /api/watcher/interventions`). The record is written ahead as `applying`
+before any side effect and settled afterwards; an `applying` record holds its
+subject like a pending one, and one older than ten minutes was interrupted: it
+is measured and settled (its follow-up continues when the effect is observed,
+otherwise it goes to a person), never repeated. The write key, which is also
+the Operations Server idempotency key, is derived from the case id, the
+episode start, the action and the repeat index, so a replayed or duplicated
+engine receipt maps to the same record. Before it acts, the effect refuses a
+second pending intervention on the subject and compares the live value
+(admission, route, the worker's running work) with the plan's before-value; on
+a mismatch it records `superseded` and does nothing. Cards and gate members are
+re-checked at apply time as well.
+An admission reduction also checks fresh overload or memory pressure immediately
+before the side effect. Both lowering and restoring admission use an atomic
+compare-and-set against the planned before-value, so a capacity edit made by a
+person between the live read and the write is preserved. The record keeps the
+capacity stamp its write left; restore and Undo also require that stamp, so a
+person who saved the same value again keeps it. Decisions of one subject
+(engine receipts, the in-process path, recoveries, Undo) are applied one at a
+time. The restart path
+fences new review or pull gate claims, confirms the host is drained using fresh slot
+telemetry and active leases, then holds the durable fence through the Operations Server
+attempt. For the gate host the same drain also blocks SSH fallback dispatches.
+If the attempt status cannot be read, the fence survives a Studio restart.
+The next intervention pass reads the attempt by its idempotency key and releases
+the fence after terminal confirmation. An absent, unreadable or `unreachable`
+attempt keeps the fence until `RestartFenceHorizon` (the four-minute command
+deadline plus ten minutes) after the decision: past the deadline the Operations
+Server and the agent refuse the command, and the agent bounds one restart to its
+validate and recreate timeouts, so no restart can still run. The agent writes a durable restart-started marker before Docker runs;
+if result spooling fails after recreation, replay reports an unknown outcome
+and never recreates the service a second time. The rate-limit continuation pin
+compares the live Ready folder and continuation base while holding the lane mutex
+and the base store's write lock, preserving a person's concurrent lane move or
+base edit.
+
+An action whose effect cannot be measured right after it ran is escalated at
+once and not reported as done; an admission change, a reroute or a pinned base
+keeps its Undo in that case. Each applied intervention has a follow-up check
+(15 minutes for admission, 10 for restarts, 20 for rerouting, 60 for
+requeues). If the condition has not cleared by then, the follow-up escalates to
+a person with the receipt chain. A lowered admission does not escalate while
+more runs are active than it admits (running work drains), up to
+`MaxCalmWaitHours` (4). A reroute waits for the login renewal and routes back
+once the provider stall clears; a reroute that settled while its exclusion
+was still in force (escalated, interrupted, effect not observed) is routed back
+by the next pass after the stall cleared and is not pruned before. An exclusion
+is lifted only by the intervention that owns it, and an unreadable exclusions
+file is never overwritten.
+
+Loop protection is part of the policy: one pending (`applying` or `applied`)
+intervention per subject; at most `MaxPerHostPerHour` (3) mutating
+interventions per host and hour; the same action on the same subject at most
+`MaxRepeatsPerSubject` (2) times in `LoopWindowHours` (6) before it escalates
+instead; at most `MaxActionsPerCard` (1) card-changing intervention (requeue,
+gate drop) per card in the loop window; and a proposal, escalation or undo of
+the current stall episode holds the subject until the stall clears and
+returns. "Would do" and superseded receipts changed nothing and do not count.
+Each pass evaluates the pure policy in process first: only decisions that act,
+propose or ask count toward the budget of 20 per pass and reach the engine, so
+a held subject adds no occurrence. Actionable kinds are ordered overload,
+memory, provider login, offline, idle capacity, batch gate, rate limit, deploy,
+claim refusal; a case in `decision-required` belongs to a person and is left
+alone. `POST /api/watcher/interventions/{id}/undo` reverts an admission reduction
+(also an escalated one that is still in force), a reroute or a pinned base; a
+restart, a restore of the person's baseline, a gate reconciliation and an
+escalation have nothing to undo. A pinned base that a run already started from
+is reported, not counted as undone.
+Admission Undo uses an atomic compare-and-set against the AI-set value, so a
+later change by a person stays in force. The intervention list and decision
+views include only projects assigned to the signed-in account; an Undo for
+another project's receipt returns not found.
+
+Restarts need `Operations:Url`, `Operations:ServiceTokenFile` (a service
+principal with `service.restart`, `maintenance.execute` and `operations.read`),
+and `Operations:Agents:<host>` naming the host's Operations Agent;
+`Operations:RestartableServices:<host>` can mirror the agent allowlist.
+`StallIntervention:Services:<role>` maps a stalled role to the agent's service
+name (`review-daemon`, `gate-worker`, `orchestrator-engine`). Without that
+configuration a restart becomes an A2 proposal. An agent whose allowlist file
+is unreadable or invalid logs it, offers no restarts and keeps serving its
+other operations. Provider rerouting applies to review claims; coding claims
+still follow the per-card claim failure budget.
+
+## Environment runbooks
+
+`project.yml` schema 2 accepts `runbooks` as named ordered lists:
+
+```yaml
+runbooks:
+  - name: restart
+    steps: [restart-container]
+  - name: backup
+    steps: [backup]
+  - name: enter-maintenance
+    steps: [maintenance-on]
+  - name: leave-maintenance
+    steps: [maintenance-off]
+  - name: rotation
+    steps: [rotate-secrets, restart-container]
+```
+
+Optional `environments`
+restricts a runbook to staging or production. The integration branch version
+is read when the run is requested; its steps and environment-scoped variables
+are frozen in the run. Plain variables and secret-provider names follow the
+deployment variable contract. A production run waits for a signed-in Owner or
+Maintainer; approval queues the frozen steps through the existing deploy host
+claim and report lease. No artifact is required and the release and deployment
+history remain unchanged. Runs share the deployment log and audit store.
+
+The project deployment API uses the prefix
+`/api/projects/{projectName}/deploy`. The environment page uses these
+runbook routes:
+
+| Method | Path after the prefix | Purpose |
+|---|---|---|
+| `GET` | `/runbooks` | List runbook definitions from the integration branch. |
+| `GET` | `/runbooks/runs?environmentId={environmentId}` | List runs for one environment; omit the query to list all project runs. |
+| `GET` | `/runbooks/runs/{runId}` | Read one run, including its steps and approval state. |
+| `GET` | `/runbooks/runs/{runId}/log?step={stepName}` | Read the run log; omit `step` for every step. |
+| `POST` | `/environments/{environmentId}/runbooks/{name}/runs` | Request a run with no request body. Returns `202 Accepted` and the run. |
+| `POST` | `/runbooks/runs/{runId}/approve` | Approve a waiting run and queue its frozen steps. Returns the updated run. |
+| `POST` | `/runbooks/runs/{runId}/reject` | Reject a waiting run. Returns the updated run. |
+
+The mutation routes use the signed-in project actor and the same public-demo
+execution admission as deployment mutations. Production approval and rejection
+require an Owner or Maintainer. `GET /audit` under the same prefix includes
+runbook request, approval, rejection and completion events. A run response
+includes its `id`, `environmentId`, `state`, `steps` and `definitionCommit`;
+each step has a `logRef` for its filtered log.
+
+The target host keeps operator-owned scripts at
+`/etc/agent-host/runbooks/<project>/<step>.sh`. The host runs each script with
+`/bin/sh` and no shell text from the repository. It supplies
+`AGENT_STUDIO_PROJECT`, `AGENT_STUDIO_ENVIRONMENT`,
+`AGENT_STUDIO_DESTINATION`, a per-run `AGENT_STUDIO_RUNBOOK_RUN` marker,
+scoped plain variables and named secrets as environment variables. Names that
+steer the loader or shell (`LD_*`, `DYLD_*`, `BASH_FUNC_*`, `PATH`, `IFS`,
+`ENV`, `BASH_ENV` and the libc loading variables) are rejected by the
+`project.yml` validator as `variable-name-reserved` and again by the host
+before any script starts. Scripts must exit zero to advance; failure stops the
+remaining steps. The host drains output locally and reports only step success
+or failure, so logs do not expose secret values. A step times out after nine
+minutes, and the whole run after ten. On Linux, `setsid` gives each script its
+own process group; timeout or host cancellation also applies while draining
+output after the script exits and kills that group. Descendants that start a
+new session keep the run marker, so cancellation then sweeps `/proc` and kills
+every process carrying it until a sweep finds none. Waiting for the script and
+its output streams is bounded at five seconds, so a survivor cannot hang the
+host. Install scripts on the assigned deploy host before
+invoking the runbook.
 ## Operator deploy targets (AGT-3263)
 
 The runner's DeployTargetExecutor is the call seam for the deploy executor

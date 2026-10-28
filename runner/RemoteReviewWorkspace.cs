@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentRunner.SourceFacts;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -26,6 +27,7 @@ public sealed class RemoteReviewWorkspace
     private readonly Func<string, Task<FailureFingerprintHistoryDto?>>? _historyReader;
     private readonly RemoteReviewAgentCommandRunner _agentCommands;
     private readonly Func<DateTime> _utcNow;
+    private readonly ISourceFactsClient? _sourceFacts;
     private string? _initialTree;
     private string? _baselineSha;
     private string? _integrationHeadSha;
@@ -40,10 +42,12 @@ public sealed class RemoteReviewWorkspace
         ReviewLeaseDto lease,
         Action<string> log,
         Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null,
-        Func<DateTime>? utcNow = null)
+        Func<DateTime>? utcNow = null,
+        ISourceFactsClient? sourceFacts = null)
     {
         _options = options;
         _subject = subject;
+        _sourceFacts = sourceFacts;
         _lease = lease;
         _log = log;
         _historyReader = historyReader;
@@ -141,7 +145,8 @@ public sealed class RemoteReviewWorkspace
 
     public async Task<ReviewWorkspaceProofDto> PrepareAsync(
         TaskServerClient client,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<string>? sparsePaths = null)
     {
         if (Directory.Exists(AttemptRoot))
             throw new ReviewInfrastructureException(
@@ -155,10 +160,19 @@ public sealed class RemoteReviewWorkspace
         Directory.CreateDirectory(BaselineCacheRoot);
         Directory.CreateDirectory(DependencyCacheRoot);
 
-        if (!string.IsNullOrWhiteSpace(_subject.SourceBundleArtifactId))
-            await MaterializeBundleAsync(client, ct);
-        else if (!string.IsNullOrWhiteSpace(_subject.RepositoryUrl))
-            await MaterializeGitAsync(_subject.RepositoryUrl!, ct);
+        if (!string.IsNullOrWhiteSpace(_subject.RepositoryUrl))
+        {
+            try { await MaterializeGitAsync(_subject.RepositoryUrl!, sparsePaths, ct); }
+            catch (ReviewInfrastructureException) when (!string.IsNullOrWhiteSpace(_subject.SourceBundleArtifactId))
+            {
+                if (!ResilientDirectory.TryDelete(RepositoryPath))
+                    throw new ReviewInfrastructureException("SnapshotUnavailable",
+                        "Failed source cache checkout could not be removed before bundle fallback.");
+                await MaterializeBundleAsync(client, sparsePaths, ct);
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(_subject.SourceBundleArtifactId))
+            await MaterializeBundleAsync(client, sparsePaths, ct);
         else
             throw new ReviewInfrastructureException(
                 "SnapshotUnavailable",
@@ -2473,6 +2487,13 @@ public sealed class RemoteReviewWorkspace
     /// Result-SHA and a freshly fetched integration ref. Both Git streams are
     /// counted while only their bounded heads are retained, so exceeding either
     /// budget can never look like a complete diff.
+    ///
+    /// <para>AGT-3318: the material is first read from the Task Server, where
+    /// the fenced producer published the diff object for this base and head.
+    /// Only a missing object falls back to a local <c>git diff</c>, through the
+    /// same <see cref="MergeBaseDiffMaterial.ComputeAsync"/> the producer runs,
+    /// and the miss is recorded as a demand. Either way the read time is
+    /// reported for the review material p95.</para>
     /// </summary>
     internal async Task<string> BuildReviewMaterialAsync(
         int maximumFiles,
@@ -2483,93 +2504,113 @@ public sealed class RemoteReviewWorkspace
         if (maximumLines <= 0) throw new ArgumentOutOfRangeException(nameof(maximumLines));
 
         var baselineSha = await ResolveBaselineShaAsync(ct);
-        var changedFiles = new List<string>(Math.Min(maximumFiles, 256));
-        var totalFiles = 0;
-        var names = await ProcessRunner.RunAsync(
-            "git",
-            [
-                "-c", "credential.helper=", "-c", "core.quotePath=false",
-                "diff", "--name-only", "--find-renames", baselineSha,
-                _subject.ExpectedResultSha,
-            ],
-            RepositoryPath,
-            onStdOut: line =>
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var (stored, missReason) = await ReadStoredReviewMaterialAsync(baselineSha, maximumFiles, maximumLines, ct);
+        MergeBaseDiffMaterial material;
+        if (stored is not null)
+        {
+            material = stored;
+        }
+        else
+        {
+            try
             {
-                if (string.IsNullOrEmpty(line)) return;
-                totalFiles++;
-                if (changedFiles.Count < maximumFiles) changedFiles.Add(line);
-            },
-            environment: ProcessEnvironment(),
-            clearEnvironment: true,
-            ct: ct);
-        if (!names.Success)
-            throw BaselineUnavailable(
-                $"Changed-file enumeration failed against merge-base '{baselineSha}': {names.StdErr.Trim()}",
-                baselineSha,
-                command: null);
-
-        var diffLines = new List<string>(Math.Min(maximumLines, 16_384));
-        var totalDiffLines = 0;
-        var currentFile = 0;
-        var diff = await ProcessRunner.RunAsync(
-            "git",
-            [
-                "-c", "credential.helper=", "-c", "core.quotePath=false",
-                "diff", "--no-ext-diff", "--find-renames", "--unified=3",
-                baselineSha, _subject.ExpectedResultSha,
-            ],
-            RepositoryPath,
-            onStdOut: line =>
+                material = await MergeBaseDiffMaterial.ComputeAsync(
+                    RepositoryPath,
+                    baselineSha,
+                    _subject.ExpectedResultSha,
+                    maximumFiles,
+                    maximumLines,
+                    ProcessEnvironment(),
+                    clearEnvironment: true,
+                    ct);
+            }
+            catch (MergeBaseDiffUnavailableException exception)
             {
-                totalDiffLines++;
-                if (line.StartsWith("diff --git ", StringComparison.Ordinal)) currentFile++;
-                if (currentFile <= maximumFiles && diffLines.Count < maximumLines)
-                    diffLines.Add(line);
-            },
-            environment: ProcessEnvironment(),
-            clearEnvironment: true,
-            ct: ct);
-        if (!diff.Success)
-            throw BaselineUnavailable(
-                $"Unified diff failed against merge-base '{baselineSha}': {diff.StdErr.Trim()}",
-                baselineSha,
-                command: null);
+                throw BaselineUnavailable(exception.Message, baselineSha, command: null);
+            }
+        }
+        var elapsed = (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        await ReportReviewMaterialReadAsync(baselineSha, stored is null, elapsed, missReason, ct);
 
-        var truncated = totalFiles > maximumFiles || totalDiffLines > maximumLines;
-        var shownFiles = Math.Min(totalFiles, maximumFiles);
-        var shownLines = diffLines.Count;
         _log(
             $"review material prepared ref={_subject.Plan.IntegrationRef} base={baselineSha} " +
-            $"result={_subject.ExpectedResultSha} files={shownFiles}/{totalFiles} " +
-            $"lines={shownLines}/{totalDiffLines} truncated={truncated.ToString().ToLowerInvariant()}");
-        return RenderReviewMaterial(
-            _subject.Plan.IntegrationRef!,
-            baselineSha,
-            _subject.ExpectedResultSha,
-            changedFiles,
-            diffLines,
-            totalFiles,
-            totalDiffLines,
-            maximumFiles,
-            maximumLines,
-            truncated);
+            $"result={_subject.ExpectedResultSha} files={Math.Min(material.TotalFiles, maximumFiles)}/{material.TotalFiles} " +
+            $"lines={material.DiffLines.Count}/{material.TotalDiffLines} truncated={material.Truncated.ToString().ToLowerInvariant()} " +
+            $"source={(stored is null ? SourceReviewMaterialSources.Fallback : SourceReviewMaterialSources.Object)} " +
+            $"elapsedMs={elapsed} digest={material.ContentSha256}");
+        return RenderReviewMaterial(_subject.Plan.IntegrationRef!, material);
+    }
+
+    private async Task<(MergeBaseDiffMaterial? Material, string? MissReason)> ReadStoredReviewMaterialAsync(
+        string baselineSha, int maximumFiles, int maximumLines, CancellationToken ct)
+    {
+        if (_sourceFacts is null) return (null, "no-task-server-client");
+        try
+        {
+            var stored = await _sourceFacts.GetSourceDiffObjectAsync(
+                _subject.RepositoryId,
+                baselineSha,
+                _subject.ExpectedResultSha,
+                SourceDiffObjectOptions.Review(maximumFiles, maximumLines),
+                SourceDiffObjectOptions.RendererVersion,
+                ct);
+            if (stored is null) return (null, "object-missing");
+            var material = MergeBaseDiffMaterial.FromObject(stored);
+            // A stored body that no longer matches its digest is not evidence.
+            return string.Equals(material.ContentSha256, stored.ContentSha256, StringComparison.Ordinal)
+                ? (material, null)
+                : (null, "object-digest-mismatch");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _log($"review material object read failed; falling back to local git diff: {exception.Message}");
+            return (null, "object-read-failed:" + exception.GetType().Name);
+        }
+    }
+
+    private async Task ReportReviewMaterialReadAsync(
+        string baselineSha, bool fallback, long elapsedMilliseconds, string? missReason, CancellationToken ct)
+    {
+        if (_sourceFacts is null) return;
+        try
+        {
+            if (fallback)
+                await _sourceFacts.RecordSourceFactDemandAsync(_subject.RepositoryId, new SourceFactDemandRequest(
+                    SourceFactKinds.Diff, "review-material-miss", baselineSha, _subject.ExpectedResultSha,
+                    FetchRef: _subject.ResultRef), ct);
+            await _sourceFacts.RecordSourceReviewMaterialReadAsync(_subject.RepositoryId, new SourceReviewMaterialReadReport(
+                baselineSha,
+                _subject.ExpectedResultSha,
+                fallback ? SourceReviewMaterialSources.Fallback : SourceReviewMaterialSources.Object,
+                elapsedMilliseconds,
+                missReason), ct);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _log($"review material read report deferred source={(fallback ? "fallback" : "object")}: {exception.Message}");
+        }
     }
 
     private static string AppendReviewMaterial(string prompt, string reviewMaterial)
         => prompt.TrimEnd() + PromptText.NewLine + PromptText.NewLine + reviewMaterial;
 
-    private static string RenderReviewMaterial(
-        string integrationRef,
-        string baselineSha,
-        string resultSha,
-        IReadOnlyList<string> changedFiles,
-        IReadOnlyList<string> diffLines,
-        int totalFiles,
-        int totalDiffLines,
-        int maximumFiles,
-        int maximumLines,
-        bool truncated)
+    /// <summary>
+    /// Renders the prompt section from a diff object. The text depends only on
+    /// the integration ref name and the object, so an object read from the Task
+    /// Server and a fallback computation of the same key render byte-identically.
+    /// </summary>
+    internal static string RenderReviewMaterial(string integrationRef, MergeBaseDiffMaterial material)
     {
+        var baselineSha = material.BaseSha;
+        var resultSha = material.HeadSha;
+        var changedFiles = material.ChangedFiles;
+        var diffLines = material.DiffLines;
+        var totalFiles = material.TotalFiles;
+        var totalDiffLines = material.TotalDiffLines;
+        var maximumFiles = material.MaximumFiles;
+        var maximumLines = material.MaximumLines;
+        var truncated = material.Truncated;
         var text = new StringBuilder();
         text.AppendLf("## Authoritative delivery review material");
         text.AppendLf();
@@ -2731,63 +2772,47 @@ public sealed class RemoteReviewWorkspace
         return !Directory.Exists(target);
     }
 
-    private async Task MaterializeGitAsync(string repositoryUrl, CancellationToken ct)
+    private async Task MaterializeGitAsync(string repositoryUrl,
+        IReadOnlyList<string>? sparsePaths, CancellationToken ct)
     {
         var credential = RepositoryCredential();
         var keyPath = RunnerFirstRunGitCredentials.Key(_options.StateDir, repositoryUrl);
         var cloneUrl = keyPath is null || repositoryUrl.StartsWith("git@github.com:", StringComparison.Ordinal)
             ? repositoryUrl
             : "git@github.com:" + new Uri(repositoryUrl).AbsolutePath.TrimStart('/');
-        // A private clone is complete, not blob-filtered: a promisor remote would
-        // fetch missing blobs lazily from later git commands, which hold no
-        // credential. Nothing has run in the fresh clone yet, so its config and
-        // hooks are git's own while the credential is in use.
-        var clone = credential is null
-            ? await ProcessRunner.RunAsync(
-                "git",
-                ["-c", "credential.helper=", "clone", "--no-checkout", "--filter=blob:none", cloneUrl, RepositoryPath],
-                AttemptRoot,
-                environment: GitTransportEnvironment(),
-                clearEnvironment: true,
-                ct: ct)
-            : await ProcessRunner.RunAsync(
-                "git",
-                CredentialedGitArguments(credential, "clone", "--no-checkout", credential.CloneUrl, RepositoryPath),
-                AttemptRoot,
-                environment: CredentialedGitEnvironment(credential),
-                clearEnvironment: true,
-                ct: ct);
-        if (!clone.Success)
-            throw new ReviewInfrastructureException(
-                "SnapshotUnavailable",
-                credential is null && LooksLikeMissingReadAccess(clone.StdErr)
-                    ? $"Repository clone failed: the review host has no read access to '{repositoryUrl}'. "
-                      + "A private repository needs repository visibility 'private' on its project and a "
-                      + $"scoped read credential in {ReviewRepositoryCredentials.FileVariable}: {clone.StdErr.Trim()}"
-                    : $"Repository clone failed: {clone.StdErr.Trim()}");
         var resultRef = string.IsNullOrWhiteSpace(_subject.ResultRef)
             ? _subject.ExpectedResultSha
             : _subject.ResultRef!;
-        var fetch = credential is null
-            ? await ProcessRunner.RunAsync(
-                "git",
-                ["-c", "credential.helper=", "fetch", "--no-tags", "origin", resultRef],
-                RepositoryPath,
-                environment: GitTransportEnvironment(),
-                clearEnvironment: true,
-                ct: ct)
-            : await ProcessRunner.RunAsync(
-                "git",
-                CredentialedGitArguments(credential, "fetch", "--no-tags", "origin", resultRef),
-                RepositoryPath,
-                environment: CredentialedGitEnvironment(credential),
-                clearEnvironment: true,
-                ct: ct);
-        if (!fetch.Success)
+        var sourceUrl = credential?.CloneUrl ?? cloneUrl;
+        async Task<ProcessResult> Run(string cwd, IReadOnlyList<string> args,
+            bool credentialed, CancellationToken token)
+        {
+            var arguments = credentialed && credential is not null
+                ? CredentialedGitArguments(credential, args.ToArray())
+                : ["-c", "credential.helper=", .. args];
+            return await ProcessRunner.RunAsync("git", arguments, cwd,
+                environment: credentialed && credential is not null
+                    ? CredentialedGitEnvironment(credential) : GitTransportEnvironment(),
+                clearEnvironment: true, ct: token);
+        }
+        (long bytes, TimeSpan ready) source;
+        try
+        {
+            source = await HostSourceObjectCache.MaterializeAsync(sourceUrl,
+                resultRef, _subject.ExpectedResultSha, RepositoryPath, Run, _utcNow, ct, sparsePaths);
+        }
+        catch (ReviewInfrastructureException exception) when (credential is null
+            && exception.Classification == "SnapshotUnavailable"
+            && LooksLikeMissingReadAccess(exception.Message))
+        {
             throw new ReviewInfrastructureException(
                 "SnapshotUnavailable",
-                $"Immutable result ref '{resultRef}' could not be fetched: {fetch.StdErr.Trim()}");
-        await GitRequiredAsync(["checkout", "--detach", "FETCH_HEAD"], ct);
+                $"Repository fetch failed: the review host has no read access to '{repositoryUrl}'. "
+                + "A private repository needs repository visibility 'private' on its project and a "
+                + $"scoped read credential in {ReviewRepositoryCredentials.FileVariable}: {exception.Message}");
+        }
+        var (bytes, ready) = source;
+        _log($"review_source_ready subject={_subject.SubjectId} bytes={bytes} ready_ms={ready.TotalMilliseconds:F0}");
     }
 
     private ReviewRepositoryCredential? RepositoryCredential()
@@ -2963,34 +2988,26 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
-    private async Task MaterializeBundleAsync(TaskServerClient client, CancellationToken ct)
+    private async Task MaterializeBundleAsync(TaskServerClient client,
+        IReadOnlyList<string>? sparsePaths, CancellationToken ct)
     {
-        var artifact = await client.GetArtifactContentAsync(
-            _subject.SourceRunId,
-            _subject.SourceBundleArtifactId!,
-            ct);
-        if (artifact is null)
-            throw new ReviewInfrastructureException("SnapshotUnavailable", "Immutable source bundle is unavailable.");
-        var bytes = Convert.FromBase64String(artifact.ContentBase64);
-        var digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-        if (!string.Equals(digest, _subject.SourceBundleSha256, StringComparison.OrdinalIgnoreCase))
-            throw new ReviewInfrastructureException(
-                "SourceBundleDigestMismatch",
-                $"Source bundle digest '{digest}' does not match '{_subject.SourceBundleSha256}'.");
-        var bundlePath = Path.Combine(AttemptRoot, "source.bundle");
-        await File.WriteAllBytesAsync(bundlePath, bytes, ct);
-        var clone = await ProcessRunner.RunAsync(
-            "git",
-            ["clone", "--no-checkout", bundlePath, RepositoryPath],
-            AttemptRoot,
-            environment: ProcessEnvironment(),
-            clearEnvironment: true,
-            ct: ct);
-        if (!clone.Success)
-            throw new ReviewInfrastructureException(
-                "SnapshotUnavailable",
-                $"Source bundle could not be materialized: {clone.StdErr.Trim()}");
-        await GitRequiredAsync(["checkout", "--detach", _subject.ExpectedResultSha], ct);
+        async Task<byte[]> Download(CancellationToken token)
+        {
+            var artifact = await client.GetArtifactContentAsync(_subject.SourceRunId,
+                _subject.SourceBundleArtifactId!, token);
+            if (artifact is null)
+                throw new ReviewInfrastructureException("SnapshotUnavailable",
+                    "Immutable source bundle is unavailable.");
+            return Convert.FromBase64String(artifact.ContentBase64);
+        }
+        async Task<ProcessResult> Run(string cwd, IReadOnlyList<string> args,
+            bool _, CancellationToken token)
+            => await ProcessRunner.RunAsync("git", ["-c", "credential.helper=", .. args], cwd,
+                environment: ProcessEnvironment(), clearEnvironment: true, ct: token);
+        var (bytes, ready) = await HostSourceObjectCache.MaterializeBundleAsync(
+            _subject.SourceBundleSha256!, _subject.ExpectedResultSha, RepositoryPath,
+            Download, Run, _utcNow, ct, sparsePaths);
+        _log($"review_source_ready subject={_subject.SubjectId} bytes={bytes} ready_ms={ready.TotalMilliseconds:F0}");
     }
 
     private async Task<string> GitValueAsync(string first, string second, CancellationToken ct)

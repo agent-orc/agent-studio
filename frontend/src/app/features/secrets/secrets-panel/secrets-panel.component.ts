@@ -1,10 +1,11 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { Observable } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
 import type { WatchPathEntry } from '../../../models/task.model';
 import { SecretsService, type SecretMetadata, type SecretScopeKey } from '../secrets.service';
+import { SecretBackendSettingsComponent } from '../secret-backend-settings/secret-backend-settings.component';
 
 /**
  * Secrets section of the Access area in Settings. People pick a scope
@@ -15,7 +16,7 @@ import { SecretsService, type SecretMetadata, type SecretScopeKey } from '../sec
 @Component({
   selector: 'app-secrets-panel',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, SecretBackendSettingsComponent],
   templateUrl: './secrets-panel.component.html',
   styleUrl: './secrets-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -26,6 +27,8 @@ export class SecretsPanelComponent {
   private readonly destroyRef = inject(DestroyRef);
 
   readonly projects = input<readonly WatchPathEntry[]>([]);
+  readonly fixedProject = input<string | null>(null);
+  readonly fixedEnvironment = input<string | null>(null);
   readonly project = signal('');
   readonly environment = signal('');
   readonly environmentOptions = signal<readonly string[]>([]);
@@ -64,15 +67,29 @@ export class SecretsPanelComponent {
   /** Items the store could not open, across every scope: a store-health warning, not a scope row. */
   readonly unreadable = computed(() => this.service.overview()?.unreadable ?? []);
 
-  constructor() { this.service.load(); }
+  constructor() {
+    this.service.load();
+    effect(onCleanup => {
+      const project = this.project();
+      this.environmentOptions.set([]);
+      if (!project) return;
+      const subscription = this.service.environments(project).subscribe(options =>
+        this.environmentOptions.set(options.map(item => item.id)));
+      onCleanup(() => subscription.unsubscribe());
+    });
+    effect(() => {
+      const project = this.fixedProject();
+      if (project && project !== this.project()) this.selectProject(project);
+    });
+    effect(() => {
+      const environment = this.fixedEnvironment();
+      if (environment && this.project() && environment !== untracked(this.environment)) this.environment.set(environment);
+    });
+  }
 
   selectProject(project: string): void {
     this.project.set(project);
     this.environment.set('');
-    this.environmentOptions.set([]);
-    if (!project) return;
-    this.service.environments(project).pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(options => this.environmentOptions.set(options));
   }
 
   add(): void {

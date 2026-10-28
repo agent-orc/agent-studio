@@ -84,7 +84,7 @@ internal sealed record ReviewDaemonRestartObservation(
 /// immutable review subjects, terminal facts, and delivery idempotency. It does
 /// not resolve or materialize a repository and never runs a product command.
 /// </summary>
-public sealed class AttemptAuthorityService
+public sealed partial class AttemptAuthorityService
 {
     public const string RelativePath = ".metadata/attempt-authority.json";
     public const int DefaultTerminalRetentionCount = 128;
@@ -130,7 +130,6 @@ public sealed class AttemptAuthorityService
     };
 
     private readonly object _gate = new();
-
     /// <summary>
     /// Per-task continuation gates. A review continuation holds its task's gate
     /// while it applies; successor creation takes the same gate before
@@ -197,6 +196,7 @@ public sealed class AttemptAuthorityService
     /// out-of-order deferrals of concurrent claims exact (AGT-2987).
     /// </summary>
     private readonly Dictionary<(string AttemptId, long Fence), DateTime> _deferrableReviewClaims = new();
+    private readonly Dictionary<string, DateTime> _quotaDeferredReviews = new(StringComparer.Ordinal);
     /// <summary>Sets the priority of this card and its current or future review attempt.</summary>
     public bool SetReviewPriority(string taskKey, string priority, Func<bool>? isInAutoReview = null)
     {
@@ -275,6 +275,7 @@ public sealed class AttemptAuthorityService
         _useJournal = _writer is AtomicJsonFileWriter;
         var root = configuration["TaskRepository"];
         _path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
+        LoadReviewRestartFences();
         CleanupStaleTemporaryFiles();
         _state = Load();
         var requiresCompactionMigration = _state.SchemaVersion < CurrentSchemaVersion;
@@ -1045,6 +1046,9 @@ public sealed class AttemptAuthorityService
         string idempotencyKey,
         string? instanceId)
     {
+        if (_reviewRestartFences.Contains("*") || _reviewRestartFences.Contains(hostId))
+            return new AttemptWriteResult(AttemptWriteStatus.InvalidState, review.AttemptId,
+                "Review host is drained for a service restart.", ReviewAttempt: ToDto(review));
         var deliveryKey = DeliveryKey("claim", idempotencyKey);
         if (review.IdempotencyKeys.Contains(deliveryKey))
         {
@@ -1124,6 +1128,9 @@ public sealed class AttemptAuthorityService
         {
             var review = FindReview(attemptId);
             if (review is null) return new AttemptWriteResult(AttemptWriteStatus.NotFound, Normalize(attemptId));
+            if (_reviewRestartFences.Contains("*") || _reviewRestartFences.Contains(hostId))
+                return new AttemptWriteResult(AttemptWriteStatus.InvalidState, review.AttemptId,
+                    "Review host is drained for a service restart.", ReviewAttempt: ToDto(review));
             var deliveryKey = DeliveryKey("reclaim", idempotencyKey);
             var payloadHash = ReviewReClaimPayloadHash(
                 executorId,
@@ -1256,6 +1263,8 @@ public sealed class AttemptAuthorityService
                 var candidate = _state.ReviewAttempts
                     .Where(review => IsCurrentReview(review) && !Terminal(review.State))
                     .Where(review => review.Lease is null || review.Lease.ExpiresAt <= now)
+                    .Where(review => !_quotaDeferredReviews.TryGetValue(review.AttemptId, out var until)
+                        || until <= now)
                     // A subject whose source run carries no Result-Envelope cannot be
                     // materialized by any executor. Inside the terminalization grace it
                     // is not yet evidence of a pre-plane completion either (the
@@ -1490,7 +1499,8 @@ public sealed class AttemptAuthorityService
     /// The fence remains consumed, while the undelivered claim key is removed
     /// so the same executor instance can claim the attempt after recovery.
     /// </summary>
-    public bool DeferReviewClaim(string attemptId, string executorId, string instanceId)
+    public bool DeferReviewClaim(string attemptId, string executorId, string instanceId,
+        bool quotaDeferred = false)
     {
         lock (_gate)
         {
@@ -1510,6 +1520,10 @@ public sealed class AttemptAuthorityService
             review.CurrentClaimDeliveryKey = null;
             review.Lease = null;
             review.State = AttemptLifecycleState.Pending;
+            if (quotaDeferred)
+                _quotaDeferredReviews[review.AttemptId] = _utcNow().AddMinutes(1);
+            else
+                _quotaDeferredReviews.Remove(review.AttemptId);
             PersistLocked();
             return true;
         }

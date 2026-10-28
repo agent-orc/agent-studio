@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "slice": "Git facts S1 (AGT-3321)",
+  "referenceHost": {
+    "name": "agent-runner-01 (agent-studio-runner)",
+    "os": "Ubuntu 24.04.4 LTS",
+    "processorsVisibleToTests": 2,
+    "runtime": ".NET 10.0.9",
+    "note": "Shared Linux runner host; other task runs build in parallel. Measured on 2026-10-27."
+  },
+  "fixture": {
+    "cards": 3000,
+    "distinctIds": 2997,
+    "archived": 2050,
+    "humanReview": 210,
+    "escalated": 40,
+    "duplicateIds": 3,
+    "packedTaskBranches": 200,
+    "worktrees": 1
+  },
+  "index": {
+    "measure": "30 unchanged-input GitStateIndexService runs (trigger task-event) after 3 warm-up runs, duration from the index's own git-index-run log, spawns from its telemetry scope",
+    "rounds": [
+      {
+        "p50Ms": 78,
+        "p95Ms": 710,
+        "maxMs": 1110,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1694,
+        "firstBuildSpawns": 16,
+        "changedRefMs": 741,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 77,
+        "p95Ms": 96,
+        "maxMs": 111,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1825,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 686,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 78,
+        "p95Ms": 687,
+        "maxMs": 1074,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1579,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 1583,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 79,
+        "p95Ms": 119,
+        "maxMs": 119,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1519,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 932,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 78,
+        "p95Ms": 113,
+        "maxMs": 136,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1390,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 794,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 77,
+        "p95Ms": 96,
+        "maxMs": 112,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1188,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 666,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 77,
+        "p95Ms": 114,
+        "maxMs": 118,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1291,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 829,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 77,
+        "p95Ms": 108,
+        "maxMs": 119,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1198,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 693,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 78,
+        "p95Ms": 114,
+        "maxMs": 124,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1450,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 726,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 77,
+        "p95Ms": 119,
+        "maxMs": 949,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1505,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 1195,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 77,
+        "p95Ms": 116,
+        "maxMs": 120,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1362,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 754,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 77,
+        "p95Ms": 112,
+        "maxMs": 1015,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1399,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 701,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 78,
+        "p95Ms": 97,
+        "maxMs": 115,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1482,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 738,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 76,
+        "p95Ms": 113,
+        "maxMs": 116,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1518,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 673,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 76,
+        "p95Ms": 118,
+        "maxMs": 774,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 1264,
+        "firstBuildSpawns": 8,
+        "changedRefMs": 699,
+        "changedRefSpawns": 16
+      },
+      {
+        "p50Ms": 79,
+        "p95Ms": 1075,
+        "maxMs": 1078,
+        "spawnsPerRun": 1,
+        "firstBuildMs": 2068,
+        "firstBuildSpawns": 16,
+        "changedRefMs": 803,
+        "changedRefSpawns": 16
+      }
+    ],
+    "frozenFromP95Ms": 1075,
+    "ceilingMs": 1182,
+    "ceilingRule": "worst round p95 of the measured rounds plus 10 percent, capped at the 90 s run deadline",
+    "spawnsPerRun": 1,
+    "runDeadlineMs": 90000,
+    "s2Target": {
+      "p95Ms": 2000,
+      "spawnsPerRun": 0
+    },
+    "distribution": "Bimodal on the reference host: most unchanged-input runs take 75 to 120 ms; about 1 to 3 percent take 0.7 to 1.1 s. A 30-run p95 is therefore about 110 ms when a round sees fewer than two slow runs and about 0.7 to 1.1 s otherwise, so the budget is frozen from the worst round.",
+    "pooledRounds": 16
+  }
+}

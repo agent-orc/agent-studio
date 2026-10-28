@@ -86,10 +86,11 @@ public static class GlobalSearchEndpoints
             }
 
             var allowed = AccessFilter(context, projects);
+            var allowedProject = ProjectFilter(context, projects);
             var ct = context.RequestAborted;
             try
             {
-                await foreach (var frame in search.StreamAsync(query, selected, limit ?? 20, ct))
+                await foreach (var frame in search.StreamAsync(query, selected, limit ?? 20, ct, allowedProject))
                     await WriteEventAsync(context, frame.Event, Authorize(frame, allowed), json);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -113,8 +114,17 @@ public static class GlobalSearchEndpoints
     /// </summary>
     internal static Func<GlobalSearchItem, bool>? AccessFilter(HttpContext context, AgentStudio.Registry.ProjectRegistry projects)
     {
-        if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human) return null;
-        return item => ProjectAccessAuthorization.Allows(human.User, item.ProjectName, projects);
+        var allowedProject = ProjectFilter(context, projects);
+        return allowedProject is null ? null : item => allowedProject(item.ProjectName);
+    }
+
+    internal static Func<string, bool>? ProjectFilter(HttpContext context, AgentStudio.Registry.ProjectRegistry projects)
+    {
+        if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access)
+            return project => access.AllowsProject(IamPermissions.ProjectRead, project);
+        if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
+            return project => ProjectAccessAuthorization.Allows(human.User, project, projects);
+        return null;
     }
 
     /// <summary>Applies the caller's project access to a frame's item arrays.</summary>

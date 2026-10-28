@@ -11,6 +11,14 @@
 import type { GroupedJobs, TaskInfo } from '../../../models/task.model';
 import { TaskState } from '../../../models/task.model';
 import { lanePresentation } from '../../../models/lane-presentation';
+import {
+  INTEGRATED_DELIVERY_COLUMN_ID,
+  type DeliveryColumnApproval,
+  type DeliveryColumnCard,
+  type DeliveryColumnRun,
+  type DeliveryColumnsResponse,
+} from '../../../models/delivery-column.model';
+import { DELIVERY_COPY, deliveryColumnTitle } from '../../../models/delivery-presentation';
 import { splitReadyByPhase } from './ready-lane-split.util';
 
 /** One rendered board lane: its state key, display chrome, and its cards. */
@@ -156,4 +164,140 @@ export function focusVisibleLaneStates(focusedContainer: string | null): string[
   return buildLaneGroups(EMPTY_GROUPED, false)
     .filter((group) => focusedContainer === null || group.id === focusedContainer)
     .flatMap((group) => group.lanes.map((lane) => lane.state));
+}
+
+/** Container id of the Delivery group; it follows "Done & Decide". */
+export const DELIVERY_GROUP_ID = 'delivery';
+
+/** One tile in a Delivery column: the board's own task and the release that placed it. */
+export interface BoardDeliveryCard {
+  task: TaskInfo;
+  releaseVersion: string | null;
+  rolledBack: boolean;
+}
+
+/** One project's release line in a column header. */
+export interface BoardDeliveryHeader {
+  projectId: string;
+  releaseVersion: string | null;
+  run: DeliveryColumnRun | null;
+  health: string | null;
+  approval: DeliveryColumnApproval | null;
+}
+
+export interface BoardDeliveryColumn {
+  id: string;
+  title: string;
+  integrated: boolean;
+  approvalPending: boolean;
+  headers: BoardDeliveryHeader[];
+  landed: BoardDeliveryCard[];
+  waiting: BoardDeliveryCard[];
+}
+
+/** The Delivery group; `count` is the sum of the tiles every column shows. */
+export interface BoardDeliveryGroup {
+  id: string;
+  label: string;
+  columns: BoardDeliveryColumn[];
+  count: number;
+}
+
+interface PlacedCard extends BoardDeliveryCard { position: number }
+
+/**
+ * The Delivery group (AGT-3276 D5 L-B): an Integrated column, then one column
+ * per environment in lifecycle order, built from the `deploy/lanes` read model.
+ *
+ * Columns of several projects merge by column id in read-model order. A column
+ * lists its landed cards first, then its waiting cards; a rolled-back card
+ * waits again with its flag. Only cards the board feed carries render, so the
+ * active filters apply and every count is the sum of visible tiles (R3). Lane
+ * states are untouched: a card can show in every environment it reached.
+ *
+ * @param furthestOnly display option: each card shows once, landed in the
+ *   furthest column it reached, or waiting in its first column when it has
+ *   landed nowhere.
+ */
+export function buildDeliveryGroup(
+  responses: readonly DeliveryColumnsResponse[],
+  tasks: readonly TaskInfo[],
+  furthestOnly: boolean,
+): BoardDeliveryGroup {
+  const byKey = new Map<string, TaskInfo>();
+  for (const task of tasks) {
+    for (const key of [task.taskKey, task.key, task.displayKey]) {
+      if (key) byKey.set(deliveryRef(task.projectName, key), task);
+    }
+  }
+  // Columns of several projects merge by id; a column new to the merge sits
+  // right after its predecessor in its own project, so every project's
+  // lifecycle order survives.
+  const ordered: BoardDeliveryColumn[] = [];
+  const landed: PlacedCard[] = [];
+  const waiting: PlacedCard[] = [];
+  const resolve = (project: string, card: DeliveryColumnCard, position: number, into: PlacedCard[]) => {
+    const task = byKey.get(deliveryRef(project, card.key));
+    if (task) into.push({ task, releaseVersion: card.releaseVersion, rolledBack: card.rolledBack, position });
+  };
+  for (const response of responses) {
+    let previous = -1;
+    for (const column of response.columns ?? []) {
+      const integrated = column.id === INTEGRATED_DELIVERY_COLUMN_ID;
+      let index = ordered.findIndex((item) => item.id === column.id);
+      if (index < 0) {
+        index = previous + 1;
+        ordered.splice(index, 0, {
+          id: column.id, title: deliveryColumnTitle(column), integrated, approvalPending: false,
+          headers: [], landed: [], waiting: [],
+        });
+      }
+      previous = index;
+      const merged = ordered[index];
+      merged.approvalPending ||= column.pendingApproval !== null;
+      if (!integrated) {
+        merged.headers.push({
+          projectId: response.projectId, releaseVersion: column.currentRelease?.version ?? null,
+          run: column.lastRun, health: column.health, approval: column.pendingApproval,
+        });
+      }
+    }
+  }
+  const positionOf = new Map(ordered.map((column, index) => [column.id, index]));
+  for (const response of responses) {
+    for (const column of response.columns ?? []) {
+      const position = positionOf.get(column.id)!;
+      column.landed.forEach((card) => resolve(response.projectId, card, position, landed));
+      const shown = new Set([...column.landed, ...column.waiting].map((card) => card.key.toLowerCase()));
+      [...column.waiting, ...column.rolledBack.filter((card) => !shown.has(card.key.toLowerCase()))]
+        .forEach((card) => resolve(response.projectId, card, position, waiting));
+    }
+  }
+  const furthest = new Map<string, number>();
+  const firstWait = new Map<string, number>();
+  for (const card of landed) furthest.set(card.task.taskKey, Math.max(furthest.get(card.task.taskKey) ?? -1, card.position));
+  for (const card of waiting) firstWait.set(card.task.taskKey, Math.min(firstWait.get(card.task.taskKey) ?? Infinity, card.position));
+  const keepLanded = (card: PlacedCard) => !furthestOnly || furthest.get(card.task.taskKey) === card.position;
+  const keepWaiting = (card: PlacedCard) => !furthestOnly
+    || (!furthest.has(card.task.taskKey) && firstWait.get(card.task.taskKey) === card.position);
+  ordered.forEach((column, index) => {
+    column.landed = uniqueTiles(landed.filter((card) => card.position === index && keepLanded(card)));
+    column.waiting = uniqueTiles(waiting.filter((card) => card.position === index && keepWaiting(card)));
+  });
+  return {
+    id: DELIVERY_GROUP_ID,
+    label: DELIVERY_COPY.groupLabel,
+    columns: ordered,
+    count: ordered.reduce((sum, column) => sum + column.landed.length + column.waiting.length, 0),
+  };
+}
+
+function deliveryRef(project: string, key: string): string {
+  return `${project.toLowerCase()}::${key.toLowerCase()}`;
+}
+
+function uniqueTiles(cards: PlacedCard[]): BoardDeliveryCard[] {
+  const seen = new Set<string>();
+  return cards.filter((card) => !seen.has(card.task.taskKey) && seen.add(card.task.taskKey))
+    .map(({ task, releaseVersion, rolledBack }) => ({ task, releaseVersion, rolledBack }));
 }

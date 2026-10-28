@@ -10,6 +10,7 @@ const json = (body: unknown) => (route: Route) => route.fulfill({
 });
 
 async function stub(page: Page) {
+  await page.route('**/api/auth/status', json({ profile: 'networked', bootstrapRequired: false, authenticated: true }));
   await page.route('**/api/tasks', json([]));
   await page.route('**/api/v1/studio/board', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
@@ -56,9 +57,9 @@ test('Credentials page shows gaps, filters and both theme screenshots', async ({
   await expect(page.getByTestId('workspace-settings-rail-credentials')).toBeVisible();
   await expect(page.getByTestId('credential-inventory')).toContainText('Affected cards: AGT-1');
   await expect(page.locator('.credentials__row')).toHaveCount(3);
-  await page.getByLabel('State').selectOption('missing');
+  await page.getByRole('combobox', { name: 'State', exact: true }).selectOption('missing');
   await expect(page.locator('.credentials__row')).toHaveCount(1);
-  await page.getByLabel('State').selectOption('all');
+  await page.getByRole('combobox', { name: 'State', exact: true }).selectOption('all');
   for (const theme of ['dark', 'light'] as const) {
     await setTheme(page, theme);
     await page.screenshot({ path: join(shots, `inventory-${theme}--mocked.png`) });

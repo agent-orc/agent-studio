@@ -539,6 +539,62 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Review_material_from_the_producer_object_is_byte_identical_to_the_fallback()
+    {
+        var (baselineSha, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/source-facts-material",
+            "docs/material.md",
+            string.Join('\n', Enumerable.Range(1, 12).Select(index => $"material line {index}")));
+        var facts = new FakeSourceFactsClient();
+        var (fallbackWorkspace, subject) = Workspace(
+            "attempt-material-fallback", subjectSha,
+            [new ReviewCommandDto("verify", "build-tests", "git", ["status", "--short"])],
+            24130, resultRef: "refs/heads/task/source-facts-material", integrationRef: "refs/heads/main",
+            sourceFacts: facts);
+        await fallbackWorkspace.PrepareAsync(null!, default);
+
+        // No object yet: the review runs the local diff, records the miss as a
+        // demand and reports a fallback read.
+        var fallback = await fallbackWorkspace.BuildReviewMaterialAsync(
+            ReviewMaterialFiles, ReviewMaterialLines, default);
+        var demand = Assert.Single(facts.Demands).Request;
+        Assert.Equal((SourceFactKinds.Diff, "review-material-miss", baselineSha, subjectSha),
+            (demand.Kind, demand.Reason, demand.BaseSha, demand.HeadSha));
+        Assert.Equal(SourceReviewMaterialSources.Fallback, Assert.Single(facts.Reads).Report.Source);
+        Assert.Equal("object-missing", facts.Reads[0].Report.MissReason);
+
+        // The producer runs on another checkout whose Git configuration would
+        // change plain diff output: prefixes, abbreviation length and colour.
+        var seed = Path.Combine(_root, "seed");
+        await GitAsync(seed, "config", "diff.noprefix", "true");
+        await GitAsync(seed, "config", "diff.mnemonicPrefix", "true");
+        await GitAsync(seed, "config", "core.abbrev", "12");
+        await GitAsync(seed, "config", "color.ui", "always");
+        await GitAsync(seed, "fetch", "origin");
+        var producer = new AgentRunner.SourceFacts.SourceFactsProducer(facts, "producer-host:1", _ => { });
+        var published = await producer.PublishHandoffAsync(
+            subject.RepositoryId, seed, subjectSha, baselineSha, "main", null, default);
+        Assert.True(published.Published);
+
+        var (objectWorkspace, _) = Workspace(
+            "attempt-material-object", subjectSha,
+            [new ReviewCommandDto("verify", "build-tests", "git", ["status", "--short"])],
+            24140, resultRef: "refs/heads/task/source-facts-material", integrationRef: "refs/heads/main",
+            sourceFacts: facts);
+        await objectWorkspace.PrepareAsync(null!, default);
+        var fromObject = await objectWorkspace.BuildReviewMaterialAsync(
+            ReviewMaterialFiles, ReviewMaterialLines, default);
+
+        Assert.Equal(SourceReviewMaterialSources.Object, facts.Reads[^1].Report.Source);
+        Assert.Single(facts.Demands);
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes(fallback), System.Text.Encoding.UTF8.GetBytes(fromObject));
+        Assert.Contains("+material line 12", fromObject, StringComparison.Ordinal);
+    }
+
+    private const int ReviewMaterialFiles = 200;
+    private const int ReviewMaterialLines = 12_000;
+
+    [Fact]
     public async Task Node_fixture_without_node_modules_prepares_before_angular_style_build()
     {
         var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
@@ -2535,7 +2591,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         int reviewNoCpuProgressSeconds = 900,
         int composeScenarioMinFreePercent = ComposeScenarioDiskAdmission.DefaultMinFreePercent,
         Action<string>? log = null,
-        Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null)
+        Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null,
+        AgentRunner.SourceFacts.ISourceFactsClient? sourceFacts = null)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -2590,7 +2647,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             ComposeScenarioMinFreePercent = composeScenarioMinFreePercent,
         };
         return (new RemoteReviewWorkspace(options, subject, lease, log ?? (_ => { }),
-            historyReader ?? (_ => Task.FromResult<FailureFingerprintHistoryDto?>(null))), subject);
+            historyReader ?? (_ => Task.FromResult<FailureFingerprintHistoryDto?>(null)),
+            sourceFacts: sourceFacts), subject);
     }
 
     private async Task<(string BaselineSha, string SubjectSha)> SeedSubjectBranchAsync()

@@ -23,10 +23,11 @@ git init --bare --quiet "$remote"
 git init --quiet "$source_checkout"
 git -C "$source_checkout" config user.name 'Stable Update Test'
 git -C "$source_checkout" config user.email 'stable-update@example.invalid'
-mkdir -p "$source_checkout/frontend/scripts" "$source_checkout/backend"
-mkdir -p "$source_checkout/contracts/TaskServer.Contracts"
+mkdir -p "$source_checkout/frontend/scripts" "$source_checkout/backend" \
+  "$source_checkout/scripts" "$source_checkout/contracts/TaskServer.Contracts"
 cp "$script_dir/../contracts/TaskServer.Contracts/runner-release-requirements.json" \
   "$source_checkout/contracts/TaskServer.Contracts/runner-release-requirements.json"
+cp "$script_dir/npm-frontend.sh" "$source_checkout/scripts/npm-frontend.sh"
 printf '%s\n' '/frontend/node_modules/' '/frontend/.angular/' > "$source_checkout/.gitignore"
 printf '%s\n' 'appsettings.Local.json' > "$source_checkout/backend/.gitignore"
 printf '%s\n' '{"name":"fixture","private":true}' > "$source_checkout/frontend/package.json"
@@ -118,8 +119,14 @@ cat > "$fake_bin/npm" <<'EOF'
 set -eu
 printf '%s\n' patched > "$ATP_TEST_PACKAGE_FILE"
 EOF
+cat > "$fake_bin/corepack" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+exec "$@"
+EOF
 chmod +x "$devspace/stop-stable.sh" "$devspace/start-stable.sh" \
-  "$devspace/start-task-server.sh" "$devspace/deploy-task-server.sh" "$fake_bin/npm"
+  "$devspace/start-task-server.sh" "$devspace/deploy-task-server.sh" \
+  "$fake_bin/npm" "$fake_bin/corepack"
 
 run_update() {
   env \

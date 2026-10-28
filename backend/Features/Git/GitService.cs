@@ -26,6 +26,9 @@ public record GitPushResult(bool Success, string Sha, string Status, string? Err
 public record GitDiffLookupResult(bool Success, string Diff, string? Error);
 public record GitWorkerCommitCleanupResult(bool Success, string Status, string? Error);
 
+/// <summary>BD-2: one commit of a revision range with its tree and full message.</summary>
+public sealed record RevisionDetail(string Sha, string Tree, string Message);
+
 public enum IntegrationBranchSyncOutcome
 {
     UpToDate,
@@ -349,6 +352,7 @@ public sealed record RemoteDeliveryCommitRange(
     /// <summary>True when the repository actively contradicts the claimed delivery.</summary>
     public bool IsDisproved =>
         Verification is DeliveryVerificationStatus.ShaMismatch
+            or DeliveryVerificationStatus.BaseNotAncestor
             or DeliveryVerificationStatus.RefMissing
             or DeliveryVerificationStatus.CommitMissing;
 }
@@ -687,7 +691,7 @@ public partial class GitService
     private readonly CommitCandidateGate _commitGate;
     private readonly ProjectSettingsService? _projectSettings;
     internal Func<ProcessStartInfo, TimeSpan, CancellationToken, GitProcessResult> IntegrationFetchForTesting { get; set; }
-        = (start, timeout, ct) => GitNetworkProcessRunner.Run(start, stdin: null, timeout, ct);
+        = (start, timeout, ct) => GitProcessBoundary.Run(start, stdin: null, timeout, ct);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> IntegrationRemoteGates = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _checkoutLagStates = new(StringComparer.OrdinalIgnoreCase);
@@ -2193,6 +2197,15 @@ public partial class GitService
         return ResolveGitToplevel(configured) ?? configured;
     }
 
+    /// <summary>The configured checkout path for filesystem reads. This does not inspect Git.</summary>
+    public string? ResolveConfiguredRepoPath(string jobId, string? watchPath)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null) return null;
+        var entry = _scanner.GetWatchPaths().FirstOrDefault(e => e.Name == info.ProjectName);
+        return entry == null ? null : ResolveConfiguredRepositoryPath(entry);
+    }
+
     /// <summary>
     /// The resolved location a task's LIVE Git view should read: the task's own
     /// worktree when it is running in one (parallel model, ADR-0052), otherwise
@@ -2909,6 +2922,9 @@ public partial class GitService
         if (diff.Length > 60_000) diff = diff[..60_000] + "\n[truncated]";
 
         var intent = ReadTaskIntent(jobId, watchPath);
+        if (!SecurityProfiles.IsLocal(_config))
+            return new GenerateMessageResult(null,
+                "Remote runner required: host Codex commit-message review is disabled in the networked profile.");
         var codexPath = _config["CodexCli:Path"] ?? "codex";
         var model = ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
         var prompt = _prompts.Render(RuntimePromptService.CommitMessage,
@@ -2947,7 +2963,7 @@ public partial class GitService
         var sw = Stopwatch.StartNew();
         try
         {
-            using var p = Process.Start(psi)!;
+            using var p = HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_config), CliTypes.Codex)!;
             await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
             p.StandardInput.Close();
             var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);
@@ -4135,18 +4151,8 @@ public partial class GitService
         psi.EnvironmentVariables["GIT_OPTIONAL_LOCKS"] = "0";
         var stdin = string.Concat(paths.Select(path => $"{revision}:{path}\n"));
 
-        var command = CommandLabel(psi);
-        var sw = Stopwatch.StartNew();
-        GitBinaryProcessResult result;
-        using (GitProcessBudget.Acquire())
-        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(GitProcessBudget.Token))
-        {
-            result = GitNetworkProcessRunner.RunBinary(
-                psi, stdin, MaxRevisionFileReadBytes, GitNetworkProcessRunner.DefaultTimeout, linked.Token);
-        }
-        sw.Stop();
-        GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode,
-            timedOut: result.FailureKind == GitProcessFailureKind.TimedOut);
+        var result = GitProcessBoundary.RunBinary(
+            psi, stdin, MaxRevisionFileReadBytes, GitNetworkProcessRunner.DefaultTimeout);
 
         if (!result.Success)
             return RevisionFiles.Failed(string.IsNullOrWhiteSpace(result.StandardError)
@@ -4806,7 +4812,7 @@ public partial class GitService
             if (ancestorCode != 0)
                 return Failed(
                     $"Fenced delivery base {AbbreviateSha(baseSha)} is not an ancestor of result {AbbreviateSha(tip)}: {ancestorError.Trim()}",
-                    DeliveryVerificationStatus.ShaMismatch);
+                    DeliveryVerificationStatus.BaseNotAncestor);
 
             var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch);
             if (integrationBranch is null)
@@ -5263,9 +5269,10 @@ public partial class GitService
         return new(IntegrationBranchSyncOutcome.UpToDate);
     }
 
-    /// <summary>Checks a delivery against the freshly fetched publication, not the developer checkout.</summary>
+    /// <summary>Checks a delivery against freshly fetched publication; exactCommit requires commit ancestry.</summary>
     public PublishedDeliveryContainment CheckPublishedDelivery(
-        string repoRoot, string branch, string deliverySha, CancellationToken cancellationToken = default)
+        string repoRoot, string branch, string deliverySha, CancellationToken cancellationToken = default,
+        bool exactCommit = false)
     {
         if (!ReviewSubjectStore.IsValidResultSha(deliverySha)) return PublishedDeliveryContainment.Unavailable;
         var fetched = FetchIntegrationBranch(repoRoot, branch, cancellationToken);
@@ -5273,7 +5280,9 @@ public partial class GitService
             return PublishedDeliveryContainment.Unavailable;
         var published = GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}");
         if (published is null) return PublishedDeliveryContainment.Unavailable;
-        return IsDeliveryPublished(repoRoot, deliverySha, published)
+        return (exactCommit
+            ? IsAncestor(repoRoot, deliverySha, published)
+            : IsDeliveryPublished(repoRoot, deliverySha, published))
             ? PublishedDeliveryContainment.Contained
             : PublishedDeliveryContainment.Missing;
     }
@@ -5995,7 +6004,7 @@ public partial class GitService
                     return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
                         error: $"Could not retain integration report paths: {restoreError.Trim()}");
                 }
-                var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
+                var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit", "--no-verify");
                 if (commitCode != 0)
                 {
                     RunGitArgs(repoRoot, "merge", "--abort");
@@ -7193,7 +7202,7 @@ public partial class GitService
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         var result = RunRollbackGitWithRetry(
             psi,
-            (start, timeout) => GitNetworkProcessRunner.Run(start, timeout: timeout),
+            (start, timeout) => GitProcessBoundary.Run(start, timeout: timeout),
             () =>
             _logger.LogWarning(
                 "Integration rollback git {Operation} timed out at {Path}; retrying once with a 120-second budget",
@@ -8237,6 +8246,32 @@ public partial class GitService
     }
 
     /// <summary>
+    /// BD-2: commit, tree and message of each commit reachable from
+    /// <paramref name="tip"/> but not from <paramref name="exclusiveBase"/>,
+    /// newest first. The tree identifies the same content after a rebase or
+    /// squash; the message keeps any card key the rewrite retained. Both
+    /// revisions may be a SHA or a branch such as <c>origin/develop</c>.
+    /// Empty when a revision is invalid or unknown.
+    /// </summary>
+    public IReadOnlyList<RevisionDetail> ListRevisionDetails(string repoRoot, string tip, string? exclusiveBase,
+        int maxCount, bool includeMessages = true)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot) || !IsLikelyBranchName(tip)
+            || exclusiveBase is not null && !IsLikelyBranchName(exclusiveBase)) return [];
+        var format = includeMessages ? "--format=%H%x1f%T%x1f%B%x1e" : "--format=%H%x1f%T%x1e";
+        var arguments = new List<string> { "log", $"--max-count={Math.Max(1, maxCount)}", format, tip };
+        if (exclusiveBase is not null) arguments.Add("^" + exclusiveBase);
+        arguments.Add(RevisionsOnly);
+        var (output, _, code) = RunGitArgs(repoRoot, [.. arguments]);
+        if (code != 0) return [];
+        return output.Split('\x1e', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(entry => entry.Split('\x1f', 3))
+            .Where(fields => fields.Length >= 2)
+            .Select(fields => new RevisionDetail(fields[0], fields[1], fields.Length > 2 ? fields[2] : ""))
+            .ToArray();
+    }
+
+    /// <summary>
     /// BD-1: whether <paramref name="ancestor"/> is an ancestor of
     /// <paramref name="descendant"/>, or null when git cannot answer. Unlike
     /// <see cref="IsAncestor"/>, only exit code 1 of
@@ -8603,7 +8638,7 @@ public partial class GitService
             // we can get without an unreliable PID/window-title scan.
             psi.ArgumentList.Add("-r");
             psi.ArgumentList.Add(root);
-            using var p = Process.Start(psi);
+            using var p = HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_config));
             return p != null;
         }
         catch (Exception ex)
@@ -8831,12 +8866,7 @@ public partial class GitService
                 CreateNoWindow = true,
             };
             foreach (var arg in args) psi.ArgumentList.Add(arg);
-            var command = CommandLabel(psi);
-            var sw = Stopwatch.StartNew();
             var result = IntegrationFetchForTesting(psi, timeout, cancellationToken);
-            sw.Stop();
-            GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode,
-                timedOut: result.FailureKind == GitProcessFailureKind.TimedOut);
             if (result.ExitCode != 0 && IsConcurrentRefUpdate(result.StandardError)
                 && refLockRetries < 2 && !cancellationToken.IsCancellationRequested)
             {
@@ -8891,48 +8921,10 @@ public partial class GitService
         string? stdin,
         CancellationToken cancellationToken = default)
     {
-        // Time every spawn and record it against the ambient git-info request
-        // scope (if any). This is the per-subprocess half of the AGT-2007
-        // instrumentation; the scope rollup turns it into "N spawns, X ms".
-        var command = CommandLabel(psi);
-        var sw = Stopwatch.StartNew();
-        var result = RunGitProcessCore(psi, stdin, cancellationToken);
-        sw.Stop();
-        GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode,
-            timedOut: result.FailureKind == GitProcessFailureKind.TimedOut);
+        // The boundary guards, registers, budgets and times every spawn
+        // against the ambient git-info request scope (AGT-2007, AGT-3321).
+        var result = GitProcessBoundary.Run(psi, stdin, GitNetworkProcessRunner.DefaultTimeout, cancellationToken);
         return (result.StandardOutput, result.StandardError, result.ExitCode);
-    }
-
-    private static GitProcessResult RunGitProcessCore(
-        ProcessStartInfo psi,
-        string? stdin,
-        CancellationToken cancellationToken)
-    {
-        using var processSlot = GitProcessBudget.Acquire();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken, GitProcessBudget.Token);
-        var result = GitNetworkProcessRunner.Run(
-            psi,
-            stdin,
-            GitNetworkProcessRunner.DefaultTimeout,
-            linked.Token);
-        return result;
-    }
-
-    /// <summary>
-    /// A short, low-cardinality label for one git spawn - the git subcommand
-    /// (e.g. <c>status</c>, <c>merge-base</c>, <c>rev-parse</c>). Deliberately
-    /// the first token only: it groups spawns cleanly in the telemetry rollup
-    /// and never leaks a branch name, path, or commit message into the logs.
-    /// </summary>
-    private static string CommandLabel(ProcessStartInfo psi)
-    {
-        if (psi.ArgumentList.Count > 0)
-            return psi.ArgumentList[0];
-        var args = psi.Arguments;
-        if (string.IsNullOrWhiteSpace(args)) return "git";
-        var space = args.IndexOf(' ');
-        return space < 0 ? args : args[..space];
     }
 
     /// <summary>

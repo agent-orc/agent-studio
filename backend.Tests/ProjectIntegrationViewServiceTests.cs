@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -20,7 +21,7 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_temp, recursive: true); } catch { }
+        if (Directory.Exists(_temp)) Directory.Delete(_temp, recursive: true);
     }
 
     [Fact]
@@ -160,18 +161,45 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
             // completed-card metadata or run Git concurrently while the request
             // is being asserted, which is especially visible with Windows Git's
             // higher spawn cost and exclusive file locking.
-            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
+            // AGT-3323 (Git facts S3): the route serves the view the Git state
+            // indexer publishes, so the indexer is the one hosted service kept.
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.AddHostedService(provider => provider.GetRequiredService<GitStateIndexService>());
+            });
         });
         using var client = factory.CreateClient();
 
-        using var response = await client.GetAsync("/api/git/integration?project=Endpoint%20Demo");
+        using var response = await PublishedView(client, "/api/git/integration?project=Endpoint%20Demo");
 
-        response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<ProjectIntegrationView>();
         Assert.NotNull(body);
         Assert.Equal("origin/develop", body!.IntegrationRef);
         Assert.Equal(mergeSha, Assert.Single(body.Queue).MergeSha);
         Assert.Equal("AGT-9", Assert.Single(body.PublisherMerges).TaskKey);
+        Assert.True(response.Headers.Contains(GitFactsResults.GenerationHeader));
+        Assert.NotNull(response.Headers.ETag);
+
+        using var conditional = new HttpRequestMessage(HttpMethod.Get, "/api/git/integration?project=Endpoint%20Demo");
+        conditional.Headers.IfNoneMatch.Add(response.Headers.ETag!);
+        using var notModified = await client.SendAsync(conditional);
+        Assert.Equal(System.Net.HttpStatusCode.NotModified, notModified.StatusCode);
+    }
+
+    /// <summary>Polls the route until the producer published the view; a warming answer is 202.</summary>
+    private static async Task<HttpResponseMessage> PublishedView(HttpClient client, string url)
+    {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            var response = await client.GetAsync(url);
+            if (response.StatusCode == System.Net.HttpStatusCode.OK) return response;
+            Assert.Equal(System.Net.HttpStatusCode.Accepted, response.StatusCode);
+            response.Dispose();
+            if (waited.Elapsed > TimeSpan.FromMinutes(1)) throw new TimeoutException("The integration view was not published.");
+            await Task.Delay(50);
+        }
     }
 
     [Fact]
@@ -351,12 +379,23 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit(15_000);
-        return (output, error, process.ExitCode);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        try
+        {
+            var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var error = process.StandardError.ReadToEndAsync(timeout.Token);
+            Task.WhenAll(output, error, process.WaitForExitAsync(timeout.Token))
+                .GetAwaiter().GetResult();
+            return (output.Result, error.Result, process.ExitCode);
+        }
+        catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            throw new TimeoutException($"git {string.Join(' ', args)} exceeded two minutes.", ex);
+        }
     }
 }

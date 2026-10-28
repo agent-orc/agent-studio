@@ -281,7 +281,6 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
         Assert.Contains("completion-from-lane-entry", row.DataGaps);
     }
 
-
     [Fact]
     public void CreationAfterCompletion_IsClampedAndFlagged_AndReAcceptanceDoesNotMoveAnchor()
     {

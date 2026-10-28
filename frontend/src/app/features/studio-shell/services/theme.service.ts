@@ -1,4 +1,4 @@
-import { Injectable, effect, signal } from '@angular/core';
+import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 
 const THEME_KEY = 'atp.studio.theme';
 
@@ -13,31 +13,49 @@ const THEME_KEY = 'atp.studio.theme';
  *
  * The service reflects the current theme onto `document.documentElement`
  * (`data-studio-theme`) so the design tokens flip, and persists the choice to
- * localStorage. Default is Light — a missing key counts as "use the default".
+ * localStorage. Default is Light to preserve existing preferences; System
+ * follows the operating-system colour scheme when selected.
  */
 @Injectable({ providedIn: 'root' })
 export class ThemeService {
-  private readonly _theme = signal<'dark' | 'light'>(
-    (localStorage.getItem(THEME_KEY) as 'dark' | 'light' | null) ?? 'light',
-  );
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly mediaQuery = typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  private readonly systemDark = signal(this.mediaQuery?.matches ?? false);
+  private readonly _preference = signal<'system' | 'dark' | 'light'>(this.savedPreference());
+  readonly preference = this._preference.asReadonly();
 
-  /** Read-only current theme. */
-  readonly theme = this._theme.asReadonly();
+  /** Resolved theme used by the titlebar and design tokens. */
+  readonly theme = computed<'dark' | 'light'>(() => {
+    const preference = this._preference();
+    return preference === 'system' ? (this.systemDark() ? 'dark' : 'light') : preference;
+  });
 
   constructor() {
+    const onSystemChange = (event: MediaQueryListEvent) => this.systemDark.set(event.matches);
+    this.mediaQuery?.addEventListener('change', onSystemChange);
+    this.destroyRef.onDestroy(() => this.mediaQuery?.removeEventListener('change', onSystemChange));
     // Reflect the theme onto the document root + persist on every change.
     effect(() => {
-      const t = this._theme();
-      document.documentElement.dataset['studioTheme'] = t;
-      try { localStorage.setItem(THEME_KEY, t); } catch { /* storage blocked */ }
+      document.documentElement.dataset['studioTheme'] = this.theme();
+      try { localStorage.setItem(THEME_KEY, this._preference()); } catch { /* storage blocked */ }
     });
   }
 
-  set(value: 'dark' | 'light'): void {
-    this._theme.set(value);
+  private savedPreference(): 'system' | 'dark' | 'light' {
+    try {
+      const value = localStorage.getItem(THEME_KEY);
+      return value === 'system' || value === 'dark' || value === 'light' ? value : 'light';
+    } catch {
+      return 'light';
+    }
+  }
+
+  set(value: 'system' | 'dark' | 'light'): void {
+    this._preference.set(value);
   }
 
   toggle(): void {
-    this._theme.update(t => (t === 'dark' ? 'light' : 'dark'));
+    this._preference.set(this.theme() === 'dark' ? 'light' : 'dark');
   }
 }

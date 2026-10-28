@@ -37,6 +37,8 @@ interface ProjectSettingsRow {
   maxReviewConcernRounds: number;
   scopedReviewAfterFinding: boolean;
   scopedReviewMaximumDeltaFiles: number;
+  /** AGT-3310: effective testing.perCard; changed through the API only. */
+  testingPerCard: 'affected' | 'full';
 }
 
 /** Bound value of the integration-gate reuse select. */
@@ -355,6 +357,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
           maxReviewConcernRounds: snap.settings.maxReviewConcernRounds ?? 1,
           scopedReviewAfterFinding: snap.settings.scopedReviewAfterFinding ?? true,
           scopedReviewMaximumDeltaFiles: snap.settings.scopedReviewMaximumDeltaFiles ?? 20,
+          testingPerCard: snap.settings.testingPerCard ?? 'full',
         };
         this.settings.set(row);
         if (this.autoCommitDraft !== row.autoCommit) this.autoCommitDraft = row.autoCommit;

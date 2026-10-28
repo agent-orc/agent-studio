@@ -53,24 +53,13 @@ public sealed class ProcessTaskHistoryGitRunner : ITaskHistoryGitRunner
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
-        var started = Stopwatch.StartNew();
-        using var p = Process.Start(psi);
-        if (p == null) return TaskHistoryGitResult.Failed("Failed to start git.");
-
-        var stdout = p.StandardOutput.ReadToEndAsync();
-        var stderr = p.StandardError.ReadToEndAsync();
-        if (!p.WaitForExit((int)Math.Ceiling(timeout.TotalMilliseconds)))
+        var result = GitProcessBoundary.Run(psi, timeout: timeout);
+        return result.FailureKind switch
         {
-            try { p.Kill(entireProcessTree: true); } catch (Exception __ex) { SilentCatch.Note(__ex, "TaskHistoryGitRunner:kill"); }
-            GitProcessTelemetry.Record(args.Count > 0 ? args[0] : "", started.ElapsedMilliseconds, -1, timedOut: true);
-            return TaskHistoryGitResult.Failed(TaskHistoryGitResult.TimedOut);
-        }
-
-        var result = new TaskHistoryGitResult(
-            stdout.GetAwaiter().GetResult(),
-            stderr.GetAwaiter().GetResult(),
-            p.ExitCode);
-        GitProcessTelemetry.Record(args.Count > 0 ? args[0] : "", started.ElapsedMilliseconds, result.Code);
-        return result;
+            GitProcessFailureKind.None => new TaskHistoryGitResult(result.StandardOutput, result.StandardError, result.ExitCode),
+            GitProcessFailureKind.TimedOut => TaskHistoryGitResult.Failed(TaskHistoryGitResult.TimedOut),
+            _ => TaskHistoryGitResult.Failed(string.IsNullOrWhiteSpace(result.StandardError)
+                ? "Failed to start git." : result.StandardError),
+        };
     }
 }

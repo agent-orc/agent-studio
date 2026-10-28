@@ -289,6 +289,7 @@ public sealed record ProjectExecutionDefinition(
     QualityDefinition? Quality)
 {
     public ProjectDeploymentDefinition? Deployment { get; init; }
+    public string? DeliveryFullSuite { get; init; }
 }
 
 /// <summary>One definition problem. <paramref name="Line"/> is the 1-based project.yml line when the path resolves to one.</summary>
@@ -348,7 +349,7 @@ public static partial class ProjectDefinitionReader
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
             "cachePaths", "capabilities", "environment", "devServer", "image", "release",
             "project", "quality", "pipeline", "artifacts", "environments", "lifecycles", "deploy",
-            "variables",
+            "variables", "tenants", "channels", "runbooks", "delivery",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
@@ -379,6 +380,14 @@ public static partial class ProjectDefinitionReader
         var release = Release(lines, issues);
         var project = Project(lines, issues);
         var quality = Quality(lines, issues);
+        var deliveryLines = Section(lines, "delivery");
+        foreach (var line in deliveryLines.Where(line => line.Indent == 2))
+            if (KeyValue(line.Text).Key != "fullSuite")
+                issues.Add(new("delivery", "unknown-field", "Delivery contains an unsupported field."));
+        var fullSuite = NestedScalar(lines, "delivery", "fullSuite");
+        if (fullSuite is not null && fullSuite is not ("required" or "optional" or "off"))
+            issues.Add(new("delivery.fullSuite", "delivery-full-suite-invalid",
+                "delivery.fullSuite must be required, optional, or off."));
 
         if (!int.TryParse(schemaVersion, out var version)) version = 0;
         var definition = new ProjectExecutionDefinition(
@@ -386,6 +395,7 @@ public static partial class ProjectDefinitionReader
             environment, devServer, NullIfBlank(image), release, project, quality)
         {
             Deployment = ParseDeployment(lines, issues),
+            DeliveryFullSuite = fullSuite,
         };
         issues.AddRange(ProjectDefinitionValidator.Validate(definition, workspace, hosts));
         issues = LocateIssues(lines, issues);
@@ -859,7 +869,7 @@ public static partial class ProjectDefinitionValidator
             issues.Add(new("quality", "v1-does-not-support-quality", "schemaVersion 1 does not support the quality section. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 1 && definition.Deployment is not null)
-            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, deploy, or variables. Use schemaVersion 2."));
+            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, channels, runbooks, deploy, variables, or tenants. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 2 && definition.Project is null)
             issues.Add(new("project", "v2-project-required", "schemaVersion 2 requires a project section."));

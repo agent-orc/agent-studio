@@ -167,28 +167,23 @@ public sealed class GlobalSearchIndexes(IConfiguration config, GitService git, I
 
     private string RunGit(string root, IReadOnlyList<string> args)
     {
-        var timer = Stopwatch.StartNew();
-        using var process = new Process { StartInfo = new ProcessStartInfo("git") {
+        var start = new ProcessStartInfo("git")
+        {
             WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true
-        }};
-        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-        process.Start();
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        if (!process.WaitForExit(30_000))
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        // Index spawns are the expensive part of a cold search; the boundary
+        // records them in the ambient per-request git rollup like every other
+        // git call instead of showing an unexplained gap.
+        var result = GitProcessBoundary.Run(start, timeout: TimeSpan.FromSeconds(30));
+        if (result.FailureKind == GitProcessFailureKind.TimedOut)
         {
-            process.Kill(true);
             logger.LogWarning("global-search-index-timeout root={Root} command={Command}", root, args[0]);
             throw new TimeoutException($"git {args[0]} in {root} exceeded 30 seconds");
         }
-        timer.Stop();
-        // Index spawns are the expensive part of a cold search; record them so
-        // the ambient per-request git rollup accounts for them like every other
-        // git call instead of showing an unexplained gap.
-        GitProcessTelemetry.Record(args[0], timer.ElapsedMilliseconds, process.ExitCode);
-        if (process.ExitCode != 0) throw new InvalidOperationException(stderr.Trim());
-        return stdout;
+        if (!result.Success) throw new InvalidOperationException(result.StandardError.Trim());
+        return result.StandardOutput;
     }
 
     private sealed record TaskTextEntry(DateTime Stamp, string Text);

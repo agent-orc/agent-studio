@@ -45,6 +45,7 @@ public sealed record ParsedTurnUsage(
         Dollars: null,
         ContextWindow: ContextWindow,
         InputIncludesCached: InputIncludesCached,
+        ReasoningOutput: ReasoningOutput,
         PinnedModel: PinnedModel,
         ModelMismatch: ModelMismatch);
 }

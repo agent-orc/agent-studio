@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Projects;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using Xunit;
@@ -77,6 +78,71 @@ public sealed class ProjectDefinitionSchemaTwoTests
         """;
 
     private static string Valid => Head + Pipeline;
+
+    [Theory]
+    [InlineData("database-url")]
+    [InlineData("database_url")]
+    public void Environment_secret_names_that_share_a_container_variable_are_rejected(string second)
+    {
+        var yaml = Valid + "\n  - name: DATABASE_ALIAS\n    secret: " + second
+            + "\n    environments: [production]\n";
+        Assert.True(ProjectDefinitionReader.Parse(yaml).IsValid);
+        Assert.Throws<JsonException>(() => ProjectEnvironmentService.ApplyDefinition([], yaml));
+    }
+
+    [Fact]
+    public void Parses_channels_named_lifecycles_and_channel_scoped_variables()
+    {
+        var yaml = Head + """
+
+            lifecycles:
+              standard:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  approval: [Owner]
+                  requires: staging
+              hotfix:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  approval: [Owner]
+            channels:
+              - name: default
+                lifecycle: standard
+                default: true
+              - name: hotfix
+                lifecycle: hotfix
+                versionRules:
+                  branchPattern: refs/heads/hotfix/*
+            variables:
+              - name: LOG_LEVEL
+                value: info
+                channels: [hotfix]
+            """;
+
+        var result = ProjectDefinitionReader.Parse(yaml);
+        Assert.True(result.IsValid, Describe(result));
+        var deployment = result.Definition!.Deployment!;
+        Assert.Equal("hotfix", deployment.Channels[1].Name);
+        Assert.Equal("production", deployment.Lifecycles["hotfix"][1].Phase);
+        Assert.Equal("hotfix", deployment.Variables[0].Channels.Single());
+    }
+
+    [Fact]
+    public void Channels_require_one_default_and_declared_lifecycles()
+    {
+        var yaml = Head + """
+
+            channels:
+              - name: hotfix
+                lifecycle: missing
+                branchPattern: refs/heads/hotfix/*
+            """;
+        var issues = ProjectDefinitionReader.Parse(yaml).Issues;
+        Assert.Contains(issues, issue => issue.Code == "channel-default-required");
+        Assert.Contains(issues, issue => issue.Code == "channel-lifecycle-unknown");
+    }
 
     [Fact]
     public void Parses_artifacts_protected_environments_ssh_steps_and_scoped_variables()
@@ -389,12 +455,23 @@ public sealed class ProjectDefinitionSchemaTwoTests
     [InlineData("    secret: DATABASE_URL\n", "    secret: \"postgres://db/app\"\n", "variable-secret-name-invalid")]
     [InlineData("    secret: DATABASE_URL\n", "    secret: DATABASE_URL\n    value: x\n", "variable-source-invalid")]
     [InlineData("    secret: DATABASE_URL\n    environments: [production]", "    secret: DATABASE_URL\n    environments: [preview]", "variable-environment-unknown")]
-    [InlineData("  - name: DATABASE_URL\n", "  - name: LOG_LEVEL\n", "variable-duplicate")]
+    [InlineData("  - name: DATABASE_URL\n    secret: DATABASE_URL\n    environments: [production]", "  - name: LOG_LEVEL\n    secret: DATABASE_URL", "variable-duplicate")]
     public void Variable_rules_name_the_offending_entry(string before, string after, string code)
     {
         var result = ProjectDefinitionReader.Parse(Replace(Valid, before, after));
 
         Assert.Contains(result.Issues, issue => issue.Code == code && issue.Path.StartsWith("variables[1]", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Equally_specific_overlapping_variable_scopes_are_refused()
+    {
+        var yaml = Replace(Replace(Valid, "  - name: LOG_LEVEL\n    value: info\n",
+            "  - name: LOG_LEVEL\n    value: info\n    environments: [production]\n"),
+            "  - name: DATABASE_URL\n", "  - name: LOG_LEVEL\n");
+
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml).Issues,
+            issue => issue.Code == "variable-duplicate" && issue.Path == "variables[1].name");
     }
 
     [Theory]
@@ -491,6 +568,65 @@ public sealed class ProjectDefinitionSchemaTwoTests
                 .Select(item => item.GetProperty("properties").GetProperty("type").GetProperty("const").GetString()));
         Assert.Equal(ProjectDeploymentVocabulary.VariableKeys,
             properties.GetProperty("variables").GetProperty("items").GetProperty("properties").EnumerateObject().Select(item => item.Name));
+        Assert.Equal(ProjectDeploymentVocabulary.TenantKeys,
+            properties.GetProperty("tenants").GetProperty("items").GetProperty("properties").EnumerateObject().Select(item => item.Name));
+        Assert.Equal(ProjectDeploymentVocabulary.ChannelKeys,
+            properties.GetProperty("channels").GetProperty("items").GetProperty("properties").EnumerateObject().Select(item => item.Name));
+    }
+
+    [Fact]
+    public void Tenant_scopes_use_or_within_a_kind_and_and_across_kinds()
+    {
+        var yaml = Valid + "\n" + """
+            tenants:
+              - name: acme
+                tags: [premium, europe]
+                environments: [staging, production]
+              - name: beta
+                tags: [europe]
+                environments: [staging]
+            """;
+        // The parsed definition and the pure resolver share the same tenant vocabulary.
+        var parsed = ProjectDefinitionReader.Parse(yaml);
+        Assert.True(parsed.IsValid, Describe(parsed));
+        var tenants = parsed.Definition!.Deployment!.Tenants;
+        Assert.Equal(["acme", "beta"], tenants.Select(item => item.Name));
+        var variables = new[]
+        {
+            new ProjectVariableDefinition("MODE", "base", null, []),
+            new ProjectVariableDefinition("MODE", "europe", null, []) { TenantTags = ["premium", "europe"] },
+            new ProjectVariableDefinition("MODE", "acme-prod", null, ["production"]) { Tenants = ["acme"] },
+        };
+        Assert.Equal("acme-prod", ProjectVariableResolution.Resolve(variables, "MODE", "production", tenants[0])?.Value);
+        Assert.Equal("europe", ProjectVariableResolution.Resolve(variables, "MODE", "staging", tenants[0])?.Value);
+        Assert.Equal("europe", ProjectVariableResolution.Resolve(variables, "MODE", "staging", tenants[1])?.Value);
+        Assert.Equal("base", ProjectVariableResolution.Resolve(variables, "MODE", "production", null)?.Value);
+        var scoped = ProjectDefinitionReader.Parse(Head + """
+
+            tenants:
+              - name: acme
+                tags: [premium]
+                environments: [staging, production]
+            variables:
+              - name: MODE
+                value: base
+              - name: MODE
+                value: premium
+                tenants: [acme]
+                tenantTags: [premium]
+            """);
+        Assert.True(scoped.IsValid, Describe(scoped));
+        Assert.Equal(["acme"], scoped.Definition!.Deployment!.Variables[1].Tenants);
+    }
+
+    [Theory]
+    [InlineData("tenants:\n  - name: acme\n    environments: [preview]\n", "tenant-environments-invalid")]
+    [InlineData("tenants:\n  - name: acme\n    environments: [staging]\n  - name: acme\n    environments: [staging]\n", "tenant-name-invalid")]
+    [InlineData("variables:\n  - name: MODE\n    value: x\n    tenants: [missing]\n", "variable-tenant-unknown")]
+    public void Invalid_tenant_declarations_have_field_issues(string section, string code)
+    {
+        var result = ProjectDefinitionReader.Parse(Head + "\n" + section);
+        Assert.Contains(result.Issues, issue => issue.Code == code && !string.IsNullOrWhiteSpace(issue.Path));
     }
 
     [Fact]

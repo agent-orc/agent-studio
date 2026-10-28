@@ -43,6 +43,7 @@ var hostEntryTimestamp = TimeProvider.System.GetTimestamp();
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .CreateBootstrapLogger();
@@ -69,7 +70,12 @@ builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
 // waits for is live; see /healthz/orchestration-engine.
 builder.Services.AddSingleton<OrchestrationEngineReadiness>();
 builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
+// AGT-3218: checks the first engine decisions after a profile switch and rolls
+// the profile back when an applied decision lacks its effect.
+builder.Services.AddSingleton<EngineApplierEffectProbe>();
+builder.Services.AddHostedService<EngineApplierCanaryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
+builder.Services.AddSingleton<NetworkedLoginAddressHealth>();
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -83,6 +89,14 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
             throw new InvalidOperationException($"Invalid Security:TrustedProxyAddresses entry: {raw}");
         options.KnownProxies.Add(address);
     }
+});
+// AGT-3230: the networked edge sends a one-year HSTS with includeSubDomains;
+// the API's own header must not advertise a weaker policy.
+builder.Services.AddOptions<Microsoft.AspNetCore.HttpsPolicy.HstsOptions>().Configure<IConfiguration>((options, configuration) =>
+{
+    if (!SecurityProfiles.IsNetworked(configuration)) return;
+    options.MaxAge = TimeSpan.FromDays(365);
+    options.IncludeSubDomains = true;
 });
 var publicDemoBodyCap = SecurityProfiles.IsPublicDemo(builder.Configuration);
 var maxRequestBodyBytes = builder.Configuration.GetValue<long>(
@@ -220,6 +234,7 @@ builder.Logging.AddProvider(new BackendFileLoggerProvider(fileLogSink));
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console(),
     preserveStaticLogger: underTestHost,
@@ -350,10 +365,16 @@ if (!underTestHost)
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
-builder.Services.AddSingleton<ISecretStore, BuiltInSecretStore>();
+builder.Services.AddHttpClient("secret-external", client => client.Timeout = TimeSpan.FromSeconds(10))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<BuiltInSecretStore>();
+builder.Services.AddSingleton<SecretBackendSettings>();
+builder.Services.AddSingleton<ScopedSecretStore>();
+builder.Services.AddSingleton<ISecretStore>(sp => sp.GetRequiredService<ScopedSecretStore>());
 builder.Services.AddSingleton<SecretAuditLog>();
 builder.Services.AddSingleton<SecretValueScrubber>();
 builder.Services.AddSingleton<ISecretProvider, SecretProvider>();
+builder.Services.AddSingleton<ProjectSecretBindings>();
 builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
 builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvisioner>();
@@ -393,6 +414,7 @@ builder.Services.AddSingleton<AgentStudio.Registry.ComponentRoutingService>();
 // AGT-1812: per-workspace default settings store + the two-tier orchestrator
 // resolver (project override -> workspace default -> platform constant default).
 builder.Services.AddSingleton<AgentStudio.Registry.WorkspaceSettingsService>();
+builder.Services.AddSingleton<AgentStudio.Quota.WorkspaceQuotaService>();
 builder.Services.AddSingleton<AgentStudio.Registry.OrchestratorDefaultsProvider>();
 // Project URLs: read-only repo scan for suggestions + minimal dev-server spawn.
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlDetectionService>();
@@ -435,6 +457,10 @@ builder.Services.AddSingleton<TaskStateMachine>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.TaskGateCancellationRegistry>();
 builder.Services.AddSingleton<TaskMutationService>();
 builder.Services.AddSingleton<ITaskHistoryGitRunner, ProcessTaskHistoryGitRunner>();
+// AGT-3318: card-open provenance and source file history read the derived
+// source facts on the Task Server; SourceFacts:ReadMode=legacy rolls back.
+builder.Services.AddSingleton<AgentStudio.Git.ISourceFactsReader,
+    AgentStudio.Git.TaskServerSourceFactsReader>();
 builder.Services.AddSingleton<TaskFileHistoryService>();
 builder.Services.AddSingleton<ResultVersionStore>();
 builder.Services.AddSingleton<LegacyResultHistoryBackfill>();
@@ -530,10 +556,29 @@ builder.Services.AddSingleton<OperatorReviewRequeueService>();
 builder.Services.AddSingleton<PublishTargetService>();
 builder.Services.AddSingleton<TaskPublishableService>();
 builder.Services.AddSingleton<PublishActionService>();
+builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconciler>(sp =>
+    sp.GetRequiredService<PublishActionService>());
+builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
+    sp.GetRequiredService<IConfiguration>()["HostedData:LocalVolumeRoot"] is { Length: > 0 } root
+        ? new LocalHostedVolumeBackupEngine(root, Path.Combine(
+            sp.GetRequiredService<IConfiguration>()["TaskRepository"] ?? throw new InvalidOperationException("TaskRepository is required."),
+            "hosted-volume-archives"), sp.GetRequiredService<ILogger<LocalHostedVolumeBackupEngine>>(),
+            sp.GetRequiredService<TimeProvider>())
+        : new UnboundHostedVolumeBackupEngine());
+builder.Services.AddSingleton<HostedVolumeBackupService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<HostedVolumeBackupWorker>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
+builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
+builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
+    AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
+builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AgentStudio.Deploy.CardPreviewSweep>();
@@ -587,6 +632,35 @@ builder.Services.AddSingleton<TaskWatcherService>();
 // SetIndexCache so existing ScanAllJobs callers transparently benefit.
 builder.Services.AddSingleton<TaskIndexCache>();
 builder.Services.AddHostedService<TaskIndexCacheDiagnosticsService>();
+// Board card enrichment shared by the board routes and the persisted board
+// (Git facts S5): the persister writes the slim cards of each published
+// generation to board-summaries.db, and a cold board read answers from them
+// marked restored instead of waiting for the first workspace scan.
+builder.Services.AddSingleton<BoardCardProjector>();
+builder.Services.AddSingleton<BoardSummaryStore>();
+builder.Services.AddSingleton<RestoredBoard>();
+builder.Services.AddSingleton<BoardSummaryPersister>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<BoardSummaryPersister>());
+// Board read model on the Task Server (pipeline delivery target M1 and M2,
+// decision D7 A-B). Board:Source selects workspace, task-server-shadow or
+// task-server; the worker mirrors the task index and compares off the request path.
+builder.Services.AddSingleton<BoardSourceSettings>();
+builder.Services.AddSingleton<BoardShadowLedger>();
+builder.Services.AddSingleton<TaskServerBoardClient>();
+builder.Services.AddSingleton<TaskServerBoardReader>();
+builder.Services.AddSingleton<TaskServerBoardSource>();
+builder.Services.AddSingleton<BoardShadowWorker>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<BoardShadowWorker>());
+TaskServerBoardClient.AddTaskServerBoardClient(builder.Services, builder.Configuration);
+// Task-folder artefacts in the Task Server (AGT-3320, migration M3 and M6,
+// decision D9 A). TaskArtifacts:Source selects workspace, task-server-shadow
+// or task-server: the mirror copies task files off the request path, release
+// card attribution reads the Task Server, and in task-server mode the
+// workspace repository is the Task Server's export, never committed here.
+builder.Services.AddSingleton<TaskArtifactsSourceSettings>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCardAttributionSource>();
+builder.Services.AddSingleton<TaskFileMirrorWorker>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<TaskFileMirrorWorker>());
 builder.Services.AddSingleton<JobStatsMetadataCache>();
 // AGT-2703: conditional board reads. TaskSidecarGeneration counts the watcher
 // events the task index deliberately drops, and BoardReadSignatureSource folds
@@ -884,7 +958,9 @@ builder.Services.AddSingleton<AgentStudio.Runner.IGateExecutorDirectory>(sp =>
     sp.GetRequiredService<V1ReviewExecutorRegistry>());
 builder.Services.AddSingleton(sp => new AgentStudio.Runner.MonolithGateStore(
     sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TimeProvider>(),
-    sp.GetRequiredService<AgentStudio.Runner.IGateExecutorDirectory>()));
+    sp.GetRequiredService<AgentStudio.Runner.IGateExecutorDirectory>(),
+    sp.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>(),
+    sp.GetRequiredService<TaskScannerService>()));
 // AGT-3055: BatchGate:Execution=claimed opts the batch suite into claimable
 // gate work; unset keeps the SSH bridge. The claimed subject lives where runner
 // gate claims land: the standalone Task Server when the versioned plane is
@@ -899,6 +975,9 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IBatchGateSubjectAuthority>(s
 builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeIncidentService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeModeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationReservationService(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
@@ -909,6 +988,7 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationRes
         1, 24 * 60))));
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
+builder.Services.AddSingleton<AgentStudio.Tokens.TokenAnalysisService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
     AgentStudio.Pipeline.RemoteRequiredLintScssRunner>();
 builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
@@ -1005,6 +1085,13 @@ if (!publicDemoExecutionProfile)
 // periodic sweep as a safety net. Request paths (tasks/list, tasks/grouped,
 // git/inventory) only ever read this service's last snapshot through
 // TaskListGitProjectionCache and GitService.GetProjectInventory.
+// AGT-3322: the durable Git fact store (git-facts.db); the indexer is its only writer.
+builder.Services.AddSingleton<GitFactStore>();
+// AGT-3323 (Git facts S3): reachability per target ref, shared by card
+// classification, provenance and the integration view; card reads join the
+// facts the indexer publishes through GitCardFactReader and never start Git.
+builder.Services.AddSingleton<GitReachabilityIndex>();
+builder.Services.AddSingleton<GitCardFactReader>();
 builder.Services.AddSingleton<GitStateIndexService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<GitStateIndexService>());
@@ -1031,8 +1118,12 @@ builder.Services.AddSingleton<BranchSweepService>();
 builder.Services.AddSingleton<BranchReclaimTriggerService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitBranchRetentionHostedService>();
-// Slice P (ASS-1663): build-profile onboarding validation dry-run.
-builder.Services.AddSingleton<IBuildCommandRunner, RemoteRequiredBuildCommandRunner>();
+// Keep host validation available for the trusted local profile. Networked and
+// public-demo profiles must never run delivered build commands in the API.
+builder.Services.AddSingleton<IBuildCommandRunner>(sp =>
+    SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
+        ? new ProcessBuildCommandRunner()
+        : new RemoteRequiredBuildCommandRunner());
 builder.Services.AddSingleton<BuildProfileValidationService>();
 // Completed-job auto-push runs off the request path: TaskTransitionService
 // enqueues here on the move to 6-completed (instant), CompletedPushWorker
@@ -1128,6 +1219,25 @@ builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStud
 builder.Services.AddSingleton<AgentStudio.Watcher.WatcherHostedService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Watcher.WatcherHostedService>());
+// AGT-3207: the AI Operator acts on the stall events (A0/A1), proposes A2
+// actions and never takes A3 ones; receipts, follow-up checks, rate limits.
+builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionStore>();
+builder.Services.AddSingleton<AgentStudio.Watcher.ProviderRouteExclusions>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IHostAdmissionControl, AgentStudio.Watcher.ClientIdentityAdmissionControl>();
+builder.Services.AddHttpClient(AgentStudio.Watcher.OperationsServerRestartControl.HttpClientName,
+    client => client.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddSingleton<AgentStudio.Watcher.IServiceRestartControl, AgentStudio.Watcher.OperationsServerRestartControl>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IServiceWorkload, AgentStudio.Watcher.ServiceWorkloadReader>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IProviderRouteControl, AgentStudio.Watcher.ReviewProviderRouteControl>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IBatchGateControl, AgentStudio.Watcher.BatchGateInterventionControl>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IContinuationControl, AgentStudio.Watcher.DeliveryContinuationControl>();
+builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionFactsBuilder>();
+builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionReceipts>();
+builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionEffect>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<AgentStudio.Watcher.StallInterventionEffect>());
+builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionService>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<AgentStudio.Watcher.StallInterventionHostedService>();
 // Periodic reap of orphaned CLI process trees (codex/node) that a finished or
 // crashed run left behind. Closes the days-long accumulation gap the startup
 // reaper alone cannot: those survivors hold job-folder handles and wedge the
@@ -1329,7 +1439,16 @@ if (connectorProfile)
     builder.ConfigureConnectorProfile();
 
 hostTimeline.Checkpoint("entryToBuild");
+// Short-lived test hosts must not leave HttpClientFactory handler-expiry timers
+// behind after their service providers have been disposed.
+if (builder.Environment.IsEnvironment("Test"))
+    builder.Services.ConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions>(options =>
+        options.HandlerLifetime = Timeout.InfiniteTimeSpan);
+
 var app = builder.Build();
+// Test-host overrides and deployment configuration are final only after Build().
+// Reject a mistyped public-edge setting before the host accepts requests.
+_ = SecurityProfiles.PublicCloudflareEdgeEnabled(app.Configuration);
 hostTimeline.Checkpoint("build");
 hostTimeline.Attach(app.Services);
 // Capture the secrets key-encryption key now, before any hosted service starts
@@ -1367,11 +1486,22 @@ var projectScopedSignalRProfile = networkedSecurityProfile || publicDemoExecutio
 var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");
 
+// Loopback trust (first-owner bootstrap) is decided on the connection peer,
+// which forwarding replaces below (AGT-3230).
+app.UseConnectionPeerCapture();
 app.UseForwardedHeaders();
+// Directly after forwarding, so every later short-circuit (Task Server proxy
+// 404, rejections, exception handler) carries the framing and content policy
+// too (AGT-3230).
+if (networkedSecurityProfile) app.UseStudioResponseHeaders();
 // Before routing, so the versioned core-attach paths Angular calls reach the
 // same legacy handlers, guards, and security checks as before (AGT-2983).
 app.UseStudioV1LegacyRouteAlias(TaskServerPlaneProxy.IsConfigured(app.Configuration));
 app.UseRouting();
+// Every matched GET runs in a Git read scope keyed by its route template, so
+// a read that starts Git outside the frozen S1 exceptions is counted, warned
+// and, in strict mode, rejected (AGT-3321).
+app.UseGitReadRequestGuard(app.Configuration);
 // A tab running the previous frontend sees this on its next API response.
 // The value is captured once from the installed artifacts, never from a
 // checkout that might advance while this process is still running.
@@ -1379,7 +1509,15 @@ var publishedArtifactSha = app.Services.GetRequiredService<PublishedArtifactSha>
 app.Use(async (context, next) =>
 {
     if (publishedArtifactSha is not null && context.Request.Path.StartsWithSegments("/api"))
-        context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+        context.Response.OnStarting(() =>
+        {
+            if ((!networkedSecurityProfile && !publicDemoExecutionProfile)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.HumanPrincipalItem)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.RunnerPrincipalItem)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.ServiceAccountPrincipalItem))
+                context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+            return Task.CompletedTask;
+        });
     await next(context);
 });
 // An explicitly selected standalone Task Server owns task data. Legacy task
@@ -1915,11 +2053,12 @@ app.Services.GetRequiredService<WikiPublicationService>().SetWikiContentCache(wi
 watcher.OnWikiChanged += (projectName, _) =>
     wikiContentCache.Invalidate(projectName, WikiContentCache.InvalidationSource.Watcher);
 
-// TaskAccess layer (ADR-0024): force a synchronous first index read so
-// boot-time disk problems surface here rather than on the first HTTP
-// request. The host's other lifecycle calls (ReloadProjectAsync,
-// ShutdownAsync) are wired through the typed interface and used by
-// callers, not at startup.
+// TaskAccess layer (ADR-0024): the first index publication starts at boot so
+// boot-time disk problems surface early. With a persisted board (Git facts
+// S5) it runs in the background and board reads answer restored; on a first
+// start it is a synchronous read before the listener, as before. The host's
+// other lifecycle calls (ReloadProjectAsync, ShutdownAsync) are wired through
+// the typed interface and used by callers, not at startup.
 _ = hostTimeline.Sweep("TaskAccessHost.Boot", () => app.Services.GetRequiredService<AgentStudio.TaskAccess.ITaskAccessHost>()
     .BootAsync());
 
@@ -2118,7 +2257,6 @@ taskRunner.OnRunnerStatusChanged += (projectName, status) =>
 app.MapAllEndpoints();
 app.MapConversationEndpoints();
 app.MapHub<TaskHub>("/hubs/jobs");
-ApiTokenRouteScopes.Declare(app);
 PublicDemoExecutionRouteInventory.ValidateStartup(
     app,
     app.Services.GetRequiredService<StartupExecutionAdmission>());

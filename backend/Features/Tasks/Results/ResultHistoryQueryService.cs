@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Git;
 
 namespace AgentStudio.Tasks;
 
@@ -20,17 +21,17 @@ namespace AgentStudio.Tasks;
 public sealed class ResultHistoryQueryService
 {
     private readonly TaskScannerService _scanner;
-    private readonly ResultVersionStore _versions;
     private readonly LegacyResultHistoryBackfill _legacy;
+    private readonly GitFactStore _facts;
 
     public ResultHistoryQueryService(
         TaskScannerService scanner,
-        ResultVersionStore versions,
-        LegacyResultHistoryBackfill legacy)
+        LegacyResultHistoryBackfill legacy,
+        GitFactStore facts)
     {
         _scanner = scanner;
-        _versions = versions;
         _legacy = legacy;
+        _facts = facts;
     }
 
     public TaskFileLookupResult<ResultHistoryListing> List(string jobId, string? watchPath)
@@ -40,9 +41,14 @@ public sealed class ResultHistoryQueryService
             return TaskFileLookupResult<ResultHistoryListing>.Fail(404, "Job not found.");
 
         var (state, snapshot) = _legacy.Observe(task, jobId, watchPath);
-        var entries = Collect(task, snapshot)
-            .Select(item => item.Entry)
-            .ToList();
+        var rows = _facts.ReadResultVersions(task.TaskKey);
+        var entries = Project(task, state == LegacyResultHistoryStates.Complete
+            ? rows : rows.Where(row => row.Source != "workspace-history").ToArray());
+        if (state == LegacyResultHistoryStates.Complete &&
+            ((!_legacy.IsImportComplete(task) && rows.Count == 0)
+             || snapshot.Record is { } record && record.Entries.Any(version =>
+                 rows.All(row => row.VersionId != GitIdPrefix + version.Sha))))
+            state = LegacyResultHistoryStates.Pending;
         return TaskFileLookupResult<ResultHistoryListing>.Ok(
             new ResultHistoryListing(entries, state),
             TaskFileSources.Workspace);
@@ -59,7 +65,10 @@ public sealed class ResultHistoryQueryService
         {
             snapshot = LegacyResultHistoryFile.Read(task.FolderPath);
             if (snapshot.State == LegacyResultHistoryStates.Missing)
-                return TaskFileLookupResult<ResultHistoryDocument>.Fail(404, "Legacy history not loaded yet.");
+            {
+                _legacy.Observe(task, jobId, watchPath);
+                return TaskFileLookupResult<ResultHistoryDocument>.Fail(202, "Legacy history is warming.");
+            }
             if (snapshot.State != LegacyResultHistoryStates.Complete)
                 return TaskFileLookupResult<ResultHistoryDocument>.Fail(
                     404, "Legacy history could not be loaded: " + snapshot.Reason);
@@ -68,78 +77,68 @@ public sealed class ResultHistoryQueryService
         {
             return TaskFileLookupResult<ResultHistoryDocument>.Fail(404, "Previous result not found.");
         }
+        else
+        {
+            _legacy.Observe(task, jobId, watchPath);
+        }
 
-        var match = Collect(task, snapshot).FirstOrDefault(item =>
-            string.Equals(item.Entry.Id, versionId, StringComparison.OrdinalIgnoreCase));
-        if (match.Entry is null)
+        var rows = _facts.ReadResultVersions(task.TaskKey);
+        var row = rows.FirstOrDefault(item => string.Equals(item.VersionId, versionId, StringComparison.OrdinalIgnoreCase));
+        if (row is null && !_legacy.IsImportComplete(task))
+        {
+            return TaskFileLookupResult<ResultHistoryDocument>.Fail(202, "Previous result is warming.");
+        }
+        if (row is null)
             return TaskFileLookupResult<ResultHistoryDocument>.Fail(404, "Previous result not found.");
-        if (match.Markdown is null)
+        var markdown = ReadContent(task, row, snapshot);
+        if (markdown is null)
             return TaskFileLookupResult<ResultHistoryDocument>.Fail(
                 404, "This previous result was too large to keep in the legacy history file.");
         return TaskFileLookupResult<ResultHistoryDocument>.Ok(
-            new ResultHistoryDocument(match.Entry, match.Markdown), match.Entry.Source);
+            new ResultHistoryDocument(ToEntry(row), markdown), row.Source);
     }
 
     private const string LocalIdPrefix = "local-";
     private const string GitIdPrefix = "git-";
 
-    /// <summary>
-    /// Local versions (read once each) plus, when <paramref name="legacy"/> is
-    /// complete, the legacy versions whose content is neither the current
-    /// Result nor a local version, newest first.
-    /// </summary>
-    private List<(ResultHistoryEntry Entry, string? Markdown)> Collect(
-        TaskInfo task,
-        LegacyResultHistorySnapshot? legacy)
+    private static List<ResultHistoryEntry> Project(TaskInfo task, IReadOnlyList<GitResultVersionFact> rows)
     {
         var current = ReadOrEmpty(Path.Combine(task.FolderPath, "status.md"));
         var excludedHashes = new HashSet<string>(StringComparer.Ordinal);
         if (current.Length > 0) excludedHashes.Add(ResultHistoryContent.Hash(current));
-        var result = new List<(ResultHistoryEntry Entry, string? Markdown)>();
-
-        foreach (var (local, markdown) in _versions.ReadLocalVersions(task.FolderPath))
-        {
-            excludedHashes.Add(ResultHistoryContent.Hash(markdown));
-            var fields = ResultHistoryContent.ParseFields(markdown);
-            result.Add((new ResultHistoryEntry(
-                Id: $"{LocalIdPrefix}{local.Number:0000}",
-                Timestamp: local.ProducedAtUtc,
-                Producer: local.Producer.Label,
-                ProducerKind: local.Producer.Kind,
-                Lane: local.Lane,
-                Result: fields.Result,
-                Case: fields.Case,
-                Source: "task-folder",
-                Version: local.Number), markdown));
-        }
-
-        if (legacy?.Record is { Outcome: LegacyResultHistoryStates.Complete } record)
-        {
-            foreach (var git in record.Entries)
-            {
-                if (!excludedHashes.Add(git.ContentHash)) continue;
-                result.Add((new ResultHistoryEntry(
-                    Id: GitIdPrefix + git.Sha,
-                    Timestamp: git.Timestamp,
-                    Producer: git.Producer,
-                    ProducerKind: git.ProducerKind,
-                    Lane: git.Lane,
-                    Result: git.Result,
-                    Case: git.Case,
-                    Source: "workspace-history",
-                    Version: null), git.Markdown));
-            }
-        }
-
-        return result
-            .OrderByDescending(item => item.Entry.Timestamp)
-            .ThenByDescending(item => item.Entry.Version)
+        // Local versions win over a matching legacy commit even when the
+        // local timestamp is older. Both sources are already indexed.
+        foreach (var row in rows.Where(row => row.Source == "task-folder"))
+            excludedHashes.Add(row.ContentHash);
+        return rows.Where(row => row.Source == "task-folder"
+                    ? !string.Equals(row.ContentHash, ResultHistoryContent.Hash(current), StringComparison.Ordinal)
+                    : excludedHashes.Add(row.ContentHash))
+            .Select(ToEntry)
             .ToList();
+    }
+
+    private static ResultHistoryEntry ToEntry(GitResultVersionFact row)
+        => new(row.VersionId, row.Timestamp, row.Producer, row.ProducerKind, row.Lane,
+            row.Result, row.Case, row.Source, row.Version);
+
+    private static string? ReadContent(TaskInfo task, GitResultVersionFact row,
+        LegacyResultHistorySnapshot? snapshot)
+    {
+        if (row.Source == "workspace-history")
+        {
+            snapshot ??= LegacyResultHistoryFile.Read(task.FolderPath);
+            return snapshot.Record?.Entries.FirstOrDefault(entry => "git-" + entry.Sha == row.VersionId)?.Markdown;
+        }
+        if (string.IsNullOrWhiteSpace(row.StatusPath)) return null;
+        var path = Path.GetFullPath(Path.Combine(task.FolderPath,
+            row.StatusPath.Replace('/', Path.DirectorySeparatorChar)));
+        if (!FilesystemPathBoundary.IsRegularFileUnder(task.FolderPath, path)) return null;
+        return BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.SidecarBytes);
     }
 
     private static string ReadOrEmpty(string path)
     {
-        try { return File.Exists(path) ? File.ReadAllText(path) : string.Empty; }
+        try { return BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.SidecarBytes) ?? string.Empty; }
         catch { return string.Empty; }
     }
 }

@@ -127,29 +127,44 @@ public sealed class TaskServerPlaneProxyTests
     }
 
     [Theory]
-    [InlineData("networked", "viewer", "viewer")]
-    [InlineData("networked", "operator", "operator")]
-    [InlineData("networked", "owner", "owner")]
-    [InlineData("networked", null, null)]
-    public void Proxy_acts_only_for_the_role_of_the_authenticated_human(
-        string profile, string? role, string? expected)
+    [InlineData(IamRoles.Viewer, "viewer")]
+    [InlineData(IamRoles.Developer, "viewer")]
+    [InlineData(IamRoles.Admin, "operator")]
+    [InlineData(IamRoles.Owner, "owner")]
+    [InlineData(null, null)]
+    public void Proxy_acts_for_a_role_derived_from_the_bindings_of_the_authenticated_principal(
+        string? workspaceRole, string? expected)
     {
         var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Security:Profile"] = profile })
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Security:Profile"] = "networked" })
             .Build();
-        var clock = new FakeTimeProvider();
-        var now = clock.GetUtcNow().UtcDateTime;
         var context = new DefaultHttpContext();
         context.Request.Headers[CredentialViewProtocol.ActingRoleHeader] = StudioRoles.Owner;
-        if (role is not null)
-            context.Items[AccessSecurityMiddleware.HumanPrincipalItem] = new HumanPrincipal(
-                new StudioUser { Id = "usr", Username = "user", DisplayName = "User", Role = role, PasswordHash = "redacted" },
-                new StudioSession
+        if (workspaceRole is not null)
+        {
+            var subject = new IamSubject(IamPrincipalKind.User, "usr", new HashSet<string>());
+            RoleBinding[] bindings =
+            [
+                new()
                 {
-                    Id = "ses", UserId = "usr", TokenHash = "redacted", CsrfHash = "redacted",
-                    CreatedAt = now, LastSeenAt = now,
-                    ExpiresAt = now.AddHours(1), AbsoluteExpiresAt = now.AddHours(8),
-                });
+                    Id = "rb", PrincipalKind = IamPrincipalKind.User, PrincipalId = "usr", Role = workspaceRole,
+                    Scope = IamScope.Workspace, Source = IamBindingSources.Manual,
+                },
+            ];
+            context.Items[AccessSecurityMiddleware.RequestAccessItem] = new RequestAccess(
+                subject, bindings, IamPermissions.WorkspaceRead, (bound, requested) => bound == requested);
+        }
+        // The legacy summary of the human principal no longer decides.
+        var clock = new FakeTimeProvider();
+        var now = clock.GetUtcNow().UtcDateTime;
+        context.Items[AccessSecurityMiddleware.HumanPrincipalItem] = new HumanPrincipal(
+            new StudioUser { Id = "usr", Username = "user", DisplayName = "User", Role = StudioRoles.Operator, PasswordHash = "redacted" },
+            new StudioSession
+            {
+                Id = "ses", UserId = "usr", TokenHash = "redacted", CsrfHash = "redacted",
+                CreatedAt = now, LastSeenAt = now,
+                ExpiresAt = now.AddHours(1), AbsoluteExpiresAt = now.AddHours(8),
+            });
 
         Assert.Equal(expected, TaskServerPlaneProxy.ActingRole(context, configuration));
         // A client-supplied claim is never forwarded verbatim.

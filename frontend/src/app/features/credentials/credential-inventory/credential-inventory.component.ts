@@ -4,6 +4,7 @@ import { WorkspaceOverlaysService } from '../../shell/state/workspace-overlays.s
 import { CodexSignInDialogService } from '../../remote-hosts/services/codex-sign-in-dialog.service';
 import { ProviderAuthStatusService } from '../../remote-hosts/services/provider-auth-status.service';
 import type { CredentialInventoryItem } from '../credential-inventory.service';
+import type { ProviderAuthBadge } from '../../remote-hosts/models/provider-auth.model';
 
 @Component({
   selector: 'app-credential-inventory',
@@ -51,11 +52,14 @@ export class CredentialInventoryComponent {
     return badge.state === 'expiring' ? 'expiring' : 'missing';
   }
 
-  signIn(item: CredentialInventoryItem): void {
-    const badge = this.providerAuth.statuses().find(status =>
+  codexBadges(item: CredentialInventoryItem): ProviderAuthBadge[] {
+    return this.providerAuth.statuses().filter(status =>
       status.provider === 'codex' && status.hostId === item.hostId);
-    this.codexSignIn.open({ hostId: item.hostId, runnerId: badge?.runnerId ?? item.hostId,
-      hostName: badge?.hostName ?? item.hostId, aliases: badge?.aliases ?? [item.hostId],
-      baselineAdvertisedAt: badge?.advertisedAt ?? null });
+  }
+
+  signIn(badge: ProviderAuthBadge): void {
+    this.codexSignIn.open({ hostId: badge.hostId, runnerId: badge.runnerId,
+      hostName: badge.hostName, aliases: badge.aliases,
+      baselineAdvertisedAt: badge.advertisedAt });
   }
 }

@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-10-16
+Version: 2026-10-20
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
@@ -57,6 +57,27 @@ The view also lists application health for every declared environment from
 Deploy area's Operations tab shows the same data per environment and check,
 including certificate expiry
 ([environment health checks](../../operations/environment-health-checks.md)).
+The same tab reads `GET /api/projects/{project}/deploy/operations` for 30-day
+monitoring, usage, load, deploy and rollback markers, and project DORA. Each
+marker opens its release and exposes the release's card keys. The project API
+also feeds the project's Operations rail, which the overview dashboard opens.
+A rail marker passes a release target for its own project to that project's
+Deploy view. The view then reads only the bounded page containing the release
+and keeps its other sources loaded. Marker card keys resolve by exact key
+through `GET /api/tasks/{key}/core`, so archived cards open too. A later card
+click or leaving the view cancels a pending lookup. Log search accepts any
+release ID, including releases whose marker predates the 30-day trend.
+The API derives DORA from production deploy runs and archive-inclusive card creation
+times: successful change runs per week, median card-to-production time, failed
+or rolled-back changes divided by terminal change runs, and median time from a
+failed production run to the next successful run. Missing samples remain
+unavailable. `GET /api/projects/{project}/deploy/operations/logs` accepts
+environment, bounded time range, level, release, and text filters and returns
+at most 100 lines. `IOperationsTelemetryReader` is the integration boundary
+for the pending intake store; until it is connected, telemetry and logs show
+an explicit empty state while deploy markers and DORA remain live. The reader
+contract allows only aggregate usage without personal identifiers and requires
+secret masking before stored log lines are returned.
 
 ## Workspace deployment dashboard
 
@@ -64,10 +85,18 @@ The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.
 It lists projects against Staging and Production, with release version, deploy
 age and state, health, pending approval, and newer release. Project group and
 environment filters apply to the matrix; selecting a cell opens that project's
-Deployment rail. The dashboard currently reads a typed fixture service and
-labels its values as sample data. BD-1 will replace the fixture producer with
-the deployment API; the `Environment`, `Release`, `Deployment`, and
+Deployment rail. The workspace dashboard currently reads a typed fixture service
+and labels its values as sample data. The `Environment`, `Release`, `Deployment`, and
 `EnvironmentStatus` contracts live under `frontend/src/app/features/deployments/`.
+
+The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
+`/releases`, and `/deployments` when configured. Its Pipeline view reads the
+parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
+The release view loads
+`/releases/{releaseId}/notes` from the included cards. The board and task detail
+share environment badges from `/api/deploy/cards`; the board can filter cards
+that are in Staging only, in Production, not yet in Production, or rolled back.
+Projects without deployment declarations show an empty environment state.
 
 The board's Delivery lanes mode and workspace dashboard show read-only delivery lanes per project.
 `GET /api/projects/{projectName}/deploy/delivery-lanes` accumulates card keys in
@@ -409,8 +438,10 @@ occur. It is not a claim about tunnel transfer time.
   Release and run lists request `/releases/page` and `/deployments/page` with
   `offset` and `limit`; responses contain `items`, `offset`, `limit`, and the
   filtered `total`. The server caps each page at 50 items, and the UI requests
-  25. Run pages also accept `environmentId`, `state`, and `sinceUtc`, so history
-  filters apply before paging. Release pages also accept `artifact` (digest
+  25. Marker navigation requests `/releases/{releaseId}/page` to return only
+  the page containing that release, including its offset and total. Run pages
+  accept `environmentId`, `state`, and `sinceUtc`, so history filters apply
+  before paging. Release pages also accept `artifact` (digest
   match, registry prefix ignored) and `notAfterUtc`; a card whose host artifact
   is not the status `currentRelease` resolves its release with one `limit=1`
   read. Runs named by `/status` open without being on a loaded page; any other
@@ -424,6 +455,14 @@ occur. It is not a claim about tunnel transfer time.
   aborts require confirmation; the server remains the authority for refusals.
   At phone widths the shell hides its Explorer sidebar so the Deploy cards use
   the editor width while the activity bar stays available.
+- The Operations environment cards and the Deploy Runbooks tab show repository-defined
+  runbooks for each environment. The tab stays deferred until opened and marks
+  itself current for assistive technology. They read
+  `/api/projects/{projectName}/deploy/runbooks` and the
+  environment-filtered `/runbooks/runs` history; start, approve and reject
+  return a run id whose per-step log is available under `/runs/{runId}/log`.
+  Production approvals use the same signed-in Owner or Maintainer authority as
+  deployments. Runbook history does not alter the current release projection.
 - `frontend/src/app/features/task-detail/`: task detail shell, protocol pane,
   prompt pane, git pane, timeline, pipeline overview, and command surfaces.
   Ordinary task selection reads the bounded `/core` projection first and paints
@@ -787,6 +826,18 @@ occur. It is not a claim about tunnel transfer time.
   summary. It does not own project onboarding or a project-source catalogue.
   Legacy CLI-admin and usage links resolve to the CLI Management section at
   `#/workspace/settings/caps`.
+- The Access destination at `#/workspace/settings/access`
+  (`frontend/src/app/features/access/`) is the one Access area. It shows users
+  with their role bindings, groups, service accounts (API tokens included, as
+  service accounts with one `api.` token), role bindings per scope, runner
+  enrollments, and enrolled runners from `GET /api/auth/iam`,
+  `/api/auth/runner-enrollments`, and `/api/auth/runners`. It invites through
+  the existing `POST /api/auth/invitations` with one initial binding, resets
+  passwords, disables users with a `{ disabled }` PUT that leaves bindings
+  alone, shows a service-account token or enrollment code once, and reloads
+  after every change. Expiry math reads the injectable `ACCESS_CLOCK`. The
+  rights model is described in
+  [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
   history, and full-backup controls. Project Settings mounts the same rule
@@ -1003,6 +1054,12 @@ header chip, and Result header agree on word and resolved colour, both themes).
   tab-state restoration. This does not affect the Board's `0-backlog` lane,
   which remains the lifecycle landing lane for new tasks.
 
+## Appearance
+
+Appearance offers Light, Dark and System. System resolves the current operating
+system colour scheme and updates when that preference changes; the titlebar
+quick toggle selects an explicit Light or Dark preference.
+
 ## Credential inventory (AGT-3170)
 
 Settings → Credentials reads the Task Server's metadata-only
@@ -1012,6 +1069,8 @@ human accounts. Filters cover host, kind and state. The board and Activity feed
 show current expiry and missing-access alerts from the same projection; an
 Execution Host row shows its own alert count. The per-host Credentials section
 still owns provider login renewal. No secret value or verifier is returned.
+The local and public demo profiles have no Task Server inventory route, so the
+client skips that request and labels the inventory as requiring a Task Server.
 
 The requirement policy uses registered project integration and release refs for
 control-host write access, and active private review subjects for per-host

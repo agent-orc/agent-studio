@@ -86,6 +86,68 @@ public sealed class RunLeaseServiceTests
         Assert.Null(stops.Peek("AGT-1"));
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Stopped")]
+    public async Task Stop_receipt_is_settled_before_lease_becomes_free(string? outcome)
+    {
+        var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
+        var leases = NewService(() => now);
+        var stops = new RemoteRunStopRequestStore(() => now);
+        var lease = leases.TryAcquire(Acquire("AGT-order", "runner-a")).Lease!;
+        stops.Record(lease.TaskKey, RemoteRunStopReasons.User,
+            lease.AttemptId, "operator", lease.FencingToken, "order-stop");
+        using var reachedBoundary = new ManualResetEventSlim();
+        using var continueRelease = new ManualResetEventSlim();
+        var request = Release(lease) with
+        {
+            AttemptId = lease.AttemptId,
+            AuthorityEpoch = lease.AuthorityEpoch,
+            IdempotencyKey = "order-release",
+            Outcome = outcome,
+        };
+        var release = Task.Run(() => leases.Release(request, () =>
+        {
+            stops.Clear(lease.TaskKey, lease.AttemptId, lease.FencingToken, "settled");
+            reachedBoundary.Set();
+            continueRelease.Wait(TimeSpan.FromSeconds(10));
+        }));
+        try
+        {
+            Assert.True(reachedBoundary.Wait(TimeSpan.FromSeconds(10)));
+            Assert.Equal("settled", stops.GetReceipt("order-stop")?.TerminalReason);
+            Assert.Equal("Held", leases.Peek(lease.TaskKey).Outcome);
+        }
+        finally { continueRelease.Set(); }
+        Assert.Equal("Released", (await release.WaitAsync(TimeSpan.FromSeconds(10))).Outcome);
+        Assert.Equal("Free", leases.Peek(lease.TaskKey).Outcome);
+    }
+
+    [Fact]
+    public void Stale_release_does_not_settle_stop_receipt()
+    {
+        var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
+        var leases = NewService(() => now);
+        var stops = new RemoteRunStopRequestStore(() => now);
+        var lease = leases.TryAcquire(Acquire("AGT-stale", "runner-a")).Lease!;
+        stops.Record(lease.TaskKey, RemoteRunStopReasons.User,
+            lease.AttemptId, "operator", lease.FencingToken, "stale-stop");
+        var request = Release(lease) with
+        {
+            AttemptId = lease.AttemptId,
+            AuthorityEpoch = lease.AuthorityEpoch,
+            IdempotencyKey = "stale-release",
+            FencingToken = lease.FencingToken + 1,
+        };
+
+        var result = leases.Release(request, () => stops.Clear(
+            lease.TaskKey, lease.AttemptId, lease.FencingToken, "settled"));
+
+        Assert.NotEqual("Released", result.Outcome);
+        Assert.Null(stops.GetReceipt("stale-stop")?.TerminalReason);
+        Assert.Equal("Held", leases.Peek(lease.TaskKey).Outcome);
+    }
+
     [Fact]
     public void Remote_held_lease_delivers_stop_only_to_matching_attempt()
     {

@@ -46,6 +46,23 @@ public static class PullGateEndpoints
                 return Results.File(path, "application/octet-stream");
             });
         });
+        gates.MapPost("/runs/{runId}/source-bundle", async (HttpContext context, string runId,
+            PullGateStore store, AccessSecurityStore security, CancellationToken ct) =>
+        {
+            var principal = GatePrincipal(context, security);
+            if (principal is null) return Results.Unauthorized();
+            var lease = context.Request.Headers["X-Gate-Lease"].ToString();
+            try
+            {
+                var (bundle, digest) = await store.BundleForLeaseAsync(principal.RunnerId,
+                    runId, lease, context.Request.Query["base"].FirstOrDefault(), ct);
+                context.Response.Headers["X-Source-Bundle-Sha256"] = digest;
+                return Results.File(bundle, "application/octet-stream");
+            }
+            catch (InvalidOperationException exception) { return Results.Conflict(new { error = exception.Message }); }
+            catch (ArgumentException exception) { return Results.BadRequest(new { error = exception.Message }); }
+            catch (InvalidDataException exception) { return Results.BadRequest(new { error = exception.Message }); }
+        });
         gates.MapPut("/runs/{runId}/artifacts/{name}", (HttpContext context,
             string runId, string name, PullGateStore store, AccessSecurityStore security) =>
             WithLease(context, security, store, runId, (host, lease) =>

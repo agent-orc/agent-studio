@@ -120,6 +120,14 @@ public sealed class MonolithOrchestrationApplier(
         var priorEngineMove = target is not null && task.State == target
             && timeline.ReadAll(task.FolderPath).Any(entry => entry.Kind == TimelineEventKinds.LaneChanged
                 && entry.Details?.GetValueOrDefault("idempotencyKey") == key);
+        // A retry after this review's integration started an agent round finds
+        // the card in Ready. That handoff is the decision's effect.
+        if (decision?.Action is TransitionAction.AcceptAndIntegrate or TransitionAction.DegradeWithFollowUp
+            && HandedToAgentRound(task, occurrence, firstPass: null))
+        {
+            SettleAgentRoundHandoff(task, occurrence);
+            return;
+        }
         if (task.State != occurrence.ExpectedSourceState && !priorEngineMove)
             throw new OrchestrationSourceStateMismatchException(task.State);
         DecisionChoiceV1? activeChoice = null;
@@ -243,6 +251,10 @@ public sealed class MonolithOrchestrationApplier(
                 < RemoteDeliverySettlementStage.IntegrationSettled)
             {
                 var result = await integration.EnqueueAsync(request);
+                // The integration can move the card, an agent round to Ready,
+                // and its folder with it; read the card it left.
+                scanner.InvalidateCache();
+                task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
                 var reviewInputs = services.GetRequiredService<ReviewInputDecisionGateway>();
                 if (reviewInputs.EngineDecides
                     && result.AutomaticRecoveryBudgetUsed is { } used
@@ -273,6 +285,11 @@ public sealed class MonolithOrchestrationApplier(
                 RemoteDeliverySettlementStore.Advance(task.FolderPath,
                     RemoteDeliverySettlementStage.IntegrationSettled,
                     result.Outcome.ToString(), RemoteDeliveryParkReason.For(result));
+                if (HandedToAgentRound(task, occurrence, result))
+                {
+                    SettleAgentRoundHandoff(task, occurrence);
+                    return;
+                }
             }
         }
         if (EngineDecisionWaitMarker.Read(task.FolderPath) is { } waitingRunId
@@ -319,9 +336,17 @@ public sealed class MonolithOrchestrationApplier(
                 engineDecisionRequeue: activeChoice is { Action: DecisionActionKinds.Retry,
                     Target: "card:ready" } or { Action: DecisionActionKinds.Adapt,
                     Target: "salvage-handoff" },
-                engineContinuationBase: salvageBase);
+                engineContinuationBase: salvageBase,
+                operatorDecisionPark: occurrence.Profile == "ReviewReport"
+                    && decision?.Action == TransitionAction.HumanReview
+                    && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"));
             if (move.Status != MoveJobStatus.Success)
-                throw new InvalidOperationException($"Engine lane move failed: {move.Status} {move.Message}");
+            {
+                var reason = $"Engine lane move failed: {move.Status} {move.Message}";
+                if (move.Status == MoveJobStatus.IntegrationFailed)
+                    throw new OrchestrationApplicationRefusedException(reason);
+                throw new InvalidOperationException(reason);
+            }
             scanner.InvalidateCache();
             scanner.PublishCoreFromKnownFolder(task.FolderPath);
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task with
@@ -407,6 +432,24 @@ public sealed class MonolithOrchestrationApplier(
                 });
         scanner.InvalidateCache();
         scanner.PublishCoreFromKnownFolder(task.FolderPath);
+    }
+
+    private bool HandedToAgentRound(AgentStudio.Shared.TaskInfo task, MonolithOrchestrationOccurrence occurrence,
+        AgentStudio.Git.MergeIntoIntegrationResult? firstPass)
+        => authority.GetReview(occurrence.AuthorityAttemptId) is { } review
+            && IntegrationAgentRoundHandoff.Find(timeline, task, occurrence.ExpectedSourceState, review.AttemptId,
+                review.Subject.ExpectedResultSha, firstPass) is not null;
+
+    /// <summary>
+    /// The agent round owns the card now: the delivery left Auto Review, so the
+    /// journal settles and the wait marker clears, as at a review-input handoff.
+    /// </summary>
+    private void SettleAgentRoundHandoff(AgentStudio.Shared.TaskInfo task,
+        MonolithOrchestrationOccurrence occurrence)
+    {
+        RemoteDeliverySettlementStore.Advance(task.FolderPath, RemoteDeliverySettlementStage.LaneSettled);
+        EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+        scanner.InvalidateCache();
     }
 
     private void EnsureLinkedFollowUp(AgentStudio.Shared.TaskInfo task,
@@ -537,20 +580,25 @@ public sealed class MonolithOrchestrationApplier(
         if (decision.Decider != payload.Decider || decision.SubjectKey != payload.SubjectKey)
             throw new InvalidDataException("The AI Operator receipt does not match its occurrence.");
         if (decision.Disposition == AiOperatorDisposition.Hold) return;
-        if (decision.Disposition == AiOperatorDisposition.Propose)
+        var effect = services.GetServices<IAiOperatorEffect>()
+            .SingleOrDefault(candidate => candidate.Decider == decision.Decider);
+        if (decision.Disposition == AiOperatorDisposition.Propose && effect is not IAiOperatorProposalEffect)
         {
             RecordOperatorDecision(occurrence, decision, "AI Operator proposal waits for a person");
             return;
         }
-        var effect = services.GetServices<IAiOperatorEffect>()
-            .SingleOrDefault(candidate => candidate.Decider == decision.Decider)
-            ?? throw new InvalidOperationException($"No authority effect is registered for {decision.Decider}.");
+        if (effect is null)
+            throw new InvalidOperationException($"No authority effect is registered for {decision.Decider}.");
         await effect.ApplyAsync(new AiOperatorApplication(occurrence.Run.RunId, occurrence.Run.ProjectId,
             occurrence.Run.TaskId, occurrence.ExpectedSourceState,
             $"engine-operator:{occurrence.Run.RunId}:{completion.IdempotencyKey}", payload, decision,
             occurrence.AuthorityAttemptId, occurrence.AuthorityFence, occurrence.AuthorityEpoch), ct);
-        RecordOperatorDecision(occurrence, decision, decision.Disposition == AiOperatorDisposition.Ask
-            ? "AI Operator asked a person" : "AI Operator applied");
+        RecordOperatorDecision(occurrence, decision, decision.Disposition switch
+        {
+            AiOperatorDisposition.Ask => "AI Operator asked a person",
+            AiOperatorDisposition.Propose => "AI Operator proposal waits for a person",
+            _ => "AI Operator applied",
+        });
     }
 
     private async Task ApplyReviewInputDecisionAsync(MonolithOrchestrationOccurrence occurrence,

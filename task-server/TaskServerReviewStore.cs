@@ -277,6 +277,7 @@ public sealed partial class TaskServerStore
         ReviewClaimResponse? response = null;
         // Every unclaimable attempt, not only the ones the response names.
         IReadOnlyList<ReviewUnclaimableAttemptDto> unclaimableToLog = [];
+        if (request.AvailableSlots > 0) await StartWorkspaceQuotaRefreshAsync(QuotaClaimKind.Review, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var executor = await WithProvenRepositoryReadAsync(
@@ -333,6 +334,8 @@ public sealed partial class TaskServerStore
 
             ReviewAttemptDto? attempt = null;
             ReviewSubjectDto? subject = null;
+            string? selectedQuotaWarning = null;
+            string? selectedQuotaProject = null;
             string? capabilityBlock = null;
             string? capabilityBlockReason = null;
             var candidates = new List<(ReviewAttemptDto Attempt, ReviewSubjectDto Subject)>();
@@ -390,6 +393,18 @@ public sealed partial class TaskServerStore
                 var scannedRows = await ScanCandidatesAsync(offset);
                 foreach (var candidate in candidates)
                 {
+                    var quotaProjectName = QuotaAdmissionOn
+                        ? await ScalarAsync(connection,
+                            "SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = $task LIMIT 1;",
+                            ct, transaction, ("$task", candidate.Attempt.TaskId)) as string
+                        : null;
+                    var quota = CachedWorkspaceQuota(quotaProjectName, "Review card " + candidate.Attempt.TaskId);
+                    if (!quota.Allowed)
+                    {
+                        capabilityBlock = quota.Message ?? "Workspace quota reached.";
+                        capabilityBlockReason = "workspace-quota";
+                        continue;
+                    }
                     var candidateRequirements = RequiredReviewCapabilities(
                         request.RequiredCapabilities,
                         candidate.Subject);
@@ -432,6 +447,8 @@ public sealed partial class TaskServerStore
                     }
                     attempt = candidate.Attempt;
                     subject = candidate.Subject;
+                    selectedQuotaWarning = quota.MeterUnavailable ? quota.Message : null;
+                    selectedQuotaProject = quotaProjectName;
                     capabilityAdmission = candidateAdmission;
                     break;
                 }
@@ -523,11 +540,16 @@ public sealed partial class TaskServerStore
                     fence,
                     resourceNamespace,
                 }), ct);
+            var quotaCardNotice = selectedQuotaProject is null ? null : ConsumeQuotaCardNotice(selectedQuotaProject);
+            if (quotaCardNotice is not null)
+                await AppendLifecycleEventAsync(connection, transaction, subject.SourceRunId,
+                    attempt.TaskId, 0, "quota.meter-unavailable", new { message = quotaCardNotice }, ct);
             response = new ReviewClaimResponse(
                 "claimed",
                 claimedAttempt,
                 subject,
                 lease,
+                Message: selectedQuotaWarning,
                 RequiredCapabilities: capabilityAdmission.Required,
                 CanaryCapabilities: capabilityAdmission.Canaries);
         }, ct);
@@ -1555,20 +1577,32 @@ public sealed partial class TaskServerStore
             && artifact.ContentBase64 is not null
             && ValidArtifact(artifact));
 
-    private static async Task<string?> CurrentBriefHashAsync(
+    private async Task<string?> CurrentBriefHashAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         string taskId,
         CancellationToken ct)
     {
-        var encoded = await ScalarAsync(connection, """
-            SELECT content_base64 FROM task_files
+        string? encoded = null;
+        var objectStored = false;
+        string? sha256 = null;
+        await using (var command = Command(connection, """
+            SELECT content_base64, object_stored, sha256 FROM task_files
              WHERE task_id = $task AND path = 'prompt.md';
-            """, ct, transaction, ("$task", taskId)) as string;
-        if (string.IsNullOrWhiteSpace(encoded)) return null;
+            """, transaction, ("$task", taskId)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            if (await reader.ReadAsync(ct))
+            {
+                encoded = reader.GetString(0);
+                objectStored = reader.GetInt64(1) != 0;
+                sha256 = reader.IsDBNull(2) ? null : reader.GetString(2);
+            }
+        }
+        if (string.IsNullOrWhiteSpace(encoded) && !objectStored) return null;
         try
         {
-            return Hash(Encoding.UTF8.GetString(Convert.FromBase64String(encoded))
+            return Hash(Encoding.UTF8.GetString(ReadTaskContent(encoded ?? string.Empty, objectStored, sha256))
                 .TrimStart('\uFEFF'));
         }
         catch (FormatException)

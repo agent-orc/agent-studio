@@ -26,6 +26,13 @@ export interface Release {
   cardKeys: string[];
   createdAtUtc: string;
   channel: string;
+  preDeliveryVerdict?: {
+    project: string;
+    commitSha: string;
+    commandDigest: string;
+    status: 'green' | 'red';
+    finishedAtUtc: string;
+  } | null;
 }
 
 export interface DeploymentStep {

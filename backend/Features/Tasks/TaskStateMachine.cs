@@ -46,6 +46,7 @@ public class TaskStateMachine
     private readonly TaskIntegrationStatusService? _integrationStatus;
     private readonly AgentStudio.Runner.AttemptAuthorityService? _attemptAuthority;
     private readonly AgentStudio.Pipeline.TaskGateCancellationRegistry? _gateCancellation;
+    private readonly TaskMutationService? _mutations;
     private readonly bool _guardedDelivery;
 
     public TaskStateMachine(
@@ -59,7 +60,8 @@ public class TaskStateMachine
         TaskIntegrationStatusService? integrationStatus = null,
         IConfiguration? configuration = null,
         AgentStudio.Runner.AttemptAuthorityService? attemptAuthority = null,
-        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null)
+        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null,
+        TaskMutationService? mutations = null)
     {
         _scanner = scanner;
         _logger = logger;
@@ -74,6 +76,7 @@ public class TaskStateMachine
         _integrationStatus = integrationStatus;
         _attemptAuthority = attemptAuthority;
         _gateCancellation = gateCancellation;
+        _mutations = mutations;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
@@ -131,7 +134,9 @@ public class TaskStateMachine
         DecisionReopenPermit? decisionReopenPermit = null,
         bool archiveOverride = false,
         bool archiveOverrideRollback = false,
-        bool historicalAcceptanceRepair = false)
+        bool historicalAcceptanceRepair = false,
+        bool operatorDecisionPark = false,
+        Func<TaskInfo, MoveJobOutcome?>? beforeMove = null)
     {
         if (!TaskStates.All.Contains(targetState))
             return new MoveJobOutcome(MoveJobStatus.Failure, $"Invalid state: {targetState}");
@@ -199,11 +204,16 @@ public class TaskStateMachine
             var status = targetState == TaskStates.Completed
                 ? _integrationStatus.BuildForCompletion(recheck)
                 : _integrationStatus.BuildLookup([recheck]).GetValueOrDefault(recheck.TaskKey);
+            var authorizedPark = operatorDecisionPark && cause == "engine-decision"
+                && authorityWrite is not null && expectedSourceState == TaskStates.AutoReview
+                && recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview;
             var admission = DeliveryLanePolicy.Decide(recheck.State, targetState,
-                AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), status?.Status, archiveOverride);
+                AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), status?.Status,
+                archiveOverride, authorizedPark);
             if (!admission.Allowed && !historicalAcceptanceRepair)
             {
-                if (recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview)
+                if (recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview
+                    && recheck.Phase != LifecyclePhases.Integrating)
                 {
                     TaskJsonFile.UpdateField(recheck.FolderPath, "phase", LifecyclePhases.Integrating, _logger);
                     _scanner.InvalidateCache();
@@ -224,6 +234,11 @@ public class TaskStateMachine
                 return new MoveJobOutcome(MoveJobStatus.Failure,
                     "Archive override requires a human actor and a written reason for this card.");
         }
+
+        // The admission guard has accepted the move. Keep the result write
+        // inside the lane lock so a failed write leaves the source lane intact.
+        if (beforeMove?.Invoke(recheck) is { } resultFailure)
+            return resultFailure;
 
         // BP-03: Ready opens a reissue generation and Progress opens an
         // execution generation. A folder-scoped remote review subject belongs
@@ -316,7 +331,19 @@ public class TaskStateMachine
         // transient divergence warning on the next scan.
         if (Directory.Exists(targetDir))
         {
-            targetSlug = LaneSlug.EnsureUnique(recheck.WatchPath, jobFolderName);
+            var identities = _scanner.GetResidentIdentityFacts()
+                .Where(other => !WatchPathComparison.PathsEqual(other.FolderPath, recheck.FolderPath))
+                .SelectMany(other => new[] { other.Id, other.Key, other.TaskKey, TaskCoreRecord.Limit(other.Id, 128) })
+                .Where(identity => !string.IsNullOrWhiteSpace(identity))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            for (var suffix = 2; ; suffix++)
+            {
+                var candidate = $"{jobFolderName}-{suffix}";
+                if (identities.Contains(candidate) || _mutations?.IsReservedIdentity(candidate) == true
+                    || LaneSlug.IsTaken(recheck.WatchPath, candidate)) continue;
+                targetSlug = candidate;
+                break;
+            }
             targetDir = Path.Combine(recheck.WatchPath, targetState, targetSlug);
             _logger.LogWarning(
                 "move-slug-deduped jobId={JobId} targetState={State} baseSlug={BaseSlug} resolvedSlug={ResolvedSlug}",
@@ -1044,6 +1071,11 @@ public class TaskStateMachine
         // fresh destination key before touching the source. The monotonic
         // counter may advance on a failed attempt, which is intentional: keys
         // are never re-used.
+        var existingAliases = _scanner.GetResidentIdentityFacts()
+            .Where(task => !WatchPathComparison.PathsEqual(task.FolderPath, recheck.FolderPath))
+            .SelectMany(task => new[] { task.Id, task.Key, task.TaskKey, TaskCoreRecord.Limit(task.Id, 128) })
+            .Where(identity => !string.IsNullOrWhiteSpace(identity))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         string destinationKey;
         int destinationNumber;
         string targetDir;
@@ -1053,7 +1085,7 @@ public class TaskStateMachine
             destinationKey = $"{destinationProject.ShortCode}-{destinationSeq}";
             TaskStorageLayout.TryParseKeyNumber(destinationKey, out destinationNumber);
             targetDir = TaskStorageLayout.JobDir(canonicalTarget, destinationNumber, destinationKey);
-        } while (Directory.Exists(targetDir));
+        } while (Directory.Exists(targetDir) || existingAliases.Contains(destinationKey));
 
         var operationId = Guid.NewGuid().ToString("N");
         var sourceParent = Path.GetDirectoryName(recheck.FolderPath)!;

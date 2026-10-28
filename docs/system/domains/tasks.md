@@ -60,6 +60,12 @@ title of a fulfilled edge. The client restores them on the parsed grouped cards
 (`restoreBoardCardDefaults` in `task.service.ts`). The production-shaped Human
 Review fixture in `BoardCardSummaryTests` holds the card to 2 KB on average. ETag
 validation remains a separate HTTP optimization from the card contract.
+`Board:Source` selects who answers the grouped board read: the workspace task
+index (`workspace`, default), the workspace with a mirrored and compared Task
+Server read model (`task-server-shadow`), or the Task Server read model
+enriched from the workspace index (`task-server`). The read model, change
+feed, shadow differences card and 7-day cutover gate are described in
+[board-source-cutover.md](../../operations/board-source-cutover.md).
 
 ## Execution modes
 
@@ -209,6 +215,41 @@ last placement decision with its timestamp. The placement GET, runner
 capability snapshot, runtime capacity GET, and host admission projection
 provide the read side for selection, rejection, capacity, and drain.
 The host's coding and review registrations retain distinct role slot budgets.
+
+### Dynamic placement shadow (DP-S1, AGT-3327)
+
+Working decisions are AGT-3171 D1 option A (host pull with bounded warm
+preference), D2 option A (one physical host identity), and D5 option A (the
+existing versioned host capacity record). The approved target executor is D3
+option A; this slice does not launch containers. The new
+`PUT /api/v1/hosts/{hostId}/placement-advertisement` stores one versioned
+advertisement per physical host, bound to a registered runner instance. It
+describes roles, OS, architecture, executor, toolchain digests, provider
+bindings, tested project repository access, and warm mirrors. The default
+`TaskServer:DynamicPlacementMode` is `shadow`; `canary` applies only to hosts
+named in `TaskServer:DynamicPlacementCanaryHostIds`. An empty host list keeps
+admissions unchanged. `TaskServer:DynamicPlacementWarmPreferenceSeconds` defaults
+to 30 and is clamped to five minutes.
+
+The coding claim transaction computes typed eligibility against the existing
+project capability requirements and the current runtime capacity version.
+It records matched and rejected requirements, actual versus shadow status,
+host, allocation version, provisional two half-core grant, lease, fence and
+per-item authority epoch in `placement_shadow_receipts`. The shadow read at
+`GET /api/v1/hosts/placement-shadow` reports differences. A current warm host
+gets a short preference; an eligible cold host can claim once the oldest
+ready task passes that window. Canary refuses stale allocation acknowledgement
+only for new claims; existing leases continue through their normal renewal
+and fenced result path. This slice does not replace the AGT-3019 allocator or
+the platform-owned Git path.
+
+Runtime-capacity acknowledgment now compares the host's reported version with
+`allocationVersion`, the version used by placement admission. Upgrading an
+existing host copies its current capacity `version` into the new allocation
+column after the version-37 retired-schema cleanup. Release suite verdicts
+use schema version 38, and the additive placement tables and column use
+version 39. Version-36 binaries still reject stores whose retired task fields
+have been removed.
 
 Configured placement defaults to one active coding lease per project. Its
 `maxParallelism` may only use slots authorized by the existing project
@@ -528,16 +569,18 @@ the dedicated `PUT /api/projects/{projectName}/execution-runner` contract.
 Project id, source type, storage location, creation time, and the task and
 document key counters are immutable and are never accepted as update fields.
 
-Deleting a project URL checks repository authority before stopping its owned
-preview process. If stopping fails, the URL and its repository audit state stay
-in the registry so the process remains reachable for another stop attempt.
+Deleting a project URL checks repository and start-rule authority before
+stopping its owned preview process. If stopping fails, the URL and its audit
+state stay in the registry so the process remains reachable for another stop
+attempt.
 Every URL whose id or label can identify a repository is checked against the
 repository URL rules when project URLs change, even if another URL currently
 takes precedence. This prevents a later reorder or deletion from selecting an
 unchecked repository URL. In the networked profile, every candidate change
 requires the Owner and records both candidate lists in the same registry write.
-Process start holds the registry URL lock through launch, so removal cannot
-delete the record between lookup and launch.
+Process start and removal hold the same per-project operation lock through
+launch or stop. The registry-wide lock is released before either process action,
+so other projects and registry reads remain available.
 
 The project registry is fail-closed. If an existing
 `<TaskRepository>/.metadata/projects.json` is not deserializable, startup
@@ -768,8 +811,9 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   the next read.
 - `integrated` means reachable from the published integration branch
   (`origin/<branch>`). A delivery that only a local branch or worktree ref can
-  see is `merged-locally` and cannot enter Human Review, be accepted, or be
-  archived. A repository without an origin mirror uses its local target ref.
+  see is `merged-locally` and cannot enter Human Review through a delivery
+  acceptance move, be accepted, or be archived. A repository without an origin
+  mirror uses its local target ref.
   The current immutable result SHA is checked first, followed by commits
   attributed to that delivery epoch. A rewritten commit is accepted only when
   its original-to-replacement mapping was persisted. The last merge attempt is
@@ -784,7 +828,10 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   with a category and recovery action. A pull-request project's approval stays
   on the pull request while the card waits in Auto Review; Human Review starts
   after the merge. The integration strategy is project configured, but these
-  lane meanings are global.
+  lane meanings are global. A `ReviewReport` decision of `HumanReview` is an
+  operator-decision park: it may move an unintegrated card from Auto Review to
+  Human Review so the operator can resolve an Inconclusive review. This exception
+  does not permit acceptance or archive without their own evidence.
 - Accept in Human Review confirms the already integrated result and records its
   delivery epoch, immutable result SHA, target branch, and target ref fingerprint.
   The target ref fingerprint is diagnostic evidence, not an acceptance boundary.
@@ -1070,6 +1117,55 @@ CLI run also returns `409`. A missing task or a file that is not editable
 returns `404`. Other I/O failures return `503 Service Unavailable` with
 retry guidance.
 
+## Product session task access (AGT-3182)
+
+A Product session is a signed-in human whose role is contributor (shown as
+Product). One predicate per plane makes that decision:
+`ContributorAccessPolicy.IsProductSession` in the backend and
+`StudioProductSession.IsProduct` in Task Server. AGT-3228 replaces the role
+check inside these predicates with role bindings; callers do not change.
+Operator, owner, viewer, and API token requests keep the unrestricted task
+contract described elsewhere in this document.
+
+Both planes enforce the same task rules for a Product session. The route
+middleware runs a first check, and each handler checks the bound request
+again, so a body the middleware reads differently cannot widen the rules.
+
+| Operation | Backend `/api/tasks` | Task Server `/api/v1/projects/{projectId}/tasks` | Product rule |
+|---|---|---|---|
+| Create | `POST /api/tasks` | `POST .../tasks` | Target lane absent, Backlog, or Ready. |
+| Edit fields | `PUT .../{id}/title`, `tags`, `references`, `waits-on`, `files/prompt.md` | `PUT .../{taskIdentity}`, `title`, `tags`, `references` | Card in Backlog or Ready, and the requested `state` keeps it there. A Task Server update with `mechanicalDelta` is denied. |
+| Move | `POST .../{id}/move`, `POST .../{id}/state` | `POST .../{taskIdentity}/move`, `PUT .../{taskIdentity}/state` | Backlog and Ready among each other, or Human Review to Completed. Backend `operatorOverride` and `archiveOverride` are denied. |
+| Read a result file | `GET .../{id}/results/{**path}` | `GET .../{taskIdentity}/results/{**path}` | Only `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp`, `.html`, `.htm`, and `.md`. Both the requested path and the resolved artifact must match, so a folder-prefix match cannot return a log, TRX, JSONL, or other raw output. |
+| Release | `PUT .../{id}/release` | `PUT .../{taskIdentity}/release` | Requires the production approval grant for the project. |
+
+A backend Product create carries no run controls. The handler clears `model`,
+`cliType`, `thinkingLevel`, `modelExplicit`, `thinkingLevelExplicit`, `mode`,
+`allowWebAccess`, and `requiresIntegration`, sets `noBranchExpected` and
+`fixture` to `false`, and records the signed-in user ID as `createdBy`. Project
+defaults then choose the CLI, model, thinking level, mode, web access, and
+integration.
+
+Product sessions are also denied every task route segment that exposes run
+internals: `session-events`, `agent-work-detail`, `conversation`, `output`,
+`trace`, `logs`, and `raw-logs` in the backend, and `session-events`,
+`agent-work-detail`, `history`, `files`, `output`, `trace`, `logs`, and
+`raw-logs` in Task Server. Segment matching is case-insensitive.
+
+Task Server reads a Product request body as the binder does. It rejects
+duplicate JSON property names, including case variants, and denies a lane field
+that is not a string or `null`. A body that is not valid JSON is denied instead
+of passed through. For every caller, Task Server JSON binding now rejects a
+body with duplicate property names (`AllowDuplicateProperties = false`).
+
+The backend route middleware denies with `403` and
+`{ "error": "role-denied", "message": ... }`; a backend handler check denies
+with `403` and no body. Task Server denies with `403` and
+`{ "error": "contributor-role-denied" }`. Tests:
+`backend.Tests/ContributorAccessTests.cs` and
+`task-server.Tests/IdentityBootstrapTests.cs`. The role summary is in
+[security overview](../../operations/security/overview.md).
+
 ## Parked-card blocker and recall
 
 Every move into `5-human-review` or `5e-escalated` writes a machine-readable
@@ -1141,11 +1237,13 @@ card waiting on a person from one waiting on a fix.
 ## Result transition invariant
 
 `TaskTransitionService` is the single enforcement point for Result availability.
-Every successful move into `4-auto-review`, `5-human-review`, `5e-escalated`,
-or `6-completed` carries a non-empty `status.md`. When no generated protocol is
-available, the service writes a marked, evidence-only scaffold before the
-folder move and enriches its own scaffold after the move with the computed
-integration projection. It never replaces a real Result. Backend startup runs
+After the lane guard accepts a move into `4-auto-review`, `5-human-review`,
+`5e-escalated`, or `6-completed`, it ensures a marked, evidence-only scaffold
+before changing lanes if no generated Result is available. If that write fails,
+the card remains in its source lane. Admission refusals and no-op moves do not write
+`status.md`, `current-result.json`, or Result history. An engine decision
+refreshes its scaffold at most once during the accepted move. The service never
+replaces a real Result. Backend startup runs
 the same idempotent repair over missing Results in `5-human-review`,
 `6-completed`, and `7-archive`; repaired files are marked as operator
 backfills.
@@ -1582,6 +1680,42 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   from `git-index-run`, so request rollups must remain at zero spawns
   regardless of how much background indexing HEAD churn causes.
 
+## Card-open provenance and source file history (AGT-3318)
+
+`GET /api/tasks/{jobId}/provenance` and the source file history route
+`GET /api/tasks/{jobId}/checkout/{path}/history` read derived source facts
+from the Task Server (`/api/v1/source-facts/{repositoryId}/...`), not Git.
+The fenced producer on the runner host (`runner/SourceFacts/`) publishes them:
+the merge-base diff object, path history and blame of the touched files at
+result handoff, and reachability of attributed commits in the integration and
+release branches on demand.
+
+- Provenance joins the persisted attributed commits with the reachability
+  facts. A positive fact stays current after every fast-forward; a negative
+  fact holds only at the head it was computed at. A missing pair reads as not
+  landed, the view carries `sourceFacts: "warming"`, and the read records a
+  demand that the producer's sweep answers. `unavailable` means the Task
+  Server could not be read; nothing falls back to Git.
+- File history reads the path history at the card's result head, its last
+  attributed commit, and parses the same `Run-Index`, `Verdict` and `Steps`
+  trailers as the Git read. The `X-Source-Facts-State` header names the state.
+- Both routes carry `X-Git-Spawns`, the number of Git processes the request
+  started. The task-switch board measurement records it per card-open read.
+- `SourceFacts:ReadMode` selects the source. Without a setting, a configured
+  Task Server plane means `derived`; `legacy` restores the live-Git reads and
+  is the only answer on a dev seat without a Task Server.
+- The legacy `GET /api/tasks/{jobId}/files/{path}/history` and historical
+  `GET /api/tasks/{jobId}/files/{path}?at={sha}` reads share a 30 second Git
+  budget per request, with a 10 second cap per call. If the budget expires
+  or a Git call times out, the route returns `503 Service Unavailable` with
+  `Retry-After: 1` and an error naming the exhausted budget or timed out
+  Git call. It does not return an incomplete history as a successful read.
+- The Task Server stores the facts by immutable key without a TTL and evicts
+  the least recently read objects once `TaskServer:SourceFactsMaxStoredBytes`
+  (default 512 MiB) is exceeded. One producer lease per repository carries a
+  producer epoch; a publish under an older epoch fails with
+  `stale-source-producer`.
+
 ## Board state source (AGT-2726)
 
 Git-derived board and task-detail state (merge signal, integration status,
@@ -1691,6 +1825,23 @@ their authoritative checks; display state never grants permission to mutate.
   unavailable while other cards retain their facts. Failed index runs keep
   the previous snapshot and do not recompute unchanged failed input on each
   task event.
+- **Git read guard (AGT-3321, Git facts S1).** Every backend Git process
+  starts through `GitProcessBoundary`, which applies the read guard,
+  registers the child for the stale-lock guard, takes the index budget slot
+  and records `GitProcessTelemetry`; `GitProcessBoundaryGuardTests` rejects
+  any other start. `GitReadRequestGuardMiddleware` opens a read scope for
+  every GET from its route template. A GET that starts Git needs an exact
+  method/route-template entry in `GitReadSpawnExceptionManifest`, with a
+  per-request spawn ceiling, an owner and a removal slice. Production counts
+  and warns (`git-read-guard-violation`) without throwing; the backend test
+  process and a Debug build under a debugger throw
+  `GitProcessOnReadRequestException`. `GitReadGuard:Mode` (`Warn` or
+  `Strict`) overrides the default. The admin git-telemetry snapshot carries
+  the per-route debt under `readGuard`. Background work a read starts on
+  purpose runs under `GitReadRequestGuard.Detach()`. The manifest only
+  shrinks: `GitReadGuardManifestTests` pins its reviewed digest, and
+  `Fixtures/git-read-route-census.tsv` classifies every registered GET
+  template (frozen, measured zero, or a coverage gap with an owner).
 
 Task detail has a separate opt-in diagnostic trace. `X-Task-Switch-Trace: 1`
 enables bounded stage timing for `GET /api/tasks/{jobId}` only. Canonical UUID
@@ -1953,10 +2104,29 @@ disk for runner state.
 - **A dirty index refreshes in the background.** A dirty or TTL-expired index
   starts one single-flight background refresh after a 200 ms coalescing window.
   It inherits neither the request trace nor the pin, and the read answers from
-  the last snapshot. Only a cold start waits, asynchronously and cancelled with
+  the last snapshot. A cold start answers from the persisted board (below);
+  only a first start without one waits, asynchronously and cancelled with
   the request. A failed background refresh keeps the last
   snapshot, logs `task-index-background-refresh-failed`, and the next read
   retries.
+- **A cold start answers from the persisted board (Git facts S5).**
+  `BoardSummaryPersister`, the only writer, builds every live card of each
+  newly published generation once per project with the board routes' own
+  enrichment (`BoardCardProjector`) and serializer, and replaces the rows of
+  changed projects in `board-summaries.db` next to `git-facts.db` (override
+  `BoardSummaries:StorePath`; schema `BoardSummaryStoreSchema`; cadence
+  `BoardSummaries:PersistIntervalSeconds`, default 10 s). Each row keeps its
+  index generation, lane rank and index position. With a persisted board, the
+  boot starts the first index publication in the background instead of before
+  the listener, and until it lands list and grouped reads answer from
+  `RestoredBoard` with `X-Board-State: restored`, `X-Board-Restored-At` and
+  `X-Board-Index-Generation`; the grouped body says `stale: true`. Access,
+  project and fixture filters apply as on a live read; transitive waiters only
+  name cards of the same project. The tag follows the bytes, so an unchanged
+  card set still answers 304, and after a restored read the first publication pushes
+  `jobsBulkChanged`. Live reads carry `X-Board-State: ready`. Query reads and a
+  first start without a persisted board keep the wait. A corrupt or foreign
+  store file is discarded by the next write.
 - **Mutation readers share the refresh.** Callers outside the board still
   wait for their mutation generation, but simultaneous callers enter the same
   200 ms window and one full scan instead of starting a scan per caller.

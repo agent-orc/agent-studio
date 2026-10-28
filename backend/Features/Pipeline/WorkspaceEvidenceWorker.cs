@@ -24,6 +24,7 @@ public sealed class WorkspaceEvidenceWorker : BackgroundService
     private readonly TimeProvider _time;
     private readonly IEvidenceFlushAlarm? _alarm;
     private readonly EvidenceFlushStallTracker _stalls = new();
+    private bool _wasExport;
 
     public WorkspaceEvidenceWorker(
         WorkspaceEvidenceQueue queue,
@@ -53,8 +54,14 @@ public sealed class WorkspaceEvidenceWorker : BackgroundService
             try
             {
                 // Drain unconditionally so a disabled switch cannot let the
-                // channel grow unbounded; only fold work in while enabled.
-                var enabled = _batcher.Enabled;
+                // channel grow unbounded; only fold work in while enabled. With
+                // TaskArtifacts:Source = task-server the workspace repository is
+                // an export (AGT-3320), so transitions commit nothing; switching
+                // back runs the catch-up commit once.
+                var exported = AgentStudio.Tasks.TaskArtifactsSourceSetting.WorkspaceRepositoryIsExport(_config);
+                if (_wasExport && !exported) RunCatchUp();
+                _wasExport = exported;
+                var enabled = _batcher.Enabled && !exported;
                 while (_queue.Reader.TryRead(out var request))
                 {
                     if (enabled) _batcher.Ingest(request);
@@ -112,6 +119,11 @@ public sealed class WorkspaceEvidenceWorker : BackgroundService
     private void RunCatchUp()
     {
         if (!_batcher.Enabled) return;
+        if (AgentStudio.Tasks.TaskArtifactsSourceSetting.WorkspaceRepositoryIsExport(_config))
+        {
+            _wasExport = true;
+            return;
+        }
 
         var watchPaths = _scanner.GetWatchPaths()
             .Select(w => w.Path)

@@ -13,6 +13,168 @@ namespace TaskServer.Tests;
 public sealed partial class TaskServerStoreTests
 {
     [Fact]
+    public async Task Quota_refusal_blocks_new_coding_claim_without_changing_ready_task()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await SeedReadyTaskAsync(seed);
+        await seed.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new RejectCodingQuota());
+        await guarded.InitializeAsync();
+        // The startup warm-up fills the verdict cache; claims read only the cache.
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        var refused = await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        Assert.Equal("empty", refused.Status);
+        Assert.Contains("quota", refused.PlacementReason!, StringComparison.OrdinalIgnoreCase);
+        var resumed = Store(temp.Path, clock);
+        await resumed.InitializeAsync();
+        Assert.Equal("claimed", (await resumed.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+    }
+
+    private sealed class RejectCodingQuota : IWorkspaceQuotaAdmission
+    {
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+            => Task.FromResult(new WorkspaceQuotaVerdict(false, "Workspace quota reached."));
+    }
+
+    [Fact]
+    public async Task Unconfigured_meter_claims_without_quota_events_and_reports_admission_off()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(seed);
+        await seed.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var events = new RecordingQuotaEvents();
+        var unmetered = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), events, null);
+        await unmetered.InitializeAsync();
+        var claim = await unmetered.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Null(claim.Message);
+        var timeline = await unmetered.GetTaskTimelineAsync(project.ProjectId, task.TaskId, default);
+        Assert.DoesNotContain(timeline.Entries, entry => entry.EventKind?.StartsWith("quota.") == true);
+        Assert.DoesNotContain(events.Published, evt => evt.Kind.StartsWith("quota.", StringComparison.Ordinal));
+        Assert.Equal(WorkspaceQuotaAdmissionStates.Off, unmetered.Status().QuotaAdmission);
+    }
+
+    [Fact]
+    public async Task Unreachable_meter_raises_one_event_per_outage_and_one_on_recovery()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(seed);
+        await seed.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var events = new RecordingQuotaEvents();
+        // The backend answers an unresolved project the same way: allowed, meter unavailable.
+        var meter = new SwitchableQuota(new WorkspaceQuotaVerdict(true, "Project is unknown to the quota meter.", true));
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), events, null, meter);
+        await guarded.InitializeAsync();
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
+
+        var claim = await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        Assert.Equal("claimed", claim.Status);
+        Assert.Contains("unknown", claim.Message!, StringComparison.Ordinal);
+        Assert.Equal(["Project"], meter.Asked);
+        Assert.Single(events.Published, evt => evt.Kind == "quota.meter-unavailable");
+        Assert.Single((await guarded.GetTaskTimelineAsync(project.ProjectId, task.TaskId, default)).Entries,
+            entry => entry.EventKind == "quota.meter-unavailable");
+        Assert.Equal(WorkspaceQuotaAdmissionStates.Unreachable, guarded.Status().QuotaAdmission);
+
+        // Still down after the TTL: asked again in the background, no second event.
+        await seed.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("Next", "More work", "2-ready"), "test", default);
+        clock.Advance(TimeSpan.FromSeconds(31));
+        await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        Assert.Equal(2, meter.Asked.Count);
+        Assert.Single(events.Published, evt => evt.Kind == "quota.meter-unavailable");
+
+        await seed.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("Last", "More work", "2-ready"), "test", default);
+        meter.Verdict = new WorkspaceQuotaVerdict(true, null);
+        clock.Advance(TimeSpan.FromSeconds(31));
+        await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        Assert.Equal(3, meter.Asked.Count);
+        Assert.Single(events.Published, evt => evt.Kind == "quota.meter-recovered");
+        Assert.Equal(WorkspaceQuotaAdmissionStates.On, guarded.Status().QuotaAdmission);
+    }
+
+    [Fact]
+    public async Task Slow_quota_admission_does_not_hold_the_write_gate()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await SeedReadyTaskAsync(seed);
+        await seed.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var meter = new BlockingQuota();
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, meter);
+        await guarded.InitializeAsync();
+
+        // The claim starts the verdict refresh and completes while the meter is still answering.
+        var claim = await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        await meter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal("claimed", claim.Status);
+        Assert.Null(claim.Message);
+        // A write on the same store also finishes while the meter is blocked.
+        await guarded.RegisterRunnerAsync("runner-b", Runner("instance-b"), "test", default)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        var refresh = guarded.WorkspaceQuotaRefreshesIdle();
+        Assert.False(refresh.IsCompleted);
+        meter.Release.SetResult(new WorkspaceQuotaVerdict(true, null));
+        await refresh.WaitAsync(TimeSpan.FromSeconds(30));
+    }
+
+    private sealed class SwitchableQuota(WorkspaceQuotaVerdict verdict) : IWorkspaceQuotaAdmission
+    {
+        public WorkspaceQuotaVerdict Verdict { get; set; } = verdict;
+        public List<string> Asked { get; } = [];
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+        {
+            Asked.Add(projectId);
+            return Task.FromResult(Verdict);
+        }
+    }
+
+    private sealed class BlockingQuota : IWorkspaceQuotaAdmission
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<WorkspaceQuotaVerdict> Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+        {
+            Entered.TrySetResult();
+            return Release.Task;
+        }
+    }
+
+    private sealed class RecordingQuotaEvents : ITaskServerEventPublisher
+    {
+        public List<TaskServerOperationalEvent> Published { get; } = [];
+        public Task PublishAsync(TaskServerOperationalEvent message, CancellationToken ct)
+        {
+            Published.Add(message);
+            return Task.CompletedTask;
+        }
+    }
+    [Fact]
     public async Task Steering_feedback_rebuilds_the_same_command_and_attempt_in_all_read_views_after_restart()
     {
         using var temp = new TempDirectory();
@@ -2688,6 +2850,99 @@ public sealed partial class TaskServerStoreTests
                 fence, decision.Outcome.ToString(),
                 IdempotencyKey: $"completion:{runId}:{idempotency}",
                 Sequence: 1, OutcomeDecision: decision), "runner-a", default);
+    }
+
+    [Fact]
+    public async Task Held_primary_model_does_not_hide_a_provider_refusal_sibling_route()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-astra", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await store.RegisterRunnerAsync("runner-b", Runner("instance-b"), "test", default);
+        await AdvertiseModelsAsync(store, clock, 1, 1,
+            ("codex", "gpt-6-astra", "ready"), ("codex", "gpt-5.6-sol", "ready"));
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-b", "instance-b", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
+            [new AdvertisedCapabilityDto(
+                CapabilityProtocol.ModelAcceptance("codex", "gpt-6-astra"),
+                "model-acceptance", "ready", CredentialGeneration: "login-1",
+                CredentialObservedAt: clock.GetUtcNow().UtcDateTime, ProbeSequence: 1)]),
+            "runner-b", default);
+        await HoldPrimaryOnRunnerAAsync(store, "gpt-6-astra");
+        Assert.NotEqual("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+
+        var other = await store.ClaimAsync(new ClaimRequest("runner-b", "instance-b"), "test", default);
+        var refusal = ProviderRefusalDecision(other.Run!.RunId, "gpt-6-astra");
+        await store.CompleteRunAsync(other.Run.RunId,
+            new CompleteRunRequest("runner-b", "instance-b", other.Lease!.LeaseId,
+                other.Lease.Fence, refusal.Outcome.ToString(),
+                IdempotencyKey: $"completion:{other.Run.RunId}:provider-refusal",
+                Sequence: 1, OutcomeDecision: refusal,
+                SalvageBranch: "refs/heads/agent-studio/salvage/runner/AGT-3258/run-1/fence-2/1111111",
+                SalvageCommitSha: "1111111111111111111111111111111111111111"), "runner-b", default);
+
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal("gpt-5.6-sol", claim.ModelFallback?.To);
+    }
+
+    [Fact]
+    public async Task Held_primary_model_does_not_hide_an_operator_selected_route()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await AdvertiseModelsAsync(store, clock, 1, 1,
+            ("codex", "gpt-6-sol", "ready"), ("codex", "gpt-5.6-sol", "ready"));
+        await HoldPrimaryOnRunnerAAsync(store, "gpt-6-sol");
+        Assert.NotEqual("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+
+        var held = (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!;
+        await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "other-model", held.Version,
+                "Continue on the accepted model", "gpt-5.6-sol", "codex", null, "continue", "operator"),
+            "operator", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal("gpt-5.6-sol", claim.ContinuationIntent?.Model);
+    }
+
+    private static async Task HoldPrimaryOnRunnerAAsync(TaskServerStore store, string model)
+    {
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", claim.Status);
+        var frame = $$$"""
+            {"type":"turn.failed","error":{"type":"invalid_request_error","message":"The {{{model}}} model is not supported when using Codex with a ChatGPT account","status":400}}
+            """;
+        var decision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+            claim.Run!.RunId, ExecutionAttemptKind.Coding, ProviderTerminalEvent: frame,
+            ExitCode: 1, DurableOutputState: DurableOutputState.Missing,
+            EffectiveCliType: "codex", EffectiveModel: model, EffectiveThinkingLevel: "high"));
+        await store.CompleteRunAsync(claim.Run.RunId,
+            new CompleteRunRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, decision.Outcome.ToString(),
+                IdempotencyKey: $"completion:{claim.Run.RunId}:model-refusal",
+                Sequence: 1, OutcomeDecision: decision), "runner-a", default);
+        Assert.Contains(await store.ListEventsAsync(claim.Run.RunId, 0, default),
+            item => item.Kind == "execution.model-capability-held");
     }
 
     private static ExecutionOutcomeDecision ProviderRefusalDecision(string runId, string model)

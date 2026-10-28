@@ -250,10 +250,10 @@ public static class LeaseEndpoints
                         reviewInputDecisions, loggerFactory, ct);
                 var releaseWrite = leases.CurrentWriteReference(
                     req.TaskKey, $"infrastructure-release:{req.AttemptId}:{req.LeaseId}");
-                var released = leases.Release(req);
+                var released = leases.Release(req, () => stops.Clear(
+                    req.TaskKey, req.AttemptId, req.FencingToken, "released"));
                 if (string.Equals(released.Outcome, "Released", StringComparison.OrdinalIgnoreCase))
                 {
-                    stops.Clear(req.TaskKey, req.AttemptId, req.FencingToken, "released");
                     var task = FindTask(scanner, req.TaskKey);
                     if (task is not null)
                         mutations.RollbackStashedPendingIntent(task.FolderPath);
@@ -1954,9 +1954,12 @@ public static class LeaseEndpoints
                     unverifiedDelivery =
                         $"Delivery not verified against the target repository: {attributionWarning} "
                         + "No completion stamp was written (AGT-2220).";
-                    targetState = TaskStates.Escalated;
-                    mutations.AddJobTag(
-                        task.Id, OutOfBandStampPolicy.UnverifiedDeliveryTag, task.WatchPath);
+                    targetState = deliveryRange.Verification == DeliveryVerificationStatus.BaseNotAncestor
+                        ? TaskStates.Ready
+                        : TaskStates.Escalated;
+                    if (targetState == TaskStates.Escalated)
+                        mutations.AddJobTag(
+                            task.Id, OutOfBandStampPolicy.UnverifiedDeliveryTag, task.WatchPath);
                 }
             }
 
@@ -2128,6 +2131,12 @@ public static class LeaseEndpoints
                 details["attributedCommitCount"] = remoteAttribution.Commits.Count.ToString();
             if (!string.IsNullOrWhiteSpace(attributionWarning))
                 details["commitAttributionWarning"] = attributionWarning;
+            if (deliveryRange?.Verification == DeliveryVerificationStatus.BaseNotAncestor)
+            {
+                details["deliveryAction"] = "requeue";
+                details["fencedBaseSha"] = req.BaseSha!;
+                details["refusedResultSha"] = resultSha!;
+            }
             if (!string.IsNullOrWhiteSpace(reportedReason))
                 details["reason"] = reportedReason;
             if (providerRejection is not null)
@@ -2419,6 +2428,27 @@ public static class LeaseEndpoints
             }
 
             remoteClaimFailures.Reset(task);
+
+            if (deliveryRange?.Verification == DeliveryVerificationStatus.BaseNotAncestor)
+            {
+                var continuation = await timeoutContinuations.StartAsync(
+                    task,
+                    new RunSalvageReference(deliveryBranch!, resultSha!),
+                    unverifiedDelivery!,
+                    attemptId,
+                    laneWrite,
+                    ct,
+                    RunContinuationCause.FencedDeliveryRefusal(req.BaseSha!, resultSha!));
+                if (!continuation.Started)
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status503ServiceUnavailable,
+                        title: "Fenced delivery continuation could not be queued",
+                        detail: continuation.Reason);
+                return Results.Ok(new RemoteRunCompletionResponse(
+                    req.TaskKey, responseOutcome, TaskStates.Ready,
+                    $"Automatic continuation will merge fenced base {req.BaseSha} into result {resultSha}.",
+                    RunAttemptId: attemptId));
+            }
 
             if (decisionStop)
             {

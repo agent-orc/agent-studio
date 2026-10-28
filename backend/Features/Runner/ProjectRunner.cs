@@ -427,6 +427,14 @@ public class ProjectRunner
     public event Action<string, string>? OnModePersist;
 
     private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
+    private readonly bool _networked;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
+
+    /// <summary>Workspace or project quota refusal for a new local run; null admits it.</summary>
+    internal RunRejection? WorkspaceQuotaRefusal()
+        => _workspaceQuota?.Admit(ProjectName) is { Allowed: false } admission
+            ? new RunRejection(RunRejectReason.QuotaCapExceeded, admission.Message ?? "Workspace quota reached.")
+            : null;
 
     public ProjectRunner(
         string projectName,
@@ -480,7 +488,9 @@ public class ProjectRunner
         RemoteDispatchRejectionStore? dispatchRejections = null,
         LocalRunClaimAdapter? localRunClaims = null,
         ILocalCodingAdmissionPolicy? localCodingAdmission = null,
-        ReviewInputDecisionGateway? reviewInputDecisions = null)
+        ReviewInputDecisionGateway? reviewInputDecisions = null,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
+        bool networked = false)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -522,6 +532,8 @@ public class ProjectRunner
         _pickupLockOwner = pickupLockOwner;
         _localRunClaims = localRunClaims;
         _localCodingAdmission = localCodingAdmission;
+        _networked = networked;
+        _workspaceQuota = workspaceQuota;
         _integrationLeases = integrationLeases;
         _timeline = timeline;
         _pipelineLog = pipelineLog;
@@ -1444,7 +1456,8 @@ public class ProjectRunner
                 var placementHold = PickupHoldPolicy.Evaluate(new PickupHoldFacts(
                     candidate.Info, null, false, null, null, DateTime.UtcNow,
                     ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(ProjectName)),
-                    _localCodingAdmission?.AllowsLocalCoding == true));
+                    (!_networked && _localCodingAdmission?.AllowsLocalCoding == true),
+                    DenyAllLocalRuns: _networked));
                 if (placementHold?.Mechanism == PickupHoldMechanisms.ExecutionPlacement)
                 {
                     _lastPickReason = placementHold.Reason;
@@ -2524,7 +2537,12 @@ public class ProjectRunner
         {
             var info = _scanner.FindJob(jobId, Entry.Path);
             if (info == null) return RunOutcome.Reject(new RunRejection(RunRejectReason.TaskNotFound, "Job not found"));
-            if (WorktreeRunPolicy.RequiresWorktree(info.Mode)
+            var location = ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(ProjectName));
+            if (_networked && location != ExecutionLocations.Local)
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.RemoteExecutionRequired,
+                    $"{RemoteExecutionRequirement.Code}: Project {ProjectName} is placed at {location}; dispatch its agent run to that runner."));
+            if (_networked || WorktreeRunPolicy.RequiresWorktree(info.Mode)
                 && _localCodingAdmission?.AllowsLocalCoding != true)
                 return RunOutcome.Reject(new RunRejection(
                     RunRejectReason.RemoteExecutionRequired,
@@ -2587,6 +2605,8 @@ public class ProjectRunner
             // Resolve the run through the canonical admission boundary exactly
             // once. The decision is run-scoped and never mutates job.json, so a
             // recovered provider is selected again on the next launch.
+            if (WorkspaceQuotaRefusal() is { } quotaRefusal)
+                return RunOutcome.Reject(quotaRefusal);
             var admissionPlan = PlanQuotaAdmission(info);
             var route = new CliRouteDecision(
                 admissionPlan.CliType,

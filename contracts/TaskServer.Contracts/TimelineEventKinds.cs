@@ -251,6 +251,16 @@ public static class TimelineEventKinds
     /// <summary>A failed pipeline boundary raised or attached to an orchestrator follow-up task.</summary>
     public const string FailureInterventionRaised = "failure_intervention_raised";
     /// <summary>
+    /// AGT-3207: the AI Operator intervened on an operational stall that
+    /// affects this card (host admission, restart, provider rerouting, batch
+    /// gate reconciliation, requeue from the last delivery), proposed an A2
+    /// action, or escalated. <see cref="TimelineEvent.Summary"/> is the
+    /// plain-language receipt; <see cref="TimelineEvent.Details"/> carries
+    /// <c>interventionId</c>, <c>subject</c>, <c>action</c>, <c>autonomy</c>,
+    /// <c>status</c> and <c>undo</c>.
+    /// </summary>
+    public const string StallInterventionRecorded = "stall_intervention_recorded";
+    /// <summary>
     /// The task was completed out-of-band (operator chat, external agent, a
     /// remote host) and reconciled through
     /// <c>POST /api/tasks/{id}/external-completion</c> instead of a runner run.
@@ -506,6 +516,13 @@ public static class TimelineEventKinds
     /// <c>evidenceDigest</c>.
     /// </summary>
     public const string WatcherCaseLinked = "watcher_case_linked";
+
+    /// <summary>
+    /// AGT-3218: the monolith gate handler took a passed engine gate decision
+    /// and dispatched the aspect review. Details carry <c>orchestrationRunId</c>;
+    /// the applier canary reads it as the durable gate dispatch.
+    /// </summary>
+    public const string EngineGateDispatched = "engine_gate_dispatched";
 
     /// <summary>
     /// IP-14: an environment health incident or certificate warning that owns

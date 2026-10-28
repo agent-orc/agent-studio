@@ -42,11 +42,11 @@ public class TaskHub : Hub
         // connection could otherwise pick up. An empty membership list never
         // widens a scoped role into the unscoped group.
         if (!isPublicDemo
-            && (principal is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(principal.User)))
+            && (principal is null || CanReadWorkspace(principal)))
             await Groups.AddToGroupAsync(Context.ConnectionId, UnscopedSecurityGroup);
         foreach (var project in _projects.List())
         {
-            if (principal is null || ProjectAccessAuthorization.Allows(principal.User, project.Id, _projects))
+            if (principal is null || CanReadProject(principal, project.Id))
                 await Groups.AddToGroupAsync(Context.ConnectionId, ProjectGroup(project.Id, _projects));
         }
         await base.OnConnectedAsync();
@@ -81,7 +81,7 @@ public class TaskHub : Hub
         var principal = LivePrincipal();
         var task = _scanner.FindJob(jobId);
         if (task is null) throw new HubException("Task not found.");
-        if (principal is not null && !ProjectAccessAuthorization.Allows(principal.User, task.ProjectName, _projects))
+        if (principal is not null && !CanReadProject(principal, task.ProjectName))
             throw new HubException("Project access denied.");
         return Groups.AddToGroupAsync(Context.ConnectionId, ConversationProjector.GroupName(jobId));
     }
@@ -96,6 +96,15 @@ public class TaskHub : Hub
                       ?? projects.FindByStorageLocation(projectHandle);
         return "project:" + (project?.Id ?? projectHandle).ToLowerInvariant();
     }
+
+    private bool CanReadWorkspace(HumanPrincipal principal)
+        => _security.AuthorizeUser(principal.User.Id, IamPermissions.ProjectRead,
+            PermissionTarget.WorkspaceWide).Allowed;
+
+    private bool CanReadProject(HumanPrincipal principal, string project)
+        => _security.AuthorizeUser(principal.User.Id, IamPermissions.ProjectRead,
+            PermissionTarget.ForProject(project),
+            (bound, requested) => ProjectAccessAuthorization.SameProject(bound, requested, _projects)).Allowed;
 
     private HumanPrincipal? LivePrincipal()
     {

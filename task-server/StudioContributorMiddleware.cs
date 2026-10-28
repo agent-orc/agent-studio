@@ -10,8 +10,10 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
     {
         "credentials", "remote-hosts", "settings", "quotas", "security", "tokens", "usage",
         "logs", "raw-logs", "merge", "promotions", "production", "management",
-        "secrets", "output", "trace", "files", "agent-work-detail", "history"
+        "secrets", "output", "trace", "files", "agent-work-detail", "history", "session-events"
     };
+
+    private static readonly JsonDocumentOptions PayloadOptions = new() { AllowDuplicateProperties = false };
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -36,12 +38,12 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
         }
         var user = status.User;
         context.Items["StudioActorId"] = user.UserId;
-        if (user.Role != StudioUserRoles.Contributor)
+        if (!StudioProductSession.IsProduct(user))
         {
             await next(context);
             return;
         }
-        context.Items["StudioContributor"] = true;
+        StudioProductSession.Mark(context);
 
         var path = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
         var method = context.Request.Method;
@@ -86,7 +88,8 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
                 return;
             }
             var taskRoute = parts.Length >= 5 && parts[4] == "tasks";
-            var allowed = safe && taskRoute;
+            var boardRoute = parts.Length >= 5 && parts[4] == "board";
+            var allowed = safe && (taskRoute || boardRoute);
             if (HttpMethods.IsPost(method) && parts.Length == 5 && taskRoute)
                 allowed = true;
             if (task is not null && task.State is (StudioTaskLanes.Backlog or StudioTaskLanes.Ready))
@@ -161,33 +164,43 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
         request.EnableBuffering();
         try
         {
-            using var doc = await JsonDocument.ParseAsync(request.Body, cancellationToken: ct);
-            var field = isMove ? "targetState" : "state";
-            var value = doc.RootElement.ValueKind == JsonValueKind.Object
-                ? doc.RootElement.EnumerateObject().FirstOrDefault(property =>
-                    property.Name.Equals(field, StringComparison.OrdinalIgnoreCase)).Value
-                : default;
+            // The binder matches names case-insensitively and rejects case-variant
+            // duplicates, so this read must see the same single value or deny.
+            using var doc = await JsonDocument.ParseAsync(request.Body, PayloadOptions, ct);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !TrySingleProperty(doc.RootElement, isMove ? "targetState" : "state", out var value)
+                || value.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.String))
+                return false;
             var target = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-            if (isCreate) return target is null or StudioTaskLanes.Backlog or StudioTaskLanes.Ready;
+            if (isCreate) return value.ValueKind == JsonValueKind.Undefined || StudioProductSession.AllowsCreate(target);
             if (isUpdate)
-            {
-                var mechanicalDelta = doc.RootElement.EnumerateObject().FirstOrDefault(property =>
-                    property.Name.Equals("mechanicalDelta", StringComparison.OrdinalIgnoreCase)).Value;
-                return mechanicalDelta.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
-                    && target is (null or StudioTaskLanes.Backlog or StudioTaskLanes.Ready);
-            }
-            return (currentState is (StudioTaskLanes.Backlog or StudioTaskLanes.Ready)
-                    && target is (StudioTaskLanes.Backlog or StudioTaskLanes.Ready))
-                || (currentState == StudioTaskLanes.HumanReview && target == StudioTaskLanes.Completed);
+                return TrySingleProperty(doc.RootElement, "mechanicalDelta", out var mechanicalDelta)
+                    && mechanicalDelta.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
+                    && StudioProductSession.AllowsEdit(currentState, target ?? currentState);
+            return StudioProductSession.AllowsMove(currentState, target);
         }
         catch (JsonException)
         {
-            return true;
+            return false;
         }
         finally
         {
             if (request.Body.CanSeek) request.Body.Position = 0;
         }
+    }
+
+    private static bool TrySingleProperty(JsonElement root, string name, out JsonElement value)
+    {
+        value = default;
+        var found = false;
+        foreach (var property in root.EnumerateObject())
+        {
+            if (!property.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
+            if (found) return false;
+            found = true;
+            value = property.Value;
+        }
+        return true;
     }
 
     private async Task<string?> ResolveProject(string identity, CancellationToken ct)

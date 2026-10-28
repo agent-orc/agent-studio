@@ -120,7 +120,8 @@ public sealed class CodexModelDiscovery
                 cols: 220,
                 rows: 80,
                 verbatimCommandLine: verbatimCommandLine,
-                ct: ct);
+                ct: ct,
+                networked: !SecurityProfiles.IsLocal(_config));
 
             await pty.WaitForIdleAsync(idleMs: 1000, timeoutMs: 10000, ct);
 
