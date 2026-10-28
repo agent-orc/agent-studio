@@ -3,7 +3,7 @@ id: stale-git-lock
 title: "Evidence flushes or integrations fail for hours on a git lock left by a dead git process"
 status: fixed
 first-seen: 2026-09-27T15:32:00Z
-last-seen: 2026-10-10T22:16:00Z
+last-seen: 2026-10-28T09:00:00Z
 severity: blocker
 category: runtime
 tags: [git, index-lock, workspace, evidence, integration-worktree, pipeline-health, windows]
@@ -15,7 +15,8 @@ affects:
   - backend/Features/Pipeline/PipelineHealthService.cs
   - backend/Features/Git/IntegrationWorktreeProvider.cs
   - backend/Features/Pipeline/BuildTestGateRunner.cs
-related-tasks: [AGT-3000, AGT-3035]
+  - backend/Features/Tasks/TaskTransitionService.cs
+related-tasks: [AGT-3000, AGT-3035, AGT-3337]
 related-adrs: []
 ---
 
@@ -147,3 +148,42 @@ whole project folders, so nothing written during the stall is lost.
 the process inventory. When a running `git.exe` has no repository path in its
 command line, the server keeps the lock because ownership is unknown. After
 that process exits, the next write can clear an aged lock.
+
+## Ref locks left by a killed fetch (AGT-3337)
+
+**Symptom.** The backend log shows, every ~33 seconds:
+
+```text
+Fetch from "origin" at "<repo>" failed (continuing offline): "git operation timed out after 30 seconds"
+```
+
+and `.git/refs/**` fills with `*.lock` files. Later fetches or pushes fail
+with `cannot lock ref`. On 2026-10-28 an empty
+`refs/remotes/origin/develop.lock` blocked every update of origin/develop for
+90 minutes, so completion moves were refused with `integration-dead-end`
+although the deliveries were on develop.
+
+**Cause.** The completed-push backstop ran `git fetch --prune origin` for every
+completed card. On a checkout with 6,604 remote refs that fetch never finished
+within the 30-second git timeout. The timeout kills the git process tree, and a
+killed fetch does not release its ref locks.
+
+**What the server does now.**
+
+- The backstop and the completed-push worker skip a card whose integration
+  verdict is `integrated` without any git call. Other cards fetch only the
+  integration branch refspec (`+refs/heads/<branch>:refs/remotes/origin/<branch>`),
+  at most once per repository per backstop cycle. The "already on the remote"
+  shortcut reads `origin/<integration branch>`, not `origin/main`.
+- `GitRefLockJanitor` runs before every fetch through `GitService.Fetch` or the
+  integration fetch, after a fetch timeout, and after a fetch that failed on a
+  ref lock. It removes `packed-refs.lock` and `refs/**/*.lock` files that are
+  older than `GitStaleLocks:RefJanitorThresholdMinutes` (default 5) when no git
+  process holds them (same ownership probe as above). In the same pass it
+  prunes `.git/worktrees/<name>` entries whose working tree no longer exists and
+  which are unlocked and older than the threshold.
+- Each janitor pass that removed something emits one operations event
+  `git-stale-lock-cleared` (kind `intervention`) that lists every removed path.
+  A timeout or `cannot lock ref` failure that leaves locks in place emits
+  `git-ref-lock-blocked`, at most once per repository per
+  `GitStaleLocks:RefLockReportWindowMinutes` (default 15).

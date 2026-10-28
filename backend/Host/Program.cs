@@ -929,6 +929,8 @@ builder.Services.AddSingleton(sp => new AgentStudio.Diagnostics.ArtifactUploadAf
 // AGT-3000: clears git locks left by dead git processes before a server-owned write.
 builder.Services.AddSingleton<AgentStudio.Git.GitStaleLockGuard>();
 builder.Services.AddSingleton<AgentStudio.Git.IntegrationWorktreeStartupLockSweep>();
+// AGT-3337: removes ref locks a killed fetch left behind, before a fetch and after a timeout.
+builder.Services.AddSingleton<AgentStudio.Git.GitRefLockJanitor>();
 builder.Services.AddHostedService(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskLiveStatusProjection>();

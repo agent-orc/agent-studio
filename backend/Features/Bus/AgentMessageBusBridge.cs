@@ -639,6 +639,73 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// Records an automatic git lock intervention (AGT-3337): the ref-lock
+    /// janitor removed lock files that a killed or crashed git process left
+    /// behind, or pruned worktree admin entries whose working tree is gone. One
+    /// message per janitor pass lists every removed path.
+    /// </summary>
+    public Task EmitGitLockInterventionAsync(
+        string? project,
+        string repository,
+        string trigger,
+        IReadOnlyList<string> removedLocks,
+        IReadOnlyList<string> prunedWorktrees,
+        TimeSpan threshold,
+        CancellationToken ct = default)
+    {
+        var parts = new List<string>();
+        if (removedLocks.Count > 0) parts.Add($"removed {removedLocks.Count} stale git lock file(s)");
+        if (prunedWorktrees.Count > 0) parts.Add($"pruned {prunedWorktrees.Count} orphaned worktree admin entries");
+        var msg = NewMessage(
+            participantId: string.IsNullOrWhiteSpace(project) ? ParticipantRuntime : ParticipantOrchestratorFor(project),
+            role: "system",
+            kind: "intervention",
+            severity: "Warn",
+            project: project,
+            topic: "git-stale-lock-cleared",
+            summary: TruncateSummary($"Git lock janitor {string.Join(" and ", parts)} in {repository} ({trigger})"),
+            body: $"Repository: {repository}\nTrigger: {trigger}\n"
+                  + $"Rule: older than {threshold.TotalMinutes:0} minutes and no git process of this server running in the repository.\n"
+                  + "A killed git process does not release its locks; while they exist every later update of those refs fails.\n"
+                  + (removedLocks.Count > 0 ? "Removed locks:\n" + string.Join("\n", removedLocks) + "\n" : "")
+                  + (prunedWorktrees.Count > 0 ? "Pruned worktree entries:\n" + string.Join("\n", prunedWorktrees) : ""),
+            payload: new { repository, trigger, removedLocks, prunedWorktrees, thresholdMinutes = threshold.TotalMinutes },
+            tags: new[] { "git-lock-janitor", "auto-intervention", $"trigger:{trigger}" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
+    /// Makes a git ref-lock blockage visible (AGT-3337): a fetch failed with
+    /// "cannot lock ref" / "Unable to create ... .lock", or a killed git process
+    /// left lock files the janitor may not remove yet. Callers rate-limit per
+    /// repository so a stuck lock costs one message per window, not one per fetch.
+    /// </summary>
+    public Task EmitGitRefLockBlockedAsync(
+        string? project,
+        string repository,
+        string trigger,
+        IReadOnlyList<string> locks,
+        string? error,
+        CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: string.IsNullOrWhiteSpace(project) ? ParticipantRuntime : ParticipantOrchestratorFor(project),
+            role: "system",
+            kind: "error",
+            severity: "Warn",
+            project: project,
+            topic: "git-ref-lock-blocked",
+            summary: TruncateSummary(
+                $"Git ref locks block updates in {repository} ({trigger}): {locks.Count} lock file(s) present"),
+            body: $"Repository: {repository}\nTrigger: {trigger}\nError: {error ?? "(none)"}\n"
+                  + "The lock janitor removes a lock once it is older than its threshold and no git process of this server runs in the repository.\n"
+                  + (locks.Count > 0 ? "Locks:\n" + string.Join("\n", locks) : ""),
+            payload: new { repository, trigger, locks, error },
+            tags: new[] { "git-lock-janitor", "ref-lock-blocked", $"trigger:{trigger}" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Emits one operator-feed alert for a deterministic gate that turned red on
     /// an integration branch (AGT-2819). Producers call this only on the
     /// green-to-red transition, so a branch that stays broken for weeks costs one

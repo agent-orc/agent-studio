@@ -65,13 +65,14 @@ public sealed class GitStaleLockGuard
         ILogger<GitStaleLockGuard>? logger,
         IGitLockOwnerProbe? probe,
         TimeProvider? time,
-        Action<TimeSpan>? wait)
+        Action<TimeSpan>? wait,
+        TimeSpan? threshold = null)
     {
         _logger = logger ?? NullLogger<GitStaleLockGuard>.Instance;
         _probe = probe ?? new GitProcessLockOwnerProbe();
         _time = time ?? TimeProvider.System;
         _wait = wait ?? Thread.Sleep;
-        _threshold = TimeSpan.FromMinutes(Math.Clamp(
+        _threshold = threshold ?? TimeSpan.FromMinutes(Math.Clamp(
             configuration?.GetValue<int?>("GitStaleLocks:ThresholdMinutes")
                 ?? (int)GitStaleLockPolicy.DefaultThreshold.TotalMinutes,
             1,
