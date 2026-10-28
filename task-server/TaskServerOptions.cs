@@ -32,6 +32,10 @@ public sealed class TaskServerOptions
     public int GateGrantHalfCores { get; set; } = 2;
     /// <summary>Ceiling of one immutable gate bundle; never above the transport limit.</summary>
     public long GateBundleMaxBytes { get; set; } = 1024L * 1024 * 1024;
+    /// <summary>Attempt credential exchange is disabled until the operator enables the S5 canary.</summary>
+    public bool AttemptCredentialCanaryEnabled { get; set; }
+    /// <summary>Absolute path to an operator-custodied, 32-byte base64 wrapping key file.</summary>
+    public string? AttemptCredentialWrappingKeyFile { get; set; }
     public int ResultRetentionDays { get; set; } = 30;
     public int ResultFinalizationMaxAttempts { get; set; } = 3;
     public bool ResultRefGcEnabled { get; set; } = true;

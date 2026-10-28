@@ -59,7 +59,8 @@ public sealed partial class TaskServerStore
     // 38 stores release candidate full-suite verdicts by project, SHA, and command digest.
     // 39 adds placement advertisements and allocation versions. Version 37
     // remains the retired-schema downgrade guard for older binaries.
-    // 40 adds post-work subjects, attempts, events and cohorts (additive).
+    // 40 adds post-work subjects, attempts, events and cohorts, and records one-use
+    // attempt credential exchange and redacted teardown receipts (both additive).
     public const int CurrentSchemaVersion = 40;
 
     /// <summary>
@@ -3908,6 +3909,30 @@ public sealed partial class TaskServerStore
             );
             CREATE INDEX IF NOT EXISTS ix_placement_shadow_receipts_task
                 ON placement_shadow_receipts(task_id, id DESC);
+            CREATE TABLE IF NOT EXISTS attempt_credential_issuances(
+                issuance_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                lease_id TEXT NOT NULL,
+                fence INTEGER NOT NULL,
+                epoch INTEGER NOT NULL,
+                host_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                repository_id TEXT NOT NULL,
+                capability_hash TEXT NOT NULL UNIQUE,
+                capability_expires_at TEXT NOT NULL,
+                exchanged_at TEXT,
+                issued_at TEXT,
+                expires_at TEXT,
+                lease_expiry_at TEXT,
+                revoked_at TEXT,
+                revocation_status TEXT,
+                deletion_status TEXT,
+                storage_mode TEXT NOT NULL,
+                issuer TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_attempt_credential_issuances_run
+                ON attempt_credential_issuances(run_id, fence);
             CREATE TABLE IF NOT EXISTS host_project_policies(
                 host_id TEXT PRIMARY KEY,
                 allow_all_projects INTEGER NOT NULL,

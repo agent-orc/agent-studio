@@ -34,6 +34,8 @@ public interface IWorkContainerRuntime
     Task<WorkRuntimeResult> CreateVolumeAsync(string name, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task<WorkRuntimeResult> CreateContainerAsync(IReadOnlyList<string> createArguments, CancellationToken ct);
     Task<WorkRuntimeResult> StartAsync(string container, CancellationToken ct);
+    Task<WorkRuntimeResult> InjectGitTokenAsync(string container, string token, CancellationToken ct)
+        => throw new NotSupportedException("This work-container runtime cannot inject attempt credentials.");
 
     /// <summary>Blocks until the container exits and returns its exit code.</summary>
     Task<int?> WaitAsync(string container, CancellationToken ct);
@@ -77,6 +79,17 @@ public sealed class CliWorkContainerRuntime(string runtime) : IWorkContainerRunt
 
     public Task<WorkRuntimeResult> StartAsync(string container, CancellationToken ct)
         => Run(["start", container], CommandTimeout, ct);
+
+    public async Task<WorkRuntimeResult> InjectGitTokenAsync(string container, string token, CancellationToken ct)
+    {
+        // The token exists only on stdin of the runtime and the file inside the
+        // container's private tmpfs. It never becomes an argument or environment value.
+        var result = await ProcessRunner.RunAsync(runtime,
+            ["exec", "--interactive", "--user", WorkContainerLaunchPlanner.ContainerUser,
+                container, "/bin/sh", "-c", "umask 077; cat > /run/agent-secrets/.github-token-next && mv /run/agent-secrets/.github-token-next /run/agent-secrets/github-token"],
+            stdin: token, clearEnvironment: true, ct: ct);
+        return new WorkRuntimeResult(result.Success, result.Success ? "" : "Attempt secret injection failed.");
+    }
 
     public async Task<int?> WaitAsync(string container, CancellationToken ct)
     {

@@ -4,6 +4,9 @@ using AgentStudio.TaskServer.Recovery;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 
+if (args.Length > 0 && args[0] == "attempt-credentials")
+    return await AgentStudio.TaskServer.AttemptCredentials.AttemptCredentialImportCommand.RunAsync(args[1..], default);
+
 TaskServerCommandLine command;
 try
 {
@@ -60,6 +63,16 @@ builder.Services.AddSignalR();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.AllowDuplicateProperties = false);
 builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationResultFinalizationSummaryGenerator>();
 builder.Services.AddSingleton<TaskServerStore>();
+builder.Services.AddSingleton<AgentStudio.TaskServer.AttemptCredentials.IAttemptRootSecretStore>(services =>
+{
+    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<TaskServerOptions>>().Value;
+    var keyFile = options.AttemptCredentialWrappingKeyFile
+        ?? Path.Combine(options.ResolveDataDirectory(), "unconfigured-attempt-wrap-key");
+    return new AgentStudio.TaskServer.AttemptCredentials.EncryptedAttemptRootSecretStore(
+        Path.Combine(options.ResolveDataDirectory(), "attempt-root-secrets"), keyFile);
+});
+builder.Services.AddHttpClient<AgentStudio.TaskServer.AttemptCredentials.IRepositoryTokenIssuer,
+    AgentStudio.TaskServer.AttemptCredentials.GitHubAppTokenIssuer>(client => client.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddSingleton<DeviceLoginSessions>();
 builder.Services.AddHostedService<DeviceLoginAuditSweep>();
 builder.Services.AddSingleton<RunnerGitSetupStore>();

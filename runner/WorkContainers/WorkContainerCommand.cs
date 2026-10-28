@@ -17,6 +17,7 @@ public static class WorkContainerCommand
     public const string Usage = """
         Usage: agent-host work-container <command> [options]
           run --attempt <attempt.json> --grant-half-cores <n> --allocation-version <v> [--acknowledged-version <v>] [--image <ref>]
+              [--broker-url <url> --broker-bearer-file <file> --runner-id <id> --instance-id <id> --subject-id <id>]
           reconcile --host <host-id> --inventory <host-agent attempt-inventory.json>
           image-promote --manifest <path> --role <coding|review|gate|all> --image <ref@sha256:...> [--release <version>]
           image-rollback --manifest <path> --role <coding|review|gate|all>
@@ -78,7 +79,15 @@ public static class WorkContainerCommand
                     var grant = new WorkContainerGrant(version,
                         options.ContainsKey("acknowledged-version") ? Number(options, "acknowledged-version") : version,
                         (int)Number(options, "grant-half-cores"));
-                    var receipt = await new WorkContainerExecutor(new CliWorkContainerRuntime(settings.Runtime), settings, log: output.WriteLine)
+                    using var brokerHttp = options.ContainsKey("broker-url")
+                        ? new HttpClient { BaseAddress = new Uri(Required(options, "broker-url").TrimEnd('/') + "/"),
+                            Timeout = TimeSpan.FromSeconds(30) }
+                        : null;
+                    IWorkContainerCredentialSource? credentialSource = brokerHttp is null ? null
+                        : new TaskServerWorkCredentialSource(brokerHttp, Required(options, "broker-bearer-file"),
+                            Required(options, "runner-id"), Required(options, "instance-id"), Required(options, "subject-id"));
+                    var receipt = await new WorkContainerExecutor(new CliWorkContainerRuntime(settings.Runtime), settings,
+                            log: output.WriteLine, credentials: credentialSource)
                         .RunAsync(attempt, image, grant, ct);
                     output.WriteLine(JsonSerializer.Serialize(receipt, Json));
                     return receipt.Outcome == "succeeded" && receipt.CleanupVerified ? 0 : 1;

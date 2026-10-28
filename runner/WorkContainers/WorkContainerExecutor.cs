@@ -34,7 +34,9 @@ public sealed record WorkContainerReceipt(
     bool CleanupVerified,
     IReadOnlyList<string> CleanupResidue,
     DateTime StartedAtUtc,
-    DateTime FinishedAtUtc);
+    DateTime FinishedAtUtc,
+    string? CredentialRevocationStatus = null,
+    string? SecretDeletionStatus = null);
 
 public sealed record WorkReconciliationAction(string Kind, string Name, string AttemptId, long Fence, string Action, string Reason);
 
@@ -76,7 +78,8 @@ public sealed class WorkContainerExecutor(
     WorkContainerSettings settings,
     Func<HostMemory>? readMemory = null,
     TimeProvider? clock = null,
-    Action<string>? log = null)
+    Action<string>? log = null,
+    IWorkContainerCredentialSource? credentials = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly Func<HostMemory> _readMemory = readMemory ?? HostMemory.Read;
@@ -119,7 +122,8 @@ public sealed class WorkContainerExecutor(
                 return Denied(attempt, image, "attempt-already-running: one container per attempt.", started);
             var admission = WorkContainerAdmissionPolicy.Decide(grant, Budget(inventory.ReservedHalfCores), settings);
             if (!admission.Admitted) return Denied(attempt, image, admission.Reason, started);
-            plan = WorkContainerLaunchPlanner.Plan(attempt, image, admission.Limits!, settings);
+            plan = WorkContainerLaunchPlanner.Plan(attempt, image, admission.Limits!, settings,
+                credentialRequired: credentials is not null);
             grantedAt = _clock.GetUtcNow();
             var volume = await runtime.CreateVolumeAsync(plan.AttemptVolume, plan.Labels, ct);
             var created = volume.Ok ? await runtime.CreateContainerAsync(plan.CreateArguments, ct) : volume;
@@ -136,6 +140,11 @@ public sealed class WorkContainerExecutor(
         int? exitCode = null;
         string outcome;
         string reason;
+        WorkCredential? credential = null;
+        var secretValues = new List<string>();
+        string? revocationStatus = null;
+        using var renewalStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        Task renewalTask = Task.CompletedTask;
         try
         {
             var start = await runtime.StartAsync(plan.ContainerName, ct);
@@ -146,6 +155,19 @@ public sealed class WorkContainerExecutor(
             }
             else
             {
+                if (credentials is not null)
+                {
+                    credential = await credentials.AcquireAsync(attempt, ct);
+                    secretValues.Add(credential.Token);
+                    var injected = await runtime.InjectGitTokenAsync(plan.ContainerName, credential.Token, ct);
+                    if (!injected.Ok) throw new InvalidOperationException(injected.Output);
+                    renewalTask = RenewCredentialUntilStoppedAsync(attempt, plan.ContainerName,
+                        credential, credentials, renewed =>
+                        {
+                            credential = renewed;
+                            secretValues.Add(renewed.Token);
+                        }, renewalStop.Token);
+                }
                 exitCode = await runtime.WaitAsync(plan.ContainerName, ct);
                 (outcome, reason) = exitCode switch
                 {
@@ -161,16 +183,63 @@ public sealed class WorkContainerExecutor(
             outcome = "stopped";
             reason = "lease lost or host stopping; container removed.";
         }
+        catch (Exception ex) when (credentials is not null && ex is InvalidOperationException or HttpRequestException)
+        {
+            outcome = "credential-unavailable";
+            reason = "Attempt credential exchange or injection failed.";
+        }
+        finally
+        {
+            renewalStop.Cancel();
+            try { await renewalTask; }
+            catch (OperationCanceledException) { _log($"work-container credential renewal stopped attempt={attempt.AttemptId}"); }
+            if (credential is not null && credentials is not null)
+            {
+                try { revocationStatus = await credentials.RevokeAsync(attempt, credential, CancellationToken.None); }
+                catch (Exception) { revocationStatus = "expiry-backstop"; }
+            }
+        }
 
         // 5. Flush the log before anything is removed, then clean up and verify.
-        var (logPath, markers) = await FlushLogAsync(plan, attempt, CancellationToken.None);
+        var (logPath, markers) = await FlushLogAsync(plan, attempt, secretValues,
+            credentials is not null, CancellationToken.None);
         var cleanupResidue = await CleanupAsync(plan, attempt, CancellationToken.None);
+        var deletionStatus = cleanupResidue.Count == 0 ? "container-tmpfs-removed" : "cleanup-residue";
+        if (credential is not null && credentials is not null && cleanupResidue.Count == 0
+            && revocationStatus is not null)
+        {
+            try { await credentials.RecordDeletionAsync(attempt, credential, deletionStatus, CancellationToken.None); }
+            catch (Exception) { deletionStatus = "server-receipt-pending"; }
+        }
         var firstCommand = markers.FirstCommand is { } first ? (first - grantedAt).TotalMilliseconds : (double?)null;
         var materialize = markers is { Materialize: { } m, FirstCommand: { } f } ? (f - m).TotalMilliseconds : (double?)null;
         var command = markers is { FirstCommand: { } c, Exit: { } e } ? (e - c).TotalMilliseconds : (double?)null;
         return Finish(attempt, image, plan.ContainerName, outcome, reason, exitCode, plan.Limits,
             new(pullMs, firstCommand, materialize, command, Elapsed(started)), markers.Cache, markers.ShaVerified,
-            logPath, cleanupResidue.Count == 0, cleanupResidue, started);
+            logPath, cleanupResidue.Count == 0, cleanupResidue, started, revocationStatus, deletionStatus);
+    }
+
+    private async Task RenewCredentialUntilStoppedAsync(WorkContainerAttempt attempt, string container,
+        WorkCredential initial, IWorkContainerCredentialSource source, Action<WorkCredential> onRenewed,
+        CancellationToken ct)
+    {
+        var current = initial;
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+            if (current.ExpiresAtUtc > DateTime.UtcNow.AddMinutes(5)) continue;
+            try
+            {
+                var renewed = await source.RenewAsync(attempt, current, ct);
+                if (renewed is null) continue;
+                var injected = await runtime.InjectGitTokenAsync(container, renewed.Token, ct);
+                if (!injected.Ok) throw new InvalidOperationException(injected.Output);
+                current = renewed;
+                onRenewed(renewed);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (Exception) { _log($"work-container credential renewal unavailable attempt={attempt.AttemptId}"); }
+        }
     }
 
     /// <summary>
@@ -192,7 +261,7 @@ public sealed class WorkContainerExecutor(
             if (verdict.Action == WorkResourceAction.FlushAndRemove)
             {
                 var logs = await runtime.LogsAsync(resource.Name, ct);
-                WriteDurably(Path.Combine(LogDirectory, $"orphan-{resource.Name}.log"), logs.Output);
+                WriteDurably(Path.Combine(LogDirectory, $"orphan-{resource.Name}.log"), SafeMarkerLog(logs.Output));
                 var removed = await runtime.RemoveContainerAsync(resource.Name, ct);
                 if (!removed.Ok) throw new InvalidOperationException($"Could not remove orphan container {resource.Name}: {removed.Output}");
             }
@@ -251,12 +320,31 @@ public sealed class WorkContainerExecutor(
         bool ShaVerified);
 
     private async Task<(string? Path, LogMarkers Markers)> FlushLogAsync(
-        WorkContainerLaunchPlan plan, WorkContainerAttempt attempt, CancellationToken ct)
+        WorkContainerLaunchPlan plan, WorkContainerAttempt attempt, IReadOnlyList<string> tokens,
+        bool safeMarkersOnly, CancellationToken ct)
     {
         var logs = await runtime.LogsAsync(plan.ContainerName, ct);
         var path = Path.Combine(LogDirectory, $"{plan.ContainerName}.log");
-        WriteDurably(path, logs.Output);
-        return (path, ParseMarkers(logs.Output));
+        var redacted = logs.Output;
+        foreach (var token in tokens)
+            if (!string.IsNullOrEmpty(token)) redacted = redacted.Replace(token, "[REDACTED]", StringComparison.Ordinal);
+        var markers = ParseMarkers(redacted);
+        WriteDurably(path, safeMarkersOnly ? SafeMarkerLog(redacted) : redacted);
+        return (path, markers);
+    }
+
+    private static string SafeMarkerLog(string raw)
+    {
+        var markers = ParseMarkers(raw);
+        return JsonSerializer.Serialize(new
+        {
+            markers.Materialize,
+            markers.FirstCommand,
+            markers.Exit,
+            markers.Cache,
+            markers.ShaVerified,
+            Output = "omitted-credential-boundary",
+        }, Json);
     }
 
     /// <summary>Reads phase, cache and SHA markers from a timestamped runtime log.</summary>
@@ -278,7 +366,9 @@ public sealed class WorkContainerExecutor(
             else if (text.StartsWith("AGENT_CACHE ", StringComparison.Ordinal))
             {
                 var parts = text.Split(' ');
-                if (parts.Length == 3) cache[parts[1]] = parts[2];
+                if (parts.Length == 3 && (parts[1] is "repo" or "npm" or "nuget")
+                    && (parts[2] is "hit" or "miss" or "refresh" or "quarantined"))
+                    cache[parts[1]] = parts[2];
             }
             else if (text.StartsWith("AGENT_SHA_VERIFIED ", StringComparison.Ordinal)) verified = true;
         }
@@ -314,11 +404,12 @@ public sealed class WorkContainerExecutor(
     private WorkContainerReceipt Finish(
         WorkContainerAttempt attempt, string image, string container, string outcome, string reason, int? exitCode,
         WorkContainerLimits? limits, WorkContainerTimings timings, IReadOnlyDictionary<string, string> cache,
-        bool shaVerified, string? logPath, bool cleanupVerified, IReadOnlyList<string> residue, DateTimeOffset started)
+        bool shaVerified, string? logPath, bool cleanupVerified, IReadOnlyList<string> residue, DateTimeOffset started,
+        string? revocationStatus = null, string? secretDeletionStatus = null)
     {
         var receipt = new WorkContainerReceipt(attempt.HostId, attempt.Role, attempt.AttemptId, attempt.LeaseId, attempt.Fence,
             image, container, outcome, reason, exitCode, limits, timings, cache, shaVerified, logPath, cleanupVerified, residue,
-            started.UtcDateTime, _clock.GetUtcNow().UtcDateTime);
+            started.UtcDateTime, _clock.GetUtcNow().UtcDateTime, revocationStatus, secretDeletionStatus);
         WriteDurably(Path.Combine(ReceiptDirectory,
                 $"{WorkContainerLaunchPlanner.Sanitize(attempt.AttemptId)}-f{attempt.Fence.ToString(CultureInfo.InvariantCulture)}.json"),
             JsonSerializer.Serialize(receipt, Json));

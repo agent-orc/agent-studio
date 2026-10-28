@@ -97,7 +97,11 @@ public sealed class PublicDemoExecutionProfileTests
         // AGT-3334 adds ten post-work command routes: one claim (Claim) and
         // nine subject, backend-pass, cohort, renewal and report steps (PostStep).
         // DP-S4 added the gate bundle upload (PostStep) and download (Continue).
-        Assert.Equal(59, routes.Count);
+        // DP-S5 credential lifecycle endpoints can issue and renew work material (Continue).
+        Assert.Equal(64, routes.Count);
+        foreach (var operation in new[] { "capability", "exchange", "renew", "revoke", "deletion" })
+            Assert.Contains(routes, route => route.RoutePattern.RawText ==
+                $"/api/v1/runs/{{runId}}/credentials/{operation}");
         var postWorkClaim = Assert.Single(routes, route => route.RoutePattern.RawText ==
             "/api/v1/post-work/claims");
         Assert.Equal(ExecutionAdmissionPath.Claim,
@@ -141,7 +145,7 @@ public sealed class PublicDemoExecutionProfileTests
             {
                 [ExecutionAdmissionPath.Claim] = 7,
                 [ExecutionAdmissionPath.Start] = 7,
-                [ExecutionAdmissionPath.Continue] = 14,
+                [ExecutionAdmissionPath.Continue] = 19,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,

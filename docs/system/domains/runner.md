@@ -51,8 +51,14 @@ for rollback; the release builds `agent-work` from
 `deploy/work-container/Dockerfile`. `RUNNER_WORK_CONTAINER_MODE` defaults to
 `off`. `shadow` records an `executor-shadow.json` beside each detached
 worker. `canary` enables `agent-host work-container run`. Detached coding and
-review workers keep the process executor until DP-S5 delivers file-based
-attempt credentials. See the
+review workers keep the process executor. DP-S5 adds an opt-in coding canary:
+the host obtains a one-use Task Server exchange capability after a live claim,
+injects a one-repository read token through runtime stdin into the container's
+private tmpfs, and revokes it on teardown. The Git helper accepts only the
+claimed GitHub repository path. Windows has an encrypted-volume and ACL file
+adapter; no production placement changes are enabled by this slice. Provider
+account sharing remains closed until separate refresh-boundary probes pass.
+See the
 [canary runbook](../../operations/setup/linux-runner-host.md#work-container-executor-canary).
 
 ## Dynamic placement post adapter, DP-S8

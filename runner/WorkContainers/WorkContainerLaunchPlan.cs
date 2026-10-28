@@ -76,7 +76,8 @@ public static class WorkContainerLaunchPlanner
     public static string CacheVolume(string cache, int version) => $"agent-cache-{cache}-v{version}";
 
     public static WorkContainerLaunchPlan Plan(
-        WorkContainerAttempt attempt, string image, WorkContainerLimits limits, WorkContainerSettings settings)
+        WorkContainerAttempt attempt, string image, WorkContainerLimits limits, WorkContainerSettings settings,
+        bool credentialRequired = false)
     {
         Validate(attempt, image);
         var stem = $"agent-work-{Sanitize(attempt.AttemptId)}-f{attempt.Fence.ToString(CultureInfo.InvariantCulture)}";
@@ -119,12 +120,26 @@ public static class WorkContainerLaunchPlanner
             ["AGENT_EXPECTED_SHA"] = attempt.ExactSha,
             ["AGENT_REPOSITORY_KEY"] = attempt.RepositoryKey,
             ["AGENT_REPOSITORY_SOURCE"] = source,
+            ["GIT_CONFIG_NOSYSTEM"] = "1",
+            ["GIT_CONFIG_GLOBAL"] = "/dev/null",
         };
         foreach (var (name, value) in WorkerBuildServerHygiene.Variables) environment[name] = value;
         foreach (var (name, value) in attempt.Environment ?? new Dictionary<string, string>())
         {
             ValidateEnvironment(name);
             environment[name] = value;
+        }
+        if (credentialRequired)
+        {
+            if (!attempt.RepositorySource.StartsWith("https://github.com/", StringComparison.Ordinal)
+                || !attempt.RepositorySource.EndsWith(".git", StringComparison.Ordinal))
+                throw new ArgumentException("Brokered Git credentials require a canonical GitHub HTTPS source.");
+            environment["AGENT_SECRET_REQUIRED"] = "1";
+            environment["GIT_CONFIG_COUNT"] = "2";
+            environment["GIT_CONFIG_KEY_0"] = "credential.helper";
+            environment["GIT_CONFIG_VALUE_0"] = "/usr/local/bin/agent-git-credential-helper";
+            environment["GIT_CONFIG_KEY_1"] = "credential.useHttpPath";
+            environment["GIT_CONFIG_VALUE_1"] = "true";
         }
 
         var arguments = new List<string>
@@ -165,6 +180,14 @@ public static class WorkContainerLaunchPlanner
     /// </summary>
     public const string EntryScript = """
         set -eu
+        if [ "${AGENT_SECRET_REQUIRED:-0}" = 1 ]; then
+          attempts=0
+          until [ -r "$AGENT_SECRET_DIR/github-token" ]; do
+            attempts=$((attempts + 1))
+            if [ "$attempts" -ge 300 ]; then echo "AGENT_SECRET_UNAVAILABLE"; exit 87; fi
+            sleep 0.1
+          done
+        fi
         echo "AGENT_PHASE materialize"
         mirror="/cache/repo/$AGENT_REPOSITORY_KEY.git"
         # The entry shell is PID 1 in every container, so its process ID is not unique across attempts.

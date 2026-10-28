@@ -216,6 +216,17 @@ capability snapshot, runtime capacity GET, and host admission projection
 provide the read side for selection, rejection, capacity, and drain.
 The host's coding and review registrations retain distinct role slot budgets.
 
+### Dynamic placement attempt credentials (DP-S5)
+
+DP-S5 selects D7 option A for the attempt credential canary. A coding run's
+credential identity is checked against the live Task Server lease, runner
+instance, host, subject, fence, and epoch before a one-use exchange capability
+is issued or consumed. The issuer derives the repository from the registered
+project, requests GitHub App `contents:read` for that repository only, and
+stores root material encrypted with an operator-custodied wrapping key. Token
+renewal requires a newer lease expiry; revocation is allowed during teardown
+after lease loss. The canary defaults off (`TaskServer:AttemptCredentialCanaryEnabled`).
+
 ### Dynamic placement shadow (DP-S1, AGT-3327)
 
 Working decisions are AGT-3171 D1 option A (host pull with bounded warm

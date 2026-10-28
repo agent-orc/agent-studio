@@ -2,7 +2,9 @@ using System.Diagnostics;
 
 namespace AgentRunner.WorkContainers;
 
-public sealed record WorkProcessResult(int ExitCode, string Output, double WallMs, string Bound);
+public sealed record WorkProcessResult(int ExitCode, string Output, double WallMs, string Bound,
+    string? CredentialStorageMode = null, string? CredentialRevocationStatus = null,
+    string? CredentialDeletionStatus = null);
 
 /// <summary>
 /// The worktree process executor kept beside the container executor. On
@@ -12,6 +14,51 @@ public sealed record WorkProcessResult(int ExitCode, string Output, double WallM
 /// </summary>
 public static class WorkProcessExecutor
 {
+    /// <summary>Windows canary: stage a brokered token outside the worktree, then remove it after the Job Object exits.</summary>
+    public static async Task<WorkProcessResult> RunWithAttemptCredentialAsync(
+        WorkContainerAttempt attempt, IWorkContainerCredentialSource source,
+        WindowsAttemptCredentialFiles files, string workingDirectory, string fileName,
+        IReadOnlyList<string> arguments, WorkContainerLimits limits, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        var credential = await source.AcquireAsync(attempt, ct);
+        WindowsAttemptCredentialFile? staged = null;
+        string revocation = "expiry-backstop", deletion = "not-staged";
+        WorkProcessResult? result = null;
+        try
+        {
+            staged = await files.StageAsync(attempt.AttemptId, attempt.Fence, credential.Token, ct);
+            var environment = new Dictionary<string, string?>
+            {
+                ["AGENT_SECRET_DIR"] = staged.Directory,
+                ["GIT_CONFIG_NOSYSTEM"] = "1",
+                ["GIT_CONFIG_GLOBAL"] = "NUL",
+            };
+            var executed = await RunAsync(workingDirectory, fileName, arguments, limits, environment, ct);
+            result = executed with
+            {
+                Output = executed.Output.Replace(credential.Token, "[REDACTED]", StringComparison.Ordinal),
+                CredentialStorageMode = staged.StorageMode,
+            };
+        }
+        finally
+        {
+            if (staged is not null)
+            {
+                var removed = await files.DeleteAsync(staged, CancellationToken.None);
+                deletion = removed.DeletionStatus == "deleted" ? "windows-file-deleted" : removed.DeletionStatus;
+            }
+            try { revocation = await source.RevokeAsync(attempt, credential, CancellationToken.None); }
+            catch (Exception) { revocation = "expiry-backstop"; }
+            if (deletion == "windows-file-deleted")
+            {
+                try { await source.RecordDeletionAsync(attempt, credential, deletion, CancellationToken.None); }
+                catch (Exception) { deletion = "server-receipt-pending"; }
+            }
+        }
+        return result! with { CredentialRevocationStatus = revocation, CredentialDeletionStatus = deletion };
+    }
+
     public static async Task<WorkProcessResult> RunAsync(
         string workingDirectory,
         string fileName,
