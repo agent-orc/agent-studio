@@ -15,6 +15,8 @@ public enum QuotaAdmissionOutcome
     Wait,
     /// <summary>Only reduce parallelism: a projected breach with no fallback while a slot is already busy.</summary>
     Throttle,
+    /// <summary>The claiming host did not prove the named model; no quota reset applies.</summary>
+    HostCapabilityMissing,
 }
 
 /// <summary>
@@ -46,7 +48,8 @@ public sealed record QuotaAdmissionPlan(
     public bool ShouldLaunch => Outcome is QuotaAdmissionOutcome.LaunchPrimary or QuotaAdmissionOutcome.LaunchFallback;
 
     /// <summary>True when the card should be held back this tick (wait or throttle).</summary>
-    public bool IsDeferred => Outcome is QuotaAdmissionOutcome.Wait or QuotaAdmissionOutcome.Throttle;
+    public bool IsDeferred => Outcome is QuotaAdmissionOutcome.Wait or QuotaAdmissionOutcome.Throttle
+        or QuotaAdmissionOutcome.HostCapabilityMissing;
 }
 
 /// <summary>
@@ -79,7 +82,9 @@ public static class QuotaAdmissionPlanner
         int occupiedSlots,
         ResolvedCliQuotaWaitPolicy? waitPolicy = null,
         CliFallbackPreference? preference = null,
-        Func<string, string?, bool>? modelAccepted = null)
+        Func<string, string?, bool>? modelAccepted = null,
+        string? claimingHost = null,
+        Func<string, string?, bool>? fallbackModelAccepted = null)
     {
         var cli = string.IsNullOrWhiteSpace(requestedCli)
             ? CliTypes.Claude
@@ -138,7 +143,8 @@ public static class QuotaAdmissionPlanner
         }
 
         var preferFallback = preference?.Active == true;
-        var route = fallback?.Resolve(cli, requestedModel, requestedThinking, Admission, preferFallback, modelAccepted);
+        var route = fallback?.Resolve(cli, requestedModel, requestedThinking, Admission, preferFallback,
+            fallbackModelAccepted ?? modelAccepted);
 
         // 2) The router switched us to the fallback (primary capped or projected;
         //    a usable fallback exists). Documented model switch before start.
@@ -189,11 +195,12 @@ public static class QuotaAdmissionPlanner
 
         if (modelAccepted is not null && !modelAccepted(cli, model))
         {
-            var reset = EarliestReset(primarySnapshot, nowUtc, caps, blockedOnly: false);
+            var key = string.IsNullOrWhiteSpace(model) ? $"provider-auth:{cli}"
+                : $"model-acceptance:{cli}:{model}";
             return new QuotaAdmissionPlan(
-                QuotaAdmissionOutcome.Wait, cli, model, thinking, false,
-                AppendReset($"waiting: {cli}/{model ?? "provider default"} is not accepted by the claiming host", reset),
-                reset?.ResetAt, QuotaWindowProjection.WorstProjection(primarySnapshot, caps, nowUtc),
+                QuotaAdmissionOutcome.HostCapabilityMissing, cli, model, thinking, false,
+                $"Host capability missing on {claimingHost ?? "claiming host"}: {key}.",
+                null, QuotaWindowProjection.WorstProjection(primarySnapshot, caps, nowUtc),
                 projectionWarning);
         }
 

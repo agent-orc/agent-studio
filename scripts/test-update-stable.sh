@@ -23,7 +23,10 @@ git init --bare --quiet "$remote"
 git init --quiet "$source_checkout"
 git -C "$source_checkout" config user.name 'Stable Update Test'
 git -C "$source_checkout" config user.email 'stable-update@example.invalid'
-mkdir -p "$source_checkout/frontend/scripts" "$source_checkout/backend" "$source_checkout/scripts"
+mkdir -p "$source_checkout/frontend/scripts" "$source_checkout/backend" \
+  "$source_checkout/scripts" "$source_checkout/contracts/TaskServer.Contracts"
+cp "$script_dir/../contracts/TaskServer.Contracts/runner-release-requirements.json" \
+  "$source_checkout/contracts/TaskServer.Contracts/runner-release-requirements.json"
 cp "$script_dir/npm-frontend.sh" "$source_checkout/scripts/npm-frontend.sh"
 printf '%s\n' '/frontend/node_modules/' '/frontend/.angular/' > "$source_checkout/.gitignore"
 printf '%s\n' 'appsettings.Local.json' > "$source_checkout/backend/.gitignore"
@@ -46,6 +49,9 @@ mkdir -p \
   "$stable_checkout/frontend/node_modules/coding-agent-chat/fesm2022" \
   "$stable_checkout/frontend/.angular/cache"
 printf '%s\n' '{"TaskServer":{"BaseUrl":"http://127.0.0.1:5071"}}' > "$stable_checkout/backend/appsettings.Local.json"
+printf '%s\n' '[]' > "$test_root/host-snapshot.json"
+export ATP_HOST_PREFLIGHT_SNAPSHOT_FILE="$test_root/host-snapshot.json"
+export ATP_RELEASE_RECORD_DIR="$test_root/release-records"
 printf '%s\n' stale-prebundle > "$stable_checkout/frontend/.angular/cache/deps.js"
 printf '%s\n' unpatched > "$stable_checkout/frontend/node_modules/coding-agent-chat/fesm2022/coding-agent-chat-markdown.mjs"
 
@@ -150,6 +156,31 @@ printf '%s\n' '// patched compatibility bridge' > "$source_checkout/frontend/scr
 git -C "$source_checkout" commit --quiet -am 'update compatibility patch'
 git -C "$source_checkout" push --quiet origin main
 
+# A registered daemon from before the model-acceptance protocol blocks the
+# cutover before Stable is stopped. The preflight still records the minimum.
+printf '%s\n' '[{"runnerId":"old-coding","hostId":"agent-runner-01","status":"active","release":{"version":"0.9.4","commit":"760293892"}}]' \
+  > "$ATP_HOST_PREFLIGHT_SNAPSHOT_FILE"
+set +e
+old_host_output=$(run_update)
+old_host_rc=$?
+set -e
+test "$old_host_rc" -ne 0
+test ! -e "$stop_marker"
+printf '%s' "$old_host_output" | grep -q 'agent-runner-01'
+grep -q '"minimumAgentHostRelease": "0.9.5"' "$ATP_RELEASE_RECORD_DIR/$(git -C "$source_checkout" rev-parse HEAD).json"
+# The version was declared before the probe shipped; a same-version older
+# commit must still fail the contract.
+printf '%s\n' '[{"runnerId":"old-coding","hostId":"agent-runner-01","status":"active","release":{"version":"0.9.5","commit":"760293892"}}]' \
+  > "$ATP_HOST_PREFLIGHT_SNAPSHOT_FILE"
+set +e
+same_version_output=$(run_update)
+same_version_rc=$?
+set -e
+test "$same_version_rc" -ne 0
+test ! -e "$stop_marker"
+printf '%s' "$same_version_output" | grep -q 'lacks the required host protocol'
+printf '%s\n' '[]' > "$ATP_HOST_PREFLIGHT_SNAPSHOT_FILE"
+
 output=$(run_update)
 test -f "$stop_marker"
 test -f "$start_marker"
@@ -231,7 +262,7 @@ fi
 
 # This script exercises scripts/update-stable.sh only: git fast-forward,
 # frontend dependency reinstall, and the browser boot probe. It has no
-# manifest install step, no release-preflight identity check, and no update
+# manifest install step or update
 # history file; those belong to the separate update-service (.NET) pipeline
 # invoked by ADR-0031 (update-service/UpdateOrchestrator.cs). The invariants
 # that a failure before restart leaves the checkout and build-manifest.json

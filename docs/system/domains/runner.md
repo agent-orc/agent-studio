@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-10-17
+Version: 2026-10-22
 Status: System-of-record map for runner-side changes.
 
 ## Dynamic placement host agent, DP-S2
@@ -96,7 +96,13 @@ restore them.
 The quota view lists accepted models by host. A launch-time model refusal with
 no salvage marks that host model unavailable and puts the card back in Ready.
 Task Server claims and work-permit offers and acceptances require fresh
-acceptance of the effective named model; a blank model uses the CLI default.
+acceptance of the effective named model when the host advertises the
+`model-acceptance` protocol. A host with no entries is a legacy daemon: its
+primary route remains claimable while Execution Hosts raises an upgrade warning.
+An advertised `unavailable` verdict refuses the claim. An advertised `unknown`
+verdict, missing model entry, or stale verdict waits for the two-minute startup
+grace, then refuses the claim as `host-capability-missing`, without a quota reset
+date. A blank model uses the CLI default.
 A refused model stays held until the same runner instance advertises it as not
 ready and then advertises a ready verdict with a larger runner-local probe
 sequence. Runner and server clock order never clears the hold. A refused
@@ -105,11 +111,23 @@ The claim hold matches the route handed to the runner: a required mechanical
 route, an operator-selected continuation, a provider-refusal sibling, or the
 stored primary. A refused primary does not hide a card using another route.
 
+The deploy contract for backend features that require an agent-host release is
+[`runner-release-requirements.json`](../../../contracts/TaskServer.Contracts/runner-release-requirements.json).
+Model acceptance requires agent-host 0.9.5 with commit d32e13f49 or a descendant;
+the version alone is insufficient because 0.9.5 predates the probe. Before
+`update-stable.sh` stops Stable, `host-release-preflight.mjs` checks registered
+host release identities against the candidate contract. It refuses an older or
+unverifiable host unless `ATP_FORCE_HOST_COMPATIBILITY=1` is set, and writes a
+record under `release-records/<target-sha>.json` with the minimum release and
+the affected hosts. A forced rollout retains the legacy claim path and warning.
+
 A review claim with a named model waits for a fresh ready acceptance verdict
-from that review executor. An unknown or unavailable verdict names the model
-capability in the unclaimable response and in the auto-review queue's oldest
-pending reason. The lane-drain alarm repeats that reason. Claim deferral logs
-only when the attempt's reason changes, and the observation clears on claim.
+from a review executor that advertises the protocol. A legacy executor may
+claim its primary route. An unknown verdict beyond the startup grace or an
+unavailable verdict names the model capability and host in the unclaimable
+response and in the auto-review queue's oldest pending reason. The lane-drain
+alarm repeats that reason. Claim deferral logs only when the attempt's reason
+changes, and the observation clears on claim.
 
 For a Ready agent card placed at `local`, `PickupHoldPolicy` projects an
 unsatisfiable `execution-placement` hold when local admission denies its mode.

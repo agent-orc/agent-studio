@@ -901,9 +901,28 @@ public static class LeaseEndpoints
                         hostActiveRuns,
                         "remote-coding-claim",
                         (provider, model) => capabilityRegistry.AcceptsModel(
-                            req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model)));
+                            req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model),
+                        req.RunnerName,
+                        (provider, model) => capabilityRegistry.ModelAdmission(
+                            req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model)
+                            == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted));
                     if (quotaPlan.IsDeferred)
                     {
+                        if (quotaPlan.Outcome == QuotaAdmissionOutcome.HostCapabilityMissing)
+                        {
+                            var modelDecision = capabilityRegistry.ModelAdmission(
+                                req.RunnerId.Trim(), req.CapabilityInstanceId,
+                                quotaPlan.CliType, quotaPlan.Model);
+                            var key = CapabilityProtocol.ModelAcceptance(
+                                quotaPlan.CliType, quotaPlan.Model!);
+                            var reason = AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmissionPolicy.Refusal(
+                                req.RunnerName, key, modelDecision);
+                            QuotaWaitMarker.Clear(task.FolderPath);
+                            RecordRejection(task,
+                                modelDecision == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Unavailable
+                                    ? "host-model-unavailable" : "host-capability-missing", reason);
+                            continue;
+                        }
                         if (quotaPlan.Outcome == QuotaAdmissionOutcome.Wait)
                             QuotaWaitMarker.Write(task.FolderPath, new QuotaWaitRecord
                             {
