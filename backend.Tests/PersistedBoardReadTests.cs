@@ -1,10 +1,13 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 
 using AgentStudio.Tasks;
 
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -38,6 +41,138 @@ public sealed class PersistedBoardReadTests : IDisposable
 
     private readonly string _workspace;
     private readonly string _watchPath;
+
+    private sealed class StartupCalls
+    {
+        private readonly ConcurrentDictionary<string, string> _pending = new();
+        private int _started;
+        private int _applicationStarted;
+        private int _warmupEntered;
+        private int _warmupCompleted;
+        private readonly TaskCompletionSource<HttpClient> _clientReady =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Registered { get; set; }
+        public Task<HttpClient> ClientReady => _clientReady.Task;
+        public void ApplicationStarted(IServer server)
+        {
+            Volatile.Write(ref _applicationStarted, 1);
+            try
+            {
+                var client = ((TestServer)server).CreateClient();
+                client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+                _clientReady.TrySetResult(client);
+            }
+            catch (Exception ex) { _clientReady.TrySetException(ex); }
+        }
+        public void WarmupEntered() => Volatile.Write(ref _warmupEntered, 1);
+        public void WarmupCompleted() => Volatile.Write(ref _warmupCompleted, 1);
+        public void Enter(string name, string phase) => _pending[name] = phase;
+        public void Leave(string name) => _pending.TryRemove(name, out _);
+        public void CompletedStart() => Interlocked.Increment(ref _started);
+        public string Describe() => $"started={Volatile.Read(ref _started)}/{Registered}; "
+            + $"applicationStarted={Volatile.Read(ref _applicationStarted) == 1}; "
+            + $"warmup={Volatile.Read(ref _warmupEntered) == 1}/{Volatile.Read(ref _warmupCompleted) == 1}; pending="
+            + string.Join(", ", _pending.OrderBy(pair => pair.Key)
+                .Select(pair => $"{pair.Key}: {pair.Value}"));
+    }
+
+    private sealed class ApplicationStartedSignal(
+        IHostApplicationLifetime lifetime, IServer server, StartupCalls calls) : IHostedService
+    {
+        public Task StartAsync(CancellationToken ct)
+        {
+            lifetime.ApplicationStarted.Register(() => calls.ApplicationStarted(server));
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
+    }
+
+    private sealed class ScanStartBarrier(ScanGate gate) : IHostedService
+    {
+        public Task StartAsync(CancellationToken ct) => gate.Started.WaitAsync(ct);
+        public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
+    }
+
+    private sealed class WarmupProbeFilter(StartupCalls calls) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, nextMiddleware) =>
+            {
+                if (context.Request.Path.Value != TestHostFactory.EndpointWarmUpPath)
+                {
+                    await nextMiddleware();
+                    return;
+                }
+                calls.WarmupEntered();
+                try { await nextMiddleware(); }
+                finally { calls.WarmupCompleted(); }
+            });
+            next(app);
+        };
+    }
+
+    private sealed class TracedHostedService(IHostedService inner, StartupCalls calls, string name)
+        : BackgroundService, IHostedLifecycleService
+    {
+        public override Task? ExecuteTask => (inner as BackgroundService)?.ExecuteTask;
+
+        private async Task Trace(string phase, Func<Task> run)
+        {
+            calls.Enter(name, phase);
+            try
+            {
+                await run();
+                if (phase == "StartAsync") calls.CompletedStart();
+            }
+            finally { calls.Leave(name); }
+        }
+
+        public Task StartAsync(CancellationToken ct) => Trace("StartAsync", () => inner.StartAsync(ct));
+        public Task StopAsync(CancellationToken ct) => inner.StopAsync(ct);
+        public Task StartingAsync(CancellationToken ct) => Trace("StartingAsync", () =>
+            inner is IHostedLifecycleService lifecycle ? lifecycle.StartingAsync(ct) : Task.CompletedTask);
+        public Task StartedAsync(CancellationToken ct) => Trace("StartedAsync", () =>
+            inner is IHostedLifecycleService lifecycle ? lifecycle.StartedAsync(ct) : Task.CompletedTask);
+        public Task StoppingAsync(CancellationToken ct) =>
+            inner is IHostedLifecycleService lifecycle ? lifecycle.StoppingAsync(ct) : Task.CompletedTask;
+        public Task StoppedAsync(CancellationToken ct) =>
+            inner is IHostedLifecycleService lifecycle ? lifecycle.StoppedAsync(ct) : Task.CompletedTask;
+
+        protected override Task ExecuteAsync(CancellationToken ct) => Task.CompletedTask;
+        public override void Dispose() { GC.SuppressFinalize(this); }
+    }
+
+    private static void TraceStarts(IServiceCollection services, StartupCalls calls)
+    {
+        for (var index = 0; index < services.Count; index++)
+        {
+            var descriptor = services[index];
+            if (descriptor.ServiceType != typeof(IHostedService) || descriptor.IsKeyedService) continue;
+            calls.Registered++;
+            var key = $"persisted-board-hosted-{index}";
+            var name = descriptor.ImplementationType?.Name ?? $"hosted-{index}";
+            if (descriptor.ImplementationInstance is { } instance)
+                services.Add(new ServiceDescriptor(typeof(IHostedService), key, instance));
+            else if (descriptor.ImplementationFactory is { } factory)
+                services.Add(new ServiceDescriptor(typeof(IHostedService), key,
+                    (provider, _) => factory(provider), descriptor.Lifetime));
+            else
+                services.Add(new ServiceDescriptor(typeof(IHostedService), key,
+                    descriptor.ImplementationType!, descriptor.Lifetime));
+            services[index] = new ServiceDescriptor(typeof(IHostedService), provider =>
+            {
+                calls.Enter(name, "resolve");
+                try
+                {
+                    var inner = provider.GetRequiredKeyedService<IHostedService>(key);
+                    return new TracedHostedService(inner, calls, inner.GetType().Name);
+                }
+                finally { calls.Leave(name); }
+            }, descriptor.Lifetime);
+        }
+    }
 
     public PersistedBoardReadTests()
     {
@@ -78,10 +213,17 @@ public sealed class PersistedBoardReadTests : IDisposable
     /// <summary>The index disk walk of one host, counted and holdable.</summary>
     private sealed class ScanGate
     {
+        private readonly TimeSpan _timeout;
         private int _scans;
         private int _failures;
+        private int _timedOut;
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public ManualResetEventSlim Open { get; } = new(true);
         public int Scans => Volatile.Read(ref _scans);
+        public bool TimedOut => Volatile.Read(ref _timedOut) == 1;
+        public Task Started => _started.Task;
+
+        public ScanGate(TimeSpan? timeout = null) => _timeout = timeout ?? TimeSpan.FromSeconds(60);
 
         /// <summary>The next <paramref name="count"/> scans fail at once, like an unreadable workspace.</summary>
         public void Fail(int count) => Volatile.Write(ref _failures, count);
@@ -89,13 +231,16 @@ public sealed class PersistedBoardReadTests : IDisposable
         public Func<List<TaskInfo>> Wrap(Func<List<TaskInfo>> scan) => () =>
         {
             Interlocked.Increment(ref _scans);
+            _started.TrySetResult();
             if (Interlocked.Decrement(ref _failures) >= 0) throw new IOException("workspace walk failed");
-            Assert.True(Open.Wait(TimeSpan.FromSeconds(60)), "the test never released the index scan");
+            var released = Open.Wait(_timeout);
+            if (!released) Volatile.Write(ref _timedOut, 1);
+            Assert.True(released, "the test never released the index scan");
             return scan();
         };
     }
 
-    private WebApplicationFactory<Program> Host(ScanGate gate, bool hostedServices = false) =>
+    private WebApplicationFactory<Program> Host(ScanGate gate, bool hostedServices = false, StartupCalls? calls = null) =>
         new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
@@ -112,6 +257,15 @@ public sealed class PersistedBoardReadTests : IDisposable
             builder.ConfigureTestServices(services =>
             {
                 if (!hostedServices) services.RemoveAll<IHostedService>();
+                if (calls is not null)
+                {
+                    services.Insert(0, ServiceDescriptor.Singleton<IHostedService>(new ScanStartBarrier(gate)));
+                    TraceStarts(services, calls);
+                    services.AddSingleton<IHostedService>(provider => new ApplicationStartedSignal(
+                        provider.GetRequiredService<IHostApplicationLifetime>(),
+                        provider.GetRequiredService<IServer>(), calls));
+                    services.AddSingleton<IStartupFilter>(new WarmupProbeFilter(calls));
+                }
                 services.AddSingleton(provider =>
                 {
                     var scanner = provider.GetRequiredService<TaskScannerService>();
@@ -210,27 +364,47 @@ public sealed class PersistedBoardReadTests : IDisposable
             Assert.Equal(1, first.Services.GetRequiredService<BoardSummaryPersister>().PersistPublished());
         }
 
-        var gate = new ScanGate();
+        var gate = new ScanGate(TimeSpan.FromMinutes(3));
         gate.Open.Reset();
-        var restarted = Host(gate, hostedServices: true);
+        var calls = new StartupCalls();
+        var restarted = Host(gate, hostedServices: true, calls);
+        Task<HttpClient>? startup = null;
         try
         {
             // The boot no longer publishes before the listener, and no hosted
             // service start waits for the index: the host starts while the
             // first scan is held, and the board answers restored.
-            var startup = Task.Run(() => Client(restarted));
-            Assert.Same(startup, await Task.WhenAny(startup, Task.Delay(TimeSpan.FromSeconds(45))));
-            using var client = await startup;
+            var entered = 0;
+            startup = Task.Run(() =>
+            {
+                Volatile.Write(ref entered, 1);
+                return Client(restarted);
+            });
+            // The barrier starts every hosted service after the held scan has
+            // entered. ApplicationStarted proves none waited for publication;
+            // the factory's unrelated endpoint warmup may finish later.
+            var ready = calls.ClientReady;
+            Assert.True(await Task.WhenAny(ready, Task.Delay(TimeSpan.FromMinutes(2))) == ready,
+                $"host start pending; entered={Volatile.Read(ref entered) == 1}; scans={gate.Scans}; hosted calls={calls.Describe()}");
+            using var client = await ready;
             var list = await Get(client, "/api/tasks/");
             Assert.Equal(RestoredBoard.Restored, list.State);
             Assert.Equal(liveList, list.Body);
             Assert.True(gate.Scans >= 1, "the boot must start the first publication");
+            Assert.False(gate.TimedOut, "the held first scan timed out before the restored read");
         }
         finally
         {
             // Hosted services wait for the held scan; release it before the stop.
             gate.Open.Set();
-            await restarted.DisposeAsync();
+            try
+            {
+                if (startup is not null)
+                {
+                    using var factoryClient = await startup.WaitAsync(TimeSpan.FromMinutes(2));
+                }
+            }
+            finally { await restarted.DisposeAsync(); }
         }
     }
 
