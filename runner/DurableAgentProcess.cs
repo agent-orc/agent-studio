@@ -128,6 +128,8 @@ internal sealed class DurableAgentProcess
             timeoutSeconds,
             tokenBaseline);
         File.WriteAllText(specPath, JsonSerializer.Serialize(spec, Json));
+        // DP-S3: shadow evidence only; the detached worker keeps the process executor.
+        WorkContainers.WorkContainerShadow.Record(workerDirectory, "coding", options.StateDir, log);
 
         var executable = Environment.ProcessPath
             ?? throw new InvalidOperationException("Cannot resolve the runner executable for detached job launch.");

@@ -1,0 +1,7 @@
+{
+  "minimumAgentHostRelease": "0.9.5",
+  "minimumAgentHostCommit": "d32e13f499a72172c4655f7e40f52032d4986462",
+  "features": {
+    "model-acceptance": "The agent-host build must include credentialed model acceptance advertisements for coding and review claims. Older hosts are admitted on the primary route with an upgrade warning."
+  }
+}

@@ -229,6 +229,8 @@ public static class ReviewClaimEmptyReasons
     public const string NoAvailableSlot = "no-available-slot";
     public const string ExecutorPaused = "executor-paused";
     public const string QuotaDeferred = "quota-deferred";
+    public const string HostCapabilityMissing = "host-capability-missing";
+    public const string HostModelUnavailable = "host-model-unavailable";
     public const string CapabilityAdmission = "capability-admission";
     public const string UnclaimablePlanRequirements = "unclaimable-plan-requirements";
     public const string DifferentHostRequired = "different-review-host-required";

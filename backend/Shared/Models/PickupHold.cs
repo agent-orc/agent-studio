@@ -14,6 +14,9 @@ public static class PickupHoldMechanisms
     /// <summary>A remote runner refused the offered card and recorded why.</summary>
     public const string DispatchRejection = "dispatch-rejection";
 
+    /// <summary>A named model lacks a required verdict from this host.</summary>
+    public const string HostCapabilityMissing = "host-capability-missing";
+
     /// <summary>The card crashed fast and is serving its exponential cooldown.</summary>
     public const string CrashBackoff = "crash-backoff";
 
@@ -271,7 +274,9 @@ public static class PickupHoldPolicy
         // card stopped being pickable, and it is the number the operator needs.
         if (facts.Rejection is { } rejection)
             return Hold(
-                PickupHoldMechanisms.DispatchRejection,
+                rejection.Code == PickupHoldMechanisms.HostCapabilityMissing
+                    ? PickupHoldMechanisms.HostCapabilityMissing
+                    : PickupHoldMechanisms.DispatchRejection,
                 $"Runner {Describe(rejection.RunnerName, rejection.RunnerId)} refused this card ({rejection.Code}): {rejection.Reason}",
                 rejection.RejectedAtUtc, facts.NowUtc, unsatisfiable: false,
                 new PickupHoldResolution(

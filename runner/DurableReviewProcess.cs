@@ -83,6 +83,8 @@ internal sealed class DurableReviewProcess
         Directory.CreateDirectory(slot.WorkerDirectory);
         var specPath = Path.Combine(slot.WorkerDirectory, "review-spec.json");
         File.WriteAllText(specPath, JsonSerializer.Serialize(spec, Json));
+        // DP-S3: shadow evidence only; the detached worker keeps the process executor.
+        WorkContainers.WorkContainerShadow.Record(slot.WorkerDirectory, "review", options.StateDir, log);
 
         var executable = Environment.ProcessPath
                          ?? throw new InvalidOperationException(

@@ -625,6 +625,26 @@ public sealed partial class TaskServerStore
                         reader.IsDBNull(33) ? null : reader.GetString(33)));
                 }
             }
+            if (runner.Status == "active"
+                && capabilities.Any(capability => capability.Key is CapabilityProtocol.CodingExecutor or CapabilityProtocol.ReviewExecutor)
+                && !capabilities.Any(capability => capability.Key.StartsWith("model-acceptance:", StringComparison.Ordinal)))
+            {
+                var executor = capabilities.First(capability => capability.Key is CapabilityProtocol.CodingExecutor or CapabilityProtocol.ReviewExecutor);
+                capabilities.Add(executor with
+                {
+                    Key = "host-upgrade:model-acceptance",
+                    Category = "host-upgrade",
+                    AdvertisedStatus = "unknown",
+                    HealthState = CapabilityHealthStates.Suspect,
+                    Reason = "Upgrade required for model acceptance.",
+                    Detail = "This host uses the legacy claim route until it advertises model acceptance.",
+                    AdvertisedAt = runner.RegisteredAt,
+                    FreshUntil = runner.LastSeenAt.AddMinutes(10),
+                    IsFresh = runner.LastSeenAt >= UtcNow.AddMinutes(-10),
+                    AffectedClaims = [],
+                    RecoveryHistory = []
+                });
+            }
             HostTelemetrySnapshotDto? telemetry = null;
             await using (var telemetryCommand = Command(connection, """
                 SELECT payload_json FROM runner_telemetry_latest WHERE runner_id = $runner;
