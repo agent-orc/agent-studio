@@ -44,6 +44,9 @@ public sealed class RunnerOptions
     /// </summary>
     public string Role { get; init; } = "coding";
 
+    /// <summary>Role loop is owned by the supervised host agent after a completed drain.</summary>
+    public bool HostAdapter { get; init; }
+
     /// <summary>Runner service credential sent as Authorization on every networked-profile request.</summary>
     public string? AuthToken { get; init; }
     public string? AuthTokenFile { get; init; }
@@ -512,6 +515,7 @@ public sealed class RunnerOptions
             Hostname = Val("hostname", "RUNNER_HOSTNAME", Environment.MachineName),
             BackendName = Val("backend-name", "RUNNER_BACKEND_NAME", "remote-runner"),
             Role = Val("role", "RUNNER_ROLE", "coding").Trim().ToLowerInvariant(),
+            HostAdapter = OptIn(Val("host-adapter", "RUNNER_HOST_ADAPTER")),
             AuthToken = authToken.Length > 0 ? authToken : null,
             AuthTokenFile = authTokenFile.Length > 0 ? authTokenFile : null,
             TlsServerCertificateSha256 = Val(
