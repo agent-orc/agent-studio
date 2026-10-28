@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import hashlib
+import sys
 from unittest.mock import patch
 
 
@@ -19,6 +20,54 @@ SPEC.loader.exec_module(MODULE)
 
 
 class InstallationEvidenceTests(unittest.TestCase):
+    def test_required_scenario_without_previous_candidate_fails_before_install(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            candidate.mkdir()
+            for name in ("agent-studio-setup", "agent-orchestrator-1.2.3-linux-x64.tar.gz"):
+                (candidate / name).write_text(name, encoding="ascii")
+            (candidate / "SHA256SUMS").write_text("".join(
+                f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+                for path in candidate.iterdir()), encoding="ascii")
+            arguments = [str(SCRIPT), "--scenario", "linux-native",
+                         "--candidate-dir", str(candidate), "--report-dir", str(root / "reports")]
+            with patch.object(sys, "argv", arguments):
+                self.assertEqual(1, MODULE.main())
+            report = json.loads((root / "reports" / "linux-native.json").read_text())
+            self.assertEqual("failed", report["status"])
+            self.assertIn("--previous-candidate-dir", report["steps"][-1]["reason"])
+
+    def test_lifecycle_needs_real_update_and_retained_card(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            proof = Path(temporary) / "lifecycle.json"
+            complete = {"status": "passed", "installationId": "installation-one",
+                        "previousVersion": "1.2.2", "candidateVersion": "1.2.3",
+                        "updatedFromPrevious": True, "uninstalledAndReinstalled": True,
+                        "retainedCard": True}
+            proof.write_text(json.dumps(complete), encoding="utf-8")
+            self.assertEqual("passed", MODULE.retained_lifecycle_step(proof)["status"])
+            proof.write_text(json.dumps({**complete, "updatedFromPrevious": False}), encoding="utf-8")
+            self.assertEqual("failed", MODULE.retained_lifecycle_step(proof)["status"])
+            proof.write_text(json.dumps({**complete, "previousVersion": "1.2.3"}), encoding="utf-8")
+            self.assertEqual("failed", MODULE.retained_lifecycle_step(proof)["status"])
+
+    def test_installed_card_evidence_requires_all_roles_and_published_sha(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            proof = Path(temporary) / "card.json"
+            complete = {"status": "passed", "state": "5-human-review",
+                        "initialSha": "a" * 40, "integrationSha": "b" * 40,
+                        "runnerRoles": ["coding", "review", "integration"]}
+            proof.write_text(json.dumps(complete), encoding="utf-8")
+            self.assertEqual("passed", MODULE.installed_card_step(proof, "Card")["status"])
+            for changed in (
+                {**complete, "integrationSha": complete["initialSha"]},
+                {**complete, "runnerRoles": ["coding", "review"]},
+                {**complete, "state": "4-auto-review"},
+            ):
+                proof.write_text(json.dumps(changed), encoding="utf-8")
+                self.assertEqual("failed", MODULE.installed_card_step(proof, "Card")["status"])
+
     def test_verified_candidate_and_report_do_not_include_secret_environment(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -76,22 +125,22 @@ class InstallationEvidenceTests(unittest.TestCase):
             self.assertIn("&lt;missing&gt;", page)
             self.assertNotIn("<missing>", page)
 
-    def test_deferred_journey_passes_gate_with_visible_note(self):
+    def test_unfinished_journey_fails_gate_with_visible_reason(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             summary = root / "summary.md"
             with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
-                self.assertTrue(MODULE.write_report(root, "linux-native", root, [
+                self.assertFalse(MODULE.write_report(root, "linux-native", root, [
                     {"step": "Install", "status": "passed", "durationSeconds": 1},
                     MODULE.pending_step("linux-native-installed-card", "Integration", "Awaiting first-use journey"),
                 ]))
             report = json.loads((root / "linux-native.json").read_text())
-            self.assertEqual("deferred", report["status"])
-            self.assertEqual("deferred", report["steps"][1]["status"])
-            self.assertIn("deferred", (root / "linux-native.html").read_text())
-            self.assertIn("Deferred: Integration", summary.read_text())
+            self.assertEqual("failed", report["status"])
+            self.assertEqual("failed", report["steps"][1]["status"])
+            self.assertIn("Awaiting first-use journey", (root / "linux-native.html").read_text())
+            self.assertIn("gate failed", summary.read_text())
 
-    def test_delivered_check_failure_fails_even_with_deferred_step(self):
+    def test_delivered_check_failure_fails_with_unfinished_step(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.assertFalse(MODULE.write_report(root, "linux-native", root, [
@@ -100,7 +149,7 @@ class InstallationEvidenceTests(unittest.TestCase):
             ]))
             self.assertEqual("failed", json.loads((root / "linux-native.json").read_text())["status"])
 
-    def test_unlisted_deferred_step_becomes_strict(self):
+    def test_every_unfinished_step_is_strict(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             step = MODULE.pending_step("new-installed-step", "First use", "Not implemented")

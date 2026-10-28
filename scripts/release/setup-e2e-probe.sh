@@ -222,7 +222,11 @@ if [[ -z "${SCENARIO_GIT_REMOTE:-}" ]]; then
   mkdir -p "$probe_root/seed"
   git -C "$probe_root/seed" init --initial-branch=main >/dev/null
   printf 'Scenario scratch repository\n' >"$probe_root/seed/README.md"
-  git -C "$probe_root/seed" add README.md
+  mkdir -p "$probe_root/seed/tests"
+  printf '#!/bin/sh\nexit 0\n' >"$probe_root/seed/tests/known-passing.sh"
+  printf '#!/bin/sh\nexit 1\n' >"$probe_root/seed/tests/known-failing.sh"
+  chmod 0755 "$probe_root/seed/tests/known-passing.sh" "$probe_root/seed/tests/known-failing.sh"
+  git -C "$probe_root/seed" add README.md tests
   git -C "$probe_root/seed" -c user.name=Scenario -c user.email=scenario@localhost commit -qm seed
   git -C "$probe_root/seed" remote add origin "$probe_root/git/scenario.git"
   git -C "$probe_root/seed" push -q origin main
@@ -278,18 +282,36 @@ export AGENT_SETUP_HOST_STATE="$host_state"
 export AGENT_SETUP_SYSTEMD_ROOT="$systemd_root"
 
 umask 077
-"$setup_binary" \
+control_args=(
   --mode control-plane \
   --target native \
-  --release-version "$version" \
-  --release-dir "$release_root" \
   --listen-url "$base_url" \
   --server-url "$base_url" \
   --execution-user "$(id -un)" \
   --agent-cli codex \
   --runner-name agent-runner-01-e2e \
-  --non-interactive \
-  >"$control_output"
+  --non-interactive
+)
+previous_dir="${INSTALL_SCENARIO_PREVIOUS_DIR:-}"
+if [[ -n "$previous_dir" ]]; then
+  previous_dir="$(realpath "$previous_dir")"
+  previous_setup="$previous_dir/agent-studio-setup"
+  chmod 0755 "$previous_setup"
+  previous_version="$("$previous_setup" --version | awk '{print $2}')"
+  "$previous_setup" "${control_args[@]}" \
+    --release-version "$previous_version" --release-dir "$previous_dir" \
+    >"$runtime_root/previous-install.log"
+  before_installation_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["InstallationId"])' "$orchestrator_config/installation.json")"
+  "$setup_binary" update "${control_args[@]}" \
+    --release-version "$version" --release-dir "$release_root" \
+    >"$control_output"
+  [[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["InstallationId"])' "$orchestrator_config/installation.json")" == "$before_installation_id" ]]
+  [[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["ReleaseVersion"])' "$orchestrator_config/installation.json")" == "$version" ]]
+else
+  "$setup_binary" "${control_args[@]}" \
+    --release-version "$version" --release-dir "$release_root" \
+    >"$control_output"
+fi
 
 if [[ "${SETUP_E2E_CONTROL_ONLY:-0}" == 1 ]]; then
   rm -f -- "$control_output"
@@ -328,7 +350,46 @@ python3 "$repo_root/scripts/release/installation-first-use.py" \
   echo "Join-token command did not issue a current single-use token." >&2
   exit 4
 }
+"$fake_systemctl" stop agent-host.service
+python3 "$repo_root/scripts/release/installed-card-journey.py" \
+  --server-url "$base_url" \
+  --studio-token-file "$orchestrator_config/studio.token" \
+  --owner-code-file "$orchestrator_config/owner_bootstrap_code" \
+  --owner-session-file "$owner_session_file" \
+  --project-id scenario-project \
+  --repository-url "$SCENARIO_GIT_REMOTE" \
+  --runner-binary "$host_opt/current/agent-host" \
+  --work-dir "$probe_root/card" \
+  --report "$(dirname "$report_path")/linux-native-card.json" \
+  >"$runtime_root/installed-card.log"
+"$fake_systemctl" start agent-host.service
 rm -f -- "$control_output" "$owner_session_file"
+
+if [[ -n "$previous_dir" ]]; then
+  "$setup_binary" uninstall --mode control-plane --target native \
+    >"$runtime_root/uninstall.log"
+  [[ -f "$orchestrator_config/installation.json" ]]
+  "$setup_binary" "${control_args[@]}" \
+    --release-version "$version" --release-dir "$release_root" \
+    >"$runtime_root/reinstall.log"
+  [[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["InstallationId"])' "$orchestrator_config/installation.json")" == "$before_installation_id" ]]
+  token="$(sed -n '1p' "$orchestrator_config/studio.token")"
+  card_key="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["taskKey"])' "$(dirname "$report_path")/linux-native-card.json")"
+  curl -fsS -H "Authorization: Bearer $token" -H 'X-Task-Protocol-Version: 2' \
+    "$base_url/api/v1/projects/scenario-project/tasks/$card_key" \
+    | python3 -c 'import json,sys; assert json.load(sys.stdin)["state"] == "5-human-review"'
+  python3 - "$(dirname "$report_path")/linux-native-lifecycle.json" \
+    "$before_installation_id" "$previous_version" "$version" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "w", encoding="utf-8") as report:
+    json.dump({"status": "passed", "installationId": sys.argv[2],
+               "previousVersion": sys.argv[3], "candidateVersion": sys.argv[4],
+               "updatedFromPrevious": True, "uninstalledAndReinstalled": True,
+               "retainedCard": True}, report, indent=2)
+    report.write("\n")
+PY
+fi
 
 if ! "$setup_binary" \
   --join \
@@ -409,7 +470,9 @@ PASS
 7. Setup waited for the daemon's startup capability result and required Git write access to the scratch repository.
 8. The owner bootstrap API accepted the installer-generated one-time code, and the owner registered the scratch repository as a project before token issuance.
 9. The real Task Server management API reported the joined runner identity.
-10. Task Server, Orchestrator Engine, and Agent Host processes were live at the final assertion.
+10. The installed candidate runner completed a fake-CLI card, the candidate review runner passed its checks, and the candidate integration runner published the reviewed SHA to loopback main (see linux-native-card.json).
+11. The previous release updated to this candidate, then uninstalled and reinstalled with the integrated card retained (see linux-native-lifecycle.json).
+12. Task Server, Orchestrator Engine, and Agent Host processes were live at the final assertion.
 
 ## Isolation
 

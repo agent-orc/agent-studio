@@ -26,7 +26,17 @@ try {
   if (Get-ScheduledTask -TaskName 'AgentOrchestrator-TaskServer' -ErrorAction SilentlyContinue) {
     throw 'Connector profile installed a local authority.'
   }
+  $bearer = (Get-Content -LiteralPath $token -Raw).Trim()
+  if (-not $bearer) { throw 'Remote authority token file is empty.' }
+  $headers = @{ Authorization = "Bearer $bearer"; 'X-Task-Protocol-Version' = '2' }
+  $hosts = Invoke-RestMethod -Uri "$($ServerUrl.TrimEnd('/'))/api/v1/management/remote-hosts" -Headers $headers
+  if (@($hosts | Where-Object { $_.runnerId -eq 'agent-runner-01' }).Count -ne 1) {
+    throw 'The real Linux agent-runner-01 host is not registered on the remote authority.'
+  }
   Write-Host 'Windows Studio connector reached the remote Linux authority.'
 } finally {
-  & $setup uninstall --install-dir $installDir --purge | Out-Null
+  if (Test-Path -LiteralPath (Join-Path $installDir 'installation.json')) {
+    & $setup uninstall --install-dir $installDir --purge | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'Connector scenario cleanup could not purge the installation.' }
+  }
 }

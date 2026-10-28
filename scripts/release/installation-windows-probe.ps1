@@ -1,7 +1,13 @@
-param([Parameter(Mandatory = $true)][string] $CandidateDir)
+param(
+  [Parameter(Mandatory = $true)][string] $CandidateDir,
+  [Parameter(Mandatory = $true)][string] $PreviousCandidateDir,
+  [Parameter(Mandatory = $true)][string] $ReportDir
+)
 $ErrorActionPreference = 'Stop'
 $candidate = (Resolve-Path -LiteralPath $CandidateDir).Path
+$previous = (Resolve-Path -LiteralPath $PreviousCandidateDir).Path
 $setup = Join-Path $candidate 'agent-studio-setup.exe'
+$previousSetup = Join-Path $previous 'agent-studio-setup.exe'
 $temporaryRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
 $installDir = Join-Path $temporaryRoot 'agent-studio-installation-scenario'
 if (Test-Path -LiteralPath $installDir) { throw 'Scenario install directory already exists. Use a clean host.' }
@@ -58,47 +64,82 @@ function Assert-Tasks([bool] $Present) {
     if ($found -ne $Present) { throw "Scheduled task $task has unexpected state." }
   }
 }
-function Assert-OwnerBootstrap {
+function Assert-OwnerBootstrapRequired {
   $url = 'http://127.0.0.1:4011/api/v1/studio/auth'
   $before = Invoke-RestMethod -Uri "$url/status"
   if (-not $before.bootstrapRequired -or -not $before.bootstrapCodeRequired) {
     throw 'Studio did not require the installer owner code.'
   }
-  $codeFile = Join-Path $env:ProgramData 'AgentOrchestrator\owner-bootstrap.code'
-  $body = @{
-    username = 'smoke-owner'
-    displayName = 'Smoke owner'
-    password = ([Guid]::NewGuid().ToString('N') + 'aA1!')
-    bootstrapCode = (Get-Content -LiteralPath $codeFile -Raw).Trim()
-  } | ConvertTo-Json -Compress
-  $owner = Invoke-RestMethod -Method Post -Uri "$url/bootstrap" -ContentType 'application/json' `
-    -Headers @{ Origin = 'http://127.0.0.1:4011' } -Body $body
-  if ($owner.status.user.role -ne 'owner') { throw 'Studio did not create the owner.' }
-  $after = Invoke-RestMethod -Uri "$url/status"
-  if ($after.bootstrapRequired) { throw 'Studio owner bootstrap remained open.' }
 }
 
 try {
   $answers = Join-Path $temporaryRoot 'agent-studio-windows-smoke-answers.json'
+  $previousAnswers = Join-Path $temporaryRoot 'agent-studio-windows-previous-answers.json'
+  @{ target = 'native'; releaseDirectory = $previous; installDirectory = $installDir;
+     providerCli = 'skip'; gitAccess = 'skip' } | ConvertTo-Json |
+    Set-Content -LiteralPath $previousAnswers -Encoding ascii
+  & $previousSetup --unattended --answer-file $previousAnswers | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'Previous Windows candidate did not install.' }
+  $initialId = (Get-Content -LiteralPath (Join-Path $installDir 'installation.json') -Raw | ConvertFrom-Json).InstallationId
+  if (-not $initialId) { throw 'Previous installation ID is missing.' }
+  Invoke-Setup -SetupArgs @('update', '--unattended', '--release-dir', $candidate, '--install-dir', $installDir)
   @{ target = 'native'; releaseDirectory = $candidate; installDirectory = $installDir;
      providerCli = 'skip'; gitAccess = 'skip' } | ConvertTo-Json |
     Set-Content -LiteralPath $answers -Encoding ascii
-  Invoke-Setup -SetupArgs @('--unattended', '--answer-file', $answers)
   Assert-Tasks $true
   Assert-Healthy
-  Assert-OwnerBootstrap
-  $before = (Get-Content -LiteralPath (Join-Path $installDir 'installation.json') -Raw | ConvertFrom-Json).installationId
+  Assert-OwnerBootstrapRequired
+  $fakeRoot = Join-Path $temporaryRoot 'agent-studio-installation-fake-cli'
+  dotnet publish testsupport/installation-fake-cli/installation-fake-cli.csproj --configuration Release `
+    --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output $fakeRoot | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'The Windows fake CLI could not be built.' }
+  $version = (& $setup --version).Split()[-1]
+  $runnerBinary = Join-Path $env:SystemDrive "AgentOrchestrator\release-$version\agent-host.exe"
+  if (-not (Test-Path -LiteralPath $runnerBinary)) { throw 'Installed candidate runner is missing.' }
+  Stop-ScheduledTask -TaskName 'AgentOrchestrator-Runner'
+  New-Item -ItemType Directory -Path $ReportDir -Force | Out-Null
+  python scripts/release/installed-card-journey.py `
+    --server-url http://127.0.0.1:5071 `
+    --studio-token-file (Join-Path $env:ProgramData 'AgentOrchestrator\studio.token') `
+    --owner-code-file (Join-Path $env:ProgramData 'AgentOrchestrator\owner-bootstrap.code') `
+    --runner-binary $runnerBinary `
+    --fake-cli (Join-Path $fakeRoot 'installation-fake-cli.exe') `
+    --work-dir (Join-Path $installDir 'card-work') `
+    --report (Join-Path $ReportDir 'windows-native-card.json')
+  if ($LASTEXITCODE -ne 0) { throw 'Installed Windows card did not reach integration.' }
+  Start-ScheduledTask -TaskName 'AgentOrchestrator-Runner'
+  $afterBootstrap = Invoke-RestMethod -Uri 'http://127.0.0.1:4011/api/v1/studio/auth/status'
+  if ($afterBootstrap.bootstrapRequired) { throw 'Studio owner bootstrap remained open.' }
+  $card = Get-Content -LiteralPath (Join-Path $ReportDir 'windows-native-card.json') -Raw | ConvertFrom-Json
+  $updatedManifest = Get-Content -LiteralPath (Join-Path $installDir 'installation.json') -Raw | ConvertFrom-Json
+  $before = $updatedManifest.InstallationId
   if (-not $before) { throw 'Installation ID is missing.' }
+  if ($before -ne $initialId) { throw 'Candidate update changed the installation ID.' }
+  if ($updatedManifest.ReleaseVersion -ne $version) { throw 'Candidate update did not pin the requested version.' }
   Invoke-Setup -SetupArgs @('uninstall', '--install-dir', $installDir)
   Assert-Tasks $false
   if (-not (Test-Path -LiteralPath (Join-Path $installDir 'data'))) { throw 'Uninstall removed the data directory.' }
   Invoke-Setup -SetupArgs @('--unattended', '--answer-file', $answers)
   Assert-Tasks $true
   Assert-Healthy
-  $after = (Get-Content -LiteralPath (Join-Path $installDir 'installation.json') -Raw | ConvertFrom-Json).installationId
+  $after = (Get-Content -LiteralPath (Join-Path $installDir 'installation.json') -Raw | ConvertFrom-Json).InstallationId
   if ($before -ne $after) { throw 'Reinstall changed the installation ID.' }
-  Write-Host 'Windows native candidate install and retained-data reinstall passed.'
+  $token = (Get-Content -LiteralPath (Join-Path $env:ProgramData 'AgentOrchestrator\studio.token') -Raw).Trim()
+  $retained = Invoke-RestMethod -Uri "http://127.0.0.1:5071/api/v1/projects/$($card.projectId)/tasks/$($card.taskKey)" `
+    -Headers @{ Authorization = "Bearer $token"; 'X-Task-Protocol-Version' = '2' }
+  if ($retained.state -ne '5-human-review') { throw 'Reinstall did not retain the integrated card.' }
+  $previousVersion = (& $previousSetup --version).Split()[-1]
+  @{ status = 'passed'; installationId = $before; previousVersion = $previousVersion;
+     candidateVersion = $version; updatedFromPrevious = $true;
+     uninstalledAndReinstalled = $true; retainedCard = $true } |
+    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ReportDir 'windows-native-lifecycle.json') -Encoding utf8
+  Write-Host 'Windows native candidate install, card integration, and retained-data reinstall passed.'
 } finally {
-  & $setup uninstall --install-dir $installDir --purge | Out-Null
+  if (Test-Path -LiteralPath (Join-Path $installDir 'installation.json')) {
+    & $setup uninstall --install-dir $installDir --purge | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'Windows scenario cleanup could not purge the installation.' }
+  }
   Remove-Item -LiteralPath $answers -Force -ErrorAction SilentlyContinue
+  if ($previousAnswers) { Remove-Item -LiteralPath $previousAnswers -Force -ErrorAction SilentlyContinue }
+  if ($fakeRoot) { Remove-Item -LiteralPath $fakeRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }

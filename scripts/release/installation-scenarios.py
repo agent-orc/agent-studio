@@ -32,19 +32,51 @@ SCENARIOS = {
     "broken-prerequisites": "Clear guidance for broken first-use prerequisites",
 }
 OPTIONAL_SCENARIOS = {"linux-vm", "windows-linux-host", "simulated-user", "broken-prerequisites", "upgrade"}
-# Remove an id here when its installed first-use journey becomes a required check.
-DEFERRED_STEP_IDS = {
-    "linux-native-installed-card",
-    "linux-docker-installed-first-use",
-    "coding-review-installed-integration",
-    "windows-native-local-studio-runner",
-}
 
 
 def pending_step(step_id: str, label: str, reason: str) -> dict:
-    return {"id": step_id, "step": label,
-            "status": "deferred" if step_id in DEFERRED_STEP_IDS else "failed",
+    return {"id": step_id, "step": label, "status": "failed",
             "reason": reason, "durationSeconds": 0}
+
+
+def installed_card_step(path: Path, label: str) -> dict:
+    step = {"step": label, "status": "failed", "durationSeconds": 0}
+    try:
+        evidence = json.loads(path.read_text(encoding="utf-8"))
+        if (evidence.get("status") != "passed"
+                or evidence.get("state") != "5-human-review"
+                or not re.fullmatch(r"[0-9a-f]{40}", evidence.get("integrationSha", ""))
+                or evidence.get("initialSha") == evidence.get("integrationSha")
+                or set(evidence.get("runnerRoles", [])) != {"coding", "review", "integration"}):
+            raise ValueError("installed coding, review, and integration proof is incomplete")
+    except (OSError, ValueError, TypeError, AttributeError):
+        step["reason"] = "installed card evidence is missing or incomplete"
+        return step
+    step["status"] = "passed"
+    step["evidence"] = path.name
+    return step
+
+
+def retained_lifecycle_step(path: Path) -> dict:
+    step = {"step": "Candidate update, uninstall, and retained-data reinstall",
+            "status": "failed", "durationSeconds": 0}
+    try:
+        evidence = json.loads(path.read_text(encoding="utf-8"))
+        if (evidence.get("status") != "passed"
+                or evidence.get("updatedFromPrevious") is not True
+                or evidence.get("uninstalledAndReinstalled") is not True
+                or evidence.get("retainedCard") is not True
+                or not evidence.get("installationId")
+                or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", evidence.get("previousVersion", ""))
+                or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", evidence.get("candidateVersion", ""))
+                or evidence["previousVersion"] == evidence["candidateVersion"]):
+            raise ValueError("lifecycle proof is incomplete")
+    except (OSError, ValueError, TypeError, AttributeError):
+        step["reason"] = "candidate update or retained-data reinstall evidence is missing"
+        return step
+    step["status"] = "passed"
+    step["evidence"] = path.name
+    return step
 
 
 def verify_candidate(directory: Path, windows: bool) -> dict:
@@ -113,15 +145,14 @@ def check_missing_git(setup: Path) -> dict:
 
 def write_report(report_dir: Path, scenario: str, candidate: Path, steps: list[dict]) -> bool:
     report_dir.mkdir(parents=True, exist_ok=True)
-    known_statuses = {"passed", "failed", "deferred", "skipped", "not_applicable"}
+    known_statuses = {"passed", "failed", "skipped", "not_applicable"}
     failed = not steps or any(
         step["status"] not in known_statuses or step["status"] == "failed"
-        or (step["status"] == "deferred" and step.get("id") not in DEFERRED_STEP_IDS)
         for step in steps
     )
     statuses = {step["status"] for step in steps}
     status = "failed" if failed else next(
-        (value for value in ("skipped", "deferred", "not_applicable") if value in statuses), "passed")
+        (value for value in ("skipped", "not_applicable") if value in statuses), "passed")
     gate_passed = not failed and ("skipped" not in statuses or scenario in OPTIONAL_SCENARIOS)
     report = {
         "schemaVersion": 1,
@@ -163,11 +194,8 @@ table{{border-collapse:collapse;width:100%;background:white}}th,td{{border:1px s
     (report_dir / f"{scenario}.html").write_text(page, encoding="utf-8")
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
-        deferred = [step["step"] for step in steps if step["status"] == "deferred"]
         with open(summary_path, "a", encoding="utf-8") as summary:
             summary.write(f"- **{scenario}: {status}** ({'gate passed' if gate_passed else 'gate failed'})")
-            if deferred:
-                summary.write(". Deferred: " + ", ".join(deferred))
             summary.write(".\n")
     return gate_passed
 
@@ -178,6 +206,7 @@ def main() -> int:
     parser.add_argument("--candidate-dir", required=True, type=Path)
     parser.add_argument("--report-dir", type=Path, default=Path(os.environ.get("JOB_RESULTS_DIR", "artifacts/installation-scenarios")))
     parser.add_argument("--previous-version", default="")
+    parser.add_argument("--previous-candidate-dir", type=Path)
     parser.add_argument("--server-url", default="")
     parser.add_argument("--token-file", type=Path)
     parser.add_argument("--operator-profile", action="store_true",
@@ -196,10 +225,30 @@ def main() -> int:
         print(f"Candidate verification failed: {error}", file=sys.stderr)
         return 1
 
+    if args.scenario in {"linux-native", "linux-docker", "windows-native"}:
+        try:
+            if args.previous_candidate_dir is None:
+                raise ValueError("--previous-candidate-dir is required for the update proof")
+            previous = args.previous_candidate_dir.resolve()
+            prior = verify_candidate(previous, args.scenario == "windows-native")
+            if previous == candidate or prior["setupSha256"] == detail["setupSha256"]:
+                raise ValueError("the previous candidate must differ from the release candidate")
+            steps.append({"step": "Verify previous candidate for update", "status": "passed",
+                          "durationSeconds": 0, "setupSha256": prior["setupSha256"]})
+        except (ValueError, OSError) as error:
+            steps.append({"step": "Verify previous candidate for update", "status": "failed",
+                          "reason": str(error), "durationSeconds": 0})
+            write_report(report_dir, args.scenario, candidate, steps)
+            return 1
+
     environment = os.environ.copy()
     environment.pop("INSTALL_SCENARIO_DEPLOY_KEY", None)
     environment.pop("INSTALL_SCENARIO_KNOWN_HOSTS", None)
     environment.pop("SCENARIO_GIT_REMOTE", None)
+    if args.scenario in {"linux-native", "linux-docker", "windows-native"}:
+        environment["INSTALL_SCENARIO_PREVIOUS_DIR"] = str(previous)
+        for suffix in ("card", "lifecycle"):
+            (report_dir / f"{args.scenario}-{suffix}.json").unlink(missing_ok=True)
     if args.scenario == "linux-native":
         optional = (environment.get("AGENT_STUDIO_SCENARIO_DEPLOY_KEY", ""),
                     environment.get("AGENT_STUDIO_SCENARIO_GIT_REMOTE", ""),
@@ -212,15 +261,17 @@ def main() -> int:
         steps.append(run("Native install and host join", ["bash", str(ROOT / "scripts/release/setup-e2e-probe.sh"),
                            str(report_dir / "linux-native-probe.md")], environment, 900))
         if steps[-1]["status"] == "passed":
-            steps.append(pending_step("linux-native-installed-card", "Installed candidate card through integration",
-                                      "Task Server has no native integration transition; coding fixture uses a separate source-built topology"))
+            steps.append(installed_card_step(report_dir / "linux-native-card.json",
+                                             "Installed candidate card through integration"))
+            steps.append(retained_lifecycle_step(report_dir / "linux-native-lifecycle.json"))
     elif args.scenario == "linux-docker":
         steps.append(run("Docker install and retained-data reinstall",
-                         ["bash", str(ROOT / "scripts/release/installation-docker-probe.sh"), str(candidate)], environment, 1200))
+                         ["bash", str(ROOT / "scripts/release/installation-docker-probe.sh"),
+                          str(candidate), str(report_dir)], environment, 1200))
         if steps[-1]["status"] == "passed":
-            steps.append(pending_step("linux-docker-installed-first-use",
-                                      "Owner, project and card through integration on installed Compose stack",
-                                      "The Docker probe currently checks an API workspace and retained data only"))
+            steps.append(installed_card_step(report_dir / "linux-docker-card.json",
+                                             "Owner, project and card through integration on installed Compose stack"))
+            steps.append(retained_lifecycle_step(report_dir / "linux-docker-lifecycle.json"))
     elif args.scenario == "linux-vm":
         if not args.operator_profile:
             steps.append({"step": "Disposable VM Compose onboarding", "status": "skipped",
@@ -233,9 +284,6 @@ def main() -> int:
         steps.append(run("Fake CLI coding and review",
                          ["bash", str(ROOT / "scripts/scenario.sh"), "--target", "compose", "--level", "full",
                           "--report-dir", str(report_dir / "coding-review-detail")], environment, 1800))
-        if steps[-1]["status"] == "passed":
-            steps.append(pending_step("coding-review-installed-integration", "Integration on installed candidate",
-                                      "Source-built fixture stops at human review and is separate from installed candidate"))
     elif args.scenario == "upgrade":
         if args.previous_version == "none":
             steps.append({"step": "Previous release", "status": "not_applicable",
@@ -257,10 +305,18 @@ def main() -> int:
     elif args.scenario == "windows-native":
         steps.append(run("Windows service install and retained-data reinstall",
                          ["pwsh", "-NoProfile", "-File", str(ROOT / "scripts/release/installation-windows-probe.ps1"),
-                          "-CandidateDir", str(candidate)], environment, 1200))
+                          "-CandidateDir", str(candidate), "-PreviousCandidateDir", str(previous),
+                          "-ReportDir", str(report_dir)], environment, 1200))
+        if steps[-1]["status"] == "passed":
+            steps.append(installed_card_step(report_dir / "windows-native-card.json",
+                                             "Installed candidate card through integration"))
+            steps.append(retained_lifecycle_step(report_dir / "windows-native-lifecycle.json"))
     elif args.scenario == "windows-linux-host":
-        if not args.server_url or not args.token_file or not args.token_file.is_file():
+        if not args.operator_profile:
             steps.append({"step": "Remote authority inputs", "status": "skipped",
+                          "reason": "Run the operator profile on KORI with a Linux agent host", "durationSeconds": 0})
+        elif not args.server_url or not args.token_file or not args.token_file.is_file():
+            steps.append({"step": "Remote authority inputs", "status": "failed",
                           "reason": "Operator KORI profile needs --server-url and --token-file", "durationSeconds": 0})
         else:
             steps.append(run("Windows connector to Linux authority",

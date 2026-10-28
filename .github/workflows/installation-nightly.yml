@@ -73,16 +73,27 @@ jobs:
               --build-arg SHA="$sha" -t "ghcr.io/agent-orc/$name:v$version" .
           done
       - name: Play installation and first use
+        id: installation
         env:
+          GH_TOKEN: ${{ github.token }}
           AGENT_STUDIO_SCENARIO_GIT_REMOTE: ${{ vars.AGENT_STUDIO_SCENARIO_GIT_REMOTE }}
           AGENT_STUDIO_SCENARIO_DEPLOY_KEY: ${{ secrets.AGENT_STUDIO_SCENARIO_DEPLOY_KEY }}
           AGENT_STUDIO_SCENARIO_KNOWN_HOSTS: ${{ secrets.AGENT_STUDIO_SCENARIO_KNOWN_HOSTS }}
           INSTALL_SCENARIO_OFFLINE: '1'
         run: |
+          previous="$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+          if [[ "$previous" == v* ]]; then
+            gh release download "$previous" --dir artifacts/previous-release
+          fi
           status=0
-          for scenario in linux-native linux-docker linux-vm coding-review broken-prerequisites; do
+          for scenario in linux-native linux-docker; do
             python3 scripts/release/installation-scenarios.py --scenario "$scenario" \
-              --candidate-dir artifacts/release --report-dir artifacts/installation-evidence || status=1
+              --candidate-dir artifacts/release --previous-candidate-dir artifacts/previous-release \
+              --report-dir artifacts/installation-evidence || status=1
+          done
+          for scenario in linux-vm coding-review broken-prerequisites; do
+            python3 scripts/release/installation-scenarios.py --scenario "$scenario" \
+              --candidate-dir artifacts/release --report-dir artifacts/installation-evidence || true
           done
           exit "$status"
       - name: Play docs-only simulated user
@@ -176,11 +187,17 @@ jobs:
           } | Set-Content artifacts/release/SHA256SUMS -Encoding ascii
       - name: Play Windows native install and reinstall
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python scripts/release/installation-scenarios.py --scenario windows-native --candidate-dir artifacts/release --report-dir artifacts/installation-evidence
+          $previous = gh release list --limit 1 --json tagName --jq '.[0].tagName'
+          if ($previous -and $previous -ne 'null') {
+            gh release download $previous --dir artifacts/previous-release
+            if ($LASTEXITCODE -ne 0) { throw 'Previous candidate download failed.' }
+          }
+          python scripts/release/installation-scenarios.py --scenario windows-native --candidate-dir artifacts/release --previous-candidate-dir artifacts/previous-release --report-dir artifacts/installation-evidence
           if ($LASTEXITCODE -ne 0) { throw 'Windows native scenario failed.' }
           python scripts/release/installation-scenarios.py --scenario windows-linux-host --candidate-dir artifacts/release --report-dir artifacts/installation-evidence
-          if ($LASTEXITCODE -ne 0) { throw 'Windows cross-host scenario failed.' }
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4

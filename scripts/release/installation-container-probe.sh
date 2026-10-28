@@ -26,5 +26,5 @@ mkdir -p "$report_dir"
 chown -R scenario:scenario "$report_dir"
 chmod 0755 "$candidate_dir/agent-studio-setup"
 export AGENT_SETUP_SKIP_ROOT_CHECK=1
-runuser -u scenario -- python3 scripts/release/installation-scenarios.py \
-  --scenario linux-native --candidate-dir "$candidate_dir" --report-dir "$report_dir"
+runuser -u scenario -- env SETUP_E2E_RELEASE_DIR="$candidate_dir" SETUP_E2E_CONTROL_ONLY=1 \
+  bash scripts/release/setup-e2e-probe.sh "$report_dir/linux-native-distro-smoke.md"
