@@ -268,6 +268,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
     private readonly ILogger<AutoReviewPostProcessingWorker> _logger;
     private readonly V1ReviewExecutorRegistry? _reviewExecutorRegistry;
     private readonly AutoReviewDeliveryResumeService? _deliveryResume;
+    private readonly PostWorkSubjectCoordinator? _postWork;
 
     /// <summary>
     /// Test seam: when set, one request is handed to this delegate instead of the
@@ -292,7 +293,8 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         IConfiguration configuration,
         ILogger<AutoReviewPostProcessingWorker> logger,
         V1ReviewExecutorRegistry? reviewExecutorRegistry = null,
-        AutoReviewDeliveryResumeService? deliveryResume = null)
+        AutoReviewDeliveryResumeService? deliveryResume = null,
+        PostWorkSubjectCoordinator? postWork = null)
     {
         _queue = queue;
         _reviewDecisionOrchestrator = reviewDecisionOrchestrator;
@@ -302,6 +304,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         _logger = logger;
         _reviewExecutorRegistry = reviewExecutorRegistry;
         _deliveryResume = deliveryResume;
+        _postWork = postWork;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -385,6 +388,17 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         }
     }
 
+    private async Task<PostWorkPassAdmission> AdmitPostWorkAsync(
+        AutoReviewPostProcessingRequest request, CancellationToken ct)
+    {
+        if (_postWork is not { Enabled: true }) return PostWorkPassAdmission.Unmanaged;
+        var card = _scanner.FindJob(request.JobId, request.WatchPath);
+        if (card is null || !string.Equals(card.State, TaskStates.AutoReview, StringComparison.Ordinal))
+            return PostWorkPassAdmission.Unmanaged;
+        return await _postWork.AdmitAsync(card,
+            $"{request.Source}:{request.Attempt}:{request.EnqueuedAtUtc.Ticks}", ct);
+    }
+
     private Task RunOneAsync(AutoReviewPostProcessingRequest request, CancellationToken ct)
         => ProcessOverride != null ? ProcessOverride(request, ct) : ProcessAsync(request, ct);
 
@@ -426,6 +440,21 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
             return;
         }
 
+        // DP-S8: in canary the pass first holds the card's post-work subject,
+        // so a host claim and this backend pass never process one card at once.
+        var admission = await AdmitPostWorkAsync(request, ct);
+        if (!admission.Admitted)
+        {
+            if (admission.Retryable)
+                ApplyOutcome(request, PostProcessingCardResult.Deferred(admission.Reason), ct);
+            else if (!admission.OwnedElsewhere)
+                ParkActiveLifecycle(request, "post-work-" + admission.Reason);
+            _logger.LogInformation(
+                "auto-review-postprocessing-skipped project={Project} job={JobId} reason=post-work-{Reason}",
+                request.ProjectName, request.JobId, admission.Reason);
+            return;
+        }
+
         var sw = Stopwatch.StartNew();
         var queueWaitMs = (long)Math.Max(0, (DateTime.UtcNow - request.EnqueuedAtUtc).TotalMilliseconds);
         MarkReviewDecisionRunning(request);
@@ -452,6 +481,9 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
                 DateTime.UtcNow, sw.Elapsed, drained: outcome.Status != PostProcessingCardStatus.Deferred
                     || outcome.Reason == "delivery-resume-exhausted");
 
+            if (_postWork is not null)
+                await _postWork.CompleteAsync(admission, outcome,
+                    DateTime.UtcNow + DeferralRetryDelay(request.Attempt), ct);
             ApplyOutcome(request, outcome, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -465,6 +497,9 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         {
             sw.Stop();
             _queue.Telemetry.RecordCompletion(DateTime.UtcNow, sw.Elapsed, drained: true);
+            if (_postWork is not null)
+                await _postWork.CompleteAsync(admission,
+                    PostProcessingCardResult.Blocked("pass-threw:" + ex.GetType().Name), null, CancellationToken.None);
             TerminalizeActiveLifecycle(
                 request,
                 "Post Processing failed before reaching a terminal decision: " + ex.GetType().Name + ".");

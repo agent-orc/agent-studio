@@ -194,12 +194,17 @@ public sealed partial class TaskServerStore
         string hostId,
         CancellationToken ct)
         => Convert.ToInt32(
+            // One host budget (AGT-3171 D5): live post-work claims share the
+            // grant with coding leases.
             await ScalarAsync(connection, """
-                SELECT COUNT(*)
-                  FROM leases l
-                  JOIN runners r ON r.id = l.runner_id
-                 WHERE r.host_id = $host
-                   AND l.status IN ('active', 'process-unknown');
+                SELECT (SELECT COUNT(*)
+                          FROM leases l
+                          JOIN runners r ON r.id = l.runner_id
+                         WHERE r.host_id = $host
+                           AND l.status IN ('active', 'process-unknown'))
+                     + (SELECT COUNT(*)
+                          FROM post_work_attempts
+                         WHERE host_id = $host AND state = 'live');
                 """, ct, transaction, ("$host", hostId)) ?? 0,
             CultureInfo.InvariantCulture);
 

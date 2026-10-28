@@ -391,7 +391,7 @@ public static class RoutePermissionCatalog
         Add("W", IamPermissions.ProjectRunsOperate,
             "/api/runner/integration-lease/**", "/api/analysis/**", "/api/drift/**", "/api/supervisor/**");
         Under("W", IamPermissions.ProjectRunsOperate, "/api/projects/{}",
-            "batch-gate/close-now", "batch-gate/members/**", "queue-health/**", "operator-sweeps/**",
+            "batch-gate/close-now", "batch-gate/members/**", "queue-health/**", "operator-sweeps/**", "post-work/**",
             "pipeline-steps/**", "completed-lane/**", "delivery-claims/**", "external-verifications", "test-runs/**",
             "publish/package", "publish/website", "model-migrations/**", "security/audit", "skill-readiness/**",
             "proposals/**", "proposals", "design/**", "graph/**", "wiki/grading/**", "visual-evidence/**",

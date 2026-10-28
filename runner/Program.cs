@@ -390,7 +390,7 @@ try
     // A host supervisor can restart after a crash while its prior child is
     // still alive. The role-local lock keeps the replacement from registering
     // or reattaching until that exact executor process has exited.
-    using var hostAdapterLock = options.HostAdapter && daemonMode && options.Role is "coding" or "review"
+    using var hostAdapterLock = options.HostAdapter && daemonMode && options.Role is "coding" or "review" or "post"
         ? AcquireHostAdapterLock(options)
         : null;
     // IP-1: a run target talks to Studio's deploy routes only, never to Task
@@ -427,6 +427,22 @@ try
             throw new ArgumentException("Gate Executor runs as a polling service and does not accept coding task keys.");
         await new RemoteGateDaemon(options, client, Log).RunAsync(shutdown.Token);
         Log("gate daemon stopped");
+        return 0;
+    }
+    if (options.Role == "post")
+    {
+        if (!daemonMode)
+            throw new ArgumentException("Post-work Executor runs as a polling service and does not accept coding task keys.");
+        var postOptions = PostWorkHostOptions.From(Environment.GetEnvironmentVariable, OperatingSystem.IsWindows());
+        await client.RegisterAsync(options.RunnerName, "post-work-executor", shutdown.Token);
+        IPostWorkStepExecutor postExecutor = postOptions.Executor == AgentStudio.TaskServer.Contracts.PostWorkExecutorKinds.Container
+            ? new ContainerPostWorkStepExecutor(postOptions, Log)
+            : new ProcessPostWorkStepExecutor(Log);
+        await new PostWorkDaemon(new TaskServerPostWorkAuthority(client, options.Hostname), postExecutor,
+                options.RunnerId, () => client.RunnerInstanceId, options.StateDir, postOptions.LeaseSeconds,
+                TimeSpan.FromSeconds(Math.Max(1, options.PollSeconds)), Log)
+            .RunAsync(shutdown.Token);
+        Log("post-work daemon stopped");
         return 0;
     }
     if (options.Role == "integration")

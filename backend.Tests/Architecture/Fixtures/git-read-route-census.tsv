@@ -191,6 +191,7 @@
 /api/projects/{projectName}/graph	free	-	-	-
 /api/projects/{projectName}/lane-sort-strategies	free	-	-	-
 /api/projects/{projectName}/operator-sweeps	free	-	-	-
+/api/projects/{projectName}/post-work/shadow	free	-	-	-
 /api/projects/{projectName}/pipeline-definition	reachable	gap	Pipeline	Pipeline reads from the Git fact store
 /api/projects/{projectName}/pipeline-definition/migration	reachable	gap	Pipeline	Pipeline reads from the Git fact store
 /api/projects/{projectName}/pipeline-health	free	-	-	-

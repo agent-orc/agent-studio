@@ -25,6 +25,23 @@ for the canary, drain, and rollback sequence. Linux per-attempt containers are
 the subsequent DP-S3 executor slice; DP-S2 retains the current process and
 cgroup executor.
 
+## Dynamic placement post adapter, DP-S8
+
+`RUNNER_ROLE=post` runs `PostWorkDaemon`, the host agent's post adapter
+(optional `post` role in the host-agent config; it has no legacy daemon, so
+`migrate-role ... post` enables it once no claim is persisted). It claims
+host-owned post-work subjects with the host's current allocation version,
+renews its lease at a third of the TTL and runs the subject's bounded steps.
+On Linux each step runs in a fresh rootless container from a digest-pinned
+`RUNNER_POST_WORK_IMAGE` (non-root, read-only root, no host socket, network
+`none` by default, CPU and memory from the grant); on Windows it runs as a
+process tree in the attempt directory and is killed on timeout. The adapter
+reports evidence and a proposed outcome; `PostWorkProposalPolicy` never turns
+evidence into pass, rework or human review. A refused renewal cancels the
+steps and suppresses the report. After a crash the persisted claim is cleaned
+by attempt label and left to the authority, which reclaims it under a newer
+fence. See the tasks map for the subject contract.
+
 Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.

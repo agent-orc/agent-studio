@@ -118,6 +118,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | ReviewDecisionOrchestrator | loop | decide, switched | Remote coding completion, review report and gate result follow their profiles (`CodingCompletion`, `ReviewReport`, `GateResult`). The local legacy review loop (`ProcessDoneAsync`, `ProcessNoOpAsync`) retires with local execution (D16, I11). |
 | AutoReviewPostProcessingWorker | loop | decide, switched | Same as ReviewDecisionOrchestrator: it decides through `ReviewDecisionOrchestrator.ProcessCardAsync`. |
 | AutoReviewPostProcessingRecoveryService | loop | apply-recover | Authority |
+| PostWorkSubjectReconcilerService | loop | apply-recover | Authority. Idle while `PostWork:Mode` is `off`; reports lane facts for DP-S8 post-work subjects and hands accepted host reports to the worker. |
 | RemoteReviewEvidenceProjectionWorker | loop | apply-recover | Authority |
 | RemoteReviewSettlementReconciler | loop | apply-recover | Authority |
 | BatchGatePilotHostedService | loop | decide, switched | `GateResult` profile for every batch gate outcome, releases and red per-task gates (`HoldForEngineBatchDecision`, AGT-3234). A per-task gate whose budget ran out in the machine gate queue is requeued through `GateQueueStallPolicy` (AGT-3219). Batch forming, closing and the advisor move with AGT-3055. |

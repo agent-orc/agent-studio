@@ -114,6 +114,7 @@ public static class EndpointMapping
         app.MapGateEconomicsEndpoints();
         app.MapPostMergeRunEndpoints();
         app.MapOperatorSweepEndpoints();
+        app.MapPostWorkEndpoints();
         app.MapFailureInterventionEndpoints();
         app.MapCauseBreakerEndpoints();
         app.MapTokenPricingEndpoints();
