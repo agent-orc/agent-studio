@@ -74,6 +74,8 @@ public sealed class RemoteGateDaemon
 
     private string ClaimFile => Path.Combine(_options.StateDir, "gate-claim.json");
 
+    internal TimeSpan RenewInterval { get; set; } = TimeSpan.FromSeconds(20);
+
     private void SaveClaim(GateClaimResponse claim)
     {
         Directory.CreateDirectory(_options.StateDir);
@@ -128,14 +130,32 @@ public sealed class RemoteGateDaemon
     {
         var authority = new GateAuthority(lease.ExecutorId, lease.InstanceId, lease.LeaseId,
             lease.Fence, lease.AuthorityEpoch);
+        // A verification bundle subject materializes only from the bundle the
+        // gate authority serves, never from a repository fetch.
+        var bundle = subject.Bundle;
         var reviewSubject = new ReviewSubjectDto(subject.SubjectId, subject.TaskId, subject.SourceRunId,
-            subject.RepositoryId, subject.RepositoryUrl, subject.ExpectedSha, subject.ResultRef,
-            subject.SourceBundleArtifactId, subject.SourceBundleSha256, null, subject.PolicyHash,
+            subject.RepositoryId, bundle is null ? subject.RepositoryUrl : null, subject.ExpectedSha,
+            subject.ResultRef, bundle is null ? subject.SourceBundleArtifactId : "gate-bundle",
+            bundle?.Sha256 ?? subject.SourceBundleSha256, null, subject.PolicyHash,
             new ReviewPlanDto([], []), subject.CreatedAt);
         var reviewLease = new ReviewLeaseDto(lease.LeaseId, lease.AttemptId, attempt.SubjectId,
             lease.ExecutorId, lease.InstanceId, lease.HostId, lease.Fence, lease.AcquiredAt,
             lease.ExpiresAt, "active", lease.ResourceNamespace, lease.PortBase, lease.AuthorityEpoch);
         var workspace = new RemoteReviewWorkspace(_options, reviewSubject, reviewLease, _log);
+        long? bundleBytes = null;
+        if (bundle is not null)
+            workspace.BundleDownload = async token =>
+            {
+                byte[] content;
+                try { content = await _client.DownloadGateBundleAsync(bundle, token); }
+                catch (Exception exception) when (exception is InvalidDataException or TaskServerException)
+                {
+                    throw new ReviewInfrastructureException("SnapshotUnavailable",
+                        "Gate bundle download failed: " + exception.Message);
+                }
+                bundleBytes = content.LongLength;
+                return content;
+            };
         var evidence = new List<GateCommandEvidence>();
         var actualSha = subject.ExpectedSha;
         var tree = string.Empty;
@@ -153,6 +173,10 @@ public sealed class RemoteGateDaemon
         {
             await _client.AdvanceGateAsync(attempt.AttemptId,
                 new GatePhaseRequest(authority, GateStates.Materializing), leaseLoss.Token);
+            // The frozen commands must still hash to the subject digest before
+            // any source is materialized or any command runs.
+            if (GateRules.PlanDigestViolation(subject) is { } planViolation)
+                throw new ReviewInfrastructureException("SnapshotUnavailable", planViolation);
             var proof = await workspace.PrepareAsync(_client, leaseLoss.Token,
                 subject.Plan.SourcePaths);
             actualSha = proof.ActualHead;
@@ -315,7 +339,11 @@ public sealed class RemoteGateDaemon
             var report = new GateReport(outcome, failure, actualSha, tree, dirtyBefore, dirtyAfter,
                 evidence, $"{lease.HostId}:{RuntimeInformation.OSDescription}",
                 RuntimeInformation.FrameworkDescription, evidence.Select(item => item.OutputSha256).ToArray(),
-                [], cleanup);
+                [], cleanup,
+                GateSubjectKinds.IsVerification(subject.Kind)
+                    ? new GateSubjectProof(GateRules.PlanHash(subject.Plan), subject.PolicyHash, actualSha,
+                        bundle?.Sha256, bundle is null ? null : bundleBytes ?? bundle.SizeBytes)
+                    : null);
             await _client.ReportGateAsync(attempt.AttemptId,
                 new SubmitGateReportRequest(authority, report), shutdown);
             return cleanup == "clean";
@@ -344,7 +372,7 @@ public sealed class RemoteGateDaemon
         {
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(20), execution.Token);
+                await Task.Delay(RenewInterval, execution.Token);
                 var lease = await _client.RenewGateAsync(attemptId,
                     new GateRenewRequest(authority, _options.TtlSeconds), execution.Token);
                 expiry = lease.ExpiresAt;

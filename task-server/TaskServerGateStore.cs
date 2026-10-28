@@ -15,8 +15,8 @@ public sealed partial class TaskServerStore
         await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS gate_subjects(
                 id TEXT PRIMARY KEY,
-                task_id TEXT NOT NULL REFERENCES tasks(id),
-                source_run_id TEXT NOT NULL REFERENCES runs(id),
+                task_id TEXT NOT NULL,
+                source_run_id TEXT NOT NULL,
                 gate_id TEXT NOT NULL,
                 plan_hash TEXT NOT NULL,
                 policy_hash TEXT NOT NULL,
@@ -25,6 +25,7 @@ public sealed partial class TaskServerStore
                 dispatch_deadline TEXT NOT NULL,
                 max_attempts INTEGER NOT NULL,
                 last_fence INTEGER NOT NULL DEFAULT 0,
+                subject_kind TEXT NOT NULL DEFAULT 'run',
                 UNIQUE(source_run_id, gate_id, plan_hash)
             );
             CREATE TABLE IF NOT EXISTS gate_attempts(
@@ -65,7 +66,70 @@ public sealed partial class TaskServerStore
                 at TEXT NOT NULL,
                 detail TEXT
             );
+            CREATE TABLE IF NOT EXISTS gate_bundles(
+                sha256 TEXT PRIMARY KEY,
+                size_bytes INTEGER NOT NULL,
+                repository_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                created_by TEXT NOT NULL
+            );
             """, ct);
+        await EnsureColumnAsync(connection, "gate_attempts", "grant_half_cores", "INTEGER NOT NULL DEFAULT 0", ct);
+        await EnsureColumnAsync(connection, "gate_attempts", "allocation_version", "INTEGER NOT NULL DEFAULT 0", ct);
+        await RelaxGateSubjectSourceKeysAsync(connection, ct);
+    }
+
+    /// <summary>
+    /// DP-S4: merge, promotion and batch subjects reference monolith task and
+    /// run identities, so <c>gate_subjects</c> no longer carries foreign keys to
+    /// the Task Server's own tasks and runs. Run subjects still validate their
+    /// run in <see cref="CreateGateSubjectAsync"/>. An older store is rebuilt
+    /// once beside the old table, like the artifact retention upgrade, so the
+    /// <c>gate_attempts</c> reference keeps pointing at <c>gate_subjects</c>.
+    /// </summary>
+    private static async Task RelaxGateSubjectSourceKeysAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        var sourceKeys = Convert.ToInt64(await ScalarAsync(connection, """
+            SELECT count(*) FROM pragma_foreign_key_list('gate_subjects') WHERE "table" IN ('tasks', 'runs');
+            """, ct) ?? 0L);
+        if (sourceKeys == 0) return;
+        await ExecuteAsync(connection, "PRAGMA foreign_keys = OFF;", ct);
+        try
+        {
+            await ExecuteAsync(connection, """
+                DROP TABLE IF EXISTS gate_subjects_kind_upgrade;
+                CREATE TABLE gate_subjects_kind_upgrade(
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    source_run_id TEXT NOT NULL,
+                    gate_id TEXT NOT NULL,
+                    plan_hash TEXT NOT NULL,
+                    policy_hash TEXT NOT NULL,
+                    subject_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    dispatch_deadline TEXT NOT NULL,
+                    max_attempts INTEGER NOT NULL,
+                    last_fence INTEGER NOT NULL DEFAULT 0,
+                    subject_kind TEXT NOT NULL DEFAULT 'run',
+                    UNIQUE(source_run_id, gate_id, plan_hash)
+                );
+                INSERT INTO gate_subjects_kind_upgrade(id, task_id, source_run_id, gate_id, plan_hash,
+                        policy_hash, subject_json, created_at, dispatch_deadline, max_attempts, last_fence)
+                    SELECT id, task_id, source_run_id, gate_id, plan_hash, policy_hash, subject_json,
+                           created_at, dispatch_deadline, max_attempts, last_fence
+                      FROM gate_subjects;
+                DROP TABLE gate_subjects;
+                ALTER TABLE gate_subjects_kind_upgrade RENAME TO gate_subjects;
+                """, ct);
+        }
+        finally
+        {
+            await ExecuteAsync(connection, "PRAGMA foreign_keys = ON;", ct);
+        }
+        var foreignKeyErrors = Convert.ToInt64(
+            await ScalarAsync(connection, "SELECT count(*) FROM pragma_foreign_key_check;", ct) ?? 0L);
+        if (foreignKeyErrors != 0)
+            throw new InvalidOperationException($"Gate subject kind migration left {foreignKeyErrors} foreign-key violation(s).");
     }
 
     public async Task<GateStatus> CreateGateSubjectAsync(CreateGateSubjectRequest request, string actorId, CancellationToken ct)
@@ -84,6 +148,16 @@ public sealed partial class TaskServerStore
                 result = await ReadGateStatusAsync(connection, transaction, existing.SubjectId, ct);
                 return;
             }
+            var verification = GateSubjectKinds.IsVerification(request.Kind);
+            if (verification)
+            {
+                // The monolith owns the candidate, its membership and its
+                // publication; this authority owns the attempt. Only a bundle
+                // this authority serves can be named.
+                if (request.Bundle is { } bundle)
+                    await RequireGateBundleAsync(connection, transaction, bundle, request.RepositoryId, ct);
+            }
+            else
             await using (var command = Command(connection, """
                 SELECT task_id, result_sha, repository_id, repository_url, result_ref,
                        source_bundle_artifact_id, source_bundle_sha256
@@ -103,7 +177,7 @@ public sealed partial class TaskServerStore
                 ValidateOptionalSourceField(reader, 5, request.SourceBundleArtifactId, "source bundle artifact");
                 ValidateOptionalSourceField(reader, 6, request.SourceBundleSha256, "source bundle digest");
             }
-            if (request.BatchId is not null)
+            if (request.BatchId is not null && !verification)
                 await ValidateBatchMembersAsync(connection, transaction, request, ct);
             var now = UtcNow;
             var subject = new GateSubject($"gsub_{Guid.NewGuid():N}", request.TaskId, request.SourceRunId,
@@ -111,12 +185,13 @@ public sealed partial class TaskServerStore
                 request.SourceBundleArtifactId, request.SourceBundleSha256, request.PlanHash.ToLowerInvariant(),
                 request.PolicyHash, request.PipelineDefinitionVersion, request.TestSelectionAuditDigest,
                 request.Plan, now, request.DispatchDeadline.ToUniversalTime(), request.MaxAttempts,
-                request.BatchId, request.MembershipDigest, request.BaseSha, request.MemberRunIds);
+                request.BatchId, request.MembershipDigest, request.BaseSha, request.MemberRunIds,
+                verification ? request.Kind : null, request.Bundle);
             var attemptId = $"gat_{Guid.NewGuid():N}";
             await ExecuteAsync(connection, """
                 INSERT INTO gate_subjects(id, task_id, source_run_id, gate_id, plan_hash, policy_hash,
-                    subject_json, created_at, dispatch_deadline, max_attempts)
-                VALUES ($id, $task, $run, $gate, $hash, $policy, $json, $now, $deadline, $max);
+                    subject_json, created_at, dispatch_deadline, max_attempts, subject_kind)
+                VALUES ($id, $task, $run, $gate, $hash, $policy, $json, $now, $deadline, $max, $kind);
                 INSERT INTO gate_attempts(id, subject_id, attempt_number, state, created_at)
                 VALUES ($attempt, $id, 1, 'queued', $now);
                 INSERT INTO gate_events(attempt_id, event, at) VALUES ($attempt, 'queued', $now);
@@ -125,9 +200,13 @@ public sealed partial class TaskServerStore
                 ("$gate", subject.Plan.GateId), ("$hash", subject.PlanHash), ("$policy", subject.PolicyHash),
                 ("$json", JsonSerializer.Serialize(subject, GateJson)), ("$now", Iso(now)),
                 ("$deadline", Iso(subject.DispatchDeadline)), ("$max", subject.MaxAttempts),
-                ("$attempt", attemptId));
+                ("$attempt", attemptId), ("$kind", GateSubjectKinds.Normalize(subject.Kind)));
             await AuditAsync(connection, transaction, actorId, "gate.subject-created", "gate-subject",
-                subject.SubjectId, JsonSerializer.Serialize(new { subject.SourceRunId, subject.Plan.GateId, subject.PlanHash }), ct);
+                subject.SubjectId, JsonSerializer.Serialize(new
+                {
+                    subject.SourceRunId, subject.Plan.GateId, subject.PlanHash,
+                    Kind = GateSubjectKinds.Normalize(subject.Kind), BundleSha256 = subject.Bundle?.Sha256,
+                }), ct);
             result = await ReadGateStatusAsync(connection, transaction, subject.SubjectId, ct);
         }, ct);
         return result!;
@@ -227,11 +306,20 @@ public sealed partial class TaskServerStore
                  WHERE host_id = $host
                    AND state IN ('claimed','materializing','running','reporting','cleaning');
                 """, ct, transaction, ("$host", hostId)) ?? 0);
-            if (occupied >= 1)
+            // DP-S4: the grant switch replaces the fixed gate slot with one
+            // reservation of the host's versioned allocation (AGT-3019 D5 A).
+            var usesGrant = GateGrantAdmissionPolicy.UsesGrant(_options.GateAdmissionMode,
+                _options.GateGrantCanaryHostIds, hostId);
+            var allocation = usesGrant ? await ReadGateHostAllocationAsync(connection, transaction, hostId, ct) : null;
+            var occupiedGrants = usesGrant ? await CountOccupiedHostGrantsAsync(connection, transaction, hostId, ct) : 0;
+            var gateAdmission = GateGrantAdmissionPolicy.Decide(usesGrant, occupied, allocation, occupiedGrants);
+            if (!gateAdmission.Admitted)
             {
-                response = new GateClaimResponse("empty", Message: "Gate host slot is occupied.");
+                response = new GateClaimResponse("empty", Message: gateAdmission.Message);
                 return;
             }
+            var grantHalfCores = gateAdmission.ReservesGrant ? Math.Clamp(_options.GateGrantHalfCores, 1, 128) : 0;
+            var allocationVersion = gateAdmission.ReservesGrant ? allocation!.AllocationVersion : 0L;
             var candidates = new List<(string AttemptId, GateSubject Subject, int Number, string? ProjectName)>();
             string? quotaReason = null;
             await using (var command = Command(connection, """
@@ -248,7 +336,11 @@ public sealed partial class TaskServerStore
             foreach (var candidate in candidates)
             {
                 var projectName = candidate.ProjectName;
-                var quota = CachedWorkspaceQuota(projectName, "Gate card " + candidate.Subject.TaskId);
+                // Verification gates belong to the operator lane of a monolith
+                // project, not a Task Server card; card quota does not apply.
+                var quota = GateSubjectKinds.IsVerification(candidate.Subject.Kind)
+                    ? new WorkspaceQuotaVerdict(true, null)
+                    : CachedWorkspaceQuota(projectName, "Gate card " + candidate.Subject.TaskId);
                 if (!quota.Allowed)
                 {
                     quotaReason = quota.Message ?? "Workspace quota reached.";
@@ -296,16 +388,20 @@ public sealed partial class TaskServerStore
                     UPDATE gate_attempts SET state = 'claimed', executor_id = $executor, instance_id = $instance,
                         host_id = $host, lease_id = $lease, fence = $fence,
                         acquired_at = $now, expires_at = $expiry, resource_namespace = $namespace,
-                        port_base = $portBase,
+                        port_base = $portBase, grant_half_cores = $grant, allocation_version = $allocation,
                         claimed_at = $now, deadline = $deadline WHERE id = $attempt AND state = 'queued';
                     INSERT INTO gate_events(attempt_id, event, at) VALUES ($attempt, 'claimed', $now);
                     """, ct, transaction, ("$fence", fence), ("$subject", candidate.Subject.SubjectId),
                     ("$executor", request.ExecutorId), ("$instance", request.InstanceId), ("$host", hostId),
                     ("$lease", leaseId), ("$now", Iso(now)), ("$expiry", Iso(expiry)),
                     ("$namespace", resourceNamespace), ("$portBase", portBase),
+                    ("$grant", grantHalfCores), ("$allocation", allocationVersion),
                     ("$deadline", Iso(deadline)), ("$attempt", candidate.AttemptId));
                 await AuditAsync(connection, transaction, actorId, "gate.claimed", "gate-attempt",
-                    candidate.AttemptId, JsonSerializer.Serialize(new { fence, hostId }), ct);
+                    candidate.AttemptId, JsonSerializer.Serialize(new
+                    {
+                        fence, hostId, admission = gateAdmission.Reason, grantHalfCores, allocationVersion,
+                    }), ct);
                 var quotaCardNotice = ConsumeQuotaCardNotice(projectName);
                 if (quotaCardNotice is not null)
                     await AppendLifecycleEventAsync(connection, transaction, candidate.Subject.SourceRunId,
@@ -313,7 +409,8 @@ public sealed partial class TaskServerStore
                 var attempt = await ReadGateAttemptAsync(connection, transaction, candidate.AttemptId, ct);
                 response = new GateClaimResponse("claimed", candidate.Subject, attempt,
                     new GateLease(leaseId, candidate.AttemptId, request.ExecutorId, request.InstanceId,
-                        hostId, fence, 0, now, expiry, resourceNamespace, portBase), quotaWarning);
+                        hostId, fence, 0, now, expiry, resourceNamespace, portBase,
+                        grantHalfCores, allocationVersion), quotaWarning);
                 return;
             }
             response = new GateClaimResponse("empty", Message: quotaReason ?? "No eligible gate subject is queued.");
@@ -382,6 +479,8 @@ public sealed partial class TaskServerStore
             if (!string.Equals(subject.ExpectedSha, request.Report.TestedSha, StringComparison.OrdinalIgnoreCase))
                 throw new TaskServerConflictException("gate-tested-sha-mismatch", "Tested SHA differs from the immutable subject.");
             ValidateGateReport(subject.Plan, request.Report);
+            if (GateRules.ProofViolation(subject, request.Report) is { } proofViolation)
+                throw new TaskServerConflictException("gate-report-invalid", proofViolation);
             var json = JsonSerializer.Serialize(request.Report, GateJson);
             var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
             var priorDigest = await ScalarAsync(connection,
@@ -483,6 +582,129 @@ public sealed partial class TaskServerStore
         }, ct);
         return result!;
     }
+
+    /// <summary>
+    /// Stores one immutable verification bundle. The digest is the identity:
+    /// a replay with the same digest and size returns the existing locator, a
+    /// different size for a known digest is a conflict, and a body that breaks
+    /// its declared size or digest is never stored.
+    /// </summary>
+    public async Task<GateBundleLocator> PutGateBundleAsync(string sha256, long sizeBytes,
+        string repositoryId, Stream content, string actorId, CancellationToken ct)
+    {
+        RequireWritable();
+        sha256 = sha256.Trim().ToLowerInvariant();
+        if (!ValidDigest(sha256, 64) || sizeBytes < 1 || sizeBytes > GateBundleMaxBytes
+            || string.IsNullOrWhiteSpace(repositoryId) || repositoryId.Length > 160)
+            throw new ArgumentException(
+                $"Gate bundle requires a SHA-256 digest, a repository and a size of 1 to {GateBundleMaxBytes} bytes.");
+        await using (var connection = await OpenReadyAsync(ct))
+        {
+            var known = await ScalarAsync(connection,
+                "SELECT size_bytes FROM gate_bundles WHERE sha256 = $sha;", ct, null, ("$sha", sha256));
+            if (known is not null)
+            {
+                if (Convert.ToInt64(known) != sizeBytes)
+                    throw new TaskServerConflictException("gate-bundle-conflict",
+                        "A gate bundle with this digest was stored with a different size.");
+                if (File.Exists(GateBundleFiles.PathFor(GateBundleRoot, sha256)))
+                    return new GateBundleLocator(sha256, sizeBytes, GateBundleLimits.Locator(sha256));
+            }
+        }
+        await GateBundleFiles.WriteAsync(GateBundleRoot, sha256, sizeBytes, content, ct);
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            await ExecuteAsync(connection, """
+                INSERT INTO gate_bundles(sha256, size_bytes, repository_id, created_at, created_by)
+                VALUES ($sha, $size, $repository, $now, $actor)
+                ON CONFLICT(sha256) DO NOTHING;
+                """, ct, transaction, ("$sha", sha256), ("$size", sizeBytes),
+                ("$repository", repositoryId), ("$now", Iso(UtcNow)), ("$actor", actorId));
+            await AuditAsync(connection, transaction, actorId, "gate.bundle-stored", "gate-bundle", sha256,
+                JsonSerializer.Serialize(new { sizeBytes, repositoryId }), ct);
+        }, ct);
+        return new GateBundleLocator(sha256, sizeBytes, GateBundleLimits.Locator(sha256));
+    }
+
+    /// <summary>
+    /// Opens a stored bundle for download. A runner principal may read only a
+    /// bundle named by a gate attempt it currently holds; the host still checks
+    /// size and digest itself before any command.
+    /// </summary>
+    public async Task<(Stream Content, long SizeBytes)?> OpenGateBundleAsync(
+        string sha256, string? runnerId, CancellationToken ct)
+    {
+        sha256 = sha256.Trim().ToLowerInvariant();
+        if (!ValidDigest(sha256, 64)) return null;
+        await using var connection = await OpenReadyAsync(ct);
+        var size = await ScalarAsync(connection,
+            "SELECT size_bytes FROM gate_bundles WHERE sha256 = $sha;", ct, null, ("$sha", sha256));
+        if (size is null) return null;
+        if (runnerId is not null && await ScalarAsync(connection, """
+            SELECT 1 FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
+             WHERE a.executor_id = $runner
+               AND a.state IN ('claimed','materializing','running','reporting','cleaning')
+               AND json_extract(s.subject_json, '$.bundle.sha256') = $sha
+             LIMIT 1;
+            """, ct, null, ("$runner", runnerId), ("$sha", sha256)) is null)
+            throw new TaskServerConflictException("gate-bundle-not-leased",
+                "Gate bundle is readable only by the holder of a live gate attempt that names it.");
+        var path = GateBundleFiles.PathFor(GateBundleRoot, sha256);
+        var bytes = Convert.ToInt64(size);
+        if (!File.Exists(path) || new FileInfo(path).Length != bytes)
+            throw new InvalidDataException("Stored gate bundle is missing or damaged.");
+        return (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true), bytes);
+    }
+
+    private string GateBundleRoot => _options.ResolveContentObjectStorePath();
+
+    private long GateBundleMaxBytes => Math.Clamp(_options.GateBundleMaxBytes, 1, GateBundleLimits.MaxBytes);
+
+    private static async Task RequireGateBundleAsync(SqliteConnection connection, SqliteTransaction transaction,
+        GateBundleLocator bundle, string repositoryId, CancellationToken ct)
+    {
+        await using var command = Command(connection,
+            "SELECT size_bytes, repository_id FROM gate_bundles WHERE sha256 = $sha;", transaction,
+            ("$sha", bundle.Sha256.ToLowerInvariant()));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            throw new TaskServerConflictException("gate-bundle-missing", "Gate bundle was not uploaded to this authority.");
+        if (reader.GetInt64(0) != bundle.SizeBytes || reader.GetString(1) != repositoryId)
+            throw new TaskServerConflictException("gate-bundle-mismatch",
+                "Gate bundle size or repository differs from the stored bundle.");
+    }
+
+    private static async Task<GateHostAllocation?> ReadGateHostAllocationAsync(SqliteConnection connection,
+        SqliteTransaction transaction, string hostId, CancellationToken ct)
+    {
+        await using var command = Command(connection, """
+            SELECT c.max_parallelism,
+                   CASE WHEN c.allocation_version > 0 THEN c.allocation_version ELSE c.version END,
+                   EXISTS(SELECT 1 FROM runners r
+                           WHERE r.host_id = c.host_id AND r.status = 'active'
+                             AND r.runtime_capacity_applied_version =
+                                 CASE WHEN c.allocation_version > 0 THEN c.allocation_version ELSE c.version END)
+              FROM runtime_capacity_settings c WHERE c.host_id = $host;
+            """, transaction, ("$host", hostId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct)
+            ? new GateHostAllocation(reader.GetInt32(0), reader.GetInt64(1), reader.GetInt64(2) == 1)
+            : null;
+    }
+
+    /// <summary>
+    /// Host grants in use: coding leases plus gate attempts that reserved a
+    /// grant. A slot-mode gate attempt reserves none, so the coding budget is
+    /// unchanged until the grant switch is on.
+    /// </summary>
+    private static async Task<int> CountOccupiedHostGrantsAsync(SqliteConnection connection,
+        SqliteTransaction transaction, string hostId, CancellationToken ct)
+        => await CountOccupiedHostSlotsAsync(connection, transaction, hostId, ct)
+           + Convert.ToInt32(await ScalarAsync(connection, """
+               SELECT count(*) FROM gate_attempts
+                WHERE host_id = $host AND grant_half_cores > 0
+                  AND state IN ('claimed','materializing','running','reporting','cleaning');
+               """, ct, transaction, ("$host", hostId)) ?? 0);
 
     private static void ValidateGateSubject(CreateGateSubjectRequest request)
         => GateRules.ValidateSubject(request);
@@ -637,13 +859,15 @@ public sealed partial class TaskServerStore
     {
         await using var command = Command(connection, """
             SELECT lease_id, executor_id, instance_id, host_id, fence, authority_epoch,
-                   acquired_at, expires_at, resource_namespace, port_base FROM gate_attempts WHERE id = $id;
+                   acquired_at, expires_at, resource_namespace, port_base,
+                   grant_half_cores, allocation_version FROM gate_attempts WHERE id = $id;
             """, transaction, ("$id", id));
         await using var reader = await command.ExecuteReaderAsync(ct);
         await reader.ReadAsync(ct);
         return new GateLease(reader.GetString(0), id, reader.GetString(1), reader.GetString(2),
             reader.GetString(3), reader.GetInt64(4), reader.GetInt64(5), Parse(reader.GetString(6)),
-            Parse(reader.GetString(7)), reader.GetString(8), reader.GetInt32(9));
+            Parse(reader.GetString(7)), reader.GetString(8), reader.GetInt32(9),
+            reader.GetInt32(10), reader.GetInt64(11));
     }
 
     private async Task<GateStatus?> ReadGateStatusAsync(SqliteConnection connection,

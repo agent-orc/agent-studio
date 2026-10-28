@@ -41,6 +41,16 @@ public static class CompletedPushSelectionPolicy
     }
 
     /// <summary>
+    /// Card-level decision taken before any git call (AGT-3337): an integration
+    /// verdict of <see cref="IntegrationStatuses.Integrated"/> already proves
+    /// every attributed commit on the published integration branch, so the card
+    /// is skipped without a fetch. <see cref="IntegrationStatuses.MergedLocally"/>
+    /// and every other verdict still need remote evidence.
+    /// </summary>
+    public static bool IsIntegratedByLocalEvidence(string? integrationStatus)
+        => string.Equals(integrationStatus, IntegrationStatuses.Integrated, StringComparison.Ordinal);
+
+    /// <summary>
     /// Classifies one commit. <paramref name="isAncestorOfIntegration"/> is
     /// null when no integration signal is available (no computed integration
     /// verdict and no reviewed-result SHA) - the pre-fix behaviour of

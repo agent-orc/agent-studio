@@ -2682,8 +2682,8 @@ public sealed class TaskTransitionService
     }
 
     public async Task<CompletedPushCommitsResult> PushCompletedJobCommitsDetailedAsync(
-        TaskInfo job, string strategy, CancellationToken ct = default)
-        => await PushJobCommitsDetailedAsync(job, strategy, requireCompletedState: true, ct);
+        TaskInfo job, string strategy, CancellationToken ct = default, CompletedPushCycle? cycle = null)
+        => await PushJobCommitsDetailedAsync(job, strategy, requireCompletedState: true, ct, cycle);
 
     public async Task<int> PushCompletedJobCommitsAsync(TaskInfo job, string strategy, CancellationToken ct = default)
         => (await PushCompletedJobCommitsDetailedAsync(job, strategy, ct)).Pushed;
@@ -2707,12 +2707,19 @@ public sealed class TaskTransitionService
     /// becoming <see cref="CommitPushStatuses.Rejected"/> and permanently
     /// skipped. A card whose integrated result is already on the remote is
     /// skipped entirely - no per-commit push calls at all (AGT-2761).
+    /// <para>AGT-3337: a card whose integration verdict already proves the
+    /// delivery on the published integration branch is skipped before any git
+    /// call. Every other card reads the remote through one fetch of the
+    /// integration branch refspec per repository and <paramref name="cycle"/>,
+    /// never a full <c>fetch --prune</c>; the shortcut checks
+    /// <c>origin/&lt;integration branch&gt;</c>, not <c>origin/main</c>.</para>
     /// </summary>
     public async Task<CompletedPushCommitsResult> PushJobCommitsDetailedAsync(
         TaskInfo job,
         string strategy,
         bool requireCompletedState,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        CompletedPushCycle? cycle = null)
     {
         if (AutoPushStrategies.Normalize(strategy) == AutoPushStrategies.Never)
             return CompletedPushCommitsResult.Empty;
@@ -2724,6 +2731,10 @@ public sealed class TaskTransitionService
             .OrderBy(c => c.At)
             .ToList();
         if (pending.Count == 0) return CompletedPushCommitsResult.Empty;
+
+        var integrationStatus = _integrationStatus?.BuildLookup([job]).GetValueOrDefault(job.TaskKey)?.Status;
+        if (CompletedPushSelectionPolicy.IsIntegratedByLocalEvidence(integrationStatus))
+            return new CompletedPushCommitsResult(0, 0, 0, CardSkippedIntegrated: true);
 
         var reason = requireCompletedState ? "completed" : "auto-commit";
         var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
@@ -2739,12 +2750,21 @@ public sealed class TaskTransitionService
             return new CompletedPushCommitsResult(legacyPushed, 0, 0, CardSkippedIntegrated: false);
         }
 
-        _git.Fetch(root, "origin", ct);
-        var remoteAncestors = _git.GetAncestorShaSet(root, "origin/main");
-        var anchorSha = ResolveIntegratedAnchorSha(job, pending, out var isIntegrated);
+        var integrationBranch = ResolveIntegrationBranch(job, _settings.Get(job.ProjectName));
+        if (string.IsNullOrWhiteSpace(integrationBranch)) integrationBranch = "main";
+        if ((cycle ?? new CompletedPushCycle()).TryClaimFetch(root))
+            _git.FetchIntegrationBranch(root, integrationBranch, ct);
 
-        if (isIntegrated && anchorSha is not null && remoteAncestors.Contains(anchorSha))
+        var anchorSha = ResolveIntegratedAnchorSha(job, pending, integrationStatus, out var isIntegrated);
+        var integrationAncestors = _git.GetAncestorShaSet(root, $"origin/{integrationBranch}");
+        if (isIntegrated && anchorSha is not null && integrationAncestors.Contains(anchorSha))
             return new CompletedPushCommitsResult(0, 0, 0, CardSkippedIntegrated: true);
+
+        // The push target stays main; PushShaAsync refreshes origin/main itself
+        // before it pushes, so a stale mirror here costs at most one no-op check.
+        var remoteAncestors = string.Equals(integrationBranch, "main", StringComparison.Ordinal)
+            ? integrationAncestors
+            : _git.GetAncestorShaSet(root, "origin/main");
 
         var integratedAncestors = anchorSha is not null
             ? _git.GetAncestorShaSet(root, anchorSha)
@@ -2842,13 +2862,13 @@ public sealed class TaskTransitionService
     /// which case the caller falls back to attempting every pending commit
     /// unconditionally rather than guessing a commit is superseded.
     /// </summary>
-    private string? ResolveIntegratedAnchorSha(
+    private static string? ResolveIntegratedAnchorSha(
         TaskInfo job,
         IReadOnlyList<TaskCommitInfo> pending,
+        string? integrationStatus,
         out bool isIntegrated)
     {
-        var status = _integrationStatus?.BuildLookup([job]).GetValueOrDefault(job.TaskKey);
-        isIntegrated = IntegrationStatuses.IsMerged(status?.Status);
+        isIntegrated = IntegrationStatuses.IsMerged(integrationStatus);
         if (isIntegrated)
         {
             var anchor = pending.LastOrDefault(c => !TaskCommitSupersession.IsSuperseded(c)) ?? pending[^1];

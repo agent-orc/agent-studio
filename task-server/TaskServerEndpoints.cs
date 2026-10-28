@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
 
 namespace AgentStudio.TaskServer;
@@ -626,6 +627,46 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.CancelGateSubjectAsync(subjectId, Actor(context), ct)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
             .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        // DP-S4: bounded immutable bundle artifacts for merge, promotion and
+        // batch verification subjects. The digest is the address; the host
+        // re-checks size and digest before materializing.
+        gates.MapPost("/bundles/{sha256}", async (
+            HttpContext context, string sha256, long sizeBytes, string repositoryId,
+            TaskServerStore store, IOptions<TaskServerOptions> options, CancellationToken ct) =>
+        {
+            var limit = Math.Clamp(options.Value.GateBundleMaxBytes, 1, GateBundleLimits.MaxBytes);
+            if (sizeBytes > limit || context.Request.ContentLength is { } length && length != sizeBytes)
+                return ArtifactRequestLimitMiddleware.Problem(limit, context.Request.ContentLength);
+            if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit)
+                bodyLimit.MaxRequestBodySize = sizeBytes;
+            return await InvokeAsync(() => store.PutGateBundleAsync(sha256, sizeBytes, repositoryId,
+                context.Request.Body, Actor(context), ct), StatusCodes.Status201Created);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        gates.MapGet("/bundles/{sha256}", async (
+            HttpContext context, string sha256, TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            var runnerId = principal is { Kind: TaskServerPrincipalKinds.Runner }
+                ? principal.RunnerId ?? string.Empty : null;
+            try
+            {
+                if (await store.OpenGateBundleAsync(sha256, runnerId, ct) is not { } bundle)
+                    return Results.NotFound(new ApiError("not-found", "Gate bundle was not found."));
+                context.Response.ContentLength = bundle.SizeBytes;
+                return Results.Stream(bundle.Content, "application/octet-stream");
+            }
+            catch (TaskServerConflictException conflict) when (conflict.Code == "gate-bundle-not-leased")
+            {
+                return Results.Json(new ApiError(conflict.Code, conflict.Message),
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+            catch (Exception exception)
+            {
+                return MapError(exception);
+            }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
         gates.MapGet("/review-sources/{reviewSubjectId}", async (
             string reviewSubjectId, TaskServerStore store, CancellationToken ct)
             => await InvokeNullableAsync(() => store.GetReviewSubjectAsync(reviewSubjectId, ct)))

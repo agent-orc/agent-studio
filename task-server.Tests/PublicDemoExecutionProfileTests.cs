@@ -96,7 +96,8 @@ public sealed class PublicDemoExecutionProfileTests
         // AGT-3181 preview feedback queues a same-card continuation (Continue).
         // AGT-3334 adds ten post-work command routes: one claim (Claim) and
         // nine subject, backend-pass, cohort, renewal and report steps (PostStep).
-        Assert.Equal(57, routes.Count);
+        // DP-S4 added the gate bundle upload (PostStep) and download (Continue).
+        Assert.Equal(59, routes.Count);
         var postWorkClaim = Assert.Single(routes, route => route.RoutePattern.RawText ==
             "/api/v1/post-work/claims");
         Assert.Equal(ExecutionAdmissionPath.Claim,
@@ -140,11 +141,11 @@ public sealed class PublicDemoExecutionProfileTests
             {
                 [ExecutionAdmissionPath.Claim] = 7,
                 [ExecutionAdmissionPath.Start] = 7,
-                [ExecutionAdmissionPath.Continue] = 13,
+                [ExecutionAdmissionPath.Continue] = 14,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,
-                [ExecutionAdmissionPath.PostStep] = 23,
+                [ExecutionAdmissionPath.PostStep] = 24,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));
