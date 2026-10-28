@@ -55,7 +55,8 @@ public sealed class ReviewDaemonDrainTests : IDisposable
                 CpuStealPercent: null,
                 IoWaitPercent: null,
                 CpuCores: Environment.ProcessorCount,
-                ActiveSlots: activeSlots));
+                ActiveSlots: activeSlots),
+            planeBudgetProbe: OpenPlane());
 
         using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var run = daemon.RunAsync(shutdown.Token);
@@ -107,7 +108,8 @@ public sealed class ReviewDaemonDrainTests : IDisposable
                 CpuStealPercent: null,
                 IoWaitPercent: null,
                 CpuCores: Environment.ProcessorCount,
-                ActiveSlots: activeSlots));
+                ActiveSlots: activeSlots),
+            planeBudgetProbe: OpenPlane());
 
         using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var run = daemon.RunAsync(shutdown.Token);
@@ -156,7 +158,8 @@ public sealed class ReviewDaemonDrainTests : IDisposable
                 CpuStealPercent: null,
                 IoWaitPercent: null,
                 CpuCores: Environment.ProcessorCount,
-                ActiveSlots: activeSlots));
+                ActiveSlots: activeSlots),
+            planeBudgetProbe: OpenPlane());
 
         using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var run = daemon.RunAsync(shutdown.Token);
@@ -235,6 +238,11 @@ public sealed class ReviewDaemonDrainTests : IDisposable
         DrainTimeoutSeconds = drainTimeoutSeconds,
         ServerRequestTimeoutSeconds = 1,
     };
+
+    // This suite proves drain behavior, so the role quota must not depend on
+    // the cgroup assigned to the test runner (which may be below two cores).
+    private static ReviewPlaneBudgetProbe OpenPlane()
+        => new(() => 12, () => "max 100000", () => "throttled_usec 0");
 
     /// <summary>A review plane that registers the executor and never has work.</summary>
     private sealed class IdleReviewPlane(bool blockFirstClaim = false) : HttpMessageHandler

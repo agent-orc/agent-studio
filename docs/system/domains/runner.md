@@ -3,6 +3,28 @@
 Version: 2026-10-17
 Status: System-of-record map for runner-side changes.
 
+## Dynamic placement host agent, DP-S2
+
+Selected working decision: dynamic placement D2 option A, one supervised host
+agent per physical machine with coding and review adapters. The AGT-3019 D5
+option A allocation remains the single host budget; this slice consumes the
+DP-S1 shadow admission contract and does not activate a new placement policy.
+The host agent starts with both roles disabled. A role is enabled only after
+its old daemon has acknowledged a claim barrier, every persisted attempt has
+reached a fenced terminal or cleanup state, and that daemon process has exited.
+The role adapter runs the existing `RemoteRunnerDaemon` or
+`RemoteReviewDaemon` in a child process with its original runner identity,
+state directory, Task Server client, and lease protocol. Separate child
+processes preserve provider CLI home and probe isolation. The host inventory
+is an atomically persisted projection of role slot files, not a lease store.
+Each adapter also holds a role-local process lock so a host-agent restart
+cannot create a second reattacher while its earlier child is alive. A release
+or protocol mismatch holds that adapter until a host-agent restart. See the
+[host-agent migration runbook](../../operations/setup/linux-runner-host.md#host-agent-role-migration)
+for the canary, drain, and rollback sequence. Linux per-attempt containers are
+the subsequent DP-S3 executor slice; DP-S2 retains the current process and
+cgroup executor.
+
 Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.

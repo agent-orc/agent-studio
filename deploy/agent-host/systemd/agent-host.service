@@ -1,0 +1,32 @@
+[Unit]
+Description=Agent Studio host agent for coding and review adapters
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=agent-runner
+Group=agent-runner
+WorkingDirectory=/var/lib/agent-host
+Environment=HOME=/var/lib/agent-host
+Environment="PATH=/var/lib/agent-host/.dotnet/tools:/var/lib/agent-host/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/opt/agent-host/current/agent-host host-agent run /etc/agent-runner/host-agent.json
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=120s
+KillSignal=SIGTERM
+# Detached workers must survive a host-agent restart for fenced reattachment.
+KillMode=process
+Delegate=cpu pids
+DelegateSubgroup=daemon
+PrivateTmp=false
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/agent-host
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

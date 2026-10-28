@@ -2340,6 +2340,91 @@ stopped. Installing or changing the unit requires root, followed by
 
 ### Restart, drain, handoff
 
+#### Host-agent role migration
+
+DP-S2 uses Dossier decision D2 option A. Start one `agent-host host-agent run`
+service per machine with both roles disabled. Its config points to the existing
+coding and review environment files. The two files must resolve to the same
+Task Server and physical hostname, distinct runner IDs and state directories,
+and distinct provider CLI homes. The host-agent service account must be able
+to read both role credentials and state directories. Keep the existing
+Task Server credentials and runner IDs: the host agent never mints an attempt
+or performs a Git publication. DP-S1 placement is still shadow only.
+
+```json
+{
+  "stateDirectory": "/var/lib/agent-host/host-agent",
+  "coding": {
+    "environmentFile": "/etc/agent-runner/runner-coding.env",
+    "homeDirectory": "/var/lib/agent-runner/coding",
+    "additionalEnvironmentFiles": ["/etc/agent-runner/provider-auth.env"]
+  },
+  "review": {
+    "environmentFile": "/etc/agent-runner/runner-review.env",
+    "homeDirectory": "/var/lib/agent-runner/review",
+    "additionalEnvironmentFiles": ["/etc/agent-runner/provider-auth.env"]
+  }
+}
+```
+
+The host agent reads literal `KEY=value` environment assignments, with optional
+single or double quotes. It does not evaluate shell expressions. Keep secrets
+in the existing token files, with owner-only permissions. Use the existing
+role-specific provider home paths in `homeDirectory`; do not copy live login
+files into a new home. Install the supplied
+[agent-host.service](../../../deploy/agent-host/systemd/agent-host.service) as `agent-host.service`, adjust
+its service user and writable roots for those homes, create its state directory,
+and reload systemd. Before migration,
+deploy a binary containing the coding drain barrier to the old coding unit.
+The review unit already has a drain barrier. Point both the old services and
+the host config at the same role state directories. Then run one role at a
+time:
+
+```sh
+sudo systemctl start agent-host.service
+agent-host host-agent migrate-role /etc/agent-runner/host-agent.json coding
+agent-host host-agent migrate-role /etc/agent-runner/host-agent.json review
+agent-host host-agent inventory /etc/agent-runner/host-agent.json
+```
+
+`migrate-role` leaves a persistent barrier in the old role state directory.
+The old daemon stops new claims, reconciles and finishes its attempts, writes
+an acknowledgement with zero active slots, and exits. Only then does the
+command persist the role as enabled. The host agent reads the existing slot
+files and starts the adapter, which registers and reconciles through the Task
+Server before taking claims. A timeout or unreadable slot holds migration;
+do not delete the barrier to force an active lease across executors. After
+the host adapter is observed claiming, disable the old systemd role unit so
+it does not repeatedly start and drain. The role-local process lock protects
+host-agent restarts when a previous adapter process remains alive.
+
+Use `agent-host host-agent drain-role ... coding` or `... review` to stop one
+adapter admitting work and wait for zero attempts. To roll back, run
+`agent-host host-agent rollback-role <config> <role>`; it drains and disables
+the host role before clearing the old daemon barrier. Then explicitly start
+the old role unit. A failed drain leaves the claim barrier in place and does
+not reopen the old unit. The host agent keeps a role-state file and a
+`attempt-inventory.json` projection under `stateDirectory`; inspect those
+alongside Task Server attempt records after a crash. Never edit these files
+to transfer a lease.
+
+For the DP-S2 canary, restart the host agent while one coding and one review
+attempt run. Confirm each adapter reconnects with its original runner ID,
+the Task Server shows one current authority holder per attempt, and each
+attempt either finishes once or has fenced cleanup evidence. Check that the
+old daemon's acknowledgement reached zero before the first new claim and that
+no duplicate completion or publication was recorded. Record the host-agent
+process CPU and resident memory over an idle five-minute window, excluding
+its role children, before widening the canary. The container executor and
+production placement switch belong to later slices.
+
+The first isolated worktree sample on 28 October 2026 ran the built host agent
+for 30.02 seconds with both role adapters disabled. At 0.5-second intervals,
+the supervisor used a mean 0.899% and p90 1.999% of one CPU core; median RSS
+was 50.266 MiB and maximum RSS was 50.992 MiB. This is process overhead only.
+It excludes adapter children, active attempts, systemd, and the five-minute
+production canary window, so it is a baseline rather than a rollout threshold.
+
 **Drain the Review Executor; never restart it while slots are busy.** A review
 holds thirty to sixty minutes of gate work in a detached worker. Stopping the
 daemon on top of it can cost that work and put the card back in the queue.
