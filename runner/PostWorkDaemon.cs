@@ -163,7 +163,10 @@ public sealed class PostWorkDaemon
                 if (result.Status != "passed") break;
             }
         }
-        catch (OperationCanceledException) when (lost.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (lost.IsCancellationRequested)
+        {
+            _log($"post-work attempt={lease.AttemptId} step cancelled after lease loss or shutdown");
+        }
         var leaseLost = lost.IsCancellationRequested && !shutdown.IsCancellationRequested;
         await lost.CancelAsync();
         await heartbeat;
@@ -406,7 +409,11 @@ internal static class PostWorkProcess
             catch (OperationCanceledException)
             {
                 if (onTimeout is not null && !ct.IsCancellationRequested) await onTimeout();
-                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                try { process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException exception)
+                {
+                    Trace.TraceInformation("post-work process exited before timeout cleanup: {0}", exception.Message);
+                }
                 await process.WaitForExitAsync(CancellationToken.None);
                 ct.ThrowIfCancellationRequested();
                 lock (output) return new PostWorkProcessResult("timed-out", null, watch.ElapsedMilliseconds, output.ToString());
@@ -421,7 +428,10 @@ internal static class PostWorkProcess
     public static async Task RunQuietAsync(string fileName, IEnumerable<string> arguments)
     {
         try { await RunAsync(fileName, arguments, Path.GetTempPath(), TimeSpan.FromSeconds(30), CancellationToken.None); }
-        catch (Exception) { }
+        catch (Exception exception)
+        {
+            Trace.TraceWarning("post-work container cleanup command failed: {0}", exception.Message);
+        }
     }
 
     public static bool TryDeleteDirectory(string path, Action<string> log)

@@ -12,7 +12,7 @@ public sealed class PostWorkDaemonTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_root, true); } catch (IOException) { }
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 
     [Fact]
