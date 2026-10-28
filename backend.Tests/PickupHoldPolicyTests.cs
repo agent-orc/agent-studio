@@ -47,6 +47,23 @@ public class PickupHoldPolicyTests
     }
 
     [Fact]
+    public void MissingHostCapabilityHasItsOwnHoldClassificationAndNamesTheKey()
+    {
+        var hold = Evaluate(Card(), rejection: new RemoteDispatchRejection
+        {
+            Code = "host-capability-missing",
+            RunnerId = "runner-1",
+            RunnerName = "agent-runner-01",
+            Reason = "Host capability missing on agent-runner-01: model-acceptance:codex:gpt-6-sol.",
+            RejectedAtUtc = Now.AddMinutes(-12),
+        });
+        Assert.Equal(PickupHoldMechanisms.HostCapabilityMissing, hold!.Mechanism);
+        Assert.Contains("agent-runner-01", hold.Reason);
+        Assert.Contains("model-acceptance:codex:gpt-6-sol", hold.Reason);
+        Assert.DoesNotContain("reset", hold.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void CardOutsideAPickupLane_IsNotHeld()
     {
         // 3-progress has been picked up; "queued but unpickable" is not a state

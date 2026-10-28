@@ -12,6 +12,8 @@ public sealed class IntegrationResultPolicyTests
     [InlineData(IntegrationOutcomeKinds.StaleBase, 1, IntegrationResultAction.Requeue, null)]
     [InlineData(IntegrationOutcomeKinds.StaleBase, 2, IntegrationResultAction.Requeue, null)]
     [InlineData(IntegrationOutcomeKinds.StaleBase, 3, IntegrationResultAction.Escalate, "5e-escalated")]
+    [InlineData(IntegrationOutcomeKinds.BlockedFailingArea, 1, IntegrationResultAction.Requeue, null)]
+    [InlineData(IntegrationOutcomeKinds.BlockedFailingArea, 99, IntegrationResultAction.Requeue, null)]
     [InlineData(IntegrationOutcomeKinds.Conflict, 1, IntegrationResultAction.Escalate, "5e-escalated")]
     [InlineData(IntegrationOutcomeKinds.Failed, 1, IntegrationResultAction.Escalate, "5e-escalated")]
     [InlineData("unknown", 1, IntegrationResultAction.Escalate, "5e-escalated")]

@@ -2197,6 +2197,15 @@ public partial class GitService
         return ResolveGitToplevel(configured) ?? configured;
     }
 
+    /// <summary>The configured checkout path for filesystem reads. This does not inspect Git.</summary>
+    public string? ResolveConfiguredRepoPath(string jobId, string? watchPath)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null) return null;
+        var entry = _scanner.GetWatchPaths().FirstOrDefault(e => e.Name == info.ProjectName);
+        return entry == null ? null : ResolveConfiguredRepositoryPath(entry);
+    }
+
     /// <summary>
     /// The resolved location a task's LIVE Git view should read: the task's own
     /// worktree when it is running in one (parallel model, ADR-0052), otherwise

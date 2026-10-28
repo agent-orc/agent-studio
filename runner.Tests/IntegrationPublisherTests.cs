@@ -80,6 +80,39 @@ public sealed class IntegrationPublisherTests : IDisposable
         Assert.NotEqual(new string('9', 40), await RevParseAsync(origin, "refs/heads/develop"));
     }
 
+    [Fact]
+    public async Task RedDevelopHoldsAnOverlappingDeliveryButPublishesAnUnrelatedOne()
+    {
+        var (origin, work) = await RepositoryAsync();
+        var baseSha = await RevParseAsync(work, "HEAD");
+        var overlapping = await CommitAsync(work, "feature.txt", "broken area", "Overlapping");
+        await Git(work, "push", "-q", origin, "HEAD:refs/heads/results/overlap");
+        var red = new PostMergeProjectState("prj", "red", baseSha, baseSha, null,
+            [new PostMergeRunRecord("red", "demo", "window", baseSha, null, null, null, 1,
+                ["test"], [new("test", 1, false)], "red", DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch)],
+            [new PostMergeIncident("fingerprint", "repair", "FixForward", DateTimeOffset.UnixEpoch,
+                null, null, ["Demo.Fails"], ["feature.txt"])]);
+
+        var blocked = await IntegrationPublisher.PublishAsync(
+            Command(origin, "develop", "refs/heads/results/overlap", overlapping), 1,
+            Path.Combine(_workspace.Path, "state"), _log.Add, default, red);
+        Assert.Equal(IntegrationOutcomeKinds.BlockedFailingArea, blocked.Outcome);
+        Assert.Equal(baseSha, await RevParseAsync(origin, "refs/heads/develop"));
+
+        await Git(work, "checkout", "-q", "--detach", baseSha);
+        var unrelated = await CommitAsync(work, "other.txt", "safe", "Unrelated");
+        await Git(work, "push", "-q", origin, "HEAD:refs/heads/results/unrelated");
+        var published = await IntegrationPublisher.PublishAsync(
+            Command(origin, "develop", "refs/heads/results/unrelated", unrelated), 2,
+            Path.Combine(_workspace.Path, "state"), _log.Add, default, red);
+        Assert.Equal(IntegrationOutcomeKinds.Integrated, published.Outcome);
+
+        var repair = await IntegrationPublisher.PublishAsync(
+            Command(origin, "develop", "refs/heads/results/overlap", overlapping) with { TaskId = "repair" }, 3,
+            Path.Combine(_workspace.Path, "state"), _log.Add, default, red);
+        Assert.Equal(IntegrationOutcomeKinds.Integrated, repair.Outcome);
+    }
+
     private static IntegrationCommandDto Command(
         string origin, string integrationRef, string resultRef, string resultSha)
         => new("int_test", "prj", "tsk", "orch", "run", "review", "repo", origin, integrationRef,

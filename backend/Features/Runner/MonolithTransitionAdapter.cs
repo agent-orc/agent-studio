@@ -9,6 +9,10 @@ namespace AgentStudio.Runner;
 public static class MonolithTransitionAdapter
 {
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
+    public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
+        => RedDevelopRepairPolicy.Decide(facts);
+    public static bool MayCreateRelease(bool developRed)
+        => RedDevelopRepairPolicy.MayCreateRelease(developRed);
     public static ReviewBudgetDecision ReviewBudget(ReviewBudgetFacts facts) => ReviewBudgetPolicy.Decide(facts);
     public static DeepReviewDecision DeepReview(DeepReviewGrounds facts, string mode,
         string? ruleVersionId = null, bool? ruleSelection = null, string? ruleModel = null,

@@ -1,4 +1,5 @@
 using AgentStudio.Registry;
+using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
@@ -36,8 +37,17 @@ public static class PostMergeRunEndpoints
                 };
             return Results.Ok(state);
         });
+        app.MapPost("/api/runner/post-merge/projects/{project}/escalation-check", (string project,
+            ProjectRegistry registry, PostMergeIncidentService incidents) =>
+        {
+            var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
+            if (record is null) return Results.NotFound();
+            incidents.EscalateOverdue(record);
+            return Results.NoContent();
+        });
         app.MapPost("/api/runner/post-merge/projects/{project}/runs", (string project,
-            PostMergeRunRecord run, ProjectRegistry registry, PostMergeRunStore store) =>
+            PostMergeRunRecord run, ProjectRegistry registry, PostMergeRunStore store,
+            PostMergeIncidentService incidents) =>
         {
             var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
             if (record is null) return Results.NotFound();
@@ -47,9 +57,27 @@ public static class PostMergeRunEndpoints
                 || run.Kind is not ("window" or "nightly")
                 || run.Status is not ("running" or "green" or "red" or "skipped")
                 || run.Commands is null || run.Verdicts is null
-                || run.Commands.Count > 64 || run.Verdicts.Count > 64)
+                || run.Commands.Count > 64 || run.Verdicts.Count > 64
+                || run.Verdicts.Any(verdict => verdict.OutputTail?.Length > 2000
+                    || verdict.FailedTests?.Count > 64
+                    || verdict.FailedTests?.Any(test => test.Length > 256) == true)
+                || run.Failure is { } failure && (string.IsNullOrWhiteSpace(failure.Fingerprint)
+                    || failure.Fingerprint.Length > 64 || failure.LogExcerpt is null
+                    || failure.LogExcerpt.Length > 2000 || failure.FailingTests is null
+                    || failure.FailingTests.Count > 64 || failure.FailingTests.Any(test => test.Length > 256)
+                    || failure.FailingPaths is null
+                    || failure.FailingPaths.Count > 128 || failure.SuspectMerges is null
+                    || failure.SuspectMerges.Count > 512))
                 return Results.BadRequest(new { error = "invalid post-merge run" });
-            var state = store.Record(record.Id, run);
+            var safe = run with
+            {
+                Verdicts = run.Verdicts.Select(verdict => verdict with
+                { OutputTail = verdict.OutputTail is null ? null : CredentialRedactor.Redact(verdict.OutputTail) }).ToArray(),
+                Failure = run.Failure is null ? null : run.Failure with
+                { LogExcerpt = CredentialRedactor.Redact(run.Failure.LogExcerpt) },
+            };
+            var state = store.Record(record.Id, safe);
+            if (state is not null) incidents.Apply(record, safe);
             return state is null ? Results.Conflict(new { error = "post-merge run already claimed or stale" })
                 : Results.Ok(state);
         });

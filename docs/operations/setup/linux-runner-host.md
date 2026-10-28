@@ -946,6 +946,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | Env var | Flag | Default | Meaning |
 |---|---|---|---|
 | `RUNNER_SERVER_URL` | `--server` | `http://127.0.0.1:5030` | Task Server base URL (or the tunnelled address). |
+| `RUNNER_POST_MERGE_STATE_URL` | `--post-merge-state-url` | `RUNNER_SERVER_URL` | Studio API URL for T3 containment facts. Set it when the integration host connects directly to the Task Server. |
 | `RUNNER_ID` | `--runner-id` | `agent-runner-<host>` | Stable lease owner identity. Fencing is per task, not per pid. |
 | `RUNNER_NAME` | `--runner-name` | `agent-runner-01` | Board-facing runner/project name. |
 | `RUNNER_CLIENT_ID` | `--client-id` | (none) | Optional attribution label. It is not authentication and grants no access. |
@@ -2339,6 +2340,162 @@ stopped. Installing or changing the unit requires root, followed by
 `systemctl daemon-reload`.
 
 ### Restart, drain, handoff
+
+#### Host-agent role migration
+
+DP-S2 uses Dossier decision D2 option A. Start one `agent-host host-agent run`
+service per machine with both roles disabled. Its config points to the existing
+coding and review environment files. The two files must resolve to the same
+Task Server and physical hostname, distinct runner IDs and state directories,
+and distinct provider CLI homes. The host-agent service account must be able
+to read both role credentials and state directories. Keep the existing
+Task Server credentials and runner IDs: the host agent never mints an attempt
+or performs a Git publication. DP-S1 placement is still shadow only.
+
+```json
+{
+  "stateDirectory": "/var/lib/agent-host/host-agent",
+  "coding": {
+    "environmentFile": "/etc/agent-runner/runner-coding.env",
+    "homeDirectory": "/var/lib/agent-runner/coding",
+    "additionalEnvironmentFiles": ["/etc/agent-runner/provider-auth.env"]
+  },
+  "review": {
+    "environmentFile": "/etc/agent-runner/runner-review.env",
+    "homeDirectory": "/var/lib/agent-runner/review",
+    "additionalEnvironmentFiles": ["/etc/agent-runner/provider-auth.env"]
+  }
+}
+```
+
+The host agent reads literal `KEY=value` environment assignments, with optional
+single or double quotes. It does not evaluate shell expressions. Keep secrets
+in the existing token files, with owner-only permissions. Use the existing
+role-specific provider home paths in `homeDirectory`; do not copy live login
+files into a new home. Install the supplied
+[agent-host.service](../../../deploy/agent-host/systemd/agent-host.service) as `agent-host.service`, adjust
+its service user and writable roots for those homes, create its state directory,
+and reload systemd. Before migration,
+deploy a binary containing the coding drain barrier to the old coding unit.
+The review unit already has a drain barrier. Point both the old services and
+the host config at the same role state directories. Then run one role at a
+time:
+
+```sh
+sudo systemctl start agent-host.service
+agent-host host-agent migrate-role /etc/agent-runner/host-agent.json coding
+agent-host host-agent migrate-role /etc/agent-runner/host-agent.json review
+agent-host host-agent inventory /etc/agent-runner/host-agent.json
+```
+
+`migrate-role` leaves a persistent barrier in the old role state directory.
+The old daemon stops new claims, reconciles and finishes its attempts, writes
+an acknowledgement with zero active slots, and exits. Only then does the
+command persist the role as enabled. The host agent reads the existing slot
+files and starts the adapter, which registers and reconciles through the Task
+Server before taking claims. A timeout or unreadable slot holds migration;
+do not delete the barrier to force an active lease across executors. After
+the host adapter is observed claiming, disable the old systemd role unit so
+it does not repeatedly start and drain. The role-local process lock protects
+host-agent restarts when a previous adapter process remains alive.
+
+Use `agent-host host-agent drain-role ... coding` or `... review` to stop one
+adapter admitting work and wait for zero attempts. To roll back, run
+`agent-host host-agent rollback-role <config> <role>`; it drains and disables
+the host role before clearing the old daemon barrier. Then explicitly start
+the old role unit. A failed drain leaves the claim barrier in place and does
+not reopen the old unit. The host agent keeps a role-state file and a
+`attempt-inventory.json` projection under `stateDirectory`; inspect those
+alongside Task Server attempt records after a crash. Never edit these files
+to transfer a lease.
+
+For the DP-S2 canary, restart the host agent while one coding and one review
+attempt run. Confirm each adapter reconnects with its original runner ID,
+the Task Server shows one current authority holder per attempt, and each
+attempt either finishes once or has fenced cleanup evidence. Check that the
+old daemon's acknowledgement reached zero before the first new claim and that
+no duplicate completion or publication was recorded. Record the host-agent
+process CPU and resident memory over an idle five-minute window, excluding
+its role children, before widening the canary. The container executor and
+production placement switch belong to later slices.
+
+The first isolated worktree sample on 28 October 2026 ran the built host agent
+for 30.02 seconds with both role adapters disabled. At 0.5-second intervals,
+the supervisor used a mean 0.899% and p90 1.999% of one CPU core; median RSS
+was 50.266 MiB and maximum RSS was 50.992 MiB. This is process overhead only.
+It excludes adapter children, active attempts, systemd, and the five-minute
+production canary window, so it is a baseline rather than a rollout threshold.
+
+#### Work container executor canary
+
+DP-S3 uses Dossier decision D3 option A: a fresh Linux work container per
+claimed attempt, with the process and cgroup executor retained as rollback
+(option B). Windows keeps the worktree process executor in a Job Object and
+never needs Docker. The switch is host-local and defaults to `off`:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RUNNER_WORK_CONTAINER_MODE` | `off` | `shadow` records `executor-shadow.json` beside each detached worker; `canary` enables `agent-host work-container run`. |
+| `RUNNER_WORK_CONTAINER_RUNTIME` | `docker` | `docker` or `podman`; the host agent calls the CLI, the work container never gets its socket. |
+| `RUNNER_WORK_CONTAINER_IMAGES` | `/etc/agent-host/work-container-images.json` | Digest-pinned role image manifest. |
+| `RUNNER_WORK_CONTAINER_MAX_CPUS` | host cores minus 2 | Host profile ceiling for one grant and for all live grants. |
+| `RUNNER_WORK_CONTAINER_MAX_MEMORY_MB` | RAM minus max(4 GiB, 15%) | Host profile memory ceiling. |
+| `RUNNER_WORK_CONTAINER_MEMORY_MB_PER_HALF_CORE` | `2048` | Memory limit granted per AGT-3019 half-core. |
+| `RUNNER_WORK_CONTAINER_CACHE_VERSION` | `1` | Generation of the npm, NuGet and repository-mirror cache volumes. |
+| `RUNNER_WORK_CONTAINER_NETWORK` | `bridge` | `host` and `container:*` are refused. |
+
+In this slice the detached coding and review workers stay on the process
+executor in every mode; provider credentials may enter a work container only
+as tmpfs files, which DP-S5 delivers. In canary mode, `agent-host
+work-container run --attempt <attempt.json> --grant-half-cores <n>
+--allocation-version <v>` executes one attempt that needs no provider
+credential. Routing claimed gate subjects to it belongs to DP-S4.
+
+Install a released role image manifest, or roll it back, with:
+
+```sh
+agent-host work-container image-promote --manifest /etc/agent-host/work-container-images.json \
+  --role all --image ghcr.io/agent-orc/agent-work@sha256:<digest> --release <version>
+agent-host work-container image-rollback --manifest /etc/agent-host/work-container-images.json --role all
+```
+
+Every release attaches `work-container-images.json`. Tags are rejected; the
+previous digest is kept as the rollback target. After a host or host-agent
+restart, and before new admissions, reconcile against the host-agent inventory:
+
+```sh
+agent-host work-container reconcile --host <host-id> \
+  --inventory /var/lib/agent-host/host-agent/attempt-inventory.json
+```
+
+Reconciliation flushes each orphan's log, then removes every container and
+attempt volume whose attempt is unknown, terminal, or on a different lease or
+fence. It removes an exited container too, and never starts one. Containers are
+created with `--restart no`, so a runtime restart cannot revive one either.
+To roll back to the process executor, set the mode to `off` or `shadow` and
+run `reconcile` once with an empty inventory after the last canary attempt.
+
+Before widening the canary, run `scripts/work-container-proof.sh <report-dir>`
+on the canary host and keep `proof.md`. The go/no-go thresholds are fixed in
+`WorkContainerRolloutThreshold`: every attempt cleaned up with zero residue;
+every over-budget launch denied before any runtime mutation; zero resurrected
+attempts; warm grant-to-first-command no more than 3 s (p50) and 5 s (p90)
+above the process executor; gate wall time within 1.10x (p50) and 1.20x (p90)
+of the process executor; cold repository materialization within 1.5x (p50);
+a cold image pull within 180 s; and a warm cache hit rate of at least 95%.
+
+The first proof ran on agent-runner-01 on 28 October 2026: 100 attempts per
+executor, parallelism 4, grant 3 half-cores, Docker 29 with the containerd
+snapshotter. All 100 container attempts succeeded with verified cleanup and no
+residue. Three over-budget launches were denied before any runtime call, the
+exact-SHA guard stopped before the work command, and reconciliation started
+nothing. Container p50/p90 were 2959/4382 ms from warm grant to first command,
+3134/3380 ms for cold materialization, and 870/993 ms of gate wall time. The
+process baseline ran inside the proving worker's own 1.41-core cgroup and was
+noisy; its gate p50 was 3500 ms in one run and 8397 ms in the next. Treat it
+as an upper bound, not as a container speedup. The verdict is no-go only
+because the role image layers were already local, so the cold pull is
+unproven. Record a cold pull on a fresh canary host before widening.
 
 **Drain the Review Executor; never restart it while slots are busy.** A review
 holds thirty to sixty minutes of gate work in a detached worker. Stopping the

@@ -57,6 +57,13 @@ public sealed record GitMergesWork(string RefName) : GitFactWork
     public override string Key => "merges:" + RefName;
 }
 
+/// <summary>A bounded S4 file-history or object request for one card path.</summary>
+public sealed record GitFileHistoryWork(string JobId, string WatchPath, string Source,
+    string Path, string? At = null) : GitFactWork
+{
+    public override string Key => $"file:{JobId}:{Source}:{Path}:{At}";
+}
+
 /// <summary>Keys of <c>git_commit_ranges</c>.</summary>
 public static class GitCommitRangeKeys
 {

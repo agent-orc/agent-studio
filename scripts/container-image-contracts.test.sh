@@ -9,6 +9,7 @@ dockerfiles=(
     orchestrator-engine/Dockerfile
     studio-bff/Dockerfile
     runner/Dockerfile
+    deploy/work-container/Dockerfile
 )
 
 for relative in "${dockerfiles[@]}"; do
@@ -26,6 +27,22 @@ for pattern in '**/*.env' '**/*.token' '**/.git-credentials' '**/git-credentials
 do
     grep -Fxq -- "$pattern" "$repo_root/.dockerignore" || {
         echo ".dockerignore does not exclude $pattern from build contexts" >&2
+        exit 1
+    }
+done
+
+# DP-S3 role image: one non-root uid, no container socket, pinned CLI versions
+# in step with the agent-host image.
+grep -Fx 'USER runner' "$repo_root/deploy/work-container/Dockerfile" > /dev/null
+grep -F 'useradd --uid 10001' "$repo_root/deploy/work-container/Dockerfile" > /dev/null
+if grep -Eq 'docker\.sock|podman\.sock|^VOLUME' "$repo_root/deploy/work-container/Dockerfile"; then
+    echo "deploy/work-container/Dockerfile must not declare volumes or reference a runtime socket" >&2
+    exit 1
+fi
+for version in CODEX_CLI_VERSION CLAUDE_CLI_VERSION; do
+    expected="$(grep -E "^ARG $version=" "$repo_root/runner/Dockerfile")"
+    grep -Fx "$expected" "$repo_root/deploy/work-container/Dockerfile" > /dev/null || {
+        echo "deploy/work-container/Dockerfile $version differs from runner/Dockerfile" >&2
         exit 1
     }
 done

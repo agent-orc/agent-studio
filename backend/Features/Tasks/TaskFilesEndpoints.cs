@@ -71,11 +71,18 @@ public static class TaskFilesEndpoints
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (TryStripOperationSuffix(path, "history", out var historyPath))
             {
-                var history = files.GetHistory(jobId, watchPath, historyPath, scope);
+                var (history, state) = files.GetIndexedHistory(jobId, watchPath, historyPath, scope);
+                ctx.Response.Headers[SourceFactsStateHeader] = state;
                 return HistoryResult(history, ctx);
             }
 
-            var content = files.ReadFile(jobId, watchPath, path, at, scope);
+            if (!string.IsNullOrWhiteSpace(at))
+            {
+                var (historical, state) = files.ReadIndexedFile(jobId, watchPath, path, at, scope);
+                ctx.Response.Headers[SourceFactsStateHeader] = state;
+                return FileContentResult(historical, ctx);
+            }
+            var content = files.ReadLiveFile(jobId, watchPath, path, scope);
             return FileContentResult(content, ctx);
         });
 
@@ -102,19 +109,25 @@ public static class TaskFilesEndpoints
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (TryStripOperationSuffix(path, "history", out var historyPath))
             {
-                // AGT-3318: card-open file history reads the derived path
-                // history of the card's result commit, not the checkout.
                 if (files.ReadsDerivedCodeHistory)
                 {
-                    var (derived, state) = await files.GetDerivedCodeHistoryAsync(jobId, watchPath, historyPath, ct);
-                    context.Response.Headers[SourceFactsStateHeader] = state;
+                    var (derived, derivedState) = await files.GetDerivedCodeHistoryAsync(
+                        jobId, watchPath, historyPath, ct);
+                    context.Response.Headers[SourceFactsStateHeader] = derivedState;
                     return HistoryResult(derived, context);
                 }
-                var history = files.GetHistory(jobId, watchPath, historyPath, TaskFileSources.Code);
+                var (history, state) = files.GetIndexedHistory(jobId, watchPath, historyPath, TaskFileSources.Code);
+                context.Response.Headers[SourceFactsStateHeader] = state;
                 return HistoryResult(history, context);
             }
 
-            var content = files.ReadFile(jobId, watchPath, path, at, TaskFileSources.Code);
+            if (!string.IsNullOrWhiteSpace(at))
+            {
+                var (historical, state) = files.ReadIndexedFile(jobId, watchPath, path, at, TaskFileSources.Code);
+                context.Response.Headers[SourceFactsStateHeader] = state;
+                return FileContentResult(historical, context);
+            }
+            var content = files.ReadLiveFile(jobId, watchPath, path, TaskFileSources.Code);
             return FileContentResult(content, context);
         }).AddEndpointFilter<AgentStudio.Git.GitSpawnCountFilter>();
 

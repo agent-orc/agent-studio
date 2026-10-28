@@ -14,7 +14,9 @@ public sealed record QuotaAdmissionRequest(
     string? ProjectName,
     int OccupiedSlots,
     string ExecutionPath,
-    Func<string, string?, bool>? ModelAccepted = null);
+    Func<string, string?, bool>? ModelAccepted = null,
+    string? ClaimingHost = null,
+    Func<string, string?, bool>? FallbackModelAccepted = null);
 
 /// <summary>
 /// Canonical application boundary around <see cref="QuotaAdmissionPlanner"/>.
@@ -69,7 +71,9 @@ public sealed class QuotaAdmissionService
             request.OccupiedSlots,
             _waitPolicy.Resolve(project),
             _preference?.Get(request.CliType ?? CliTypes.Claude),
-            request.ModelAccepted);
+            request.ModelAccepted,
+            request.ClaimingHost,
+            request.FallbackModelAccepted);
         return plan with
         {
             BetterCandidates = _betterCandidates.FindRoute(

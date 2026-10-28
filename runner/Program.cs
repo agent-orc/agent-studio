@@ -15,6 +15,20 @@ if (args is ["--version"])
     return 0;
 }
 
+if (args is ["host-agent", ..])
+{
+    using var hostStop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; hostStop.Cancel(); };
+    using var hostSigterm = OperatingSystem.IsWindows() ? null
+        : PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
+        {
+            context.Cancel = true;
+            hostStop.Cancel();
+        });
+    return await HostAgentSupervisor.ExecuteAsync(args[1..],
+        message => Console.Error.WriteLine($"[host-agent] {message}"), hostStop.Token);
+}
+
 if (args is ["--enroll", var installationUrl, var enrollmentCode])
     return await RunnerEnrollmentCommand.RunAsync(
         installationUrl, enrollmentCode, Console.Out, Console.Error, CancellationToken.None);
@@ -57,6 +71,17 @@ if (args is ["--detached-review-worker", var detachedReviewSpec])
 // AGT-W63 I03: offline tooling for the owned runner-host record.
 if (args is ["host-record", ..])
     return RunnerHostRecordCommand.Run(args[1..], Console.Out, Console.Error);
+
+// DP-S3: Linux work container executor operations for the host agent.
+if (args is ["work-container", ..])
+{
+    using var workContainerStop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; workContainerStop.Cancel(); };
+    using var workContainerSigterm = OperatingSystem.IsWindows() ? null
+        : PosixSignalRegistration.Create(PosixSignal.SIGTERM, context => { context.Cancel = true; workContainerStop.Cancel(); });
+    try { return await AgentRunner.WorkContainers.WorkContainerCommand.RunAsync(args[1..], Console.Out, Console.Error, workContainerStop.Token); }
+    catch (OperationCanceledException) when (workContainerStop.IsCancellationRequested) { return 130; }
+}
 
 // AGT-3231: render, apply and verify the zone network policy on this host.
 if (args is ["zone-policy", ..])
@@ -373,6 +398,12 @@ if (options.HealthCheckOnly)
 
 try
 {
+    // A host supervisor can restart after a crash while its prior child is
+    // still alive. The role-local lock keeps the replacement from registering
+    // or reattaching until that exact executor process has exited.
+    using var hostAdapterLock = options.HostAdapter && daemonMode && options.Role is "coding" or "review"
+        ? AcquireHostAdapterLock(options)
+        : null;
     // IP-1: a run target talks to Studio's deploy routes only, never to Task
     // Server work queues, and opens no listener.
     if (options.Role == "run-target")
@@ -436,6 +467,7 @@ try
     Log($"done, exit code {exitCode}");
     return exitCode;
 }
+
 catch (OperationCanceledException)
 {
     Log("cancelled");
@@ -455,6 +487,13 @@ catch (Exception ex)
 {
     Log($"unhandled error: {ex}");
     return 1;
+}
+
+static FileStream AcquireHostAdapterLock(RunnerOptions options)
+{
+    Directory.CreateDirectory(options.StateDir);
+    return new FileStream(Path.Combine(options.StateDir, $"host-{options.Role}-adapter.lock"),
+        FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 }
 
 static void PrintUsage()

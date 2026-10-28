@@ -11,6 +11,37 @@ public sealed class OperationalStallDetectorTests
     private DateTime Now => _clock.GetUtcNow().UtcDateTime;
 
     [Fact]
+    public void Fleet_alarm_names_dominant_refusal_after_claim_gap_and_host_poll()
+    {
+        var baseSnapshot = new OperationalStallSnapshot([], [], [], [], [], [], [],
+            LegacyModelHosts: [new("agent-runner-01", "coding", "runner-1", Now.AddDays(-8))],
+            FleetClaims: new FleetClaimStallFact(["AGT-1", "AGT-2", "AGT-3"],
+                Now.AddMinutes(-25), Now.AddMinutes(-15),
+                [new("host-capability-missing", Now.AddMinutes(-14), "AGT-1"),
+                 new("host-capability-missing", Now.AddMinutes(-13), "AGT-2"),
+                 new("project-concurrency-full", Now.AddMinutes(-12), "AGT-3")], true));
+
+        var findings = OperationalStallDetector.Detect(baseSnapshot, new(), Now);
+        var warning = Assert.Single(findings, x => x.FingerprintKey.Contains("host-model-upgrade-required"));
+        Assert.Contains("upgrade required for model acceptance", warning.Summary);
+        var alarm = Assert.Single(findings, x => x.FingerprintKey.Contains("fleet-claim-stall"));
+        Assert.Equal("critical", alarm.Severity);
+        Assert.Equal("host-capability-missing", alarm.Details["dominantReason"]);
+        Assert.Equal(3, alarm.BlockedCount);
+        Assert.DoesNotContain(OperationalStallDetector.Detect(baseSnapshot with
+        {
+            FleetClaims = baseSnapshot.FleetClaims with { LastClaimUtc = Now.AddMinutes(-2) },
+        }, new(), Now), x => x.FingerprintKey.Contains("fleet-claim-stall"));
+        var unclassified = Assert.Single(OperationalStallDetector.Detect(baseSnapshot with
+        {
+            LegacyModelHosts = [],
+            FleetClaims = baseSnapshot.FleetClaims with { Refusals = [] },
+        }, new(), Now));
+        Assert.Equal("no refusal recorded", unclassified.Details["dominantReason"]);
+    }
+
+
+    [Fact]
     public void EveningIncident_FindsEachConditionWithImpactAndStableSubjects()
     {
         var facts = new OperationalStallSnapshot(

@@ -1,7 +1,59 @@
 # Runner Domain Map
 
-Version: 2026-10-17
+Version: 2026-10-22
 Status: System-of-record map for runner-side changes.
+
+## Dynamic placement host agent, DP-S2
+
+Selected working decision: dynamic placement D2 option A, one supervised host
+agent per physical machine with coding and review adapters. The AGT-3019 D5
+option A allocation remains the single host budget; this slice consumes the
+DP-S1 shadow admission contract and does not activate a new placement policy.
+The host agent starts with both roles disabled. A role is enabled only after
+its old daemon has acknowledged a claim barrier, every persisted attempt has
+reached a fenced terminal or cleanup state, and that daemon process has exited.
+The role adapter runs the existing `RemoteRunnerDaemon` or
+`RemoteReviewDaemon` in a child process with its original runner identity,
+state directory, Task Server client, and lease protocol. Separate child
+processes preserve provider CLI home and probe isolation. The host inventory
+is an atomically persisted projection of role slot files, not a lease store.
+Each adapter also holds a role-local process lock so a host-agent restart
+cannot create a second reattacher while its earlier child is alive. A release
+or protocol mismatch holds that adapter until a host-agent restart. See the
+[host-agent migration runbook](../../operations/setup/linux-runner-host.md#host-agent-role-migration)
+for the canary, drain, and rollback sequence. Linux per-attempt containers are
+the subsequent DP-S3 executor slice; DP-S2 retains the current process and
+cgroup executor.
+
+## Dynamic placement work container executor, DP-S3
+
+Selected working decision: dynamic placement D3 option A, a fresh Linux work
+container per claimed attempt plus the Windows process executor, with option
+B (process and cgroup) kept as canary rollback. D5 option A still applies:
+the container's `--cpus`, `--memory` and `--pids-limit` are the attempt's
+AGT-3019 half-core grant, and the host profile ceiling bounds both one grant
+and the sum of live grants. The code lives in `runner/WorkContainers/`:
+pure admission, launch-plan, reconciliation, executor-selection and rollout
+threshold policies; a Docker or Podman CLI adapter; and an executor that
+admits under a host-wide grant lock, then creates the attempt volume and
+container, runs it, flushes the timestamped log, removes the container and
+attempt volume, and verifies that nothing remains. A launch that is over
+budget or on a stale allocation is refused before any runtime call.
+Containers run as uid 10001 with a read-only root, all capabilities dropped,
+`no-new-privileges`, `--restart no`, a tmpfs secret directory, and no runtime
+socket or provider home. Each mounts a writable attempt volume plus the
+versioned npm, NuGet and repository-mirror cache volumes. The entry script
+verifies the exact SHA before the work command runs. A mirror that cannot
+supply that SHA is quarantined and rebuilt. Restart reconciliation removes
+every resource without a live lease and fence, and never starts a container.
+Role images are digest-pinned in a manifest that keeps the previous digest
+for rollback; the release builds `agent-work` from
+`deploy/work-container/Dockerfile`. `RUNNER_WORK_CONTAINER_MODE` defaults to
+`off`. `shadow` records an `executor-shadow.json` beside each detached
+worker. `canary` enables `agent-host work-container run`. Detached coding and
+review workers keep the process executor until DP-S5 delivers file-based
+attempt credentials. See the
+[canary runbook](../../operations/setup/linux-runner-host.md#work-container-executor-canary).
 
 Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
@@ -74,7 +126,13 @@ restore them.
 The quota view lists accepted models by host. A launch-time model refusal with
 no salvage marks that host model unavailable and puts the card back in Ready.
 Task Server claims and work-permit offers and acceptances require fresh
-acceptance of the effective named model; a blank model uses the CLI default.
+acceptance of the effective named model when the host advertises the
+`model-acceptance` protocol. A host with no entries is a legacy daemon: its
+primary route remains claimable while Execution Hosts raises an upgrade warning.
+An advertised `unavailable` verdict refuses the claim. An advertised `unknown`
+verdict, missing model entry, or stale verdict waits for the two-minute startup
+grace, then refuses the claim as `host-capability-missing`, without a quota reset
+date. A blank model uses the CLI default.
 A refused model stays held until the same runner instance advertises it as not
 ready and then advertises a ready verdict with a larger runner-local probe
 sequence. Runner and server clock order never clears the hold. A refused
@@ -83,11 +141,23 @@ The claim hold matches the route handed to the runner: a required mechanical
 route, an operator-selected continuation, a provider-refusal sibling, or the
 stored primary. A refused primary does not hide a card using another route.
 
+The deploy contract for backend features that require an agent-host release is
+[`runner-release-requirements.json`](../../../contracts/TaskServer.Contracts/runner-release-requirements.json).
+Model acceptance requires agent-host 0.9.5 with commit d32e13f49 or a descendant;
+the version alone is insufficient because 0.9.5 predates the probe. Before
+`update-stable.sh` stops Stable, `host-release-preflight.mjs` checks registered
+host release identities against the candidate contract. It refuses an older or
+unverifiable host unless `ATP_FORCE_HOST_COMPATIBILITY=1` is set, and writes a
+record under `release-records/<target-sha>.json` with the minimum release and
+the affected hosts. A forced rollout retains the legacy claim path and warning.
+
 A review claim with a named model waits for a fresh ready acceptance verdict
-from that review executor. An unknown or unavailable verdict names the model
-capability in the unclaimable response and in the auto-review queue's oldest
-pending reason. The lane-drain alarm repeats that reason. Claim deferral logs
-only when the attempt's reason changes, and the observation clears on claim.
+from a review executor that advertises the protocol. A legacy executor may
+claim its primary route. An unknown verdict beyond the startup grace or an
+unavailable verdict names the model capability and host in the unclaimable
+response and in the auto-review queue's oldest pending reason. The lane-drain
+alarm repeats that reason. Claim deferral logs only when the attempt's reason
+changes, and the observation clears on claim.
 
 For a Ready agent card placed at `local`, `PickupHoldPolicy` projects an
 unsatisfiable `execution-placement` hold when local admission denies its mode.
@@ -1114,8 +1184,10 @@ unreported claim expires with its lease and is queued again.
   The stop route targets the card's canonical authority key for both remote and
   local leases. A local lease can remain held while preparation or
   post-processing runs without a CLI process. Its owner observes a fenced stop
-  before starting the next step, releases the lease with outcome `Stopped`, and
-  settles the stop receipt so the card shows the stopped attempt. The endpoint
+  before starting the next step, settles the stop receipt, and releases the
+  lease with outcome `Stopped` so the card shows the stopped attempt. The matching
+  receipt is retired while the lease is still held, before a reader can see it
+  as free. Remote lease release follows the same order. The endpoint
   shares a gate with CLI launch and review moves. A stop accepted while visual
   QA is running is checked before the UI card can enter Human Review. The store
   resolves `TaskRepository` on first use, so a host without it still starts:

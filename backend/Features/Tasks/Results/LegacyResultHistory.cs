@@ -48,7 +48,10 @@ public sealed record LegacyResultHistoryEntry(
     string Case,
     string ContentHash,
     string? Markdown,
-    bool Truncated);
+    bool Truncated,
+    int? RunIndex = null,
+    string? Verdict = null,
+    string? Steps = null);
 
 /// <summary>
 /// What the task folder says about its legacy Result history. A file that is

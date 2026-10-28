@@ -41,6 +41,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\contracts\TaskServer.Contracts\TaskServer.Contracts.csproj" />
+    <ProjectReference Include="..\orchestration-decisions\Orchestration.Decisions.csproj" />
     <ProjectReference Include="..\cli-hosting\AgentStudio.CliHosting.csproj" />
     <!--
       T1 (AGT-2370): the detached worker drives the coding CLI through the

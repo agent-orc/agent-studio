@@ -15,6 +15,9 @@ public sealed class RunnerOptions
     /// <summary>Central Task Server base URL, e.g. http://127.0.0.1:5030 or the reverse-proxied central URL.</summary>
     public required string ServerUrl { get; init; }
 
+    /// <summary>Studio API URL for red-develop containment facts when integration claims use a direct Task Server URL.</summary>
+    public string? PostMergeStateUrl { get; init; }
+
     /// <summary>Stable per-runner identity used as the lease owner (fencing is per task, not per pid).</summary>
     public required string RunnerId { get; init; }
 
@@ -40,6 +43,9 @@ public sealed class RunnerOptions
     /// daemon loops, workspace roots, credentials, and server-side claims.
     /// </summary>
     public string Role { get; init; } = "coding";
+
+    /// <summary>Role loop is owned by the supervised host agent after a completed drain.</summary>
+    public bool HostAdapter { get; init; }
 
     /// <summary>Runner service credential sent as Authorization on every networked-profile request.</summary>
     public string? AuthToken { get; init; }
@@ -501,12 +507,15 @@ public sealed class RunnerOptions
         var options = new RunnerOptions
         {
             ServerUrl = Val("server", "RUNNER_SERVER_URL", "http://127.0.0.1:5030").TrimEnd('/'),
+            PostMergeStateUrl = Val("post-merge-state-url", "RUNNER_POST_MERGE_STATE_URL").Trim() is { Length: > 0 } postMergeUrl
+                ? postMergeUrl.TrimEnd('/') : null,
             RunnerId = Val("runner-id", "RUNNER_ID", $"agent-runner-{Environment.MachineName}".ToLowerInvariant()),
             RunnerName = Val("runner-name", "RUNNER_NAME", "agent-runner-01"),
             ClientId = Val("client-id", "RUNNER_CLIENT_ID").Trim() is { Length: > 0 } clientId ? clientId : null,
             Hostname = Val("hostname", "RUNNER_HOSTNAME", Environment.MachineName),
             BackendName = Val("backend-name", "RUNNER_BACKEND_NAME", "remote-runner"),
             Role = Val("role", "RUNNER_ROLE", "coding").Trim().ToLowerInvariant(),
+            HostAdapter = OptIn(Val("host-adapter", "RUNNER_HOST_ADAPTER")),
             AuthToken = authToken.Length > 0 ? authToken : null,
             AuthTokenFile = authTokenFile.Length > 0 ? authTokenFile : null,
             TlsServerCertificateSha256 = Val(
@@ -640,6 +649,15 @@ public sealed class RunnerOptions
                 + "network (for example a container network such as http://orchestrator-api:5031).");
         if (!serverUri.IsLoopback && string.IsNullOrWhiteSpace(options.AuthToken))
             throw new ArgumentException("RUNNER_AUTH_TOKEN is required for a non-loopback Task Server.");
+        if (options.PostMergeStateUrl is { } postMergeStateUrl)
+        {
+            var stateUri = new Uri(postMergeStateUrl, UriKind.Absolute);
+            if (stateUri.Scheme != Uri.UriSchemeHttp && stateUri.Scheme != Uri.UriSchemeHttps
+                || stateUri.Scheme == Uri.UriSchemeHttp && !stateUri.IsLoopback && !options.AllowInsecureHttp)
+                throw new ArgumentException("RUNNER_POST_MERGE_STATE_URL must use HTTPS unless it is loopback or private HTTP is explicitly allowed.");
+            if (!stateUri.IsLoopback && string.IsNullOrWhiteSpace(options.AuthToken))
+                throw new ArgumentException("RUNNER_AUTH_TOKEN is required for a non-loopback post-merge state URL.");
+        }
         if (options.Role is not ("coding" or "review" or "gate" or "integration" or "run-target"))
             throw new ArgumentException("RUNNER_ROLE must be 'coding', 'review', 'gate', 'integration', or 'run-target'.");
         if (options.Role is "review" or "gate"

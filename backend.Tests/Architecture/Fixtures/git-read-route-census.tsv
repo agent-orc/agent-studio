@@ -316,7 +316,7 @@
 /api/tasks/{jobId}/agent-work-summary	free	-	-	-
 /api/tasks/{jobId}/artifacts	free	-	-	-
 /api/tasks/{jobId}/attachments/{fileName}	free	-	-	-
-/api/tasks/{jobId}/checkout/{**path}	reachable	frozen	Git facts	S4 card files and result history
+/api/tasks/{jobId}/checkout/{**path}	free	-	-	-
 /api/tasks/{jobId}/claude/session-info	free	-	-	-
 /api/tasks/{jobId}/code-review/list	free	-	-	-
 /api/tasks/{jobId}/code-review/{fileName}	free	-	-	-
@@ -326,7 +326,7 @@
 /api/tasks/{jobId}/commits/diff	free	-	-	-
 /api/tasks/{jobId}/commits/files	free	-	-	-
 /api/tasks/{jobId}/commits/{sha}/diff	free	-	-	-
-/api/tasks/{jobId}/commits/{sha}/file	reachable	frozen	Git facts	S4 card files and result history
+/api/tasks/{jobId}/commits/{sha}/file	free	-	-	-
 /api/tasks/{jobId}/commits/{sha}/files	free	-	-	-
 /api/tasks/{jobId}/conversation	free	-	-	-
 /api/tasks/{jobId}/core	free	-	-	-
@@ -338,7 +338,7 @@
 /api/tasks/{jobId}/details/overview	free	-	-	-
 /api/tasks/{jobId}/details/review	free	-	-	-
 /api/tasks/{jobId}/details/usage	free	-	-	-
-/api/tasks/{jobId}/files/{**path}	reachable	frozen	Git facts	S4 card files and result history
+/api/tasks/{jobId}/files/{**path}	free	-	-	-
 /api/tasks/{jobId}/git/diff	reachable	frozen	AGT-3017 route ownership	AGT-3017 D2/D4 dev-seat retirement
 /api/tasks/{jobId}/git/file	reachable	frozen	AGT-3017 route ownership	AGT-3017 D2/D4 dev-seat retirement
 /api/tasks/{jobId}/git/hygiene	reachable	frozen	AGT-3017 route ownership	AGT-3017 D2/D4 dev-seat retirement
@@ -352,7 +352,7 @@
 /api/tasks/{jobId}/provenance	free	-	-	-
 /api/tasks/{jobId}/regression-radar	reachable	gap	Tasks	Task reads from the Git fact store
 /api/tasks/{jobId}/result-history	reachable	measured-zero	-	-
-/api/tasks/{jobId}/result-history/{versionId}	free	-	-	-
+/api/tasks/{jobId}/result-history/{versionId}	reachable	measured-zero	-	-
 /api/tasks/{jobId}/results/{**path}	free	-	-	-
 /api/tasks/{jobId}/review-projection	free	-	-	-
 /api/tasks/{jobId}/runs	free	-	-	-

@@ -2525,6 +2525,95 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Legacy_host_without_model_acceptance_can_claim_named_primary()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+
+        Assert.Equal("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+    }
+
+    [Fact]
+    public async Task Legacy_executor_is_marked_for_upgrade_in_execution_host_snapshot()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
+            [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor", "ready")]),
+            "runner-a", default);
+
+        var legacy = Assert.Single((await store.ListRunnerCapabilitySnapshotsAsync(default))
+            .Single().Capabilities, item => item.Key == "host-upgrade:model-acceptance");
+        Assert.Contains("Upgrade required for model acceptance", legacy.Reason);
+
+        await AdvertiseModelsAsync(store, clock, 2, 1, ("codex", "gpt-6-sol", "ready"));
+        Assert.DoesNotContain((await store.ListRunnerCapabilitySnapshotsAsync(default))
+            .Single().Capabilities, item => item.Key == "host-upgrade:model-acceptance");
+    }
+
+    [Fact]
+    public async Task Advertised_unavailable_model_refuses_claim()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await AdvertiseModelsAsync(store, clock, 1, 1, ("codex", "gpt-6-sol", "unavailable"));
+
+        var refusal = await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("empty", refusal.Status);
+        Assert.Contains("Host model unavailable on", refusal.Message);
+        Assert.Contains("model-acceptance:codex:gpt-6-sol", refusal.Message);
+    }
+
+    [Fact]
+    public async Task Unknown_model_waits_during_grace_then_names_host_capability()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await AdvertiseModelsAsync(store, clock, 1, 1, ("codex", "gpt-6-sol", "unknown"));
+
+        var pending = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("empty", pending.Status);
+        Assert.Contains("verifying model-acceptance:codex:gpt-6-sol", pending.Message);
+        Assert.DoesNotContain("reset", pending.Message, StringComparison.OrdinalIgnoreCase);
+
+        clock.Advance(TimeSpan.FromMinutes(3));
+        var refused = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("empty", refused.Status);
+        Assert.Contains("Host capability missing on", refused.Message);
+        Assert.Contains("model-acceptance:codex:gpt-6-sol", refused.Message);
+    }
+
+    [Fact]
     public async Task Claim_refuses_a_primary_model_whose_acceptance_went_stale()
     {
         using var temp = new TempDirectory();

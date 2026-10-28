@@ -107,6 +107,7 @@ internal sealed class GitCardFactProducer
     private readonly GitCardFactOptions _options;
     private readonly ILogger _logger;
     private readonly TimeProvider _time;
+    private readonly TaskFileHistoryService? _files;
     private readonly ConcurrentDictionary<string, RepoFacts> _repos = new(StringComparer.OrdinalIgnoreCase);
 
     internal GitCardFactProducer(
@@ -119,7 +120,8 @@ internal sealed class GitCardFactProducer
         Func<TaskInfo, bool>? backfill,
         GitCardFactOptions options,
         ILogger logger,
-        TimeProvider time)
+        TimeProvider time,
+        TaskFileHistoryService? files = null)
     {
         _reachability = reachability;
         _reader = reader;
@@ -131,6 +133,7 @@ internal sealed class GitCardFactProducer
         _options = options;
         _logger = logger;
         _time = time;
+        _files = files;
     }
 
     /// <summary>
@@ -407,7 +410,24 @@ internal sealed class GitCardFactProducer
         foreach (var name in mergeRefs.Where(name => !string.IsNullOrWhiteSpace(name)))
             IndexMerges(repo, root, refs, reach, name, mergeChanges, cursors);
 
-        // 6. Diff objects: queued first, then the default diff of live cards.
+        // 6. S4 file work from a card read has priority over default diffs.
+        foreach (var fileWork in work.OfType<GitFileHistoryWork>())
+        {
+            if (_files is null || _store is null || OverBudget(clock))
+            {
+                deferred.Add(fileWork);
+                continue;
+            }
+            var fact = _files.BuildIndexedHistory(fileWork, repo.Project);
+            if (fact is null)
+            {
+                deferred.Add(fileWork);
+                continue;
+            }
+            _store.WritePathHistory(fact);
+        }
+
+        // 7. Diff objects: queued first, then the default diff of live cards.
         var draft = Pointer(repo, refs, integrationBranch, reach, repo.Generation, _time.GetUtcNow(),
             GitPublishedFacts.ReadyState);
         var diffWork = work.Where(item => item is GitCommitDiffWork or GitAggregateDiffWork or GitRangeDiffWork)
@@ -416,10 +436,10 @@ internal sealed class GitCardFactProducer
             .ToList();
         deferred.AddRange(WriteDiffObjects(repo, root, diffWork, clock));
 
-        // 7. Legacy attribution backfill, moved off GET /commits.
+        // 8. Legacy attribution backfill, moved off GET /commits.
         Backfill(repo, tasks, clock);
 
-        // 8. The project integration view from the same generation's facts.
+        // 9. The project integration view from the same generation's facts.
         var view = ComposeView(repo, root, tasks, projection, refs, integrationBranch, reach, cursors);
 
         foreach (var item in deferred) repo.Enqueue([item]);

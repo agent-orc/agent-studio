@@ -330,7 +330,8 @@ public static class TaskGitEndpoints
         // the known-commit gate joins published facts and starts no Git.
         group.MapGet("/{jobId}/commits/{sha}/file", (
             string jobId, string sha, string? project, string? path, string? watchPath,
-            TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings, GitService git,
+            TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings,
+            TaskFileHistoryService files, HttpContext context,
             AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
@@ -347,7 +348,14 @@ public static class TaskGitEndpoints
             }
             if (known == false)
                 return Results.NotFound(new { error = "Commit is not associated with this job." });
-            return FileContentResult(git.GetFileContentResult(jobId, watchPath, path, sha));
+            var (content, state) = files.ReadIndexedFile(jobId, watchPath, path ?? "", sha, TaskFileSources.Code);
+            context.Response.Headers[TaskFilesEndpoints.SourceFactsStateHeader] = state;
+            if (state == AgentStudio.Git.SourceFactStates.Warming)
+                return GitFactsResults.Warming(new { content = "", isBinary = false }, published);
+            if (!content.Success)
+                return Results.Json(new { error = content.Error }, statusCode: content.StatusCode);
+            var binary = content.Value!.Content.Contains('\0');
+            return Results.Ok(new { content = binary ? "" : content.Value.Content, isBinary = binary });
         });
 
         // Commit-provenance & landed-state (ASS-1724). Returns the persisted

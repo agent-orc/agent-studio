@@ -161,9 +161,8 @@ public sealed class GitReadRouteCensusTests : IDisposable
     {
         var census = ComputeCensus().ToDictionary(route => route.Route, StringComparer.Ordinal);
 
-        Assert.Equal("reachable", census["/api/tasks/{jobId}/files/{**path}"].Git);
+        Assert.Equal("free", census["/api/tasks/{jobId}/files/{**path}"].Git);
         Assert.Equal("reachable", census["/api/git/hygiene"].Git);
-        Assert.Contains("GitProcessBoundary", census["/api/tasks/{jobId}/files/{**path}"].Via, StringComparison.Ordinal);
         // AGT-3323 (Git facts S3): the card reads it migrated join published
         // facts and have no static path to Git at all.
         foreach (var route in new[]
@@ -171,6 +170,7 @@ public sealed class GitReadRouteCensusTests : IDisposable
                      "/api/tasks/{jobId}/provenance", "/api/tasks/{jobId}/delivery-claim", "/api/git/integration",
                      "/api/tasks/{jobId}/commits", "/api/tasks/{jobId}/commits/files", "/api/tasks/{jobId}/commits/diff",
                      "/api/tasks/{jobId}/commit", "/api/tasks/{jobId}/commits/{sha}/files",
+                     "/api/tasks/{jobId}/commits/{sha}/file", "/api/tasks/{jobId}/checkout/{**path}",
                      "/api/tasks/{jobId}/runs/{index:int}/commits", "/api/tasks/{jobId}/runs/{index:int}/files",
                  })
             Assert.Equal("free", census[route].Git);

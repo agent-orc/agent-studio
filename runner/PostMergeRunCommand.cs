@@ -105,6 +105,9 @@ public sealed class PostMergeRunCommand
             return 0;
         }
 
+        using (var escalation = await _http.PostAsync(StateUrl() + "/escalation-check", null, ct))
+            escalation.EnsureSuccessStatusCode();
+
         Directory.CreateDirectory(_options.Checkout);
         using var claim = ClaimCheckout();
         if (claim is null) { _output.WriteLine("post-merge checkout already claimed"); return 0; }
@@ -186,6 +189,7 @@ public sealed class PostMergeRunCommand
             from, opened, now, merges.Count, commands, [], "running", now, null);
         await Post(started, ct);
         var verdicts = new List<PostMergeCommandVerdict>();
+        var quarantinedFailures = 0;
         foreach (var command in commands)
         {
             var suite = definition.TestSuites.FirstOrDefault(item => item.Command == command);
@@ -204,21 +208,169 @@ public sealed class PostMergeRunCommand
                 var results = await Task.WhenAll(shardCommands.Select(shard =>
                     RunCommand(shard, definition.Environment, ct)));
                 verdicts.AddRange(results.Select((result, index) =>
-                    new PostMergeCommandVerdict(shardCommands[index], result.ExitCode, result.TimedOut)));
+                    new PostMergeCommandVerdict(shardCommands[index], result.ExitCode, result.TimedOut,
+                        result.ExitCode == 0 ? null : PostMergeAttributor.Excerpt(result.Output),
+                        result.ExitCode == 0 ? null : PostMergeAttributor.FailedTests(result.Output))));
             }
             else
             {
                 var result = await RunCommand(command, definition.Environment, ct);
-                verdicts.Add(new(command, result.ExitCode, result.TimedOut));
+                verdicts.Add(new(command, result.ExitCode, result.TimedOut,
+                    result.ExitCode == 0 ? null : PostMergeAttributor.Excerpt(result.Output),
+                    result.ExitCode == 0 ? null : PostMergeAttributor.FailedTests(result.Output)));
+            }
+            foreach (var failingVerdict in verdicts.Where(verdict => verdict.ExitCode != 0).ToArray())
+            {
+                if (!definition.TestSuites.Any(suite => failingVerdict.Command == suite.Command
+                        || failingVerdict.Command.StartsWith(suite.Command + " ", StringComparison.Ordinal)
+                        || suite.Command.Contains("dotnet test ", StringComparison.Ordinal)
+                        && failingVerdict.Command.Contains(suite.Command.Split(" --filter", StringSplitOptions.None)[0],
+                            StringComparison.Ordinal)))
+                    continue;
+                var observed = failingVerdict.FailedTests ?? PostMergeAttributor.FailedTests(failingVerdict.OutputTail ?? "");
+                var blocking = PostMergeAttributor.BlockingTests(_options.Checkout, observed, _clock.GetUtcNow());
+                var focused = PostMergeAttributor.FocusedCommand(failingVerdict.Command, blocking);
+                var knownFlake = observed.Count > 0 && blocking.Count == 0;
+                if (!knownFlake && focused is not null)
+                    knownFlake = (await RunCommand(focused, definition.Environment, ct)).ExitCode == 0;
+                if (!knownFlake) continue;
+                verdicts[verdicts.IndexOf(failingVerdict)] = failingVerdict with { ExitCode = 0 };
+                quarantinedFailures++;
             }
             if (verdicts.Any(verdict => verdict.ExitCode != 0)) break;
         }
         var status = verdicts.All(v => v.ExitCode == 0) && verdicts.Count >= commands.Count
             ? "green" : "red";
-        await Post(started with { Status = status, Verdicts = verdicts,
+        PostMergeFailureEvidence? failure = null;
+        if (status == "red")
+        {
+            try { failure = await AttributeFailureAsync(state, definition, tip, verdicts, ct); }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _output.WriteLine($"post-merge attribution unavailable: {exception.GetType().Name}: {exception.Message}");
+                var failed = verdicts.First(verdict => verdict.ExitCode != 0);
+                var excerpt = PostMergeAttributor.Excerpt(failed.OutputTail ?? "");
+                var tests = failed.FailedTests ?? PostMergeAttributor.FailedTests(excerpt);
+                failure = new(PostMergeAttributor.Fingerprint(tests, failed.Command, excerpt), tests,
+                    excerpt, [], [], null, false, false);
+            }
+        }
+        await Post(started with { Status = status, Verdicts = verdicts, Failure = failure,
+            Reason = quarantinedFailures > 0
+                ? $"{quarantinedFailures} failing command(s) passed a same-SHA rerun or had only quarantined tests."
+                : null,
             FinishedAtUtc = _clock.GetUtcNow() }, ct);
         _output.WriteLine($"post-merge {status} tip={tip} commands={verdicts.Count}");
         return status == "green" ? 0 : 1;
+    }
+
+    private async Task<PostMergeFailureEvidence> AttributeFailureAsync(PostMergeProjectState state,
+        ProjectExecutionDefinition definition, string tip,
+        IReadOnlyList<PostMergeCommandVerdict> verdicts, CancellationToken ct)
+    {
+        var failed = verdicts.First(verdict => verdict.ExitCode != 0);
+        var excerpt = PostMergeAttributor.Excerpt(failed.OutputTail ?? "");
+        var observed = failed.FailedTests ?? PostMergeAttributor.FailedTests(excerpt);
+        var blocking = PostMergeAttributor.BlockingTests(_options.Checkout, observed, _clock.GetUtcNow());
+        var focused = PostMergeAttributor.FocusedCommand(failed.Command, blocking);
+        var fingerprint = PostMergeAttributor.Fingerprint(blocking, failed.Command, excerpt);
+
+        var range = state.LastGreenSha is null ? "FETCH_HEAD^..FETCH_HEAD" : state.LastGreenSha + ".." + tip;
+        var history = await Git(ct, "log", "--first-parent", "--reverse", "--format=%H", range);
+        if (!history.Success) throw new IOException(history.StdErr);
+        var commits = history.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var listedProjects = await Git(ct, "ls-files", "*.csproj");
+        if (!listedProjects.Success) throw new IOException(listedProjects.StdErr);
+        var projectMap = new PostMergeProjectMap(_options.Checkout,
+            listedProjects.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        var candidates = new List<(string Sha, IReadOnlyList<string> Paths)>();
+        foreach (var commit in commits)
+        {
+            var diff = await Git(ct, "diff", "--name-only", commit + "^", commit);
+            if (!diff.Success) throw new IOException(diff.StdErr);
+            var paths = diff.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            if (projectMap.CouldAffect(definition, paths, failed.Command))
+                candidates.Add((commit, paths));
+        }
+
+        string? attributed = null;
+        if (focused is not null && candidates.Count > 0)
+        {
+            var left = 0;
+            var right = candidates.Count - 1;
+            try
+            {
+                // One point for a sole suspect; binary search when paths leave
+                // multiple first-parent suspects in the range.
+                while (left <= right)
+                {
+                    var middle = left + (right - left) / 2;
+                    var point = candidates[middle].Sha;
+                    var switched = await Git(ct, "checkout", "--quiet", "--detach", "--force", point);
+                    if (!switched.Success) throw new IOException(switched.StdErr);
+                    var buildCommands = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(definition.Commands.Prepare))
+                        buildCommands.Add(definition.Commands.Prepare);
+                    buildCommands.AddRange(definition.Commands.Build);
+                    var built = true;
+                    foreach (var command in buildCommands)
+                    {
+                        if ((await RunCommand(command, definition.Environment, ct)).ExitCode == 0) continue;
+                        built = false;
+                        break;
+                    }
+                    if (!built) { attributed = null; break; }
+                    var test = await RunCommand(focused, definition.Environment, ct);
+                    if (test.ExitCode == 0) left = middle + 1;
+                    else { attributed = point; right = middle - 1; }
+                }
+            }
+            finally
+            {
+                var restored = await Git(CancellationToken.None, "checkout", "--quiet", "--detach", "--force", tip);
+                if (!restored.Success) throw new IOException(restored.StdErr);
+            }
+        }
+
+        var affected = attributed is null ? candidates.SelectMany(candidate => candidate.Paths)
+            : candidates.First(candidate => candidate.Sha == attributed).Paths;
+        var failingPaths = affected.Distinct(StringComparer.Ordinal).Take(128).ToArray();
+        // A later first-parent integration may depend on the suspect through
+        // another file. Without a proof of independence, use fix forward.
+        var laterDepends = attributed is not null && commits.SkipWhile(commit => commit != attributed)
+            .Skip(1).Any();
+        var clean = false;
+        string? attributedTaskId = null;
+        if (attributed is not null && !laterDepends)
+        {
+            var parents = await Git(ct, "rev-list", "--parents", "-n", "1", attributed);
+            if (!parents.Success) throw new IOException(parents.StdErr);
+            var merge = parents.StdOut.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries).Length > 2;
+            var args = merge ? new[] { "revert", "--no-commit", "-m", "1", attributed }
+                : ["revert", "--no-commit", attributed];
+            try { clean = (await Git(ct, args)).Success; }
+            finally
+            {
+                if (!clean)
+                {
+                    var abort = await Git(CancellationToken.None, "revert", "--abort");
+                    if (!abort.Success)
+                        _output.WriteLine("post-merge revert probe had no active sequence to abort");
+                }
+                var reset = await Git(CancellationToken.None, "reset", "--hard", tip);
+                if (!reset.Success) throw new IOException(reset.StdErr);
+            }
+        }
+        if (attributed is not null)
+        {
+            var message = await Git(ct, "show", "-s", "--format=%B", attributed);
+            if (!message.Success) throw new IOException(message.StdErr);
+            attributedTaskId = PostMergeAttributor.TaskIdFromMergeMessage(message.StdOut);
+        }
+        return new(fingerprint, blocking, excerpt, failingPaths,
+            candidates.Select(candidate => candidate.Sha).TakeLast(512).ToArray(),
+            attributed, clean, laterDepends,
+            AttributedTaskId: attributedTaskId);
     }
 
     private FileStream? ClaimCheckout()
@@ -249,7 +401,7 @@ public sealed class PostMergeRunCommand
                 onStdOut: line => _output.WriteLine(line),
                 onStdErr: line => _output.WriteLine(line),
                 isolateProcessGroup: OperatingSystem.IsLinux(), ct: timeout.Token);
-            return (result.ExitCode, false, result.StdOut);
+            return (result.ExitCode, false, result.StdOut + "\n" + result.StdErr);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

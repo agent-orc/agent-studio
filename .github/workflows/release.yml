@@ -384,6 +384,7 @@ jobs:
             [agent-host]=runner/Dockerfile
             [agent-operations-server]=operations-server/Dockerfile
             [agent-operations-agent]=operations-agent/Dockerfile
+            [agent-work]=deploy/work-container/Dockerfile
           )
           images=()
           for name in "${!dockerfiles[@]}"; do
@@ -603,12 +604,12 @@ jobs:
           cat artifacts/images/candidate-images.tar.zst.part-* | zstd -dc | docker load
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           short_sha="${SHA:0:7}"
-          for name in agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine agent-studio-bff agent-host agent-operations-server agent-operations-agent; do
+          for name in agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine agent-studio-bff agent-host agent-operations-server agent-operations-agent agent-work; do
             image="ghcr.io/agent-orc/$name"
             docker tag "$image:v$VERSION" "$image:sha-$short_sha"
             docker push "$image:sha-$short_sha"
           done
-          for name in agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine agent-studio-bff agent-host agent-operations-server agent-operations-agent; do
+          for name in agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine agent-studio-bff agent-host agent-operations-server agent-operations-agent agent-work; do
             image="ghcr.io/agent-orc/$name"
             docker buildx imagetools inspect "$image:sha-$short_sha" >/dev/null
           done
@@ -627,6 +628,10 @@ jobs:
         with:
           name: release-candidate-${{ github.sha }}
           path: artifacts/release
+      - uses: actions/download-artifact@v4
+        with:
+          name: work-container-images
+          path: artifacts/work-container
       - name: Verify release assets
         run: (cd artifacts/release && sha256sum -c SHA256SUMS)
       - name: Attest release assets
@@ -647,6 +652,7 @@ jobs:
             artifacts/release/*.tar.gz artifacts/release/*.zip \
             artifacts/release/agent-studio-setup artifacts/release/agent-studio-setup.exe \
             artifacts/release/install.sh artifacts/release/SHA256SUMS artifacts/release/RELEASE-NOTES.md \
+            artifacts/work-container/work-container-images.json \
             --verify-tag --notes-file artifacts/release/RELEASE-NOTES.md \
             --title "Agent Studio $VERSION"
 
@@ -671,6 +677,16 @@ jobs:
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           scripts/release/promote-images.sh "$VERSION" "$SHA"
+      - name: Record the digest-pinned work container role images
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: scripts/release/work-container-image-manifest.sh "$VERSION" artifacts/work-container-images.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: work-container-images
+          path: artifacts/work-container-images.json
+          if-no-files-found: error
+          retention-days: 30
 
   verify-visibility:
     name: Report anonymous package visibility after release
@@ -686,7 +702,7 @@ jobs:
           set -uo pipefail
           docker logout ghcr.io
           visibility=public
-          for name in agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine agent-studio-bff agent-host agent-operations-server agent-operations-agent; do
+          for name in agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine agent-studio-bff agent-host agent-operations-server agent-operations-agent agent-work; do
             image="ghcr.io/agent-orc/$name:v$VERSION"
             if docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
               echo "$image: anonymous pull available" >> "$GITHUB_STEP_SUMMARY"

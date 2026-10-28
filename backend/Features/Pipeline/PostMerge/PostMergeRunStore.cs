@@ -21,6 +21,18 @@ public sealed class PostMergeRunStore
         lock (_gate) return ReadLocked(projectId);
     }
 
+    public PostMergeProjectState UpdateIncidents(string projectId,
+        Func<IReadOnlyList<PostMergeIncident>, IReadOnlyList<PostMergeIncident>> update)
+    {
+        lock (_gate)
+        {
+            var state = ReadLocked(projectId);
+            state = state with { Incidents = update(state.Incidents ?? []) };
+            WriteLocked(projectId, state);
+            return state;
+        }
+    }
+
     public PostMergeProjectState? Record(string projectId, PostMergeRunRecord run)
     {
         lock (_gate)
@@ -60,7 +72,8 @@ public sealed class PostMergeRunStore
                     || run.FinishedAtUtc < run.StartedAtUtc
                     || run.Verdicts.Count == 0
                     || run.Status == "green" && (run.Verdicts.Count < run.Commands.Count
-                        || run.Verdicts.Any(verdict => verdict.ExitCode != 0)))
+                        || run.Verdicts.Any(verdict => verdict.ExitCode != 0)
+                        && run.Failure?.AllFailuresQuarantined != true))
                     return null;
                 state = state with
                 {

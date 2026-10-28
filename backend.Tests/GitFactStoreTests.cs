@@ -58,6 +58,40 @@ public sealed class GitFactStoreTests : IDisposable
     }
 
     [Fact]
+    public void FileFacts_SeparateCardsAndInvalidateOnRefMove_AndResultRowsSurviveRestart()
+    {
+        var store = NewStore();
+        store.Open();
+        var epoch = store.AcquireProducerEpoch("proj", "producer-test");
+        store.Publish(Publication("proj", epoch, "f1", "a"));
+        var at = _clock.GetUtcNow().UtcDateTime;
+        var entry = new TaskFileHistoryEntry(new string('a', 40), at, 2, "accept", "review", "agent",
+            new TaskFileVersionProvenance(TaskFileSources.Workspace, "status.md", "review=pass", null));
+        store.WritePathHistory(new GitPathHistoryFact("proj", TaskFileSources.Workspace,
+            "/jobs/proj/card-a", "status.md", [entry],
+            [new GitFileObjectFact(entry.Sha, "status.md", "first", "hash-a", false)]));
+        store.WritePathHistory(new GitPathHistoryFact("proj", TaskFileSources.Workspace,
+            "/jobs/proj/card-b", "status.md", [entry with { Message = "other" }],
+            [new GitFileObjectFact(entry.Sha, "status.md", "second", "hash-b", false)]));
+        store.UpsertResultVersion(new GitResultVersionFact("proj::card-a", "local-0001", "run attempt #2",
+            "run-attempt", "review", 2, "accept", "review=pass", at, "result-hash", null,
+            "task-folder", "results/history/0001/status.md", "accept", "generic", 1));
+
+        var reopened = NewStore();
+        Assert.Equal("opened", reopened.Open());
+        Assert.Equal("first", reopened.ReadFileObject("proj", TaskFileSources.Workspace,
+            "/jobs/proj/card-a", entry.Sha, "status.md")!.Content);
+        Assert.Equal("second", reopened.ReadFileObject("proj", TaskFileSources.Workspace,
+            "/jobs/proj/card-b", entry.Sha, "status.md")!.Content);
+        Assert.Equal("other", Assert.Single(reopened.ReadPathHistory("proj", TaskFileSources.Workspace,
+            "status.md", "/jobs/proj/card-b")!.Entries).Message);
+        Assert.Equal("local-0001", Assert.Single(reopened.ReadResultVersions("proj::card-a")).VersionId);
+        reopened.Publish(Publication("proj", epoch, "f2", "a"));
+        Assert.Null(reopened.ReadPathHistory("proj", TaskFileSources.Workspace,
+            "status.md", "/jobs/proj/card-a"));
+    }
+
+    [Fact]
     public void Publish_ThenLoadCurrent_RoundTripsTheGenerationRepositoryAndCards()
     {
         var store = NewStore();
