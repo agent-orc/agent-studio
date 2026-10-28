@@ -78,6 +78,9 @@ internal static class CredentialViewEndpoints
             => await TaskServerEndpoints.InvokeAsync(async () => await store.GetCredentialInventoryAsync(
                 await StudioRoleGate.ResolveAsync(context, store, bootstrap, ct) ?? StudioUserRoles.Viewer, ct)))
             .RequireStudioRole(StudioUserRoles.Operator);
+        management.MapGet("/attempt-visibility", async (TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(() => store.GetAttemptVisibilityAsync(ct)))
+            .RequireStudioRole(StudioUserRoles.Viewer);
     }
 }
 

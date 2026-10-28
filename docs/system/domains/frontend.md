@@ -28,6 +28,14 @@ to its measured initial size plus a small build-variance margin; preserve the
 
 ## Environment flow
 
+DP-S6 renders canary attempt rows beneath their physical host using
+`GET /api/v1/management/attempt-visibility`. Active occupancy follows the
+Task Server lease and host executor receipt; a verified cleanup releases
+occupancy while the attempt remains in the bounded history. Stale leases and
+failed cleanup stay visible. The credential inventory consumes the same attempt
+identity through metadata-only issuance rows. The view labels placement shadow
+grants and unreported executor facts as such.
+
 The Studio header opens a full-width Environment view. It refreshes every 15
 seconds while visible. The view joins the archive-inclusive
 `GET /api/environment/flow` projection with execution-host heartbeat telemetry,

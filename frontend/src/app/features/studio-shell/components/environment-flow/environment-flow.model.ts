@@ -10,6 +10,18 @@ export interface EnvironmentFlowSnapshot {
   waitingReasons: readonly { reason: string; count: number }[];
 }
 
+export interface AttemptVisibility {
+  attemptId: string; project: string; subject: string; hostId: string; role: string;
+  executor: string; leaseId: string; fence: number; leaseState: string;
+  startedAt: string; leaseExpiresAt: string; imageDigest: string | null;
+  grantHalfCores: number | null; grantSource: string; cacheOutcome: string;
+  cleanupStatus: string; occupancy: 'occupied' | 'released' | 'orphan'; provenance: string;
+}
+
+export interface AttemptVisibilitySnapshot {
+  generatedAt: string; attempts: readonly AttemptVisibility[];
+}
+
 export function minutes(value: number | null | undefined): string {
   if (value == null) return 'Unavailable';
   return value < 60 ? `${Math.round(value)} min` : `${(value / 60).toFixed(1)} h`;

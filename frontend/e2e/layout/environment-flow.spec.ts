@@ -4,6 +4,22 @@ import { join } from 'node:path';
 
 test('environment view refreshes and fits light and dark desktop widths', async ({ page }) => {
   let reads = 0;
+  let attemptStage: 'empty' | 'running' | 'terminal' | 'orphan' = 'empty';
+  const attempt = {
+    attemptId: 'run-visible', project: 'Demo', subject: 'AGT-1', hostId: 'kori-review-1',
+    role: 'coding', executor: 'container', leaseId: 'lease-visible', fence: 7,
+    leaseState: 'active', startedAt: new Date(Date.now() - 120_000).toISOString(),
+    leaseExpiresAt: new Date(Date.now() + 120_000).toISOString(), imageDigest: 'sha256:abcdef',
+    grantHalfCores: 3, grantSource: 'executor receipt', cacheOutcome: 'warm',
+    cleanupStatus: 'running', occupancy: 'occupied', provenance: 'Task Server lease + host receipt',
+  };
+  await page.route('**/api/v1/management/attempt-visibility', route => route.fulfill({ json: {
+    generatedAt: new Date().toISOString(), attempts: attemptStage === 'empty' ? [] : [{
+      ...attempt,
+      ...(attemptStage === 'terminal' ? { leaseState: 'released', cleanupStatus: 'verified', occupancy: 'released' }
+        : attemptStage === 'orphan' ? { leaseState: 'stale', cleanupStatus: 'failed', occupancy: 'orphan' } : {}),
+    }],
+  } }));
   await page.route('**/api/environment/flow', async route => {
     reads++;
     await route.fulfill({ json: {
@@ -70,11 +86,28 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   await expect(failed).toContainText('observed connected');
   const output = process.env.JOB_RESULTS_DIR ?? join(process.cwd(), 'test-results');
   mkdirSync(output, { recursive: true });
+  await view.locator('[data-host-id="kori-review-1"]').scrollIntoViewIfNeeded();
+  await expect(view.locator('[data-host-id="kori-review-1"] [data-attempt-id]')).toHaveCount(0);
   await page.screenshot({ path: join(output, 'environment-1280-light.png') });
 
+  for (const stage of ['running', 'terminal', 'orphan'] as const) {
+    attemptStage = stage;
+    await view.getByRole('button', { name: 'Refresh' }).click();
+    const child = view.locator('[data-host-id="kori-review-1"] [data-attempt-id="run-visible"]');
+    await expect(child).toBeVisible();
+    await expect(child).toContainText('sha256:abcdef');
+    await expect(child).toContainText('Task Server lease + host receipt');
+    await expect(child).toHaveAttribute('data-occupancy', stage === 'running' ? 'occupied'
+      : stage === 'terminal' ? 'released' : 'orphan');
+    await child.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(output, `environment-${stage}-light.png`) });
+  }
+
+  const beforeRefresh = reads;
   await view.getByRole('button', { name: 'Refresh' }).click();
-  await expect(view.locator('.environment-flow__metrics > div').first().locator('b')).toHaveText('2');
-  expect(reads).toBeGreaterThanOrEqual(2);
+  await expect.poll(async () => Number(await view.locator('.environment-flow__metrics > div').first().locator('b').textContent()))
+    .toBeGreaterThan(beforeRefresh);
+  expect(reads).toBeGreaterThan(beforeRefresh);
   await view.getByRole('button', { name: 'Close environment view' }).click();
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.getByTestId('studio-titlebar-theme').click();
@@ -82,6 +115,14 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   await openEnvironment();
   await expect(view).toBeVisible();
   await page.screenshot({ path: join(output, 'environment-1920-dark.png') });
+  for (const stage of ['empty', 'running', 'terminal', 'orphan'] as const) {
+    attemptStage = stage;
+    await view.getByRole('button', { name: 'Refresh' }).click();
+    await expect(view.locator('[data-host-id="kori-review-1"] [data-attempt-id="run-visible"]'))
+      .toHaveCount(stage === 'empty' ? 0 : 1);
+    await view.locator('[data-host-id="kori-review-1"]').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(output, `environment-${stage}-dark.png`) });
+  }
   const box = await view.boundingBox();
   expect(box?.width).toBe(1920);
 });

@@ -520,6 +520,19 @@ public static class TaskServerEndpoints
             if (!OwnsCredentialAttempt(context, runId, request.Identity)) return Results.Forbid();
             return await InvokeAsync(() => store.RecordAttemptCredentialDeletionAsync(request, ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        runs.MapPost("/{runId}/executor-receipt", async (
+            HttpContext context, string runId, AttemptExecutorReceiptRequest request,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            if (context.TaskServerPrincipal() is not
+                { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } boundRunner }
+                || boundRunner != request.RunnerId) return Results.Forbid();
+            return await InvokeAsync(async () =>
+            {
+                await store.RecordAttemptExecutorReceiptAsync(runId, request, ct);
+                return new { recorded = true };
+            });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         runs.MapPost("/{runId}/reconcile", async (
             HttpContext context,
             string runId,

@@ -45,6 +45,8 @@
     } @else { <p role="status">Loading card flow…</p> }
     <app-environment-health-overview />
     <section aria-labelledby="environment-hosts-title"><h2 id="environment-hosts-title">Hosts <small>{{ hosts().length }}</small></h2>
+      <p class="environment-flow__note">Attempt provenance: Task Server lease and host executor receipt. Placement shadow grants are labelled when no executor grant was reported. DP-D8 option A.</p>
+      @if (attemptState() === 'unavailable') { <p class="environment-flow__note">Attempt visibility is unavailable for this connection.</p> }
       <div class="environment-flow__hosts">
         @for (host of hosts(); track host.id) {
           <article class="environment-flow__host" [class.environment-flow__host--alert]="host.status === 'offline' || host.status === 'degraded'" [attr.data-host-id]="host.id">
@@ -65,9 +67,33 @@
               @for (task of running(host); track task.id) { <span>{{ task.taskKey || task.id }} · {{ age(task) }}</span> }
               @if (!running(host).length) { <span>{{ runningEmptyLabel(host) }}</span> }
             </div>
+            @if (attemptState() === 'ready') {
+              <div class="environment-flow__attempts" [attr.data-host-attempts]="host.id">
+                <strong>Task Server attempts · {{ occupiedAttempts(host) }} occupied</strong>
+                @for (attempt of hostAttempts(host); track attempt.attemptId) {
+                  <article class="environment-flow__attempt" [attr.data-attempt-id]="attempt.attemptId"
+                    [attr.data-occupancy]="attempt.occupancy" [attr.data-cleanup]="attempt.cleanupStatus">
+                    <div><b>{{ attempt.project }} · {{ attempt.subject }}</b><span class="environment-flow__attempt-state">{{ attempt.occupancy }}</span></div>
+                    <p>{{ attempt.role }} · {{ attempt.executor }} · attempt {{ attempt.attemptId }} · fence {{ attempt.fence }}</p>
+                    <p>Lease {{ attempt.leaseState }} · {{ attempt.leaseId }} · age {{ attemptAge(attempt) }}</p>
+                    <p>Grant {{ attempt.grantHalfCores ?? 'unreported' }} half cores · {{ attempt.grantSource }}</p>
+                    <p>Image {{ attempt.imageDigest ?? 'unreported' }} · cache {{ attempt.cacheOutcome }}</p>
+                    <p>Cleanup {{ attempt.cleanupStatus }} · {{ attempt.provenance }}</p>
+                  </article>
+                } @empty { <p>No attempt receipts for this host.</p> }
+              </div>
+            }
           </article>
         }
       </div>
+      @if (unlinkedAttempts().length) {
+        <div class="environment-flow__unlinked"><strong>Attempts on hosts absent from the current host list</strong>
+          @for (attempt of unlinkedAttempts(); track attempt.attemptId) {
+            <p [attr.data-attempt-id]="attempt.attemptId">{{ attempt.hostId }} · {{ attempt.project }} · {{ attempt.subject }} ·
+              {{ attempt.executor }} · {{ attempt.occupancy }} · lease {{ attempt.leaseState }} · cleanup {{ attempt.cleanupStatus }}</p>
+          }
+        </div>
+      }
     </section>
     <section aria-labelledby="environment-events-title"><h2 id="environment-events-title">Open stall events <small>{{ cases().length }}</small></h2>
       @for (item of cases(); track item.id) { <article class="environment-flow__event"><b>{{ item.detectorClass }} · {{ item.project }}</b>

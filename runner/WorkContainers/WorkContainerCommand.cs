@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 
 namespace AgentRunner.WorkContainers;
@@ -86,9 +88,44 @@ public static class WorkContainerCommand
                     IWorkContainerCredentialSource? credentialSource = brokerHttp is null ? null
                         : new TaskServerWorkCredentialSource(brokerHttp, Required(options, "broker-bearer-file"),
                             Required(options, "runner-id"), Required(options, "instance-id"), Required(options, "subject-id"));
+                    async Task Report(WorkContainerAttempt item, string selectedImage, int halfCores,
+                        string cleanup, string cache, DateTime startedAt, CancellationToken token)
+                    {
+                        if (brokerHttp is null) return;
+                        using var request = new HttpRequestMessage(HttpMethod.Post,
+                            $"api/v1/runs/{Uri.EscapeDataString(item.AttemptId)}/executor-receipt");
+                        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
+                            File.ReadAllText(Required(options, "broker-bearer-file")).Trim());
+                        var at = selectedImage.IndexOf("@sha256:", StringComparison.Ordinal);
+                        request.Content = JsonContent.Create(new
+                        {
+                            RunnerId = Required(options, "runner-id"), InstanceId = Required(options, "instance-id"),
+                            item.LeaseId, item.Fence, Executor = "container",
+                            ImageDigest = at < 0 ? null : selectedImage[(at + 1)..],
+                            GrantHalfCores = halfCores, CacheOutcome = cache,
+                            CleanupStatus = cleanup, StartedAt = startedAt,
+                        });
+                        using var response = await brokerHttp.SendAsync(request, token);
+                        response.EnsureSuccessStatusCode();
+                    }
                     var receipt = await new WorkContainerExecutor(new CliWorkContainerRuntime(settings.Runtime), settings,
-                            log: output.WriteLine, credentials: credentialSource)
+                            log: output.WriteLine, credentials: credentialSource,
+                            reportStarted: (item, selectedImage, halfCores, token) =>
+                                Report(item, selectedImage, halfCores, "running", "pending", DateTime.UtcNow, token))
                         .RunAsync(attempt, image, grant, ct);
+                    if (brokerHttp is not null)
+                    {
+                        try
+                        {
+                            var cache = string.Join(", ", receipt.Cache.Select(pair => $"{pair.Key}:{pair.Value}"));
+                            await Report(attempt, image, grant.HalfCores,
+                                receipt.CleanupVerified ? "verified" : "failed",
+                                cache.Length == 0 ? "unreported" : cache.Length <= 80 ? cache : cache[..80],
+                                receipt.StartedAtUtc,
+                                CancellationToken.None);
+                        }
+                        catch (Exception) { output.WriteLine($"work-container visibility receipt pending attempt={attempt.AttemptId}"); }
+                    }
                     output.WriteLine(JsonSerializer.Serialize(receipt, Json));
                     return receipt.Outcome == "succeeded" && receipt.CleanupVerified ? 0 : 1;
                 }

@@ -61,7 +61,7 @@ public sealed partial class TaskServerStore
     // remains the retired-schema downgrade guard for older binaries.
     // 40 adds post-work subjects, attempts, events and cohorts, and records one-use
     // attempt credential exchange and redacted teardown receipts (both additive).
-    public const int CurrentSchemaVersion = 40;
+    public const int CurrentSchemaVersion = 41;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -3933,6 +3933,18 @@ public sealed partial class TaskServerStore
             );
             CREATE INDEX IF NOT EXISTS ix_attempt_credential_issuances_run
                 ON attempt_credential_issuances(run_id, fence);
+            CREATE TABLE IF NOT EXISTS attempt_executor_receipts(
+                run_id TEXT PRIMARY KEY REFERENCES runs(id),
+                lease_id TEXT NOT NULL,
+                fence INTEGER NOT NULL,
+                executor TEXT NOT NULL,
+                image_digest TEXT,
+                grant_half_cores INTEGER,
+                cache_outcome TEXT NOT NULL,
+                cleanup_status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                recorded_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS host_project_policies(
                 host_id TEXT PRIMARY KEY,
                 allow_all_projects INTEGER NOT NULL,

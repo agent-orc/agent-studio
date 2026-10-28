@@ -54,6 +54,16 @@
 .environment-flow__host-detail { display: flex; gap: .3rem; flex-wrap: wrap; font-size: .75rem; margin-top: .4rem;
   strong { width: 100%; } span { color: var(--studio-text-secondary); }
 }
+.environment-flow__attempts { display: grid; gap: .4rem; margin-top: .8rem; font-size: .78rem; }
+.environment-flow__attempt { padding: .65rem; border: 1px solid var(--studio-border); border-radius: .4rem;
+  background: var(--studio-bg-surface);
+  &[data-occupancy='orphan'], &[data-cleanup='failed'] { background: color-mix(in srgb, var(--studio-warn) 9%, var(--studio-surface)); }
+  > div { display: flex; justify-content: space-between; gap: .5rem; }
+  p { margin: .3rem 0 0; overflow-wrap: anywhere; color: var(--studio-text-secondary); }
+}
+.environment-flow__attempt-state { text-transform: capitalize; }
+.environment-flow__unlinked { margin-top: .75rem; padding: .7rem; border: 1px solid var(--studio-border); border-radius: .4rem;
+  background: color-mix(in srgb, var(--studio-warn) 9%, var(--studio-surface)); }
 .environment-flow__event { display: flex; flex-wrap: wrap; gap: .4rem 1rem; margin: .45rem 0;
   small { color: var(--studio-text-secondary); }
 }

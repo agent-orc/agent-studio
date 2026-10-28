@@ -79,6 +79,25 @@ public class WorkContainerExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task Running_receipt_is_reported_only_after_container_start()
+    {
+        var runtime = new FakeRuntime();
+        var reports = new List<string>();
+        var executor = new WorkContainerExecutor(runtime, Settings, () => Memory,
+            reportStarted: (attempt, image, grant, _) =>
+            {
+                reports.Add($"{attempt.AttemptId}:{image}:{grant}");
+                Assert.Contains(runtime.Calls, call => call.StartsWith("start ", StringComparison.Ordinal));
+                Assert.DoesNotContain(runtime.Calls, call => call.StartsWith("wait ", StringComparison.Ordinal));
+                return Task.CompletedTask;
+            });
+        await executor.RunAsync(WorkContainerPolicyTests.Attempt(), WorkContainerPolicyTests.Digest,
+            new WorkContainerGrant(1, 1, 2), CancellationToken.None);
+        Assert.Single(reports);
+        Assert.Contains("attempt-42", reports[0]);
+    }
+
+    [Fact]
     public async Task Brokered_token_uses_tmpfs_injection_and_is_redacted_before_log_persistence()
     {
         var token = "opaque-" + Guid.NewGuid().ToString("N");
