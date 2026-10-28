@@ -27,6 +27,8 @@ RUN apt-get update \
  && chown -R 10001:10001 /work /cache
 # The host may bind a read-only bare source repository owned by another uid.
 RUN git config --system --add safe.directory /mnt/source
+COPY git-credential-helper.sh /usr/local/bin/agent-git-credential-helper
+RUN chmod 0755 /usr/local/bin/agent-git-credential-helper
 # No VOLUME declaration: the host agent mounts named volumes on every path, and
 # an empty named volume copies this ownership so user 10001 can write it.
 ENV HOME=/work/home \

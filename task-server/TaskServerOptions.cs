@@ -15,6 +15,10 @@ public sealed class TaskServerOptions
     public string DynamicPlacementMode { get; set; } = "shadow";
     public string[] DynamicPlacementCanaryHostIds { get; set; } = [];
     public int DynamicPlacementWarmPreferenceSeconds { get; set; } = 30;
+    /// <summary>Attempt credential exchange is disabled until the operator enables the S5 canary.</summary>
+    public bool AttemptCredentialCanaryEnabled { get; set; }
+    /// <summary>Absolute path to an operator-custodied, 32-byte base64 wrapping key file.</summary>
+    public string? AttemptCredentialWrappingKeyFile { get; set; }
     public int ResultRetentionDays { get; set; } = 30;
     public int ResultFinalizationMaxAttempts { get; set; } = 3;
     public bool ResultRefGcEnabled { get; set; } = true;

@@ -79,6 +79,29 @@ public class WorkContainerExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task Brokered_token_uses_tmpfs_injection_and_is_redacted_before_log_persistence()
+    {
+        var token = "opaque-" + Guid.NewGuid().ToString("N");
+        var runtime = new FakeRuntime { Log = "2026-10-28T10:00:00Z accidental=" + token };
+        var credentials = new FakeCredentials(token);
+        var attempt = WorkContainerPolicyTests.Attempt() with
+            { RepositorySource = "https://github.com/example/one.git" };
+        var executor = new WorkContainerExecutor(runtime, Settings, () => Memory, credentials: credentials);
+        var receipt = await executor.RunAsync(attempt, WorkContainerPolicyTests.Digest,
+            new WorkContainerGrant(1, 1, 2), CancellationToken.None);
+
+        Assert.Equal("succeeded", receipt.Outcome);
+        Assert.Equal("revoked", receipt.CredentialRevocationStatus);
+        Assert.Equal("container-tmpfs-removed", receipt.SecretDeletionStatus);
+        Assert.Equal(token, runtime.InjectedToken);
+        Assert.DoesNotContain(token, File.ReadAllText(receipt.LogPath!), StringComparison.Ordinal);
+        Assert.DoesNotContain(token, File.ReadAllText(Path.Combine(_state, "receipts", "attempt-42-f7.json")), StringComparison.Ordinal);
+        Assert.Contains("omitted-credential-boundary", File.ReadAllText(receipt.LogPath!));
+        Assert.DoesNotContain(runtime.Calls, call => call.Contains(token, StringComparison.Ordinal));
+        Assert.True(credentials.Revoked);
+    }
+
+    [Fact]
     public async Task Sha_mismatch_is_reported_and_still_cleaned_up()
     {
         var runtime = new FakeRuntime { ExitCode = WorkContainerLaunchPlanner.ShaMismatchExitCode };
@@ -183,6 +206,7 @@ public class WorkContainerExecutorTests : IDisposable
         public bool BlockWait { get; init; }
         public bool RemovalFails { get; init; }
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string? InjectedToken { get; private set; }
         private readonly Lock _gate = new();
 
         private void Call(string text) { lock (_gate) Calls.Add(text); }
@@ -216,6 +240,13 @@ public class WorkContainerExecutorTests : IDisposable
             return Task.FromResult(WorkRuntimeResult.Success);
         }
 
+        public Task<WorkRuntimeResult> InjectGitTokenAsync(string container, string token, CancellationToken ct)
+        {
+            InjectedToken = token;
+            Call("inject-secret");
+            return Task.FromResult(WorkRuntimeResult.Success);
+        }
+
         public async Task<int?> WaitAsync(string container, CancellationToken ct)
         {
             Call($"wait {container}");
@@ -243,5 +274,19 @@ public class WorkContainerExecutorTests : IDisposable
             => Task.FromResult(new ManagedWorkInventory(
                 Containers.Where(item => attemptId is null || item.Resource.AttemptId == attemptId).ToArray(),
                 Volumes.Where(item => attemptId is null || item.AttemptId == attemptId).ToArray()));
+    }
+
+    private sealed class FakeCredentials(string token) : IWorkContainerCredentialSource
+    {
+        public bool Revoked { get; private set; }
+        public Task<WorkCredential> AcquireAsync(WorkContainerAttempt attempt, CancellationToken ct)
+            => Task.FromResult(new WorkCredential("issuance", token, DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc)));
+        public Task<WorkCredential?> RenewAsync(WorkContainerAttempt attempt, WorkCredential current, CancellationToken ct)
+            => Task.FromResult<WorkCredential?>(null);
+        public Task<string> RevokeAsync(WorkContainerAttempt attempt, WorkCredential current, CancellationToken ct)
+        {
+            Revoked = true;
+            return Task.FromResult("revoked");
+        }
     }
 }

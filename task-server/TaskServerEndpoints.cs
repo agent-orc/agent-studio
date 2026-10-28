@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TaskServer.AttemptCredentials;
 using Microsoft.Extensions.Options;
 
 namespace AgentStudio.TaskServer;
@@ -473,6 +474,51 @@ public static class TaskServerEndpoints
 
         var runs = api.MapGroup("/runs")
             .RequireTaskServerScope(TaskServerScopes.RunsWrite);
+        runs.MapPost("/{runId}/credentials/capability", async (
+            HttpContext context, string runId, AttemptCredentialIdentity identity,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            if (!OwnsCredentialAttempt(context, runId, identity)) return Results.Forbid();
+            context.Response.Headers.CacheControl = "no-store";
+            return await InvokeAsync(() => store.CreateAttemptCredentialCapabilityAsync(identity, ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        runs.MapPost("/{runId}/credentials/exchange", async (
+            HttpContext context, string runId, AttemptCredentialExchangeRequest request,
+            TaskServerStore store, IRepositoryTokenIssuer issuer, IAttemptRootSecretStore roots,
+            CancellationToken ct) =>
+        {
+            if (!OwnsCredentialAttempt(context, runId, request.Identity)) return Results.Forbid();
+            context.Response.Headers.CacheControl = "no-store";
+            return await InvokeAsync(() => store.ExchangeAttemptCredentialAsync(
+                request.Identity, request.IssuanceId, request.Capability, issuer, roots, ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        runs.MapPost("/{runId}/credentials/renew", async (
+            HttpContext context, string runId, AttemptCredentialLifecycleRequest request,
+            TaskServerStore store, IRepositoryTokenIssuer issuer, IAttemptRootSecretStore roots,
+            CancellationToken ct) =>
+        {
+            if (!OwnsCredentialAttempt(context, runId, request.Identity)) return Results.Forbid();
+            context.Response.Headers.CacheControl = "no-store";
+            return await InvokeAsync(() => store.RenewAttemptCredentialAsync(
+                request.Identity, request.IssuanceId, issuer, roots, ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        runs.MapPost("/{runId}/credentials/revoke", async (
+            HttpContext context, string runId, AttemptCredentialLifecycleRequest request,
+            TaskServerStore store, IRepositoryTokenIssuer issuer, IAttemptRootSecretStore roots,
+            CancellationToken ct) =>
+        {
+            if (!OwnsCredentialAttempt(context, runId, request.Identity)) return Results.Forbid();
+            context.Response.Headers.CacheControl = "no-store";
+            return await InvokeAsync(() => store.RevokeAttemptCredentialAsync(
+                request.Identity, request.IssuanceId, issuer, roots, ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        runs.MapPost("/{runId}/credentials/deletion", async (
+            HttpContext context, string runId, AttemptCredentialDeletionRequest request,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            if (!OwnsCredentialAttempt(context, runId, request.Identity)) return Results.Forbid();
+            return await InvokeAsync(() => store.RecordAttemptCredentialDeletionAsync(request, ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         runs.MapPost("/{runId}/reconcile", async (
             HttpContext context,
             string runId,
@@ -1202,6 +1248,12 @@ public static class TaskServerEndpoints
            ?? context.Request.Headers["X-Actor-Id"].FirstOrDefault()
            ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
            ?? "local-compatibility";
+
+    private static bool OwnsCredentialAttempt(HttpContext context, string runId, AttemptCredentialIdentity identity)
+        => context.TaskServerPrincipal() is
+            { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } boundRunner }
+           && string.Equals(boundRunner, identity.RunnerId, StringComparison.Ordinal)
+           && string.Equals(runId, identity.AttemptId, StringComparison.Ordinal);
 
     internal static int ProtocolVersion(HttpContext context)
         => int.TryParse(

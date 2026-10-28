@@ -2444,12 +2444,37 @@ never needs Docker. The switch is host-local and defaults to `off`:
 | `RUNNER_WORK_CONTAINER_CACHE_VERSION` | `1` | Generation of the npm, NuGet and repository-mirror cache volumes. |
 | `RUNNER_WORK_CONTAINER_NETWORK` | `bridge` | `host` and `container:*` are refused. |
 
-In this slice the detached coding and review workers stay on the process
-executor in every mode; provider credentials may enter a work container only
-as tmpfs files, which DP-S5 delivers. In canary mode, `agent-host
+Detached coding and review workers stay on the process executor in every mode.
+The DP-S5 coding canary uses Task Server's brokered GitHub App read token,
+injected through Docker or Podman stdin into the container's private tmpfs.
+Provider CLI account sharing remains disabled until the refresh proof passes.
+In canary mode, `agent-host
 work-container run --attempt <attempt.json> --grant-half-cores <n>
 --allocation-version <v>` executes one attempt that needs no provider
 credential. Routing claimed gate subjects to it belongs to DP-S4.
+
+To prepare the DP-S5 repository credential canary, place a 32-byte base64
+wrapping key in a mode-0600 file outside the Task Server data directory and
+set `TaskServer:AttemptCredentialWrappingKeyFile` to its path. Keep the key in
+the installation recovery set. Create a mode-0600 root JSON file under
+`/dev/shm` with `AppId`, `InstallationId`, numeric `RepositoryId`, canonical
+`RepositoryUrl`, and `PrivateKeyPem`. Import it offline with:
+
+```sh
+task-server attempt-credentials import-github-app \
+  --store-dir <task-server-data-dir> --wrapping-key-file <key-file> \
+  --repository-key <registered-repository-id> --root-json-file <protected-tmpfs-json>
+```
+
+Remove the plaintext import file after the command succeeds. Set
+`TaskServer:AttemptCredentialCanaryEnabled=true` only for a fenced coding
+canary. Pass `--broker-url`, `--broker-bearer-file`, `--runner-id`,
+`--instance-id`, and `--subject-id` to `agent-host work-container run` along
+with its normal claim and grant inputs. The bearer file remains on the host;
+the attempt file contains no token. Exchange and renewal require the current
+lease and fence. The broker requests one registered repository with
+`contents:read`, records issuance metadata, and revokes on teardown; an
+unavailable issuer leaves at most the token's one-hour expiry backstop.
 
 Install a released role image manifest, or roll it back, with:
 
