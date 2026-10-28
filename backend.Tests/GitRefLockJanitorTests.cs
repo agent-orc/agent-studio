@@ -173,9 +173,43 @@ public sealed class GitRefLockJanitorTests : IDisposable
         Assert.True(Directory.Exists(live));
         Assert.True(Directory.Exists(locked));
         Assert.False(Directory.Exists(fresh));
+        var messages = Events().Where(m => m.Topic == "git-stale-lock-cleared").ToArray();
+        Assert.Equal(2, messages.Length);
+        Assert.Contains(messages, message => message.Body.Contains(orphan, StringComparison.Ordinal));
+        Assert.Contains(messages, message => message.Body.Contains(fresh, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void BeforeFetch_RemovesOnlyOldMissingInitializingEntriesWithoutAnOwnGitProcess()
+    {
+        RunGit(_root, "init", "-q", _repo);
+        var old = InitializingEntry("old", Path.Combine(_root, "missing-old"), TimeSpan.FromMinutes(20));
+        File.WriteAllText(Path.Combine(old, "index.lock"), "");
+        Directory.SetLastWriteTimeUtc(old, _clock.GetUtcNow().UtcDateTime - TimeSpan.FromMinutes(20));
+        var fresh = InitializingEntry("fresh", Path.Combine(_root, "missing-fresh"), TimeSpan.FromMinutes(2));
+        var livePath = Path.Combine(_root, "live");
+        Directory.CreateDirectory(livePath);
+        File.WriteAllText(Path.Combine(livePath, ".git"), "gitdir: elsewhere");
+        var live = InitializingEntry("live", livePath, TimeSpan.FromMinutes(20));
+        var other = WorktreeEntry("other", Path.Combine(_root, "missing-other"), TimeSpan.FromMinutes(20));
+        File.WriteAllText(Path.Combine(other, "locked"), "on removable disk");
+        var janitor = Janitor(OwnServerChildrenOnly());
+
+        using (GitChildProcessRegistry.Track(_repo))
+        {
+            Assert.Empty(janitor.BeforeFetch(_repo).PrunedWorktrees);
+            Assert.True(Directory.Exists(old));
+        }
+
+        var result = janitor.BeforeFetch(_repo);
+
+        Assert.Equal([old], result.PrunedWorktrees);
+        Assert.False(Directory.Exists(old));
+        Assert.True(Directory.Exists(fresh));
+        Assert.True(Directory.Exists(live));
+        Assert.True(Directory.Exists(other));
         var message = Assert.Single(Events(), m => m.Topic == "git-stale-lock-cleared");
-        Assert.Contains(orphan, message.Body);
-        Assert.Contains(fresh, message.Body);
+        Assert.Contains(old, message.Body);
     }
 
     [Fact]
@@ -250,6 +284,16 @@ public sealed class GitRefLockJanitorTests : IDisposable
         Directory.CreateDirectory(entry);
         File.WriteAllText(Path.Combine(entry, "gitdir"), Path.Combine(workTree, ".git") + "\n");
         File.SetLastWriteTimeUtc(Path.Combine(entry, "gitdir"), _clock.GetUtcNow().UtcDateTime - age);
+        Directory.SetLastWriteTimeUtc(entry, _clock.GetUtcNow().UtcDateTime - age);
+        return entry;
+    }
+
+    private string InitializingEntry(string name, string workTree, TimeSpan age)
+    {
+        var entry = WorktreeEntry(name, workTree, age);
+        var locked = Path.Combine(entry, "locked");
+        File.WriteAllText(locked, "initializing");
+        File.SetLastWriteTimeUtc(locked, _clock.GetUtcNow().UtcDateTime - age);
         Directory.SetLastWriteTimeUtc(entry, _clock.GetUtcNow().UtcDateTime - age);
         return entry;
     }

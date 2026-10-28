@@ -189,6 +189,8 @@ public class TaskFolderAccessIsolationTest
             // never the task-storage tree.
             ["backend/Features/Git/GitService.cs"] =
                 "Wiki folder move/delete operate on the project repo docs/ tree, not task storage.",
+            ["backend/Features/Git/StaleLocks/GitRefLockJanitor.cs"] =
+                "Deletes only stale Git worktree administration entries after ownership and age checks, never task storage.",
 
             // Integration worktree (AGT-2832): removes the Studio-owned
             // integration worktree directory when its registration is stale,

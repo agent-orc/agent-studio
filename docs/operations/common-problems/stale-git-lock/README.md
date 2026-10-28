@@ -180,10 +180,12 @@ killed fetch does not release its ref locks.
   ref lock. It removes `packed-refs.lock` and `refs/**/*.lock` files that are
   older than `GitStaleLocks:RefJanitorThresholdMinutes` (default 5) when no git
   process holds them (same ownership probe as above). In the same pass it
-  prunes `.git/worktrees/<name>` entries whose working tree no longer exists and
-  which are unlocked and older than the threshold.
-- Each janitor pass that removed something emits one operations event
-  `git-stale-lock-cleared` (kind `intervention`) that lists every removed path.
+  prunes unlocked `.git/worktrees/<name>` entries whose working tree no longer
+  exists. It also removes entries locked as `initializing` when their `gitdir`
+  target is missing and the entry, lock, and pointer are older than the threshold.
+- Each removed worktree registration emits an operations event
+  `git-stale-lock-cleared` (kind `intervention`) naming that entry. Cleared ref
+  locks are reported together in one event.
   A timeout or `cannot lock ref` failure that leaves locks in place emits
   `git-ref-lock-blocked`, at most once per repository per
   `GitStaleLocks:RefLockReportWindowMinutes` (default 15).
