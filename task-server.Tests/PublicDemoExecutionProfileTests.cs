@@ -98,7 +98,8 @@ public sealed class PublicDemoExecutionProfileTests
         // nine subject, backend-pass, cohort, renewal and report steps (PostStep).
         // DP-S4 added the gate bundle upload (PostStep) and download (Continue).
         // DP-S5 credential lifecycle endpoints can issue and renew work material (Continue).
-        Assert.Equal(64, routes.Count);
+        // AGT-3332 records executor receipts for attempt visibility (Continue).
+        Assert.Equal(65, routes.Count);
         foreach (var operation in new[] { "capability", "exchange", "renew", "revoke", "deletion" })
             Assert.Contains(routes, route => route.RoutePattern.RawText ==
                 $"/api/v1/runs/{{runId}}/credentials/{operation}");
@@ -122,6 +123,24 @@ public sealed class PublicDemoExecutionProfileTests
             "/api/v1/projects/{projectId}/tasks/{taskIdentity}/older-brief-delivery/decision");
         Assert.Equal(ExecutionAdmissionPath.Continue,
             olderBriefDecision.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
+        var executorReceipt = Assert.Single(routes, route => route.RoutePattern.RawText ==
+            "/api/v1/runs/{runId}/executor-receipt");
+        Assert.Equal(ExecutionAdmissionPath.Continue,
+            executorReceipt.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
+        using (var request = new HttpRequestMessage(HttpMethod.Post, Materialize(executorReceipt.RoutePattern))
+               { Content = new StringContent("{}", Encoding.UTF8, "application/json") })
+        using (var response = await client.SendAsync(request))
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal(ExecutionAdmissionPolicy.ExecutionDisabledCode,
+                body.RootElement.GetProperty("code").GetString());
+            var detail = body.RootElement.GetProperty("detail");
+            Assert.Equal(ExecutionAdmissionPolicy.PublicDemoProfile,
+                detail.GetProperty("profile").GetString());
+            Assert.Equal(ExecutionAdmissionPolicy.PathName(ExecutionAdmissionPath.Continue),
+                detail.GetProperty("admissionPath").GetString());
+        }
         Assert.Contains(routes, route => route.RoutePattern.RawText ==
             "/api/v1/steering/projects/{projectId}/tasks/{taskIdentity}/actions");
         Assert.Contains(routes, route => route.RoutePattern.RawText ==
@@ -145,7 +164,7 @@ public sealed class PublicDemoExecutionProfileTests
             {
                 [ExecutionAdmissionPath.Claim] = 7,
                 [ExecutionAdmissionPath.Start] = 7,
-                [ExecutionAdmissionPath.Continue] = 19,
+                [ExecutionAdmissionPath.Continue] = 20,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,

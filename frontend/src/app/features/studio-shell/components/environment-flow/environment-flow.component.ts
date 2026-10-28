@@ -6,7 +6,8 @@ import type { RemoteHost } from '../../../remote-hosts/models/remote-host.model'
 import { freshHostTelemetry } from '../../../remote-hosts/models/running-truth';
 import { hostZonePolicy } from '../../../remote-hosts/models/zone-policy';
 import type { WatcherCase } from '../../../watcher/models/watcher.model';
-import { minutes, type EnvironmentFlowSnapshot } from './environment-flow.model';
+import { minutes, type AttemptVisibility, type AttemptVisibilitySnapshot,
+  type EnvironmentFlowSnapshot } from './environment-flow.model';
 import { EnvironmentHealthOverviewComponent } from '../../../environment-health';
 
 interface DecisionReceipt {
@@ -27,12 +28,15 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
   readonly tasks = input.required<readonly TaskInfo[]>();
   readonly closed = output<void>();
   readonly flow = signal<EnvironmentFlowSnapshot | null>(null);
+  readonly attempts = signal<readonly AttemptVisibility[]>([]);
+  readonly attemptState = signal<'loading' | 'ready' | 'unavailable'>('loading');
   readonly cases = signal<readonly WatcherCase[]>([]);
   readonly receipts = signal<readonly DecisionReceipt[]>([]);
   readonly error = signal<string | null>(null);
   readonly updatedAt = signal<Date | null>(null);
   readonly hosts = computed(() => this.hostsService.hosts());
   private timer: ReturnType<typeof setInterval> | null = null;
+  private attemptRefreshSequence = 0;
 
   ngOnInit(): void {
     this.refresh();
@@ -47,6 +51,19 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
 
   refresh(): void {
     this.hostsService.refresh();
+    const attemptRefreshSequence = ++this.attemptRefreshSequence;
+    this.http.get<AttemptVisibilitySnapshot>('/api/v1/management/attempt-visibility').subscribe({
+      next: data => {
+        if (attemptRefreshSequence !== this.attemptRefreshSequence) return;
+        this.attempts.set(data.attempts ?? []);
+        this.attemptState.set('ready');
+      },
+      error: () => {
+        if (attemptRefreshSequence !== this.attemptRefreshSequence) return;
+        this.attempts.set([]);
+        this.attemptState.set('unavailable');
+      },
+    });
     this.http.get<EnvironmentFlowSnapshot>('/api/environment/flow').subscribe({
       next: data => { this.flow.set(data); this.updatedAt.set(new Date(data.capturedAt)); this.error.set(null); },
       error: () => this.error.set('Flow data is temporarily unavailable.'),
@@ -63,6 +80,21 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
   }
 
   readonly minutes = minutes;
+  hostAttempts(host: RemoteHost): readonly AttemptVisibility[] {
+    const hostId = host.hostAdmission?.hostId ?? host.id;
+    return this.attempts().filter(item => item.hostId === hostId);
+  }
+  occupiedAttempts(host: RemoteHost): number {
+    return this.hostAttempts(host).filter(item => item.occupancy === 'occupied').length;
+  }
+  unlinkedAttempts(): readonly AttemptVisibility[] {
+    const ids = new Set(this.hosts().map(host => host.hostAdmission?.hostId ?? host.id));
+    return this.attempts().filter(item => !ids.has(item.hostId));
+  }
+  attemptAge(attempt: AttemptVisibility): string {
+    const elapsed = (Date.now() - Date.parse(attempt.startedAt)) / 60_000;
+    return minutes(Number.isFinite(elapsed) ? Math.max(0, elapsed) : null);
+  }
   readonly zonePolicy = hostZonePolicy;
   private hostFresh(host: RemoteHost): boolean {
     const heartbeatAt = host.lastHeartbeatAt ? Date.parse(host.lastHeartbeatAt) : Number.NaN;

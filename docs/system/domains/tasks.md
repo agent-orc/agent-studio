@@ -2267,6 +2267,13 @@ disk for runner state.
 
 ## Execution location on task reads
 
+DP-S6 attempt visibility reads Task Server `leases` as the occupancy authority,
+joins host executor receipts by run, lease and fence, and joins credential
+issuance metadata by the same identity. Only canary executors publish receipts.
+The management projection retains bounded settled attempts and labels stale
+leases, cleanup failures, and unreported facts. The credential inventory selects
+named metadata columns and never selects capability hashes or token material.
+
 `GET /api/tasks`, `GET /api/tasks/grouped`, task detail, and SignalR task
 updates carry `TaskInfo.executionLocation`. Consumers must use its actual
 `runnerId`, `executionKind`, lease state, and heartbeat for live attribution.

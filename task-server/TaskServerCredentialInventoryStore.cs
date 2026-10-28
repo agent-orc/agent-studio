@@ -137,9 +137,44 @@ public sealed partial class TaskServerStore
                 repositories.Add(new(repository, reader.GetString(1),
                     reader.IsDBNull(2) ? null : reader.GetString(2),
                     !reader.IsDBNull(3) && ReviewRepositoryAccessPolicy.IsPrivate(reader.GetString(3))));
-        return new(now, CredentialInventoryPolicy.Derive(items,
+        var derived = CredentialInventoryPolicy.Derive(items,
             hosts.Select(pair => new CredentialInventoryPolicy.Host(pair.Key, pair.Value.Roles,
-                pair.Value.Ready)).ToArray(), privateReviews, repositories, now));
+                pair.Value.Ready)).ToArray(), privateReviews, repositories, now).ToList();
+        // This reads the same run and lease authority as the Environment projection.
+        // Select only issuance metadata; the capability hash and issued token are excluded.
+        await using (var command = Command(connection, """
+            SELECT i.issuance_id, i.host_id, i.role, i.subject_id, i.run_id,
+                   i.lease_id, i.fence, i.issuer, i.storage_mode, i.issued_at,
+                   i.expires_at, i.revoked_at, i.revocation_status, i.deletion_status,
+                   p.repository_url, t.task_key, l.status, l.expires_at
+              FROM attempt_credential_issuances i
+              JOIN leases l ON l.run_id = i.run_id AND l.lease_id = i.lease_id
+              JOIN tasks t ON t.id = i.subject_id
+              LEFT JOIN project_repositories p ON p.repository_id = i.repository_id
+             ORDER BY i.capability_expires_at DESC LIMIT 200;
+            """))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        while (await reader.ReadAsync(ct))
+        {
+            var expires = reader.IsDBNull(10) ? (DateTime?)null : Parse(reader.GetString(10));
+            var revoked = !reader.IsDBNull(11);
+            var leaseStale = reader.GetString(16) != "active" || Parse(reader.GetString(17)) <= now;
+            var state = revoked ? "unused" : leaseStale || expires is { } deadline && deadline <= now
+                ? "expiring" : reader.IsDBNull(9) ? "unused" : "ok";
+            var repository = reader.IsDBNull(14) ? null
+                : ReviewRepositoryAccessPolicy.CanonicalRepository(reader.GetString(14));
+            var binding = $"{reader.GetString(15)} · attempt {reader.GetString(4)} · lease {reader.GetString(5)} · fence {reader.GetInt64(6)} · {reader.GetString(2)}";
+            var revocation = reader.IsDBNull(12) ? "pending" : reader.GetString(12);
+            var deletion = reader.IsDBNull(13) ? "pending" : reader.GetString(13);
+            derived.Add(new($"attempt:{reader.GetString(0)}", "repository", reader.GetString(1),
+                "attempt_repository_token", "Attempt repository access", [reader.GetString(2), "repository:read"],
+                repository, "read", expires,
+                reader.IsDBNull(9) ? null : Parse(reader.GetString(9)), state, false,
+                revoked ? "Attempt credential settled" : leaseStale ? "Lease is stale" : "Attempt bound",
+                [reader.GetString(15)], reader.GetString(7), binding, reader.GetString(8),
+                $"{revocation} · file {deletion}"));
+        }
+        return new(now, derived);
     }
 
     private static string ExpiryDetail(DateTime? expires, DateTime now, string otherwise)

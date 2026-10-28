@@ -79,7 +79,8 @@ public sealed class WorkContainerExecutor(
     Func<HostMemory>? readMemory = null,
     TimeProvider? clock = null,
     Action<string>? log = null,
-    IWorkContainerCredentialSource? credentials = null)
+    IWorkContainerCredentialSource? credentials = null,
+    Func<WorkContainerAttempt, string, int, CancellationToken, Task>? reportStarted = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly Func<HostMemory> _readMemory = readMemory ?? HostMemory.Read;
@@ -148,6 +149,11 @@ public sealed class WorkContainerExecutor(
         try
         {
             var start = await runtime.StartAsync(plan.ContainerName, ct);
+            if (start.Ok && reportStarted is not null)
+            {
+                try { await reportStarted(attempt, image, grant.HalfCores, ct); }
+                catch (Exception) { _log($"work-container visibility receipt pending attempt={attempt.AttemptId}"); }
+            }
             if (!start.Ok)
             {
                 outcome = "launch-failed";

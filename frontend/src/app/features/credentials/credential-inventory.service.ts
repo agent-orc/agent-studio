@@ -19,6 +19,10 @@ export interface CredentialInventoryItem {
   required: boolean;
   detail: string;
   affectedCards: readonly string[];
+  issuer?: string | null;
+  binding?: string | null;
+  storageMode?: string | null;
+  revocationReceipt?: string | null;
 }
 
 export interface CredentialInventory {

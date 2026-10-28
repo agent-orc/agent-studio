@@ -56,7 +56,7 @@ export default defineConfig({
       {
         command: 'bash ../scripts/serve-prebuilt-backend.sh',
         url: `http://127.0.0.1:${backendPort}/healthz`,
-        timeout: 100_000,
+        timeout: Number(process.env.PW_E2E_BACKEND_STARTUP_MS ?? 100_000),
         reuseExistingServer: true,
         gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 30_000 },
       },

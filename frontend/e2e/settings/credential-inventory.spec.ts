@@ -19,6 +19,18 @@ async function stub(page: Page) {
   await page.route('**/api/clients', json([]));
   await page.route('**/api/v1/workspaces*', json([]));
   await page.route('**/api/dev-tools/flags', json({ updateStableEnabled: false, deleteE2EJobsEnabled: false }));
+  const seenAt = new Date().toISOString();
+  await page.route('**/api/v1/management/remote-hosts', json([{
+    runnerId: 'runner-a', name: 'runner-a', hostId: 'runner-a', instanceId: 'coding',
+    runnerVersion: '1', protocolVersion: 2, status: 'active',
+    registeredAt: seenAt, lastSeenAt: seenAt,
+    hostAdmission: { hostId: 'runner-a', admissionState: 'open' },
+    capabilities: [{ key: 'provider-auth:codex', category: 'provider-auth',
+      advertisedStatus: 'ready', healthState: 'healthy', signal: 'ok', detail: 'Active session confirmed',
+      advertisedAt: seenAt, freshUntil: new Date(Date.now() + 180_000).toISOString(),
+      isFresh: true, consecutiveFailures: 0, affectedClaims: [], recoveryHistory: [] }],
+  }]));
+  await page.route('**/api/v1/management/links', json([]));
   await page.route('**/api/v1/management/credential-inventory', json({
     generatedAt: '2026-10-16T09:00:00Z',
     items: [
@@ -34,6 +46,13 @@ async function stub(page: Page) {
         label: 'Codex account', scopes: [], repository: null, permission: null,
         expiresAt: null, lastUseAt: null, state: 'ok', required: true,
         detail: 'Host-owned login', affectedCards: [] },
+      { id: 'attempt:issuance-visible', category: 'repository', hostId: 'runner-a', kind: 'attempt_repository_token',
+        label: 'Attempt repository access', scopes: ['coding', 'repository:read'],
+        repository: 'github.com/team/product', permission: 'read',
+        expiresAt: '2026-10-28T11:00:00Z', lastUseAt: '2026-10-28T10:00:00Z',
+        state: 'ok', required: false, detail: 'Attempt bound', affectedCards: ['AGT-1'],
+        issuer: 'github-app', binding: 'AGT-1 · attempt run-visible · lease lease-visible · fence 7 · coding',
+        storageMode: 'linux-tmpfs', revocationReceipt: 'pending · file pending' },
     ],
   }));
 }
@@ -56,12 +75,16 @@ test('Credentials page shows gaps, filters and both theme screenshots', async ({
   await expect(page.getByTestId('credential-inventory')).toBeVisible();
   await expect(page.getByTestId('workspace-settings-rail-credentials')).toBeVisible();
   await expect(page.getByTestId('credential-inventory')).toContainText('Affected cards: AGT-1');
-  await expect(page.locator('.credentials__row')).toHaveCount(3);
+  await expect(page.locator('.credentials__row')).toHaveCount(4);
+  await expect(page.getByTestId('credential-inventory')).toContainText('run-visible · lease lease-visible · fence 7');
+  await expect(page.getByTestId('credential-inventory')).toContainText('File storage: linux-tmpfs');
+  await expect(page.getByTestId('credential-inventory')).toContainText('Revocation receipt: pending · file pending');
   await page.getByRole('combobox', { name: 'State', exact: true }).selectOption('missing');
   await expect(page.locator('.credentials__row')).toHaveCount(1);
   await page.getByRole('combobox', { name: 'State', exact: true }).selectOption('all');
   for (const theme of ['dark', 'light'] as const) {
     await setTheme(page, theme);
+    await page.locator('.credentials__row').last().scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(shots, `inventory-${theme}--mocked.png`) });
   }
   await page.getByTestId('access-codex-sign-in').click();

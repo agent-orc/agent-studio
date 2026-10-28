@@ -15,7 +15,11 @@ public sealed record CredentialInventoryItemDto(
     string State,
     bool Required,
     string Detail,
-    IReadOnlyList<string> AffectedCards);
+    IReadOnlyList<string> AffectedCards,
+    string? Issuer = null,
+    string? Binding = null,
+    string? StorageMode = null,
+    string? RevocationReceipt = null);
 
 public sealed record CredentialInventoryDto(
     DateTime GeneratedAt,
