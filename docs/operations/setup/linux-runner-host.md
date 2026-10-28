@@ -946,6 +946,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | Env var | Flag | Default | Meaning |
 |---|---|---|---|
 | `RUNNER_SERVER_URL` | `--server` | `http://127.0.0.1:5030` | Task Server base URL (or the tunnelled address). |
+| `RUNNER_POST_MERGE_STATE_URL` | `--post-merge-state-url` | `RUNNER_SERVER_URL` | Studio API URL for T3 containment facts. Set it when the integration host connects directly to the Task Server. |
 | `RUNNER_ID` | `--runner-id` | `agent-runner-<host>` | Stable lease owner identity. Fencing is per task, not per pid. |
 | `RUNNER_NAME` | `--runner-name` | `agent-runner-01` | Board-facing runner/project name. |
 | `RUNNER_CLIENT_ID` | `--client-id` | (none) | Optional attribution label. It is not authentication and grants no access. |

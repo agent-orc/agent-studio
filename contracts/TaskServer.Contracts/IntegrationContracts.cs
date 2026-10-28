@@ -19,10 +19,13 @@ public static class IntegrationOutcomeKinds
     /// <summary>The non-force push was rejected because the integration ref moved.</summary>
     public const string StaleBase = "stale-base";
 
+    /// <summary>A red develop incident covers paths changed by this delivery; keep it queued.</summary>
+    public const string BlockedFailingArea = "blocked-failing-area";
+
     public const string Failed = "failed";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(
-        [Integrated, AlreadyIntegrated, Conflict, StaleBase, Failed], StringComparer.Ordinal);
+        [Integrated, AlreadyIntegrated, Conflict, StaleBase, BlockedFailingArea, Failed], StringComparer.Ordinal);
 }
 
 public static class IntegrationCapabilities
