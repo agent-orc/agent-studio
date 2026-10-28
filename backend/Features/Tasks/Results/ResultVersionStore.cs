@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AgentStudio.Git;
+using AgentStudio.Shared;
 
 namespace AgentStudio.Tasks;
 
@@ -31,11 +33,16 @@ public sealed class ResultVersionStore
 
     private readonly TimelineLog? _timeline;
     private readonly ILogger<ResultVersionStore> _logger;
+    private readonly GitFactStore? _facts;
+    private readonly IConfiguration? _configuration;
 
-    public ResultVersionStore(ILogger<ResultVersionStore> logger, TimelineLog? timeline = null)
+    public ResultVersionStore(ILogger<ResultVersionStore> logger, TimelineLog? timeline = null,
+        GitFactStore? facts = null, IConfiguration? configuration = null)
     {
         _logger = logger;
         _timeline = timeline;
+        _facts = facts;
+        _configuration = configuration;
     }
 
     public ResultWriteOutcome Replace(
@@ -64,6 +71,7 @@ public sealed class ResultVersionStore
 
             if (preserved is not null)
             {
+                IndexLocalVersion(folderPath, preserved);
                 _timeline?.Append(
                     folderPath,
                     TimelineEventKinds.ResultReplaced,
@@ -80,6 +88,70 @@ public sealed class ResultVersionStore
             }
 
             return new ResultWriteOutcome(true, preserved, null);
+        }
+    }
+
+    private void IndexLocalVersion(string folderPath, ResultHistoryVersion version)
+    {
+        if (_facts is null) return;
+        var path = Path.Combine(folderPath, version.StatusPath.Replace('/', Path.DirectorySeparatorChar));
+        var markdown = BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.SidecarBytes);
+        if (markdown is null) return;
+        var fields = ResultHistoryContent.ParseFields(markdown);
+        var watchPath = _configuration?.GetSection("WatchPaths").GetChildren()
+            .Select(entry => entry["Path"])
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Where(path => Path.GetFullPath(folderPath).StartsWith(
+                Path.GetFullPath(path!).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            .OrderByDescending(path => path!.Length).FirstOrDefault()
+            ?? FallbackWatchPath(folderPath);
+        var taskKey = TaskIdentity.CreateKey(watchPath, ResolveTaskId(folderPath));
+        try
+        {
+            _facts.UpsertResultVersion(new GitResultVersionFact(taskKey,
+                $"local-{version.Number:0000}", version.Producer.Label, version.Producer.Kind,
+                version.Lane,
+                int.TryParse(version.Producer.Attempt, CultureInfo.InvariantCulture, out var run) ? run : null,
+                fields.Result, null, version.ProducedAtUtc, ResultHistoryContent.Hash(markdown),
+                null, "task-folder", version.StatusPath, fields.Result, fields.Case, version.Number));
+        }
+        catch (Exception ex)
+        {
+            // The result file remains authoritative. A later background import
+            // recovers this derived row without changing the published result.
+            _logger.LogWarning(ex, "result-version index failed folder={Folder}", folderPath);
+        }
+    }
+
+    private static string FallbackWatchPath(string folderPath)
+    {
+        var parent = Directory.GetParent(folderPath);
+        var grandparent = parent?.Parent;
+        return string.Equals(grandparent?.Name, TaskStorageLayout.JobsDirName, StringComparison.Ordinal)
+            ? grandparent?.Parent?.FullName ?? folderPath
+            : grandparent?.FullName ?? folderPath;
+    }
+
+    private static string ResolveTaskId(string folderPath)
+    {
+        var folderId = Path.GetFileName(folderPath);
+        var jobsDir = Directory.GetParent(folderPath)?.Parent;
+        if (!string.Equals(jobsDir?.Name, TaskStorageLayout.JobsDirName, StringComparison.Ordinal))
+            return folderId;
+        try
+        {
+            var raw = BoundedFileRead.ReadAllTextOrNull(
+                Path.Combine(folderPath, "task.json"), BoundedFileRead.SidecarBytes);
+            if (raw is null) return folderId;
+            using var document = JsonDocument.Parse(raw);
+            return document.RootElement.TryGetProperty("id", out var id)
+                && id.ValueKind == JsonValueKind.String
+                && id.GetString() is { Length: > 0 } value ? value : folderId;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return folderId;
         }
     }
 
@@ -137,7 +209,8 @@ public sealed class ResultVersionStore
             var full = Path.GetFullPath(Path.Combine(folderPath, version.StatusPath.Replace('/', Path.DirectorySeparatorChar)));
             try
             {
-                if (File.Exists(full)) result.Add((version, File.ReadAllText(full)));
+                var markdown = BoundedFileRead.ReadAllTextOrNull(full, BoundedFileRead.SidecarBytes);
+                if (markdown is not null) result.Add((version, markdown));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

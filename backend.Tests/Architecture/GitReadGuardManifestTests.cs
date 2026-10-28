@@ -17,7 +17,7 @@ namespace AgentStudio.Tests.Architecture;
 [Trait("Category", "Guard")]
 public sealed class GitReadGuardManifestTests
 {
-    private const string ReviewedDigest = "26e9c57e5b2d256ee3ac08a2f12ff0b3e53698d77c90debc656a8f1e601e616e";
+    private const string ReviewedDigest = "35da1b08051e955c39e0b1ee631c8cf1ef22f1f30039fe241ad0a67cd0be018f";
 
     /// <summary>Method, route template and spawn ceiling of every reviewed exception.</summary>
     private const string Reviewed = """
@@ -57,9 +57,6 @@ public sealed class GitReadGuardManifestTests
             GET /api/runner/project:{projectId}/orchestrator-chat 3
             GET /api/runner/task:{projectId}/{taskKey}/orchestrator-chat 3
             GET /api/runner/workbench:{projectId}/{workbenchKey}/orchestrator-chat 3
-            GET /api/tasks/{jobId}/checkout/{**path} 2
-            GET /api/tasks/{jobId}/commits/{sha}/file 1
-            GET /api/tasks/{jobId}/files/{**path} 5
             GET /api/tasks/{jobId}/git/diff 2
             GET /api/tasks/{jobId}/git/file 1
             GET /api/tasks/{jobId}/git/hygiene 5

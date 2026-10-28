@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using AgentStudio.Git;
 
 namespace AgentStudio.Tasks;
 
@@ -25,6 +26,9 @@ public sealed class LegacyResultHistoryBackfill
     private readonly ILogger<LegacyResultHistoryBackfill> _logger;
     private readonly TimeSpan _totalBudget;
     private readonly TimeSpan _perCallCap;
+    private readonly GitFactStore? _facts;
+    private readonly ConcurrentDictionary<string, byte> _importStarted = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _importComplete = new(StringComparer.Ordinal);
 
     private readonly ConcurrentDictionary<string, Lazy<Task>> _inFlight = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastAttempt = new(StringComparer.Ordinal);
@@ -36,7 +40,8 @@ public sealed class LegacyResultHistoryBackfill
         TaskFileHistoryService files,
         TimeProvider clock,
         ILogger<LegacyResultHistoryBackfill> logger,
-        TimeSpan? totalBudget = null)
+        TimeSpan? totalBudget = null,
+        GitFactStore? facts = null)
     {
         _scanner = scanner;
         _files = files;
@@ -44,10 +49,12 @@ public sealed class LegacyResultHistoryBackfill
         _logger = logger;
         _totalBudget = totalBudget ?? GitCallBudgetPolicy.BackfillTotalBudget;
         _perCallCap = GitCallBudgetPolicy.BackfillPerCallCap;
+        _facts = facts;
     }
 
     /// <summary>Backfills started by this instance; a test probe for single-flight.</summary>
     internal int StartedRuns => Volatile.Read(ref _startedRuns);
+    internal bool IsImportComplete(TaskInfo task) => _importComplete.ContainsKey(Key(task));
 
     /// <summary>Completes once every backfill in flight has persisted its outcome.</summary>
     internal Task WhenIdleAsync() => Task.WhenAll(_inFlight.Values.Select(run => run.Value));
@@ -68,6 +75,14 @@ public sealed class LegacyResultHistoryBackfill
         DateTimeOffset? lastAttempt = _lastAttempt.TryGetValue(key, out var at) ? at : null;
         var running = _inFlight.ContainsKey(key);
         var snapshot = LegacyResultHistoryFile.Read(task.FolderPath);
+        if (_facts is not null && _importStarted.TryAdd(key, 0))
+        {
+            // Existing AGT-3086 snapshots and local sidecars are imported in
+            // the background. A read never walks the history directory.
+            using (AgentStudio.Git.GitReadRequestGuard.Detach())
+            using (ExecutionContext.SuppressFlow())
+                _ = Task.Run(() => ImportExisting(task, snapshot));
+        }
 
         var decision = LegacyResultHistoryPolicy.Decide(
             snapshot.State,
@@ -182,6 +197,9 @@ public sealed class LegacyResultHistoryBackfill
             return;
         }
 
+        if (record.Outcome == LegacyResultHistoryStates.Complete && _facts is not null)
+            ImportLegacy(info.TaskKey, record);
+
         if (record.Outcome == LegacyResultHistoryStates.Failed)
         {
             _logger.LogWarning(
@@ -194,6 +212,42 @@ public sealed class LegacyResultHistoryBackfill
                 "result-history legacy backfill complete jobId={JobId} versions={Versions} elapsedMs={ElapsedMs}",
                 jobId, record.Entries.Count, record.ElapsedMs);
         }
+    }
+
+    private void ImportExisting(TaskInfo task, LegacyResultHistorySnapshot snapshot)
+    {
+        try
+        {
+            foreach (var (version, markdown) in new ResultVersionStore(
+                         Microsoft.Extensions.Logging.Abstractions.NullLogger<ResultVersionStore>.Instance)
+                         .ReadLocalVersions(task.FolderPath))
+            {
+                var fields = ResultHistoryContent.ParseFields(markdown);
+                _facts!.UpsertResultVersion(new GitResultVersionFact(task.TaskKey,
+                    $"local-{version.Number:0000}", version.Producer.Label, version.Producer.Kind,
+                    version.Lane, int.TryParse(version.Producer.Attempt, out var run) ? run : null,
+                    fields.Result, null, version.ProducedAtUtc, ResultHistoryContent.Hash(markdown),
+                    null, "task-folder", version.StatusPath, fields.Result, fields.Case, version.Number));
+            }
+            if (snapshot.Record is { Outcome: LegacyResultHistoryStates.Complete } record)
+                ImportLegacy(task.TaskKey, record);
+            _importComplete[Key(task)] = 0;
+        }
+        catch (Exception ex)
+        {
+            _importStarted.TryRemove(Path.GetFullPath(task.FolderPath), out _);
+            _logger.LogWarning(ex, "result-history index import failed task={TaskKey}", task.TaskKey);
+        }
+    }
+
+    private void ImportLegacy(string taskKey, LegacyResultHistoryRecord record)
+    {
+        foreach (var version in record.Entries)
+            _facts!.UpsertResultVersion(new GitResultVersionFact(taskKey, "git-" + version.Sha,
+                version.Producer, version.ProducerKind, version.Lane, version.RunIndex,
+                version.Verdict, version.Steps,
+                version.Timestamp, version.ContentHash, version.Sha, "workspace-history",
+                null, version.Result, version.Case, null));
     }
 
     private static IReadOnlyList<LegacyResultHistoryEntry> ToEntries(IReadOnlyList<WorkspaceResultFileVersion> versions)
@@ -216,7 +270,10 @@ public sealed class LegacyResultHistoryBackfill
                 Case: fields.Case,
                 ContentHash: hash,
                 Markdown: version.Content,
-                Truncated: false));
+                Truncated: false,
+                RunIndex: version.Entry.RunIndex,
+                Verdict: version.Entry.Verdict,
+                Steps: version.Entry.Provenance.Steps));
         }
         return entries;
     }

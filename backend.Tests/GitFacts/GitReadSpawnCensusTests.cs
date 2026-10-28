@@ -203,6 +203,13 @@ public static class GitReadSpawnScenarios
                 await host.Get(host.TaskUrl(GitFactsBoardFixture.IntegratedReview, "result-history"));
                 await host.Get(host.TaskUrl(GitFactsBoardFixture.EscalatedBare, "result-history"));
             }),
+        Scenario("R6 result version warms from persisted facts", "R6",
+            [Tasks + "/result-history/{versionId}"],
+            async host =>
+            {
+                await host.Get(host.TaskUrl(GitFactsBoardFixture.IntegratedReview,
+                    "result-history/local-0001"));
+            }),
         Scenario("R12 project integration view: cold, warm, moved ref", "R12",
             ["/api/git/integration"],
             async host =>
