@@ -191,7 +191,8 @@ public sealed class WorkContainerExecutor(
         finally
         {
             renewalStop.Cancel();
-            try { await renewalTask; } catch (OperationCanceledException) { }
+            try { await renewalTask; }
+            catch (OperationCanceledException) { _log($"work-container credential renewal stopped attempt={attempt.AttemptId}"); }
             if (credential is not null && credentials is not null)
             {
                 try { revocationStatus = await credentials.RevokeAsync(attempt, credential, CancellationToken.None); }

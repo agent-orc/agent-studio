@@ -49,11 +49,11 @@ public static class WorkProcessExecutor
                 deletion = removed.DeletionStatus == "deleted" ? "windows-file-deleted" : removed.DeletionStatus;
             }
             try { revocation = await source.RevokeAsync(attempt, credential, CancellationToken.None); }
-            catch (Exception) { }
+            catch (Exception) { revocation = "expiry-backstop"; }
             if (deletion == "windows-file-deleted")
             {
                 try { await source.RecordDeletionAsync(attempt, credential, deletion, CancellationToken.None); }
-                catch (Exception) { }
+                catch (Exception) { deletion = "server-receipt-pending"; }
             }
         }
         return result! with { CredentialRevocationStatus = revocation, CredentialDeletionStatus = deletion };

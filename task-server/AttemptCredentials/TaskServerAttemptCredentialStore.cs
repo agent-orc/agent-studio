@@ -153,16 +153,21 @@ public sealed partial class TaskServerStore
         catch
         {
             var revoked = false;
-            try { revoked = await issuer.RevokeAsync(token.Value, CancellationToken.None); } catch (Exception) { }
-            try { await roots.DeleteAsync("issued-" + issuanceId, CancellationToken.None); } catch (Exception) { }
+            try { revoked = await issuer.RevokeAsync(token.Value, CancellationToken.None); }
+            catch (Exception) { revoked = false; }
+            var rootDeleted = true;
+            try { await roots.DeleteAsync("issued-" + issuanceId, CancellationToken.None); }
+            catch (Exception) { rootDeleted = false; }
             await InWriteTransactionAsync(async (connection, transaction) =>
                 await ExecuteAsync(connection, """
                     UPDATE attempt_credential_issuances
                        SET revoked_at = $now, revocation_status = $status,
-                           deletion_status = 'no-host-file'
+                           deletion_status = $deletion
                      WHERE issuance_id = $id;
                     """, CancellationToken.None, transaction, ("$now", Iso(UtcNow)),
-                    ("$status", revoked ? "revoked" : "expiry-backstop"), ("$id", issuanceId)), CancellationToken.None);
+                    ("$status", revoked ? "revoked" : "expiry-backstop"),
+                    ("$deletion", rootDeleted ? "no-host-file" : "root-delete-pending"),
+                    ("$id", issuanceId)), CancellationToken.None);
             throw;
         }
         return new AttemptCredentialMaterial(issuanceId, token.Value, repositoryId,

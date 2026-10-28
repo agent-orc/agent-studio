@@ -94,7 +94,11 @@ public sealed class PublicDemoExecutionProfileTests
         // {integrationId}/lease/renew and {integrationId}/report (PostStep).
         // Integration executors publish through them, so all three are denied.
         // AGT-3181 preview feedback queues a same-card continuation (Continue).
-        Assert.Equal(47, routes.Count);
+        // DP-S5 credential lifecycle endpoints can issue and renew work material (Continue).
+        Assert.Equal(52, routes.Count);
+        foreach (var operation in new[] { "capability", "exchange", "renew", "revoke", "deletion" })
+            Assert.Contains(routes, route => route.RoutePattern.RawText ==
+                $"/api/v1/runs/{{runId}}/credentials/{operation}");
         var revokedReference = Assert.Single(routes, route => route.RoutePattern.RawText ==
             "/api/v1/runs/{runId}/revoked-reference");
         Assert.Equal(ExecutionAdmissionPath.PostStep,
@@ -126,7 +130,7 @@ public sealed class PublicDemoExecutionProfileTests
             {
                 [ExecutionAdmissionPath.Claim] = 6,
                 [ExecutionAdmissionPath.Start] = 7,
-                [ExecutionAdmissionPath.Continue] = 13,
+                [ExecutionAdmissionPath.Continue] = 18,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,
