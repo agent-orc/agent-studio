@@ -25,6 +25,7 @@ public static class OrchestrationLoopRegistration
         services.AddSingleton<AutoReviewDeliveryResumeService>();
         services.AddHostedService<AutoReviewPostProcessingWorker>();
         services.AddHostedService<AutoReviewPostProcessingRecoveryService>();
+        services.AddHostedService<PostWorkSubjectReconcilerService>();
         services.AddHostedService<RemoteReviewEvidenceProjectionWorker>();
         services.AddHostedService<RemoteReviewSettlementReconciler>();
         return services;

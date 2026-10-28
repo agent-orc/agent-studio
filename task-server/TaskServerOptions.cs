@@ -15,6 +15,12 @@ public sealed class TaskServerOptions
     public string DynamicPlacementMode { get; set; } = "shadow";
     public string[] DynamicPlacementCanaryHostIds { get; set; } = [];
     public int DynamicPlacementWarmPreferenceSeconds { get; set; } = 30;
+    /// <summary>
+    /// DP-S8 post-work subjects: <c>shadow</c> (default) records subjects and
+    /// backend passes without host claims; <c>canary</c> admits host claims for
+    /// drained cohorts; <c>off</c> refuses subject materialization.
+    /// </summary>
+    public string PostWorkMode { get; set; } = "shadow";
     public int ResultRetentionDays { get; set; } = 30;
     public int ResultFinalizationMaxAttempts { get; set; } = 3;
     public bool ResultRefGcEnabled { get; set; } = true;

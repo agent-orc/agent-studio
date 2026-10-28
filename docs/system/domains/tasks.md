@@ -248,8 +248,62 @@ Runtime-capacity acknowledgment now compares the host's reported version with
 existing host copies its current capacity `version` into the new allocation
 column after the version-37 retired-schema cleanup. Release suite verdicts
 use schema version 38, and the additive placement tables and column use
-version 39. Version-36 binaries still reject stores whose retired task fields
-have been removed.
+version 39. The additive DP-S8 post-work tables use version 40. Version-36
+binaries still reject stores whose retired task fields have been removed.
+
+### Post-work subjects (DP-S8, AGT-3334)
+
+Working decisions are AGT-3171 D1 option A (host pull) and D2 option A (one
+host agent per machine), as the 26.10.2026 operator approval of Stufe 2
+recommends; the executor follows D3 option A and the budget D5 option A.
+Each unfinished `4-auto-review` lane entry becomes one durable post-work
+subject in the Task Server (`post_work_subjects`). Its stable idempotency key
+is `PostWorkIdentity.IdempotencyKey(project, card, laneEntry)`, where the
+lane entry is the card's `EnteredLaneAt`; a re-entry is a new subject and
+retires the idle earlier one. The subject records source run (last session),
+required capabilities, artifact references (result SHA, integration branch),
+bounded steps and a policy digest over those three. The first recorded inputs
+of a lane entry stay authoritative; a differing replay is only logged.
+`PostWork:ProjectIds:<project>` maps a backend project name to the Task
+Server project id that host advertisements list; `PostWork:Steps` and
+`PostWork:RequiredCapabilities` define the bounded steps and hard host
+requirements.
+
+A backend pass and a host claim are both attempts of the subject
+(`post_work_attempts`); a partial unique index keeps at most one live attempt,
+so one card is never processed by both. `PostWorkAuthorityPolicy` holds the
+pure admission, fenced-call and reconciliation rules. Host claims
+(`POST /api/v1/post-work/claims`) require the `post-work-executor`
+capability, a placement advertisement with role `post`, the current
+AGT-3019 allocation version and a free host grant; live post attempts count
+against the same `maxParallelism` as coding leases. Renewal and report are
+fenced by lease, fence and authority epoch; after lease loss, revocation or a
+newer fence a report is inert. A host report carries step evidence and a
+proposed outcome only. The server applies the decision: an accepted
+`decided` or `blocked` proposal makes the subject `reported`, and the backend
+worker runs its unchanged `ReviewDecisionOrchestrator` pass as the
+server-apply attempt, which owns lifecycle transitions, reissue, human-review
+routing, delivery resume and publication. A `deferred` proposal and a backend
+deferral keep their reason and retry time; a host cannot claim before it.
+An applied subject is never rerun.
+
+`PostWork:Mode` on the backend defaults to `off`; `TaskServer:PostWorkMode`
+defaults to `shadow`. In `shadow` the transition and the startup recovery
+(the backfill of unfinished cards) materialize subjects, every backend pass
+is recorded with its outcome, and `GET /api/v1/post-work/shadow` compares
+host eligibility with backend outcomes. Shadow never refuses a backend pass.
+`canary` requires both switches. Unconverted cards keep the in-memory queue
+and recovery sweep; a cohort (`POST .../post-work/cohorts`) first stops new
+backend admissions for its cards, `advance` waits until every active backend
+pass finished and reconciles its outcome, and only then makes the subjects
+host-owned. `rollback` revokes live host leases, advances the fence, returns
+subjects to the backend and re-enqueues exactly the cards the lane-state
+reconciliation names. On restart the backend reports lane facts
+(`PostWorkSubjectReconcilerService`): a card that left the lane retires its
+subject, a recorded lane decision marks it applied, and passes of the earlier
+backend process are lost. The in-memory queue is retired only after a cohort
+canary and rollback record show no missed card, duplicate decision or
+duplicate publication.
 
 Configured placement defaults to one active coding lease per project. Its
 `maxParallelism` may only use slots authorized by the existing project

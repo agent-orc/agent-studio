@@ -972,6 +972,15 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IBatchGateSubjectAuthority>(s
             .GetRequiredService<IHttpClientFactory>().CreateClient(TaskServerPlaneProxy.ClientName))
         : new AgentStudio.Pipeline.MonolithBatchGateSubjectAuthority(
             sp.GetRequiredService<AgentStudio.Runner.MonolithGateStore>()));
+// DP-S8 (AGT-3171): post-work subjects live where host claims land, the
+// standalone Task Server. Without it PostWork:Mode stays off.
+builder.Services.AddSingleton(sp => new AgentStudio.Runner.PostWorkSubjectCoordinator(
+    sp.GetRequiredService<IConfiguration>(),
+    sp.GetRequiredService<ILogger<AgentStudio.Runner.PostWorkSubjectCoordinator>>(),
+    TaskServerPlaneProxy.IsConfigured(sp.GetRequiredService<IConfiguration>())
+        ? new AgentStudio.Runner.TaskServerPostWorkAuthorityClient(() => sp
+            .GetRequiredService<IHttpClientFactory>().CreateClient(TaskServerPlaneProxy.ClientName))
+        : null));
 builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();

@@ -120,11 +120,7 @@ public sealed class OrchestrationExecutionModeTests
         Assert.Equal(mode, MonolithTransitionSwitch.For(configuration, "ReviewReport"));
         var services = new ServiceCollection();
         services.AddOrchestrationExecutionLoops();
-        Assert.Equal(6, services.Count(descriptor => descriptor.ServiceType == typeof(IHostedService)));
-        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IHostedService)
-            && descriptor.ImplementationType == typeof(RemoteReviewSettlementReconciler));
-        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IHostedService)
-            && descriptor.ImplementationType == typeof(AgentStudio.Pipeline.BatchGatePilotHostedService));
+        AssertLoopOwners(services);
     }
 
     [Fact]
@@ -146,19 +142,31 @@ public sealed class OrchestrationExecutionModeTests
     }
 
     [Fact]
-    public void Monolith_mode_registers_all_six_legacy_loop_owners()
+    public void Monolith_mode_registers_all_seven_loop_owners()
     {
         var services = new ServiceCollection();
 
         services.AddOrchestrationExecutionLoops();
 
-        Assert.Equal(6, services.Count(descriptor =>
-            descriptor.ServiceType == typeof(IHostedService)));
-        Assert.Contains(services, descriptor =>
-            descriptor.ServiceType == typeof(IHostedService)
-            && descriptor.ImplementationType == typeof(RemoteReviewSettlementReconciler));
-        Assert.Contains(services, descriptor =>
-            descriptor.ServiceType == typeof(IHostedService)
-            && descriptor.ImplementationType == typeof(AgentStudio.Pipeline.BatchGatePilotHostedService));
+        AssertLoopOwners(services);
+    }
+
+    private static void AssertLoopOwners(IServiceCollection services)
+    {
+        var hosted = services.Where(descriptor => descriptor.ServiceType == typeof(IHostedService)).ToArray();
+        Assert.Equal(new Type[]
+        {
+            typeof(AgentStudio.Pipeline.BatchGatePilotHostedService),
+            typeof(AutoReviewPostProcessingWorker),
+            typeof(AutoReviewPostProcessingRecoveryService),
+            typeof(PostWorkSubjectReconcilerService),
+            typeof(RemoteReviewEvidenceProjectionWorker),
+            typeof(RemoteReviewSettlementReconciler),
+        }, hosted.Where(descriptor => descriptor.ImplementationType is not null)
+            .Select(descriptor => descriptor.ImplementationType!).ToArray());
+        Assert.Single(hosted, descriptor => descriptor.ImplementationFactory is not null);
+        Assert.Single(services, descriptor =>
+            descriptor.ServiceType == typeof(AutoReviewDeliveryResumeService)
+            && descriptor.Lifetime == ServiceLifetime.Singleton);
     }
 }

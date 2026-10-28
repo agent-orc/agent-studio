@@ -11,7 +11,8 @@ public sealed record HostAgentRoleConfiguration(
 public sealed record HostAgentConfiguration(
     string StateDirectory,
     HostAgentRoleConfiguration Coding,
-    HostAgentRoleConfiguration Review);
+    HostAgentRoleConfiguration Review,
+    HostAgentRoleConfiguration? Post = null);
 public sealed record HostAgentRoleState(
     bool Enabled,
     string RunnerId,
@@ -31,7 +32,8 @@ public sealed record HostAttemptInventoryEntry(
 public sealed record HostAttemptInventory(DateTime ObservedAtUtc, IReadOnlyList<HostAttemptInventoryEntry> Attempts);
 
 /// <summary>
-/// One OS-supervised host service owns the coding and review adapters. Each
+/// One OS-supervised host service owns the coding and review adapters and,
+/// when configured, the DP-S8 post adapter. Each
 /// adapter runs in a child process to preserve its own CLI home and existing
 /// Task Server registration, renewal, report, and crash recovery semantics.
 /// The host inventory is a projection of those durable role records, never a
@@ -40,22 +42,31 @@ public sealed record HostAttemptInventory(DateTime ObservedAtUtc, IReadOnlyList<
 public static class HostAgentSupervisor
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private static readonly string[] Roles = ["coding", "review"];
+    private static readonly string[] BaseRoles = ["coding", "review"];
+
+    private static string[] RolesOf(HostAgentConfiguration config)
+        => config.Post is null ? BaseRoles : [.. BaseRoles, "post"];
     [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
     private static extern int SendUnixSignal(int pid, int signal);
 
     public static async Task<int> ExecuteAsync(string[] args, Action<string> log, CancellationToken ct)
     {
         if (args.Length < 2 || args[0] is not ("run" or "migrate-role" or "drain-role" or "enable-role" or "rollback-role" or "inventory"))
-            throw new ArgumentException("Usage: agent-host host-agent <run|migrate-role|drain-role|enable-role|rollback-role|inventory> <config.json> [coding|review]");
+            throw new ArgumentException("Usage: agent-host host-agent <run|migrate-role|drain-role|enable-role|rollback-role|inventory> <config.json> [coding|review|post]");
         var operation = args[0];
         var config = JsonSerializer.Deserialize<HostAgentConfiguration>(File.ReadAllText(args[1]), Json)
                      ?? throw new InvalidDataException("Host agent configuration is empty.");
         var role = args.Length > 2 ? args[2] : null;
-        if (operation is not ("run" or "inventory") && !Roles.Contains(role, StringComparer.Ordinal))
-            throw new ArgumentException("A coding or review role is required.");
+        var roles = RolesOf(config);
+        if (operation is not ("run" or "inventory") && !roles.Contains(role, StringComparer.Ordinal))
+            throw new ArgumentException("A configured coding, review or post role is required.");
         Directory.CreateDirectory(config.StateDirectory);
-        var options = Roles.ToDictionary(item => item, item => ParseRole(config, item), StringComparer.Ordinal);
+        var options = roles.ToDictionary(item => item, item => ParseRole(config, item), StringComparer.Ordinal);
+        if (options.TryGetValue("post", out var post)
+            && (options.Values.Count(item => item.RunnerId == post.RunnerId) > 1
+                || options.Values.Count(item => Path.GetFullPath(item.StateDir) == Path.GetFullPath(post.StateDir)) > 1
+                || !string.Equals(post.Hostname, options["coding"].Hostname, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("The post adapter needs its own runner identity and state directory on the same host.");
         if (options["coding"].RunnerId == options["review"].RunnerId
             || Path.GetFullPath(options["coding"].StateDir) == Path.GetFullPath(options["review"].StateDir))
             throw new InvalidOperationException("Coding and review must have separate runner identities and state directories.");
@@ -75,6 +86,8 @@ public static class HostAgentSupervisor
             Path.Combine(config.StateDirectory, $"{role}.control.lock"),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var chosen = options[role!];
+        if (operation == "migrate-role" && role == "post")
+            return EnablePostRole(config, chosen, log);
         if (operation == "migrate-role")
             return await MigrateRoleAsync(config, role!, chosen, log, ct);
         if (operation == "drain-role" || operation == "rollback-role")
@@ -83,6 +96,7 @@ public static class HostAgentSupervisor
             if (drained != 0 || operation == "drain-role") return drained;
             // Only after the host adapter is gone may the legacy service claim again.
             if (role == "review") ReviewDrainGuard.ClearDrainState(chosen.StateDir);
+            else if (role == "post") HostRoleDrainControl.Clear(chosen.StateDir, role);
             else CodingDrainGuard.Clear(chosen.StateDir);
             log($"role={role} rollback ready; start the old role service explicitly");
             return 0;
@@ -101,7 +115,12 @@ public static class HostAgentSupervisor
 
     private static Dictionary<string, string> ReadRoleEnvironment(HostAgentConfiguration config, string role)
     {
-        var roleConfig = role == "coding" ? config.Coding : config.Review;
+        var roleConfig = role switch
+        {
+            "coding" => config.Coding,
+            "review" => config.Review,
+            _ => config.Post ?? throw new InvalidOperationException("The post role is not configured."),
+        };
         if (!Path.IsPathFullyQualified(roleConfig.HomeDirectory))
             throw new InvalidDataException($"{role} home directory must be absolute.");
         var values = ReadEnvironmentFile(roleConfig.EnvironmentFile);
@@ -148,7 +167,7 @@ public static class HostAgentSupervisor
             while (!ct.IsCancellationRequested)
             {
                 var state = ReadState(config);
-                foreach (var role in Roles)
+                foreach (var role in RolesOf(config))
                 {
                     var enabled = state.Roles.GetValueOrDefault(role);
                     if (enabled is null || !enabled.Enabled) continue;
@@ -304,8 +323,24 @@ public static class HostAgentSupervisor
         return 0;
     }
 
+    /// <summary>
+    /// The post role has no legacy daemon to drain: the backend queue keeps
+    /// unconverted cards and the Task Server cohort switch admits host claims.
+    /// </summary>
+    private static int EnablePostRole(HostAgentConfiguration config, RunnerOptions options, Action<string> log)
+    {
+        if (CaptureRoleInventory("post", options).Count != 0)
+            throw new InvalidOperationException("post still has a persisted attempt; reconcile before enabling.");
+        HostRoleDrainControl.Clear(options.StateDir, "post");
+        UpdateState(config, state => state.Roles["post"] = new HostAgentRoleState(
+            true, options.RunnerId, options.StateDir, null, null, DateTime.UtcNow));
+        log("role=post host adapter enabled");
+        return 0;
+    }
+
     private static (string? Id, int? Pid, int Active) LegacyAcknowledgement(string role, string stateDir)
     {
+        if (role == "post") return (null, null, 0);
         if (role == "review")
         {
             var ack = ReviewDrainGuard.ReadDrainAcknowledgement(stateDir);
@@ -322,10 +357,16 @@ public static class HostAgentSupervisor
     }
 
     private static HostAttemptInventory CaptureInventory(Dictionary<string, RunnerOptions> options)
-        => new(DateTime.UtcNow, Roles.SelectMany(role => CaptureRoleInventory(role, options[role])).ToArray());
+        => new(DateTime.UtcNow, options.Keys.Order(StringComparer.Ordinal)
+            .SelectMany(role => CaptureRoleInventory(role, options[role])).ToArray());
 
     private static IReadOnlyList<HostAttemptInventoryEntry> CaptureRoleInventory(string role, RunnerOptions options)
     {
+        if (role == "post")
+            return PostWorkDaemon.ReadPersistedClaim(options.StateDir) is { } post
+                ? [new HostAttemptInventoryEntry(role, post.AttemptId, post.LeaseId, post.Fence,
+                    post.AuthorityEpoch, "claimed", null)]
+                : [];
         if (role == "coding")
         {
             var slots = new RunnerStateStore(options.StateDir).LoadAll()
