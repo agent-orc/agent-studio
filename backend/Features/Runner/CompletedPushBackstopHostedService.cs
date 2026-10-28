@@ -41,13 +41,16 @@ public sealed class CompletedPushBackstopHostedService : BackgroundService
         var skippedSuperseded = 0;
         var rejected = 0;
         var skippedIntegrated = 0;
+        // One cycle object: each repository fetches its integration branch at
+        // most once per sweep, not once per card (AGT-3337).
+        var cycle = new CompletedPushCycle();
 
         foreach (var job in completed)
         {
             ct.ThrowIfCancellationRequested();
             var strategy = AutoPushStrategies.Normalize(_settings.Get(job.ProjectName).AutoPushStrategy);
             if (strategy == AutoPushStrategies.Never) continue;
-            var result = await _transitions.PushCompletedJobCommitsDetailedAsync(job, strategy, ct);
+            var result = await _transitions.PushCompletedJobCommitsDetailedAsync(job, strategy, ct, cycle);
             pushed += result.Pushed;
             skippedSuperseded += result.SkippedSuperseded;
             rejected += result.Rejected;

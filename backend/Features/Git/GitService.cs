@@ -690,6 +690,7 @@ public partial class GitService
     private readonly ProjectRegistry _registry;
     private readonly CommitCandidateGate _commitGate;
     private readonly ProjectSettingsService? _projectSettings;
+    private readonly GitRefLockJanitor? _lockJanitor;
     internal Func<ProcessStartInfo, TimeSpan, CancellationToken, GitProcessResult> IntegrationFetchForTesting { get; set; }
         = (start, timeout, ct) => GitProcessBoundary.Run(start, stdin: null, timeout, ct);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> IntegrationRemoteGates = new(
@@ -705,7 +706,8 @@ public partial class GitService
         AdHocUsageRecorder? usage = null,
         ProjectRegistry? registry = null,
         IEnumerable<ICommitCandidateScanner>? commitCandidateScanners = null,
-        ProjectSettingsService? projectSettings = null)
+        ProjectSettingsService? projectSettings = null,
+        GitRefLockJanitor? lockJanitor = null)
     {
         _logger = logger;
         _scanner = scanner;
@@ -715,6 +717,7 @@ public partial class GitService
         _registry = registry ?? new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
         _commitGate = new CommitCandidateGate(logger, commitCandidateScanners);
         _projectSettings = projectSettings;
+        _lockJanitor = lockJanitor;
         // Give the ambient git-spawn telemetry a logger for out-of-scope
         // slow-spawn warnings (the per-request rollup uses its own logger).
         GitProcessTelemetry.Logger ??= logger;
@@ -5235,7 +5238,7 @@ public partial class GitService
                string.Equals(mergedTree.Trim(), publishedTree.Trim(), StringComparison.Ordinal);
     }
 
-    private IntegrationBranchSyncResult FetchIntegrationBranch(
+    internal IntegrationBranchSyncResult FetchIntegrationBranch(
         string repoRoot,
         string integrationBranch,
         CancellationToken cancellationToken)
@@ -7032,11 +7035,13 @@ public partial class GitService
         if (!hasRemote)
             return new GitWorktreeResult(true, root, null); // no remote -> nothing to fetch
 
+        _lockJanitor?.BeforeFetch(root);
         var (_, err, code) = RunGitArgs(root, cancellationToken, "fetch", "--prune", remote);
         if (code != 0)
         {
             // Offline / transient: do not wedge the run, but surface the reason.
             _logger.LogWarning("Fetch from {Remote} at {Path} failed (continuing offline): {Error}", remote, root, err.Trim());
+            _lockJanitor?.AfterFetchFailure(root, err);
             return new GitWorktreeResult(true, root, err.Trim());
         }
         return new GitWorktreeResult(true, root, null);
@@ -8854,6 +8859,7 @@ public partial class GitService
         using var remoteGate = EnterIntegrationRemoteGate(cwd, cancellationToken);
         var timeout = GitNetworkProcessRunner.DefaultTimeout;
         var refLockRetries = 0;
+        _lockJanitor?.BeforeFetch(cwd);
         while (true)
         {
             var psi = new ProcessStartInfo
@@ -8878,6 +8884,8 @@ public partial class GitService
                     return (result.StandardOutput, result.StandardError, result.ExitCode);
                 continue;
             }
+            if (result.ExitCode != 0)
+                _lockJanitor?.AfterFetchFailure(cwd, result.StandardError);
             if (result.FailureKind != GitProcessFailureKind.TimedOut || timeout == IntegrationFetchCatchUpTimeout)
                 return (result.StandardOutput, result.StandardError, result.ExitCode);
             _logger.LogWarning(
