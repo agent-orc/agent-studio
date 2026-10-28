@@ -1038,6 +1038,37 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/containment", request, ct)
            ?? throw new TaskServerException(500, "Empty gate containment response.");
 
+    /// <summary>
+    /// Downloads one immutable gate bundle (DP-S4) and refuses any body that is
+    /// not exactly the declared size. The caller still verifies the digest
+    /// before the bundle is materialized.
+    /// </summary>
+    public async Task<byte[]> DownloadGateBundleAsync(Contract.GateBundleLocator bundle, CancellationToken ct)
+    {
+        if (bundle.SizeBytes is < 1 or > Contract.GateBundleLimits.MaxBytes)
+            throw new InvalidDataException("Gate bundle declares a size outside the transport limit.");
+        using var response = await _http.GetAsync(bundle.Locator, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var detail = await response.Content.ReadAsStringAsync(ct);
+            throw new TaskServerException((int)response.StatusCode, $"Gate bundle fetch failed: {Trim(detail)}");
+        }
+        if (response.Content.Headers.ContentLength is { } announced && announced != bundle.SizeBytes)
+            throw new InvalidDataException("Gate bundle size differs from its subject.");
+        var content = new byte[bundle.SizeBytes];
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        var offset = 0;
+        while (offset < content.Length)
+        {
+            var read = await stream.ReadAsync(content.AsMemory(offset), ct);
+            if (read == 0) throw new InvalidDataException("Gate bundle is shorter than its subject declares.");
+            offset += read;
+        }
+        if (await stream.ReadAsync(new byte[1], ct) != 0)
+            throw new InvalidDataException("Gate bundle is longer than its subject declares.");
+        return content;
+    }
+
     public async Task<Contract.GateStatus?> GetGateStatusAsync(string subjectId, CancellationToken ct)
     {
         using var response = await _http.GetAsync($"/api/v1/gates/subjects/{Uri.EscapeDataString(subjectId)}", ct);

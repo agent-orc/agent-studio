@@ -15,6 +15,17 @@ public sealed class TaskServerOptions
     public string DynamicPlacementMode { get; set; } = "shadow";
     public string[] DynamicPlacementCanaryHostIds { get; set; } = [];
     public int DynamicPlacementWarmPreferenceSeconds { get; set; } = 30;
+    /// <summary>
+    /// DP-S4 gate admission: <c>slot</c> keeps one fixed gate slot per host
+    /// (default); <c>canary</c> reserves a host grant only on
+    /// <see cref="GateGrantCanaryHostIds"/>; <c>grant</c> reserves one on every host.
+    /// </summary>
+    public string GateAdmissionMode { get; set; } = "slot";
+    public string[] GateGrantCanaryHostIds { get; set; } = [];
+    /// <summary>Recorded size of one gate grant; it takes one slot of the host allocation.</summary>
+    public int GateGrantHalfCores { get; set; } = 2;
+    /// <summary>Ceiling of one immutable gate bundle; never above the transport limit.</summary>
+    public long GateBundleMaxBytes { get; set; } = 1024L * 1024 * 1024;
     public int ResultRetentionDays { get; set; } = 30;
     public int ResultFinalizationMaxAttempts { get; set; } = 3;
     public bool ResultRefGcEnabled { get; set; } = true;

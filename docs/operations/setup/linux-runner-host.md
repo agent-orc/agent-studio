@@ -2426,6 +2426,35 @@ was 50.266 MiB and maximum RSS was 50.992 MiB. This is process overhead only.
 It excludes adapter children, active attempts, systemd, and the five-minute
 production canary window, so it is a baseline rather than a rollout threshold.
 
+#### Claimed gate migration (DP-S4)
+
+DP-S4 uses Dossier decisions D4 option A and D5 option A. Merge, promotion
+and batch verification gates become claimable gate subjects at the Task
+Server; the SSH bridge stays the default until an operator switches it. All
+switches are off by default:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `RemoteGate:Transport` (monolith) | `bridge` | `canary` claims merge and promotion gates for `RemoteGate:ClaimedCanaryProjects`; `claimed` claims every verification gate once `RemoteGate:ClaimedCanaryRequiredPasses` (default 1) passes are recorded, and keeps the bridge for other projects until then. A non-bridge value needs `TaskServer:BaseUrl`. |
+| `BatchGate:Execution` (monolith) | `bridge` | `claimed` now also works with a remote Task Server: the subject declares the `batch` kind, so member task and run IDs stay monolith references. |
+| `TaskServer:GateAdmissionMode` (Task Server) | `slot` | `canary` reserves a host grant on `TaskServer:GateGrantCanaryHostIds`; `grant` does so on every host. A grant takes one slot of the host's versioned runtime-capacity allocation, shared with coding leases, and records `GateGrantHalfCores` (default 2). |
+| `TaskServer:GateBundleMaxBytes` (Task Server) | 1 GiB | Upload ceiling of `POST /api/v1/gates/bundles/{sha256}`. |
+
+Roll the gate host and Task Server forward before the monolith switch. A
+verification report must carry the host proof (plan digest, policy digest,
+HEAD, bundle digest and size), so an older gate daemon cannot pass a claimed
+merge, promotion or batch gate. Enable a grant canary on one gate host, then
+set `RemoteGate:Transport=canary` for one project. Confirm in the monolith log
+that `gate_transport_selected ... route=Claimed` appears, that the Task Server
+shows one claim per subject, and that the integration receipt has the same
+evidence fields as a bridge receipt. A switch never cancels an SSH invocation
+already in flight; it drains on the bridge. `bridge_retirement_ready=true`
+in that log line means the mode is `claimed`, a canary has passed, and no SSH
+invocation is in flight. Retire the bridge default only after that. To roll
+back, set `RemoteGate:Transport=bridge`. A claimed subject already waiting
+finishes under its lease or is cancelled with its caller, which makes the
+attempt terminal and returns its grant.
+
 **Drain the Review Executor; never restart it while slots are busy.** A review
 holds thirty to sixty minutes of gate work in a detached worker. Stopping the
 daemon on top of it can cost that work and put the card back in the queue.

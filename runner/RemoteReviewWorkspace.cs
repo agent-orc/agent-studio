@@ -2988,11 +2988,19 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
+    /// <summary>
+    /// Gate bundle source (DP-S4): a verification gate downloads its immutable
+    /// bundle from the gate authority instead of a run artifact. The digest is
+    /// still checked by the host source cache before materialization.
+    /// </summary>
+    internal Func<CancellationToken, Task<byte[]>>? BundleDownload { get; set; }
+
     private async Task MaterializeBundleAsync(TaskServerClient client,
         IReadOnlyList<string>? sparsePaths, CancellationToken ct)
     {
         async Task<byte[]> Download(CancellationToken token)
         {
+            if (BundleDownload is { } bundleDownload) return await bundleDownload(token);
             var artifact = await client.GetArtifactContentAsync(_subject.SourceRunId,
                 _subject.SourceBundleArtifactId!, token);
             if (artifact is null)

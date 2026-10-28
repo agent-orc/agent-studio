@@ -88,7 +88,7 @@ public sealed class ClaimedBatchGateRunnerTests
     }
 
     [Fact]
-    public void Claimed_execution_refuses_the_Task_Server_proxy_before_subject_creation()
+    public void Claimed_execution_runs_with_a_remote_Task_Server_through_the_batch_kind()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -96,10 +96,16 @@ public sealed class ClaimedBatchGateRunnerTests
                 [ClaimedBatchGateRunner.ExecutionKey] = "claimed",
                 ["TaskServer:BaseUrl"] = "https://task-server.test/",
             }).Build();
+        var (manifest, run) = Batch();
 
-        var error = Assert.Throws<InvalidOperationException>(() => ClaimedBatchGateRunner.Mode(configuration));
-        Assert.Contains("TaskServer:BaseUrl", error.Message, StringComparison.Ordinal);
-        Assert.Contains("BatchGate:Execution=bridge", error.Message, StringComparison.Ordinal);
+        Assert.Equal(ClaimedBatchGateRunner.ExecutionMode, ClaimedBatchGateRunner.Mode(configuration));
+        // DP-S4: member task and run IDs stay opaque monolith references.
+        var request = ClaimedBatchGateRunner.Subject(manifest, run,
+            BatchGatePolicy.CandidateRef(manifest, run.CoordinatorFence), "https://git.test/repo.git",
+            [new VerifyCommand(VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test")],
+            TimeSpan.FromMinutes(30), _clock.GetUtcNow().UtcDateTime);
+        Assert.Equal(GateSubjectKinds.Batch, request.Kind);
+        Assert.Equal("run-1", request.SourceRunId);
     }
 
     [Fact]
@@ -148,7 +154,8 @@ public sealed class ClaimedBatchGateRunnerTests
         => new(GateStates.Passed, null, subject.ExpectedSha, new string('c', 40), false, false,
             subject.Plan.Commands.Select(command => new GateCommandEvidence(command.StepId, 0, false,
                 new string('d', 64), "ok", _clock.GetUtcNow().UtcDateTime, _clock.GetUtcNow().UtcDateTime)).ToArray(),
-            "linux-x64", "dotnet-10", [], [], "clean");
+            "linux-x64", "dotnet-10", [], [], "clean",
+            new GateSubjectProof(subject.PlanHash, subject.PolicyHash, subject.ExpectedSha));
 
     private sealed class GateHosts : IGateExecutorDirectory
     {
