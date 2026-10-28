@@ -1,0 +1,2 @@
+known-passing.sh exit=2
+known-failing.sh exit=2
