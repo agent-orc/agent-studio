@@ -6,6 +6,13 @@ if [ "${1:-}" = "--version" ]; then
     exit 0
 fi
 
+if [ -n "${SCENARIO_EXPECTED_WORK_ROOT:-}" ]; then
+    case "$(pwd -P)/" in
+        "${SCENARIO_EXPECTED_WORK_ROOT%/}/"*) ;;
+        *) printf 'Scenario coding worker started outside its scratch root.\n' >&2; exit 2 ;;
+    esac
+fi
+
 while [ ! -f "$SCENARIO_RELEASE_FILE" ]; do
     sleep 0.05
 done

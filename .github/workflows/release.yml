@@ -103,6 +103,7 @@ jobs:
           bash scripts/release/release-scripts.test.sh
           sh scripts/release/linux-install-script.test.sh
           python3 scripts/release/installation-scenarios.test.py
+          python3 scripts/release/test-installation-card.py
           python3 -m unittest discover \
             -s deploy/agent-host/tests \
             -p 'test_*.py'
@@ -485,6 +486,9 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.301'
       - uses: actions/download-artifact@v4
         with:
           name: windows-release-artifacts
