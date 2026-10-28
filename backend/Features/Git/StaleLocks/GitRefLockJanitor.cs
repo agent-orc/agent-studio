@@ -127,9 +127,13 @@ public sealed class GitRefLockJanitor
                 _logger.LogWarning(
                     "git-ref-lock-janitor repo={Repo} trigger={Trigger} cleared={Cleared} prunedWorktrees={Pruned} kept={Kept}",
                     scope.WorkTree, trigger, locks.Cleared.Count, pruned.Count, locks.Remaining.Count);
-                Emit(() => _bus?.EmitGitLockInterventionAsync(
-                    project, scope.WorkTree, trigger,
-                    locks.Cleared.Select(finding => finding.Path).ToArray(), pruned, Threshold));
+                if (locks.Cleared.Count > 0)
+                    Emit(() => _bus?.EmitGitLockInterventionAsync(
+                        project, scope.WorkTree, trigger,
+                        locks.Cleared.Select(finding => finding.Path).ToArray(), [], Threshold));
+                foreach (var entry in pruned)
+                    Emit(() => _bus?.EmitGitLockInterventionAsync(
+                        project, scope.WorkTree, trigger, [], [entry], Threshold));
             }
 
             var reported = false;
@@ -169,16 +173,29 @@ public sealed class GitRefLockJanitor
         var now = _time.GetUtcNow().UtcDateTime;
         var entries = Directory.EnumerateDirectories(registry).ToArray();
         var candidates = new List<string>();
+        var initializing = new List<string>();
         foreach (var entry in entries)
         {
             try
             {
-                if (File.Exists(Path.Combine(entry, "locked"))) continue;
+                var lockFile = Path.Combine(entry, "locked");
                 var gitdirFile = Path.Combine(entry, "gitdir");
                 if (!File.Exists(gitdirFile)) continue;
                 var pointer = File.ReadAllText(gitdirFile).Trim();
                 if (string.IsNullOrWhiteSpace(pointer)) continue;
                 var dotGit = Path.GetFullPath(Path.IsPathRooted(pointer) ? pointer : Path.Combine(entry, pointer));
+                if (File.Exists(lockFile))
+                {
+                    if (string.Equals(File.ReadAllText(lockFile).Trim(), "initializing", StringComparison.Ordinal)
+                        && !File.Exists(dotGit) && !Directory.Exists(dotGit)
+                        && now - new[] {
+                            File.GetLastWriteTimeUtc(lockFile),
+                            File.GetLastWriteTimeUtc(gitdirFile),
+                            Directory.GetLastWriteTimeUtc(entry),
+                        }.Max() >= Threshold)
+                        initializing.Add(entry);
+                    continue;
+                }
                 var workTree = Path.GetDirectoryName(dotGit);
                 if (string.IsNullOrEmpty(workTree) || Directory.Exists(workTree)) continue;
                 candidates.Add(entry);
@@ -188,8 +205,24 @@ public sealed class GitRefLockJanitor
                 SilentCatch.Note(ex, "GitRefLockJanitor: unreadable worktree entry is left in place");
             }
         }
-        if (candidates.Count == 0) return [];
+        if (candidates.Count == 0 && initializing.Count == 0) return [];
         if (_probe.Probe(scope, now) != GitLockOwnership.None) return [];
+
+        var removed = new List<string>();
+        foreach (var entry in initializing)
+        {
+            try
+            {
+                Directory.Delete(entry, recursive: true);
+                removed.Add(entry);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(ex, "git-initializing-worktree-entry-remove-failed entry={Entry}", entry);
+            }
+        }
+
+        if (candidates.Count == 0) return removed;
 
         var start = new ProcessStartInfo
         {
@@ -210,7 +243,8 @@ public sealed class GitRefLockJanitor
             _logger.LogWarning("git-worktree-entry-prune-failed repo={Repo} error={Error}",
                 scope.WorkTree, result.StandardError);
         }
-        return entries.Where(entry => !Directory.Exists(entry)).ToArray();
+        removed.AddRange(candidates.Where(entry => !Directory.Exists(entry)));
+        return removed;
     }
 
     private bool ShouldReport(string repository)

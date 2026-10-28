@@ -334,8 +334,12 @@ with the Task Server proxy until batch identity is migrated.
 `backend/Features/Pipeline/BatchGate/` contains the closed-manifest policy,
 membership digest, append-only replay and member evidence records, bounded
 halving policy, coordinator lease, publication preconditions, and pilot metric
-projection. `GitService.ReplayBatchMember` replays each member through a
-disposable detached worktree; candidate refs use
+projection. `GitService.ReplayBatchMember` replays linear members with
+`git merge-tree` and `git commit-tree`, without checking out their files.
+Git versions lacking the required tree options use a disposable detached
+worktree. Non-linear members still use a detached worktree for their merge.
+Temporary worktree removal is retried, and cleanup leftovers do not discard
+a successful replay. Candidate refs use
 `refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
 
 Member replay routes (AGT-3104, chosen by the pure `BatchReplayPolicy`):

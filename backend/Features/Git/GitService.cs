@@ -6057,8 +6057,7 @@ public partial class GitService
         var recovery = TryMechanicalRebase(repoRoot, sourceRef, integrationTip);
         if (!recovery.Success)
         {
-            if (recovery.FailureKind is MechanicalRebaseFailureKind.Conflict
-                or MechanicalRebaseFailureKind.AttributionAmbiguous)
+            if (recovery.FailureKind == MechanicalRebaseFailureKind.Conflict)
             {
                 var report = BuildIntegrationConflictReport(
                     integrationBranch,
@@ -6284,7 +6283,7 @@ public partial class GitService
         var added = false;
         try
         {
-            var add = WorktreeAddDetached(repoRoot, worktreePath, batchTip);
+            var add = AddMechanicalWorktree(repoRoot, worktreePath, batchTip);
             if (!add.Success)
             {
                 result = BatchReplayResult.Infrastructure(
@@ -6301,7 +6300,9 @@ public partial class GitService
             result = BatchReplayResult.Infrastructure($"Batch merge failed: {ex.Message}");
         }
         var cleanupError = CleanupMechanicalRebaseWorktree(repoRoot, container, worktreePath, added);
-        return cleanupError is null ? result : BatchReplayResult.Infrastructure(cleanupError);
+        if (cleanupError is not null)
+            _logger.LogWarning("Batch merge cleanup deferred at {Path}: {Error}", worktreePath, cleanupError);
+        return result;
     }
 
     private BatchReplayResult MergeInWorktree(
@@ -6443,7 +6444,7 @@ public partial class GitService
     /// commit without an unresolved textual conflict is eligible. The delivery
     /// ref and integration branch are never moved by this probe.
     /// </summary>
-    private MechanicalRebaseAttempt TryMechanicalRebase(
+    internal MechanicalRebaseAttempt TryMechanicalRebase(
         string repoRoot,
         string sourceRef,
         string integrationTip)
@@ -6491,6 +6492,10 @@ public partial class GitService
                 originalRangeError ?? "Mechanical rebase found no delivery commits to replay.");
         }
 
+        var treeReplay = TryMechanicalTreeReplay(repoRoot, integrationTip, originalCommits);
+        if (treeReplay is not null)
+            return treeReplay;
+
         var container = Path.Combine(
             Path.GetTempPath(),
             "agent-studio-integration-rebase-" + Guid.NewGuid().ToString("N"));
@@ -6501,7 +6506,7 @@ public partial class GitService
         var added = false;
         try
         {
-            var add = WorktreeAddDetached(repoRoot, worktreePath, sourceRef);
+            var add = AddMechanicalWorktree(repoRoot, worktreePath, sourceRef);
             if (!add.Success)
             {
                 attempt = MechanicalRebaseAttempt.Failed(
@@ -6586,7 +6591,7 @@ public partial class GitService
             worktreePath,
             added);
         if (cleanupError is not null)
-            return MechanicalRebaseAttempt.Failed(cleanupError);
+            _logger.LogWarning("Mechanical rebase cleanup deferred at {Path}: {Error}", worktreePath, cleanupError);
 
         return attempt;
     }
@@ -6704,7 +6709,7 @@ public partial class GitService
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
-    private string? CleanupMechanicalRebaseWorktree(
+    internal string? CleanupMechanicalRebaseWorktree(
         string repoRoot,
         string container,
         string worktreePath,
@@ -6715,8 +6720,10 @@ public partial class GitService
 
         if (added)
         {
-            var removed = WorktreeRemove(repoRoot, worktreePath);
-            if (!removed.Success)
+            var removed = RemoveMechanicalWorktreeWithRetry(
+                () => WorktreeRemove(repoRoot, worktreePath).Success,
+                delay => Thread.Sleep(delay));
+            if (!removed)
             {
                 try
                 {
@@ -6741,17 +6748,57 @@ public partial class GitService
             SilentCatch.Note(ex, "GitService: mechanical rebase temp directory cleanup");
         }
 
+        // A timed-out add can register a locked "initializing" entry before
+        // checkout is killed. Inspect it after deleting the temporary folder.
+        if (!added)
+            RemoveAbortedMechanicalWorktreeRegistration(repoRoot, worktreePath);
+
         var normalizedWorktree = Path.GetFullPath(worktreePath);
         var remainsRegistered = ListWorktrees(repoRoot).Any(entry => string.Equals(
             Path.GetFullPath(entry.Path),
             normalizedWorktree,
             StringComparison.OrdinalIgnoreCase));
         return remainsRegistered || Directory.Exists(worktreePath)
-            ? "Mechanical rebase cleanup could not remove its isolated worktree; integration was not attempted."
+            ? "Mechanical worktree cleanup left an isolated entry for the janitor."
             : null;
     }
 
-    private sealed record MechanicalRebaseAttempt(
+    private void RemoveAbortedMechanicalWorktreeRegistration(string repoRoot, string worktreePath)
+    {
+        var (commonRaw, error, code) = RunGitArgs(repoRoot, "rev-parse", "--git-common-dir");
+        if (code != 0)
+        {
+            _logger.LogWarning("Could not locate aborted worktree registration: {Error}", error.Trim());
+            return;
+        }
+        var common = Path.GetFullPath(Path.IsPathRooted(commonRaw.Trim())
+            ? commonRaw.Trim() : Path.Combine(repoRoot, commonRaw.Trim()));
+        var registry = Path.Combine(common, "worktrees");
+        if (!Directory.Exists(registry)) return;
+        var target = Path.GetFullPath(Path.Combine(worktreePath, ".git"));
+        foreach (var entry in Directory.EnumerateDirectories(registry))
+        {
+            try
+            {
+                var gitdir = Path.Combine(entry, "gitdir");
+                if (!File.Exists(gitdir)) continue;
+                var pointer = File.ReadAllText(gitdir).Trim();
+                if (string.IsNullOrWhiteSpace(pointer)) continue;
+                var resolved = Path.GetFullPath(Path.IsPathRooted(pointer)
+                    ? pointer : Path.Combine(entry, pointer));
+                if (!string.Equals(resolved, target, StringComparison.OrdinalIgnoreCase)
+                    || File.Exists(target) || Directory.Exists(target)) continue;
+                Directory.Delete(entry, recursive: true);
+                _logger.LogWarning("Removed aborted mechanical worktree registration {Entry}", entry);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(ex, "Could not remove aborted mechanical worktree registration {Entry}", entry);
+            }
+        }
+    }
+
+    internal sealed record MechanicalRebaseAttempt(
         bool Success,
         string? RebasedTip,
         IReadOnlyList<RebasedCommitReplacement> Replacements,
@@ -6826,7 +6873,7 @@ public partial class GitService
 
     private sealed record RebaseStop(string? Sha, int? Number);
 
-    private enum MechanicalRebaseFailureKind
+    internal enum MechanicalRebaseFailureKind
     {
         None,
         Conflict,
