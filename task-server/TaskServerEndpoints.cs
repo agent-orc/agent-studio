@@ -716,6 +716,84 @@ public static class TaskServerEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
             .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
 
+        // DP-S8 post work: the backend materializes subjects and holds backend
+        // passes; host agents claim, renew and report through fenced attempts.
+        var postWork = api.MapGroup("/post-work")
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        postWork.MapPost("/subjects", async (
+            HttpContext context, MaterializePostWorkSubjectRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.MaterializePostWorkSubjectAsync(request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        postWork.MapGet("/subjects/{subjectIdOrKey}", async (
+            string subjectIdOrKey, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetPostWorkSubjectAsync(subjectIdOrKey, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        postWork.MapPost("/backend-passes", async (
+            HttpContext context, BeginBackendPassRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.BeginBackendPassAsync(request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        postWork.MapPost("/subjects/{idempotencyKey}/backend-pass/complete", async (
+            HttpContext context, string idempotencyKey, CompleteBackendPassRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.CompleteBackendPassAsync(idempotencyKey, request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        postWork.MapPost("/reconcile", async (
+            HttpContext context, ReconcilePostWorkRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ReconcilePostWorkAsync(request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        postWork.MapGet("/shadow", async (int? limit, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.GetPostWorkShadowSummaryAsync(limit ?? 50, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        postWork.MapPost("/cohorts", async (
+            HttpContext context, StartPostWorkCohortRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.StartPostWorkCohortAsync(request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        postWork.MapGet("/cohorts/{cohortId}", async (string cohortId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetPostWorkCohortAsync(cohortId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        postWork.MapPost("/cohorts/{cohortId}/advance", async (
+            HttpContext context, string cohortId, AdvancePostWorkCohortRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.AdvancePostWorkCohortAsync(cohortId, request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        postWork.MapPost("/cohorts/{cohortId}/rollback", async (
+            HttpContext context, string cohortId, RollbackPostWorkCohortRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.RollbackPostWorkCohortAsync(cohortId, request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        postWork.MapPost("/claims", async (
+            HttpContext context, PostWorkClaimRequest request, TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            if (principal is { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } runnerId }
+                && runnerId != request.ExecutorId)
+                return Results.Json(new ApiError("runner-identity-mismatch", "Post-work executor identity differs from its principal."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            return await InvokeAsync(() => store.ClaimPostWorkAsync(request, Actor(context), ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
+        postWork.MapPost("/attempts/{attemptId}/renew", async (
+            HttpContext context, string attemptId, PostWorkRenewRequest request, TaskServerStore store, CancellationToken ct)
+            => GateRunnerPrincipalPolicy.Matches(context.TaskServerPrincipal(), request.Authority.ExecutorId)
+                ? await InvokeAsync(() => store.RenewPostWorkAsync(attemptId, request, ct))
+                : GateRunnerPrincipalPolicy.Denied())
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
+        postWork.MapPost("/attempts/{attemptId}/report", async (
+            HttpContext context, string attemptId, SubmitPostWorkReportRequest request, TaskServerStore store, CancellationToken ct)
+            => GateRunnerPrincipalPolicy.Matches(context.TaskServerPrincipal(), request.Authority.ExecutorId)
+                ? await InvokeAsync(() => store.ReportPostWorkAsync(attemptId, request, Actor(context), ct))
+                : GateRunnerPrincipalPolicy.Denied())
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
+
         var reviews = api.MapGroup("/reviews")
             .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
         reviews.MapPost("/subjects", async (

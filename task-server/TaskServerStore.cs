@@ -59,7 +59,8 @@ public sealed partial class TaskServerStore
     // 38 stores release candidate full-suite verdicts by project, SHA, and command digest.
     // 39 adds placement advertisements and allocation versions. Version 37
     // remains the retired-schema downgrade guard for older binaries.
-    public const int CurrentSchemaVersion = 39;
+    // 40 adds post-work subjects, attempts, events and cohorts (additive).
+    public const int CurrentSchemaVersion = 40;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4631,6 +4632,7 @@ public sealed partial class TaskServerStore
             """, ct, ("$version", CurrentSchemaVersion), ("$now", Iso(UtcNow)));
         await ApplyReviewMigrationAsync(connection, ct);
         await ApplyGateMigrationAsync(connection, ct);
+        await ApplyPostWorkMigrationAsync(connection, ct);
         await ApplyFailureFingerprintMigrationAsync(connection, ct);
         await ApplySourceFactsMigrationAsync(connection, ct);
         await ApplyReleaseSuiteVerdictMigrationAsync(connection, ct);

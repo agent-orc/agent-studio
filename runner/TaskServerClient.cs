@@ -212,6 +212,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             var runnerId = options.RunnerId;
             string[] capabilities = options.Role == "integration"
                 ? [Contract.IntegrationCapabilities.Executor]
+                : options.Role == "post"
+                ? [Contract.PostWorkCapabilities.Executor]
                 : options.Role is "review" or "gate"
                 ? [.. options.Role == "gate"
                     ? RunnerCapabilityProbe.GateRegistrationCapabilities(options)
@@ -1037,6 +1039,36 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         => await PostJsonAsync<Contract.GateContainmentRequest, Contract.GateStatus>(
                $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/containment", request, ct)
            ?? throw new TaskServerException(500, "Empty gate containment response.");
+
+    public async Task<Contract.PostWorkClaimResponse> ClaimPostWorkAsync(
+        Contract.PostWorkClaimRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.PostWorkClaimRequest, Contract.PostWorkClaimResponse>(
+               "/api/v1/post-work/claims", request, ct)
+           ?? throw new TaskServerException(500, "Empty post-work claim response.");
+
+    public async Task<Contract.PostWorkLease> RenewPostWorkAsync(
+        string attemptId, Contract.PostWorkRenewRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.PostWorkRenewRequest, Contract.PostWorkLease>(
+               $"/api/v1/post-work/attempts/{Uri.EscapeDataString(attemptId)}/renew", request, ct)
+           ?? throw new TaskServerException(500, "Empty post-work renewal response.");
+
+    public async Task<Contract.PostWorkSubject> ReportPostWorkAsync(
+        string attemptId, Contract.SubmitPostWorkReportRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.SubmitPostWorkReportRequest, Contract.PostWorkSubject>(
+               $"/api/v1/post-work/attempts/{Uri.EscapeDataString(attemptId)}/report", request, ct)
+           ?? throw new TaskServerException(500, "Empty post-work report response.");
+
+    /// <summary>The host's current AGT-3019 allocation version, which a post-work claim must acknowledge.</summary>
+    public async Task<long> GetHostAllocationVersionAsync(string hostId, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync($"/api/v1/hosts/{Uri.EscapeDataString(hostId)}/runtime-capacity", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return 0;
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Runtime capacity read failed: {Trim(detail)}");
+        var capacity = JsonSerializer.Deserialize<Contract.RuntimeCapacitySettingsDto>(detail, Json);
+        return capacity is null ? 0 : capacity.AllocationVersion > 0 ? capacity.AllocationVersion : capacity.Version;
+    }
 
     /// <summary>
     /// Downloads one immutable gate bundle (DP-S4) and refuses any body that is

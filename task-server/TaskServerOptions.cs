@@ -16,6 +16,12 @@ public sealed class TaskServerOptions
     public string[] DynamicPlacementCanaryHostIds { get; set; } = [];
     public int DynamicPlacementWarmPreferenceSeconds { get; set; } = 30;
     /// <summary>
+    /// DP-S8 post-work subjects: <c>shadow</c> (default) records subjects and
+    /// backend passes without host claims; <c>canary</c> admits host claims for
+    /// drained cohorts; <c>off</c> refuses subject materialization.
+    /// </summary>
+    public string PostWorkMode { get; set; } = "shadow";
+    /// <summary>
     /// DP-S4 gate admission: <c>slot</c> keeps one fixed gate slot per host
     /// (default); <c>canary</c> reserves a host grant only on
     /// <see cref="GateGrantCanaryHostIds"/>; <c>grant</c> reserves one on every host.

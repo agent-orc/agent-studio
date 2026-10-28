@@ -826,6 +826,76 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
             "{\"name\":\"orchestrator-post-processing\",\"status\":\"running\"," +
             "\"startedAt\":\"2026-08-04T15:36:52.1510585Z\"}]}");
 
+    [Fact]
+    public async Task ProcessAsync_PostWorkCanary_HostOwnedCardIsLeftToTheHostClaim()
+    {
+        // DP-S8: a card a host agent owns is never processed by a backend pass.
+        SeedNoOpReviewJob("host-owned");
+        var deps = BuildDeps();
+        var authority = new FakePostWorkAuthority
+        {
+            Decision = new Contract.BackendPassDecision(false, "host-owned"),
+        };
+        var worker = PostWorkWorker(deps, PostWorkSubjectCoordinatorTests.Coordinator("canary", authority));
+
+        await worker.ProcessAsync(Request("host-owned"), CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, "host-owned")));
+        Assert.Empty(authority.Completed);
+        Assert.Single(authority.Materialized);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PostWorkCanary_WithoutTheAuthority_DefersInsteadOfProcessing()
+    {
+        SeedNoOpReviewJob("authority-down");
+        var deps = BuildDeps();
+        var worker = PostWorkWorker(deps, PostWorkSubjectCoordinatorTests.Coordinator("canary",
+            new FakePostWorkAuthority { Throw = true }));
+        worker.DeferralDelayOverride = _ => TimeSpan.FromHours(1);
+
+        await worker.ProcessAsync(Request("authority-down"), CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, "authority-down")));
+        var wait = deps.Queue.WaitStateOf(Project, "authority-down");
+        Assert.Equal(PostWorkSubjectCoordinator.AuthorityUnavailable, wait?.Reason);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PostWorkCanary_AdmittedPassRecordsTheExistingDecision()
+    {
+        SeedNoOpReviewJob("admitted");
+        var deps = BuildDeps();
+        var authority = new FakePostWorkAuthority();
+        var worker = PostWorkWorker(deps, PostWorkSubjectCoordinatorTests.Coordinator("canary", authority));
+
+        await worker.ProcessAsync(Request("admitted"), CancellationToken.None);
+
+        // The unchanged decision engine reissued the NoOp card; the authority
+        // recorded that decision for the subject.
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, "admitted")));
+        var completed = Assert.Single(authority.Completed);
+        Assert.Equal(Contract.PostWorkOutcomes.Decided, completed.Outcome);
+        Assert.Equal("noop", completed.Reason);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PostWorkShadow_NeverChangesTheExistingQueueBehaviour()
+    {
+        SeedNoOpReviewJob("shadow");
+        var deps = BuildDeps();
+        var worker = PostWorkWorker(deps, PostWorkSubjectCoordinatorTests.Coordinator("shadow",
+            new FakePostWorkAuthority { Throw = true }));
+
+        await worker.ProcessAsync(Request("shadow"), CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, "shadow")));
+    }
+
+    private static AutoReviewPostProcessingWorker PostWorkWorker(Deps deps, PostWorkSubjectCoordinator postWork)
+        => new(deps.Queue, deps.Orchestrator, deps.Scanner, deps.Mutations, deps.Configuration,
+            NullLogger<AutoReviewPostProcessingWorker>.Instance, postWork: postWork);
+
     private AutoReviewPostProcessingRequest Request(string jobId) => new(
         ProjectName: Project,
         JobId: jobId,

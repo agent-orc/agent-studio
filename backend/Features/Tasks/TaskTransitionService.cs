@@ -38,6 +38,8 @@ public sealed class TaskTransitionService
     private readonly OperatorReviewRequeueService? _operatorReviewRequeue;
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
     private readonly AttemptAuthorityService? _attemptAuthority;
+    private PostWorkSubjectCoordinator? _postWork
+        => _services?.GetService(typeof(PostWorkSubjectCoordinator)) as PostWorkSubjectCoordinator;
     private readonly ReviewAttemptTaskLifecycleService? _reviewAttemptLifecycle;
     private readonly ResultVersionStore? _resultVersions;
     private readonly BranchReclaimTriggerService? _branchReclaim;
@@ -2600,6 +2602,9 @@ public sealed class TaskTransitionService
     {
         var queue = _autoReviewQueue;
         if (queue == null) return false;
+        // DP-S8: the transition and the startup recovery (backfill) both pass
+        // here, so every unfinished auto-review lane entry gets one subject.
+        _postWork?.MaterializeInBackground(moved, source);
 
         var accepted = queue.Enqueue(new AutoReviewPostProcessingRequest(
             ProjectName: moved.ProjectName,

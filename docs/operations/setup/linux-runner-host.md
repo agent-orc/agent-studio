@@ -2419,6 +2419,34 @@ process CPU and resident memory over an idle five-minute window, excluding
 its role children, before widening the canary. The container executor and
 production placement switch belong to later slices.
 
+#### Post-work cohort canary and rollback (DP-S8)
+
+Post work stays on the backend queue until an operator switch. First set
+`PostWork:Mode=shadow` on the backend (the Task Server default
+`TaskServer:PostWorkMode=shadow` accepts subjects) and compare
+`GET /api/projects/{project}/post-work/shadow`: every unfinished auto-review
+card needs a subject, and the difference count names cards no advertised post
+host could take. For a canary, set both switches to `canary`, add a `post`
+role to the host-agent config with its own runner ID and state directory,
+set `RUNNER_POST_WORK_IMAGE=<image>@sha256:<digest>` on Linux, advertise role
+`post` in the host placement record, then run
+`agent-host host-agent migrate-role <config> post`.
+
+```sh
+curl -X POST .../api/projects/<project>/post-work/cohorts \
+  -d '{"cohortId":"canary-1","taskIds":["AGT-1","AGT-2"]}'
+curl -X POST .../api/projects/<project>/post-work/cohorts/canary-1/advance
+```
+
+`advance` keeps the cohort `draining` while a backend pass still holds a card
+and converts it to host ownership only after that pass recorded its outcome.
+Repeat it until the phase is `host`. To roll back, call
+`.../cohorts/canary-1/rollback` with a reason: live host leases are revoked,
+late reports are refused, and the response lists the cards re-enqueued to the
+backend queue. Keep the cohort record (`GET /api/v1/post-work/cohorts/<id>`)
+with the canary evidence; the in-memory queue path is retired only after a
+canary and a rollback record show no missed card or duplicate decision.
+
 The first isolated worktree sample on 28 October 2026 ran the built host agent
 for 30.02 seconds with both role adapters disabled. At 0.5-second intervals,
 the supervisor used a mean 0.899% and p90 1.999% of one CPU core; median RSS
