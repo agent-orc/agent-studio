@@ -86,7 +86,11 @@ try {
   Invoke-Setup -SetupArgs @('--unattended', '--answer-file', $answers)
   Assert-Tasks $true
   Assert-Healthy
-  Assert-OwnerBootstrap
+  $taskKey = & (Join-Path $PSScriptRoot 'installation-windows-card.ps1') `
+    -CandidateDir $candidate -InstallDir $installDir
+  if ($LASTEXITCODE -ne 0 -or -not $taskKey) { throw 'Windows first-use card did not complete.' }
+  $ownerStatus = Invoke-RestMethod -Uri 'http://127.0.0.1:4011/api/v1/studio/auth/status'
+  if ($ownerStatus.bootstrapRequired) { throw 'Studio owner bootstrap remained open.' }
   $before = (Get-Content -LiteralPath (Join-Path $installDir 'installation.json') -Raw | ConvertFrom-Json).installationId
   if (-not $before) { throw 'Installation ID is missing.' }
   Invoke-Setup -SetupArgs @('uninstall', '--install-dir', $installDir)
@@ -97,7 +101,11 @@ try {
   Assert-Healthy
   $after = (Get-Content -LiteralPath (Join-Path $installDir 'installation.json') -Raw | ConvertFrom-Json).installationId
   if ($before -ne $after) { throw 'Reinstall changed the installation ID.' }
-  Write-Host 'Windows native candidate install and retained-data reinstall passed.'
+  $token = (Get-Content -LiteralPath (Join-Path $env:ProgramData 'AgentOrchestrator/studio.token') -Raw).Trim()
+  $retained = Invoke-RestMethod -Uri "http://127.0.0.1:5071/api/v1/projects/scenario-project/tasks/$taskKey" `
+    -Headers @{ Authorization = "Bearer $token"; 'X-Task-Protocol-Version' = '2' }
+  if ($retained.state -ne '5-human-review') { throw 'Reinstall did not retain the integrated card.' }
+  Write-Host 'Windows native candidate install, coding, review, integration and retained-data reinstall passed.'
 } finally {
   & $setup uninstall --install-dir $installDir --purge | Out-Null
   Remove-Item -LiteralPath $answers -Force -ErrorAction SilentlyContinue

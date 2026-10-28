@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 import hashlib
@@ -76,35 +77,37 @@ class InstallationEvidenceTests(unittest.TestCase):
             self.assertIn("&lt;missing&gt;", page)
             self.assertNotIn("<missing>", page)
 
-    def test_deferred_journey_passes_gate_with_visible_note(self):
+    def test_unimplemented_journey_fails_gate_with_visible_reason(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             summary = root / "summary.md"
             with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
-                self.assertTrue(MODULE.write_report(root, "linux-native", root, [
+                self.assertFalse(MODULE.write_report(root, "linux-native", root, [
                     {"step": "Install", "status": "passed", "durationSeconds": 1},
-                    MODULE.pending_step("linux-native-installed-card", "Integration", "Awaiting first-use journey"),
+                    {"id": "linux-native-installed-card", "step": "Integration", "status": "failed",
+                     "reason": "Awaiting first-use journey", "durationSeconds": 0},
                 ]))
             report = json.loads((root / "linux-native.json").read_text())
-            self.assertEqual("deferred", report["status"])
-            self.assertEqual("deferred", report["steps"][1]["status"])
-            self.assertIn("deferred", (root / "linux-native.html").read_text())
-            self.assertIn("Deferred: Integration", summary.read_text())
+            self.assertEqual("failed", report["status"])
+            self.assertEqual("failed", report["steps"][1]["status"])
+            self.assertIn("Awaiting first-use journey", (root / "linux-native.html").read_text())
+            self.assertIn("gate failed", summary.read_text())
 
-    def test_delivered_check_failure_fails_even_with_deferred_step(self):
+    def test_delivered_check_failure_fails_with_missing_step(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.assertFalse(MODULE.write_report(root, "linux-native", root, [
                 {"step": "Install", "status": "failed", "durationSeconds": 1},
-                MODULE.pending_step("linux-native-installed-card", "Integration", "Awaiting first-use journey"),
+                {"id": "linux-native-installed-card", "step": "Integration", "status": "failed",
+                 "reason": "Awaiting first-use journey", "durationSeconds": 0},
             ]))
             self.assertEqual("failed", json.loads((root / "linux-native.json").read_text())["status"])
 
-    def test_unlisted_deferred_step_becomes_strict(self):
+    def test_deferred_step_is_strict(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            step = MODULE.pending_step("new-installed-step", "First use", "Not implemented")
-            self.assertEqual("failed", step["status"])
+            step = {"id": "new-installed-step", "step": "First use", "status": "deferred",
+                    "reason": "Not implemented", "durationSeconds": 0}
             self.assertFalse(MODULE.write_report(root, "linux-native", root, [step]))
 
     def test_required_journey_with_skipped_step_fails_gate(self):
@@ -115,6 +118,22 @@ class InstallationEvidenceTests(unittest.TestCase):
                 {"step": "Integration", "status": "skipped", "durationSeconds": 0},
             ]))
             self.assertEqual("skipped", json.loads((root / "linux-native.json").read_text())["status"])
+
+    def test_required_installed_journeys_have_no_deferred_step(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for scenario in ("linux-native", "linux-docker", "windows-native"):
+                arguments = [str(SCRIPT), "--scenario", scenario, "--candidate-dir", str(root),
+                             "--report-dir", str(root / "reports")]
+                with patch.object(sys, "argv", arguments), \
+                     patch.object(MODULE, "verify_candidate", return_value={"assetCount": 1,
+                                                                           "setupSha256": "fixture"}), \
+                     patch.object(MODULE, "run", return_value={"step": "Installed journey",
+                                                                  "status": "passed", "durationSeconds": 1}):
+                    self.assertEqual(0, MODULE.main(), scenario)
+                report = json.loads((root / "reports" / f"{scenario}.json").read_text())
+                self.assertEqual("passed", report["status"])
+                self.assertEqual(["passed", "passed"], [step["status"] for step in report["steps"]])
 
 
 if __name__ == "__main__":

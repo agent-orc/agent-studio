@@ -25,7 +25,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Check installation evidence contract
-        run: python3 scripts/release/installation-scenarios.test.py
+        run: |
+          python3 scripts/release/installation-scenarios.test.py
+          python3 scripts/release/test-installation-card.py
       - name: Build release-shaped candidate assets
         run: |
           set -euo pipefail
@@ -41,6 +43,8 @@ jobs:
             -p:Version="$version" -p:SourceRevisionId="$sha")
           dotnet publish task-server/TaskServer.csproj "${common[@]}" --runtime linux-x64 --output artifacts/publish/task-server
           dotnet publish orchestrator-engine/OrchestratorEngine.csproj "${common[@]}" --runtime linux-x64 --output artifacts/publish/orchestrator-engine
+          dotnet publish backend/OrchestratorApi.csproj "${common[@]}" --runtime linux-x64 --output artifacts/publish/orchestrator-api
+          dotnet publish studio-bff/StudioBff.csproj "${common[@]}" --runtime linux-x64 --output artifacts/publish/studio-bff
           dotnet publish runner/AgentRunner.csproj "${common[@]}" --runtime linux-x64 --output artifacts/publish/agent-host-linux-x64
           dotnet publish runner/AgentRunner.csproj "${common[@]}" --runtime osx-arm64 --output artifacts/publish/agent-host-osx-arm64
           dotnet publish setup/AgentOrchestratorSetup.csproj "${common[@]}" --runtime linux-x64 --output artifacts/publish/setup

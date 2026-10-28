@@ -32,21 +32,6 @@ SCENARIOS = {
     "broken-prerequisites": "Clear guidance for broken first-use prerequisites",
 }
 OPTIONAL_SCENARIOS = {"linux-vm", "windows-linux-host", "simulated-user", "broken-prerequisites", "upgrade"}
-# Remove an id here when its installed first-use journey becomes a required check.
-DEFERRED_STEP_IDS = {
-    "linux-native-installed-card",
-    "linux-docker-installed-first-use",
-    "coding-review-installed-integration",
-    "windows-native-local-studio-runner",
-}
-
-
-def pending_step(step_id: str, label: str, reason: str) -> dict:
-    return {"id": step_id, "step": label,
-            "status": "deferred" if step_id in DEFERRED_STEP_IDS else "failed",
-            "reason": reason, "durationSeconds": 0}
-
-
 def verify_candidate(directory: Path, windows: bool) -> dict:
     sums = directory / "SHA256SUMS"
     setup = "agent-studio-setup.exe" if windows else "agent-studio-setup"
@@ -113,15 +98,14 @@ def check_missing_git(setup: Path) -> dict:
 
 def write_report(report_dir: Path, scenario: str, candidate: Path, steps: list[dict]) -> bool:
     report_dir.mkdir(parents=True, exist_ok=True)
-    known_statuses = {"passed", "failed", "deferred", "skipped", "not_applicable"}
+    known_statuses = {"passed", "failed", "skipped", "not_applicable"}
     failed = not steps or any(
         step["status"] not in known_statuses or step["status"] == "failed"
-        or (step["status"] == "deferred" and step.get("id") not in DEFERRED_STEP_IDS)
         for step in steps
     )
     statuses = {step["status"] for step in steps}
     status = "failed" if failed else next(
-        (value for value in ("skipped", "deferred", "not_applicable") if value in statuses), "passed")
+        (value for value in ("skipped", "not_applicable") if value in statuses), "passed")
     gate_passed = not failed and ("skipped" not in statuses or scenario in OPTIONAL_SCENARIOS)
     report = {
         "schemaVersion": 1,
@@ -163,11 +147,8 @@ table{{border-collapse:collapse;width:100%;background:white}}th,td{{border:1px s
     (report_dir / f"{scenario}.html").write_text(page, encoding="utf-8")
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
-        deferred = [step["step"] for step in steps if step["status"] == "deferred"]
         with open(summary_path, "a", encoding="utf-8") as summary:
             summary.write(f"- **{scenario}: {status}** ({'gate passed' if gate_passed else 'gate failed'})")
-            if deferred:
-                summary.write(". Deferred: " + ", ".join(deferred))
             summary.write(".\n")
     return gate_passed
 
@@ -209,18 +190,11 @@ def main() -> int:
             environment["SCENARIO_GIT_REMOTE"] = optional[1]
             environment["INSTALL_SCENARIO_KNOWN_HOSTS"] = optional[2]
         environment["SETUP_E2E_RELEASE_DIR"] = str(candidate)
-        steps.append(run("Native install and host join", ["bash", str(ROOT / "scripts/release/setup-e2e-probe.sh"),
+        steps.append(run("Native install, owner, card, review and integration", ["bash", str(ROOT / "scripts/release/setup-e2e-probe.sh"),
                            str(report_dir / "linux-native-probe.md")], environment, 900))
-        if steps[-1]["status"] == "passed":
-            steps.append(pending_step("linux-native-installed-card", "Installed candidate card through integration",
-                                      "Task Server has no native integration transition; coding fixture uses a separate source-built topology"))
     elif args.scenario == "linux-docker":
-        steps.append(run("Docker install and retained-data reinstall",
+        steps.append(run("Docker install, first-use card and retained-data reinstall",
                          ["bash", str(ROOT / "scripts/release/installation-docker-probe.sh"), str(candidate)], environment, 1200))
-        if steps[-1]["status"] == "passed":
-            steps.append(pending_step("linux-docker-installed-first-use",
-                                      "Owner, project and card through integration on installed Compose stack",
-                                      "The Docker probe currently checks an API workspace and retained data only"))
     elif args.scenario == "linux-vm":
         if not args.operator_profile:
             steps.append({"step": "Disposable VM Compose onboarding", "status": "skipped",
@@ -233,9 +207,6 @@ def main() -> int:
         steps.append(run("Fake CLI coding and review",
                          ["bash", str(ROOT / "scripts/scenario.sh"), "--target", "compose", "--level", "full",
                           "--report-dir", str(report_dir / "coding-review-detail")], environment, 1800))
-        if steps[-1]["status"] == "passed":
-            steps.append(pending_step("coding-review-installed-integration", "Integration on installed candidate",
-                                      "Source-built fixture stops at human review and is separate from installed candidate"))
     elif args.scenario == "upgrade":
         if args.previous_version == "none":
             steps.append({"step": "Previous release", "status": "not_applicable",
@@ -255,13 +226,13 @@ def main() -> int:
             except (OSError, subprocess.SubprocessError, IndexError, ValueError):
                 steps.append({"step": "Candidate version", "status": "failed", "reason": "setup version unavailable", "durationSeconds": 0})
     elif args.scenario == "windows-native":
-        steps.append(run("Windows service install and retained-data reinstall",
+        steps.append(run("Windows install, owner, card, integration and retained-data reinstall",
                          ["pwsh", "-NoProfile", "-File", str(ROOT / "scripts/release/installation-windows-probe.ps1"),
                           "-CandidateDir", str(candidate)], environment, 1200))
     elif args.scenario == "windows-linux-host":
-        if not args.server_url or not args.token_file or not args.token_file.is_file():
+        if not args.operator_profile or not args.server_url or not args.token_file or not args.token_file.is_file():
             steps.append({"step": "Remote authority inputs", "status": "skipped",
-                          "reason": "Operator KORI profile needs --server-url and --token-file", "durationSeconds": 0})
+                          "reason": "Operator KORI profile needs --operator-profile, --server-url and --token-file", "durationSeconds": 0})
         else:
             steps.append(run("Windows connector to Linux authority",
                              ["pwsh", "-NoProfile", "-File", str(ROOT / "scripts/release/installation-windows-connector-probe.ps1"),
