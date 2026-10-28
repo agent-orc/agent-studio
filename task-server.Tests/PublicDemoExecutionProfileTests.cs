@@ -94,7 +94,21 @@ public sealed class PublicDemoExecutionProfileTests
         // {integrationId}/lease/renew and {integrationId}/report (PostStep).
         // Integration executors publish through them, so all three are denied.
         // AGT-3181 preview feedback queues a same-card continuation (Continue).
-        Assert.Equal(47, routes.Count);
+        // AGT-3334 adds ten post-work command routes: one claim (Claim) and
+        // nine subject, backend-pass, cohort, renewal and report steps (PostStep).
+        Assert.Equal(57, routes.Count);
+        var postWorkClaim = Assert.Single(routes, route => route.RoutePattern.RawText ==
+            "/api/v1/post-work/claims");
+        Assert.Equal(ExecutionAdmissionPath.Claim,
+            postWorkClaim.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
+        var postWorkRenew = Assert.Single(routes, route => route.RoutePattern.RawText ==
+            "/api/v1/post-work/attempts/{attemptId}/renew");
+        Assert.Equal(ExecutionAdmissionPath.PostStep,
+            postWorkRenew.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
+        var postWorkReport = Assert.Single(routes, route => route.RoutePattern.RawText ==
+            "/api/v1/post-work/attempts/{attemptId}/report");
+        Assert.Equal(ExecutionAdmissionPath.PostStep,
+            postWorkReport.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
         var revokedReference = Assert.Single(routes, route => route.RoutePattern.RawText ==
             "/api/v1/runs/{runId}/revoked-reference");
         Assert.Equal(ExecutionAdmissionPath.PostStep,
@@ -124,13 +138,13 @@ public sealed class PublicDemoExecutionProfileTests
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 6,
+                [ExecutionAdmissionPath.Claim] = 7,
                 [ExecutionAdmissionPath.Start] = 7,
                 [ExecutionAdmissionPath.Continue] = 13,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,
-                [ExecutionAdmissionPath.PostStep] = 14,
+                [ExecutionAdmissionPath.PostStep] = 23,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

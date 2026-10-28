@@ -743,7 +743,7 @@ public static class TaskServerEndpoints
             => GateRunnerPrincipalPolicy.Matches(context.TaskServerPrincipal(), request.Authority.ExecutorId)
                 ? await InvokeAsync(() => store.RenewPostWorkAsync(attemptId, request, ct))
                 : GateRunnerPrincipalPolicy.Denied())
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
             .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
         postWork.MapPost("/attempts/{attemptId}/report", async (
             HttpContext context, string attemptId, SubmitPostWorkReportRequest request, TaskServerStore store, CancellationToken ct)
