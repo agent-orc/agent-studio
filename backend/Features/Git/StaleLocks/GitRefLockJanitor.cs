@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Globalization;
 using AgentStudio.Bus;
 using AgentStudio.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -28,14 +30,14 @@ public sealed record GitRefLockJanitorResult(
 /// <see cref="GitStaleLockGuard"/> with a shorter threshold (default 5 minutes)
 /// and never waits. A lock is removed only when it is older than the threshold
 /// and no git process (a child of this server or any OS git process tied to the
-/// repository) runs there. In the same pass it prunes
-/// <c>.git/worktrees/&lt;name&gt;</c> admin entries whose working tree no longer
-/// exists, under the same rule.</para>
+/// repository) runs there. In the same pass Git prunes unlocked
+/// worktree registrations whose working tree no longer exists, under the
+/// same rule.</para>
 ///
 /// <para>Every removal becomes one <c>git-stale-lock-cleared</c> operations
 /// event; locks it must keep after a timeout or a ref-lock failure become a
-/// rate-limited <c>git-ref-lock-blocked</c> event. No git process is spawned:
-/// a git spawn is what the lock blocks.</para>
+/// rate-limited <c>git-ref-lock-blocked</c> event. Ref-lock inspection itself
+/// does not spawn Git; worktree pruning uses the bounded Git process runner.</para>
 /// </summary>
 public sealed class GitRefLockJanitor
 {
@@ -155,11 +157,9 @@ public sealed class GitRefLockJanitor
     }
 
     /// <summary>
-    /// Removes <c>&lt;common&gt;/worktrees/&lt;name&gt;</c> entries whose
-    /// <c>gitdir</c> names a working tree directory that no longer exists (what
-    /// <c>git worktree prune</c> does), but only for unlocked entries older than
-    /// the threshold and only while no git process runs in the repository.
-    /// Their <c>index.lock</c> files go with them.
+    /// Lets Git prune worktree registrations whose working tree no longer
+    /// exists. Git decides which registrations are safe to remove, including
+    /// locked worktrees. Only report entries that disappeared after the command.
     /// </summary>
     private IReadOnlyList<string> PruneOrphanedWorktrees(GitLockScope scope)
     {
@@ -167,13 +167,13 @@ public sealed class GitRefLockJanitor
         if (!Directory.Exists(registry)) return [];
 
         var now = _time.GetUtcNow().UtcDateTime;
+        var entries = Directory.EnumerateDirectories(registry).ToArray();
         var candidates = new List<string>();
-        foreach (var entry in Directory.EnumerateDirectories(registry))
+        foreach (var entry in entries)
         {
             try
             {
                 if (File.Exists(Path.Combine(entry, "locked"))) continue;
-                if (now - Directory.GetLastWriteTimeUtc(entry) < Threshold) continue;
                 var gitdirFile = Path.Combine(entry, "gitdir");
                 if (!File.Exists(gitdirFile)) continue;
                 var pointer = File.ReadAllText(gitdirFile).Trim();
@@ -191,20 +191,26 @@ public sealed class GitRefLockJanitor
         if (candidates.Count == 0) return [];
         if (_probe.Probe(scope, now) != GitLockOwnership.None) return [];
 
-        var pruned = new List<string>();
-        foreach (var entry in candidates)
+        var start = new ProcessStartInfo
         {
-            try
-            {
-                Directory.Delete(entry, recursive: true);
-                pruned.Add(entry);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _logger.LogWarning(ex, "git-worktree-entry-prune-failed repo={Repo} entry={Entry}", scope.WorkTree, entry);
-            }
+            FileName = "git",
+            WorkingDirectory = scope.WorkTree,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add("worktree");
+        start.ArgumentList.Add("prune");
+        start.ArgumentList.Add("--expire=" + (_time.GetUtcNow() - Threshold)
+            .ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture));
+        var result = GitProcessBoundary.Run(start);
+        if (!result.Success)
+        {
+            _logger.LogWarning("git-worktree-entry-prune-failed repo={Repo} error={Error}",
+                scope.WorkTree, result.StandardError);
         }
-        return pruned;
+        return entries.Where(entry => !Directory.Exists(entry)).ToArray();
     }
 
     private bool ShouldReport(string repository)

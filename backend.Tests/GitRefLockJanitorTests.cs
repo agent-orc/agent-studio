@@ -145,11 +145,13 @@ public sealed class GitRefLockJanitorTests : IDisposable
     [Fact]
     public void BeforeFetch_PrunesWorktreeEntriesWhoseWorkingTreeIsGone_OnlyWhenNoOwnGitRuns()
     {
+        RunGit(_root, "init", "-q", _repo);
         var orphan = WorktreeEntry("worktree1", Path.Combine(_root, "agent-studio-batch-merge-1"), TimeSpan.FromHours(1));
         File.WriteAllText(Path.Combine(orphan, "index.lock"), "");
         Directory.SetLastWriteTimeUtc(orphan, _clock.GetUtcNow().UtcDateTime - TimeSpan.FromHours(1));
         var liveTree = Path.Combine(_root, "live-tree");
         Directory.CreateDirectory(liveTree);
+        Directory.CreateDirectory(Path.Combine(liveTree, ".git"));
         var live = WorktreeEntry("worktree2", liveTree, TimeSpan.FromHours(1));
         var locked = WorktreeEntry("worktree3", Path.Combine(_root, "unmounted"), TimeSpan.FromHours(1));
         File.WriteAllText(Path.Combine(locked, "locked"), "on removable disk");
@@ -164,13 +166,16 @@ public sealed class GitRefLockJanitorTests : IDisposable
 
         var result = janitor.BeforeFetch(_repo);
 
-        Assert.Equal(new[] { orphan }, result.PrunedWorktrees);
+        // Git prunes a missing gitdir even when its registration is recent;
+        // --expire only controls registrations Git treats as expired.
+        Assert.Equal(new[] { orphan, fresh }, result.PrunedWorktrees.OrderBy(path => path, StringComparer.Ordinal));
         Assert.False(Directory.Exists(orphan));
         Assert.True(Directory.Exists(live));
         Assert.True(Directory.Exists(locked));
-        Assert.True(Directory.Exists(fresh));
+        Assert.False(Directory.Exists(fresh));
         var message = Assert.Single(Events(), m => m.Topic == "git-stale-lock-cleared");
         Assert.Contains(orphan, message.Body);
+        Assert.Contains(fresh, message.Body);
     }
 
     [Fact]
@@ -244,6 +249,7 @@ public sealed class GitRefLockJanitorTests : IDisposable
         var entry = Path.Combine(_gitDir, "worktrees", name);
         Directory.CreateDirectory(entry);
         File.WriteAllText(Path.Combine(entry, "gitdir"), Path.Combine(workTree, ".git") + "\n");
+        File.SetLastWriteTimeUtc(Path.Combine(entry, "gitdir"), _clock.GetUtcNow().UtcDateTime - age);
         Directory.SetLastWriteTimeUtc(entry, _clock.GetUtcNow().UtcDateTime - age);
         return entry;
     }
