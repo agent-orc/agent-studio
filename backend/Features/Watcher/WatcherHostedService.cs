@@ -1,3 +1,5 @@
+using AgentStudio.Tasks;
+
 namespace AgentStudio.Watcher;
 
 /// <summary>Structured summary of one sweep, mirroring <c>AcceptanceRailSnapshot</c> for the status endpoint and the <c>watcher-run</c> log line.</summary>
@@ -39,6 +41,7 @@ public sealed class WatcherHostedService : BackgroundService
     private readonly WatcherProposalDraftingService _drafting;
     private readonly WatcherActivityProjector _activity;
     private readonly WatcherContingentService _contingent;
+    private readonly TaskScannerService _scanner;
     private readonly IConfiguration _configuration;
     private readonly ILogger<WatcherHostedService> _logger;
     private readonly TimeProvider _time;
@@ -54,6 +57,7 @@ public sealed class WatcherHostedService : BackgroundService
         WatcherProposalDraftingService drafting,
         WatcherActivityProjector activity,
         WatcherContingentService contingent,
+        TaskScannerService scanner,
         IConfiguration configuration,
         ILogger<WatcherHostedService> logger,
         TimeProvider? time = null)
@@ -66,6 +70,7 @@ public sealed class WatcherHostedService : BackgroundService
         _drafting = drafting;
         _activity = activity;
         _contingent = contingent;
+        _scanner = scanner;
         _configuration = configuration;
         _logger = logger;
         _time = time ?? TimeProvider.System;
@@ -96,6 +101,7 @@ public sealed class WatcherHostedService : BackgroundService
     /// <summary>Pure-enough, testable single sweep. Same shape as <c>AcceptanceRailHostedService.RunOnceAsync</c>.</summary>
     public async Task<WatcherRunSnapshot> RunOnceAsync(WatcherOptions? optionsOverride = null, CancellationToken ct = default)
     {
+        await _scanner.WaitForFirstPublicationAsync(ct).ConfigureAwait(false);
         var workspaceRoot = _configuration["TaskRepository"];
         if (string.IsNullOrWhiteSpace(workspaceRoot))
         {

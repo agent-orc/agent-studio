@@ -405,7 +405,9 @@ public sealed class PersistedBoardReadTests : IDisposable
             Assert.Equal(liveList, list.Body);
             Assert.True(gate.Scans >= 1, "the boot must start the first publication");
             Assert.False(gate.TimedOut, "the held first scan timed out before the restored read");
-            Assert.Equal(0, restarted.Services.GetRequiredService<TaskIndexCache>().BlockingRefreshWaits);
+            var index = restarted.Services.GetRequiredService<TaskIndexCache>();
+            Assert.True(index.BlockingRefreshWaits == 0,
+                $"blocking refresh waits={index.BlockingRefreshWaits}; {PoolState()}; first stack={index.FirstBlockingRefreshWaitStack}");
         }
         finally
         {

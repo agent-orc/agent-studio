@@ -169,9 +169,11 @@ public sealed class TaskIndexCache
     public long ExternalInvalidations;
     public long MutationInvalidations;
     private long _blockingRefreshWaits;
+    private string? _firstBlockingRefreshWaitStack;
 
     /// <summary>Sync callers that waited for an in-flight publication.</summary>
     internal long BlockingRefreshWaits => Interlocked.Read(ref _blockingRefreshWaits);
+    internal string? FirstBlockingRefreshWaitStack => Volatile.Read(ref _firstBlockingRefreshWaitStack);
 
     public TaskIndexCache(
         TaskScannerService scanner,
@@ -1087,6 +1089,8 @@ public sealed class TaskIndexCache
             if (coldStartRefresh != null)
             {
                 Interlocked.Increment(ref _blockingRefreshWaits);
+                if (Volatile.Read(ref _firstBlockingRefreshWaitStack) is null)
+                    Interlocked.CompareExchange(ref _firstBlockingRefreshWaitStack, Environment.StackTrace, null);
                 using (TaskSwitchTrace.Span("index.wait"))
                     coldStartRefresh.GetAwaiter().GetResult();
 
