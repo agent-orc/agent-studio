@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Net.Sockets;
 using AgentRunner;
+using AgentStudio.TestSupport;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -11,18 +11,12 @@ public sealed class DeployHostGuidedFailureTests
     [Fact]
     public async Task HealthRetry_ChecksHealthWithoutRedeployingTheArtifact()
     {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        using var listener = new HttpListener();
-        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-        listener.Start();
-        var healthRequest = Task.Run(async () =>
+        var healthRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new LoopbackHttpServer(async context =>
         {
-            var context = await listener.GetContextAsync();
             context.Response.StatusCode = 200;
-            context.Response.Close();
+            await context.Response.CompleteAsync();
+            healthRequest.TrySetResult();
         });
         var tokenFile = Path.Combine(Path.GetTempPath(), "deploy-health-retry-" + Guid.NewGuid().ToString("N"));
         await File.WriteAllTextAsync(tokenFile, "test-" + Guid.NewGuid().ToString("N"));
@@ -32,7 +26,7 @@ public sealed class DeployHostGuidedFailureTests
             {
                 id = "retry-job", project = "demo", environmentId = "stage", hostId = "stage-host",
                 artifact = "artifact-unavailable", template = "container", destination = "invalid-port",
-                healthUrl = $"http://127.0.0.1:{port}/", secretRefs = new[] { "DB-URL", "DB.URL" },
+                healthUrl = listener.BaseUrl + "/", secretRefs = new[] { "DB-URL", "DB.URL" },
                 missingSecretRefs = new[] { new { name = "DB-URL", reason = "not-bound" } },
                 containerPort = 8080, previousArtifact = (string?)null, status = "claimed",
                 leaseToken = "lease-" + Guid.NewGuid().ToString("N"), retryStep = "health",
@@ -40,13 +34,12 @@ public sealed class DeployHostGuidedFailureTests
             using var client = new HttpClient(plane) { BaseAddress = new Uri("http://studio.test/") };
             var result = await DeployHostCommand.RunAsync(
                 ["http://studio.test", "stage-host", tokenFile, "/missing/artifacts"], CancellationToken.None, client);
-            await healthRequest.WaitAsync(TimeSpan.FromSeconds(5));
+            await healthRequest.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(0, result);
             Assert.True(plane.ReportedHealthy);
         }
         finally
         {
-            listener.Stop();
             File.Delete(tokenFile);
         }
     }
