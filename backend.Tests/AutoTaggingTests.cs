@@ -2,6 +2,7 @@ using System.Text.Json;
 using AgentStudio.Tags;
 using AgentStudio.Areas;
 using AgentStudio.Shared;
+using AgentStudio.Pipeline;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -12,6 +13,50 @@ public sealed class AutoTaggingTests
     private static readonly HashSet<string> Registry = ["execution-and-runner", "gates-and-review", "testing"];
     private static readonly TagMaintenanceItem Item = new("Agent Studio", "card", "gate-test",
         "Gate test", [], "Review the validation gate and its tests.", true);
+
+    private const string ValidReply = "{\"kind\":\"card\",\"id\":\"gate-test\",\"tags\":[\"gates-and-review\"],\"confidence\":0.9}";
+
+    [Theory]
+    [InlineData("```json\n" + ValidReply + "\n```")]
+    [InlineData("The classification is:\n" + ValidReply + "\nThank you.")]
+    public void ExtractsValidJsonFromModelWrapping(string reply)
+    {
+        var prediction = AutoTagCallPolicy.Parse(reply, Item, Registry, Areas);
+        Assert.Equal("gate-test", prediction.Id);
+        Assert.Equal(["gates-and-review"], prediction.Tags);
+    }
+
+    [Theory]
+    [InlineData("```json\n{\"kind\":\"card\"}\n```")]
+    [InlineData("{\"kind\":\"card\",\"id\":\"gate-test\",\"tags\":[\"invented\"],\"confidence\":0.9}")]
+    [InlineData("No classification available")]
+    public void RejectsInvalidOrIncompleteReply(string reply) =>
+        Assert.Throws<InvalidOperationException>(() => AutoTagCallPolicy.Parse(reply, Item, Registry, Areas));
+
+    [Fact]
+    public void AutoTagRouteHonorsStepCliAndModelWithClaudeDefault()
+    {
+        var defaultRoute = AutoTagClassifier.ResolveRoute(null);
+        Assert.Equal(CliTypes.Claude, defaultRoute.Cli);
+        Assert.Equal(ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet), defaultRoute.Model);
+        Assert.Equal(defaultRoute, AutoTagClassifier.ResolveRoute(new ProjectSettings
+        {
+            OrchestratorModel = ModelFamilyResolver.Resolve(ModelFamilies.GptMini),
+        }));
+        var selected = AutoTagClassifier.ResolveRoute(new ProjectSettings
+        {
+            PipelineSteps = new Dictionary<string, PipelineStepSetting>
+            {
+                [PipelineCatalogue.AutoTagStepId] = new()
+                {
+                    CliType = CliTypes.Codex,
+                    Model = ModelFamilyResolver.Resolve(ModelFamilies.GptMini),
+                },
+            },
+        });
+        Assert.Equal(CliTypes.Codex, selected.Cli);
+        Assert.Equal(ModelFamilyResolver.Resolve(ModelFamilies.GptMini), selected.Model);
+    }
 
     [Fact]
     public void ClosedRegistryRequiresAnAreaAndMatchingIdentity()
