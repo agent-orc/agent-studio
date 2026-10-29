@@ -854,7 +854,7 @@ public sealed class InstallationJourneyTests
     {
         using var listener = StartHealthListener(out var url);
         Assert.Equal(((bool?)true, (bool?)null), await PreflightProbe.AuthorityAsync(new Uri(url), default));
-        listener.Stop();
+        listener.Dispose();
         Assert.Equal(((bool?)false, (bool?)null), await PreflightProbe.AuthorityAsync(new Uri(url), default));
     }
 
@@ -879,7 +879,7 @@ public sealed class InstallationJourneyTests
             Assert.Contains("[ok  ] Authority URL", reached.ToString());
             Assert.Contains("[ok  ] Connectivity", reached.ToString());
 
-            listener.Stop();
+            listener.Dispose();
             var unreachable = new StringWriter();
             Console.SetOut(unreachable);
             Assert.Equal(1, await ProductSetup.RunAsync(["preflight", "--journey", "join-host",
@@ -1007,29 +1007,14 @@ public sealed class InstallationJourneyTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
-    internal static System.Net.HttpListener StartHealthListener(out string url)
+    internal static AgentStudio.TestSupport.LoopbackHttpServer StartHealthListener(out string url)
     {
-        var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        url = $"http://127.0.0.1:{port}";
-        var listener = new System.Net.HttpListener();
-        listener.Prefixes.Add(url + "/");
-        listener.Start();
-        _ = Task.Run(async () =>
+        var listener = new AgentStudio.TestSupport.LoopbackHttpServer(context =>
         {
-            while (listener.IsListening)
-            {
-                try
-                {
-                    var context = await listener.GetContextAsync();
-                    context.Response.StatusCode = 200;
-                    context.Response.Close();
-                }
-                catch (Exception) { return; }
-            }
+            context.Response.StatusCode = 200;
+            return Task.CompletedTask;
         });
+        url = listener.BaseUrl;
         return listener;
     }
 

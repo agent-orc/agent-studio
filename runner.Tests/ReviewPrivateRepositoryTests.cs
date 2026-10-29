@@ -4,6 +4,8 @@ using System.Net.Sockets;
 using System.Text;
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TestSupport;
+using Microsoft.AspNetCore.Http;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -316,87 +318,40 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
     /// </summary>
     private sealed class BasicAuthGitServer : IAsyncDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly LoopbackHttpServer _listener;
         private readonly string _projectRoot;
         private readonly string _expectedAuthorization;
-        private readonly CancellationTokenSource _stop = new();
-        private Task _loop = Task.CompletedTask;
         private int _authorizedRequests;
 
-        private BasicAuthGitServer(string projectRoot, string username, string password, int port)
+        private BasicAuthGitServer(string projectRoot, string username, string password)
         {
             _projectRoot = projectRoot;
             _expectedAuthorization = "Basic " + Convert.ToBase64String(
                 Encoding.UTF8.GetBytes($"{username}:{password}"));
-            Port = port;
-            BaseUrl = $"http://127.0.0.1:{port}/";
-            _listener.Prefixes.Add(BaseUrl);
+            _listener = new LoopbackHttpServer(HandleAsync);
         }
 
-        public int Port { get; }
-        public string BaseUrl { get; }
+        public int Port => _listener.Port;
+        public string BaseUrl => _listener.BaseUrl + "/";
         public int AuthorizedRequests => Volatile.Read(ref _authorizedRequests);
 
         public static BasicAuthGitServer Start(string projectRoot, string username, string password)
+            => new(projectRoot, username, password);
+
+        private async Task HandleAsync(HttpContext context)
         {
-            for (var attempt = 1; ; attempt++)
+            if (!string.Equals(context.Request.Headers.Authorization, _expectedAuthorization,
+                    StringComparison.Ordinal))
             {
-                var probe = new TcpListener(IPAddress.Loopback, 0);
-                probe.Start();
-                var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-                probe.Stop();
-                var server = new BasicAuthGitServer(projectRoot, username, password, port);
-                try
-                {
-                    server._listener.Start();
-                }
-                catch (HttpListenerException) when (attempt < 5)
-                {
-                    // A parallel test took the probed port before the listener bound it.
-                    // Retry with a fresh port. Close() is skipped: on Linux it would try
-                    // to bind the taken port again.
-                    continue;
-                }
-                server._loop = server.AcceptAsync();
-                return server;
+                context.Response.StatusCode = 401;
+                context.Response.Headers.WWWAuthenticate = "Basic realm=\"private\"";
+                return;
             }
+            Interlocked.Increment(ref _authorizedRequests);
+            await ServeAsync(context);
         }
 
-        private async Task AcceptAsync()
-        {
-            while (!_stop.IsCancellationRequested)
-            {
-                HttpListenerContext context;
-                try { context = await _listener.GetContextAsync(); }
-                catch (Exception) when (_stop.IsCancellationRequested) { return; }
-                catch (HttpListenerException) { return; }
-                catch (ObjectDisposedException) { return; }
-                _ = Task.Run(() => HandleAsync(context));
-            }
-        }
-
-        private async Task HandleAsync(HttpListenerContext context)
-        {
-            try
-            {
-                if (!string.Equals(context.Request.Headers["Authorization"], _expectedAuthorization,
-                        StringComparison.Ordinal))
-                {
-                    context.Response.StatusCode = 401;
-                    context.Response.AddHeader("WWW-Authenticate", "Basic realm=\"private\"");
-                    context.Response.Close();
-                    return;
-                }
-                Interlocked.Increment(ref _authorizedRequests);
-                await ServeAsync(context);
-            }
-            catch
-            {
-                try { context.Response.Abort(); } catch { /* connection already gone */ }
-            }
-        }
-
-        private async Task ServeAsync(HttpListenerContext context)
+        private async Task ServeAsync(HttpContext context)
         {
             var start = new ProcessStartInfo("git", "http-backend")
             {
@@ -408,21 +363,21 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
             };
             start.Environment["GIT_PROJECT_ROOT"] = _projectRoot;
             start.Environment["GIT_HTTP_EXPORT_ALL"] = "1";
-            start.Environment["REQUEST_METHOD"] = context.Request.HttpMethod;
-            start.Environment["PATH_INFO"] = context.Request.Url!.AbsolutePath;
-            start.Environment["QUERY_STRING"] = context.Request.Url.Query.TrimStart('?');
+            start.Environment["REQUEST_METHOD"] = context.Request.Method;
+            start.Environment["PATH_INFO"] = context.Request.Path.Value ?? string.Empty;
+            start.Environment["QUERY_STRING"] = context.Request.QueryString.Value?.TrimStart('?') ?? string.Empty;
             start.Environment["CONTENT_TYPE"] = context.Request.ContentType ?? string.Empty;
             start.Environment["REMOTE_USER"] = "reviewer";
             start.Environment["REMOTE_ADDR"] = "127.0.0.1";
-            if (context.Request.Headers["Content-Encoding"] is { } encoding)
-                start.Environment["HTTP_CONTENT_ENCODING"] = encoding;
-            if (context.Request.Headers["Git-Protocol"] is { } protocol)
-                start.Environment["GIT_PROTOCOL"] = protocol;
+            if (context.Request.Headers["Content-Encoding"] is { Count: > 0 } encoding)
+                start.Environment["HTTP_CONTENT_ENCODING"] = encoding.ToString();
+            if (context.Request.Headers["Git-Protocol"] is { Count: > 0 } protocol)
+                start.Environment["GIT_PROTOCOL"] = protocol.ToString();
             using var process = Process.Start(start)!;
             var output = new MemoryStream();
             var copyOut = process.StandardOutput.BaseStream.CopyToAsync(output);
             var drainError = process.StandardError.ReadToEndAsync();
-            await context.Request.InputStream.CopyToAsync(process.StandardInput.BaseStream);
+            await context.Request.Body.CopyToAsync(process.StandardInput.BaseStream);
             process.StandardInput.Close();
             await copyOut;
             await drainError;
@@ -448,12 +403,11 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
                 else if (name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
                     context.Response.ContentType = value;
                 else if (!name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
-                    context.Response.AddHeader(name, value);
+                    context.Response.Headers[name] = value;
             }
             var bodyStart = split < 0 ? 0 : split + separatorLength;
-            context.Response.ContentLength64 = bytes.Length - bodyStart;
-            await context.Response.OutputStream.WriteAsync(bytes.AsMemory(bodyStart));
-            context.Response.Close();
+            context.Response.ContentLength = bytes.Length - bodyStart;
+            await context.Response.Body.WriteAsync(bytes.AsMemory(bodyStart));
         }
 
         private static int IndexOf(byte[] haystack, byte[] needle)
@@ -465,13 +419,7 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
 
         public async ValueTask DisposeAsync()
         {
-            _stop.Cancel();
-            // Close only: on Linux the managed HttpListener releases the port in Stop()
-            // and binds it again in a later Close(), which fails with "Address already
-            // in use" once a parallel test has taken the port.
-            _listener.Close();
-            await _loop;
-            _stop.Dispose();
+            await _listener.DisposeAsync();
         }
     }
 }
