@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\setup\AgentOrchestratorSetup.csproj" />
+    <ProjectReference Include="..\testsupport\AgentStudio.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>

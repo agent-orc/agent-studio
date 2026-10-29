@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text;
+using Microsoft.AspNetCore.Http;
 
 namespace AgentStudio.TestSupport;
 
@@ -17,18 +18,13 @@ namespace AgentStudio.TestSupport;
 public sealed class GitSmartHttpServer : IDisposable
 {
     private readonly string _projectRoot;
-    private readonly HttpListener _listener = new();
-    private readonly CancellationTokenSource _stopping = new();
-    private readonly Task _loop;
+    private readonly LoopbackHttpServer _listener;
 
     public GitSmartHttpServer(string projectRoot)
     {
         _projectRoot = Path.GetFullPath(projectRoot);
-        var port = BuiltProcessLauncher.FreePort();
-        BaseUrl = $"http://127.0.0.1:{port}";
-        _listener.Prefixes.Add(BaseUrl + "/");
-        _listener.Start();
-        _loop = Task.Run(AcceptLoopAsync);
+        _listener = new LoopbackHttpServer(ServeAsync);
+        BaseUrl = _listener.BaseUrl;
     }
 
     public string BaseUrl { get; }
@@ -36,44 +32,19 @@ public sealed class GitSmartHttpServer : IDisposable
     /// <summary>The clone URL of a bare repository directly under the project root.</summary>
     public string UrlFor(string repositoryDirectoryName) => $"{BaseUrl}/{repositoryDirectoryName}";
 
-    private async Task AcceptLoopAsync()
-    {
-        while (!_stopping.IsCancellationRequested)
-        {
-            HttpListenerContext context;
-            try
-            {
-                context = await _listener.GetContextAsync();
-            }
-            catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException or InvalidOperationException)
-            {
-                return;
-            }
-            _ = Task.Run(() => ServeAsync(context));
-        }
-    }
-
-    private async Task ServeAsync(HttpListenerContext context)
+    private async Task ServeAsync(HttpContext context)
     {
         try
         {
             await RunBackendAsync(context);
         }
-        catch (Exception exception) when (exception is IOException or HttpListenerException or InvalidOperationException)
+        catch (Exception exception) when (exception is IOException or InvalidOperationException)
         {
-            try
-            {
-                context.Response.StatusCode = 500;
-                context.Response.Close();
-            }
-            catch (Exception closeFailure) when (closeFailure is HttpListenerException or ObjectDisposedException or InvalidOperationException)
-            {
-                // The client is gone.
-            }
+            context.Response.StatusCode = 500;
         }
     }
 
-    private async Task RunBackendAsync(HttpListenerContext context)
+    private async Task RunBackendAsync(HttpContext context)
     {
         var request = context.Request;
         var start = new ProcessStartInfo("git")
@@ -82,31 +53,32 @@ public sealed class GitSmartHttpServer : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         start.ArgumentList.Add("http-backend");
         start.Environment["GIT_PROJECT_ROOT"] = _projectRoot;
         start.Environment["GIT_HTTP_EXPORT_ALL"] = "1";
-        start.Environment["REQUEST_METHOD"] = request.HttpMethod;
-        start.Environment["PATH_INFO"] = Uri.UnescapeDataString(request.Url!.AbsolutePath);
-        start.Environment["QUERY_STRING"] = request.Url.Query.TrimStart('?');
-        start.Environment["REMOTE_ADDR"] = request.RemoteEndPoint.Address.ToString();
+        start.Environment["REQUEST_METHOD"] = request.Method;
+        start.Environment["PATH_INFO"] = Uri.UnescapeDataString(request.Path.Value ?? string.Empty);
+        start.Environment["QUERY_STRING"] = request.QueryString.Value?.TrimStart('?') ?? string.Empty;
+        start.Environment["REMOTE_ADDR"] = context.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
         // Push over smart HTTP otherwise requires an authenticated REMOTE_USER.
         start.Environment["REMOTE_USER"] = "scenario";
         if (request.ContentType is { Length: > 0 } contentType)
             start.Environment["CONTENT_TYPE"] = contentType;
-        if (request.ContentLength64 >= 0)
-            start.Environment["CONTENT_LENGTH"] = request.ContentLength64.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        if (request.Headers["Content-Encoding"] is { Length: > 0 } encoding)
-            start.Environment["HTTP_CONTENT_ENCODING"] = encoding;
-        if (request.Headers["Git-Protocol"] is { Length: > 0 } protocol)
-            start.Environment["GIT_PROTOCOL"] = protocol;
+        if (request.ContentLength is { } contentLength)
+            start.Environment["CONTENT_LENGTH"] = contentLength.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (request.Headers["Content-Encoding"] is { Count: > 0 } encoding)
+            start.Environment["HTTP_CONTENT_ENCODING"] = encoding.ToString();
+        if (request.Headers["Git-Protocol"] is { Count: > 0 } protocol)
+            start.Environment["GIT_PROTOCOL"] = protocol.ToString();
 
         using var process = Process.Start(start)
             ?? throw new InvalidOperationException("Could not start git http-backend.");
         var stderr = process.StandardError.ReadToEndAsync();
         var body = Task.Run(async () =>
         {
-            await request.InputStream.CopyToAsync(process.StandardInput.BaseStream);
+            await request.Body.CopyToAsync(process.StandardInput.BaseStream);
             process.StandardInput.Close();
         });
 
@@ -121,15 +93,14 @@ public sealed class GitSmartHttpServer : IDisposable
             else if (string.Equals(name, "Content-Type", StringComparison.OrdinalIgnoreCase))
                 response.ContentType = value;
             else if (string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase))
-                response.ContentLength64 = long.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+                response.ContentLength = long.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
             else
-                response.AddHeader(name, value);
+                response.Headers[name] = value;
         }
-        await output.CopyToAsync(response.OutputStream);
+        await output.CopyToAsync(response.Body);
         await body;
         await process.WaitForExitAsync();
         await stderr;
-        response.Close();
     }
 
     /// <summary>Reads CGI response headers up to the blank line, leaving the stream at the body.</summary>
@@ -159,11 +130,6 @@ public sealed class GitSmartHttpServer : IDisposable
 
     public void Dispose()
     {
-        _stopping.Cancel();
-        // Close only: Stop() before Close() makes the managed listener on Linux bind
-        // the released port again, which fails once a parallel test has taken it.
-        _listener.Close();
-        try { _loop.Wait(TimeSpan.FromSeconds(5)); } catch (AggregateException) { }
-        _stopping.Dispose();
+        _listener.Dispose();
     }
 }

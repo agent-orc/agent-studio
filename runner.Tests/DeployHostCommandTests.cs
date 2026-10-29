@@ -10,6 +10,7 @@ using AgentStudio.Projects;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -28,23 +29,16 @@ public sealed class DeployHostCommandTests
     {
         var root = Path.Combine(Path.GetTempPath(), "deploy-tenant-executor-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var paths = new List<string>();
-        var health = Task.Run(async () =>
+        var health = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new LoopbackHttpServer(async context =>
         {
-            for (var i = 0; i < 2; i++)
-            {
-                using var socket = await listener.AcceptTcpClientAsync();
-                await using var stream = socket.GetStream();
-                var buffer = new byte[1024];
-                var count = await stream.ReadAsync(buffer);
-                paths.Add(Encoding.ASCII.GetString(buffer, 0, count).Split('\r')[0]);
-                await stream.WriteAsync(Encoding.ASCII.GetBytes(
-                    "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
-            }
+            paths.Add($"{context.Request.Method} {context.Request.Path} HTTP/{context.Request.Protocol.Split('/')[1]}");
+            context.Response.StatusCode = 200;
+            await context.Response.CompleteAsync();
+            if (paths.Count == 2) health.TrySetResult();
         });
+        var port = listener.Port;
         try
         {
             var tokenFile = Path.Combine(root, "token");
@@ -84,7 +78,7 @@ public sealed class DeployHostCommandTests
                     [client.BaseAddress.ToString(), "host", tokenFile, root, root], CancellationToken.None,
                     client, RunCommand));
             }
-            await health;
+            await health.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(["GET /acme HTTP/1.1", "GET /beta HTTP/1.1"], paths);
             Assert.Equal(["deploy-demo-stage-acme", "deploy-demo-stage-beta"], commands.Select(item => item.Name));
             Assert.Equal(["127.0.0.1:8181:8080", "127.0.0.1:8182:8080"], commands.Select(item => item.Publish));
@@ -100,7 +94,6 @@ public sealed class DeployHostCommandTests
         }
         finally
         {
-            listener.Stop();
             Directory.Delete(root, true);
         }
     }
@@ -776,10 +769,9 @@ public sealed class DeployHostCommandTests
             image = Docker("image", "inspect", "caddy:2-alpine", "--format", "{{index .RepoDigests 0}}").Trim();
         }
         Assert.Matches("@sha256:[0-9a-f]{64}$", image);
-        var listener = new TcpListener(IPAddress.Loopback, 0);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
         var project = "Operator Demo " + Guid.NewGuid().ToString("N")[..8];
         var projectHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(project)))[..16].ToLowerInvariant();
         var containerName = "deploy-" + projectHash + "-stage";
@@ -788,7 +780,24 @@ public sealed class DeployHostCommandTests
         var watch = Path.Combine(root, "workspace", "projects", project);
         var environmentDir = Path.Combine(repo, "docs", "deployments", "environments");
         Directory.CreateDirectory(environmentDir);
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
         Directory.CreateDirectory(watch);
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"), """
+            schemaVersion: 1
+            stack: [dotnet]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+              test:
+              lint:
+            testSuites:
+            cachePaths: []
+            capabilities: [linux]
+            environment:
+            delivery:
+              fullSuite: off
+            """);
         Git(repo, "init", "-b", "develop");
         Git(repo, "config", "user.email", "test@example.com");
         Git(repo, "config", "user.name", "Test User");
@@ -859,6 +868,8 @@ public sealed class DeployHostCommandTests
                 new GateArtifactRequest(project, image, commit));
             Assert.True(queued.StatusCode == HttpStatusCode.Accepted,
                 await queued.Content.ReadAsStringAsync());
+            // Docker must bind this host port. Hold the reservation until the handoff.
+            listener.Stop();
             var result = await DeployHostCommand.RunAsync(
                 [client.BaseAddress!.ToString(), deploy.Runner.Id, tokenFile, root, root], CancellationToken.None, client);
             Assert.Equal(0, result);
