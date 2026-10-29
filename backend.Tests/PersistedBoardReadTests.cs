@@ -20,6 +20,19 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
+/// Serial execution for <see cref="PersistedBoardReadTests"/>: its restarted hosts hold
+/// the first scan open and bound the start and the restored read in wall time. In the
+/// parallel suite these bounds failed four times (27.-29.10.2026, AGT-3339) while every
+/// isolated run stayed green, so the class runs after the parallel collections. The
+/// bounds and assertions are unchanged.
+/// </summary>
+[CollectionDefinition(PersistedBoardRestartCollection.Name, DisableParallelization = true)]
+public sealed class PersistedBoardRestartCollection
+{
+    public const string Name = "PersistedBoardRestart";
+}
+
+/// <summary>
 /// Board reads around the task index publication (Git facts S5, AGT-3088):
 /// <list type="bullet">
 ///   <item>after a restart, a board read answers from the persisted board,
@@ -34,6 +47,7 @@ namespace AgentStudio.Tests;
 /// Each host runs without hosted services, so the only index scans are the
 /// ones these reads start, and each scan can be held open.
 /// </summary>
+[Collection(PersistedBoardRestartCollection.Name)]
 public sealed class PersistedBoardReadTests : IDisposable
 {
     private const string ProjectName = "persisted-board";
