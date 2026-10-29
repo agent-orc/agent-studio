@@ -1,3 +1,5 @@
+using AgentStudio.Tasks;
+
 namespace AgentStudio.Git;
 
 public enum BranchRetentionDecision
@@ -815,6 +817,7 @@ public sealed class GitBranchRetentionService
 /// </summary>
 public sealed class GitBranchRetentionHostedService : BackgroundService
 {
+    private readonly TaskScannerService _scanner;
     private readonly GitBranchRetentionService _retention;
     private readonly ArchivedResultRefPruner _archivedResultRefs;
     private readonly BranchSweepService _sweep;
@@ -822,12 +825,14 @@ public sealed class GitBranchRetentionHostedService : BackgroundService
     private readonly ILogger<GitBranchRetentionHostedService> _logger;
 
     public GitBranchRetentionHostedService(
+        TaskScannerService scanner,
         GitBranchRetentionService retention,
         ArchivedResultRefPruner archivedResultRefs,
         BranchSweepService sweep,
         IConfiguration configuration,
         ILogger<GitBranchRetentionHostedService> logger)
     {
+        _scanner = scanner;
         _retention = retention;
         _archivedResultRefs = archivedResultRefs;
         _sweep = sweep;
@@ -842,6 +847,8 @@ public sealed class GitBranchRetentionHostedService : BackgroundService
             _logger.LogInformation("Git branch retention disabled via GitRetention:Enabled=false");
             return;
         }
+
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
 
         var intervalHours = Math.Clamp(
             _configuration.GetValue<int?>("GitRetention:IntervalHours") ?? 24,

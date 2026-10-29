@@ -59,6 +59,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await RunOnceAsync(stoppingToken).ConfigureAwait(false); }

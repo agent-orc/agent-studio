@@ -168,6 +168,10 @@ public sealed class TaskIndexCache
     public long StaleHits;
     public long ExternalInvalidations;
     public long MutationInvalidations;
+    private long _blockingRefreshWaits;
+
+    /// <summary>Sync callers that waited for an in-flight publication.</summary>
+    internal long BlockingRefreshWaits => Interlocked.Read(ref _blockingRefreshWaits);
 
     public TaskIndexCache(
         TaskScannerService scanner,
@@ -341,6 +345,39 @@ public sealed class TaskIndexCache
     public TaskIndexPublication? TryGetPublished()
     {
         lock (_lock) return _hasSnapshot ? _publication : null;
+    }
+
+    /// <summary>
+    /// Lets startup workers wait for the first publication without occupying a
+    /// thread-pool worker. A failed scan is retried by the dedicated refresh
+    /// worker; recovery passes must not mistake an empty index for an empty board.
+    /// </summary>
+    public async Task WaitForFirstPublicationAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            Task refresh;
+            lock (_lock)
+            {
+                if (_hasSnapshot) return;
+                StartBackgroundRefreshLocked();
+                refresh = _refreshCompletion!.Task;
+            }
+
+            try
+            {
+                await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "task-index-first-publication-retrying");
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>
@@ -1049,6 +1086,7 @@ public sealed class TaskIndexCache
 
             if (coldStartRefresh != null)
             {
+                Interlocked.Increment(ref _blockingRefreshWaits);
                 using (TaskSwitchTrace.Span("index.wait"))
                     coldStartRefresh.GetAwaiter().GetResult();
 

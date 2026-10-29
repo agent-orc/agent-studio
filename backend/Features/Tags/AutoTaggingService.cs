@@ -342,7 +342,7 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
 }
 
 /// <summary>Durable queue for project backfills. Interrupted jobs resume after a restart.</summary>
-public sealed class AutoTagBackfillQueue(AutoTaggingService service, IConfiguration configuration,
+public sealed class AutoTagBackfillQueue(AutoTaggingService service, TaskScannerService scanner, IConfiguration configuration,
     ILogger<AutoTagBackfillQueue> logger) : BackgroundService
 {
     private readonly Channel<AutoTagBackfillJob> _queue = Channel.CreateUnbounded<AutoTagBackfillJob>();
@@ -383,6 +383,7 @@ public sealed class AutoTagBackfillQueue(AutoTaggingService service, IConfigurat
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         if (Directory.Exists(DirectoryPath))
         {
             foreach (var path in Directory.GetFiles(DirectoryPath, "*.json"))
@@ -429,6 +430,7 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         while (!stoppingToken.IsCancellationRequested)
         {
             await ScanOnceAsync(stoppingToken);

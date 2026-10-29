@@ -647,7 +647,7 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
 
     private AutoTagCreationWorker NewWorker() => new(_service, _workspace, _scanner, _config,
         NullLogger<AutoTagCreationWorker>.Instance);
-    private AutoTagBackfillQueue NewQueue() => new(_service, _config,
+    private AutoTagBackfillQueue NewQueue() => new(_service, _scanner, _config,
         NullLogger<AutoTagBackfillQueue>.Instance);
     private string Watch() => Path.Combine(_root, "project");
     private string Git(params string[] args)

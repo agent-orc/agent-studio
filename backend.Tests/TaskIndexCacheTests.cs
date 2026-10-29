@@ -23,6 +23,39 @@ public class TaskIndexCacheTests : IDisposable
     private readonly TaskIndexCache _cache;
 
     [Fact]
+    public async Task Startup_waiters_return_their_pool_workers_while_the_first_scan_is_held()
+    {
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance, _config,
+            () =>
+            {
+                entered.Set();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(30)), "the test did not release the first scan");
+                return _scanner.ScanAllJobsRaw();
+            });
+        _scanner.SetIndexCache(cache);
+
+        var calls = Enumerable.Range(0, 16)
+            .Select(_ => Task.Factory.StartNew(
+                () => _scanner.WaitForFirstPublicationAsync(CancellationToken.None),
+                CancellationToken.None, TaskCreationOptions.DenyChildAttach, TaskScheduler.Default))
+            .ToArray();
+        Task[] waits;
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(15)));
+            waits = await Task.WhenAll(calls).WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.All(waits, wait => Assert.False(wait.IsCompleted));
+            Assert.Equal(0, cache.BlockingRefreshWaits);
+        }
+        finally { release.Set(); }
+
+        await Task.WhenAll(waits).WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.NotNull(cache.TryGetPublished());
+    }
+
+    [Fact]
     public void AbsentCardOnDirtySnapshot_DoesNotRemainWarming()
     {
         WriteJob(TaskStates.Ready, "card-a", "Present");

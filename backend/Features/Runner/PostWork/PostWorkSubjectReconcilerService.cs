@@ -30,10 +30,14 @@ public sealed class PostWorkSubjectReconcilerService(
                 var coordinator = scope.ServiceProvider.GetRequiredService<PostWorkSubjectCoordinator>();
                 var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
                 if (coordinator.Enabled && MonolithTransitionSwitch.OwnsAutoReview(configuration))
+                {
+                    var scanner = scope.ServiceProvider.GetRequiredService<TaskScannerService>();
+                    await scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
                     await TickAsync(coordinator,
-                        scope.ServiceProvider.GetRequiredService<TaskScannerService>(),
+                        scanner,
                         scope.ServiceProvider.GetRequiredService<AutoReviewPostProcessingQueue>(),
                         logger, stoppingToken);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

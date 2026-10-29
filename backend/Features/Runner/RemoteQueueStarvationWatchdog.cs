@@ -269,6 +269,7 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         RefreshSafely();
         var intervalSeconds = Math.Clamp(
             _configuration.GetValue<int?>("RemoteQueueStarvation:IntervalSeconds")

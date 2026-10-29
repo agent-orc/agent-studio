@@ -95,6 +95,7 @@ public sealed class OrchestratorPrepHostedService : BackgroundService
         var intervalSeconds = _configuration.GetValue("Orchestrator:PrepTickSeconds", 60);
 
         try { await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken); } catch (OperationCanceledException) { return; }
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
 
         // One-shot rescue of any card still parked in the retired
         // 1a-orchestrator-prep lane back to 1-preparation, so removing the lane

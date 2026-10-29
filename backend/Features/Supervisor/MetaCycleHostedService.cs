@@ -85,6 +85,7 @@ public sealed class MetaCycleHostedService : BackgroundService
         var intervalSeconds = _configuration.GetValue("Supervisor:MetaCycleTickSeconds", 30);
 
         try { await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken); } catch (OperationCanceledException) { return; }
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
 
         while (!stoppingToken.IsCancellationRequested)
         {

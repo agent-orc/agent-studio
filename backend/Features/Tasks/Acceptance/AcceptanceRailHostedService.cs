@@ -388,6 +388,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         while (!stoppingToken.IsCancellationRequested)
         {
             var options = AcceptanceRailOptions.FromConfiguration(_configuration);

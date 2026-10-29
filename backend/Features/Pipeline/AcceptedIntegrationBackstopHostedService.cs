@@ -315,6 +315,7 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
         // off the host startup path, while the ordering prevents legacy cards
         // from being mistaken for live acceptance transactions.
         await Task.Yield();
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         if (_historicalSweep is not null)
         {
             try

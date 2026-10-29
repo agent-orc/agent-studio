@@ -201,6 +201,7 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         try
         {
             await foreach (var request in _queue.Reader.ReadAllAsync(stoppingToken))

@@ -83,6 +83,7 @@ public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
             while (!MonolithTransitionSwitch.OwnsAutoReview(configuration))
                 await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken).ConfigureAwait(false);
             var scanner = scope.ServiceProvider.GetRequiredService<TaskScannerService>();
+            await scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
             var transitions = scope.ServiceProvider.GetRequiredService<TaskTransitionService>();
             var reviewAttempts = scope.ServiceProvider.GetRequiredService<ReviewAttemptTaskLifecycleService>();
 

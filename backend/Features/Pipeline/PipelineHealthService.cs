@@ -503,6 +503,7 @@ public sealed class PipelineHealthService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         await EvaluateAsync(DateTime.UtcNow, stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(PipelineHealthConventions.SensorInterval);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))

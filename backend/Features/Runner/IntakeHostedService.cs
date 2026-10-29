@@ -61,6 +61,7 @@ public sealed class IntakeHostedService : BackgroundService
                 using var scope = _services.CreateScope();
                 var settings = scope.ServiceProvider.GetRequiredService<ProjectSettingsService>();
                 var scanner = scope.ServiceProvider.GetRequiredService<TaskScannerService>();
+                await scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
                 var intake = scope.ServiceProvider.GetRequiredService<IntakeRunner>();
                 var orchestratorDefaults = scope.ServiceProvider
                     .GetRequiredService<AgentStudio.Registry.OrchestratorDefaultsProvider>();

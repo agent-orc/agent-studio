@@ -69,6 +69,7 @@ public sealed class CompletedPushBackstopHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         var interval = ResolveInterval();
         using var timer = new PeriodicTimer(interval);
 

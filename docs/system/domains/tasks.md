@@ -2192,6 +2192,13 @@ disk for runner state.
   `jobsBulkChanged`. Live reads carry `X-Board-State: ready`. Query reads and a
   first start without a persisted board keep the wait. A corrupt or foreign
   store file is discarded by the next write.
+- **Startup workers await the first publication.** Recovery, retention, and
+  watchdog passes that need a complete task snapshot call
+  `TaskScannerService.WaitForFirstPublicationAsync` before their synchronous
+  scanner reads. They await the same single-flight background refresh without
+  occupying thread-pool workers, so a long scan does not starve restored board
+  reads or host startup. A failed first scan retries on the dedicated
+  refresh worker before those passes resume.
 - **Mutation readers share the refresh.** Callers outside the board still
   wait for their mutation generation, but simultaneous callers enter the same
   200 ms window and one full scan instead of starting a scan per caller.

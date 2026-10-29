@@ -8,13 +8,16 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public sealed class GateEnvironmentRetryHostedService : BackgroundService
 {
+    private readonly TaskScannerService _scanner;
     private readonly GateEnvironmentRetryService _retries;
     private readonly ILogger<GateEnvironmentRetryHostedService> _logger;
 
     public GateEnvironmentRetryHostedService(
+        TaskScannerService scanner,
         GateEnvironmentRetryService retries,
         ILogger<GateEnvironmentRetryHostedService> logger)
     {
+        _scanner = scanner;
         _retries = retries;
         _logger = logger;
     }
@@ -24,6 +27,7 @@ public sealed class GateEnvironmentRetryHostedService : BackgroundService
         // Keep the first sweep off the host startup path; a replay spawns Git
         // and a build gate.
         await Task.Yield();
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         var options = _retries.Options;
         if (!options.Enabled)
         {

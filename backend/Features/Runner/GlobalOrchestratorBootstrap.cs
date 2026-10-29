@@ -61,6 +61,7 @@ public sealed class GlobalOrchestratorBootstrap
         }
 
         var modelId = _config["GlobalOrchestrator:Model"] ?? OrchestratorRunner.DefaultModel;
+        await _scanner.WaitForFirstPublicationAsync(ct).ConfigureAwait(false);
         var prompt = BuildBootPrompt();
         var workingDirectory = ResolveWorkingDirectory();
 
