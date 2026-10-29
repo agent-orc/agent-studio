@@ -20,6 +20,17 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
+/// Restarts remain serial after unrestricted parallel runs timed out on the
+/// restored read. The timeout stack showed no product worker waiting on the
+/// held scan; test-host endpoint warmup still waits synchronously.
+/// </summary>
+[CollectionDefinition(PersistedBoardRestartCollection.Name, DisableParallelization = true)]
+public sealed class PersistedBoardRestartCollection
+{
+    public const string Name = "PersistedBoardRestart";
+}
+
+/// <summary>
 /// Board reads around the task index publication (Git facts S5, AGT-3088):
 /// <list type="bullet">
 ///   <item>after a restart, a board read answers from the persisted board,
@@ -34,6 +45,7 @@ namespace AgentStudio.Tests;
 /// Each host runs without hosted services, so the only index scans are the
 /// ones these reads start, and each scan can be held open.
 /// </summary>
+[Collection(PersistedBoardRestartCollection.Name)]
 public sealed class PersistedBoardReadTests : IDisposable
 {
     private const string ProjectName = "persisted-board";
