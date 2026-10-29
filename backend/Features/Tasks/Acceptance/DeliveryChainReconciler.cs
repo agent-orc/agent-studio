@@ -198,6 +198,7 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         while (!stoppingToken.IsCancellationRequested)
         {

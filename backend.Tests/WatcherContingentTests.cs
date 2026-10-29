@@ -146,7 +146,7 @@ public sealed class WatcherContingentExhaustionSweepTests : IDisposable
 
         var sweep = new WatcherHostedService(
             [fixture], engine, caseStore, new WatcherEvidencePackBuilder(), analysis, drafting, activity, contingent,
-            configuration, NullLogger<WatcherHostedService>.Instance);
+            scanner, configuration, NullLogger<WatcherHostedService>.Instance);
 
         await sweep.RunOnceAsync(WatcherOptions.FromConfiguration(configuration), CancellationToken.None);
         var second = await sweep.RunOnceAsync(WatcherOptions.FromConfiguration(configuration), CancellationToken.None);

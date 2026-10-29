@@ -20,11 +20,9 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// Serial execution for <see cref="PersistedBoardReadTests"/>: its restarted hosts hold
-/// the first scan open and bound the start and the restored read in wall time. In the
-/// parallel suite these bounds failed four times (27.-29.10.2026, AGT-3339) while every
-/// isolated run stayed green, so the class runs after the parallel collections. The
-/// bounds and assertions are unchanged.
+/// Restarts remain serial after unrestricted parallel runs timed out on the
+/// restored read. The timeout stack showed no product worker waiting on the
+/// held scan; test-host endpoint warmup still waits synchronously.
 /// </summary>
 [CollectionDefinition(PersistedBoardRestartCollection.Name, DisableParallelization = true)]
 public sealed class PersistedBoardRestartCollection
@@ -210,7 +208,7 @@ public sealed class PersistedBoardReadTests : IDisposable
         try { Directory.Delete(_workspace, recursive: true); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Best-effort temp cleanup; a retained temp folder must not fail a run.
+            Debug.WriteLine($"PersistedBoardReadTests temporary workspace cleanup failed: {ex}");
         }
     }
 
@@ -304,10 +302,21 @@ public sealed class PersistedBoardReadTests : IDisposable
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         if (ifNoneMatch is not null) request.Headers.TryAddWithoutValidation("If-None-Match", ifNoneMatch);
-        using var response = await client.SendAsync(request).WaitAsync(NoWait);
+        HttpResponseMessage response;
+        try { response = await client.SendAsync(request).WaitAsync(NoWait); }
+        catch (TimeoutException ex)
+        {
+            var pool = PoolState();
+            throw new TimeoutException($"GET {url} timed out; {pool}", ex);
+        }
+        using (response)
         return (response.StatusCode, await response.Content.ReadAsByteArrayAsync(), response.Headers.ETag?.ToString(),
             Header(response, RestoredBoard.StateHeader), Header(response, RestoredBoard.GenerationHeader));
     }
+
+    private static string PoolState() =>
+        $"threadPoolThreads={ThreadPool.ThreadCount}; pendingWorkItems={ThreadPool.PendingWorkItemCount}; "
+        + $"completedWorkItems={ThreadPool.CompletedWorkItemCount}; processId={Environment.ProcessId}";
 
     private static string? Header(HttpResponseMessage response, string name)
         => response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
@@ -398,14 +407,19 @@ public sealed class PersistedBoardReadTests : IDisposable
             // entered. ApplicationStarted proves none waited for publication;
             // the factory's unrelated endpoint warmup may finish later.
             var ready = calls.ClientReady;
-            Assert.True(await Task.WhenAny(ready, Task.Delay(TimeSpan.FromMinutes(2))) == ready,
-                $"host start pending; entered={Volatile.Read(ref entered) == 1}; scans={gate.Scans}; hosted calls={calls.Describe()}");
+            var started = await Task.WhenAny(ready, Task.Delay(TimeSpan.FromMinutes(2))) == ready;
+            var startPool = started ? null : PoolState();
+            Assert.True(ready.IsCompleted,
+                $"host start pending; entered={Volatile.Read(ref entered) == 1}; scans={gate.Scans}; hosted calls={calls.Describe()}; {startPool}");
             using var client = await ready;
             var list = await Get(client, "/api/tasks/");
             Assert.Equal(RestoredBoard.Restored, list.State);
             Assert.Equal(liveList, list.Body);
             Assert.True(gate.Scans >= 1, "the boot must start the first publication");
             Assert.False(gate.TimedOut, "the held first scan timed out before the restored read");
+            var index = restarted.Services.GetRequiredService<TaskIndexCache>();
+            Assert.True(index.BlockingRefreshWaits == 0,
+                $"blocking refresh waits={index.BlockingRefreshWaits}; {PoolState()}; first stack={index.FirstBlockingRefreshWaitStack}");
         }
         finally
         {

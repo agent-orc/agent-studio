@@ -14,9 +14,17 @@ public sealed class OperatorCandidateAuditRepair(
     {
         _stop = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
         var token = _stop.Token;
-        lifetime.ApplicationStarted.Register(() => _repair = Task.Run(() =>
+        lifetime.ApplicationStarted.Register(() => _repair = Task.Run(async () =>
         {
-            try { RepairAll(token); }
+            try
+            {
+                await scanner.WaitForFirstPublicationAsync(token).ConfigureAwait(false);
+                RepairAll(token);
+            }
+            catch (OperationCanceledException ex) when (token.IsCancellationRequested)
+            {
+                SilentCatch.Note(ex, "OperatorCandidateAuditRepair: stopped before the first index publication");
+            }
             catch (Exception ex) { logger.LogWarning(ex, "Operator candidate audit repair failed"); }
         }, token));
         return Task.CompletedTask;

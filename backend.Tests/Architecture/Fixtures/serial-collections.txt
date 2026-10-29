@@ -51,5 +51,5 @@ environment-baseline backend.Tests/CliContextConventionsTests.cs 4
 environment-baseline backend.Tests/CliWorkingMemoryServiceTests.cs 2
 environment-baseline backend.Tests/PtySessionEnvironmentTests.cs 4
 
-collection PersistedBoardRestartCollection its members boot restarted hosts that hold the first scan open and bound the start and the restored read in wall time; these bounds failed four times in the parallel suite and never in isolation (AGT-3339, 27.-29.10.2026).
+collection PersistedBoardRestartCollection unrestricted parallel runs still timed out on the restored read after hosted index waits were removed; the timeout stack showed no product worker waiting on the held scan and the test-host endpoint warmup still waits synchronously (AGT-3340).
 member PersistedBoardRestartCollection PersistedBoardReadTests

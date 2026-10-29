@@ -14,13 +14,16 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public sealed class InterruptedIntegrationGateRecoveryHostedService : BackgroundService
 {
+    private readonly TaskScannerService _scanner;
     private readonly InterruptedIntegrationGateRecoveryService _recovery;
     private readonly ILogger<InterruptedIntegrationGateRecoveryHostedService> _logger;
 
     public InterruptedIntegrationGateRecoveryHostedService(
+        TaskScannerService scanner,
         InterruptedIntegrationGateRecoveryService recovery,
         ILogger<InterruptedIntegrationGateRecoveryHostedService> logger)
     {
+        _scanner = scanner;
         _recovery = recovery;
         _logger = logger;
     }
@@ -31,6 +34,7 @@ public sealed class InterruptedIntegrationGateRecoveryHostedService : Background
         // giving up the ordering: the merge gate is only reachable through the
         // queues and sweeps that start after this yield.
         await Task.Yield();
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         try
         {
             var report = _recovery.RunOnce(stoppingToken);

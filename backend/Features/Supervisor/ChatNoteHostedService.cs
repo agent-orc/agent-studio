@@ -74,6 +74,7 @@ public sealed class ChatNoteHostedService : BackgroundService
 
         try { await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken); }
         catch (OperationCanceledException) { return; }
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
 
         while (!stoppingToken.IsCancellationRequested)
         {

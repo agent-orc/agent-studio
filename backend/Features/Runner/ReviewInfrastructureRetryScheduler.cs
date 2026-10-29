@@ -257,6 +257,7 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         if (!_configuration.GetValue("Runner:ReviewInfrastructureRetry:Enabled", true))
         {
             _logger.LogInformation(

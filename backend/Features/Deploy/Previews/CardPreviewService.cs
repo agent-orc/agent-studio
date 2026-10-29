@@ -210,10 +210,12 @@ public sealed class CardPreviewService
     }
 }
 
-public sealed class CardPreviewSweep(CardPreviewService previews, ILogger<CardPreviewSweep> logger) : BackgroundService
+public sealed class CardPreviewSweep(CardPreviewService previews, TaskScannerService scanner,
+    ILogger<CardPreviewSweep> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
         while (!stoppingToken.IsCancellationRequested)
         {

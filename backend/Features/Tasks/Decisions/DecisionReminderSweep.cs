@@ -159,13 +159,15 @@ public sealed class DecisionReminderSweepHostedService : BackgroundService
 {
     public const int DefaultIntervalMinutes = 30;
 
+    private readonly TaskScannerService _scanner;
     private readonly DecisionReminderSweep _sweep;
     private readonly IConfiguration _config;
     private readonly ILogger<DecisionReminderSweepHostedService> _logger;
 
-    public DecisionReminderSweepHostedService(DecisionReminderSweep sweep, IConfiguration config,
+    public DecisionReminderSweepHostedService(TaskScannerService scanner, DecisionReminderSweep sweep, IConfiguration config,
         ILogger<DecisionReminderSweepHostedService> logger)
     {
+        _scanner = scanner;
         _sweep = sweep;
         _config = config;
         _logger = logger;
@@ -173,6 +175,7 @@ public sealed class DecisionReminderSweepHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         var minutes = _config.GetValue<int?>("Supervisor:DecisionReminderSweepIntervalMinutes") ?? DefaultIntervalMinutes;
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(Math.Clamp(minutes, 1, 24 * 60)));
         while (!stoppingToken.IsCancellationRequested)

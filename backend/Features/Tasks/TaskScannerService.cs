@@ -127,6 +127,10 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public void SetIndexCache(TaskIndexCache cache) => _indexCache = cache;
 
+    /// <summary>Waits asynchronously for the first index publication before a startup scan.</summary>
+    public Task WaitForFirstPublicationAsync(CancellationToken cancellationToken)
+        => _indexCache?.WaitForFirstPublicationAsync(cancellationToken) ?? Task.CompletedTask;
+
     /// <summary>Resident identity facts for create admission; only a cold index waits for its first publication.</summary>
     public IReadOnlyList<TaskInfo> GetResidentIdentityFacts()
         => _indexCache is null || _indexCache.Generation == 0

@@ -49,6 +49,7 @@ public sealed class WatcherFixtureReplayTests : IDisposable
             stack.Drafting,
             stack.Activity,
             stack.Contingent,
+            stack.Scanner,
             stack.Configuration,
             NullLogger<WatcherHostedService>.Instance);
 
@@ -97,7 +98,7 @@ public sealed class WatcherFixtureReplayTests : IDisposable
         var fixture = new FixtureProbe(EveningFixtures().Take(1).ToList());
         var sweep = new WatcherHostedService(
             [fixture], stack.Engine, stack.CaseStore, new WatcherEvidencePackBuilder(), stack.Analysis,
-            stack.Drafting, stack.Activity, stack.Contingent, stack.Configuration, NullLogger<WatcherHostedService>.Instance);
+            stack.Drafting, stack.Activity, stack.Contingent, stack.Scanner, stack.Configuration, NullLogger<WatcherHostedService>.Instance);
 
         var first = await sweep.RunOnceAsync(stack.Options, CancellationToken.None);
         Assert.Equal(1, first.CasesUpdated);
@@ -116,7 +117,7 @@ public sealed class WatcherFixtureReplayTests : IDisposable
         var fixture = new FixtureProbe(EveningFixtures().Take(1).ToList());
         var sweep1 = new WatcherHostedService(
             [fixture], stack.Engine, stack.CaseStore, new WatcherEvidencePackBuilder(), stack.Analysis,
-            stack.Drafting, stack.Activity, stack.Contingent, stack.Configuration, NullLogger<WatcherHostedService>.Instance);
+            stack.Drafting, stack.Activity, stack.Contingent, stack.Scanner, stack.Configuration, NullLogger<WatcherHostedService>.Instance);
         await sweep1.RunOnceAsync(stack.Options, CancellationToken.None);
 
         // Simulate a process restart: a fresh store instance re-reads from disk.
@@ -124,7 +125,7 @@ public sealed class WatcherFixtureReplayTests : IDisposable
         var restartedEngine = new WatcherCaseEngine(restartedStore, stack.Suppressions);
         var sweep2 = new WatcherHostedService(
             [fixture], restartedEngine, restartedStore, new WatcherEvidencePackBuilder(), stack.Analysis,
-            stack.Drafting, stack.Activity, stack.Contingent, stack.Configuration, NullLogger<WatcherHostedService>.Instance);
+            stack.Drafting, stack.Activity, stack.Contingent, stack.Scanner, stack.Configuration, NullLogger<WatcherHostedService>.Instance);
         var second = await sweep2.RunOnceAsync(stack.Options, CancellationToken.None);
 
         // Same fingerprint, second sweep after "restart": exactly one durable

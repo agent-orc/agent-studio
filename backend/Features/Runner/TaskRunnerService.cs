@@ -394,6 +394,7 @@ public class TaskRunnerService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _executionAdmission?.Demand(ExecutionAdmissionPath.Start);
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
 
         // Initialize runners for each watch path
         var entries = _scanner.GetWatchPaths();

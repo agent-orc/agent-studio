@@ -82,6 +82,7 @@ public sealed class EngineApplierCanaryService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         try
         {
             while (!stoppingToken.IsCancellationRequested)

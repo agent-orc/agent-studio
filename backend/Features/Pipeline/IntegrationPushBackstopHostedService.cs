@@ -140,6 +140,7 @@ public sealed class IntegrationPushBackstopHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         var interval = TimeSpan.FromMinutes(Math.Clamp(
             _configuration.GetValue<int?>("Integration:PushBackstopIntervalMinutes") ?? 15,
             1,
