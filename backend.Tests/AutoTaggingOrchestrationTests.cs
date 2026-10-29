@@ -311,6 +311,67 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
     }
 
     [Fact]
+    public async Task ClassificationFailureBacksOffForOneDay()
+    {
+        var worker = NewWorker();
+        await worker.ScanOnceAsync(CancellationToken.None);
+        AddCard("failed-classification");
+        _classifier.Fail = true;
+
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.Single(_classifier.Calls);
+        Assert.Empty(_service.Read(Project));
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.Single(_classifier.Calls);
+        var restarted = await NewService().BackfillAsync(Project, apply: false, CancellationToken.None);
+        Assert.Equal(1, restarted.Deferred);
+        Assert.Single(_classifier.Calls);
+
+        _classifier.Fail = false;
+        _clock.Advance(TimeSpan.FromHours(24));
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.Equal(2, _classifier.Calls.Count);
+        Assert.Equal("tagged", Assert.Single(_service.Read(Project)).Status);
+    }
+
+    [Fact]
+    public async Task ChangedCardContentClearsFailureBackoff()
+    {
+        var worker = NewWorker();
+        await worker.ScanOnceAsync(CancellationToken.None);
+        AddCard("changed-content");
+        _classifier.Fail = true;
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.Single(_classifier.Calls);
+
+        _classifier.Fail = false;
+        _workspace.Items[0] = _workspace.Items[0] with { Text = "Revised card body" };
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.Equal(2, _classifier.Calls.Count);
+        Assert.Equal("tagged", Assert.Single(_service.Read(Project)).Status);
+    }
+
+    [Fact]
+    public async Task HourlyCapDefersRemainingCardsUntilWindowExpires()
+    {
+        _config["AutoTag:HourlyCallLimit"] = "1";
+        var worker = NewWorker();
+        await worker.ScanOnceAsync(CancellationToken.None);
+        AddCard("first");
+        AddCard("second");
+
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.Single(_classifier.Calls);
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.Single(_classifier.Calls);
+
+        _clock.Advance(TimeSpan.FromHours(1));
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.Equal(2, _classifier.Calls.Count);
+        Assert.Equal(2, _service.Read(Project).Count);
+    }
+
+    [Fact]
     public async Task BackfillQueueResumesAQueuedJobAfterRestart()
     {
         var first = NewQueue();
@@ -704,12 +765,14 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
 
     private sealed class FakeClassifier : IAutoTagClassifier
     {
+        public bool Fail { get; set; }
         public Dictionary<string, double> Confidence { get; } = new(StringComparer.Ordinal);
         public List<(string Id, string Thinking)> Calls { get; } = [];
         public Task<TagClassificationPrediction> ClassifyAsync(string project, TagMaintenanceItem item,
             TagMaintenanceSnapshot snapshot, string thinkingLevel, CancellationToken ct)
         {
             Calls.Add((item.Id, thinkingLevel));
+            if (Fail) throw new InvalidOperationException("Injected classification failure.");
             return Task.FromResult(new TagClassificationPrediction
             {
                 Kind = item.Kind, Id = item.Id, Tags = ["execution-and-runner"],

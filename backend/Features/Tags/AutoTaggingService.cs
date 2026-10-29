@@ -5,6 +5,7 @@ using AgentStudio.Areas;
 using AgentStudio.Prompts;
 using AgentStudio.Projects;
 using AgentStudio.Runner;
+using AgentStudio.Pipeline;
 
 namespace AgentStudio.Tags;
 
@@ -18,7 +19,13 @@ public sealed record AutoTagResult(string Kind, string Id, string Status, string
 }
 public sealed record AutoTagReport(string Project, bool Applied, int Eligible, int AlreadyTagged, int Classified,
     Dictionary<string, int> CountsPerArea, List<AutoTagResult> LowConfidence,
-    TagGoldenSetReport GoldenSet, List<AutoTagResult> Items);
+    TagGoldenSetReport GoldenSet, List<AutoTagResult> Items)
+{
+    public int Failed { get; init; }
+    public int Deferred { get; init; }
+    public int Capped { get; init; }
+    public string[] CappedKeys { get; init; } = [];
+}
 internal sealed record AutoTagPendingApply(AutoTagReport Report, List<TagMaintenanceChange> Changes);
 
 public sealed record AutoTagBackfillJob(string Id, string Project, bool Apply, string Status,
@@ -47,17 +54,30 @@ public interface IAutoTagClassifier
 }
 
 /// <summary>A separate classification route, never routed through coding task qualification.</summary>
+public sealed record AutoTagRoute(string Cli, string Model);
+
 public sealed class AutoTagClassifier(CliOneShotRegistry oneShots, RuntimePromptService prompts,
-    AreaRegistryService areas) : IAutoTagClassifier
+    AreaRegistryService areas, ProjectSettingsService settings) : IAutoTagClassifier
 {
     public const string StepId = AgentStudio.Pipeline.PipelineCatalogue.AutoTagStepId;
     public const int MaxPromptCharacters = 16000;
     public const int MaxResponseCharacters = 2048;
     public const int MaxOutputTokens = 512;
+    public static AutoTagRoute ResolveRoute(ProjectSettings? settings)
+    {
+        var cli = PipelineStepConfigResolver.ResolveCliType(settings, StepId) ?? CliTypes.Claude;
+        var fallback = ModelMetadataRegistry.DefaultForCli(cli)
+            ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet);
+        var model = PipelineStepConfigResolver.Lookup(settings, StepId)?.Model
+            ?? (cli == CliTypes.Claude ? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet) : fallback);
+        if (!ModelMetadataRegistry.IsCompatibleWithCli(cli, model))
+            throw new InvalidOperationException("Auto-tag step model is incompatible with its CLI.");
+        return new(cli, model);
+    }
     public async Task<TagClassificationPrediction> ClassifyAsync(string project, TagMaintenanceItem item,
         TagMaintenanceSnapshot snapshot, string thinkingLevel, CancellationToken ct)
     {
-        var model = ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet);
+        var route = ResolveRoute(settings.Get(project));
         var registry = areas.EffectiveTags(project);
         var areaIds = areas.List(project).Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
         var allowed = registry.Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
@@ -69,28 +89,24 @@ public sealed class AutoTagClassifier(CliOneShotRegistry oneShots, RuntimePrompt
                 x => x.Value.Take(20).Select(t => new { t.Term, t.Definition, t.Synonyms })),
         });
         var prompt = prompts.Render("auto-tag.md", new Dictionary<string, string?> { ["input"] = input },
-            new PromptCallContext(project, StepId, model));
+            new PromptCallContext(project, StepId, route.Model));
         if (prompt.Length > MaxPromptCharacters)
             throw new InvalidOperationException("Auto-tag context exceeds the prompt cap.");
-        var cli = oneShots.Get(CliTypes.Claude)
-            ?? throw new InvalidOperationException("Sonnet classification CLI unavailable.");
-        var result = await cli.RunAsync(new(CliTypes.Claude, model, prompt)
+        var cli = oneShots.Get(route.Cli)
+            ?? throw new InvalidOperationException("Auto-tag classification CLI unavailable.");
+        var result = await cli.RunAsync(new(route.Cli, route.Model, prompt)
         {
             ThinkingLevel = thinkingLevel, Timeout = TimeSpan.FromMinutes(2),
             Project = project, JobId = item.Kind == "card" ? item.Id : null,
             Source = StepId, StepId = StepId,
-            ExtraArgs = ["--tools", "", "--max-budget-usd", "0.10"],
+            ExtraArgs = route.Cli == CliTypes.Claude ? ["--tools", "", "--max-budget-usd", "0.10"] : [],
         }, ct);
         if (!result.Ok) throw new InvalidOperationException(result.Error ?? "Auto-tag classification failed.");
         if (result.Usage?.OutputTokens > MaxOutputTokens)
             throw new InvalidOperationException("Auto-tag response exceeds the token cap.");
         if (result.ParsedText.Length > MaxResponseCharacters)
             throw new InvalidOperationException("Auto-tag response exceeds the output cap.");
-        var prediction = JsonSerializer.Deserialize<TagClassificationPrediction>(result.ParsedText,
-            TagMaintenancePolicy.Json) ?? throw new InvalidOperationException("Auto-tag response is empty.");
-        if (!AutoTaggingPolicy.IsValid(prediction, item, allowed, areaIds))
-            throw new InvalidOperationException("Auto-tag response violates the closed registry or confidence contract.");
-        return prediction;
+        return AutoTagCallPolicy.Parse(result.ParsedText, item, allowed, areaIds);
     }
 }
 
@@ -123,13 +139,18 @@ internal static class ProposedGlossaryContext
 public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAutoTagClassifier classifier,
     TagGoldenSetEvaluator goldenSets, ProjectSettingsService settings, TaskScannerService scanner,
     AreaRegistryService areaRegistry,
-    TimelineLog timeline, OrchestratorLog activity, IConfiguration configuration, TimeProvider? clock = null)
+    TimelineLog timeline, OrchestratorLog activity, IConfiguration configuration, TimeProvider? clock = null,
+    AutoTagCallBudget? callBudget = null)
 {
     private readonly TimeProvider time = clock ?? TimeProvider.System;
+    private readonly AutoTagCallBudget budget = callBudget ?? new AutoTagCallBudget(configuration, clock);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, TagGoldenSetReport> _goldenReports = new(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<string> Projects() => workspace.Projects();
     public bool Enabled(string project) => settings.Get(project).AutoTag;
+    public IReadOnlySet<string> DueFailedKeys(string project, IEnumerable<TagMaintenanceItem> items) =>
+        items.Where(item => budget.FailureDue(project, item))
+            .Select(item => item.Kind + ":" + item.Id).ToHashSet(StringComparer.Ordinal);
     private string StatePath(string project)
     {
         if (!Projects().Contains(project)) throw new ArgumentException("Unknown project.");
@@ -295,6 +316,10 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
             var low = new List<AutoTagResult>();
             var areas = areaRegistry.List(project).Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
             var changes = new List<TagMaintenanceChange>();
+            var failed = 0;
+            var deferred = 0;
+            var capped = 0;
+            var cappedKeys = new List<string>();
             foreach (var existing in eligible)
                 foreach (var area in existing.Tags.Where(areas.Contains))
                     counts[area] = counts.GetValueOrDefault(area) + 1;
@@ -302,11 +327,45 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
             {
                 ct.ThrowIfCancellationRequested();
                 var thinkingLevel = tier;
-                var prediction = await classifier.ClassifyAsync(project, item, snapshot, thinkingLevel, ct);
-                if (prediction.Confidence < AutoTaggingPolicy.ConfidenceThreshold && thinkingLevel == "low")
+                TagClassificationPrediction prediction;
+                try
                 {
-                    thinkingLevel = "high";
+                    var denial = budget.Admit(project, item);
+                    if (denial != null)
+                    {
+                        if (denial == "hourly-cap")
+                        {
+                            capped++;
+                            cappedKeys.Add(item.Kind + ":" + item.Id);
+                        }
+                        else deferred++;
+                        continue;
+                    }
                     prediction = await classifier.ClassifyAsync(project, item, snapshot, thinkingLevel, ct);
+                    if (prediction.Confidence < AutoTaggingPolicy.ConfidenceThreshold && thinkingLevel == "low")
+                    {
+                        thinkingLevel = "high";
+                        denial = budget.Admit(project, item);
+                        if (denial != null)
+                        {
+                            if (denial == "hourly-cap")
+                            {
+                                capped++;
+                                cappedKeys.Add(item.Kind + ":" + item.Id);
+                            }
+                            else deferred++;
+                            continue;
+                        }
+                        prediction = await classifier.ClassifyAsync(project, item, snapshot, thinkingLevel, ct);
+                    }
+                    budget.Succeeded(project, item);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception)
+                {
+                    budget.Failed(project, item);
+                    failed++;
+                    continue;
                 }
                 var accepted = AutoTaggingPolicy.Status(prediction.Confidence) == "tagged";
                 var result = new AutoTagResult(item.Kind, item.Id,
@@ -328,7 +387,8 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
                         TagMaintenancePolicy.Encode(accepted ? prediction.Tags : item.Tags)));
             }
             var report = new AutoTagReport(project, apply, eligible.Count,
-                eligible.Count(i => i.Tags.Length > 0), candidates.Count, counts, low, golden, results);
+                eligible.Count(i => i.Tags.Length > 0), results.Count, counts, low, golden, results)
+            { Failed = failed, Deferred = deferred, Capped = capped, CappedKeys = cappedKeys.ToArray() };
             if (apply)
             {
                 SavePending(project, new(report, changes));
@@ -440,6 +500,12 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
 
     internal async Task ScanOnceAsync(CancellationToken ct)
     {
+        var classified = 0;
+        var failed = 0;
+        var deferred = 0;
+        var capped = 0;
+        var projectErrors = 0;
+        string? firstError = null;
         foreach (var project in service.Projects())
         {
             if (!service.Enabled(project)) continue;
@@ -465,19 +531,38 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
                     continue;
                 }
                 var previous = JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(path), TagMaintenancePolicy.Json) ?? [];
-                if (now.Except(previous).Any())
+                var dueFailures = service.DueFailedKeys(project, items);
+                if (now.Except(previous).Any() || dueFailures.Count > 0)
                 {
                     var recorded = service.Read(project).Select(result => result.Kind + ":" + result.Id)
                         .ToHashSet(StringComparer.Ordinal);
-                    var newKeys = now.Except(previous).Except(recorded).ToHashSet(StringComparer.Ordinal);
+                    var newKeys = now.Except(previous).Concat(dueFailures).Except(recorded)
+                        .ToHashSet(StringComparer.Ordinal);
                     if (newKeys.Count > 0)
-                        await service.BackfillAsync(project, apply: true, ct, newKeys);
+                    {
+                        var report = await service.BackfillAsync(project, apply: true, ct, newKeys);
+                        classified += report.Classified;
+                        failed += report.Failed;
+                        deferred += report.Deferred;
+                        capped += report.Capped;
+                        now.ExceptWith(report.CappedKeys);
+                    }
                     File.WriteAllText(path, TagMaintenancePolicy.Encode(now));
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
-            catch (Exception ex) { logger.LogError(ex, "auto-tag-failed project={Project}", project); }
+            catch (Exception ex)
+            {
+                projectErrors++;
+                firstError ??= project + ": " + ex.GetType().Name + ": " + ex.Message;
+            }
         }
+        if (failed > 0 || projectErrors > 0)
+            logger.LogWarning("auto-tag-cycle classified={Classified} failed={Failed} deferred={Deferred} capped={Capped} projectErrors={ProjectErrors} firstError={FirstError}",
+                classified, failed, deferred, capped, projectErrors, firstError);
+        else
+            logger.LogInformation("auto-tag-cycle classified={Classified} failed={Failed} deferred={Deferred} capped={Capped} projectErrors={ProjectErrors}",
+                classified, failed, deferred, capped, projectErrors);
     }
 }
 

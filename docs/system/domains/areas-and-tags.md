@@ -33,6 +33,7 @@ changes it only after an operator approves the exact proposal.
 | Proposal validation and exact before/after plans | `backend/Features/Tags/Maintenance/TagMaintenancePolicy.cs` (pure) |
 | Card, Dossier, wiki, registry, and glossary reads and writes | `backend/Features/Tags/Maintenance/TagMaintenanceWorkspace.cs` |
 | Creation classification, confidence policy, proposals, and backfill | `backend/Features/Tags/AutoTaggingService.cs` |
+| Reply extraction and durable classification call admission | `backend/Features/Tags/AutoTagCallPolicy.cs` |
 
 ## The ten product areas
 
@@ -116,6 +117,16 @@ Normal backfills skip any item already recorded in the project's auto-tag
 state, including a tag-empty `tags-proposed` item. Repeating a dry run or
 apply therefore preserves its pending proposal and does not spend another
 classification call. New eligible items are still classified.
+
+Classification accepts a JSON object in a Markdown fence or surrounded by
+prose, then validates the exact four-field shape and closed tag registry.
+Failed classification calls are recorded in
+`<TaskRepository>/auto-tag/call-state.json` by project, item, and content
+fingerprint. The same content waits 24 hours before another call; changing its
+title or body makes it eligible immediately. A rolling hourly limit of 60
+classification calls covers all projects and both confidence tiers. The limit
+can be set with `AutoTag:HourlyCallLimit`. The creation worker keeps capped
+items pending and writes one aggregate log line per scan.
 
 For cards and wiki articles, applying an accepted classification persists the
 tags and `taggingStatus` together in one atomic file replacement. Wiki writes
