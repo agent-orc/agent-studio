@@ -146,15 +146,26 @@ metrics and area counts) and `changes[]` with each item's serialized tag
 `before` and `after` values. No item is changed if that record cannot be saved.
 
 An apply retry completes this saved batch before accepting a new batch. It
-checks each item's current tags against its saved preimage and result and
-refuses conflicting changes. Accepted tag writes already at the saved target
-are reused; proposals keep their status in auto-tag state without a file write.
+checks each item's current tags against its saved preimage and result. If tags
+changed, the newer state wins: that item is recorded as `skipped-conflict` in
+the report's `skippedConflicts`, and the rest of the batch continues. Accepted
+tag writes already at the saved target are reused; proposals keep their status
+in auto-tag state without a file write.
 It then repairs the card timeline, project auto-tag state, activity feed, and
 report. Timeline and activity appends check their boolean outcomes and use the
 saved result timestamp and identity to recognize an already written event.
 The pending record is removed only after the report is durable. Recovery does
 not call the classifier again, and the presence of tags never excludes pending
 bookkeeping. Dry runs do not replay pending writes.
+
+Classification captures cards even when a project has no configured repository
+checkout. A missing checkout or unavailable Dossier or wiki inventory is
+listed in the capture's unreadable items; those document items are skipped.
+Maintenance captures still treat unreadable inventories as incomplete for tag
+retirement. The creation worker logs one inventory reason per project and scan.
+`GET /api/projects/{project}/auto-tag/status` returns the last successful scan,
+the last error, and the item blocking a failed apply. Status is stored under
+`<TaskRepository>/auto-tag/` and survives a worker restart.
 
 The enabled creation worker checks for pending batches on each sweep, including
 when no new item is found. Project opt-out pauses this automatic recovery too;

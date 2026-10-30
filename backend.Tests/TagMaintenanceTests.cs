@@ -420,6 +420,32 @@ public sealed class TagMaintenanceTests : IDisposable
     }
 
     [Fact]
+    public void ClassificationCaptureWithoutCheckoutKeepsCardInventoryReadable()
+    {
+        var (workspace, _) = RealWorkspace(otherHasInventory: false);
+
+        var snapshot = workspace.CaptureForClassification("Other");
+
+        Assert.Empty(snapshot.Unreadable);
+        Assert.Equal(["Other"], snapshot.WithoutCheckout);
+        Assert.DoesNotContain(snapshot.Items, item => item.Kind is "dossier" or "wiki");
+    }
+
+    [Fact]
+    public void ClassificationCaptureWithMissingCheckoutRecordsOneReason()
+    {
+        var (workspace, _) = RealWorkspace(otherHasInventory: false,
+            otherRoot: Path.Combine(_root, "missing"));
+
+        var snapshot = workspace.CaptureForClassification("Other");
+
+        var unreadable = Assert.Single(snapshot.Unreadable);
+        Assert.Equal("checkout", unreadable.Kind);
+        Assert.Equal("Repository checkout missing for Other.", unreadable.Error);
+        Assert.DoesNotContain(snapshot.Items, item => item.Kind is "dossier" or "wiki");
+    }
+
+    [Fact]
     public async Task MergeAndRetireFailClosedBeforeAnyWriteWhileUsageCountsAreIncomplete()
     {
         var workspace = new FakeWorkspace(); var service = Service(workspace);

@@ -32,7 +32,7 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
     /// </summary>
     public TagMaintenanceSnapshot Capture(string project) => CaptureCore(project, includeOtherProjects: true);
 
-    /// <summary>Project-only capture for classification; unavailable content still fails closed.</summary>
+    /// <summary>Project-only capture for classification; unavailable content is recorded and skipped.</summary>
     public TagMaintenanceSnapshot CaptureForClassification(string project) =>
         CaptureCore(project, includeOtherProjects: false);
 
@@ -41,14 +41,12 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
         if (!Projects().Contains(project)) throw new ArgumentException("Unknown project.");
         var items = new List<TagMaintenanceItem>();
         var unreadable = new List<TagMaintenanceUnreadableItem>();
-        var checkouts = includeOtherProjects
-            ? Projects().ToDictionary(name => name, name => ProjectRepoResolver.ResolveForProject(name, scanner, registry))
-            : [];
+        var checkouts = (includeOtherProjects ? Projects() : [project])
+            .ToDictionary(name => name, name => ProjectRepoResolver.ResolveForProject(name, scanner, registry));
         var withoutCheckout = checkouts.Where(pair => pair.Value == null).Select(pair => pair.Key)
             .ToHashSet(StringComparer.Ordinal);
         void Unreadable(string name, string kind, string id, string error)
         {
-            if (!includeOtherProjects) throw new InvalidOperationException(error);
             unreadable.Add(new(name, kind, id, error));
         }
         foreach (var task in scanner.ScanAllJobsWithArchive().Where(task =>
@@ -118,7 +116,9 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
             foreach (var node in tree.Root) Visit(node);
         }
         // Without a checkout there is no glossary page to read or write, so no proposal can be planned.
-        var glossary = withoutCheckout.Contains(project) ? [] : areas.List(project).ToDictionary(area => area.Id, area =>
+        var glossary = withoutCheckout.Contains(project) ||
+            (!includeOtherProjects && unreadable.Any(item => item.Project == project && item.Kind == "checkout"))
+            ? [] : areas.List(project).ToDictionary(area => area.Id, area =>
         {
             var result = glossaries.Read(project, area.Id);
             if (!result.Success) throw new InvalidOperationException(result.Error);

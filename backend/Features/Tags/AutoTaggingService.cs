@@ -25,8 +25,12 @@ public sealed record AutoTagReport(string Project, bool Applied, int Eligible, i
     public int Deferred { get; init; }
     public int Capped { get; init; }
     public string[] CappedKeys { get; init; } = [];
+    public List<string> SkippedConflicts { get; init; } = [];
 }
 internal sealed record AutoTagPendingApply(AutoTagReport Report, List<TagMaintenanceChange> Changes);
+
+public sealed record AutoTagProjectStatus(DateTimeOffset? LastSuccessfulCycle = null,
+    string? LastError = null, string? BlockingItem = null);
 
 public sealed record AutoTagBackfillJob(string Id, string Project, bool Apply, string Status,
     DateTimeOffset CreatedAt, DateTimeOffset? CompletedAt = null, string? Error = null);
@@ -146,6 +150,7 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
     private readonly AutoTagCallBudget budget = callBudget ?? new AutoTagCallBudget(configuration, clock);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, TagGoldenSetReport> _goldenReports = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _applyingItems = new(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<string> Projects() => workspace.Projects();
     public bool Enabled(string project) => settings.Get(project).AutoTag;
     public IReadOnlySet<string> DueFailedKeys(string project, IEnumerable<TagMaintenanceItem> items) =>
@@ -190,6 +195,23 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
     }
     private string PendingPath(string project) => Path.ChangeExtension(StatePath(project), ".pending.json");
     public bool HasPendingApply(string project) => File.Exists(PendingPath(project));
+    public string? ApplyingItem(string project) => _applyingItems.GetValueOrDefault(project);
+    private string StatusPath(string project) => Path.ChangeExtension(StatePath(project), ".status.json");
+    public AutoTagProjectStatus ReadStatus(string project)
+    {
+        var path = StatusPath(project);
+        return File.Exists(path)
+            ? JsonSerializer.Deserialize<AutoTagProjectStatus>(File.ReadAllText(path), TagMaintenancePolicy.Json) ?? new()
+            : new();
+    }
+    public void RecordCycle(string project, string? error = null, string? blockingItem = null)
+    {
+        var previous = ReadStatus(project);
+        var status = error == null
+            ? new AutoTagProjectStatus(time.GetUtcNow())
+            : previous with { LastError = error, BlockingItem = blockingItem };
+        new AtomicJsonFileWriter().Write(StatusPath(project), TagMaintenancePolicy.Encode(status));
+    }
 
     private void SavePending(string project, AutoTagPendingApply pending) =>
         new AtomicJsonFileWriter().Write(PendingPath(project), TagMaintenancePolicy.Encode(pending));
@@ -206,7 +228,14 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
         foreach (var change in pending.Changes)
         {
             ct.ThrowIfCancellationRequested();
+            _applyingItems[project] = change.Kind + ":" + change.Id;
             var result = pending.Report.Items.Single(x => x.Kind == change.Kind && x.Id == change.Id);
+            if (result.Status == "skipped-conflict")
+            {
+                prior.Remove((change.Kind, change.Id));
+                Save(project, prior.Values.OrderBy(x => x.Kind).ThenBy(x => x.Id).ToList());
+                continue;
+            }
             string? current = null;
             try { current = workspace.Read(change); }
             catch (WikiTagWriteUnavailableException ex) when (change.Kind == "wiki")
@@ -215,11 +244,21 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
             }
             // Proposals are durable in auto-tag state; repository files stay untouched.
             if (result.Status == "tags-proposed" && current != null && current != change.Before)
-                throw new InvalidOperationException($"Auto-tag recovery conflicts with changed tags: {change.Kind}/{change.Id}.");
+            {
+                RecordConflict(project, pending, change, result);
+                prior.Remove((change.Kind, change.Id));
+                Save(project, prior.Values.OrderBy(x => x.Kind).ThenBy(x => x.Id).ToList());
+                continue;
+            }
             if (result.Status == "tagged" && current != change.After)
             {
                 if (current != change.Before)
-                    throw new InvalidOperationException($"Auto-tag recovery conflicts with changed tags: {change.Kind}/{change.Id}.");
+                {
+                    RecordConflict(project, pending, change, result);
+                    prior.Remove((change.Kind, change.Id));
+                    Save(project, prior.Values.OrderBy(x => x.Kind).ThenBy(x => x.Id).ToList());
+                    continue;
+                }
                 try
                 {
                     if (!workspace.Write(change, result.Status))
@@ -228,6 +267,17 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
                 catch (WikiTagWriteUnavailableException ex) when (change.Kind == "wiki")
                 {
                     result = RecordWikiProposal(project, pending, change, result, ex.Message);
+                }
+                catch (InvalidOperationException ex) when (ex.Message == $"Stale {change.Kind}/{change.Id}.")
+                {
+                    // The writer rechecks its preimage. A manual edit may land between our read and that check.
+                    if (workspace.Read(change) != change.After)
+                    {
+                        RecordConflict(project, pending, change, result);
+                        prior.Remove((change.Kind, change.Id));
+                        Save(project, prior.Values.OrderBy(x => x.Kind).ThenBy(x => x.Id).ToList());
+                        continue;
+                    }
                 }
             }
             var accepted = result.Status == "tagged";
@@ -268,7 +318,25 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
         }
         SaveReport(project, pending.Report);
         File.Delete(path);
+        _applyingItems.TryRemove(project, out _);
         return pending.Report;
+    }
+
+    private void RecordConflict(string project, AutoTagPendingApply pending,
+        TagMaintenanceChange change, AutoTagResult result)
+    {
+        var key = change.Kind + ":" + change.Id;
+        var skipped = result with { Status = "skipped-conflict", Reason = "Tags changed after auto-tag planning." };
+        var index = pending.Report.Items.FindIndex(x => x.Kind == change.Kind && x.Id == change.Id);
+        pending.Report.Items[index] = skipped;
+        pending.Report.LowConfidence.RemoveAll(x => x.Kind == change.Kind && x.Id == change.Id);
+        if (result.Status == "tagged")
+            foreach (var area in result.AreaTags)
+                pending.Report.CountsPerArea[area] = Math.Max(0,
+                    pending.Report.CountsPerArea.GetValueOrDefault(area) - 1);
+        if (!pending.Report.SkippedConflicts.Contains(key, StringComparer.Ordinal))
+            pending.Report.SkippedConflicts.Add(key);
+        SavePending(project, pending);
     }
 
     private AutoTagResult RecordWikiProposal(string project, AutoTagPendingApply pending,
@@ -520,14 +588,19 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
                 var nonArchivedCards = scanner.ScanAllJobsWithArchive()
                     .Where(task => task.ProjectName == project && AutoTaggingPolicy.EligibleCard(task))
                     .Select(task => task.Id).ToHashSet(StringComparer.Ordinal);
-                var items = workspace.CaptureForClassification(project).Items
+                var snapshot = workspace.CaptureForClassification(project);
+                var items = snapshot.Items
                     .Where(item => item.Project == project && (item.Kind == "card"
                         ? nonArchivedCards.Contains(item.Id) : item.Active)).ToList();
+                var inventoryError = snapshot.Unreadable.FirstOrDefault()?.Error;
+                if (inventoryError != null)
+                    logger.LogWarning("auto-tag-inventory-partial project={Project} reason={Reason}", project, inventoryError);
                 var now = items.Select(i => i.Kind + ":" + i.Id).ToHashSet(StringComparer.Ordinal);
                 if (!File.Exists(path))
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                     File.WriteAllText(path, TagMaintenancePolicy.Encode(now));
+                    service.RecordCycle(project, inventoryError);
                     continue;
                 }
                 var previous = JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(path), TagMaintenancePolicy.Json) ?? [];
@@ -549,12 +622,15 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
                     }
                     File.WriteAllText(path, TagMaintenancePolicy.Encode(now));
                 }
+                service.RecordCycle(project, inventoryError);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
             catch (Exception ex)
             {
                 projectErrors++;
                 firstError ??= project + ": " + ex.GetType().Name + ": " + ex.Message;
+                service.RecordCycle(project, ex.GetType().Name + ": " + ex.Message,
+                    service.ApplyingItem(project));
             }
         }
         if (failed > 0 || projectErrors > 0)
@@ -574,6 +650,8 @@ public static class AutoTaggingEndpoints
         group.MapGet("/", (string project, AutoTaggingService service) => Results.Ok(service.Read(project)));
         group.MapGet("/report", (string project, AutoTaggingService service) =>
             service.ReadReport(project) is { } report ? Results.Ok(report) : Results.NotFound());
+        group.MapGet("/status", (string project, AutoTaggingService service) =>
+            Results.Ok(service.ReadStatus(project)));
         group.MapPost("/backfill", async (string project, bool apply, AutoTaggingService service, CancellationToken ct) =>
             Results.Ok(await service.BackfillAsync(project, apply, ct)));
         group.MapPost("/backfill-jobs", (string project, bool apply, AutoTagBackfillQueue jobs) =>
