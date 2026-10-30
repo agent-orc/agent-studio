@@ -637,21 +637,68 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
     }
 
     [Fact]
-    public async Task RecoveryRefusesToOverwriteInterveningTagEdits()
+    public async Task RecoverySkipsChangedTagsAndCompletesOtherItems()
     {
         AddCard("edited");
+        AddCard("other");
         _workspace.RejectWrites = true;
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _service.BackfillAsync(Project, apply: true, CancellationToken.None));
         _workspace.RejectWrites = false;
         _mutations.SetJobTags("edited", ["security"], Watch());
         _workspace.Items[0] = _workspace.Items[0] with { Tags = ["security"] };
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            NewService().BackfillAsync(Project, apply: true, CancellationToken.None));
+        var resumed = NewService();
+        var report = await resumed.BackfillAsync(Project, apply: true, CancellationToken.None);
         Assert.Equal(["security"], _scanner.FindJob("edited", Watch())!.Tags);
-        Assert.Empty(_service.Read(Project));
-        Assert.True(_service.HasPendingApply(Project));
-        Assert.Single(_classifier.Calls);
+        Assert.Equal(["execution-and-runner"], _scanner.FindJob("other", Watch())!.Tags);
+        Assert.Equal(["card:edited"], report.SkippedConflicts);
+        Assert.Equal("skipped-conflict", report.Items.Single(x => x.Id == "edited").Status);
+        Assert.Equal("other", Assert.Single(resumed.Read(Project)).Id);
+        Assert.False(resumed.HasPendingApply(Project));
+        Assert.Equal(2, _classifier.Calls.Count);
+        Assert.Empty(new TimelineLog(NullLogger<TimelineLog>.Instance)
+            .ReadAll(_scanner.FindJob("edited", Watch())!.FolderPath));
+    }
+
+    [Fact]
+    public async Task ApplySkipsTagsChangedBetweenReadAndWrite()
+    {
+        AddCard("edited");
+        AddCard("other");
+        _workspace.BeforeWrite = () =>
+        {
+            _workspace.BeforeWrite = null;
+            Assert.True(_mutations.SetJobTags("edited", ["security"], Watch()));
+            _workspace.Items[0] = _workspace.Items[0] with { Tags = ["security"] };
+        };
+
+        var report = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+
+        Assert.Equal(["card:edited"], report.SkippedConflicts);
+        Assert.Equal(["security"], _scanner.FindJob("edited", Watch())!.Tags);
+        Assert.Equal(["execution-and-runner"], _scanner.FindJob("other", Watch())!.Tags);
+        Assert.False(_service.HasPendingApply(Project));
+    }
+
+    [Fact]
+    public async Task WorkerStatusPersistsBlockingItemAndClearsAfterRecovery()
+    {
+        AddCard("blocked");
+        _workspace.RejectWrites = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.BackfillAsync(Project, apply: true, CancellationToken.None));
+        var worker = NewWorker();
+        await worker.ScanOnceAsync(CancellationToken.None);
+        var failed = NewService().ReadStatus(Project);
+        Assert.Null(failed.LastSuccessfulCycle);
+        Assert.Contains("did not apply", failed.LastError);
+        Assert.Equal("card:blocked", failed.BlockingItem);
+        _workspace.RejectWrites = false;
+        await worker.ScanOnceAsync(CancellationToken.None);
+        var recovered = NewService().ReadStatus(Project);
+        Assert.Equal(_clock.GetUtcNow(), recovered.LastSuccessfulCycle);
+        Assert.Null(recovered.LastError);
+        Assert.Null(recovered.BlockingItem);
     }
 
     private AutoTaggingService NewService() => new(_workspace, _classifier,

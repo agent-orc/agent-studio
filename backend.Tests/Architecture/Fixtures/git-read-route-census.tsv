@@ -248,6 +248,7 @@
 /api/projects/{project}/auto-tag/	free	-	-	-
 /api/projects/{project}/auto-tag/backfill-jobs/{id}	free	-	-	-
 /api/projects/{project}/auto-tag/report	free	-	-	-
+/api/projects/{project}/auto-tag/status	free	-	-	-
 /api/projects/{project}/chat/scroll	free	-	-	-
 /api/projects/{project}/chat/search	free	-	-	-
 /api/projects/{project}/chat/stats	free	-	-	-
