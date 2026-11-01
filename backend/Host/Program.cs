@@ -374,6 +374,23 @@ builder.Services.AddSingleton<ISecretStore>(sp => sp.GetRequiredService<ScopedSe
 builder.Services.AddSingleton<SecretAuditLog>();
 builder.Services.AddSingleton<SecretValueScrubber>();
 builder.Services.AddSingleton<ISecretProvider, SecretProvider>();
+// Redirects stay off: a followed request would lose or leak its App identity.
+builder.Services.AddHttpClient("github-app", client => client.Timeout = TimeSpan.FromSeconds(20))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<AgentStudio.TaskServer.Contracts.GitHubApp.IGitHubAppVault>(sp =>
+    new AgentStudio.GitHubApp.SecretProviderGitHubAppVault(
+        sp.GetRequiredService<ISecretProvider>(), sp.GetRequiredService<AccessSecurityStore>().SecurityFolder));
+builder.Services.AddSingleton<AgentStudio.TaskServer.Contracts.GitHubApp.IRegisteredRepositoryCatalog,
+    AgentStudio.GitHubApp.ProjectRegistryRepositoryCatalog>();
+builder.Services.AddSingleton(sp => new AgentStudio.TaskServer.Contracts.GitHubApp.GitHubAppBroker(
+    new AgentStudio.TaskServer.Contracts.GitHubApp.GitHubAppClient(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("github-app"), sp.GetRequiredService<TimeProvider>()),
+    sp.GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.IGitHubAppVault>(),
+    sp.GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.IRegisteredRepositoryCatalog>(),
+    sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.GitHubAppHostKeys(
+    sp.GetRequiredService<AccessSecurityStore>().SecurityFolder));
+builder.Services.AddHostedService<AgentStudio.GitHubApp.GitHubAppHostCredentialService>();
 builder.Services.AddSingleton<ProjectSecretBindings>();
 builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
@@ -1511,6 +1528,7 @@ var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
 // Loopback trust (first-owner bootstrap) is decided on the connection peer,
 // which forwarding replaces below (AGT-3230).
 app.UseConnectionPeerCapture();
+app.UseOperatorListener();
 app.UseForwardedHeaders();
 // Directly after forwarding, so every later short-circuit (Task Server proxy
 // 404, rejections, exception handler) carries the framing and content policy
@@ -1626,6 +1644,7 @@ if (SecurityProfiles.IsLocal(app.Configuration)) app.UseCors();
 // In the networked profile this is the authentication and authorization
 // boundary. X-Client-Id remains attribution only and is never consulted as a
 // credential. Local development retains the legacy attribution middleware.
+app.UseOperatorListener();
 app.UseAccessSecurity();
 app.UseMiddleware<AgentStudio.Diagnostics.ArtifactRequestLimitMiddleware>();
 

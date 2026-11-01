@@ -5,8 +5,9 @@ namespace AgentStudio.Secrets;
 /// <summary>
 /// Default <see cref="ISecretProvider"/>: validates input, applies the pure
 /// version and access policies, persists through the configured
-/// <see cref="ISecretStore"/>, and audits every attempt with its outcome. The
-/// only path that decrypts a value is <see cref="GetForWorkloadAsync"/>.
+/// <see cref="ISecretStore"/>, and audits every attempt with its outcome. Values
+/// are decrypted only by <see cref="GetForWorkloadAsync"/> and, for the platform's
+/// own root material, <see cref="GetForPlatformAsync"/>.
 /// </summary>
 public sealed class SecretProvider : ISecretProvider
 {
@@ -105,6 +106,28 @@ public sealed class SecretProvider : ISecretProvider
             var resolved = new SecretReference(record.ParsedScope, record.Name, version.Version);
             _scrubber.Register(resolved, value);
             return (new ResolvedSecret(reference, resolved, value), "ok", version.Version);
+        });
+    }
+
+    public Task<ResolvedSecret> GetForPlatformAsync(SecretReference reference, string purpose, CancellationToken ct = default)
+    {
+        if (reference.Scope != SecretScope.Workspace || !SecretAccessPolicy.IsPlatformOnly(reference.Name))
+            throw new SecretAccessDeniedException("platform-scope-denied", "The platform reads only its own workspace-level secrets.");
+        var platform = new SecretWorkload("platform", "studio-platform", SecretScope.Workspace.Key, null);
+        return AuditedAsync(SecretAuditActions.Resolve, reference, platform.Actor, purpose, platform, async () =>
+        {
+            var record = await _store.FindAsync(reference.Scope, reference.Name, ct)
+                         ?? throw new SecretNotFoundException(reference.ToString());
+            var version = SecretVersionPolicy.Select(record, reference.Version);
+            var bytes = await _store.ReadValueAsync(record.ParsedScope, record.Name, version.Version, ct);
+            string value;
+            try { value = Encoding.UTF8.GetString(bytes); }
+            finally { Array.Clear(bytes); }
+            await _store.UpdateAsync(record.ParsedScope, record.Name,
+                current => SecretVersionPolicy.MarkUsed(current, version.Version, platform, purpose, Now), ct);
+            var resolved = new SecretReference(record.ParsedScope, record.Name, version.Version);
+            _scrubber.Register(resolved, value);
+            return (new ResolvedSecret(reference, resolved, value), "ok", (int?)version.Version);
         });
     }
 

@@ -29,7 +29,8 @@ public static class StudioResponseHeaderPolicy
         "worker-src 'self'; " +
         "object-src 'none'; " +
         "base-uri 'self'; " +
-        "form-action 'self'; " +
+        // github.com receives the GitHub App manifest form (settings > GitHub).
+        "form-action 'self' https://github.com; " +
         "frame-ancestors 'self'";
 
     /// <summary>

@@ -21,8 +21,22 @@ public static partial class SecretAccessPolicy
 
     public static bool IsValidPurpose(string? purpose) => purpose is not null && PurposePattern().IsMatch(purpose);
 
+    public const string GitHubAppPrivateKeyName = "AGENT_STUDIO_GITHUB_APP_PRIVATE_KEY";
+    public const string GitHubAppClientSecretName = "AGENT_STUDIO_GITHUB_APP_CLIENT_SECRET";
+
+    /// <summary>
+    /// Root material only the platform itself reads: the GitHub App key can mint a
+    /// token for every repository. A workload never gets it, at any scope, since a
+    /// deeper reference would inherit it from the workspace. The names say whose they
+    /// are, so a project's own GITHUB_APP_ID or similar stays an ordinary secret.
+    /// </summary>
+    public static bool IsPlatformOnly(string? name)
+        => name is GitHubAppPrivateKeyName or GitHubAppClientSecretName;
+
     public static SecretAccessDecision ForWorkload(SecretReference reference, SecretWorkload workload, string? purpose)
     {
+        if (IsPlatformOnly(reference.Name))
+            return SecretAccessDecision.Deny("platform-secret", "This secret belongs to the platform; no workload receives it.");
         if (!IsValidPurpose(purpose))
             return SecretAccessDecision.Deny("invalid-purpose", "A purpose is required: lowercase letters, digits, ':', '.', '_' or '-'.");
         if (string.IsNullOrWhiteSpace(workload.Project) || string.IsNullOrWhiteSpace(workload.Identity))

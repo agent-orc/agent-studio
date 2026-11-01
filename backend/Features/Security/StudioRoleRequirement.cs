@@ -43,6 +43,7 @@ public static class AccessSecurityRouteInventory
     [
         // Local first-run setup steps: Git access and repository probes today, later steps too.
         "/api/first-run/",
+        "/api/v1/management/github-app",
     ];
 
     public static bool RequiresOwner(string pattern)

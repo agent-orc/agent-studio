@@ -31,6 +31,12 @@ public interface ISecretProvider
     /// the value is registered for log scrubbing before it is returned.
     /// </summary>
     Task<ResolvedSecret> GetForWorkloadAsync(SecretReference reference, SecretWorkload workload, string purpose, CancellationToken ct = default);
+
+    /// <summary>
+    /// Issues workspace-level root material to the platform itself, such as the
+    /// GitHub App key that mints repository tokens. Audited like a workload read.
+    /// </summary>
+    Task<ResolvedSecret> GetForPlatformAsync(SecretReference reference, string purpose, CancellationToken ct = default);
 }
 
 /// <summary>

@@ -438,6 +438,8 @@ internal static class HostGitProcessHardening
     internal static void Apply(ProcessStartInfo startInfo)
     {
         SelectBareRepository(startInfo);
+        // Before the hardening keys: the check below expects those three last.
+        GitHubAppGitRouting.Apply(startInfo);
         if (startInfo.Environment.TryGetValue("GIT_CONFIG_COUNT", out var raw)
             && int.TryParse(raw, out var previous)
             && previous >= 3

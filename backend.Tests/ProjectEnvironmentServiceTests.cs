@@ -1599,6 +1599,9 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<SecretAuditEntry>> ReadAuditAsync(SecretScope? scope, int limit,
             CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ResolvedSecret> GetForPlatformAsync(SecretReference reference, string purpose, CancellationToken ct = default)
+            => throw new IOException("Injected provider failure.");
+
         public Task<ResolvedSecret> GetForWorkloadAsync(SecretReference reference, SecretWorkload workload,
             string purpose, CancellationToken ct = default) => throw new NotSupportedException();
     }

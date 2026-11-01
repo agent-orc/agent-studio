@@ -80,6 +80,13 @@ PORT="${PORT:-${DEFAULT_PORT}}"
 # (backend/Features/Connector/ConnectorHost.cs). Do not add [::1] here to cure
 # the localhost connect delay; API clients spell 127.0.0.1 instead.
 BASE_URL="http://127.0.0.1:${PORT}"
+# The browser path's own port, set by the launcher of a Studio whose hosts reach it
+# through tunnels (backend/Features/Security/OperatorListener.cs).
+LISTEN_URLS="${BASE_URL}"
+if [[ -n "${OPERATOR_PORT:-}" ]]; then
+  LISTEN_URLS="${BASE_URL};http://127.0.0.1:${OPERATOR_PORT}"
+  export Security__OperatorListenerPort="${OPERATOR_PORT}"
+fi
 HEALTH_URL="${BASE_URL}/healthz"
 PROJECT_FILE="${SCRIPT_DIR}/backend/OrchestratorApi.csproj"
 PID_FILE="${SCRIPT_DIR}/.api.pid"
@@ -723,7 +730,7 @@ prepare_launch_command() {
       echo "ERROR: api-prebuilt-required: API_REQUIRE_PREBUILT=1 requires API_PREBUILT_DIR; no local build is allowed." >&2
       return 1
     fi
-    API_LAUNCH_COMMAND=(dotnet run --project "${PROJECT_FILE}" --urls "${BASE_URL}")
+    API_LAUNCH_COMMAND=(dotnet run --project "${PROJECT_FILE}" --urls "${LISTEN_URLS}")
     return 0
   fi
 
@@ -790,7 +797,7 @@ NODE
 )" || return 1
   API_LAUNCH_DIRECTORY="${SCRIPT_DIR}/backend"
   API_LAUNCH_COMMAND=(dotnet "${artifact_dir}/OrchestratorApi.dll" \
-    --contentRoot "${SCRIPT_DIR}/backend" --urls "${BASE_URL}")
+    --contentRoot "${SCRIPT_DIR}/backend" --urls "${LISTEN_URLS}")
 }
 
 refuse_moved_stable() {

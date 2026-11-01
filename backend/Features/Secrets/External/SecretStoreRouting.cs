@@ -92,6 +92,9 @@ public sealed class SecretBackendSettings
             throw new SecretValidationException("invalid-backend-vault", "A 1Password vault ID is required.");
         if (binding.CredentialReference is null && binding.CredentialEnvironmentVariable is null)
             throw new SecretValidationException("backend-credential-required", "Choose a built-in credential reference or environment variable.");
+        // A backend's URL receives its credential, so this reference could send the App key anywhere.
+        if (binding.CredentialReference is { } platform && SecretAccessPolicy.IsPlatformOnly(SecretReference.Parse(platform).Name))
+            throw new SecretValidationException("invalid-backend-credential", "A platform secret cannot be a backend's credential.");
         if (binding.CredentialReference is { } reference && SecretReference.Parse(reference).Scope != SecretScope.Workspace)
             throw new SecretValidationException("invalid-backend-credential", "Adapter credentials must use a built-in workspace secret.");
         if (binding.CredentialEnvironmentVariable is { } variable

@@ -376,6 +376,7 @@
 /api/v1/gates/subjects/{subjectId}	free	-	-	-
 /api/v1/management/diagnostics	free	-	-	-
 /api/v1/management/environment	free	-	-	-
+/api/v1/management/github-app/	free	-	-	-
 /api/v1/management/host-releases	free	-	-	-
 /api/v1/management/links	free	-	-	-
 /api/v1/management/provider-refusals	free	-	-	-

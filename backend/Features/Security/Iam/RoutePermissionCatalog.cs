@@ -219,6 +219,8 @@ public static class RoutePermissionCatalog
         Add("GET", IamPermissions.RunnerService, "/api/deploy/jobs/{}/{}/artifact");
         // The proxy to a standalone Task Server declares its own split
         // (TaskServerPlaneProxy.MapTaskServerPlaneProxy).
+        // The App key can reach every repository; connecting it is the Owner's.
+        Add("*", IamPermissions.WorkspaceAdminister, "/api/v1/management/github-app", "/api/v1/management/github-app/**");
         Add("*", IamPermissions.WorkspaceOperate, "/api/v1/management/**");
 
         // --- Environments and production approval --------------------------

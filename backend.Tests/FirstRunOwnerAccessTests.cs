@@ -48,7 +48,7 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         var endpoints = factory.Services.GetServices<EndpointDataSource>()
             .SelectMany(source => source.Endpoints).ToArray();
         var firstRun = endpoints.OfType<RouteEndpoint>()
-            .Where(route => AccessSecurityRouteInventory.RequiresOwner(route.RoutePattern.RawText ?? string.Empty))
+            .Where(route => (route.RoutePattern.RawText ?? string.Empty).StartsWith("/api/first-run/", StringComparison.OrdinalIgnoreCase))
             .ToArray();
 
         foreach (var (method, pattern, _, _) in Routes)

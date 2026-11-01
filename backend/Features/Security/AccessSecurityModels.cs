@@ -64,6 +64,10 @@ public static class RunnerScopes
     public const string Deploy = "runner.deploy";
     public const string Release = "runner.release";
     public const string Gate = "gate.execute";
+    /// <summary>May fetch short-lived GitHub App tokens that read every registered repository.</summary>
+    public const string RepositoryRead = "repository.read";
+    /// <summary>May fetch short-lived GitHub App tokens that push to every registered repository.</summary>
+    public const string RepositoryWrite = "repository.write";
 
     /// <summary>
     /// The public-demo replay scope. It admits nothing but pre-signed simulated
@@ -74,7 +78,7 @@ public static class RunnerScopes
     public const string DemoReplay = "demo.replay";
 
     public static readonly string[] Minimum = [Claim, Lease, Logs, Events, Artifacts, Completion];
-    public static readonly HashSet<string> All = new([.. Minimum, DemoReplay, Orchestration, Deploy, Release, Gate], StringComparer.Ordinal);
+    public static readonly HashSet<string> All = new([.. Minimum, DemoReplay, Orchestration, Deploy, Release, Gate, RepositoryRead, RepositoryWrite], StringComparer.Ordinal);
 
     /// <summary>Replay, engine, deploy, release, and pull gate credentials each have one role; none is also an execution credential.</summary>
     public static bool IsExclusive(string scope) => scope is DemoReplay or Orchestration or Deploy or Release or Gate;

@@ -787,6 +787,7 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPut(method) && path.Split('/').Length == 5) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && (path.EndsWith("/claims", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith("/review-claims", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/repository-credentials", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && path.EndsWith("/reports", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.EndsWith("/capability-failures", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.EndsWith("/cli-update/result", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;

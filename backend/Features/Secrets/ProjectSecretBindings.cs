@@ -53,6 +53,8 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
     public ProjectSecretBinding Bind(string project, string environment, string name, string reference,
         string actor, string? approvedBy)
     {
+        if (SecretAccessPolicy.IsPlatformOnly(name))
+            throw new SecretAccessDeniedException("platform-secret", "This secret belongs to the platform; no workload receives it.");
         var declared = Declared(project, environment);
         if (environment != "preview" && !declared.Names.Contains(name, StringComparer.Ordinal))
             throw new SecretValidationException("reference-not-declared", "The environment does not declare this secret name.");
