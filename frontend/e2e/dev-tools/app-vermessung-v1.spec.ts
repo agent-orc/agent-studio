@@ -170,7 +170,6 @@ test('App-Vermessung v1 real stable sweep', async ({ page }) => {
   await page.waitForTimeout(1_200);
   await dismissRecovery(page);
   await captureActivitySurface(page, 'studio-ab-activity', 'Activity feed');
-  await captureActivitySurface(page, 'studio-ab-runbook', 'Runbook');
   await captureActivitySurface(page, 'studio-ab-admin', 'Orchestrator administration');
 
   const usage = page.getByText('Usage', { exact: true }).last();

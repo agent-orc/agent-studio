@@ -8,7 +8,6 @@ const STUDIO_PANEL_KINDS = new Set<StudioPanelKind>([
   'filters',
   'cli',
   'activity',
-  'runbook',
   'settings',
   'chats',
 ]);
@@ -136,6 +135,10 @@ function readPanelState(): StudioPanelPersistedState {
     // now a full editor tab). A persisted active:'settings' would land on the
     // "Panel not implemented" fallback, so fall back to the Explorer.
     if (active === 'settings') active = 'explorer';
+    // AGT-3351 migration: the Runbook sidebar panel was removed. A persisted
+    // active:'runbook' would land on the "Panel not implemented" fallback, so
+    // fall back to the Explorer.
+    if ((parsed.active as string) === 'runbook') active = 'explorer';
     return {
       active,
       visible: typeof parsed.visible === 'boolean' ? parsed.visible : undefined,

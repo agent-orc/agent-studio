@@ -84,4 +84,12 @@ describe('StudioPanelStateService', () => {
     expect(service.active()).toBe('filters');
     expect(service.markerOwner()).toBeUndefined();
   });
+
+  it('migrates a stored Runbook panel to the Explorer', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ active: 'runbook', visible: true }));
+    const service = TestBed.inject(StudioPanelStateService);
+
+    expect(service.active()).toBe('explorer');
+    expect(service.visible()).toBe(true);
+  });
 });

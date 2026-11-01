@@ -179,4 +179,18 @@ test.describe('studio-shell · Activity Bar marks exactly one active item', () =
       await testInfo.attach(name, { path, contentType: 'image/png' });
     });
   }
+
+  test('the rail has no Runbook item and a stored Runbook panel opens the Explorer', async ({ page }) => {
+    await page.addInitScript(() => {
+      if (!sessionStorage.getItem('runbook-seeded')) {
+        sessionStorage.setItem('runbook-seeded', '1');
+        localStorage.setItem('atp.studio.panelState.v1', JSON.stringify({ active: 'runbook', visible: true }));
+      }
+    });
+    await bootStudio(page);
+
+    await expect(page.getByTestId('studio-ab-runbook')).toHaveCount(0);
+    await expect(activeButtons(page)).toHaveCount(1);
+    await expect(page.getByTestId('studio-ab-explorer')).toHaveClass(/studio-ab__btn--active/);
+  });
 });

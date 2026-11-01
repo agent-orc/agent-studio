@@ -618,7 +618,6 @@ export class StudioShellComponent {
     { key: 'filters', icon: 'filter', label: 'Filters' },
     { key: 'cli', icon: 'cli', label: 'Agents / CLI' },
     { key: 'activity', icon: 'activity', label: 'Activity' },
-    { key: 'runbook', icon: 'runbook', label: 'Runbook' },
   ];
 
   /**

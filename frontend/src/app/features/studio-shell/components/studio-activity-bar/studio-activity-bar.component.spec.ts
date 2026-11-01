@@ -6,13 +6,13 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { StudioActivityBarComponent, StudioActivityBarItem } from './studio-activity-bar.component';
 import { resolveActiveActivityKey } from './studio-activity-bar.active-key';
+import { StudioPanelStateService } from '../../services/studio-panel-state.service';
 
 const ITEMS: readonly StudioActivityBarItem[] = [
   { key: 'explorer', icon: 'folder', label: 'Explorer' },
   { key: 'filters', icon: 'filter', label: 'Filters' },
   { key: 'cli', icon: 'cli', label: 'Agents / CLI' },
   { key: 'activity', icon: 'activity', label: 'Activity' },
-  { key: 'runbook', icon: 'runbook', label: 'Runbook' },
 ];
 
 /**
@@ -69,6 +69,12 @@ describe('StudioActivityBarComponent settings destination', () => {
     fixture.detectChanges();
     return fixture;
   }
+
+  it('renders no Runbook button (removed panel)', () => {
+    const fixture = mount();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="studio-ab-runbook"]')).toBeNull();
+  });
 
   it('renders no Admin button (removed destination)', () => {
     const fixture = mount();
@@ -248,5 +254,25 @@ describe('resolveActiveActivityKey · most recent activation wins', () => {
     const state = activateTab(clickPanel(dossierTab, 'chats'), 'workbenches');
     expect(state.sidebarVisible).toBe(true);
     expect(state.activePanel).toBe('chats');
+  });
+});
+
+/** AGT-3351: the Runbook panel was removed; stored state lands on the Explorer. */
+describe('stored Runbook panel migration', () => {
+  it('opens the Explorer for a persisted active:runbook', () => {
+    TestBed.resetTestingModule();
+    localStorage.setItem('atp.studio.panelState.v1', JSON.stringify({ active: 'runbook', visible: true }));
+    try {
+      const panels = TestBed.inject(StudioPanelStateService);
+      expect(panels.active()).toBe('explorer');
+      expect(resolveActiveActivityKey({
+        activeTabKind: 'board',
+        activePanel: panels.active(),
+        sidebarVisible: panels.visible(),
+        markerOwner: panels.markerOwner(),
+      })).toBe('explorer');
+    } finally {
+      localStorage.removeItem('atp.studio.panelState.v1');
+    }
   });
 });
