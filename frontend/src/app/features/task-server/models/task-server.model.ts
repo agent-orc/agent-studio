@@ -67,7 +67,7 @@ export interface TaskServerStore {
   archivedTaskCount: number;
   /** Registered client identity files under the store. */
   identityCount: number;
-  eventCount: number;
+  eventCount: number | null;
   artifactCount: number;
 }
 
@@ -117,6 +117,7 @@ export interface ManagementActionResult {
 /** The whole live Task-Server management status snapshot. */
 export interface TaskServerStatus {
   connection: TaskServerConnection;
+  statistics: { state: 'pending' | 'ready' | 'failed'; refreshedAt: string | null };
   store: TaskServerStore;
   evidence: TaskServerEvidenceStatus;
   clients: readonly TaskServerClient[];
@@ -198,6 +199,7 @@ export function healthTone(health: TaskServerHealth): StatusTone {
 
 /** Human label for the evidence working-tree state. */
 export function evidenceStateLabel(state: string): string {
+  if (state === 'pending') return 'Calculating';
   if (state === 'available') return 'Available';
   if (state === 'empty') return 'Empty';
   if (state === 'failed') return 'Failed';
@@ -211,7 +213,7 @@ export function evidenceStateLabel(state: string): string {
  */
 export function evidenceStateTone(state: string): StatusTone {
   if (state === 'available') return 'ok';
-  if (state === 'empty') return 'calm';
+  if (state === 'empty' || state === 'pending') return 'calm';
   return 'warn';
 }
 

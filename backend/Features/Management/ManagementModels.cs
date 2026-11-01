@@ -9,7 +9,10 @@ public sealed record ManagementStatus(
     IReadOnlyList<MigrationStatus> Migrations,
     IReadOnlyList<RunnerManagementStatus> Runners,
     SecurityManagementStatus Security,
-    BackupStatus Backups);
+    BackupStatus Backups,
+    StatisticsStatus Statistics);
+
+public sealed record StatisticsStatus(string State, string? RefreshedAt);
 
 public sealed record ServerIdentity(
     string Id, string Url, string Version, string ProtocolMinimum,
@@ -19,7 +22,7 @@ public sealed record ServerHealth(string State, bool Live, bool Ready, IReadOnly
 
 public sealed record StoreStatus(
     long SizeBytes, int ProjectCount, int TaskCount, int ArchivedTaskCount,
-    long EventCount, long ArtifactCount, int IdentityCount);
+    long? EventCount, long ArtifactCount, int IdentityCount);
 
 public sealed record EvidenceStatus(string State, long EventFiles, long ArtifactFiles, string? LastWriteAt);
 

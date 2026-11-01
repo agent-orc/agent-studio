@@ -18,6 +18,10 @@
     </button>
   </header>
 
+  @if (loading() && !status()) {
+    <p class="ts__hint" role="status" data-testid="task-server-querying">Querying the Task Server. Connection status is pending.</p>
+  }
+
   @if (unavailable(); as unavailableState) {
     <section class="ts__unavailable"
              role="alert"
@@ -40,6 +44,7 @@
   }
 
   @if (status(); as s) {
+    @if (s.statistics.state === 'ready') {
     <div class="ts__summary" data-testid="task-server-summary">
       <span class="ts__count"><strong>{{ s.store.projectCount }}</strong> projects</span>
       <span class="ts__sep" aria-hidden="true">·</span>
@@ -47,6 +52,15 @@
       <span class="ts__sep" aria-hidden="true">·</span>
       <span class="ts__count"><strong>{{ s.clients.length }}</strong> Hosts</span>
     </div>
+    } @else {
+      <p class="ts__hint" role="status" data-testid="task-server-statistics-pending">
+        {{ s.statistics.state === 'failed' ? 'Statistics are temporarily unavailable.' : 'Store and evidence statistics are being computed.' }}
+      </p>
+    }
+
+    @if (s.statistics.refreshedAt) {
+      <p class="ts__hint" data-testid="task-server-statistics-age">Statistics refreshed {{ statisticsAge() }}.</p>
+    }
 
     <div class="ts__blocks">
       @if (connection(); as c) {
@@ -79,19 +93,18 @@
         <section class="ts__block" data-testid="task-server-store">
           <header class="ts__block-head">
             <h3 class="ts__block-title">Workspace store</h3>
-            <span class="ts__badge" data-testid="task-server-store-size">{{ formatBytes(st.sizeBytes) }}</span>
+            <span class="ts__badge" data-testid="task-server-store-size">{{ s.statistics.state === 'ready' ? formatBytes(st.sizeBytes) : 'Calculating' }}</span>
           </header>
           <dl class="ts__rows">
             <div class="ts__row">
               <dt>Root</dt>
               <dd class="ts__mono" [cacTooltip]="st.root">{{ st.root }}</dd>
             </div>
-            <div class="ts__row"><dt>Projects</dt><dd>{{ st.projectCount }}</dd></div>
-            <div class="ts__row"><dt>Active tasks</dt><dd>{{ st.taskCount }}</dd></div>
-            <div class="ts__row"><dt>Archived</dt><dd>{{ st.archivedTaskCount }}</dd></div>
+            <div class="ts__row"><dt>Projects</dt><dd>{{ s.statistics.state === 'ready' ? st.projectCount : '-' }}</dd></div>
+            <div class="ts__row"><dt>Active tasks</dt><dd>{{ s.statistics.state === 'ready' ? st.taskCount : '-' }}</dd></div>
+            <div class="ts__row"><dt>Archived</dt><dd>{{ s.statistics.state === 'ready' ? st.archivedTaskCount : '-' }}</dd></div>
             <div class="ts__row"><dt>Identities</dt><dd>{{ st.identityCount }}</dd></div>
-            <div class="ts__row"><dt>Events</dt><dd>{{ st.eventCount }}</dd></div>
-            <div class="ts__row"><dt>Artifacts</dt><dd>{{ st.artifactCount }}</dd></div>
+            <div class="ts__row"><dt>Artifacts</dt><dd>{{ s.statistics.state === 'ready' ? st.artifactCount : '-' }}</dd></div>
           </dl>
         </section>
       }
@@ -104,8 +117,8 @@
             <span class="ts__badge" [attr.data-tone]="evidenceStateTone(ev.state)" data-testid="task-server-evidence-state">{{ evidenceStateLabel(ev.state) }}</span>
           </header>
           <dl class="ts__rows">
-            <div class="ts__row"><dt>Event files</dt><dd>{{ ev.eventFiles }}</dd></div>
-            <div class="ts__row"><dt>Artifact files</dt><dd>{{ ev.artifactFiles }}</dd></div>
+            <div class="ts__row"><dt>Event files</dt><dd>{{ s.statistics.state === 'ready' ? ev.eventFiles : '-' }}</dd></div>
+            <div class="ts__row"><dt>Artifact files</dt><dd>{{ s.statistics.state === 'ready' ? ev.artifactFiles : '-' }}</dd></div>
             <div class="ts__row"><dt>Latest write</dt><dd>{{ ev.lastWriteAt ? lastEvidenceLabel() : '-' }}</dd></div>
           </dl>
         </section>
@@ -130,10 +143,10 @@
         </dl>
       </section>
       <section class="ts__block" data-testid="task-server-backups" [attr.data-tone]="s.backups.lastFailure ? 'error' : 'ok'">
-        <header class="ts__block-head"><h3 class="ts__block-title">Backups</h3><span class="ts__badge" [attr.data-tone]="s.backups.lastFailure ? 'error' : 'ok'">{{ s.backups.items.length }} retained</span></header>
+        <header class="ts__block-head"><h3 class="ts__block-title">Backups</h3><span class="ts__badge" [attr.data-tone]="s.backups.lastFailure ? 'error' : 'ok'">{{ s.statistics.state === 'ready' ? s.backups.items.length + ' retained' : 'Calculating' }}</span></header>
         <dl class="ts__rows">
           <div class="ts__row"><dt>Retention</dt><dd>{{ s.backups.retentionCount }}</dd></div>
-          <div class="ts__row"><dt>Latest</dt><dd>{{ s.backups.items[0]?.verificationState || 'None' }}</dd></div>
+          <div class="ts__row"><dt>Latest</dt><dd>{{ s.statistics.state === 'ready' ? (s.backups.items[0]?.verificationState || 'None') : 'Calculating' }}</dd></div>
           <div class="ts__row"><dt>Failure</dt><dd>{{ s.backups.lastFailure || '-' }}</dd></div>
         </dl>
       </section>

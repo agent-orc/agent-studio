@@ -51,6 +51,7 @@ export class TaskServerPanelComponent implements OnInit, OnDestroy {
   /** Ticking clock so relative last-seen / commit-age labels stay fresh. */
   readonly now = signal<number>(Date.now());
   private tickHandle: ReturnType<typeof setInterval> | null = null;
+  private pendingHandle: ReturnType<typeof setInterval> | null = null;
 
   readonly connection = computed(() => this.status()?.connection ?? null);
   readonly store = computed(() => this.status()?.store ?? null);
@@ -60,6 +61,8 @@ export class TaskServerPanelComponent implements OnInit, OnDestroy {
   /** Relative age of the latest durable evidence write. */
   readonly lastEvidenceLabel = computed(() =>
     formatRelativeTime(this.evidence()?.lastWriteAt, this.now()));
+  readonly statisticsAge = computed(() =>
+    formatRelativeTime(this.status()?.statistics.refreshedAt, this.now()));
 
   // Pure display helpers exposed to the template.
   readonly formatBytes = formatBytes;
@@ -71,11 +74,18 @@ export class TaskServerPanelComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.service.ensureLoaded();
-    this.tickHandle = setInterval(() => this.now.set(Date.now()), 30_000);
+    this.tickHandle = setInterval(() => {
+      this.now.set(Date.now());
+      if (this.status() && !this.loading() && !this.busyAction()) this.reload();
+    }, 30_000);
+    this.pendingHandle = setInterval(() => {
+      if (this.status()?.statistics.state === 'pending' && !this.loading() && !this.busyAction()) this.reload();
+    }, 5_000);
   }
 
   ngOnDestroy(): void {
     if (this.tickHandle) clearInterval(this.tickHandle);
+    if (this.pendingHandle) clearInterval(this.pendingHandle);
   }
 
   reload(): void { void this.service.reload(); }

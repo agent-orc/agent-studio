@@ -28,6 +28,7 @@ const SHOT_DIR = process.env.OVERLAY_SHOT_DIR ?? 'test-results';
 const MANAGEMENT_STATUS = {
   server: { id: 'task-server-e2e', url: 'http://localhost:4010', version: '2026.07.20', protocolMinimum: '1.0', protocolMaximum: '1.0', uptimeSeconds: 7200 },
   health: { state: 'healthy', ready: true },
+  statistics: { state: 'ready', refreshedAt: '2026-07-20T10:00:00Z' },
   store: { sizeBytes: 2048, projectCount: 2, taskCount: 12, archivedTaskCount: 8, eventCount: 42, artifactCount: 6, identityCount: 2 },
   evidence: { state: 'available', eventFiles: 4, artifactFiles: 6, lastWriteAt: '2026-07-20T10:00:00Z' },
   maintenance: { mode: 'normal', drainRequested: false, shutdownPrepared: false, reason: null },
@@ -86,6 +87,30 @@ test.describe('Task Server settings section', () => {
     await dismissDevErrorDialog(page);
   });
 
+  test('querying and pending statistics leave connection status clear', async ({ page }) => {
+    await expect(page.getByTestId('status-bar-settings')).toBeVisible({ timeout: 30_000 });
+    let answer!: () => void;
+    const held = new Promise<void>(resolve => { answer = resolve; });
+    await page.route('**/api/v1/management/status', async route => {
+      await held;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        ...MANAGEMENT_STATUS,
+        statistics: { state: 'pending', refreshedAt: null },
+        evidence: { ...MANAGEMENT_STATUS.evidence, state: 'pending', eventFiles: 0, artifactFiles: 0 },
+      }) });
+    });
+    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('workspace-settings-rail-task-server').click();
+    await expect(page.getByTestId('task-server-querying')).toBeVisible();
+    await expect(page.getByTestId('task-server-unavailable')).toHaveCount(0);
+    await page.screenshot({ path: join(SHOT_DIR, 'task-server-querying.png') });
+    answer();
+    await expect(page.getByTestId('task-server-connection')).toBeVisible();
+    await expect(page.getByTestId('task-server-statistics-pending')).toBeVisible();
+    await expect(page.getByTestId('task-server-store-size')).toHaveText('Calculating');
+    await page.screenshot({ path: join(SHOT_DIR, 'task-server-statistics-pending.png') });
+  });
+
   test('rail + overview expose the Task Server section', async ({ page }) => {
     await page.getByTestId('status-bar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
@@ -105,6 +130,7 @@ test.describe('Task Server settings section', () => {
     await expect(page.getByTestId('task-server-connection')).toBeVisible();
     await expect(page.getByTestId('task-server-store')).toBeVisible();
     await expect(page.getByTestId('task-server-evidence')).toBeVisible();
+    await expect(page.getByTestId('task-server-statistics-age')).toContainText('Statistics refreshed');
     await expect(page.getByTestId('task-server-management')).toBeVisible();
     await expect(page.getByTestId('task-server-clients-section')).toContainText('Host registry');
     await expect(page.getByTestId('task-server-clients-section')).toContainText('Enroll host');

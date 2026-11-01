@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -21,7 +22,7 @@ public sealed class ManagementService
         "runner-revoke",
     };
 
-    private static readonly DateTime StartedAt = DateTime.UtcNow;
+    private static readonly DateTime ProcessStartUtc = ReadProcessStartUtc();
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly IConfiguration _configuration;
     private readonly TaskScannerService _scanner;
@@ -34,6 +35,7 @@ public sealed class ManagementService
     private readonly TaskIntegrationStatusService? _integrationStatus;
     private readonly TaskMutationService? _mutations;
     private readonly TimelineLog? _timeline;
+    private readonly ManagementStatisticsCache _statistics;
     private readonly object _gate = new();
 
     public ManagementService(
@@ -47,7 +49,8 @@ public sealed class ManagementService
         ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null,
         TaskIntegrationStatusService? integrationStatus = null,
         TaskMutationService? mutations = null,
-        TimelineLog? timeline = null)
+        TimelineLog? timeline = null,
+        ManagementStatisticsCache? statistics = null)
     {
         _configuration = configuration;
         _scanner = scanner;
@@ -60,6 +63,7 @@ public sealed class ManagementService
         _integrationStatus = integrationStatus;
         _mutations = mutations;
         _timeline = timeline;
+        _statistics = statistics ?? new ManagementStatisticsCache(() => ComputeStatistics());
     }
 
     private string Root => Path.GetFullPath(_configuration["TaskRepository"]
@@ -73,7 +77,7 @@ public sealed class ManagementService
 
     public ManagementStatus Snapshot(string url)
     {
-        var jobs = _scanner.ScanAllAutomationJobs();
+        var statistics = _statistics.Current();
         var maintenance = ReadState();
         var migrations = _migrations.List();
         var backupFailure = ReadBackupFailure();
@@ -86,14 +90,6 @@ public sealed class ManagementService
         var ready = Directory.Exists(Root)
                     && maintenance.Mode == "normal"
                     && migrations.All(x => x.State is not ("running" or "failed"));
-        var files = Directory.Exists(Root)
-            ? Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories).ToArray()
-            : [];
-        var eventFiles = files.Where(IsEventFile).ToArray();
-        var artifactFiles = files.Where(IsArtifactFile).ToArray();
-        var lastEvidence = eventFiles.Concat(artifactFiles)
-            .Select(File.GetLastWriteTimeUtc).DefaultIfEmpty().Max();
-
         var assembly = typeof(ManagementService).Assembly;
         var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? assembly.GetName().Version?.ToString() ?? "unknown";
@@ -113,23 +109,26 @@ public sealed class ManagementService
             new ServerIdentity(
                 _configuration["Management:ServerId"] ?? Environment.MachineName.ToLowerInvariant(),
                 url.TrimEnd('/'), version, "1.0", "1.0",
-                Math.Max(0, (long)(DateTime.UtcNow - StartedAt).TotalSeconds)),
+                Math.Max(0, (long)(DateTime.UtcNow - ProcessStartUtc).TotalSeconds)),
             new ServerHealth(healthState, true, ready, reasons),
             new StoreStatus(
-                files.Sum(SafeLength),
-                _projects.List().Count,
-                jobs.Count(x => x.State != TaskStates.Archive),
-                jobs.Count(x => x.State == TaskStates.Archive),
-                CountJsonLines(eventFiles), artifactFiles.LongLength, identityCount),
+                statistics.Snapshot?.SizeBytes ?? 0,
+                statistics.Snapshot?.ProjectCount ?? 0,
+                statistics.Snapshot?.TaskCount ?? 0,
+                statistics.Snapshot?.ArchivedTaskCount ?? 0,
+                null, statistics.Snapshot?.ArtifactFiles ?? 0, identityCount),
             new EvidenceStatus(
-                eventFiles.Length + artifactFiles.Length == 0 ? "empty" : "available",
-                eventFiles.LongLength, artifactFiles.LongLength,
-                lastEvidence == default ? null : lastEvidence.ToString("O")),
+                statistics.Snapshot is null ? statistics.State :
+                    statistics.Snapshot.EventFiles + statistics.Snapshot.ArtifactFiles == 0 ? "empty" : "available",
+                statistics.Snapshot?.EventFiles ?? 0, statistics.Snapshot?.ArtifactFiles ?? 0,
+                statistics.Snapshot?.LastWriteAt),
             maintenance,
             migrations,
             runners,
             ReadSecurityStatus(),
-            new BackupStatus("server-owned backup directory", DefaultRetention, ListBackups(), backupFailure));
+            new BackupStatus("server-owned backup directory", DefaultRetention,
+                statistics.Snapshot?.Backups ?? [], backupFailure),
+            new StatisticsStatus(statistics.State, statistics.Snapshot?.RefreshedAt));
     }
 
     public RecoveryDiagnostics Diagnostics()
@@ -201,6 +200,9 @@ public sealed class ManagementService
                 };
                 result = result with { CommandId = commandId };
                 AppendAudit(result, requestFingerprint);
+                if (!request.DryRun && kind is ("archive-sweep" or "orphan-sweep" or "fixture-sweep"
+                    or "backup-create" or "backup-retention"))
+                    _statistics.Invalidate();
                 return result;
             }
             catch (SecurityOperationException ex)
@@ -842,16 +844,20 @@ public sealed class ManagementService
             return false;
         }
     }
-    private static long SafeLength(string path) { try { return new FileInfo(path).Length; } catch (IOException) { return 0; } }
-    private static bool IsEventFile(string path) => path.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase) || path.Contains("timeline", StringComparison.OrdinalIgnoreCase);
-    private static bool IsArtifactFile(string path) => path.Contains($"{Path.DirectorySeparatorChar}results{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) || path.Contains($"{Path.DirectorySeparatorChar}artifacts{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
-    private static long CountJsonLines(IEnumerable<string> files)
+    private ManagementStatistics ComputeStatistics()
     {
-        long count = 0;
-        foreach (var file in files.Where(x => x.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)))
-            try { count += File.ReadLines(file).LongCount(); }
-            catch (IOException ex) { SilentCatch.Note(ex, $"management event count: {file}"); }
-        return count;
+        var files = ManagementStatisticsCache.ScanFiles(Root);
+        var jobs = _scanner.ScanAllAutomationJobs();
+        return new ManagementStatistics(files.SizeBytes, _projects.List().Count,
+            jobs.Count(x => x.State != TaskStates.Archive),
+            jobs.Count(x => x.State == TaskStates.Archive),
+            files.EventFiles, files.ArtifactFiles, files.LastWriteAt,
+            ListBackups(), DateTime.UtcNow.ToString("O"));
+    }
+    private static DateTime ReadProcessStartUtc()
+    {
+        using var process = Process.GetCurrentProcess();
+        return process.StartTime.ToUniversalTime();
     }
     private string? ReadBackupFailure() { var path = Path.Combine(Metadata, "last-backup-failure.txt"); return File.Exists(path) ? File.ReadAllText(path) : null; }
     private void WriteBackupFailure(string message) { Directory.CreateDirectory(Metadata); File.WriteAllText(Path.Combine(Metadata, "last-backup-failure.txt"), message); }

@@ -917,6 +917,15 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   This keeps the Delivery Chain Dossier's selected `integrated-only` review option;
   the corrected freshness rule compares the accepted delivery and current Git
   reachability instead of requiring an unchanged target HEAD.
+- `GET /api/v1/management/status` reads identity, health, maintenance,
+  migrations, runners, and security live. Store, evidence, and backup inventory
+  come from one background snapshot refreshed on status reads when five minutes
+  old; mutating management commands invalidate it earlier.
+  `statistics.state` is `pending` until the first scan completes, then `ready`
+  (`failed` if the first scan fails);
+  `statistics.refreshedAt` gives the snapshot time. The inventory skips `.git`.
+  `store.eventCount` is null because exact JSONL line counting is no longer
+  performed; `evidence.eventFiles` supplies the useful file count.
 - The one-time `delivery-stale-repair-2026-10-11` management command restores
   cards from the 2026-10-11 false bounce after the fixed backend is live. Run
   `POST /api/v1/management/commands` with
