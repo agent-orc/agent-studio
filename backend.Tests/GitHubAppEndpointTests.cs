@@ -456,7 +456,9 @@ public sealed class GitHubAppEndpointTests(GitHubAppEndpointTests.LocalHost loca
         var secrets = local.Services.GetRequiredService<ISecretProvider>();
         await new SecretProviderGitHubAppVault(secrets, SecurityFolder)
             .WriteSecretsAsync(new GitHubAppSecrets("pem", "client"), "owner", default);
-        var workload = new SecretWorkload(SecretWorkload.TaskRun, "run-1", "some-project", null);
+        // Even a workload that declares the names never receives them.
+        var workload = new SecretWorkload(SecretWorkload.TaskRun, "run-1", "some-project", null,
+            [SecretProviderGitHubAppVault.PrivateKeyName, SecretProviderGitHubAppVault.ClientSecretName]);
 
         // At the workspace, and through a deeper scope that would inherit it.
         foreach (var reference in new[]

@@ -7,8 +7,12 @@ namespace AgentStudio.Secrets;
 public sealed record DeployJobLease(string JobId, string Project, string EnvironmentId, string HostId,
     IReadOnlyList<string> SecretRefs, IReadOnlyDictionary<string, string>? SecretBindings = null);
 
-/// <summary>A task run with a live lease.</summary>
-public sealed record TaskRunLease(string TaskKey, string Project, string RunnerId, string LeaseId);
+/// <summary>
+/// A task run with a live lease. <see cref="SecretNames"/> lists the secret
+/// names declared for the run; without a declaration the run reads none.
+/// </summary>
+public sealed record TaskRunLease(string TaskKey, string Project, string RunnerId, string LeaseId,
+    IReadOnlyList<string>? SecretNames = null);
 
 /// <summary>Reads the lease facts a workload binding needs.</summary>
 public interface ISecretWorkloadLeases
@@ -28,6 +32,8 @@ public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments,
                     job.EnvironmentKind ?? "production"))
             : null;
 
+    // Task runs have no secret declaration source yet, so the lease carries no
+    // names and the binding refuses every task-run resolution.
     public TaskRunLease? FindLiveTaskRun(string taskKey)
     {
         var lease = leases.Peek(taskKey).Lease;
@@ -41,7 +47,8 @@ public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments,
 /// <summary>
 /// Pure binding of an authenticated service credential to a workload. A
 /// deploy job needs the deploy scope, the job's host identity and its lease
-/// token; a task run needs the lease scope and the live lease of that task.
+/// token; a task run needs the lease scope, the live lease of that task and
+/// a secret declaration on that lease.
 /// </summary>
 public static class SecretWorkloadBinding
 {
@@ -85,7 +92,10 @@ public static class SecretWorkloadBinding
             return Denied("workload-lease-invalid", "No live run lease matches this task and lease.");
         if (!string.Equals(run.RunnerId, runner.RunnerId, StringComparison.Ordinal))
             return Denied("workload-identity-denied", "The run lease is held by another Runner.");
-        return (new SecretWorkload(SecretWorkload.TaskRun, runner.RunnerId, run.Project, null), SecretAccessDecision.Allow);
+        if (run.SecretNames is not { Count: > 0 } declared)
+            return Denied("workload-undeclared", "The task run declares no secret names.");
+        return (new SecretWorkload(SecretWorkload.TaskRun, runner.RunnerId, run.Project, null, declared),
+            SecretAccessDecision.Allow);
     }
 
     private static (SecretWorkload?, SecretAccessDecision) Denied(string code, string reason)

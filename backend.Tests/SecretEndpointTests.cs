@@ -329,6 +329,49 @@ public sealed class SecretEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task Task_run_resolves_only_declared_names_and_a_run_without_declaration_is_refused_and_audited()
+    {
+        using var factory = Networked();
+        using var client = Client(factory);
+        var owner = Owner(factory);
+        var value = NewValue();
+        await Send(client, "POST", "/api/secrets/workspace", new { name = "SHARED", value = NewValue() }, owner);
+        await Send(client, "POST", $"/api/projects/{Project}/secrets", new { name = "API_TOKEN", value }, owner);
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var coder = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("coder", null, null, null)).Code);
+        var workload = new { kind = "task-run", taskKey = TaskKey, leaseId = "lease-1" };
+
+        _leases.Runs[TaskKey] = new TaskRunLease(TaskKey, Project, coder.Runner.Id, "lease-1");
+        var undeclared = await Send(client, "POST", SecretEndpoints.ResolvePath,
+            new { reference = "secret://workspace/SHARED", purpose = "task:build", workload }, bearer: coder.Secret);
+        Assert.Equal(HttpStatusCode.Forbidden, undeclared.Status);
+        Assert.Contains("workload-undeclared", undeclared.Body, StringComparison.Ordinal);
+
+        _leases.Runs[TaskKey] = new TaskRunLease(TaskKey, Project, coder.Runner.Id, "lease-1", ["API_TOKEN"]);
+        var declared = await Send(client, "POST", SecretEndpoints.ResolvePath,
+            new { reference = $"secret://{Project}/API_TOKEN", purpose = "task:build", workload }, bearer: coder.Secret);
+        Assert.Equal(HttpStatusCode.OK, declared.Status);
+        using (var json = JsonDocument.Parse(declared.Body))
+            Assert.Equal(value, json.RootElement.GetProperty("value").GetString());
+        var other = await Send(client, "POST", SecretEndpoints.ResolvePath,
+            new { reference = "secret://workspace/SHARED", purpose = "task:build", workload }, bearer: coder.Secret);
+        Assert.Equal(HttpStatusCode.Forbidden, other.Status);
+        Assert.Contains("reference-not-declared", other.Body, StringComparison.Ordinal);
+
+        using var all = JsonDocument.Parse((await Send(client, "GET", "/api/secrets/audit", null, owner)).Body);
+        var outcomes = all.RootElement.GetProperty("entries").EnumerateArray()
+            .Where(entry => entry.GetProperty("action").GetString() == "resolve")
+            .Select(entry => (entry.GetProperty("outcome").GetString(), entry.GetProperty("reference").GetString(),
+                entry.GetProperty("actor").GetString())).ToList();
+        Assert.Equal(
+        [
+            ("denied:reference-not-declared", "secret://workspace/SHARED", "workload:" + coder.Runner.Id),
+            ("ok", $"secret://{Project}/API_TOKEN", "workload:" + coder.Runner.Id),
+            ("denied:workload-undeclared", "secret://workspace/SHARED", "workload:" + coder.Runner.Id),
+        ], outcomes);
+    }
+
+    [Fact]
     public async Task Local_profile_scrubs_a_resolved_value_from_runner_logs_written_to_the_task_folder()
     {
         SeedTask();
@@ -350,7 +393,7 @@ public sealed class SecretEndpointTests : IDisposable
 
         var security = factory.Services.GetRequiredService<AccessSecurityStore>();
         var runner = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("coder", null, null, null)).Code);
-        _leases.Runs[TaskKey] = new TaskRunLease(TaskKey, Project, runner.Runner.Id, "lease-1");
+        _leases.Runs[TaskKey] = new TaskRunLease(TaskKey, Project, runner.Runner.Id, "lease-1", ["API_TOKEN"]);
         using var resolveRequest = new HttpRequestMessage(HttpMethod.Post, SecretEndpoints.ResolvePath)
         {
             Content = JsonContent.Create(new
