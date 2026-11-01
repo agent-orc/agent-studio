@@ -6,6 +6,7 @@ using System.Diagnostics;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using AgentStudio.Pipeline;
+using AgentStudio.Management;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -22,6 +23,41 @@ namespace AgentStudio.Tests;
 
 public sealed class ManagementApiTests : IDisposable
 {
+    [Fact]
+    public async Task StatusAndDiagnostics_ReturnLiveHealthWhileStatisticsRefreshIsBlocked()
+    {
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var scans = 0;
+        var cache = new ManagementStatisticsCache(() =>
+        {
+            Interlocked.Increment(ref scans);
+            entered.Set();
+            release.Wait();
+            return new ManagementStatistics(1, 1, 1, 0, 1, 0, null, [], "2026-11-01T00:00:00Z");
+        });
+        try
+        {
+            await using var factory = BuildFactory(statisticsCache: cache);
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+            var first = client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
+            var second = client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
+            var statuses = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(30)));
+            Assert.All(statuses, status =>
+            {
+                Assert.Equal("healthy", status.GetProperty("health").GetProperty("state").GetString());
+                Assert.Equal("pending", status.GetProperty("statistics").GetProperty("state").GetString());
+                Assert.Equal(JsonValueKind.Null, status.GetProperty("statistics").GetProperty("refreshedAt").ValueKind);
+            });
+            var diagnostics = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/diagnostics");
+            Assert.Equal("healthy", diagnostics.GetProperty("health").GetString());
+            Assert.Equal(1, Volatile.Read(ref scans));
+        }
+        finally { release.Set(); }
+    }
+
     // The delivery-bounce repair compares no timestamps with now; the fixture
     // only needs a stable instant for its commit and pipeline records.
     private static readonly DateTime RepairFixtureTime = new(2026, 10, 12, 8, 0, 0, DateTimeKind.Utc);
@@ -50,9 +86,9 @@ public sealed class ManagementApiTests : IDisposable
         client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
         var status = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
         Assert.Equal("healthy", status.GetProperty("health").GetProperty("state").GetString());
-        Assert.True(
-            status.GetProperty("store").GetProperty("eventCount").GetInt64() >= 1,
-            "The seeded server evidence event must remain visible when startup emits additional runtime events.");
+        Assert.True(status.GetProperty("health").GetProperty("live").GetBoolean());
+        Assert.Contains(status.GetProperty("statistics").GetProperty("state").GetString(), new[] { "pending", "ready" });
+        Assert.Equal(JsonValueKind.Null, status.GetProperty("store").GetProperty("eventCount").ValueKind);
 
         const string key = "maintenance-test-key";
         var request = new { kind = "maintenance-enter", dryRun = false, confirmation = "maintenance-enter", idempotencyKey = key, reason = "test rehearsal" };
@@ -725,8 +761,6 @@ public sealed class ManagementApiTests : IDisposable
             writer.Write("changed");
         }
 
-        var status = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
-        Assert.Equal("failed", status.GetProperty("backups").GetProperty("items")[0].GetProperty("verificationState").GetString());
         var verify = await client.PostAsJsonAsync("/api/v1/management/commands", new
         {
             kind = "restore-verify", dryRun = false, confirmation = "restore-verify", idempotencyKey = "tamper-restore-key"
@@ -1022,7 +1056,8 @@ public sealed class ManagementApiTests : IDisposable
         IRunnerLinkProcessLauncher? launcher = null,
         StableReleaseIdentity? stableRelease = null,
         TimeProvider? timeProvider = null,
-        string? connectivityManifest = null) =>
+        string? connectivityManifest = null,
+        ManagementStatisticsCache? statisticsCache = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment(environment);
@@ -1055,6 +1090,7 @@ public sealed class ManagementApiTests : IDisposable
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IHostedService>();
+            if (statisticsCache is not null) services.AddSingleton(statisticsCache);
             if (stableRelease is not null)
             {
                 services.RemoveAll<BuildIdentity>();

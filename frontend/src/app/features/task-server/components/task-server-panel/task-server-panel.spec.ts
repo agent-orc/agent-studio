@@ -14,6 +14,38 @@ import { AuthSessionState } from '../../../../services/auth.service';
  * command response produces a result row.
  */
 describe('TaskServerPanelComponent', () => {
+  it('shows querying separately from unavailable and keeps connection visible while statistics are pending', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskServerPanelComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskServerPanelComponent);
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="task-server-querying"]')?.textContent).toContain('Querying the Task Server');
+    expect(el.querySelector('[data-testid="task-server-unavailable"]')).toBeNull();
+
+    TestBed.inject(HttpTestingController).expectOne('/api/v1/management/status').flush({
+      server: { id: 'ts-1', url: 'http://localhost:4010', version: '1.0', protocolMinimum: '1.0', protocolMaximum: '1.0', uptimeSeconds: 60 },
+      health: { state: 'healthy', ready: true },
+      statistics: { state: 'pending', refreshedAt: null },
+      store: { sizeBytes: 0, projectCount: 0, taskCount: 0, archivedTaskCount: 0, eventCount: null, artifactCount: 0, identityCount: 1 },
+      evidence: { state: 'pending', eventFiles: 0, artifactFiles: 0, lastWriteAt: null },
+      maintenance: { mode: 'normal', drainRequested: false, shutdownPrepared: false, reason: null }, migrations: [],
+      runners: [], backups: { directory: '/tmp/backups', retentionCount: 7, lastFailure: null, items: [] },
+      security: { available: true, userCount: 1, credentialRunnerCount: 0, sessionUrl: '/api/auth/session', usersUrl: '/api/auth/users', runnerCredentialsUrl: '/api/auth/runners', integration: 'shared' },
+    });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="task-server-querying"]')).toBeNull();
+    expect(el.querySelector('[data-testid="task-server-connection"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="task-server-statistics-pending"]')?.textContent).toContain('being computed');
+    expect(el.querySelector('[data-testid="task-server-store-size"]')?.textContent).toContain('Calculating');
+    expect(el.querySelector('[data-testid="task-server-backups"]')?.textContent).toContain('Calculating');
+    expect(el.querySelector('[data-testid="task-server-unavailable"]')).toBeNull();
+    fixture.destroy();
+  });
+
   async function mount() {
     await TestBed.configureTestingModule({
       imports: [TaskServerPanelComponent],
@@ -29,6 +61,7 @@ describe('TaskServerPanelComponent', () => {
     TestBed.inject(HttpTestingController).expectOne('/api/v1/management/status').flush({
       server: { id: 'ts-1', url: 'http://localhost:4010', version: '1.0', protocolMinimum: '1.0', protocolMaximum: '1.0', uptimeSeconds: 60 },
       health: { state: 'healthy', ready: true },
+      statistics: { state: 'ready', refreshedAt: '2026-07-20T10:00:00Z' },
       store: { sizeBytes: 1, projectCount: 1, taskCount: 2, archivedTaskCount: 0, eventCount: 3, artifactCount: 4, identityCount: 2 },
       evidence: { state: 'available', eventFiles: 1, artifactFiles: 1, lastWriteAt: null },
       maintenance: { mode: 'normal', drainRequested: false, shutdownPrepared: false, reason: null }, migrations: [],
@@ -86,6 +119,7 @@ describe('TaskServerPanelComponent', () => {
     expect(el.querySelector('[data-testid="task-server-connection"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="task-server-store"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="task-server-evidence"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="task-server-statistics-age"]')?.textContent).toContain('Statistics refreshed');
     expect(el.querySelector('[data-testid="task-server-management"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="task-server-evidence"]')?.textContent).toContain('Event files');
     expect(el.querySelector('[data-testid="task-server-evidence"]')?.textContent).not.toContain('Branch');

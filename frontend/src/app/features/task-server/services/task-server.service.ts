@@ -17,7 +17,8 @@ export interface TaskServerUnavailable {
 interface ApiStatus {
   server: { id: string; url: string; version: string; protocolMinimum: string; protocolMaximum: string; uptimeSeconds: number };
   health: { state: 'healthy' | 'degraded' | 'maintenance'; ready: boolean };
-  store: { sizeBytes: number; projectCount: number; taskCount: number; archivedTaskCount: number; eventCount: number; artifactCount: number; identityCount: number };
+  store: { sizeBytes: number; projectCount: number; taskCount: number; archivedTaskCount: number; eventCount: number | null; artifactCount: number; identityCount: number };
+  statistics?: TaskServerStatus['statistics'];
   evidence: { state: string; eventFiles: number; artifactFiles: number; lastWriteAt: string | null };
   maintenance: TaskServerStatus['maintenance'];
   migrations: TaskServerStatus['migrations'];
@@ -126,6 +127,7 @@ export class TaskServerService {
 
   private mapStatus(api: ApiStatus, recentResults: readonly ManagementActionResult[]): TaskServerStatus {
     return {
+      statistics: api.statistics ?? { state: 'ready', refreshedAt: null },
       connection: {
         id: api.server.id,
         url: api.server.url,
