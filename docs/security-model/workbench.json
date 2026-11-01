@@ -1,0 +1,216 @@
+{
+  "schemaVersion": 1,
+  "id": "security-model",
+  "title": "Security model for Agent Studio and the operator agent",
+  "summary": "Target security model for the move to a public website: threat model per actor, five trust zones, the operator agent as a first-class actor (own identity, scoped short-lived credentials, tiers T0 to T3, recorded standing grants, owner approval with step-up, hash-chained audit with an off-host sink, break-glass, kill switch, rules for untrusted content and several sessions), agent containment, credential placement with a takeover runbook, a public deployment baseline and four stages. Alternatives compare five operator credential models, four host separation options and three audit stores. Recommended: typed operations with short-lived certificates as transition, hash-chained audit with a write-once sink, separate users and per-attempt containers now and a separate control-plane host before a second user. Thirteen slices ordered by stage; the first gives the operator agent its own identity and audit trail.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-01T19:00:00Z",
+  "sourceTaskKeys": [
+    "AGT-3353"
+  ],
+  "relatedTaskKeys": [
+    "QS-130"
+  ],
+  "implementationTasks": [
+    {
+      "id": "SM-1",
+      "title": "SM-1 · Operator agent identity and audit trail",
+      "promptMarkdown": "# Operator agent identity and audit trail\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D1, SM-D4, SM-D11. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 0 · owner only behind an access layer. Dependencies: none (first slice). Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: backend/Features/Security/Iam/ (service accounts, AccessSecurityStore.Iam.cs), backend/Features/Security/ (middleware and audit writers), TaskServerPrincipalStore in task-server/, card timeline actors.\n\n## Deliver\nAdd a principal kind `operator-agent` built on the service-account model, with child sessions. The Owner creates the operator principal and starts a session in Settings > Access; each session receives its own bearer token (at most 8 hours, renewable only by the Owner). Every request, audit entry and card timeline event made with a session token carries the actor `operator-agent:<id>/session:<sid>` and `delegatedBy: human:<owner id>`; the owner never appears as the actor. Introduce one audit writer for the control plane: entries carry actor, session, route or operation, target, parameter digest, outcome, time and the hash of the previous entry; route the existing IAM, service-account, API-token, secret and run audits through it without dropping fields. Forward each entry to a configurable off-host append-only sink (start with an HTTPS endpoint or object storage with write-once retention behind an adapter) and record the forwarded position. Add a verification job that recomputes the chain and compares it with the sink, raising an acute alert on a gap or mismatch. Add an operator activity view for the Owner that lists sessions and their entries. Document how the operator agent is configured on the owner's machine under its own OS user, without access to the owner's SSH agent or keys (D11).\n\n## Out of scope\nTiers, grants and approvals (SM-4, SM-5); host certificates (SM-6); the kill switch beyond revoking a single token (SM-2).\n\n## Acceptance\n- In a scripted operator session of at least 50 mixed requests, 100% of audit entries and timeline events name the operator agent and session, and 0 name the owner.\n- Changing, deleting or reordering any stored audit entry makes the verification job fail and raise an alert in a test.\n- Entries reach the configured sink within 60 seconds at the 95th percentile in a test with a fake sink; an unreachable sink queues entries without loss and alerts.\n- An operator session token cannot call access administration, write audit or create grants (403 in tests).\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-1 Operator agent identity and audit trail",
+        "stage": "0 · owner only behind an access layer",
+        "criteria": [
+          "In a scripted operator session of at least 50 mixed requests, 100% of audit entries and timeline events name the operator agent and session, and 0 name the owner.",
+          "Changing, deleting or reordering any stored audit entry makes the verification job fail and raise an alert in a test.",
+          "Entries reach the configured sink within 60 seconds at the 95th percentile in a test with a fake sink; an unreachable sink queues entries without loss and alerts.",
+          "An operator session token cannot call access administration, write audit or create grants (403 in tests)."
+        ]
+      }
+    },
+    {
+      "id": "SM-2",
+      "title": "SM-2 · Kill switch and operator sessions",
+      "promptMarkdown": "# Kill switch and operator sessions\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D1, SM-D7. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 0 · owner only behind an access layer. Dependencies: SM-1. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: Settings > Access, the operator principal from SM-1, Operations Server principal revocation (operations-server/Features/Access/), backend session middleware.\n\n## Deliver\nAdd an Owner action `End all operator access` in Studio and an equivalent out-of-band command on the control-plane host for when the UI is unreachable. It disables the operator principal, revokes every session token and future grant, cancels pending approval requests (when SM-5 exists), stops certificate issuance (when SM-6 exists) and revokes the operator's Operations Server principals. Add a per-session kill. Record each use in the audit with a distinct event type and notify the Owner. Add a scheduled drill mode that exercises the switch against a test principal and records the measured time.\n\n## Out of scope\nGrant model and approval UI.\n\n## Acceptance\n- After the kill switch, every operator request is refused within 60 seconds, measured in an integration test across Studio API and Operations Server.\n- A per-session kill refuses that session within 60 seconds while another session of the same principal keeps working.\n- The out-of-band command works with the Studio UI stopped and writes the same audit event.\n- A drill run produces a recorded duration and passes.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-2 Kill switch and operator sessions",
+        "stage": "0 · owner only behind an access layer",
+        "criteria": [
+          "After the kill switch, every operator request is refused within 60 seconds, measured in an integration test across Studio API and Operations Server.",
+          "A per-session kill refuses that session within 60 seconds while another session of the same principal keeps working.",
+          "The out-of-band command works with the Studio UI stopped and writes the same audit event.",
+          "A drill run produces a recorded duration and passes."
+        ]
+      }
+    },
+    {
+      "id": "SM-3",
+      "title": "SM-3 · Access layer and deployment baseline",
+      "promptMarkdown": "# Access layer and deployment baseline\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D5. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 0 · owner only behind an access layer. Dependencies: none. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: deploy/compose/monolith-networked/ (compose.yaml, Caddyfiles, check-edge-config.sh), docs/operations/setup/studio-website.md, backup procedure.\n\n## Deliver\nDocument and check an identity-aware access layer with a second factor in front of the whole site (provider-neutral; the edge must refuse traffic that did not pass it). Harden the website containers: non-root, read-only root filesystems with explicit writable volumes, `cap_drop: [ALL]`, `no-new-privileges`, images referenced by digest. Add unattended security updates guidance with a reboot window. Make backups encrypted with a key kept separately from the backup, add a restore-to-scratch script and a monitored restore result. Add alerts for login failures, new sessions and certificate expiry. Extend check-edge-config.sh into a baseline check that verifies these settings.\n\n## Out of scope\nIn-product second factor (SM-8).\n\n## Acceptance\n- The baseline check passes on the reference stack and fails, with a named reason, for each removed hardening setting.\n- A request that did not pass the access layer is refused at the edge in a test configuration.\n- An encrypted backup is restored into a scratch installation by the script and a sign-in succeeds there; the result is reported as a monitored signal.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-3 Access layer and deployment baseline",
+        "stage": "0 · owner only behind an access layer",
+        "criteria": [
+          "The baseline check passes on the reference stack and fails, with a named reason, for each removed hardening setting.",
+          "A request that did not pass the access layer is refused at the edge in a test configuration.",
+          "An encrypted backup is restored into a scratch installation by the script and a sign-in succeeds there; the result is reported as a monitored signal."
+        ]
+      }
+    },
+    {
+      "id": "SM-4",
+      "title": "SM-4 · Operation catalogue, tiers and standing grants",
+      "promptMarkdown": "# Operation catalogue, tiers and standing grants\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D2, SM-D3, SM-D7. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 1 · public login. Dependencies: SM-1. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: backend/Features/Security/Iam/ (permissions, bindings), RoutePermissionCatalog.cs, contracts/Operations.Contracts/, Settings > Access.\n\n## Deliver\nDefine an operation catalogue for the operator agent: each catalogued route or typed operation has an id, a tier (T0 observe, T1 routine, T2 high risk) and a scope kind. Seed it from the Dossier's tier table: T0 reads; T1 requeue, steer, allowlisted service restart, drain and resume, gate re-run, stage deploy of a gate-verified commit, promotion of a commit with full gate evidence (D2); T2 secrets, firewall and exposure, data deletion, force push or history rewrite, gate bypass, key rotation, host enrollment and removal, access and grant changes, catalogue changes. Operator requests outside the catalogue are refused. Add standing grant records (principal, operation set, scope, rate per hour, time window, issuer, issued, expires default 7 days and at most 30, revoked, reason) that only the Owner creates, renews or revokes in Studio. The policy step admits T0 always, T1 when a live grant covers operation, scope and rate, and refuses T2 with `approval-required` (SM-5 turns that into a request). Direct pushes to protected branches are not catalogued for the operator (D3).\n\n## Out of scope\nThe approval request flow (SM-5).\n\n## Acceptance\n- Every catalogued operation has exactly one tier; an inventory test fails for an operator-reachable route without one.\n- T1 without a covering live grant, an exceeded rate, and every T2 request are refused with typed reasons in tests.\n- A grant stops admitting requests at its expiry and within 60 seconds of revocation; grant changes appear in the IAM audit.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-4 Operation catalogue, tiers and standing grants",
+        "stage": "1 · public login",
+        "criteria": [
+          "Every catalogued operation has exactly one tier; an inventory test fails for an operator-reachable route without one.",
+          "T1 without a covering live grant, an exceeded rate, and every T2 request are refused with typed reasons in tests.",
+          "A grant stops admitting requests at its expiry and within 60 seconds of revocation; grant changes appear in the IAM audit."
+        ]
+      }
+    },
+    {
+      "id": "SM-5",
+      "title": "SM-5 · Owner approval with step-up",
+      "promptMarkdown": "# Owner approval with step-up\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D8. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 1 · public login. Dependencies: SM-4, SM-8. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: Decision card model (docs/operations/decision-cards.md), Studio notifications, the policy step from SM-4.\n\n## Deliver\nTurn a T2 refusal into an approval request that shows operation, parameters, parameter digest, target, session, instruction source (owner chat, card, repository file, web page, log) and the agent's stated reason. The Owner approves or rejects in Studio after a step-up with the second factor. Approvals are single-use, bound to the digest, expire after 15 minutes, and take their actor from the authenticated session only. Execution re-checks the digest and records the result against the approval. Optional push notification links to the request but cannot approve.\n\n## Out of scope\nBreak-glass (SM-7).\n\n## Acceptance\n- A T2 request executes only after an approval with step-up; without step-up the approval is refused.\n- Replay of a used approval, a changed parameter, and an expired approval are refused in tests.\n- Approval actors cannot be set through a client header; a test with a forged header is refused.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-5 Owner approval with step-up",
+        "stage": "1 · public login",
+        "criteria": [
+          "A T2 request executes only after an approval with step-up; without step-up the approval is refused.",
+          "Replay of a used approval, a changed parameter, and an expired approval are refused in tests.",
+          "Approval actors cannot be set through a client header; a test with a forged header is refused."
+        ]
+      }
+    },
+    {
+      "id": "SM-6",
+      "title": "SM-6 · Host operations without the owner's keys",
+      "promptMarkdown": "# Host operations without the owner's keys\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D1. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 1 · public login. Dependencies: SM-1, SM-4. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: operations-server/, operations-agent/, contracts/Operations.Contracts/OperationsProtocol.cs, deploy/compose/operations/, docs/operations/operations-server-backchannel/index.html.\n\n## Deliver\nBring the Operations Server into the supported deployment and route operator host work through it. Extend the typed catalogue with the routine host operations the operator performs today (inspect, restart, drain and resume, log collection, configuration apply from a reviewed file), each with schema, allowlist and journal entry on the host. Make attempt history append-only. For work not yet covered, add a Studio-held SSH certificate authority that issues certificates of at most 60 minutes for an unprivileged operations account with a fixed command allowlist, only after the policy step; push a revocation list to hosts. Remove long-lived operator keys from hosts' authorized keys and document the migration.\n\n## Out of scope\nBreak-glass shells (SM-7).\n\n## Acceptance\n- The operator's routine host work in a recorded week maps to typed operations or certificate sessions; none uses a long-lived key.\n- A certificate is refused by a host after 60 minutes and after revocation in tests.\n- Every executed host operation has a matching central audit entry; a host-side journal entry without one raises an alert.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-6 Host operations without the owner's keys",
+        "stage": "1 · public login",
+        "criteria": [
+          "The operator's routine host work in a recorded week maps to typed operations or certificate sessions; none uses a long-lived key.",
+          "A certificate is refused by a host after 60 minutes and after revocation in tests.",
+          "Every executed host operation has a matching central audit entry; a host-side journal entry without one raises an alert."
+        ]
+      }
+    },
+    {
+      "id": "SM-7",
+      "title": "SM-7 · Break-glass window",
+      "promptMarkdown": "# Break-glass window\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D9. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 1 · public login. Dependencies: SM-1, SM-2. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: SM-1 audit writer, SM-6 certificate authority, Settings > Access.\n\n## Deliver\nLet the Owner open a break-glass window with a sealed offline credential plus the second factor. The window names the sessions it covers, lasts at most 2 hours, issues elevated access, writes to a separate audit stream, alerts on open, and creates a review card when it closes. When the control plane is down, the host journal and the sink receive the entries; the review card reconciles them after recovery.\n\n## Out of scope\nAutomatic elevation requested by an agent.\n\n## Acceptance\n- A window cannot open without both the sealed credential and the second factor.\n- Elevated access ends at the window's end (at most 2 hours) in a test with a fake clock.\n- Closing a window creates exactly one review card listing its audit entries.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-7 Break-glass window",
+        "stage": "1 · public login",
+        "criteria": [
+          "A window cannot open without both the sealed credential and the second factor.",
+          "Elevated access ends at the window's end (at most 2 hours) in a test with a fake clock.",
+          "Closing a window creates exactly one review card listing its audit entries."
+        ]
+      }
+    },
+    {
+      "id": "SM-8",
+      "title": "SM-8 · Second factor and session management",
+      "promptMarkdown": "# Second factor and session management\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D5. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 1 · public login. Dependencies: none. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: backend/Features/Security/AccessSecurityEndpoints.cs, AccessSecurityStore.cs, the sign-in gate in frontend/, task-server Studio auth.\n\n## Deliver\nAdd WebAuthn passkeys and TOTP with recovery codes. Require a second factor for Owner and Admin at sign-in and for every step-up. Add a session list per user (device, address, created, last use) with revoke one and revoke all, Owner revocation of any user's sessions, and a notice on a new session. Bring the standalone Task Server Studio sign-in to the same throttling and expiry behaviour as the monolith.\n\n## Out of scope\nSSO and enterprise identity providers.\n\n## Acceptance\n- Owner and Admin cannot complete sign-in or step-up without a registered second factor; tests cover WebAuthn, TOTP and recovery codes.\n- Revoke all ends every other session of the user within 60 seconds, including live event streams.\n- Both sign-in stacks apply the same throttling and session expiry in tests.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-8 Second factor and session management",
+        "stage": "1 · public login",
+        "criteria": [
+          "Owner and Admin cannot complete sign-in or step-up without a registered second factor; tests cover WebAuthn, TOTP and recovery codes.",
+          "Revoke all ends every other session of the user within 60 seconds, including live event streams.",
+          "Both sign-in stacks apply the same throttling and session expiry in tests."
+        ]
+      }
+    },
+    {
+      "id": "SM-9",
+      "title": "SM-9 · Bound and expiring runner credentials",
+      "promptMarkdown": "# Bound and expiring runner credentials\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D7. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 1 · public login. Dependencies: none. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: backend/Features/Security/ (runner credentials, middleware), task-server/ (principal store, placement and review stores), runner enrollment UI.\n\n## Deliver\nBind every runner credential to its host, role and an explicit project set; a host without a project policy gets none instead of all. Give new credentials a default expiry of 30 days with the existing overlap rotation and warn before expiry. Limit card reads to cards the runner holds a lease on. Limit review claims to projects bound to the credential and keep reports fenced to the claimant. Issue repository tokens only for repositories of bound projects.\n\n## Out of scope\nPer-attempt tokens inside containers (SM-11).\n\n## Acceptance\n- A runner cannot read, claim or report a card or review outside its bound projects and role (negative tests for each route family).\n- A newly enrolled credential carries an expiry of 30 days by default; existing credentials get a migration notice, not a silent change.\n- Repository token issuance to a host covers only repositories of its bound projects.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-9 Bound and expiring runner credentials",
+        "stage": "1 · public login",
+        "criteria": [
+          "A runner cannot read, claim or report a card or review outside its bound projects and role (negative tests for each route family).",
+          "A newly enrolled credential carries an expiry of 30 days by default; existing credentials get a migration notice, not a silent change.",
+          "Repository token issuance to a host covers only repositories of its bound projects."
+        ]
+      }
+    },
+    {
+      "id": "SM-10",
+      "title": "SM-10 · Repository rules, pinned actions and continuous checks",
+      "promptMarkdown": "# Repository rules, pinned actions and continuous checks\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D3, SM-D10. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 1 · public login. Dependencies: none. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: .github/workflows/, the GitHub App integration, Quality Studio sensors (related card QS-130).\n\n## Deliver\nDefine repository rules for develop, main and release tags (no force push, no deletion, updates only by the platform identity after gate evidence, no agent identity in the bypass list) and a check that reports drift. Pin every workflow action and base image by digest with an update bot or script. Sign release tags. Withhold the workflow permission from repository tokens by default and grant it per attempt only for cards marked as changing CI, with human review required. Add Quality Studio sensors for unpinned actions and images, missing repository rules, response headers and TLS of the public URL, and the route permission inventory.\n\n## Out of scope\nRelease signing of images and verification at deploy (SM-13).\n\n## Acceptance\n- A force push or a non-platform update to a protected reference is refused in a rehearsal repository.\n- No workflow file references an action by tag; the sensor fails a fixture that does.\n- A delivery that touches workflow files cannot be pushed without the CI marker and review; Quality Studio reports the security posture on every release.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-10 Repository rules, pinned actions and continuous checks",
+        "stage": "1 · public login",
+        "criteria": [
+          "A force push or a non-platform update to a protected reference is refused in a rehearsal repository.",
+          "No workflow file references an action by tag; the sensor fails a fixture that does.",
+          "A delivery that touches workflow files cannot be pushed without the CI marker and review; Quality Studio reports the security posture on every release."
+        ]
+      }
+    },
+    {
+      "id": "SM-11",
+      "title": "SM-11 · Per-attempt containment by default",
+      "promptMarkdown": "# Per-attempt containment by default\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D6, SM-D10. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 2 · a second user. Dependencies: SM-9. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: runner/WorkContainers/, deploy/work-container/, deploy/zones/, task-server attempt credentials; coordinate docs/dynamic-placement/index.html slices 3 and 5.\n\n## Deliver\nMake the work-container executor the default for coding, review and gate on Linux hosts after its canary: one fresh container per attempt with its own UID and only that attempt's repository. Remove the host service user from the container-runtime group; only the host agent launches containers through a narrow launcher. Apply the work-zone egress policy on every host that runs agents. Mint repository and provider tokens per attempt, bound to lease, fence, project and repository, delivered as tmpfs files and revoked at completion. Keep host enrollment credentials and provider root logins outside the container. Accept a review verdict only from a review principal different from the delivery's coding principal.\n\n## Out of scope\nPer-attempt VMs (Stage 3 option).\n\n## Acceptance\n- A probe attempt cannot read the host credential, provider root logins or another project's checkout.\n- The probe cannot reach the runtime socket or a non-allowlisted address.\n- A token taken from a finished attempt is refused; a review verdict from the delivery's coding principal is refused.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-11 Per-attempt containment by default",
+        "stage": "2 · a second user",
+        "criteria": [
+          "A probe attempt cannot read the host credential, provider root logins or another project's checkout.",
+          "The probe cannot reach the runtime socket or a non-allowlisted address.",
+          "A token taken from a finished attempt is refused; a review verdict from the delivery's coding principal is refused."
+        ]
+      }
+    },
+    {
+      "id": "SM-12",
+      "title": "SM-12 · Control plane separation and key placement",
+      "promptMarkdown": "# Control plane separation and key placement\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D6. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 2 · a second user. Dependencies: SM-1, SM-11. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: deploy/compose/monolith-networked/, backend/Features/Secrets/ (KeyEncryptionKeySource, external backends), GitHub App vault.\n\n## Deliver\nMove the control plane to its own host (H3) with a documented migration. Move the GitHub App private key and the secret store's key-encryption key out of the API data volume into an external backend or a host secret readable only at start. Move CLI logins that serve control-plane one-shots out of the API home or isolate them. Rehearse the takeover runbook from the Dossier for an execution host and for the control plane and record the evidence.\n\n## Out of scope\nCustomer isolation (SM-13).\n\n## Acceptance\n- No execution-host role runs on the control-plane host.\n- The API data volume contains neither the GitHub App private key nor the key-encryption key; Studio still starts and issues tokens.\n- Both takeover rehearsals complete with recorded rotation of every listed credential class.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-12 Control plane separation and key placement",
+        "stage": "2 · a second user",
+        "criteria": [
+          "No execution-host role runs on the control-plane host.",
+          "The API data volume contains neither the GitHub App private key nor the key-encryption key; Studio still starts and issues tokens.",
+          "Both takeover rehearsals complete with recorded rotation of every listed credential class."
+        ]
+      }
+    },
+    {
+      "id": "SM-13",
+      "title": "SM-13 · Customer isolation and verified releases",
+      "promptMarkdown": "# Customer isolation and verified releases\n\nSource: docs/security-model/index.html (AGT-3353), decisions SM-D6. Read that Dossier and workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operations/security/overview.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented.\n\nStage: 3 · outside customers. Dependencies: SM-10, SM-11, SM-12. Resolve slice IDs to promoted task keys before starting dependent work.\n\nEntry points: .github/workflows/release.yml, deploy adapters, host pools in placement.\n\n## Deliver\nRun each outside customer's work on its own host pool, optionally with a per-attempt sandbox VM (H4). Sign every release image and archive with an identity outside the API container and verify signature and provenance in every deploy path. Commission an external penetration test and track its findings to closure or recorded acceptance. Publish an incident response commitment.\n\n## Out of scope\nBilling and contracts.\n\n## Acceptance\n- Placement never schedules one customer's attempt on another customer's host pool (tests).\n- Every deploy path refuses an unsigned release or one without matching provenance.\n- External penetration test findings are closed or accepted with a recorded owner decision.\n\nVerification and documentation\nReproduce the gap with a failing test before the fix. Build any credential-shaped test value at runtime; never write provider-shaped literals. Do not include real hostnames, addresses or account names in code, tests, docs or commits; the repository is public. UI changes follow frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md and need Playwright coverage with light and dark screenshots under results/. Update docs/operations/security/overview.md and the affected setup guide, append to this Dossier's implementation log, and report exact verification. Git handling stays with the platform: do not commit, push or manage worktrees yourself.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SM-13 Customer isolation and verified releases",
+        "stage": "3 · outside customers",
+        "criteria": [
+          "Placement never schedules one customer's attempt on another customer's host pool (tests).",
+          "Every deploy path refuses an unsigned release or one without matching provenance.",
+          "External penetration test findings are closed or accepted with a recorded owner decision."
+        ]
+      }
+    }
+  ]
+}
