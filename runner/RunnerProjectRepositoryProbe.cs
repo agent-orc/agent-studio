@@ -6,6 +6,11 @@ namespace AgentRunner;
 public sealed class RunnerProjectRepositoryProbe(
     RunnerOptions options, TaskServerClient client, IRepositoryGitProof git, Action<string> log)
 {
+    // A review host holds read tokens, so its write proof fails by design. It must
+    // not fetch each private repository again every minute because of that.
+    private static readonly TimeSpan ReadOnlyHostProbeInterval = TimeSpan.FromMinutes(30);
+    private readonly Dictionary<string, DateTime> _lastReadOnlyProbe = new(StringComparer.Ordinal);
+
     public async Task PollAsync(CancellationToken shutdown)
     {
         while (!shutdown.IsCancellationRequested)
@@ -31,6 +36,13 @@ public sealed class RunnerProjectRepositoryProbe(
             if (status.Probes.Any(probe => probe.RunnerId == options.RunnerId && probe.Admitted
                 && TimeProvider.System.GetUtcNow().UtcDateTime - probe.ObservedAt < TimeSpan.FromMinutes(5)))
                 continue;
+            if (options.Role == "review")
+            {
+                var now = TimeProvider.System.GetUtcNow().UtcDateTime;
+                if (_lastReadOnlyProbe.TryGetValue(project.ProjectId, out var last) && now - last < ReadOnlyHostProbeInterval)
+                    continue;
+                _lastReadOnlyProbe[project.ProjectId] = now;
+            }
             var origin = status.Registration.RepositoryUrl;
             var keyPath = RunnerFirstRunGitCredentials.Key(options.StateDir, origin);
             var helperPath = keyPath is null

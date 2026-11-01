@@ -76,6 +76,7 @@ public sealed class RemoteReviewDaemon
         // confirmed stopped, so an accidental relaunch cannot reopen claims.
         var persistedAtStartup = state.LoadAll();
         var reconciler = new ReviewSlotReconciler(state, _client.GetReviewAttemptAsync, log: _log);
+        var registeredRepositoryKeys = RunnerCapabilityProbe.ReviewRepositoryReadCapabilities(_options);
         Task<string> RegisterAsync(CancellationToken ct) => _client.RegisterAsync(
             _options.RunnerName,
             "review-executor",
@@ -327,7 +328,15 @@ public sealed class RemoteReviewDaemon
                 // its credential answered a real ls-remote. The probe bounds
                 // each proof by its own timeout, outside the request deadline.
                 await ReviewRepositoryReadProbe.Shared.RefreshDueAsync(
-                    _options.ReviewGitCredentialsFile, _log, operation.Token);
+                    _options.ReviewGitCredentialsFile, _log, operation.Token, _options.StateDir);
+                // The App can gain a repository while this daemon runs. Claim
+                // admission reads the keys named at registration.
+                var repositoryKeys = RunnerCapabilityProbe.ReviewRepositoryReadCapabilities(_options);
+                if (!repositoryKeys.SequenceEqual(registeredRepositoryKeys))
+                {
+                    await RegisterAsync(operation.Token);
+                    registeredRepositoryKeys = repositoryKeys;
+                }
                 await AdvertiseAsync();
             }
             Task AdvertiseAsync() => CapabilityAdvertisementRecovery.ExecuteAsync(

@@ -104,6 +104,15 @@ public sealed class RunnerOptions
     /// </summary>
     public string? ReviewGitCredentialsFile { get; init; }
 
+    public const string RepositoryKeyFileVariable = "RUNNER_REPOSITORY_KEY_FILE";
+
+    /// <summary>
+    /// Owner-only file with this host's key for fetching GitHub App repository
+    /// tokens in the local profile (scripts/github-app-host-key.sh). A networked
+    /// host presents its service credential instead and needs no key.
+    /// </summary>
+    public string? RepositoryKeyFile { get; init; }
+
     /// <summary>
     /// Floor for how long a review verify command's process tree may run without
     /// clearing its CPU floor before the hang watchdog kills it and the attempt
@@ -543,6 +552,9 @@ public sealed class RunnerOptions
                 .Trim() is { Length: > 0 } reviewGitCredentials
                 ? Path.GetFullPath(reviewGitCredentials)
                 : null,
+            RepositoryKeyFile = Env(RepositoryKeyFileVariable).Trim() is { Length: > 0 } repositoryKeyFile
+                ? Path.GetFullPath(repositoryKeyFile)
+                : null,
             ReviewNoCpuProgressSeconds = overrides.TryGetValue("review-no-cpu-progress-seconds", out var noProgress)
                                          && int.TryParse(noProgress, out var noProgressValue)
                                          && noProgressValue >= 0
@@ -693,16 +705,19 @@ public sealed class RunnerOptions
     }
 
     internal static string ReadAuthTokenFile(string path)
+        => ReadOwnerOnlySecretFile(path, "RUNNER_AUTH_TOKEN_FILE");
+
+    internal static string ReadOwnerOnlySecretFile(string path, string variable)
     {
-        if (!File.Exists(path)) throw new ArgumentException($"RUNNER_AUTH_TOKEN_FILE does not exist: {path}");
+        if (!File.Exists(path)) throw new ArgumentException($"{variable} does not exist: {path}");
         if (!OperatingSystem.IsWindows())
         {
             var mode = File.GetUnixFileMode(path);
             if ((mode & (UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0)
-                throw new ArgumentException("RUNNER_AUTH_TOKEN_FILE must not be accessible to other users.");
+                throw new ArgumentException($"{variable} must not be accessible to other users.");
         }
         var token = File.ReadAllText(path).Trim();
-        if (token.Length == 0) throw new ArgumentException("RUNNER_AUTH_TOKEN_FILE is empty.");
+        if (token.Length == 0) throw new ArgumentException($"{variable} is empty.");
         return token;
     }
 }

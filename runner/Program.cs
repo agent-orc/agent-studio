@@ -87,6 +87,11 @@ if (args is ["work-container", ..])
 if (args is ["zone-policy", ..])
     return await ZonePolicyCommand.RunAsync(args[1..], Console.Out, Console.Error, CancellationToken.None);
 
+// The scheduled runs below parse their own options. They share the host's App tokens
+// when their unit names its state directory.
+if (Environment.GetEnvironmentVariable("RUNNER_STATE_DIR") is { Length: > 0 } scheduledStateDir)
+    RepositoryCredentialRouting.Configure(scheduledStateDir);
+
 // AGT-3074: scheduled release-category coverage run, started by agent-coverage-run.timer.
 if (args is ["coverage-run", ..])
 {
@@ -178,6 +183,7 @@ if (args is ["--repository-admin"])
 }
 
 var (options, taskKey, once, help) = RunnerOptions.Parse(args);
+RepositoryCredentialRouting.Configure(options.StateDir);
 
 void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] [agent-host] {message}");
 
@@ -439,6 +445,19 @@ try
         await new RemoteGateDaemon(options, client, Log).RunAsync(shutdown.Token);
         Log("gate daemon stopped");
         return 0;
+    }
+    if (daemonMode)
+    {
+        var repositoryCredentials = new RepositoryCredentialSync(options, client, Log);
+        // Before the first registration: review capabilities name the repositories it finds.
+        using var firstSync = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
+        firstSync.CancelAfter(TimeSpan.FromSeconds(30));
+        try { await repositoryCredentials.SyncOnceAsync(firstSync.Token); }
+        catch (OperationCanceledException) when (!shutdown.IsCancellationRequested)
+        {
+            Log("repository-credentials first sync timed out; the background sync keeps trying");
+        }
+        _ = repositoryCredentials.PollAsync(shutdown.Token);
     }
     if (options.Role == "post")
     {

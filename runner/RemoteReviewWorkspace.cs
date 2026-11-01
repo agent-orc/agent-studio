@@ -2808,7 +2808,8 @@ public sealed class RemoteReviewWorkspace
             throw new ReviewInfrastructureException(
                 "SnapshotUnavailable",
                 $"Repository fetch failed: the review host has no read access to '{repositoryUrl}'. "
-                + "A private repository needs repository visibility 'private' on its project and a "
+                + "A private repository needs repository visibility 'private' on its project and either "
+                + "the GitHub App installed on it (Settings > GitHub) or a "
                 + $"scoped read credential in {ReviewRepositoryCredentials.FileVariable}: {exception.Message}");
         }
         var (bytes, ready) = source;
@@ -2825,7 +2826,8 @@ public sealed class RemoteReviewWorkspace
             if (RunnerFirstRunGitCredentials.Token(_options.StateDir, _subject.RepositoryUrl) is { } firstRun)
                 return firstRun;
             if (!_subject.Plan.PrivateRepository) return null;
-            return ReviewRepositoryCredentials.Load(_options.ReviewGitCredentialsFile).Find(_subject.RepositoryUrl);
+            return ReviewRepositoryCredentials.LoadForHost(_options.StateDir, _options.ReviewGitCredentialsFile)
+                .Find(_subject.RepositoryUrl);
         }
         catch (Exception exception) when (exception is ArgumentException or IOException
                                               or UnauthorizedAccessException)

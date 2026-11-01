@@ -1144,9 +1144,30 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     {
         using var response = await _http.PostAsJsonAsync(
             $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/git-setups/claim", new { }, ct);
-        if (response.StatusCode == HttpStatusCode.NoContent) return null;
+        // A monolith has no setup queue: its first-run setup runs on the Studio host itself.
+        if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<Contract.RunnerGitSetupWork>(
+            TaskServerContractJson, ct);
+    }
+
+    /// <summary>
+    /// This host's GitHub App tokens. Null when no App is connected or the server
+    /// does not offer them yet. A refusal surfaces as the status of the exception.
+    /// </summary>
+    public async Task<Contract.GitHubApp.RepositoryCredentialsResponse?> GetRepositoryCredentialsAsync(
+        string runnerId, string access, string? hostKey, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/repository-credentials")
+        {
+            Content = JsonContent.Create(new Contract.GitHubApp.RepositoryCredentialsRequest(access)),
+        };
+        if (hostKey is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", hostKey);
+        using var response = await _http.SendAsync(request, ct);
+        if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Contract.GitHubApp.RepositoryCredentialsResponse>(
             TaskServerContractJson, ct);
     }
 

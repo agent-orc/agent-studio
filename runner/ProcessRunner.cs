@@ -66,6 +66,9 @@ public static class ProcessRunner
         if (environment != null)
             foreach (var (key, value) in environment)
                 psi.Environment[key] = value;
+        // A cleared environment means the caller selected its own credential.
+        if (!clearEnvironment && fileName == "git")
+            RepositoryCredentialRouting.Apply(psi.Environment);
         // AGT-3005: applied last so neither a cleared environment nor a caller
         // value can re-enable a reusable build node that outlives the run.
         WorkerBuildServerHygiene.ApplyTo(psi.Environment);

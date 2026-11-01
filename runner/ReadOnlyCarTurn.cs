@@ -80,7 +80,7 @@ internal static class ReadOnlyCarTurn
                     ThinkingLevel = thinkingLevel,
                     PermissionMode = CliPermissionModes.ReadOnly,
                     ContextMode = CliContextModes.Shared,
-                    ExtraEnvironment = OutputCapEnvironment(cliType, maxOutputTokens),
+                    ExtraEnvironment = WorkerEdgeCredentialBoundary.BlankedOver(OutputCapEnvironment(cliType, maxOutputTokens)),
                     Tuning = DecisionCapTuning(cliType, maxOutputTokens, maxInputTokens),
                 },
                 shutdown);

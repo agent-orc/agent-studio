@@ -6,6 +6,7 @@ internal static class WorkerEdgeCredentialBoundary
     private static readonly string[] ExactNames =
     [
         "RUNNER_AUTH_TOKEN", "RUNNER_AUTH_TOKEN_FILE", "RUNNER_CLIENT_ID",
+        RunnerOptions.RepositoryKeyFileVariable,
         "RUNNER_STATE_DIR", "AGENT_HOST_STATE_DIR",
         "STUDIO_COOKIE", "STUDIO_CSRF",
     ];
@@ -19,6 +20,19 @@ internal static class WorkerEdgeCredentialBoundary
     public static bool IsProtectedName(string key)
         => ExactNames.Contains(key, StringComparer.OrdinalIgnoreCase)
            || Prefixes.Any(prefix => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// For a CLI started inside the daemon, whose driver inherits this process's
+    /// environment: blanks every protected name on top of <paramref name="extra"/>.
+    /// </summary>
+    public static Dictionary<string, string> BlankedOver(IReadOnlyDictionary<string, string>? extra)
+    {
+        var environment = extra is null ? new Dictionary<string, string>() : new Dictionary<string, string>(extra);
+        foreach (var key in Environment.GetEnvironmentVariables().Keys.OfType<string>())
+            if (IsProtectedName(key))
+                environment[key] = string.Empty;
+        return environment;
+    }
 
     public static void RemoveFrom<T>(IDictionary<string, T> environment)
     {

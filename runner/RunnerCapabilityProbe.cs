@@ -305,7 +305,7 @@ internal static class RunnerCapabilityProbe
     public static IReadOnlyList<string> ReviewRepositoryReadCapabilities(RunnerOptions options)
     {
         if (options.Role != "review") return [];
-        try { return ReviewRepositoryCredentials.Load(options.ReviewGitCredentialsFile).CapabilityKeys; }
+        try { return ReviewRepositoryCredentials.LoadForHost(options.StateDir, options.ReviewGitCredentialsFile).CapabilityKeys; }
         catch (Exception exception) when (exception is ArgumentException or IOException
                                               or UnauthorizedAccessException)
         {

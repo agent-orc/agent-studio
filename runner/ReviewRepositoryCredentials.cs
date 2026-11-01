@@ -65,6 +65,24 @@ public sealed class ReviewRepositoryCredentials
         return Parse(File.ReadAllLines(path));
     }
 
+    /// <summary>
+    /// What this host may read now: its GitHub App tokens, then whatever the
+    /// configured file holds for other repositories. An App token wins, because
+    /// it is the one being renewed.
+    /// </summary>
+    public static ReviewRepositoryCredentials LoadForHost(string stateDir, string? path)
+    {
+        var configured = Load(path);
+        var managedPath = RepositoryCredentialPaths.ReviewStore(stateDir);
+        if (!File.Exists(managedPath)) return configured;
+        var managed = Parse(File.ReadAllLines(managedPath));
+        return new ReviewRepositoryCredentials(
+        [
+            .. managed.Entries,
+            .. configured.Entries.Where(entry => managed.Entries.All(known => known.Canonical != entry.Canonical)),
+        ]);
+    }
+
     public static ReviewRepositoryCredentials Parse(IEnumerable<string> lines)
     {
         var entries = new List<ReviewRepositoryCredential>();

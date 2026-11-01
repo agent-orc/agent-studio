@@ -60,12 +60,15 @@ public sealed class ReviewRepositoryReadProbe
     /// invalidated. A key removed from the file is forgotten; a file that turns
     /// unreadable or malformed marks every known key unavailable.
     /// </summary>
-    public async Task RefreshDueAsync(string? credentialsFile, Action<string> log, CancellationToken ct)
+    public async Task RefreshDueAsync(string? credentialsFile, Action<string> log, CancellationToken ct,
+        string? stateDir = null)
     {
         ReviewRepositoryCredentials credentials;
         try
         {
-            credentials = ReviewRepositoryCredentials.Load(credentialsFile);
+            credentials = stateDir is null
+                ? ReviewRepositoryCredentials.Load(credentialsFile)
+                : ReviewRepositoryCredentials.LoadForHost(stateDir, credentialsFile);
         }
         catch (Exception exception) when (exception is ArgumentException or IOException
                                               or UnauthorizedAccessException)
