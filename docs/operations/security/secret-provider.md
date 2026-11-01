@@ -188,7 +188,11 @@ credential. The workload block names the lease the credential runs under:
 ```
 
 A `task-run` workload names `taskKey` and `leaseId`. The server derives the
-project and environment from the live lease, not from the request. A browser
+project and environment from the live lease, not from the request. A task run
+reads only the secret names declared for its lease; a run without a
+declaration is refused with `workload-undeclared` and the refusal is audited.
+Task leases do not carry a declaration yet, so every task-run resolution is
+currently refused; deploy jobs keep their environment declaration. A browser
 session never receives a value, in any profile. The response carries
 `Cache-Control: no-store` and has
 `{ "reference": "...", "resolvedReference": "...@<version>",
