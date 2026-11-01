@@ -86,7 +86,8 @@ export function stripUrlCredentials(value) {
 
 function isTransient(relative) {
   const lower = relative.toLowerCase();
-  return lower.endsWith('.tmp') || /\.relocate-\d+$/.test(lower) || lower.split('/').includes('.migration-backups');
+  return lower.endsWith('.tmp') || /\.relocate-\d+$/.test(lower) || lower.split('/').includes('.migration-backups')
+    || /^\.metadata\/[^/]*\.corrupt-[^/]*$/.test(lower);
 }
 
 /** Workspace area of one relative path, independent of its Git state. */

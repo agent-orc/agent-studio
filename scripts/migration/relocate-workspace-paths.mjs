@@ -63,7 +63,7 @@ export async function inventory({ workspace, config = [], checkout = [], link = 
   for (const file of unique) {
     const original = await readFile(file, 'utf8');
     const json = isJsonFile(file);
-    if (json) JSON.parse(original);
+    if (json) JSON.parse(original.replace(/^\uFEFF/, ''));
     const token = json ? /"(?:\\.|[^"\\])*"/g : /[^\r\n]+/g;
     const updated = original.replace(token, match => {
       let value;

@@ -9,7 +9,7 @@ import {
   acceptedTokenHits, buildInventory, classifyPath, classifyWorkspace, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
   readProjectRegistry, runCli, scanFileContent, scanWorkspace, screenTokens, selectDelta, skippedFolders, stripUrlCredentials, taskRoots, tokenStateIssues,
 } from './move-studio-to-server.mjs';
-import { relocate } from './relocate-workspace-paths.mjs';
+import { inventory as relocateInventory, relocate } from './relocate-workspace-paths.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/move-studio-workspace.json', import.meta.url), 'utf8'));
 const fixedClock = () => new Date('2026-10-19T08:30:00.000Z');
@@ -651,4 +651,26 @@ test('skipped folders stay out of the workspace scan', async () => {
   assert.deepEqual(skip, ['.claude/worktrees']);
   assert.deepEqual(scanWorkspace(root, { skip }).map(item => item.path), ['projects/demo/keep.md']);
   await rm(root, { recursive: true, force: true });
+});
+
+test('a JSON file with a byte order mark is relocated and keeps its mark', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-bom-'));
+  const workspace = path.join(root, 'workspace');
+  await mkdir(path.join(workspace, '.metadata'), { recursive: true });
+  await writeFile(path.join(workspace, '.metadata', 'session.json'), '\uFEFF{"root":"C:\\\\Projects\\\\demo"}');
+  const mapping = path.join(root, 'map.json');
+  await writeFile(mapping, JSON.stringify({ 'C:\\Projects\\demo': '/data/projects/demo' }));
+
+  const report = await relocateInventory({ workspace, mapping, apply: true });
+
+  assert.equal(report.unresolved?.length ?? 0, 0);
+  const written = await readFile(path.join(workspace, '.metadata', 'session.json'), 'utf8');
+  assert.ok(written.startsWith('\uFEFF'));
+  assert.ok(written.includes('/data/projects/demo'));
+  await rm(root, { recursive: true, force: true });
+});
+
+test('a store set aside after a crash stays behind', () => {
+  assert.equal(classifyPath('.metadata/attempt-authority.corrupt-20261011-1647.json').transfer, 'exclude');
+  assert.equal(classifyPath('.metadata/attempt-authority.json').transfer, 'archive');
 });
