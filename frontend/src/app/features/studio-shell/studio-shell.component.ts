@@ -61,7 +61,7 @@ import { StudioTabStateService } from './services/studio-tab-state.service';
 import { ProjectHubUrlService } from './services/project-hub-url.service';
 import { StudioPanelStateService } from './services/studio-panel-state.service';
 import { ExplorerSectionsService } from './services/explorer-sections.service';
-import { ExplorerWorkbenchStateService } from './services/explorer-workbench-state.service';
+import { TreeRowComponent } from '../../components/tree-row/tree-row.component';
 import { buildProjectSidebarRows, type ProjectSidebarRow } from './studio-shell.project-rows';
 import { StudioTab, studioTabKey } from './studio-shell.types';
 import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
@@ -105,7 +105,7 @@ function cliColorFor(cli: string): string {
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent],
+  imports: [FormsModule, StudioIconComponent, TreeRowComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -146,7 +146,6 @@ export class StudioShellComponent {
   readonly uiPrefs = inject(UiPreferencesService);
   readonly boardFilters = inject(BoardFiltersService);
   readonly explorerSections = inject(ExplorerSectionsService);
-  private readonly explorerWorkbenchState = inject(ExplorerWorkbenchStateService);
   private readonly confirmDialog = inject(ConfirmDialogService);
   private readonly notifications = inject(NotificationService);
   private readonly workspaceManager = inject(WorkspaceManagerService);
@@ -1061,11 +1060,10 @@ export class StudioShellComponent {
     this.jobService.refresh();
   }
 
-  /** Collapse every workspace, project, Dossier, and Dossier-status branch. */
+  /** Collapse every workspace and project branch. */
   onCollapseAllProjects(): void {
     this._expandedProjects.set(new Set<string>());
     this.writeExpandedProjects(new Set<string>());
-    this.explorerWorkbenchState.collapseAll(this.projectRows().map(project => project.name));
     this.collapseAllVersion.update(version => version + 1);
   }
 

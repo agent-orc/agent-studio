@@ -423,8 +423,8 @@ occur. It is not a claim about tunnel transfer time.
   auto-review status snapshot into a compact current-step or elapsed-wait
   indicator; the lane header reconciles those visible cards as active versus
   waiting, with machine-lock gate queueing remaining a distinct waiting state.
-- Project Explorer entries follow Board, Dossiers, Deploy, Operations, Wiki,
-  Deck (NV-D1 option A). Deploy hosts the BD-3 Deploy area (Overview,
+- Project Explorer entries follow Board, Deploy, Operations, Wiki, Dossiers,
+  optional Style Guide, Deck, then project URLs (NV-D1 operator decision, 2026-11-01). Deploy hosts the BD-3 Deploy area (Overview,
   Releases, Pipeline, History, the existing deployment tools) plus a Run steps view with
   the run pipeline panel; old `pipeline` routes open Run steps. Operations reads
   `GET /api/projects/<project>/environments` and shows the recorded health of
@@ -652,39 +652,21 @@ occur. It is not a claim about tunnel transfer time.
   menu. Task-reference chips and lane dots share the viewport-positioned
   application tooltip so long titles and merge-status lines wrap without
   clipping in the viewer, lists, and Wiki surfaces. Pulse reuses the same
-  catalogue as a thinking inbox. The Explorer projects that catalogue into a first-class Dossiers
-  branch rather than exposing the descriptor's physical `operations/` path.
-  Current entries are grouped as `Needs a decision` and `In implementation`;
-  `Documented` and `Discarded` stay under a History branch. Every
-  lifecycle header and leaf uses one compact 24 px tree row: its pattern icon
-  aligns with every sibling at that depth, its title receives the flexible
-  width, and only a quiet status dot or compact open-decision count trails it.
-  Catalogue key, complete title, lifecycle state, phase, and freshness stay in
-  the viewport-safe shared tooltip instead of a second tree line. The Dossiers
-  count is the number of open decisions, not the number of documents.
-  Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
-  Lifecycle-group counts equal
-  their visible leaves and zero counts stay hidden. The catalogue's
-  `docs/operations/admin-design-guideline/index.html` entry is promoted once as
-  the permanent `Style Guide` project destination and is omitted from the
-  nested Dossiers list. This applies the AGT-2607 navigation-citizenship
-  direction without introducing a second lifecycle or taxonomy source.
-  The lifecycle branch uses one 12 px nesting step for both a group chevron and
-  its leaf icons instead of stacking a second full tree indent. At the
+  catalogue as a thinking inbox. The Explorer shows a single Dossiers row
+  directly below Wiki. It opens the project overview, keeps the live
+  open-decision count, and is current for that overview or an open Dossier tab.
+  The catalogue's admin-design-guideline entry becomes the optional Style Guide
+  row; only that row is current for its tab. The overview owns lifecycle groups
+  and their persisted section state. The Explorer has no Dossier disclosure or
+  leaves. At the
   Explorer's narrow width, project and URL names own the remaining row width
   before optional decoration: project activity overlays the avatar, zero totals
   stay absent, hover-only jump actions collapse, gaps and gutters tighten, and
   the project count disappears only at the resize floor. Ellipsis remains the
   last fallback, and the complete name plus current status stays in the shared
   title tooltip.
-  An active Dossier is
-  the selected leaf in the Explorer rather than making its Dossiers disclosure
-  parent current. Opening one expands the owning workspace, project, and
-  owning lifecycle group, persists those disclosure choices,
-  and scrolls the selected leaf into view. It does not open or close unrelated
-  branches. The Explorer-head Collapse all action closes workspace, project,
-  Dossiers, lifecycle, and History branches. Settled Dossiers keep the same
-  selection semantics but are revealed under History. Repository
+  An active Dossier marks the flat Dossiers row current. The Explorer-head
+  Collapse all action closes workspace and project branches. Repository
   HTML runs only
   in an opaque-origin `srcdoc` iframe with the Dossier CSP. A source-checked
   message boundary maps docs-relative links to the in-app Wiki and opens absolute

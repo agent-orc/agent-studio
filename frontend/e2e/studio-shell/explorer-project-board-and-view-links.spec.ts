@@ -6,8 +6,8 @@ import { dismissDevErrorDialog, setTheme, type Theme } from '../helpers/theme';
 
 /**
  * ASS-658/ASS-597: a project node in the Workspaces Explorer exposes exactly
- * six baseline project-scoped links: Board, Dossiers, Deploy, Operations,
- * Wiki, and Deck. A catalogue-owned Living Style Guide
+ * six baseline project-scoped links: Board, Deploy, Operations, Wiki,
+ * Dossiers, and Deck. A catalogue-owned Style Guide
  * may add one promoted sibling. The retired per-lane children (active /
  * human review / archive) stay gone.
  *
@@ -214,9 +214,6 @@ test.describe('Explorer · project destinations', () => {
     const { row, name } = expanded;
     const children = row.locator('.studio-tree-children');
 
-    // A Dossier can be expanded into nested entries; the six destinations
-    // remain visible regardless of that local disclosure state.
-
     // Each is addressable by its stable testid.
     await expect(page.getByTestId(`studio-explorer-project-board-${name}`)).toBeVisible();
     await expect(page.getByTestId(`studio-explorer-project-deck-${name}`)).toBeVisible();
@@ -224,6 +221,19 @@ test.describe('Explorer · project destinations', () => {
     await expect(page.getByTestId(`studio-explorer-project-workbenches-${name}`)).toBeVisible();
     await expect(page.getByTestId(`studio-explorer-project-deploy-${name}`)).toBeVisible();
     await expect(page.getByTestId(`studio-explorer-project-operations-${name}`)).toBeVisible();
+    const labels = await children.locator('.tree-row__name').allTextContents();
+    const destinations = labels.map(label => label.trim());
+    const expected = ['Board', 'Deploy', 'Operations', 'Wiki', 'Dossiers'];
+    if (destinations.includes('Style Guide')) expected.push('Style Guide');
+    expected.push('Deck');
+    expect(destinations.slice(0, expected.length)).toEqual(expected);
+    const rowIds = await children.locator('.tree-row').evaluateAll(rows =>
+      rows.map(row => row.getAttribute('data-testid') ?? ''));
+    expect(rowIds.slice(expected.length).every(id =>
+      id.startsWith(`studio-explorer-project-url-${name}-`))).toBe(true);
+    expect(await children.locator('.tree-row--child').count()).toBe(rowIds.length);
+    await expect(page.getByTestId(`studio-explorer-project-workbenches-${name}`))
+      .not.toHaveAttribute('aria-expanded');
 
     // The retired per-lane labels must not appear under the project node.
     const childText = (await children.innerText()).toLowerCase();
@@ -233,6 +243,10 @@ test.describe('Explorer · project destinations', () => {
     expect(childText).toContain('board');
     expect(childText).toContain('deck');
     expect(childText).not.toContain('backlog');
+    const dashboard = page.getByTestId('studio-open-deployment-dashboard');
+    await expect(dashboard.getByTestId('studio-open-deployment-dashboard-glyph')).toBeVisible();
+    await dashboard.click();
+    await expect(dashboard).toHaveAttribute('aria-current', 'page');
   });
 
   test('Deploy and Operations open outside the Deck in both themes', async ({ page, devBackend }) => {

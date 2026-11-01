@@ -224,8 +224,11 @@
           @switch (activePanel()) {
             @case ('explorer') {
               <section class="studio-explorer">
-                <button type="button" class="studio-deployment-entry" data-testid="studio-open-deployment-dashboard"
-                        (click)="openDeploymentDashboard()">Deployment dashboard</button>
+                <app-tree-row level="root" glyph="send" label="Deployment dashboard"
+                              [active]="activeTab()?.kind === 'deployment-dashboard'"
+                              [ariaCurrent]="activeTab()?.kind === 'deployment-dashboard' ? 'page' : null"
+                              testid="studio-open-deployment-dashboard"
+                              (selectRequest)="openDeploymentDashboard()" />
                 <!-- F46: two-level workspace → project tree. The flat
                      project list is grouped under its registry workspace
                      by <app-explorer-workspace-tree>; the shell keeps

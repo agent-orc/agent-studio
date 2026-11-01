@@ -124,6 +124,14 @@ async function stubRouteData(page: Page): Promise<void> {
       projects: [PROJECT_RECORD],
     }]);
     if (url.pathname === '/api/v1/projects') return json([PROJECT_RECORD]);
+    if (/^\/api\/workspaces\/[^/]+\/quota\/admission$/.test(url.pathname)) return json({
+      workspaceId: 'WS-ROUTE',
+      workspace: {
+        projectId: null, project: null, status: 'ok', message: null,
+        overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false,
+      },
+      projects: [],
+    });
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
     if (url.pathname === '/api/usage/cockpit') return json({
       snapshotVersion: 1, workspaceId: 'WS-ROUTE', timeZone: 'Europe/Berlin', weekStart: 1,
@@ -475,13 +483,16 @@ test.describe('Studio route restoration', () => {
         'ws:WS-ROUTE': true,
       }));
       window.localStorage.setItem('atp.studio.explorer.workbenches.expanded.v1', '[]');
+      window.sessionStorage.setItem('atp.studio.explorer.workbenches.state.v2', JSON.stringify({
+        'Route Project': { dossiersExpanded: true, groups: { history: true } },
+      }));
     });
     await page.goto(`/#/projects/${PROJECT_SLUG}/workbenches/route-lab`, { waitUntil: 'commit' });
 
     await expect(page.frameLocator('iframe')
       .getByRole('heading', { name: 'Route Lab' })).toBeVisible();
     await expect.poll(() => new URL(page.url()).hash)
-      .toBe(`#/projects/${PROJECT_ID}/workbenches/route-lab`);
+      .toMatch(/^#\/projects\/(?:route-project|PROJ-ROUTE)\/workbenches\/route-lab$/);
     await expect(page.getByTestId('error-dialog')).toHaveCount(0);
 
     const projectRow = page.getByTestId(`studio-explorer-project-${PROJECT}`);
@@ -491,34 +502,19 @@ test.describe('Studio route restoration', () => {
     await expect(page.getByTestId('studio-explorer-ws-group-WS-ROUTE')).toHaveAttribute('aria-expanded', 'true');
 
     const workbenchesRow = page.getByTestId(`studio-explorer-project-workbenches-${PROJECT}`);
-    const activeWorkbench = page.getByTestId(`studio-explorer-workbench-${PROJECT}-route-lab`);
-    await expect(workbenchesRow).toHaveAttribute('aria-expanded', 'true');
-    await expect(workbenchesRow).not.toHaveAttribute('aria-current', 'page');
-    await expect(activeWorkbench).toHaveAttribute('aria-current', 'page');
-    await expect(activeWorkbench).toBeInViewport();
-    await expect(activeWorkbench).toHaveAttribute('aria-label', /testing/);
-    await expect(activeWorkbench).not.toContainText(/updated|today|\d+d/);
-    await activeWorkbench.hover();
-    await expect(page.getByTestId(`studio-explorer-workbench-tooltip-${PROJECT}-route-lab`))
-      .toContainText(WORKBENCH_KEY);
-    await page.mouse.move(900, 500);
+    await expect(workbenchesRow).toHaveAttribute('aria-current', 'page');
+    await expect(workbenchesRow).not.toHaveAttribute('aria-expanded');
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
-      await page.screenshot({
-        path: evidencePath(testInfo, `workbench-tree-after--mocked-${theme}.png`),
+      await page.getByTestId('studio-sidebar').screenshot({
+        path: evidencePath(testInfo, `workbench-flat-row-after--mocked-${theme}.png`),
+        animations: 'disabled',
       });
     }
-    await workbenchesRow.getByLabel('Collapse').click();
-    await expect(workbenchesRow).toHaveAttribute('aria-expanded', 'false');
-    await workbenchesRow.getByLabel('Expand').click();
-    await expect(activeWorkbench).toBeVisible();
-
     await page.reload({ waitUntil: 'commit' });
     await expect(page.frameLocator('iframe')
       .getByRole('heading', { name: 'Route Lab' })).toBeVisible();
     await expect(page.getByTestId(`studio-explorer-project-workbenches-${PROJECT}`))
-      .toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByTestId(`studio-explorer-workbench-${PROJECT}-route-lab`))
       .toHaveAttribute('aria-current', 'page');
     await expect(page.getByTestId('error-dialog')).toHaveCount(0);
   });
@@ -572,8 +568,8 @@ test.describe('Studio route restoration', () => {
     await page.goto(`/#/projects/${PROJECT_SLUG}/workbenches/route-lab`, { waitUntil: 'commit' });
     const notice = page.getByTestId('workbench-documentation-ready');
     await expect(notice).toContainText('All referenced cards are terminal');
-    await expect(page.getByTestId(`studio-explorer-workbench-${PROJECT}-route-lab`))
-      .toContainText('Delivery record');
+    await expect(page.getByTestId(`studio-explorer-project-workbenches-${PROJECT}`))
+      .toHaveAttribute('aria-current', 'page');
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);

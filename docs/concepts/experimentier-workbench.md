@@ -257,27 +257,23 @@ into the ordinary Wiki tree.
 ```text
 Agent Studio
   Board
-  Project Hub
+  Deploy
+  Operations
   Wiki
   Dossiers                         3
-    Project state at a glance         testing
-    Pipeline completion flow          decision-ready
-    App surface measurement           shaping
-  Epics
+  Style Guide (when available)
+  Deck
+  Project URLs
 ```
 
-The default expansion lists current items: `active` plus
-`decision-pending`, sorted by `updatedAt` newest first. Pending failures
-remain visible until repaired. The count equals the visible current children.
-A quiet history action opens decided and archived items; settled experiments do
-not keep an acute signal. Status uses text, a dot, or a background tint, never a
-colored left accent bar.
+The Dossiers count reflects open decisions. The row opens the project overview,
+which offers current items, history, search, and filters. Status uses text, a
+dot, or a background tint, never a colored left accent bar.
 
-The catalogue loads lazily when a project's Dossiers row expands, or through
-one bounded batch for already-expanded projects. Explorer startup must not issue
-one Dossier request for every registered project.
+The catalogue loads for expanded projects and refreshes on Dossier hub events.
+Explorer startup must not issue one Dossier request for every registered project.
 
-Selecting an item opens a Dossier tab and preserves project, path, viewed
+Selecting an item from the overview opens a Dossier tab and preserves project, path, viewed
 branch, and revision in the header. This uses the shared Branch Context Control
 from the [Distributed Agent Studio target architecture](distributed-agent-studio-target-architecture.md). The list
 and viewer must never imply that content from one branch represents another.
@@ -287,8 +283,8 @@ that SHA to bytes HEAD does not contain.
 
 Because the files remain below `docs/`, they also stay visible in the physical
 Wiki tree and Git/Pulse history. The ordinary Wiki view renders the entrypoint
-as an interactive but isolated artifact. The Dossiers row is a narrow
-generated projection with lifecycle actions, not a second content tree.
+as an interactive but isolated artifact. The flat Dossiers row opens the
+project overview, where lifecycle actions remain available.
 
 Pulse may report recently changed, invalid, or decision-ready Dossiers, but
 Pulse does not own their list or lifecycle. Its role remains a generated entry
@@ -514,8 +510,8 @@ with Robert's required Pulse entry point and the first WB-5 discovery pilot:
 - `GET /api/projects/{projectName}/workbenches` validates canonical folders,
   keeps invalid descriptors visible, sorts current items newest first, and can
   include settled history through `?history=true`;
-- the Explorer loads a project's catalogue only when its Dossiers row is
-  expanded, and the count equals the visible rows;
+- the Explorer loads each expanded project's catalogue for its flat Dossiers row,
+  whose count is the number of open decisions;
 - the viewer carries project, path, branch, and revision provenance and renders
   `srcdoc` with `sandbox="allow-scripts"`, an opaque origin, and a restrictive
   CSP that denies network, frames, forms, objects, workers, and base URLs;

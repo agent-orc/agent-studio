@@ -161,7 +161,7 @@ test('article patterns drive the Dossier Explorer and isolated viewer in both th
   let createdWorkspaceId: string | null = null;
   let clientId: string | null = null;
   for (const candidate of paths) {
-    const response = await fetch(`${devBackend.baseUrl}/api/projects/${encodeURIComponent(candidate.name)}/workbenches`);
+    const response = await fetch(`${devBackend.baseUrl}/api/projects/${encodeURIComponent(candidate.name)}/workbenches?history=true`);
     if (!response.ok) continue;
     const catalogue = await response.json() as { items?: { id: string }[] };
     if (catalogue.items?.some(item => item.id === 'app-survey')) { project = candidate; break; }
@@ -203,7 +203,7 @@ test('article patterns drive the Dossier Explorer and isolated viewer in both th
   }
   expect(project, 'The real backend must expose this repository as a project.').toBeTruthy();
   try {
-  const realCatalogueResponse = await fetch(`${devBackend.baseUrl}/api/projects/${encodeURIComponent(project!.name)}/workbenches`);
+  const realCatalogueResponse = await fetch(`${devBackend.baseUrl}/api/projects/${encodeURIComponent(project!.name)}/workbenches?history=true`);
   const realCatalogueText = await realCatalogueResponse.text();
   expect(realCatalogueResponse.ok, realCatalogueText).toBe(true);
   expect(realCatalogueText).toContain('app-survey');
@@ -219,21 +219,10 @@ test('article patterns drive the Dossier Explorer and isolated viewer in both th
   const workbenchesRow = page.getByTestId(`studio-explorer-project-workbenches-${project.name}`);
   await expect(workbenchesRow).toBeVisible();
   await workbenchesRow.click();
-  await expect(page.getByTestId(`studio-explorer-workbench-${project.name}-workbench-mockup-family`)).toBeVisible();
-  await expect(page.getByTestId(`studio-explorer-workbench-${project.name}-app-survey`)).toBeVisible();
-  await expect(page.getByTestId(`studio-explorer-workbench-${project.name}-deck-icon-exploration`)).toBeVisible();
-  await expect(page.getByTestId(`studio-explorer-workbench-${project.name}-workbench-konzept`)).toBeVisible();
-  const uiExplorerIcon = await page.getByTestId(
-    `studio-explorer-workbench-${project.name}-deck-icon-exploration`).locator('svg').innerHTML();
-  const conceptExplorerIcon = await page.getByTestId(
-    `studio-explorer-workbench-${project.name}-workbench-konzept`).locator('svg').innerHTML();
-  expect(uiExplorerIcon).not.toBe(conceptExplorerIcon);
-  await expect(page.getByTestId(
-    `workbench-overview-pattern-${project.name}-deck-icon-exploration`)).toHaveAttribute('data-pattern', 'ui');
-  await expect(page.getByTestId(
-    `workbench-overview-pattern-${project.name}-workbench-konzept`)).toHaveAttribute('data-pattern', 'concept');
-  await expect(page.getByTestId(`studio-explorer-workbench-history-${project.name}`)).toBeVisible();
-  const dossierList = page.getByTestId(`studio-explorer-workbench-list-${project.name}`);
+  for (const id of ['workbench-mockup-family', 'app-survey', 'deck-icon-exploration', 'workbench-konzept']) {
+    await expect(page.getByTestId(`workbench-overview-item-${project.name}-${id}`)).toBeVisible();
+  }
+  await expect(workbenchesRow).not.toHaveAttribute('aria-expanded');
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
@@ -241,16 +230,14 @@ test('article patterns drive the Dossier Explorer and isolated viewer in both th
     await page.getByTestId('studio-sidebar').screenshot({
       path: evidencePath(testInfo, `dossier-nav-${theme}--real.png`),
     });
-    await dossierList.screenshot({
-      path: evidencePath(testInfo, `dossier-list-${theme}--real.png`),
-    });
     await page.screenshot({
       path: evidencePath(testInfo, `workbench-explorer--${theme}--real.png`),
       fullPage: true,
     });
   }
 
-  await page.getByTestId(`studio-explorer-workbench-${project.name}-workbench-konzept`).click();
+  await page.getByTestId(`workbench-overview-item-${project.name}-workbench-konzept`)
+    .getByRole('button', { name: 'Open full view' }).click();
   const frame = page.getByTestId('workbench-viewer-frame');
   await expect(frame).toBeVisible();
   await expect(frame).toHaveAttribute('title', /^Dossier artifact:/);
@@ -292,8 +279,10 @@ test('article patterns drive the Dossier Explorer and isolated viewer in both th
       evidencePath(testInfo, `article-template-concept--${theme}--real.png`),
     );
   }
-  await page.getByTestId(`studio-explorer-workbench-${project.name}-deck-icon-exploration`)
-    .dispatchEvent('click');
+  await page.getByTestId('workbench-viewer-maximize').click();
+  await workbenchesRow.click();
+  await page.getByTestId(`workbench-overview-item-${project.name}-deck-icon-exploration`)
+    .getByRole('button', { name: 'Open full view' }).click();
   await expect(page.getByTestId('workbench-viewer-frame-shell'))
     .not.toHaveClass(/workbench-viewer__frame-shell--maximized/);
   await expect(page.getByTestId('workbench-viewer-provenance')
@@ -321,6 +310,7 @@ test('article patterns drive the Dossier Explorer and isolated viewer in both th
       evidencePath(testInfo, `article-template-ui--${theme}--real.png`),
     );
   }
+  await page.getByTestId('workbench-viewer-maximize').click();
   let escapedNetworkRequests = 0;
   page.on('request', request => {
     if (new URL(request.url()).hostname === 'workbench.invalid') escapedNetworkRequests += 1;
@@ -348,8 +338,9 @@ test('article patterns drive the Dossier Explorer and isolated viewer in both th
       branch: 'develop', revision: null, workingTreeModified: true, fingerprint: null,
     },
   }));
-  await page.getByTestId(`studio-explorer-workbench-${project.name}-app-survey`)
-    .dispatchEvent('click');
+  await workbenchesRow.click();
+  await page.getByTestId(`workbench-overview-item-${project.name}-app-survey`)
+    .getByRole('button', { name: 'Open full view' }).click();
   await expect(page.getByTestId('workbench-viewer-frame-shell'))
     .not.toHaveClass(/workbench-viewer__frame-shell--maximized/);
   const srcdoc = await frame.getAttribute('srcdoc');
@@ -406,22 +397,22 @@ test('Nordstern Dossier links, maximize, and Wiki jump stay in the Studio', asyn
   if (await projectRow.getAttribute('aria-expanded') === 'false') await projectRow.click();
   const workbenchesRow = page.getByTestId(`studio-explorer-project-workbenches-${projectName}`);
   await expect(workbenchesRow).toBeVisible();
-  if (await workbenchesRow.getAttribute('aria-expanded') === 'false') await workbenchesRow.click();
-  await page.getByTestId(`studio-explorer-workbench-${projectName}-nordstern`).click();
+  await workbenchesRow.click();
+  await page.getByTestId(`workbench-overview-item-${projectName}-nordstern`)
+    .getByRole('button', { name: 'Open full view' }).click();
 
   const detailsTrigger = page.getByTestId('workbench-viewer-details-trigger');
   const detailsPopover = page.getByTestId('workbench-viewer-details-popover');
-  const viewerDetailsWikiAction = detailsPopover.locator('.viewer-details__wiki-link');
   await detailsTrigger.click();
-  await expect(viewerDetailsWikiAction).toBeVisible();
+  await expect(detailsPopover).toBeVisible();
   await detailsTrigger.click();
   await expect(page.getByTestId('workbench-viewer-maximize')).toHaveAttribute('aria-label', 'Maximize');
   const nordsternFrame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
-  const landkarte = nordsternFrame.getByRole('heading', { name: /Landkarte/ });
-  await expect(landkarte).toBeVisible();
-  await landkarte.scrollIntoViewIfNeeded();
+  const targetPicture = nordsternFrame.getByRole('heading', { name: /The target picture/ });
+  await expect(targetPicture).toBeVisible();
+  await targetPicture.scrollIntoViewIfNeeded();
   await page.screenshot({
-    path: evidencePath(testInfo, 'nordstern-landkarte-after.png'),
+    path: evidencePath(testInfo, 'nordstern-target-picture-after.png'),
     fullPage: true,
   });
 
@@ -432,21 +423,8 @@ test('Nordstern Dossier links, maximize, and Wiki jump stay in the Studio', asyn
   await page.getByTestId('workbench-viewer-maximize').click();
   await expect(page.getByTestId('workbench-viewer-maximize')).toHaveAttribute('aria-label', 'Maximize');
 
-  await detailsTrigger.click();
-  await expect(viewerDetailsWikiAction).toBeVisible();
-  await viewerDetailsWikiAction.click();
+  await nordsternFrame.getByRole('link', { name: 'AGT-W49' }).first().click();
   await expect(page).toHaveURL(
-    /#\/projects\/[^/]+\/wiki\?page=operations%2Fnordstern%2Findex\.html/,
+    /#\/projects\/[^/]+\/wiki\?page=operations%2Foperations-server-backchannel%2Findex\.html/,
   );
-  await expect(page.getByTestId('project-wiki-viewer-path'))
-    .toContainText('operations/nordstern/index.html');
-
-  await page.goBack();
-  await expect(page.getByTestId('workbench-viewer-frame')).toBeVisible();
-  await nordsternFrame.getByRole('link', { name: /Umsetzungsplan \(Detail\)/ }).click();
-  await expect(page).toHaveURL(
-    /#\/projects\/[^/]+\/wiki\?page=operations%2Fumsetzungsplan-zielbild%2Findex\.html/,
-  );
-  await expect(page.getByTestId('project-wiki-viewer-path'))
-    .toContainText('operations/umsetzungsplan-zielbild/index.html');
 });

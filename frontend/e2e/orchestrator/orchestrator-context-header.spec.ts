@@ -24,6 +24,7 @@ test.use({ serviceWorkers: 'block' });
 
 const PROJECT = 'project-neuen';
 const RUNNING_TASK_ID = 'run-task-1';
+const RUNNING_TASK_KEY = `C:/tmp/${PROJECT}::${RUNNING_TASK_ID}`;
 const RUNNING_TASK_TITLE = 'Wire up the orchestrator header';
 const LONG_CONTEXT_PROJECT = 'Agent Orchestrator Website';
 const LONG_CONTEXT_TITLE = 'Family navigation consistency - decision';
@@ -63,7 +64,7 @@ async function fulfillKnownGet(route: Route, body: unknown, unexpectedRequests: 
 function runningTask() {
   return {
     id: RUNNING_TASK_ID,
-    taskKey: PROJECT + '::' + RUNNING_TASK_ID,
+    taskKey: RUNNING_TASK_KEY,
     displayKey: 'AGT-1916',
     title: RUNNING_TASK_TITLE,
     state: '3-progress',
@@ -82,7 +83,7 @@ function runningTask() {
     commit: null,
     execution: {
       jobId: RUNNING_TASK_ID,
-      taskKey: PROJECT + '::' + RUNNING_TASK_ID,
+      taskKey: RUNNING_TASK_KEY,
       processId: 1234,
       // Two minutes ago -> duration label bucket "2m".
       startedAt: new Date(Date.now() - 120_000).toISOString(),
@@ -121,6 +122,32 @@ async function stubBoardBootstrap(page: Page): Promise<string[]> {
       unexpectedRequests,
     );
   });
+
+  // Shell bootstrap reads these alongside the focused Orchestrator context.
+  // Keep each response shape explicit so the fallback still catches new APIs.
+  await page.route(/\/api\/auth\/status$/, route =>
+    fulfillKnownGet(route, { profile: 'local', authenticated: true, bootstrapRequired: false }, unexpectedRequests));
+  await page.route(/\/api\/projects$/, route => fulfillKnownGet(route, [], unexpectedRequests));
+  await page.route(/\/api\/develop-states$/, route => fulfillKnownGet(route, [], unexpectedRequests));
+  await page.route(/\/api\/watcher\/stalls(?:\?.*)?$/, route =>
+    fulfillKnownGet(route, { count: 0, cases: [] }, unexpectedRequests));
+  await page.route(/\/api\/v1\/management\/(?:links|provider-refusals|runner-infrastructure-failures)(?:\?.*)?$/, route =>
+    fulfillKnownGet(route, [], unexpectedRequests));
+  await page.route(/\/api\/v1\/management\/host-releases$/, route =>
+    fulfillKnownGet(route, { observedAt: '2026-08-10T08:00:00Z', stable: null, behindCount: 0, hosts: [] }, unexpectedRequests));
+  await page.route(/\/api\/projects\/[^/]+\/tags$/, route => fulfillKnownGet(route, [], unexpectedRequests));
+  await page.route(/\/api\/projects\/[^/]+\/deploy\/lanes$/, route =>
+    fulfillKnownGet(route, { projectId: '', releaseDepth: 0, columns: [] }, unexpectedRequests));
+  await page.route(/\/api\/projects\/[^/]+\/batch-gate\/state(?:\?.*)?$/, route =>
+    fulfillKnownGet(route, { current: null, history: [] }, unexpectedRequests));
+  await page.route(/\/api\/projects\/[^/]+\/chat-metadata$/, route =>
+    fulfillKnownGet(route, { chatMetadataEnabled: true }, unexpectedRequests));
+  await page.route(/\/api\/workbenches(?:\?.*)?$/, route =>
+    fulfillKnownGet(route, { projectName: null, count: 0, currentCount: 0, historyCount: 0, items: [] }, unexpectedRequests));
+  await page.route(/\/api\/orchestrator\/context\/workbench:[^/]+\/[^/]+$/, route =>
+    fulfillKnownGet(route, { contextKey: 'workbench', capturedAt: '2026-08-10T08:00:00Z', digest: '', sources: [] }, unexpectedRequests));
+  await page.route(/\/api\/runner\/workbench:[^/]+\/[^/]+\/orchestrator-chat$/, route =>
+    fulfillKnownGet(route, { project: LONG_CONTEXT_PROJECT, turns: [], executionContext: null }, unexpectedRequests));
 
   const emptyArrayEndpoints = /\/api\/(?:cli\/(?:claude|codex|gemini)\/models|clients\/?|crash-recovery\/pending|git\/summary|tags|v1\/workspaces)(?:\?.*)?$/;
   await page.route(emptyArrayEndpoints, async (route) => {
@@ -176,6 +203,23 @@ async function stubBoardBootstrap(page: Page): Promise<string[]> {
       { at: '2026-01-01T00:00:00Z', snapshots: [], ttlSeconds: 600 },
       unexpectedRequests,
     );
+  });
+  await page.route(/\/api\/usage\/cockpit(?:\?.*)?$/, async (route) => {
+    const at = '2026-08-10T08:00:00Z';
+    const availability = { status: 'unavailable', observedAt: at, ttlSeconds: 600 };
+    const calendar = {
+      timeZone: 'Europe/Berlin', weekStart: 1,
+      dayStartUtc: at, dayEndUtc: at, weekStartUtc: at, weekEndUtc: at,
+    };
+    await fulfillKnownGet(route, {
+      snapshotVersion: 1, workspaceId: '', timeZone: calendar.timeZone,
+      weekStart: 1, generatedAt: at, calendar, clis: [], runs: [], slots: [], sources: {},
+      cost: {
+        currency: 'USD', calendar, todayUsd: null, weekUsd: null, projects: [],
+        coverage: availability, pricingVersion: 'test', normalizationVersion: 'test',
+        ledgerEndpointTemplate: '',
+      },
+    }, unexpectedRequests);
   });
   await page.route(/\/api\/tasks\/archive(?:\?.*)?$/, async (route) => {
     await fulfillKnownGet(route, { items: [], total: 0, offset: 0, limit: 50 }, unexpectedRequests);
@@ -297,7 +341,23 @@ async function stubLongWorkbench(page: Page): Promise<string[]> {
       count: 1,
       currentCount: 1,
       historyCount: 0,
-      items: [],
+      items: [{
+        projectName: LONG_CONTEXT_PROJECT,
+        workbench: {
+          id: LONG_CONTEXT_WORKBENCH,
+          key: 'AOW-W1',
+          title: LONG_CONTEXT_TITLE,
+          summary: 'Long composer context regression fixture.',
+          status: 'decision-pending',
+          phase: 'decision',
+          updatedAtUtc: '2026-08-10T08:00:00Z',
+          entryPath: `docs/workbenches/${LONG_CONTEXT_WORKBENCH}/index.html`,
+          valid: true,
+          error: null,
+          sourceTaskKeys: [],
+          relatedTaskKeys: [],
+        },
+      }],
     }, unexpectedRequests);
   });
   await page.route(
@@ -545,7 +605,11 @@ test.describe('Orchestrator context header · where am I', () => {
       'dark',
     );
     await stubWorkspace(page, { withRunningTask: true });
-    await openSideSheet(page, false);
+    await page.goto('/');
+    await page.waitForLoadState('domcontentloaded');
+    await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+    await page.getByRole('tab', { name: RUNNING_TASK_TITLE }).click();
+    await showSideSheet(page, false);
 
     const sheet = page.getByTestId('orch-side-sheet');
     // The automatic context chip is the composer's location indicator now.
@@ -573,15 +637,14 @@ test.describe('Orchestrator context header · where am I', () => {
       const workbenchSection = page.getByTestId(
         `studio-explorer-project-workbenches-${LONG_CONTEXT_PROJECT}`,
       );
-      const workbench = page.getByTestId(
-        `studio-explorer-workbench-${LONG_CONTEXT_PROJECT}-${LONG_CONTEXT_WORKBENCH}`,
-      );
       if (await page.locator('app-orchestrator-side-sheet.is-open').count()) {
         await page.getByTestId('orch-side-sheet-toggle').click();
       }
-      if (!await workbench.isVisible()) await workbenchSection.click();
-      await expect(workbench).toBeVisible();
-      await workbench.click();
+      const project = page.getByTestId(`studio-explorer-project-${LONG_CONTEXT_PROJECT}`);
+      if (await project.getAttribute('aria-expanded') === 'false') await project.click();
+      await workbenchSection.click();
+      await page.getByTestId(`workbench-overview-item-${LONG_CONTEXT_PROJECT}-${LONG_CONTEXT_WORKBENCH}`)
+        .getByRole('button', { name: 'Open full view' }).click();
       await page.setViewportSize({ width: variant.width, height: variant.height });
       if (!await page.locator('app-orchestrator-side-sheet.is-open').count()) {
         await showSideSheet(page, false);

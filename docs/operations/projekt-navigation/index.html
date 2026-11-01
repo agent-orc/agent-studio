@@ -125,7 +125,7 @@
 <p>Operator-Vorgabe vom 16.10.2026, sinngemäß: Die Projekte brauchen eine neue Hauptstruktur mit Operations und Deploy. Epics haben sich nicht bewährt und können vollständig ausgebaut werden. Die neue Klammer werden die Dossiers. Der Ausbau ist eventuell nicht ganz einfach. So wird auch ein Hauptpunkt frei.</p>
 
 <h2 id="s2"><span class="no">§2</span>Heute</h2>
-<p>Im Explorer hat jedes Projekt diese Hauptpunkte: Board, Deck, Wiki, Dossiers, Epics und danach die Projekt-Adressen (<code>explorer-workspace-tree.component.html</code>). Das Deck sammelt rund 25 Panels in vier Gruppen (<code>project-shell.config.ts</code>):</p>
+<p>Current Explorer order: Board, Deploy, Operations, Wiki, Dossiers, optional Style Guide, Deck, then project URLs (<code>explorer-workspace-tree.component.html</code>). Dossiers is a flat row that opens the project overview. The following Deck inventory records the structure at the time of the original 16.10.2026 proposal:</p>
 <div class="tablewrap">
 <table>
   <thead><tr><th>Gruppe</th><th>Panels</th></tr></thead>
@@ -145,11 +145,13 @@
   <thead><tr><th>Hauptpunkt</th><th>Inhalt</th><th>kommt aus</th></tr></thead>
   <tbody>
     <tr><td><b>Board</b></td><td>Karten in Lanes, gruppierbar nach Dossier und nach Umgebung</td><td>wie heute; Gruppierung nach Epic entfällt</td></tr>
-    <tr><td><b>Dossiers</b></td><td>Konzepte, Entscheidungen, Programme; je Dossier seine Karten mit Fortschritt</td><td>wie heute, erweitert (§4)</td></tr>
     <tr><td><b>Deploy</b></td><td>Übersicht mit Status-Karte je Umgebung, Releases, Pipeline, Variablen, Runbooks</td><td>neu (Bereitstellungs-Dossier §3); ersetzt die Panels Deployment und Pipeline</td></tr>
     <tr><td><b>Operations</b></td><td>Health, Monitoring, Nutzung, Last, Logs und Alarme je Umgebung, DORA-Kennzahlen</td><td>neu (Integrierte Plattform §8); übernimmt das Panel Observability, soweit es die Anwendung betrifft</td></tr>
     <tr><td><b>Wiki</b></td><td>Projekt-Dokumentation</td><td>wie heute</td></tr>
+    <tr><td><b>Dossiers</b></td><td>Konzepte, Entscheidungen, Programme; je Dossier seine Karten mit Fortschritt</td><td>wie heute, erweitert (§4)</td></tr>
+    <tr><td><b>Style Guide</b></td><td>Projekt-Style-Guide, falls vorhanden</td><td>Projekt-Dossier-Katalog</td></tr>
     <tr><td><b>Deck</b></td><td>die übrigen Panels, ohne Deployment, Pipeline und Observability</td><td>wie heute, schlanker</td></tr>
+    <tr><td><b>Projekt-Adressen</b></td><td>konfigurierte Projekt-URLs als eingebettete Vorschau</td><td>Projektkonfiguration</td></tr>
   </tbody>
 </table>
 </div>
@@ -199,6 +201,7 @@
   <h3>NV-D1 · In welcher Reihenfolge stehen die Hauptpunkte?</h3>
   <label data-option-id="board-dossiers-deploy-ops" data-option-label="A · Board, Dossiers, Deploy, Operations, Wiki, Deck (Empfehlung)"><input type="radio" name="nv-reihenfolge" value="board-dossiers-deploy-ops"><span><b>A · Board, Dossiers, Deploy, Operations, Wiki, Deck</b><span class="d">Folgt dem Weg einer Änderung: planen, bauen, bereitstellen, betreiben.</span></span></label>
   <label data-option-id="board-deploy-ops-dossiers" data-option-label="B · Board, Deploy, Operations, Dossiers, Wiki, Deck"><input type="radio" name="nv-reihenfolge" value="board-deploy-ops-dossiers"><span><b>B · Board, Deploy, Operations, Dossiers, Wiki, Deck</b><span class="d">Betrieb weiter oben; Dossiers als Nachschlagewerk.</span></span></label>
+  <p><strong>Operator decision, 01.11.2026:</strong> Board, Deploy, Operations, Wiki, Dossiers, Style Guide (when available), Deck, then project URLs. Dossiers is one flat row directly below Wiki with no inline tree. Clicking it opens the project Dossier overview.</p>
   <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
 </div>
 

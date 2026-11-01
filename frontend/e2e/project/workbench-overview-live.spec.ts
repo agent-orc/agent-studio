@@ -296,7 +296,6 @@ test('project and central overviews receive a newly created item without reloadi
   expect(projectName, 'The dev backend must expose the task checkout Dossiers.').not.toBeNull();
 
   const id = `live-tree-proof-${Date.now().toString(36)}`;
-  const probeDir = path.join(devBackend.workspace, 'docs', 'operations', id);
   try {
     await proxyApi(page, devBackend.baseUrl);
     const hubConnected = page.waitForEvent('websocket', {
@@ -314,12 +313,32 @@ test('project and central overviews receive a newly created item without reloadi
 
     const sectionRow = page.getByTestId(`studio-explorer-project-workbenches-${projectName}`);
     await expect(sectionRow).toBeVisible();
+    await expect(sectionRow.locator('app-count-badge')).toBeVisible({ timeout: 30_000 });
+    const initialDecisionCount = Number((await sectionRow.locator('app-count-badge').textContent())?.trim() || 0);
     await sectionRow.click();
     await expect(page).toHaveURL(/\/workbenches(?:&|$)/);
     await expect(page.getByTestId('workbench-overview-scope')).toContainText(projectName!);
 
-    fs.mkdirSync(probeDir, { recursive: true });
-    fs.writeFileSync(path.join(probeDir, 'index.html'), `<!doctype html>
+    const registration = await fetch(`${devBackend.baseUrl}/api/clients/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ displayName: `Dossier live proof ${id}` }),
+    });
+    const registrationBody = await registration.text();
+    expect(registration.ok, registrationBody).toBe(true);
+    const client = JSON.parse(registrationBody) as { id: string };
+    const createPage = async (name: string, content: string): Promise<void> => {
+      const response = await fetch(
+        `${devBackend.baseUrl}/api/projects/${encodeURIComponent(projectName!)}/wiki/pages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'X-Client-Id': client.id },
+          body: JSON.stringify({ relPath: `operations/${id}/${name}`, content }),
+        },
+      );
+      expect(response.ok, await response.text()).toBe(true);
+    };
+    await createPage('index.html', `<!doctype html>
 <html>
   <head><style>:root { color-scheme: light dark; } body { color: CanvasText; background: Canvas; }</style></head>
   <body>
@@ -331,7 +350,7 @@ test('project and central overviews receive a newly created item without reloadi
     </section>
   </body>
 </html>`);
-    fs.writeFileSync(path.join(probeDir, 'workbench.json'), JSON.stringify({
+    await createPage('workbench.json', JSON.stringify({
       schemaVersion: 1,
       id,
       title: 'Live creation proof',
@@ -344,10 +363,19 @@ test('project and central overviews receive a newly created item without reloadi
       relatedTaskKeys: [],
     }, null, 2));
 
-    const treeItem = page.getByTestId(`studio-explorer-workbench-${projectName}-${id}`);
-    await expect(treeItem, 'SignalR created event must add the Tree child without page.reload().')
-      .toBeVisible({ timeout: 15_000 });
-    await expect(treeItem).toContainText('1 open');
+    await expect.poll(async () => {
+      const response = await fetch(
+        `${devBackend.baseUrl}/api/projects/${encodeURIComponent(projectName!)}/workbenches?history=true`,
+      );
+      if (!response.ok) return false;
+      const catalogue = await response.json() as { items?: { id: string }[] };
+      return catalogue.items?.some(item => item.id === id) ?? false;
+    }, { message: 'The backend catalogue must discover the new Dossier.', timeout: 30_000 }).toBe(true);
+
+    await expect.poll(async () => Number((await sectionRow.locator('app-count-badge').textContent())?.trim() || 0), {
+      message: 'SignalR created event must refresh the flat Dossiers count without page.reload().',
+      timeout: 30_000,
+    }).toBe(initialDecisionCount + 1);
     await expect(page.getByTestId(`workbench-overview-item-${projectName}-${id}`)).toBeVisible();
 
     const overviewUrl = page.url();
@@ -379,6 +407,5 @@ test('project and central overviews receive a newly created item without reloadi
     }
   } finally {
     await page.unrouteAll({ behavior: 'ignoreErrors' });
-    fs.rmSync(probeDir, { recursive: true, force: true });
   }
 });

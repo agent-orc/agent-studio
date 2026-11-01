@@ -2,7 +2,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { describe, expect, it } from 'vitest';
 import {
@@ -482,19 +482,44 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     const rows = Array.from(
       root.querySelectorAll<HTMLElement>('.studio-tree-children .tree-row[data-testid^="studio-explorer-project-"]'),
     ).map(el => el.getAttribute('data-testid'));
-    // NV-D1 option A is the fixed project navigation order.
+    // The operator's 2026-11-01 decision fixes this flat order.
     expect(rows).toEqual([
       'studio-explorer-project-board-Alpha',
-      'studio-explorer-project-workbenches-Alpha',
       'studio-explorer-project-deploy-Alpha',
       'studio-explorer-project-operations-Alpha',
       'studio-explorer-project-wiki-Alpha',
+      'studio-explorer-project-workbenches-Alpha',
       'studio-explorer-project-hub-Alpha',
     ]);
 
     const wiki = root.querySelector<HTMLElement>('[data-testid="studio-explorer-project-wiki-Alpha"]');
     wiki?.click();
     expect(emitted).toEqual(['Alpha']);
+  });
+  it('places an available Style Guide between Dossiers and Deck at the same child indent', () => {
+    const fixture = mount();
+    fixture.componentRef.setInput('registryWorkspaces', []);
+    fixture.componentRef.setInput('projectRows', [row('Alpha', { isActive: true })]);
+    fixture.componentRef.setInput('expandedProjects', new Set(['Alpha']));
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectOne(request =>
+      request.url === '/api/projects/Alpha/workbenches' && request.params.get('history') === 'true')
+      .flush({ projectName: 'Alpha', includesHistory: true, count: 1, items: [{
+        id: 'guide', key: 'AGT-W20', title: 'Style Guide', summary: '', status: 'active',
+        phase: null, updatedAtUtc: '2026-10-01T00:00:00Z',
+        entryPath: 'docs/operations/admin-design-guideline/index.html', valid: true,
+        error: null, sourceTaskKeys: [], relatedTaskKeys: [], pattern: 'concept',
+      }] });
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    const rows = Array.from(root.querySelectorAll<HTMLElement>('.studio-tree-children .tree-row'));
+    expect(rows.map(el => el.getAttribute('data-testid'))).toEqual([
+      'studio-explorer-project-board-Alpha', 'studio-explorer-project-deploy-Alpha',
+      'studio-explorer-project-operations-Alpha', 'studio-explorer-project-wiki-Alpha',
+      'studio-explorer-project-workbenches-Alpha', 'studio-explorer-project-style-guide-Alpha',
+      'studio-explorer-project-hub-Alpha',
+    ]);
+    expect(rows.every(el => el.classList.contains('tree-row--child'))).toBe(true);
   });
   it('highlights only the Wiki row when the active surface is the wiki rail', () => {
     const fixture = mount();
