@@ -420,7 +420,7 @@ public sealed partial class AccessSecurityStore
     private (ServiceAccountToken Token, string Secret) NewServiceAccountToken(string prefix, string? name, DateTime now, DateTime expiresAt)
     {
         var tokenId = Guid.NewGuid().ToString("N");
-        var secret = $"{prefix}.{tokenId}.{PasswordSecretHasher.RandomToken()}";
+        var secret = Issued($"{prefix}.{tokenId}.{PasswordSecretHasher.RandomToken()}");
         return (new ServiceAccountToken
         {
             Id = tokenId, Name = name, SecretHash = PasswordSecretHasher.HashSecret(secret), CreatedAt = now, ExpiresAt = expiresAt,
