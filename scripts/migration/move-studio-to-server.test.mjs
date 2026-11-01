@@ -6,8 +6,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  buildInventory, classifyPath, classifyWorkspace, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
-  readProjectRegistry, runCli, scanFileContent, scanWorkspace, screenTokens, selectDelta, stripUrlCredentials, taskRoots, tokenStateIssues,
+  acceptedTokenHits, buildInventory, classifyPath, classifyWorkspace, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
+  readProjectRegistry, runCli, scanFileContent, scanWorkspace, screenTokens, selectDelta, skippedFolders, stripUrlCredentials, taskRoots, tokenStateIssues,
 } from './move-studio-to-server.mjs';
 import { relocate } from './relocate-workspace-paths.mjs';
 
@@ -624,3 +624,31 @@ function readRegistryFromFixture() {
     urls: project.Urls.map(url => ({ id: url.Id, label: url.Label, url: url.Url })),
   }));
 }
+
+test('an operator-reviewed token hit travels, and a new shape in that file still blocks', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'move-accepted-'));
+  const file = path.join(dir, 'accepted.tsv');
+  await writeFile(file, 'github-token\tprojects/demo/results/test.log\n');
+  const entry = { path: 'projects/demo/results/test.log', size: 1, mtimeMs: 1, transfer: 'archive', area: 'results' };
+  const accepted = acceptedTokenHits(file);
+
+  const fixture = screenTokens([entry], { scan: () => ({ hash: 'h', token: 'github-token' }), accepted });
+  assert.equal(fixture[0].transfer, 'archive');
+  const other = screenTokens([entry], { scan: () => ({ hash: 'h', token: 'private-key' }), accepted });
+  assert.equal(other[0].reason, 'token-pattern');
+  assert.equal(acceptedTokenHits(undefined).size, 0);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('skipped folders stay out of the workspace scan', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-skip-'));
+  await mkdir(path.join(root, '.claude/worktrees/old'), { recursive: true });
+  await mkdir(path.join(root, 'projects/demo'), { recursive: true });
+  await writeFile(path.join(root, '.claude/worktrees/old/copy.md'), 'x');
+  await writeFile(path.join(root, 'projects/demo/keep.md'), 'x');
+
+  const skip = skippedFolders('.claude/worktrees: :');
+  assert.deepEqual(skip, ['.claude/worktrees']);
+  assert.deepEqual(scanWorkspace(root, { skip }).map(item => item.path), ['projects/demo/keep.md']);
+  await rm(root, { recursive: true, force: true });
+});
