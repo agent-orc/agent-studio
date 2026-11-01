@@ -374,6 +374,7 @@
 /api/token-pricing/unpriced-models	free	-	-	-
 /api/usage/cockpit	free	-	-	-
 /api/v1/gates/subjects/{subjectId}	free	-	-	-
+/api/v1/management/credential-inventory	free	-	-	-
 /api/v1/management/diagnostics	free	-	-	-
 /api/v1/management/environment	free	-	-	-
 /api/v1/management/github-app/	free	-	-	-

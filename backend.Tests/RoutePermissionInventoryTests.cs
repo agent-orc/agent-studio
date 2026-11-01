@@ -116,6 +116,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("DELETE", "/api/auth/runner-enrollments/{id}", IamPermissions.AccessManage)]
     [InlineData("GET", "/api/first-run/projects/{projectId}/repository", IamPermissions.WorkspaceAdminister)]
     [InlineData("POST", "/api/first-run/git-setups", IamPermissions.WorkspaceAdminister)]
+    [InlineData("GET", "/api/v1/management/credential-inventory", IamPermissions.WorkspaceAdminister)]
     [InlineData("GET", "/api/v1/management/github-app", IamPermissions.WorkspaceAdminister)]
     [InlineData("POST", "/api/v1/management/github-app/flow", IamPermissions.WorkspaceAdminister)]
     [InlineData("PUT", "/api/v1/management/github-app/credentials", IamPermissions.WorkspaceAdminister)]

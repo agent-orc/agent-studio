@@ -99,6 +99,13 @@ only the ordinary port, so its branch reclaim is refused and the periodic sweep 
 that work. A website that rebinds its name to this machine is refused every write
 on every port by its `Origin`.
 
+## See what exists
+
+**Settings > Credentials** lists the App, the repositories it covers, each host's key
+and tokens, the secret store's items, enrolled service identities, and the logins and
+Git access the hosts report. It shows metadata only, and on an installation without a
+Task Server the operator port answers it, like this page.
+
 ## How Git finds the token
 
 Tokens live in a `git credential-store` file: `github-app/git-credentials` under

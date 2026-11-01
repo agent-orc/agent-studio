@@ -18,6 +18,24 @@ public static class GitHubAppEndpoints
         if (SecurityProfiles.IsPublicDemo(app.Configuration)) return;
         var group = app.MapGroup("/api/v1/management/github-app").RequireStudioRole(StudioRoles.Owner);
 
+        app.MapGet("/api/v1/management/credential-inventory", (HttpContext context, GitHubAppBroker broker,
+            GitHubAppHostKeys hostKeys, ISecretProvider secrets, AccessSecurityStore security,
+            AgentStudio.Runner.V1ReviewExecutorRegistry hosts, AgentStudio.Clients.ClientIdentityStore clients,
+            TimeProvider clock, CancellationToken ct) => Run(context, async () => Results.Ok(LocalCredentialInventory.Project(
+                new LocalCredentialInventory.Sources(
+                    await broker.StatusAsync(false, ct),
+                    hostKeys.List(),
+                    await secrets.ListAsync(null, ct),
+                    security.ListRunners(),
+                    hosts.ListCapabilitySnapshots(),
+                    clients.ListAll()
+                        .Where(client => client.RunnerGitStatus is not null && client.Kind != AgentStudio.Shared.ClientIdentityKind.Retired)
+                        .Select(client => new LocalCredentialInventory.HostGitAccess(
+                            client.Id, client.RunnerGitStatus!, client.RunnerGitDetail, client.RunnerGitCheckedAt))
+                        .ToArray()),
+                clock.GetUtcNow().UtcDateTime))))
+            .RequireStudioRole(StudioRoles.Owner);
+
         group.MapGet("", (bool? refresh, HttpContext context, GitHubAppBroker broker, CancellationToken ct)
             => Run(context, async () => Results.Ok(await broker.StatusAsync(refresh == true, ct))));
 
