@@ -435,19 +435,20 @@ describe('GitPaneComponent', () => {
     fixture.detectChanges();
 
     const root = fixture.nativeElement as HTMLElement;
-    const toggle = root.querySelector<HTMLButtonElement>('[data-testid="git-diff-mode-toggle"]');
-    expect(toggle).not.toBeNull();
+    const unified = root.querySelector<HTMLButtonElement>('[data-testid="git-diff-mode-toggle"]');
+    const sideBySide = root.querySelector<HTMLButtonElement>('[data-testid="git-side-by-side-option"]');
+    expect(unified).not.toBeNull();
     // Default: side-by-side, pressed.
     expect(fixture.componentInstance.diffViewMode()).toBe('side-by-side');
-    expect(toggle?.getAttribute('aria-pressed')).toBe('true');
-    expect(toggle?.textContent?.trim()).toBe('Side-by-side');
+    expect(sideBySide?.getAttribute('aria-pressed')).toBe('true');
+    expect(unified?.textContent?.trim()).toBe('Unified');
 
-    toggle?.click();
+    unified?.click();
     fixture.detectChanges();
 
     expect(fixture.componentInstance.diffViewMode()).toBe('line-by-line');
-    expect(toggle?.getAttribute('aria-pressed')).toBe('false');
-    expect(toggle?.textContent?.trim()).toBe('Unified');
+    expect(unified?.getAttribute('aria-pressed')).toBe('true');
+    expect(sideBySide?.getAttribute('aria-pressed')).toBe('false');
     expect(localStorage.getItem('taskboard.gitPane.diffViewMode')).toBe('line-by-line');
   });
 
@@ -462,8 +463,8 @@ describe('GitPaneComponent', () => {
 
     expect(fixture.componentInstance.diffViewMode()).toBe('line-by-line');
     const root = fixture.nativeElement as HTMLElement;
-    const toggle = root.querySelector<HTMLButtonElement>('[data-testid="git-diff-mode-toggle"]');
-    expect(toggle?.getAttribute('aria-pressed')).toBe('false');
+    const unified = root.querySelector<HTMLButtonElement>('[data-testid="git-diff-mode-toggle"]');
+    expect(unified?.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('collapses the whole commit-meta head with one toggle and remembers the state', async () => {
@@ -531,7 +532,8 @@ describe('GitPaneComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.componentInstance.previewActive()).toBe(true);
-    expect(toggle?.textContent?.trim()).toBe('Diff');
+    expect(toggle?.textContent?.trim()).toBe('Preview');
+    expect(toggle?.getAttribute('aria-pressed')).toBe('true');
     // Preview surface takes over; the raw diff + layout toggle step aside.
     expect(root.querySelector('[data-testid="git-preview"]')).not.toBeNull();
     expect(root.querySelector('[data-testid="git-preview-markdown"]')).not.toBeNull();

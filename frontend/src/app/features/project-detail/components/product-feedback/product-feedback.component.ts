@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, HostListener, computed, inject, input, signal } from '@angular/core';
 import { TaskState, type TaskInfo } from '../../../../models/task.model';
 import { laneName } from '../../../../models/lane-presentation';
@@ -21,6 +22,7 @@ interface Point { x: number; y: number }
 @Component({
   selector: 'app-product-feedback',
   standalone: true,
+  imports: [SegmentedControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './product-feedback.component.html',
   styleUrl: './product-feedback.component.scss',
@@ -38,6 +40,7 @@ export class ProductFeedbackComponent {
   readonly selected = computed(() => this.cards().find(card => card.id === this.selectedId()) ?? null);
   readonly status = computed(() => this.selected() ? productStatus(this.selected()!) : null);
   readonly screenshots = signal<TaskScreenshot[]>([]);
+  readonly shotOptions = computed(() => this.screenshots().map(shot => ({ value: shot.url, label: shot.caption })));
   readonly beforeShot = computed(() => [...this.screenshots()].reverse().find(shot => /\bbefore\b/i.test(shot.caption)) ?? null);
   readonly afterShot = computed(() => [...this.screenshots()].reverse().find(shot => /\bafter\b/i.test(shot.caption)) ?? null);
   readonly currentShot = signal<TaskScreenshot | null>(null);

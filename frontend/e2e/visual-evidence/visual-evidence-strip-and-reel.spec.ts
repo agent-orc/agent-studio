@@ -442,7 +442,7 @@ test.describe('Visual evidence: per-task strip + lightbox + workspace reel', () 
       const samples: Array<{ what: string; selector: string }> = [
         { what: 'reel title', selector: '.wss__title' },
         { what: 'reel subtitle', selector: '.wss__sub' },
-        { what: 'active window button', selector: '.wss__win-btn--active' },
+        { what: 'active window button', selector: '[data-testid="wss-win-3d"][aria-pressed="true"]' },
         { what: 'bucket title', selector: '.wss__bucket-title' },
         { what: 'caption spec', selector: '.strip__caption-spec' },
         { what: 'caption timestamp', selector: '.strip__caption-ts' },

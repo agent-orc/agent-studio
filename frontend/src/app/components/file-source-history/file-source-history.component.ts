@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import type { TaskFileHistoryEntry, TaskFileSourceScope } from '../../models/task.model';
@@ -12,11 +13,12 @@ type LoadState = 'idle' | 'loading' | 'loaded' | 'error';
   selector: 'app-file-source-history',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [MarkdownViewComponent],
+  imports: [SegmentedControlComponent, MarkdownViewComponent],
   templateUrl: './file-source-history.component.html',
   styleUrl: './file-source-history.component.scss',
 })
 export class FileSourceHistoryComponent {
+  readonly modeOptions = [{ value: 'file', label: 'File', testid: 'file-source-current' }, { value: 'history', label: 'History', testid: 'file-source-history-toggle' }] as const;
   private readonly jobs = inject(TaskService);
   private readonly nowTick = inject(NowTickService);
 

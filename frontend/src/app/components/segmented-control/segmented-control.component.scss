@@ -1,132 +1,42 @@
-/*
- * Shared single-select segmented control (Theme Dark|Light, Activity bar
- * Left|Right, and future "pick one of N" switches).
- *
- * Track-style: a bordered, rounded container holds the options on a faint
- * inset track; the active option lifts into a filled accent "thumb" while
- * inactive options stay flat and dimmed. The fill — not a hairline divider —
- * is what separates the choices, so "Dark" and "Light" never read as one
- * glued word. Tuned to stay legible in both light and dark themes.
- */
+@use '../../../styles/mixins' as m;
 
-.segmented {
-  display: inline-flex;
-  align-items: stretch;
-  gap: 2px;
-  padding: 2px;
-  background: var(--studio-bg-hover);
-  border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+/* The doubled class beats `.studio button` and light `.panel button`
+ * regardless of stylesheet order. Both reset rules otherwise remove the
+ * option padding or override its foreground and thumb background. */
+.segmented.segmented {
+  @include m.segmented-track;
 }
 
-.segmented__option {
-  appearance: none;
-  border: 0;
-  margin: 0;
-  padding: var(--studio-spacing-1) var(--studio-spacing-3);
-  background: transparent;
-  color: var(--studio-fg-dim);
-  font: inherit;
-  font-size: 11px;
-  line-height: 1.2;
-  font-weight: 500;
-  white-space: nowrap;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
-
-  &:hover:not(:disabled):not(.segmented__option--active) {
-    background: var(--studio-bg-elevated);
-    color: var(--studio-fg);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--studio-accent);
-    outline-offset: 1px;
-  }
-
-  &:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
+.segmented.segmented .segmented__option {
+  @include m.segmented-option;
 }
 
-/* Active "thumb": filled brand accent, dark-on-accent label, slight lift.
- * Loud on purpose so the selected option is unmistakable at a glance.
- * Doubled class (0,2,0) so it always beats the base `.segmented__option`
- * regardless of injected-stylesheet order under ViewEncapsulation.None. */
-.segmented__option.segmented__option--active {
-  background: var(--studio-accent);
-  color: var(--studio-on-accent);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-
-  &:hover:not(:disabled) {
-    background: var(--studio-accent);
-    color: var(--studio-on-accent);
-  }
+.segmented.segmented .segmented__option:hover:not(:disabled):not(.segmented__option--active) {
+  background: color-mix(in srgb, var(--studio-fg) 7%, transparent);
+  color: var(--studio-fg);
 }
 
-/* Optional per-option icon (SegmentedOption.icon): inline before the label. */
-.segmented__option.segmented__option--with-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--studio-spacing-1);
+.segmented.segmented .segmented__option:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 1px;
 }
+
+.segmented.segmented .segmented__option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.segmented.segmented .segmented__option.segmented__option--active,
+.segmented.segmented .segmented__option.segmented__option--active:hover {
+  @include m.segmented-thumb;
+}
+
 .segmented__icon {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
 }
 
-/*
- * `subtle` appearance: a quiet, closed control for in-content toolbars.
- * One bordered container on the surface tone, equal-width segments, and an
- * active state that only lifts to a muted surface fill with a border-strong
- * inset ring — no brand accent, so it does not compete with the content.
- * The default (`accent`) rules above stay untouched for existing callers.
- */
-.segmented.segmented--subtle {
-  display: inline-grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 0;
-  padding: 0;
-  background: var(--studio-surface);
-  border: 1px solid var(--studio-border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.segmented--subtle .segmented__option {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--studio-spacing-1);
-  border-radius: 0;
-  color: var(--studio-fg-muted);
-
-  &:hover:not(:disabled):not(.segmented__option--active) {
-    background: var(--studio-bg-hover);
-    color: var(--studio-fg);
-  }
-
-  /* The container clips (overflow: hidden), so keep the ring inside it. */
-  &:focus-visible {
-    outline-offset: -2px;
-  }
-}
-
-.segmented--subtle .segmented__option.segmented__option--active {
-  background: var(--studio-surface-muted);
-  color: var(--studio-text-primary);
-  font-weight: 600;
-  box-shadow: inset 0 0 0 1px var(--studio-border-strong);
-
-  &:hover:not(:disabled) {
-    background: var(--studio-surface-muted);
-    color: var(--studio-text-primary);
-  }
+@media (prefers-reduced-motion: reduce) {
+  .segmented.segmented .segmented__option { transition: none; }
 }

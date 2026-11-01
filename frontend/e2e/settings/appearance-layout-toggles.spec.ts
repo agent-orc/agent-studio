@@ -34,10 +34,44 @@ test.describe('Settings — Appearance/Layout segmented toggles', () => {
       await expect(appearance).toBeInViewport();
       await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'dark');
       await expect(page.getByTestId('settings-theme-system')).toHaveAttribute('aria-pressed', 'true');
-      await page.screenshot({ path: join(output, `appearance-system-${width}-dark.png`), animations: 'disabled' });
+      await assertSegmentMetrics(page);
+      await page.screenshot({ path: join(output, `appearance-system-${width}-dark--real.png`), animations: 'disabled' });
       await page.emulateMedia({ colorScheme: 'light' });
       await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'light');
-      await page.screenshot({ path: join(output, `appearance-system-${width}-light.png`), animations: 'disabled' });
+      await assertSegmentMetrics(page);
+      await page.screenshot({ path: join(output, `appearance-system-${width}-light--real.png`), animations: 'disabled' });
+    }
+  });
+
+  test('create dialog stays within 390 px and its thumb beats light panel rules', async ({ page }) => {
+    const output = process.env.JOB_RESULTS_DIR ?? 'test-results';
+    mkdirSync(output, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await page.setViewportSize({ width: 1280, height: 844 });
+      await page.goto('/');
+      await page.evaluate(value => localStorage.setItem('atp.studio.theme', value), theme);
+      await page.reload();
+      await page.getByRole('button', { name: /add task/i }).first().click();
+      const dialog = page.locator('.create-dialog');
+      await expect(dialog).toBeVisible();
+      await page.setViewportSize({ width: 390, height: 844 });
+      const bounds = await dialog.boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(391);
+      const typePicker = page.getByTestId('create-task-type');
+      await expect(typePicker.getByRole('button', { name: 'Chore' })).toHaveAttribute('aria-pressed', 'true');
+      await dialog.screenshot({ path: join(output, `create-dialog-${theme}--real.png`), animations: 'disabled' });
+      if (theme === 'light') {
+        // Apply the real light .panel cascade to a migrated control.
+        await typePicker.evaluate(el => el.classList.add('panel'));
+        const colors = await typePicker.evaluate(el => {
+          const active = el.querySelector<HTMLButtonElement>('[aria-pressed="true"]')!;
+          const inactive = el.querySelector<HTMLButtonElement>('[aria-pressed="false"]')!;
+          return [getComputedStyle(active).backgroundColor, getComputedStyle(inactive).backgroundColor];
+        });
+        expect(colors[0]).not.toBe(colors[1]);
+      }
     }
   });
 
@@ -93,3 +127,61 @@ test.describe('Settings — Appearance/Layout segmented toggles', () => {
     await expect(left).toHaveAttribute('aria-pressed', 'false');
   });
 });
+
+async function assertSegmentMetrics(page: import('@playwright/test').Page) {
+  const readMetrics = () => page.getByRole('group', { name: 'Theme' }).evaluate(group => {
+    const active = group.querySelector<HTMLButtonElement>('[aria-pressed="true"]')!;
+    const inactive = group.querySelector<HTMLButtonElement>('[aria-pressed="false"]')!;
+    const activeStyle = getComputedStyle(active);
+    const inactiveStyle = getComputedStyle(inactive);
+    const trackStyle = getComputedStyle(group);
+    // Computed colors may use rgb() or CSS Color 4 color(srgb ...).
+    function color(value: string): [number, number, number, number] {
+      if (value.startsWith('#')) {
+        const hex = value.slice(1);
+        const parts = hex.length === 3 ? [...hex].map(ch => ch + ch) : hex.match(/../g)!;
+        return [parseInt(parts[0], 16) / 255, parseInt(parts[1], 16) / 255, parseInt(parts[2], 16) / 255, 1];
+      }
+      if (value.startsWith('color(srgb')) {
+        const nums = value.match(/[\d.]+/g)!.map(Number);
+        return [nums[0], nums[1], nums[2], nums[3] ?? 1];
+      }
+      const nums = value.match(/[\d.]+/g)!.map(Number);
+      return [nums[0] / 255, nums[1] / 255, nums[2] / 255, nums[3] ?? 1];
+    }
+    function over(fg: number[], bg: number[]): number[] {
+      return [0, 1, 2].map(i => fg[i] * (fg[3] ?? 1) + bg[i] * (1 - (fg[3] ?? 1)));
+    }
+    function light(rgb: number[]): number {
+      const c = rgb.map(x => x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
+      return c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+    }
+    function contrast(a: number[], b: number[]): number {
+      const values = [light(a), light(b)].sort((x, y) => y - x);
+      return (values[0] + 0.05) / (values[1] + 0.05);
+    }
+    const surface = color(activeStyle.backgroundColor);
+    const track = over(color(trackStyle.backgroundColor), surface);
+    const thumb = over(color(activeStyle.backgroundColor), track);
+    return {
+      optionHeight: active.getBoundingClientRect().height,
+      controlHeight: group.getBoundingClientRect().height,
+      paddingLeft: parseFloat(activeStyle.paddingLeft),
+      paddingRight: parseFloat(activeStyle.paddingRight),
+      activeContrast: contrast(color(activeStyle.color), thumb),
+      inactiveContrast: contrast(color(inactiveStyle.color), track),
+      overflow: group.getBoundingClientRect().right > innerWidth,
+    };
+  });
+  // Text and thumb colors transition for 120 ms when the OS theme flips.
+  await expect.poll(async () => (await readMetrics()).activeContrast, { timeout: 5_000 })
+    .toBeGreaterThanOrEqual(4.5);
+  const metrics = await readMetrics();
+  expect(metrics.optionHeight).toBeGreaterThanOrEqual(24);
+  expect(metrics.controlHeight).toBeGreaterThanOrEqual(28);
+  expect(metrics.paddingLeft).toBe(12);
+  expect(metrics.paddingRight).toBe(12);
+  expect(metrics.activeContrast).toBeGreaterThanOrEqual(4.5);
+  expect(metrics.inactiveContrast).toBeGreaterThanOrEqual(4.5);
+  expect(metrics.overflow).toBe(false);
+}

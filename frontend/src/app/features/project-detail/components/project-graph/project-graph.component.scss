@@ -139,28 +139,7 @@
   color: var(--studio-error);
 }
 
-.project-graph__toolbar {
-  /* Segmented control: a panel that frames its buttons, so it keeps a hairline inset. */
-  @include m.deck-panel(var(--studio-spacing-1));
-  display: inline-flex;
-  margin-bottom: var(--studio-spacing-3);
-}
-
-.project-graph__toolbar button {
-  min-height: 30px;
-  padding: var(--studio-spacing-1) var(--studio-spacing-3);
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--studio-fg-muted);
-  font: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-
-.project-graph__toolbar button:hover { color: var(--studio-fg-strong); }
-.project-graph__toolbar button.is-active { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
-.project-graph__toolbar button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+app-segmented-control { display: inline-block; margin-bottom: var(--studio-spacing-3); }
 
 .project-graph__canvas,
 .project-graph__table-wrap {

@@ -174,15 +174,7 @@
           </button>
           <span class="pdrift__action-divider"></span>
           <span class="pdrift__action-label">Mark</span>
-          @for (s of statuses; track s) {
-            <button class="pdrift__btn pdrift__btn--status"
-                    [class.pdrift__btn--active]="titleCase(row.effectiveStatus) === s"
-                    [attr.data-testid]="'project-drift-action-mark-' + s.toLowerCase() + '-' + row.element.elementId"
-                    [disabled]="busy() === 'status'"
-                    (click)="markStatus(row.element, s)">
-              {{ s }}
-            </button>
-          }
+          <app-segmented-control [disabled]="busy() === 'status'" [options]="statusOptions(row)" [value]="titleCase(row.effectiveStatus)" ariaLabel="Mark status" (valueChange)="markStatus(row.element, $any($event))" />
         </div>
 
         @if (actionMessage(); as msg) {

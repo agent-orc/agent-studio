@@ -20,20 +20,7 @@
 
   <fieldset class="execution-card__field" data-testid="project-pickup-mode-control">
     <legend>Pickup mode</legend>
-    <div class="execution-card__mode-options">
-      @for (mode of pickupModes; track mode.id) {
-        <button
-          type="button"
-          [class.execution-card__mode--active]="pickupMode() === mode.id"
-          [attr.aria-pressed]="pickupMode() === mode.id"
-          [attr.data-testid]="'project-pickup-mode-' + mode.id"
-          [disabled]="saving() || probing()"
-          [title]="mode.hint"
-          (click)="setPickupMode(mode.id)">
-          {{ mode.label }}
-        </button>
-      }
-    </div>
+    <app-segmented-control [disabled]="saving() || probing()" [options]="segmentedPickupModes" [value]="pickupMode()" ariaLabel="Pickup mode" (valueChange)="setPickupMode($event)" />
     <small>
       {{ pickupMode() === 'auto'
         ? 'Ready tasks are offered automatically.'

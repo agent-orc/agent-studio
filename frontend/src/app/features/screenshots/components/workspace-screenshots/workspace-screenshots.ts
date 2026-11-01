@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -45,7 +46,7 @@ const WINDOW_OPTIONS: { hours: number; label: string; testId: string }[] = [
   selector: 'app-workspace-screenshots',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ScreenshotStripComponent],
+  imports: [SegmentedControlComponent, ScreenshotStripComponent],
   templateUrl: './workspace-screenshots.html',
   styleUrl: './workspace-screenshots.scss',
 })
@@ -56,6 +57,7 @@ export class WorkspaceScreenshotsComponent implements OnInit, OnDestroy {
   readonly openTask = output<TaskScreenshot>();
 
   readonly windowOptions = WINDOW_OPTIONS;
+  readonly segmentedWindowOptions = this.windowOptions.map(opt => ({ value: opt.hours, label: opt.label, testid: 'wss-win-' + opt.testId }));
 
   readonly windowHours = signal<number>(this.loadWindow());
   readonly projectFilter = signal<string | null>(this.loadProject());

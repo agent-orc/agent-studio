@@ -179,7 +179,7 @@ test.describe('Git pane — tree view and split layout', () => {
       // Diff column gets the lion's share of the width.
       expect(diffBox!.width).toBeGreaterThan(treeBox!.width);
       // Side-by-side diff once the pane is maximized.
-      await expect(page.getByTestId('git-diff-mode-toggle')).toHaveText('Side-by-side');
+      await expect(page.getByTestId('git-side-by-side-option')).toHaveAttribute('aria-pressed', 'true');
 
       // Regression: in maximized split mode, the tree must stretch to fill
       // its column. The SCSS `:host([data-fill="true"]) .git-tree` rule

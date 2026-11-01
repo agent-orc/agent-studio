@@ -15,7 +15,6 @@
       @if (results().length > 0) {
         <app-segmented-control
             ariaLabel="Darstellung der Suchtreffer"
-            appearance="subtle"
             [options]="viewOptions"
             [value]="viewMode()"
             (valueChange)="setViewMode($event)" />

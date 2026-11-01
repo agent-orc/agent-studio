@@ -97,31 +97,6 @@
     color: var(--studio-fg-dim);
   }
 
-  &__modes {
-    display: flex;
-    border: 1px solid var(--studio-border);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-
-  &__mode {
-    font: inherit;
-    font-size: 11px;
-    padding: 3px 10px;
-    border: none;
-    background: var(--studio-bg);
-    color: var(--studio-fg-dim);
-    cursor: pointer;
-
-    &--on {
-      background: var(--studio-bg-elevated);
-      color: var(--studio-fg-strong);
-      font-weight: 600;
-    }
-
-    &:disabled { opacity: 0.5; cursor: default; }
-  }
-
   &__table {
     border-collapse: collapse;
     font-size: 12px;

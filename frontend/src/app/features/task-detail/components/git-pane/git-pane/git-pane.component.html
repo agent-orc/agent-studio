@@ -256,24 +256,12 @@
       <div class="git-view__diff-toolbar">
         <span class="git-view__diff-path">{{ git.selectedDiffPath() }}</span>
         @if (selectedIsPreviewable()) {
-          <button type="button"
-                  class="git-view__diff-mode-toggle git-view__preview-toggle"
-                  data-testid="git-preview-toggle"
-                  [attr.aria-pressed]="previewActive()"
-                  [cacTooltip]="previewActive() ? 'Show the raw diff' : 'Show a rendered preview of this file'"
-                  (click)="togglePreview()">
-            {{ previewActive() ? 'Diff' : 'Preview' }}
-          </button>
+          <app-segmented-control [options]="previewOptions" [value]="previewActive() ? 'preview' : 'diff'"
+            ariaLabel="File view" (valueChange)="setPreviewMode($event)" />
         }
         @if (!previewActive()) {
-          <button type="button"
-                  class="git-view__diff-mode-toggle"
-                  data-testid="git-diff-mode-toggle"
-                  [attr.aria-pressed]="diffViewMode() === 'side-by-side'"
-                  [cacTooltip]="diffViewMode() === 'side-by-side' ? 'Switch to unified (inline) diff' : 'Switch to side-by-side diff'"
-                  (click)="toggleDiffViewMode()">
-            {{ diffViewMode() === 'side-by-side' ? 'Side-by-side' : 'Unified' }}
-          </button>
+          <app-segmented-control [options]="diffViewOptions" [value]="diffViewMode()"
+            ariaLabel="Diff layout" (valueChange)="setDiffViewMode($event)" />
         }
         @if (!maximized()) {
           <button class="pane__maximize"

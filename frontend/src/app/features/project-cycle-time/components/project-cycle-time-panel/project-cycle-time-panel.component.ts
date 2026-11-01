@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -88,7 +89,7 @@ const FLOW_COLUMNS: readonly DrillDownColumn[] = [
 @Component({
   selector: 'app-project-cycle-time-panel',
   standalone: true,
-  imports: [TooltipDirective, CycleTimeTransitionsComponent, CycleTimeTaskTransitionsComponent, FlowOverviewComponent],
+  imports: [SegmentedControlComponent, TooltipDirective, CycleTimeTransitionsComponent, CycleTimeTaskTransitionsComponent, FlowOverviewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-cycle-time-panel.component.html',
   styleUrl: './project-cycle-time-panel.component.scss',
@@ -101,6 +102,7 @@ export class ProjectCycleTimePanelComponent {
   readonly openTask = output<{ jobId: string; watchPath: string }>();
 
   readonly windows = CYCLE_TIME_WINDOWS;
+  readonly segmentedWindows = this.windows.map(value => ({ value, label: windowLabel(value), testid: 'cycle-time-window-' + value }));
   readonly laneStages = signal(false);
   readonly columns = computed(() => this.laneStages() ? DRILL_DOWN_COLUMNS : FLOW_COLUMNS);
   readonly window = signal<CycleTimeWindow>('7d');

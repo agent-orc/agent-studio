@@ -64,25 +64,8 @@
   font-weight: 600;
 }
 
-.create-lane-picker {
-  min-height: 34px;
-  align-items: center;
-  border-color: var(--studio-border);
-  background: var(--studio-bg-editor);
-}
-
-.create-lane-picker__btn,
 .create-tag-picker__chip {
   min-height: 28px;
-}
-
-.create-lane-picker__btn:hover {
-  background: var(--studio-bg-hover);
-}
-
-.create-lane-picker__btn--active {
-  background: color-mix(in srgb, var(--studio-accent-4) 18%, var(--studio-bg-editor));
-  color: var(--studio-fg-strong);
 }
 
 .field__input {

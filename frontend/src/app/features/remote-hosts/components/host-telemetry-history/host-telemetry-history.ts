@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
@@ -14,12 +15,13 @@ import {
 @Component({
   selector: 'app-host-telemetry-history',
   standalone: true,
-  imports: [DatePipe, AppTooltipDirective],
+  imports: [SegmentedControlComponent, DatePipe, AppTooltipDirective],
   templateUrl: './host-telemetry-history.html',
   styleUrl: './host-telemetry-history.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class HostTelemetryHistoryComponent {
+  readonly windowOptions = (['1h', '6h', '48h', '14d'] as const).map(value => ({ value, label: value, testid: 'remote-host-window-' + value }));
   readonly host = input.required<RemoteHost>();
   readonly now = input<number>(Date.now());
   readonly window = signal<'1h' | '6h' | '48h' | '14d'>('6h');

@@ -68,12 +68,8 @@
           </div>
         }
       }
-      <div class="product__shots" aria-label="Delivery screenshots">
-        @for (shot of screenshots(); track shot.url) {
-          <button type="button" [attr.aria-pressed]="currentShot()?.url === shot.url"
-                  (click)="selectShot(shot.url)">{{ shot.caption }}</button>
-        }
-      </div>
+      <app-segmented-control ariaLabel="Delivery screenshot" [options]="shotOptions()"
+        [value]="currentShot()?.url ?? ''" (valueChange)="selectShot($event)" />
       @if (feedbackShotUrls()) {
         <button type="button" data-testid="product-check-update" (click)="refreshScreenshots()">Check for updated preview</button>
       }

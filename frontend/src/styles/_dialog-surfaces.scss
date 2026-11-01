@@ -774,54 +774,6 @@
     &:hover:not(:disabled) { background: var(--notify-info-icon-bg); }
   }
 }
-.create-type-picker {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px;
-  background: rgba(0,0,0,0.3);
-}
-.create-type-picker__btn {
-  border: 0;
-  background: transparent;
-  color: var(--studio-fg-dim);
-  padding: 5px 12px;
-  font-size: 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.create-type-picker__btn:hover { color: var(--studio-fg); background: rgba(255,255,255,0.06); }
-.create-type-picker__btn--active { background: rgba(139,92,246,0.22); color: #ddd6fe; }
-/* Lane (target-state) picker. Shares the same chrome as the type
-   picker so the dialog reads as one consistent toolbar of inline
-   choices, distinguished only by the lane icons. */
-.create-lane-picker {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px;
-  background: rgba(0,0,0,0.3);
-  flex-wrap: wrap;
-}
-.create-lane-picker__btn {
-  border: 0;
-  background: transparent;
-  color: var(--studio-fg-dim);
-  padding: 5px 10px;
-  font-size: 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.create-lane-picker__icon { font-size: 13px; line-height: 1; }
-.create-lane-picker__btn:hover { color: var(--studio-fg); background: rgba(255,255,255,0.06); }
-.create-lane-picker__btn--active { background: rgba(56,189,248,0.22); color: #bae6fd; }
 /* Mode picker web-access toggle: a small switch beneath the Coding /
    Planning / Research buttons. Shares the dialog's muted palette. */
 .create-web-toggle {

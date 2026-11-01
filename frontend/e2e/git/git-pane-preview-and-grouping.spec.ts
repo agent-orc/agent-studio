@@ -144,8 +144,8 @@ test.describe('Git pane — preview, path disambiguation, and diff grouping (AGT
       await page.getByTestId('git-preview-toggle').click();
       await expect(page.getByTestId('git-preview-markdown')).toBeVisible();
       await expect(page.getByTestId('git-preview-markdown')).toContainText('Usage');
-      // Toggle back to the diff.
-      await page.getByTestId('git-preview-toggle').click();
+      // Select Diff to return to the raw view.
+      await page.getByTestId('git-diff-option').click();
       await expect(page.getByTestId('git-diff')).toBeVisible();
 
       // (1) HTML preview: scripts run, while the opaque origin still blocks

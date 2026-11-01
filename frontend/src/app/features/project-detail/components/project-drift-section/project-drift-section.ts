@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Observable, map } from 'rxjs';
@@ -40,7 +41,7 @@ interface MarbleRow {
 @Component({
   selector: 'app-project-drift-section',
   standalone: true,
-  imports: [FormsModule, TooltipDirective],
+  imports: [SegmentedControlComponent, FormsModule, TooltipDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-drift-section.html',
   styleUrl: './project-drift-section.scss'
@@ -62,6 +63,7 @@ export class ProjectDriftSectionComponent implements OnInit, OnDestroy {
   readonly actionMessage = signal<string | null>(null);
 
   readonly statuses: DriftFindingStatus[] = ['New', 'Tracked', 'Accepted', 'Ignored', 'Resolved'];
+  statusOptions(row: { element: { elementId: string } }) { return this.statuses.map(value => ({ value, label: value, testid: 'project-drift-action-mark-' + value.toLowerCase() + '-' + row.element.elementId })); }
 
   readonly marbleRows = computed<MarbleRow[]>(() => {
     const m = this.model();

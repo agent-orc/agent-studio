@@ -16,20 +16,6 @@
 
 .telemetry__context { color: var(--studio-fg-dim); flex: 1 1 auto; }
 .telemetry__context--stale { color: var(--studio-fg-muted); opacity: 0.62; }
-.telemetry__windows { display: flex; gap: var(--studio-spacing-1); }
-.telemetry__windows button {
-  border: 1px solid var(--studio-border);
-  border-radius: 4px;
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  background: transparent;
-  color: var(--studio-fg-dim);
-  cursor: pointer;
-}
-.telemetry__windows button[aria-pressed='true'] {
-  border-color: var(--studio-accent);
-  background: var(--studio-bg-selected);
-  color: var(--studio-fg-strong);
-}
 .telemetry__findings {
   display: flex;
   flex-wrap: wrap;

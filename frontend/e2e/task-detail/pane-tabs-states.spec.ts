@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { test, expect } from '@playwright/test';
 import { api } from '../helpers/api';
 import { createJob, moveJob } from '../helpers/jobs';
@@ -69,6 +71,14 @@ test.describe('F38: pane-tab indicator states', () => {
       // class `pane-tab` (no inspector__tab--* legacy classes).
       await expect(activity).toHaveClass(/(^|\s)pane-tab(\s|$)/);
       await expect(activity).toHaveClass(/pane-tab--active/);
+      const output = process.env.JOB_RESULTS_DIR ?? 'test-results';
+      mkdirSync(output, { recursive: true });
+      for (const theme of ['light', 'dark'] as const) {
+        await page.evaluate(value => localStorage.setItem('atp.studio.theme', value), theme);
+        await page.reload();
+        await expect(activity).toBeVisible();
+        await activity.locator('..').screenshot({ path: join(output, `pane-tabs-pill-${theme}--real.png`), animations: 'disabled' });
+      }
     } finally {
       await api(`/api/tasks/${encodeURIComponent(job.id)}?watchPath=${encodeURIComponent(watchPath)}`, { method: 'DELETE' });
     }

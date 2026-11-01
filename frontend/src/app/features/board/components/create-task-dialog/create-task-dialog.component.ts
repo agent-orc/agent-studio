@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { AfterViewInit, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, ViewChild, computed, inject, input, model, output, signal } from '@angular/core';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { forkJoin, of } from 'rxjs';
@@ -56,11 +57,12 @@ const PENDING_PREFIX = 'pending-attachment-';
   selector: 'app-create-job-dialog',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent],
+  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent],
   templateUrl: './create-task-dialog.component.html',
   styleUrl: './create-task-dialog.component.scss'
 })
 export class CreateTaskDialogComponent implements AfterViewInit {
+  readonly taskTypeOptions = [{ value: 'bug', label: 'Bug', testid: 'create-task-type-bug' }, { value: 'feature', label: 'Feature', testid: 'create-task-type-feature' }, { value: 'chore', label: 'Chore', testid: 'create-task-type-chore' }] as const;
   readonly watchPaths = input<WatchPathEntry[]>([]);
   readonly availableModels = input<CliModelInfo[]>([]);
   readonly cliTypeDraft = input.required<CliType>();
@@ -85,6 +87,7 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   readonly availableTags = computed(() => this.tagRegistryStore.tags());
 
   readonly laneOptions = CREATE_LANE_OPTIONS;
+  readonly segmentedLaneOptions = this.laneOptions.map(lane => ({ value: lane.state, label: lane.label, testid: 'create-lane-' + lane.state }));
   /** Reactive dialog header derived from the chosen target lane. */
   readonly header = computed<string>(() => {
     switch (this.newTargetState()) {
