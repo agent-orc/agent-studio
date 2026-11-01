@@ -35,6 +35,8 @@ public sealed class AttemptRootGitHubAppVault(IAttemptRootSecretStore roots) : I
         => roots.WriteAsync(SecretsName, JsonSerializer.Serialize(secrets, Json), ct);
 
     public Task DeleteSecretsAsync(string actor, CancellationToken ct) => roots.DeleteAsync(SecretsName, ct);
+
+    public Task EnsureWritableAsync(CancellationToken ct) => roots.EnsureWritableAsync(ct);
 }
 
 /// <summary>The repository each project registered with this Task Server.</summary>

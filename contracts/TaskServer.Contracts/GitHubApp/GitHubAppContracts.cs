@@ -150,6 +150,9 @@ public interface IGitHubAppVault
     Task<GitHubAppSecrets?> ReadSecretsAsync(CancellationToken ct);
     Task WriteSecretsAsync(GitHubAppSecrets secrets, string actor, CancellationToken ct);
     Task DeleteSecretsAsync(string actor, CancellationToken ct);
+
+    /// <summary>Throws when <see cref="WriteSecretsAsync"/> could not store the App's secrets now, for example without a key.</summary>
+    Task EnsureWritableAsync(CancellationToken ct);
 }
 
 /// <summary>
