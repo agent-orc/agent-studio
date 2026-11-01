@@ -83,6 +83,45 @@ async function noLeftAccent(page: Page): Promise<void> {
   expect(offenders, 'no coloured left accent bar inside the Delivery group').toEqual([]);
 }
 
+async function measureGroupHeaders(page: Page) {
+  return page.getByTestId('studio-board').evaluate((board) => {
+    const ids = ['backlog', 'active', 'decide', 'delivery'];
+    return ids.map((id) => {
+      const group = board.querySelector(`[data-testid="lane-group-${id}"]`);
+      const header = group?.querySelector('header');
+      const label = header?.querySelector('span');
+      const content = header?.nextElementSibling;
+      if (!group || !header || !label) throw new Error(`Missing ${id} header`);
+      const box = header.getBoundingClientRect();
+      const probe = document.createElement('span');
+      probe.style.cssText = 'display:inline-block;width:0;height:0;padding:0;border:0;vertical-align:baseline';
+      label.append(probe);
+      const baseline = probe.getBoundingClientRect().top;
+      probe.remove();
+      return { id, top: box.top, height: box.height, bottom: box.bottom, baseline,
+        contentTop: content?.getBoundingClientRect().top ?? null };
+    });
+  });
+}
+
+async function checkGroupHeaders(page: Page, results: string, theme: 'light' | 'dark', width: number) {
+  await page.setViewportSize({ width, height: 900 });
+  await setTheme(page, theme);
+  const measurements = await measureGroupHeaders(page);
+  const phase = process.env.BOARD_HEADER_BEFORE === '1' ? 'before' : 'after';
+  fs.writeFileSync(path.join(results, `agt-3354-header-${phase}-${theme}-${width}.json`), JSON.stringify(measurements, null, 2));
+  await page.getByTestId('studio-board').screenshot({ path: path.join(results, `agt-3354-board-${phase}-${theme}-${width}.png`) });
+  if (phase === 'before') return;
+  const reference = measurements[0];
+  for (const group of measurements.slice(1)) {
+    for (const key of ['top', 'height', 'bottom', 'baseline', 'contentTop'] as const) {
+      expect(group[key], `${group.id} ${key} exists`).not.toBeNull();
+      expect(Math.abs(group[key]! - reference[key]!), `${theme} ${width}px ${group.id} ${key}`).toBeLessThanOrEqual(0.5);
+    }
+  }
+  await expect(page.getByTestId('delivery-furthest-only')).toHaveAccessibleName('Furthest environment only');
+}
+
 test('Delivery group places accepted cards by environment in both themes', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-10-21T12:00:00Z') });
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -113,6 +152,10 @@ test('Delivery group places accepted cards by environment in both themes', async
   const board = page.getByTestId('studio-board');
   const delivery = board.getByTestId('lane-group-delivery');
   await expect(delivery).toBeVisible();
+  for (const width of [1440, 1000]) {
+    for (const theme of ['light', 'dark'] as const) await checkGroupHeaders(page, results, theme, width);
+  }
+  await page.setViewportSize({ width: 2000, height: 1900 });
   // D5 L-B: the Delivery group directly follows Done & Decide.
   const groupOrder = await board.locator('[data-testid^="lane-group-"]:not([data-testid^="lane-group-lanes"])')
     .evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')));
