@@ -107,6 +107,7 @@ public sealed class AttemptVisibilityTests
             _values.Remove(name);
             return Task.CompletedTask;
         }
+        public Task EnsureWritableAsync(CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class Issuer(ManualTimeProvider clock) : IRepositoryTokenIssuer
