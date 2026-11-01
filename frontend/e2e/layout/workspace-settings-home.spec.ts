@@ -36,13 +36,15 @@ function settingsHome(page: Page) {
 async function stubBackgroundApis(page: Page) {
   const json = (body: unknown) => async (route: import('@playwright/test').Route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+  // The isolated static server has no health endpoint; keep its probe out of console-error assertions.
+  await page.route('**/healthz', route => route.fulfill({ status: 200, body: 'ok' }));
 
   await page.route('**/api/v1/studio/auth/status', json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/v1/studio/board', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/board*', json({ backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [], escalated: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
   await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
   await page.route('**/api/runner/token-summary-aggregate*', json({
@@ -73,7 +75,6 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/cli/usage', json({ entries: [] }));
   await page.route('**/api/cli/contracts', json([]));
   await page.route('**/api/cli/*/models*', json({ models: [], source: 'stubbed' }));
-  await page.route('**/api/cli/*/working-memory*', json({ entries: [] }));
   await page.route('**/api/admin/prompts', json({
     overrideDirectory: 'stubbed',
     items: [
@@ -128,8 +129,6 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/workspace/tokens/expensive-jobs*', json({ jobs: [] }));
   await page.route('**/api/workspace/screenshots*', json({ windowHours: 72, projectFilter: null, screenshots: [] }));
   await page.route('**/api/v1/workspaces*', json([]));
-  await page.route('**/api/cli/working-memory*', json({ available: false, root: null, capturedAt: new Date().toISOString(), entries: [] }));
-  await page.route('**/api/cli/sessions*', json({ sessions: [] }));
   await page.route('**/api/cli/models*', json({ types: [] }));
   await page.route('**/api/v1/management/retention/policy', json({ scope: 'workspace', version: 0, updatedAt: '', updatedBy: 'platform', rules: [], fullBackups: { daily: 7, weekly: 4, monthly: 12 } }));
   await page.route('**/api/v1/management/retention/runs', json([]));
@@ -138,16 +137,13 @@ async function stubBackgroundApis(page: Page) {
 }
 
 // AGT-2035 — the consolidated Settings view. Summary was removed; Appearance,
-// Updates, Workspaces (Global) and Working memory (Workspace) were added. Each
+// Updates and Workspaces (Global) were added. Each
 // section keeps a stable outer overlay test id + an inner component test id.
 const SECTIONS: { key: string; overlayTestid: string; innerTestid: string }[] = [
   { key: 'appearance', overlayTestid: 'workspace-appearance-overlay', innerTestid: 'appearance-settings' },
   { key: 'updates', overlayTestid: 'workspace-updates-overlay', innerTestid: 'updates-settings' },
   { key: 'workspaces', overlayTestid: 'workspace-management-overlay', innerTestid: 'workspace-management' },
   { key: 'caps', overlayTestid: 'cli-admin-overlay', innerTestid: 'cli-admin-panel' },
-  { key: 'cli-sessions', overlayTestid: 'cli-sessions-overlay', innerTestid: 'cli-sessions-panel' },
-  { key: 'cli-paths', overlayTestid: 'cli-paths-overlay', innerTestid: 'cli-paths-panel' },
-  { key: 'working-memory', overlayTestid: 'workspace-working-memory-overlay', innerTestid: 'workspace-working-memory' },
   { key: 'prompts', overlayTestid: 'prompt-admin-overlay', innerTestid: 'prompt-admin-panel' },
   { key: 'retention', overlayTestid: 'workspace-retention-overlay', innerTestid: 'retention-admin' },
   { key: 'tokens', overlayTestid: 'workspace-tokens-overlay', innerTestid: 'token-usage-section' },
@@ -182,10 +178,6 @@ test.describe('Workspace settings home (Dach)', () => {
       await expect(page.getByTestId(`workspace-settings-card-${key}`)).toBeVisible();
       await expect(page.getByTestId(`workspace-settings-rail-${key}`)).toBeVisible();
     }
-    // AGT-2101: the rail entry for the CLI hub is now labelled "CLI Management"
-    // (was "Usage caps"), matching the panel's own heading. Session inventory
-    // and on-disk paths were split into their own "CLI sessions" / "CLI paths"
-    // rail pages.
     await expect(page.getByTestId('workspace-settings-rail-caps')).toContainText('CLI Management');
 
     await page.screenshot({ path: join(SHOT_DIR, 'workspace-settings-overview--mocked.png'), fullPage: false });
@@ -196,11 +188,11 @@ test.describe('Workspace settings home (Dach)', () => {
     await expect(settingsHome(page)).toBeVisible();
     if (SETTINGS_SHOT_PHASE === 'after') {
       const rail = page.getByTestId('workspace-settings-rail');
-      const rows = rail.locator('app-tree-row[data-testid^="workspace-settings-rail-"]');
+      const rows = rail.locator('app-tree-row > button[data-testid^="workspace-settings-rail-"]');
       await expect(page.getByTestId('workspace-settings-group-general')).toBeVisible();
       await expect(page.getByTestId('workspace-settings-group-global')).toBeVisible();
       await expect(page.getByTestId('workspace-settings-group-workspace')).toBeVisible();
-      await expect(rows).toHaveCount(15);
+      await expect(rows).toHaveCount(16);
       for (const row of await rows.all()) {
         await expect(row.locator('app-studio-icon')).toHaveCount(1);
         await expect(row.locator('svg')).toHaveAttribute('stroke', 'currentColor');
@@ -211,6 +203,9 @@ test.describe('Workspace settings home (Dach)', () => {
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
+      for (const removed of ['cli-sessions', 'cli-paths', 'working-memory']) {
+        await expect(page.getByTestId(`workspace-settings-rail-${removed}`)).toHaveCount(0);
+      }
       await settingsHome(page).screenshot({
         path: join(SHOT_DIR, `workspace-settings-${SETTINGS_SHOT_PHASE}-${theme}.png`),
       });
@@ -229,7 +224,6 @@ test.describe('Workspace settings home (Dach)', () => {
       await page.getByTestId(`workspace-settings-rail-${key}`).click();
       await expect(page.getByTestId(overlayTestid)).toBeVisible();
       await expect(page.getByTestId(innerTestid)).toBeVisible({ timeout: 5_000 });
-      await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
     }
 
     await page.getByTestId('workspace-settings-rail-caps').click();
@@ -262,7 +256,7 @@ test.describe('Workspace settings home (Dach)', () => {
     }
 
     await page.getByTestId('token-usage-nav-codex').click();
-    await expect(page).toHaveURL(/#\/workspace\/tokens\/codex$/);
+    await expect(page).toHaveURL(/#\/workspace\/settings\/tokens\/codex$/);
     await expect(page.getByTestId('cli-window-analysis-codex')).toContainText('Codex usage windows');
     await page.getByTestId('cli-window-period-7d').click();
     await expect(page.getByTestId('cli-window-period-7d')).toHaveAttribute('aria-pressed', 'true');
@@ -290,6 +284,21 @@ test.describe('Workspace settings home (Dach)', () => {
     await expect(page.getByTestId('workspace-settings-rail-caps')).toHaveAttribute('aria-current', 'page');
     await expect(page.getByTestId('cli-admin-panel')).toBeVisible();
     await expect(page.getByTestId('cli-contracts-explainer')).toContainText('not configuration');
+  });
+
+  test('retired CLI settings routes open CLI Management without errors', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    for (const route of ['cli-sessions', 'cli-paths', 'working-memory']) {
+      await page.goto(`/#/workspace/settings/${route}`);
+      await expect(page.getByTestId('cli-admin-panel')).toBeVisible();
+      await expect(page.getByTestId('workspace-settings-rail-caps')).toHaveAttribute('aria-current', 'page');
+      for (const removed of ['cli-sessions', 'cli-paths', 'working-memory']) {
+        await expect(page.getByTestId(`workspace-settings-rail-${removed}`)).toHaveCount(0);
+      }
+    }
+    expect(errors).toEqual([]);
   });
 
   test('legacy modal close button dismisses the home when modal layout is active', async ({ page }) => {

@@ -11,6 +11,7 @@ import { setTheme } from '../helpers/theme';
  * doesn't clobber state (mirrors status-bar-and-header.spec.ts).
  */
 test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => { localStorage.setItem('atp.flag.vsCodeLayout', '0'); });
   await page.route('**/api/clients/*/defaults', async (route) => {
     await route.fulfill({
       status: 200,
@@ -40,6 +41,8 @@ async function installBootMocks(page: Page): Promise<void> {
     route
       .fulfill({ status: 200, contentType: 'application/json', body: '[]' })
       .catch(() => undefined));
+  await page.route('**/api/v1/studio/auth/status', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }) }));
   await page.route('**/api/environment**', (route) =>
     route.fulfill({
       status: 200,
@@ -57,12 +60,16 @@ async function installBootMocks(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({
         backlog: [], preparation: [], orchestratorPrep: [], ready: [],
-        progress: [], failedPickup: [], review: [], autoReview: [],
-        humanReview: [], completed: [], archive: [],
+        progress: [], failedPickup: [], codeNotComplete: [], review: [], autoReview: [],
+        humanReview: [], escalated: [], completed: [], archive: [],
       }),
     }));
   await page.route('**/api/watch-paths**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  // A project prevents the first-run launch from switching the active
+  // settings section after this test opens Usage.
+  await page.route('**/api/v1/projects', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'PROJ-1', archived: false }]) }));
   // Archive lane pages GET /api/tasks/archive expecting { items, total };
   // the catch-all [] would leave `items` undefined and blow up the lane's
   // `archiveRemaining` computed, so shape it explicitly.
@@ -75,6 +82,8 @@ async function installBootMocks(page: Page): Promise<void> {
   // would throw into the global error dialog. Ship an empty snapshots list.
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ snapshots: [] }) }));
+  await page.route('**/api/watcher/status**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ options: { enabled: false }, lastRun: null, contingent: null }) }));
   // The CLI-usage detail panel (rendered when the caps section opens) folds
   // the token timeline; its sparkline iterates `timeline.cells`, so the
   // endpoints must return a TokenTimeline whose `cells`/`projects` are
@@ -83,9 +92,6 @@ async function installBootMocks(page: Page): Promise<void> {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ cells: [], projects: [] }) }));
   await page.route('**/api/workspace/tokens/expensive-jobs**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ jobs: [] }) }));
-  // Per-CLI working-memory panel iterates `report.entries`.
-  await page.route('**/api/cli/*/working-memory**', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [] }) }));
 }
 
 /**
@@ -214,10 +220,9 @@ test.describe('Status bar panel buttons - active/toggle state', () => {
       path: 'test-results/status-bar-usage-only-active--mocked-dark.png',
     });
 
-    // Switch the same home to its overview (non-'caps') section via the
-    // Settings pill. The accent must move with it: Settings lights up and
-    // Usage goes dark — the two are mutually exclusive, never both lit.
-    await settings.click();
+    // The modal covers the status bar, so switch to Overview through its rail.
+    // The accent must move with it: Settings lights up and Usage goes dark.
+    await page.getByTestId('workspace-settings-rail-overview').click();
     await expect(settings, 'Settings active on overview section').toHaveAttribute(
       'aria-pressed',
       'true',

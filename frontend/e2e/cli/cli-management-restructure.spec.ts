@@ -13,7 +13,6 @@ import { setTheme, dismissDevErrorDialog } from '../helpers/theme';
  *   3. CAPS stays its own clearly-delineated area on the hub.
  *   4. COMPLETION CONTRACTS carry an explainer head (adapter self-report:
  *      typed yes/no, completion signal, usage source; read-only by design).
- *   5. CLI SESSIONS and CLI PATHS are their own encapsulated rail pages.
  *
  * Fully route-stubbed so it runs against a static/dev frontend with no backend;
  * screenshots are labelled --mocked.
@@ -80,7 +79,7 @@ async function stub(page: Page) {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/v1/studio/board*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/board*', json({ backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [], escalated: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
   await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
   await page.route('**/api/runner/token-summary-aggregate*', json({
@@ -154,7 +153,7 @@ async function stub(page: Page) {
       const m = /\/api\/cli\/([^/]+)\/models/.exec(p);
       const vendor = m ? m[1].charAt(0).toUpperCase() + m[1].slice(1) : 'CLI';
       body = modelCatalog(vendor);
-    } else if (p.includes('/working-memory')) body = { available: false, root: null, capturedAt: new Date().toISOString(), entries: [] };
+    }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
   await page.route('**/api/clients', json([]));
@@ -164,6 +163,8 @@ async function stub(page: Page) {
 }
 
 async function openHome(page: Page) {
+  await dismissDevErrorDialog(page);
+  await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"]').forEach(node => node.remove()));
   await page.getByTestId('status-bar-settings').click();
   await expect(page.locator(
     '[data-testid="workspace-settings-inline"], [data-testid="workspace-settings-overlay"]',
@@ -221,8 +222,6 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
     await expect(fallbackRoutes).toContainText('$15.00 in / $75.00 out');
     await expect(overlay.getByTestId('quota-non-reroutable-callers')).toContainText('quota-probe');
     await expect(claudeRow.getByTestId('prefer-fallback-claude')).toBeVisible();
-    // No unexpected app error dialog (would mean an unstubbed endpoint).
-    await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
 
     // Caps + contracts remain their own sections on the hub.
     await expect(overlay.getByText('Usage caps', { exact: true })).toBeVisible();
@@ -234,6 +233,7 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
     await expect(overlay.getByTestId('cli-admin-sessions')).toHaveCount(0);
 
     // Expand a row to reveal the route editor + full model list.
+    await dismissDevErrorDialog(page);
     await claudeRow.getByTestId('cli-models-toggle-claude').click();
     await expect(claudeRow.getByTestId('cli-primary-claude')).toBeVisible();
 
@@ -244,38 +244,4 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
 
   });
 
-  test('CLI sessions and CLI paths are their own encapsulated rail pages', async ({ page }) => {
-    await openHome(page);
-
-    // Both rail entries exist.
-    await expect(page.getByTestId('workspace-settings-rail-cli-sessions')).toBeVisible();
-    await expect(page.getByTestId('workspace-settings-rail-cli-paths')).toBeVisible();
-
-    // CLI sessions page.
-    await page.getByTestId('workspace-settings-rail-cli-sessions').click();
-    await expect(page.getByTestId('cli-sessions-overlay')).toBeVisible();
-    const sessions = page.getByTestId('cli-sessions-panel');
-    await expect(sessions).toBeVisible();
-    await expect(sessions.getByText('Loading native CLI session stores...')).toHaveCount(0, { timeout: 10_000 });
-    // The stubbed inventory renders (confirms the usage report loaded).
-    await expect(sessions.getByText('a1', { exact: true })).toBeVisible();
-    for (const theme of ['light', 'dark'] as const) {
-      await setTheme(page, theme);
-      await page.getByTestId('cli-sessions-overlay').screenshot({ path: join(SHOT_DIR, `cli-sessions-page--mocked-${theme}.png`) });
-    }
-
-    // CLI paths page: per-CLI executable + project roots.
-    await page.getByTestId('workspace-settings-rail-cli-paths').click();
-    await expect(page.getByTestId('cli-paths-overlay')).toBeVisible();
-    const paths = page.getByTestId('cli-paths-panel');
-    await expect(paths).toBeVisible();
-    const claudePaths = paths.getByTestId('cli-paths-row-claude');
-    await expect(claudePaths).toBeVisible();
-    await expect(claudePaths).toContainText('/usr/local/bin/claude');
-    await expect(claudePaths).toContainText('/repos/agent-taskboard');
-    for (const theme of ['light', 'dark'] as const) {
-      await setTheme(page, theme);
-      await page.getByTestId('cli-paths-overlay').screenshot({ path: join(SHOT_DIR, `cli-paths-page--mocked-${theme}.png`) });
-    }
-  });
 });

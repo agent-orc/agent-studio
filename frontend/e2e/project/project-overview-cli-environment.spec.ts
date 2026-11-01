@@ -5,7 +5,7 @@ import { api } from '../helpers/api';
 
 interface WatchPath { name: string; path: string; rootPath?: string | null; repositoryPath?: string | null }
 
-const SCREENSHOT_DIR = path.resolve(__dirname, '..', '..', 'playwright-screenshots', 'project-overview-cli-environment');
+const SCREENSHOT_DIR = process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', 'playwright-screenshots', 'project-overview-cli-environment');
 
 let projectName = '';
 let projectPath = '';
@@ -91,7 +91,6 @@ test.beforeEach(async ({ page }) => {
               }],
             }],
           },
-          { cliType: 'copilot', available: false, version: null, path: 'C:\\Tools\\copilot.cmd', error: 'not signed in', projects: [] },
           { cliType: 'codex', available: true, version: 'codex 0.200.0-test', path: 'C:\\Tools\\codex.cmd', error: null, projects: [] },
           { cliType: 'gemini', available: false, version: null, path: 'C:\\Tools\\gemini.cmd', error: null, projects: [] },
         ],
@@ -129,7 +128,7 @@ test('overview is operator-only and settings owns CLI environment details', asyn
   const cliEnv = page.getByTestId('project-detail-cli-environment');
   await expect(cliEnv).toBeVisible();
   await expect(cliEnv).toContainText('CLI environment');
-  await expect(cliEnv).toContainText('2 / 4 CLIs ready');
+  await expect(cliEnv).toContainText('2 / 3 CLIs ready');
   await expect(cliEnv).toContainText('1 project session found');
 
   const claude = page.getByTestId('project-detail-cli-env-claude');

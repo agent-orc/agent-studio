@@ -19,7 +19,7 @@ The studio has one persistent-list, one-active-item side menu at several levels:
 | L3 | Prompt catalogue (RUNNER / REVIEW / …) | `features/orchestrator/prompt-admin-panel` (`<app-tree-row>`) |
 | S1/S2 | Orchestrator + Workspace settings rails | `orchestrator-settings-modal`, `shell/workspace-overlays` |
 | W1/W2 | Wiki tree, Agent-Docs tree | `project-wiki-section`, `project-steering-docs-section` |
-| T1/C1/N1 | Open-tabs list, CLI sessions, focused-view task rail | `components/list-row`, `cli-sessions-panel`, root `app.scss` |
+| T1/C1/N1 | Open-tabs list and focused-view task rail | `components/list-row`, root `app.scss` |
 
 The pre-analysis verdict ("kein geteiltes Komponenten-/Zustandsmuster") was **half right**: L1/L2/L3 already share the *same* Angular components (`<app-tree-row>` + `<app-section-header>` + `<app-count-badge>`) from a prior consolidation slice — so the *component* was already unified. What was **not** unified was the **active-state look**: the shared tree-row painted a near-grey 14% tint, the settings rails used a plain grey `bg-selected` with no accent, and two rails (CLI sessions, task rail) hard-coded **off-brand colours that ignored the theme** (blue `rgba(96,165,250,…)`, indigo `rgba(99,102,241,…)`). That is the inconsistency the operator saw.
 

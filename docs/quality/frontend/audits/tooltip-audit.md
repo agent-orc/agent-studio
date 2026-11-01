@@ -117,7 +117,6 @@ The list is grouped by feature. Each row is `<file> - <count>`. Anything not in 
 
 #### CLI, quota, tokens
 
-- `features/cli/components/cli-sessions-panel.html` - 4
 - `features/cli/components/cli-usage-sheet.html` - 1
 - `features/quota/components/header-quota.html` - 2
 - `features/quota/components/quota-strip.html` - 3

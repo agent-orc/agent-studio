@@ -26,6 +26,47 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         { SecurityProfiles.Networked, "http://127.0.0.1:5071" },
     };
 
+    [Fact]
+    public async Task Retired_cli_page_routes_return_not_found_for_an_operator()
+    {
+        using var factory = Factory(SecurityProfiles.Networked, null);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        const string password = "correct horse battery staple!";
+        store.Bootstrap(new BootstrapRequest("first.owner", password, null));
+        var login = store.Login("first.owner", password, "first.owner|127.0.0.1");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={login.SessionToken}");
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", login.CsrfToken);
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
+
+        foreach (var path in new[]
+                 {
+                     "/api/cli/claude/working-memory",
+                     "/api/cli/claude/session-detail?id=missing",
+                     "/api/cli/claude/session?id=missing",
+                 })
+        {
+            using var get = await client.GetAsync(path);
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, get.StatusCode);
+        }
+        using var deleteMemory = await client.DeleteAsync("/api/cli/claude/working-memory?path=missing");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, deleteMemory.StatusCode);
+        using var deleteSession = await client.DeleteAsync("/api/cli/claude/session?id=missing");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, deleteSession.StatusCode);
+
+        var retired = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "GET /api/cli/{cliType}/working-memory",
+            "DELETE /api/cli/{cliType}/working-memory",
+            "GET /api/cli/{cliType}/session-detail",
+            "DELETE /api/cli/{cliType}/session",
+        };
+        foreach (var endpoint in Routes(factory.Services))
+        foreach (var method in RoutePermissionCatalog.Methods(endpoint))
+            Assert.DoesNotContain($"{method} {endpoint.RoutePattern.RawText}", retired);
+    }
+
     [Theory]
     [MemberData(nameof(Profiles))]
     public void Every_route_declares_a_known_permission(string profile, string? taskServer)
@@ -124,8 +165,6 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("GET", "/api/filesystem-layer/snapshot", IamPermissions.WorkspaceAdminister)]
     [InlineData("GET", "/api/cli/types", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/usage", IamPermissions.WorkspaceOperate)]
-    [InlineData("GET", "/api/cli/{cliType}/session-detail", IamPermissions.WorkspaceOperate)]
-    [InlineData("GET", "/api/cli/{cliType}/working-memory", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/cli/quota", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/{cliType}/models", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/maintenance-model", IamPermissions.WorkspaceRead)]

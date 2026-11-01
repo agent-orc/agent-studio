@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+test.skip(process.platform !== 'win32', 'Stable sweep requires Windows Chrome and its operator evidence directory.');
 test.use({ launchOptions: { executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe' } });
 test.setTimeout(8 * 60_000);
 
@@ -182,7 +183,7 @@ test('App-Vermessung v1 real stable sweep', async ({ page }) => {
     await recordMissing(page, 'Usage', 'status bar entry', 'Usage status control was not visible.');
   }
 
-  for (const key of ['overview', 'appearance', 'updates', 'workspaces', 'caps', 'working-memory', 'prompts', 'tokens', 'screenshots', 'remote-hosts']) {
+  for (const key of ['overview', 'appearance', 'updates', 'workspaces', 'caps', 'prompts', 'tokens', 'screenshots', 'remote-hosts']) {
     await page.goto(`/#/workspace/settings/${key}`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(850);
     const recoveryOverlay = page.getByTestId('crash-recovery-prompt-overlay');

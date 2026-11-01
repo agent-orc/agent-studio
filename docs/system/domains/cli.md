@@ -43,11 +43,7 @@ CLI execution tests.
 - `backend/Features/Cli/Pty/CliEnvironment.cs`: `ProbeEnvironment()` is the one
   updater guard every PTY spawn passes as `extraEnv`.
 - `backend/Features/Cli/CliEndpoints.cs`: sessions, versions, quota, and model
-  endpoints. The CLI-session tool (AGT-2102) adds `GET /api/cli/{cliType}/session-detail`
-  (lazy single-transcript parse: model, thinking, message count, first prompt)
-  and a guarded `DELETE /api/cli/{cliType}/session` (cleanup refused for any path
-  outside the CLI's own session store). Both resolve/parse in
-  `SessionRegistry.cs`; the `/usage` list report stays body-free.
+  endpoints. The `/usage` session list report stays body-free.
 - `backend/Services/Runner/OrchestratorSession.cs` and
   `OrchestratorRunner.cs`: runner-to-CLI orchestration boundary.
 - `backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs` and `CodexOneShot.cs`:

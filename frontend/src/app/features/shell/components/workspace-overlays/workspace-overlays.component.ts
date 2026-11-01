@@ -1,4 +1,4 @@
-﻿import { NgTemplateOutlet } from '@angular/common';
+import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, effect, inject, input, output, signal } from '@angular/core';
 import { WorkspaceOverlaysService } from '../../state/workspace-overlays.service';
 import type { WorkspaceSettingsSection } from '../../state/workspace-overlays.service';
@@ -6,9 +6,6 @@ import { WorkspaceScreenshotsComponent } from '../../../screenshots';
 import { TokenUsageSectionComponent } from '../../../tokens';
 import {
   CliAdminPanelComponent,
-  CliWorkingMemoryPanelComponent,
-  CliSessionsPanelComponent,
-  CliPathsPanelComponent,
 } from '../../../cli';
 import { RemoteHostsPanelComponent } from '../../../remote-hosts';
 import { CredentialInventoryComponent } from '../../../credentials/credential-inventory/credential-inventory.component';
@@ -60,13 +57,12 @@ interface SettingsRailItem {
  * AGT-1812 moved out of their standalone modal). Workspace group
  * (defaults applied across the workspace's projects): CLI Management (the CLI
  * catalog / models / routes / usage caps / completion-contracts hub), CLI
- * sessions and CLI paths (encapsulated pages split out of that hub - AGT-2101),
- * Working memory, System prompts, Token usage, Visual evidence.
+ * System prompts, Token usage, Visual evidence.
  *
  * Each content section re-uses a stable outer test id
  * (`cli-admin-overlay`, `prompt-admin-overlay`, `workspace-tokens-overlay`,
  * `workspace-screenshots-overlay`, `orchestrator-config-overlay`, plus the new
- * appearance/updates/workspaces/working-memory ids) so deep-links and specs
+ * appearance/updates/workspaces ids) so deep-links and specs
  * keep resolving.
  */
 @Component({
@@ -77,10 +73,7 @@ interface SettingsRailItem {
     TokenUsageSectionComponent,
     WorkspaceScreenshotsComponent,
     CliAdminPanelComponent,
-    CliWorkingMemoryPanelComponent,
-    CliSessionsPanelComponent,
-    CliPathsPanelComponent,
-    RemoteHostsPanelComponent,
+          RemoteHostsPanelComponent,
     CredentialInventoryComponent,
     SecretsPanelComponent,
     TaskServerPanelComponent,
@@ -136,9 +129,6 @@ export class WorkspaceOverlaysComponent {
     { key: 'remote-hosts', label: 'Environment', description: 'Machines, services, connections, health, and repository access.', icon: 'activity', group: 'global' },
     { key: 'orchestrator', label: 'Orchestrator', description: 'Platform-global supervisor, meta-cycle, and auto-intervention lifecycle flags.', icon: 'bot', group: 'global' },
     { key: 'caps', label: 'CLI Management', description: 'What CLIs and models are available, their fallback routes, usage caps and completion contracts.', icon: 'cli', group: 'workspace' },
-    { key: 'cli-sessions', label: 'CLI sessions', description: 'Per-CLI per-project native session inventory.', icon: 'list', group: 'workspace' },
-    { key: 'cli-paths', label: 'CLI paths', description: 'Where each CLI lives on disk: executable path and known project roots.', icon: 'link', group: 'workspace' },
-    { key: 'working-memory', label: 'Working memory', description: 'Per-CLI memory and session state. Auth stays protected.', icon: 'book', group: 'workspace' },
     { key: 'prompts', label: 'System prompts', description: 'Application-wide runtime prompt defaults and overrides.', icon: 'code', group: 'workspace' },
     { key: 'retention', label: 'Retention', description: 'Artifact rules, previews, archive runs, and full backups.', icon: 'archive', group: 'workspace' },
     { key: 'tokens', label: 'Token usage', description: 'The single usage area: token spend across every project.', icon: 'activity', group: 'workspace' },
@@ -202,8 +192,6 @@ export class WorkspaceOverlaysComponent {
   panelTestid(): string {
     switch (this.overlays.section()) {
       case 'caps': return 'cli-admin-overlay';
-      case 'cli-sessions': return 'cli-sessions-overlay';
-      case 'cli-paths': return 'cli-paths-overlay';
       case 'prompts': return 'prompt-admin-overlay';
       case 'retention': return 'workspace-retention-overlay';
       case 'tokens': return 'workspace-tokens-overlay';
@@ -218,7 +206,6 @@ export class WorkspaceOverlaysComponent {
       case 'remote-hosts': return 'workspace-remote-hosts-overlay';
       case 'first-run': return 'workspace-first-run-overlay';
       case 'orchestrator': return 'orchestrator-config-overlay';
-      case 'working-memory': return 'workspace-working-memory-overlay';
       case 'overview': return 'workspace-settings-overview-panel';
     }
   }

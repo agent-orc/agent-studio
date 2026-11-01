@@ -155,43 +155,6 @@
         @case ('caps') {
           <app-cli-admin-panel />
         }
-        @case ('cli-sessions') {
-          <section class="ws-settings__section" data-testid="workspace-cli-sessions">
-            <header class="ws-settings__section-head">
-              <h2 class="ws-settings__panel-title">CLI sessions</h2>
-              <p class="ws-settings__panel-desc">
-                The per-CLI, per-project inventory of native CLI sessions on this
-                host. This is a lazy read-only view; the larger session revamp is
-                tracked separately.
-              </p>
-            </header>
-            <app-cli-sessions-panel (openJobDetail)="openJobDetail.emit($event)" />
-          </section>
-        }
-        @case ('cli-paths') {
-          <section class="ws-settings__section" data-testid="workspace-cli-paths">
-            <header class="ws-settings__section-head">
-              <h2 class="ws-settings__panel-title">CLI paths</h2>
-              <p class="ws-settings__panel-desc">
-                Where each CLI lives on this host: the discovered executable path
-                and the project roots it holds session state for. Read-only.
-              </p>
-            </header>
-            <app-cli-paths-panel />
-          </section>
-        }
-        @case ('working-memory') {
-          <section class="ws-settings__section" data-testid="workspace-working-memory">
-            <header class="ws-settings__section-head">
-              <h2 class="ws-settings__panel-title">Working memory</h2>
-              <p class="ws-settings__panel-desc">
-                Per-CLI memory and session state you can inspect and clear. Auth
-                and config are protected and never listed as deletable.
-              </p>
-            </header>
-            <app-cli-working-memory-panel />
-          </section>
-        }
         @case ('prompts') {
           <app-prompt-admin-panel />
         }
