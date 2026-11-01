@@ -1376,6 +1376,10 @@ builder.Services.AddSingleton<CliVersionTracker>();
 builder.Services.AddSingleton<NpmGlobalInstaller>();
 builder.Services.AddSingleton<LocalCliRepairService>();
 builder.Services.AddSingleton<QuotaService>();
+builder.Services.AddSingleton(new AgentStudio.TaskServer.Contracts.HostQuotaCoordinator(
+    builder.Configuration.GetValue<int?>("Quota:TtlSeconds")
+    ?? AgentStudio.TaskServer.Contracts.HostQuotaCoordinator.DefaultTtlSeconds));
+builder.Services.AddHostedService<HostQuotaSyncService>();
 if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
     builder.Services.AddHostedService<CliVersionMonitorHostedService>();
 builder.Services.AddSingleton<CliQuotaCapsService>();
