@@ -429,6 +429,17 @@ replaces the value, each line of a multi-line value, and the base64 form with
 `[secret:<reference>]`. Registrations expire 24 hours after the last
 resolution. The pattern-based `CredentialRedactor` still runs first.
 
+`CredentialRedactor` masks GitHub tokens (including App installation tokens),
+user info in remote URLs, Anthropic and OpenAI keys, `CLAUDE_CODE_OAUTH_TOKEN`
+and `refresh_token` assignments, private-key blocks, and the tokens Studio
+issues itself. Session, CSRF, runner, enrollment, invitation, service-account,
+telemetry and connector tokens are also registered as exact values when they
+are issued, so they are masked whatever their shape. Remote Review reports
+pass through the redactor before Studio stores them; a masked artifact gets a
+new digest that the command evidence then cites. Job-folder commits leave the
+job's `logs/` folder out. All patterns use the non-backtracking regex engine,
+so redaction time grows linearly with the input length.
+
 ## Studio
 
 The Secrets section is under Settings → Global → Secrets, next to Credentials

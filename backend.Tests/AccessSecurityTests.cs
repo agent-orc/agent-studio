@@ -32,6 +32,19 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
+    public void Issued_session_csrf_and_runner_secrets_are_masked_by_the_redactor()
+    {
+        var (store, _, _) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("issued.owner", "correct horse battery staple!", "Issued Owner"));
+        var enrollment = store.CreateEnrollment(new RunnerEnrollmentRequest("issued-runner-01", null, null, null));
+        var runner = store.EnrollRunner(enrollment.Code);
+
+        // The CSRF token has no recognisable shape; only the issued literal masks it.
+        foreach (var issued in new[] { owner.CsrfToken, owner.SessionToken, enrollment.Code, runner.Secret })
+            Assert.Equal("echo [REDACTED_CREDENTIAL] done", AgentStudio.Security.CredentialRedactor.Redact($"echo {issued} done"));
+    }
+
+    [Fact]
     public void Bootstrap_password_session_and_runner_secrets_are_hashed_at_rest()
     {
         var (store, _, _) = NewStore();

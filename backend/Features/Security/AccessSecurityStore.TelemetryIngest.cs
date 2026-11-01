@@ -26,7 +26,7 @@ public sealed partial class AccessSecurityStore
         if (expiresAt is { } expiry && expiry.ToUniversalTime() <= now)
             throw new SecurityOperationException(400, "invalid-expiry", "Token expiry must be in the future.");
         var id = Guid.NewGuid().ToString("N");
-        var secret = $"{TelemetryTokenPrefix}.{id}.{PasswordSecretHasher.RandomToken()}";
+        var secret = Issued($"{TelemetryTokenPrefix}.{id}.{PasswordSecretHasher.RandomToken()}");
         var token = new TelemetryIngestToken
         {
             Id = id, Name = label, Project = project, Environment = environment, Signals = normalized,

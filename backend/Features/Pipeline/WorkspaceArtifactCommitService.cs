@@ -18,6 +18,7 @@ public sealed class WorkspaceArtifactCommitService
 {
     private const string CommitterName = "agent-orchestrator";
     private const string CommitterEmail = "agent-orchestrator@local";
+    private const string JobLogFolder = "logs";
 
     private readonly IConfiguration _configuration;
     private readonly ILogger<WorkspaceArtifactCommitService> _logger;
@@ -167,6 +168,10 @@ public sealed class WorkspaceArtifactCommitService
                 var oversized = FindOversizedFiles(gitRoot, pathspecs);
                 UnstageRefusedFiles(gitRoot, oversized);
                 var refusedSpecs = BuildLiteralExcludePathspecs(oversized);
+                // Raw CLI and session logs stay on disk only; the job commit
+                // carries the reviewed evidence, never the log folder.
+                refusedSpecs.AddRange(BuildLiteralExcludePathspecs(
+                    pathspecs.Select(pathspec => pathspec + "/" + JobLogFolder).ToList()));
                 var addArgs = new List<string> { "add", "-A", "--" };
                 addArgs.AddRange(pathspecs);
                 addArgs.AddRange(refusedSpecs);
