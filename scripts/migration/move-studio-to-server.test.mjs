@@ -674,3 +674,21 @@ test('a store set aside after a crash stays behind', () => {
   assert.equal(classifyPath('.metadata/attempt-authority.corrupt-20261011-1647.json').transfer, 'exclude');
   assert.equal(classifyPath('.metadata/attempt-authority.json').transfer, 'archive');
 });
+
+test('a Windows path inside stored message text is history and does not stop the apply', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-text-'));
+  const workspace = path.join(root, 'workspace');
+  await mkdir(path.join(workspace, '.metadata'), { recursive: true });
+  const summary = 'finished failed=0 report=C:\\Users\\someone\\report.json';
+  await writeFile(path.join(workspace, '.metadata', 'attempts.json'), JSON.stringify({ root: 'C:\\Projects\\demo', summary }));
+  const mapping = path.join(root, 'map.json');
+  await writeFile(mapping, JSON.stringify({ 'C:\\Projects\\demo': '/data/projects/demo' }));
+
+  const report = await relocateInventory({ workspace, mapping, apply: true });
+
+  assert.equal(report.unresolved, 0);
+  const written = JSON.parse(await readFile(path.join(workspace, '.metadata', 'attempts.json'), 'utf8'));
+  assert.equal(written.root, '/data/projects/demo');
+  assert.equal(written.summary, summary);
+  await rm(root, { recursive: true, force: true });
+});
