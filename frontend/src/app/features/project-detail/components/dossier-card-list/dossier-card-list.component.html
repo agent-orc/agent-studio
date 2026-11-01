@@ -1,22 +1,28 @@
 <section class="dossier-cards" data-testid="dossier-card-list" aria-label="Dossier cards">
   @if (list(); as view) {
-    <header class="dossier-cards__header">
-      <strong>Cards</strong>
-      <span data-testid="dossier-slice-progress">{{ view.completedSlices }} / {{ view.implementationSlices }} implementation slices complete</span>
-    </header>
-    @if (view.cards.length === 0) { <p>No cards are assigned to this Dossier yet.</p> }
-    <ul>
-      @for (card of view.cards; track card.key) {
-        <li>
-          <button type="button" (click)="open(card.key)" [attr.data-testid]="'dossier-card-' + card.key">
-            <strong>{{ card.key }}</strong> {{ card.title }}
-          </button>
-          <span>{{ laneName(card.lane) }} · {{ card.state }}</span>
-          <span>Environments: {{ card.environments.length ? card.environments.join(', ') : 'None' }}</span>
-          @if (card.section) { <span>Section: {{ card.section }}</span> }
-          @if (card.decision) { <span>Decision: {{ card.decision }}</span> }
-        </li>
+    @if (view.cards.length === 0) {
+      <p class="dossier-cards__empty"><strong>Cards</strong> <span>No cards are assigned to this Dossier yet.</span></p>
+    } @else {
+      <button type="button" class="dossier-cards__toggle" data-testid="dossier-cards-toggle" (click)="toggle()"
+        [attr.aria-expanded]="expanded()" aria-controls="dossier-cards-items"><app-disclosure-marker [open]="expanded()" />
+        <strong>Cards</strong>
+        <span data-testid="dossier-slice-progress">{{ view.completedSlices }} / {{ view.implementationSlices }} implementation slices complete</span>
+      </button>
+      @if (expanded()) {
+        <ul id="dossier-cards-items">
+          @for (card of view.cards; track card.key) {
+            <li>
+              <button type="button" class="dossier-cards__card" (click)="open(card.key)" [attr.data-testid]="'dossier-card-' + card.key">
+                <strong>{{ card.key }}</strong> {{ card.title }}
+              </button>
+              <span>{{ laneName(card.lane) }} · {{ card.state }}</span>
+              <span>Environments: {{ card.environments.length ? card.environments.join(', ') : 'None' }}</span>
+              @if (card.section) { <span>Section: {{ card.section }}</span> }
+              @if (card.decision) { <span>Decision: {{ card.decision }}</span> }
+            </li>
+          }
+        </ul>
       }
-    </ul>
+    }
   }
 </section>

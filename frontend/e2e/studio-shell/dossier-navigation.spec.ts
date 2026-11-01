@@ -34,7 +34,7 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
   page,
   devBackend,
 }, testInfo) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const paths = await (await fetch(`${devBackend.baseUrl}/api/watch-paths`)).json() as { name: string }[];
   let catalogue: Catalogue | null = null;
   for (const candidate of paths) {
@@ -176,6 +176,16 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
   const cardList = page.getByTestId('dossier-card-list');
   await expect(cardList).toBeVisible();
   await expect(cardList.getByTestId('dossier-slice-progress')).toContainText('1 / 3 implementation slices complete');
+  const cardsToggle = cardList.getByTestId('dossier-cards-toggle');
+  await expect(cardsToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(cardList.getByTestId('dossier-card-AGT-3204')).toHaveCount(0);
+  const toggleBox = await cardsToggle.boundingBox();
+  const frameBox = await page.getByTestId('workbench-viewer-frame-shell').boundingBox();
+  expect(toggleBox).toBeTruthy();
+  expect(frameBox).toBeTruthy();
+  expect(frameBox!.y - (toggleBox!.y + toggleBox!.height)).toBeLessThanOrEqual(16);
+  await cardsToggle.click();
+  await expect(cardsToggle).toHaveAttribute('aria-expanded', 'true');
   await expect(cardList.getByTestId('dossier-card-AGT-3204')).toContainText('Dossier cards and grouping');
   await expect(cardList).toContainText('staging');
   await expect(cardList).toContainText('§4');
@@ -216,6 +226,12 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await cardList.screenshot({ path: evidencePath(testInfo, `dossier-cards-${theme}.png`) });
+    await cardsToggle.click();
+    await expect(cardsToggle).toHaveAttribute('aria-expanded', 'false');
+    await page.getByTestId('workbench-viewer').screenshot({
+      path: evidencePath(testInfo, `dossier-cards-collapsed-${theme}.png`),
+    });
+    await cardsToggle.click();
     await page.getByTestId('studio-sidebar').screenshot({
       path: evidencePath(testInfo, `workspace-tree-after-narrow-${theme}--real.png`),
     });
