@@ -269,7 +269,7 @@ test.describe('Workspace token timeline', () => {
     await dismissDevErrorDialog(page);
 
     // The default 24 h window should render cells from the stubbed payload.
-    await expect(page.getByTestId('wtt-win-24h')).toHaveClass(/wtt__win-btn--active/);
+    await expect(page.getByTestId('wtt-win-24h')).toHaveAttribute('aria-pressed', 'true');
     const segments = page.getByTestId(/^wtt-seg-/);
     await expect(segments.first()).toBeVisible({ timeout: 3_000 });
     const initialBars = await page.getByTestId(/^wtt-bar-/).count();
@@ -278,13 +278,13 @@ test.describe('Workspace token timeline', () => {
     // Window toggle: flip to 6 h. The button must light up active and
     // the chart must re-render against the new bucket size.
     await page.getByTestId('wtt-win-6h').click();
-    await expect(page.getByTestId('wtt-win-6h')).toHaveClass(/wtt__win-btn--active/);
-    await expect(page.getByTestId('wtt-win-24h')).not.toHaveClass(/wtt__win-btn--active/);
+    await expect(page.getByTestId('wtt-win-6h')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('wtt-win-24h')).toHaveAttribute('aria-pressed', 'false');
     await expect(page.getByTestId(/^wtt-seg-/).first()).toBeVisible({ timeout: 3_000 });
 
     // Back to 24h for the rest of the assertions and screenshot.
     await page.getByTestId('wtt-win-24h').click();
-    await expect(page.getByTestId('wtt-win-24h')).toHaveClass(/wtt__win-btn--active/);
+    await expect(page.getByTestId('wtt-win-24h')).toHaveAttribute('aria-pressed', 'true');
 
     // Project legend toggle: click the 'alpha' chip off, all alpha
     // segments disappear; click again, they come back.
@@ -406,7 +406,7 @@ test.describe('Workspace token timeline', () => {
       const samples: { what: string; selector: string }[] = [
         { what: 'title', selector: '.wtt__title' },
         { what: 'subtitle', selector: '.wtt__sub' },
-        { what: 'active window button', selector: '.wtt__win-btn--active' },
+        { what: 'active window button', selector: '[data-testid^="wtt-win-"][aria-pressed="true"]' },
         { what: 'legend chip', selector: '.wtt__chip' },
         { what: 'table cell', selector: '.wtt__tab td' },
         { what: 'model table cell', selector: '[data-testid="wtt-models-table"] td' },
@@ -421,7 +421,7 @@ test.describe('Workspace token timeline', () => {
         ).toBeGreaterThanOrEqual(4.5);
       }
 
-      await view.screenshot({ path: join(SCREENSHOT_DIR, `workspace-token-timeline-${theme}.png`) });
+      await view.screenshot({ path: join(SCREENSHOT_DIR, `workspace-token-timeline-${theme}--mocked.png`) });
     });
   }
 });

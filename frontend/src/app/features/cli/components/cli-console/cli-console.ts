@@ -1,14 +1,17 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, input, signal, computed, effect, OnDestroy } from '@angular/core';
 import { CliOutputLine } from '../../../../models/task.model';
 
 @Component({
   selector: 'app-cli-console',
   standalone: true,
+  imports: [SegmentedControlComponent],
   templateUrl: './cli-console.html',
   styleUrl: './cli-console.scss',
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class CliConsoleComponent implements OnDestroy {
+  readonly streamOptions = [{ value: 'all', label: 'All' }, { value: 'stdout', label: 'stdout' }, { value: 'stderr', label: 'stderr' }] as const;
   readonly lines = input<CliOutputLine[]>([]);
   readonly title = input('Console Output');
   readonly bodyMaxHeight = input('400px');

@@ -14,19 +14,7 @@
       </p>
     </div>
     <div class="wtt__controls">
-      @if (!scope()) { <div class="wtt__win" role="radiogroup" aria-label="Window">
-        @for (opt of windowOptions; track opt.hours) {
-          <button type="button"
-                  class="wtt__win-btn"
-                  [class.wtt__win-btn--active]="windowHours() === opt.hours"
-                  [attr.data-testid]="'wtt-win-' + opt.testId"
-                  role="radio"
-                  [attr.aria-checked]="windowHours() === opt.hours"
-                  (click)="setWindow(opt.hours)">
-            {{ opt.label }}
-          </button>
-        }
-      </div> }
+      @if (!scope()) { <app-segmented-control [options]="segmentedWindowOptions" [value]="windowHours()" ariaLabel="Window" (valueChange)="setWindow($event)" /> }
       <button type="button"
               class="wtt__refresh"
               data-testid="wtt-refresh"

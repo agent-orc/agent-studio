@@ -1,3 +1,5 @@
+@use '../../../styles/mixins' as m;
+
 /*
  * Shared tab control for the prompt / protocol / future panes. Two
  * variants, one component:
@@ -86,11 +88,8 @@ app-pane-tabs.pane-tabs-host--header {
   animation: none;
 }
 
-.pane-tabs--pill {
-  gap: 2px;
-  padding: 2px;
-  background: var(--studio-bg-hover);
-  border-radius: 3px;
+.pane-tabs--pill.pane-tabs--pill {
+  @include m.segmented-track;
 }
 
 /* Re-orders the pill variant so the activity tab leads when the host
@@ -190,17 +189,23 @@ app-pane-tabs.pane-tabs-host--header {
   align-self: center;
 }
 
-/* Pill variant — compact toggle group inside the pane body. */
-.pane-tabs--pill .pane-tab {
-  padding: 3px 10px;
-  border-radius: 2px;
-  font-size: 0.9em;
+/* Pill tabs keep tab semantics while sharing the segmented track and thumb. */
+.pane-tabs--pill.pane-tabs--pill .pane-tab {
+  @include m.segmented-option;
 
-  &.pane-tab--active {
-    background: var(--studio-bg-editor);
-    color: var(--studio-fg-strong);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  &:hover:not(:disabled):not(.pane-tab--active) {
+    background: color-mix(in srgb, var(--studio-fg) 7%, transparent);
+    color: var(--studio-fg);
   }
+
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
+
+  &.pane-tab--active,
+  &.pane-tab--active:hover { @include m.segmented-thumb; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-tabs--pill.pane-tabs--pill .pane-tab { transition: none; }
 }
 
 .pane-tab__icon {

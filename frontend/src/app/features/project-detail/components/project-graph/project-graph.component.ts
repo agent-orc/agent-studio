@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
@@ -98,12 +99,13 @@ const MAX_GRAPH_COMPONENTS = 36;
 @Component({
   selector: 'app-project-graph',
   standalone: true,
-  imports: [LoadingSurfaceComponent],
+  imports: [SegmentedControlComponent, LoadingSurfaceComponent],
   templateUrl: './project-graph.component.html',
   styleUrl: './project-graph.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ProjectGraphComponent {
+  readonly viewOptions = [{ value: 'graph', label: 'Graph', testid: 'project-graph-view-graph' }, { value: 'list', label: 'Components', testid: 'project-graph-view-list' }] as const;
   private readonly http = inject(HttpClient);
   private requestVersion = 0;
 

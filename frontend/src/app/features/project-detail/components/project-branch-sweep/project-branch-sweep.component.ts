@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
@@ -46,11 +47,12 @@ const VISIBLE_ROW_LIMIT = 200;
   selector: 'app-project-branch-sweep',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DisclosureMarkerComponent, InfoButtonComponent],
+  imports: [SegmentedControlComponent, DisclosureMarkerComponent, InfoButtonComponent],
   templateUrl: './project-branch-sweep.component.html',
   styleUrl: './project-branch-sweep.component.scss',
 })
 export class ProjectBranchSweepComponent {
+  readonly modeOptions = [{ value: 'report-only', label: 'report-only' }, { value: 'reclaim', label: 'reclaim', testid: 'branch-sweep-mode-reclaim' }] as const;
   private readonly projectGit = inject(ProjectGitService);
 
   readonly projectName = input.required<string>();

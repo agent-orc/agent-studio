@@ -1,17 +1,6 @@
 <div class="field">
   <span class="field__label">Mode</span>
-  <div class="create-type-picker" data-testid="create-mode">
-    @for (m of modeOptions; track m.value) {
-      <button type="button"
-              class="create-type-picker__btn"
-              [class.create-type-picker__btn--active]="mode() === m.value"
-              [attr.data-testid]="'create-mode-' + m.value"
-              [cacTooltip]="m.hint"
-              (click)="setMode(m.value)">
-        <span aria-hidden="true">{{ m.icon }}</span> {{ m.label }}
-      </button>
-    }
-  </div>
+  <app-segmented-control data-testid="create-mode" [options]="segmentedModeOptions" [value]="mode()" ariaLabel="Task mode" (valueChange)="setMode($event)" />
   <button type="button"
           class="create-web-toggle"
           role="switch"

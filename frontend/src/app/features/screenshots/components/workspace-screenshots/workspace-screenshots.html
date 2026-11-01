@@ -17,19 +17,7 @@
       </p>
     </div>
     <div class="wss__controls">
-      <div class="wss__win" role="radiogroup" aria-label="Window">
-        @for (opt of windowOptions; track opt.hours) {
-          <button type="button"
-                  class="wss__win-btn"
-                  [class.wss__win-btn--active]="windowHours() === opt.hours"
-                  [attr.data-testid]="'wss-win-' + opt.testId"
-                  role="radio"
-                  [attr.aria-checked]="windowHours() === opt.hours"
-                  (click)="setWindow(opt.hours)">
-            {{ opt.label }}
-          </button>
-        }
-      </div>
+      <app-segmented-control [options]="segmentedWindowOptions" [value]="windowHours()" ariaLabel="Window" (valueChange)="setWindow($event)" />
       @if (!projectName() && projects().length > 1) {
         <select class="wss__project"
                 data-testid="wss-project-filter"

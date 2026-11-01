@@ -17,37 +17,6 @@
   min-width: 0;
 }
 
-.fsh__mode {
-  display: inline-flex;
-  flex: 0 0 auto;
-  overflow: hidden;
-  border: 1px solid var(--studio-border);
-  border-radius: 4px;
-  background: var(--studio-bg);
-}
-
-.fsh__mode-button {
-  border: 0;
-  border-right: 1px solid var(--studio-border);
-  background: transparent;
-  color: var(--studio-fg-dim);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.72rem;
-  line-height: 1.6;
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-}
-
-.fsh__mode-button:last-child {
-  border-right: 0;
-}
-
-.fsh__mode-button:hover,
-.fsh__mode-button--active {
-  background: color-mix(in srgb, var(--studio-accent) 16%, transparent);
-  color: var(--studio-fg-strong);
-}
-
 .fsh__path {
   min-width: 0;
   overflow: hidden;

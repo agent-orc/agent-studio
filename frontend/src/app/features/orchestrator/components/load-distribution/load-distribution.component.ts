@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { CliUsageStore } from '../../../tokens';
 import type { CliUsageQuotaRow, TokenSummaryByModel } from '../../../tokens';
@@ -18,7 +19,7 @@ interface ModelRow {
 @Component({
   selector: 'app-load-distribution',
   standalone: true,
-  imports: [AppTooltipDirective],
+  imports: [SegmentedControlComponent, AppTooltipDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './load-distribution.component.html',
   styleUrl: './load-distribution.component.scss',
@@ -35,6 +36,8 @@ export class LoadDistributionComponent implements OnInit, OnDestroy {
     { id: '7d', label: '7 days', hours: 168 },
   ];
   readonly decisionKinds = ['all', 'switch', 'downshift', 'throttle', 'wait'];
+  readonly segmentedPeriods = this.periods.map(item => ({ value: item.id, label: item.label, testid: 'load-period-' + item.id }));
+  readonly segmentedDecisionKinds = this.decisionKinds.map(value => ({ value, label: value }));
   readonly periodHours = computed(() => this.periods.find(p => p.id === this.period())?.hours ?? 24);
   readonly windowStart = computed(() => Date.now() - this.periodHours() * 3_600_000);
   readonly periodEntries = computed(() => this.entries().filter(e => Date.parse(e.ts) >= this.windowStart()));

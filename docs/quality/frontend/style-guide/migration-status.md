@@ -69,6 +69,8 @@ Tracker for the design-system convergence work. Each row is a **queueable task**
 
 | Slice                                                             | Status | Notes                                                                                       |
 | ----------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------- |
+| `<app-segmented-control>` for compact pick-one-of-N choices | 🟢 | One quiet track and raised thumb; template lint rejects new hand-built choices |
+| Pill tabs share segmented track and thumb mixins | 🟢 | `pane-tabs--pill` keeps `tablist` semantics |
 | `<app-pane-tabs>` canonical                                        | 🟢     | F38; `variant="header"` + `variant="pill"`                                                   |
 | Prompt-pane / protocol-pane on `<app-pane-tabs>`                   | 🟢     | Already migrated                                                                             |
 | **T-Tabs: studio-shell editor tab strip evaluation** — migrate to `<app-pane-tabs variant="strip">` (new variant) or keep `.studio-tab` bespoke | ⚪ | Decision needed; the editor tab strip carries drag-reorder + close-per-tab |

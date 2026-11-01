@@ -12,6 +12,50 @@
  * See docs/quality/frontend/audits/scss-quality.md "Wave E" for the rationale.
  */
 
+/* Shared track and thumb for single-choice controls and pill tabs. */
+@mixin segmented-track {
+  display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  background: color-mix(in srgb, var(--studio-fg) 8%, transparent);
+  border: 0;
+  border-radius: 8px;
+}
+
+@mixin segmented-option {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--studio-spacing-1);
+  min-height: 24px;
+  margin: 0;
+  padding: 0 var(--studio-spacing-3);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--studio-fg-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+@mixin segmented-thumb {
+  background: var(--studio-surface);
+  color: var(--studio-fg);
+  font-weight: 600;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--studio-fg) 14%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.14);
+}
+
 /* ---------------------------------------------------------------------
  * icon-button
  *

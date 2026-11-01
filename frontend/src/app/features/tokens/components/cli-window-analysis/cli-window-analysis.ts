@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { AdHocUsageAggregate, TokenSummaryAggregate, TokenTimeline } from '../../models/tokens.model';
@@ -11,7 +12,7 @@ interface StreamPart { label: string; tokens: number; pct: number; }
 @Component({
   selector: 'app-cli-window-analysis',
   standalone: true,
-  imports: [AppTooltipDirective],
+  imports: [SegmentedControlComponent, AppTooltipDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './cli-window-analysis.html',
   styleUrl: './cli-window-analysis.scss',
@@ -28,6 +29,7 @@ export class CliWindowAnalysisComponent {
 
   readonly period = signal<AnalysisPeriod>('24h');
   readonly periods: readonly AnalysisPeriod[] = ['1h', '24h', '7d'];
+  readonly segmentedPeriods = this.periods.map(value => ({ value, label: value, testid: 'cli-window-period-' + value }));
   readonly row = computed(() => this.quotaRows().find(row => row.cliType === this.cliType()) ?? null);
   readonly label = computed(() => this.cliType() === 'claude' ? 'Claude' : 'Codex');
   readonly cliModels = computed(() => (this.tokens()?.byModel ?? []).filter(row => this.modelMatches(row.model)));

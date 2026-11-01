@@ -99,6 +99,27 @@ test.describe('Project detail - Knowledge section', () => {
     await resetWikiStorage(page);
   });
 
+  test('wiki search choice renders in both themes', async ({ page }) => {
+    await page.route('**/api/projects/*/wiki/search*', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ query: 'guide', semanticUsed: false, expandedTerms: [], durationMs: 12,
+        results: [{ relPath: 'concepts/overview.md', title: 'Concept overview', kind: 'md',
+          snippet: 'A <em>guide</em> to the project', score: 0.9, updatedAt: '2026-07-10T08:00:00Z' }] }),
+    }));
+    const output = process.env.JOB_RESULTS_DIR?.trim() || SCREENSHOT_DIR;
+    fs.mkdirSync(output, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await page.goto(`/#/projects/${slugFor(projectName)}/wiki`);
+      await page.evaluate(value => localStorage.setItem('atp.studio.theme', value), theme);
+      await page.reload();
+      await page.getByTestId('project-wiki-search').fill('guide');
+      const results = page.getByTestId('wiki-search-results');
+      await expect(results.getByRole('group', { name: 'Darstellung der Suchtreffer' })).toBeVisible();
+      await results.screenshot({ path: path.join(output, `wiki-search-${theme}--mocked.png`), animations: 'disabled' });
+    }
+  });
+
   test('Knowledge rail mounts the root tree and opens a page', async ({ page }) => {
     await page.goto(`/#/projects/${slugFor(projectName)}/wiki`);
 

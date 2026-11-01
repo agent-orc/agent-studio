@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -35,7 +36,7 @@ const WINDOW_OPTIONS: { hours: number; label: string; testId: string }[] = [
 @Component({
   selector: 'app-workspace-summary',
   standalone: true,
-  imports: [DatePipe],
+  imports: [SegmentedControlComponent, DatePipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-summary.html',
   styleUrl: './workspace-summary.scss',
@@ -44,6 +45,7 @@ export class WorkspaceSummaryComponent implements OnInit, OnDestroy {
   private readonly tasks = inject(TaskService);
 
   readonly windowOptions = WINDOW_OPTIONS;
+  readonly segmentedWindowOptions = this.windowOptions.map(opt => ({ value: opt.hours, label: opt.label, testid: 'wsm-win-' + opt.testId }));
 
   readonly windowHours = signal<number>(this.loadWindow());
   readonly summary = signal<ExecutiveSummaryResponse | null>(null);

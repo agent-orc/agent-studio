@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { test, expect } from '@playwright/test';
 import { api } from '../helpers/api';
 import { createJob, moveJob } from '../helpers/jobs';
@@ -69,6 +71,25 @@ test.describe('F38: pane-tab indicator states', () => {
       // class `pane-tab` (no inspector__tab--* legacy classes).
       await expect(activity).toHaveClass(/(^|\s)pane-tab(\s|$)/);
       await expect(activity).toHaveClass(/pane-tab--active/);
+      const output = process.env.JOB_RESULTS_DIR ?? 'test-results';
+      mkdirSync(output, { recursive: true });
+      for (const theme of ['light', 'dark'] as const) {
+        await page.evaluate(value => localStorage.setItem('atp.studio.theme', value), theme);
+        await page.reload();
+        await expect(activity).toBeVisible();
+        // The app currently mounts this tablist in its header variant. Apply
+        // the pill variant classes to the same tablist to review the shared
+        // track and thumb while retaining its role="tablist" contract.
+        const tablist = activity.locator('..');
+        await expect(tablist).toHaveAttribute('role', 'tablist');
+        await tablist.evaluate(element => {
+          element.classList.remove('pane-tabs--header');
+          element.classList.add('pane-tabs--pill');
+          element.closest('app-pane-tabs')?.classList.remove('pane-tabs-host--header');
+        });
+        await expect(tablist).toHaveClass(/pane-tabs--pill/);
+        await tablist.screenshot({ path: join(output, `pane-tabs-pill-${theme}--real.png`), animations: 'disabled' });
+      }
     } finally {
       await api(`/api/tasks/${encodeURIComponent(job.id)}?watchPath=${encodeURIComponent(watchPath)}`, { method: 'DELETE' });
     }

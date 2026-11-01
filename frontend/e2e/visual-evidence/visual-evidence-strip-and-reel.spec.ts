@@ -1,6 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
-import { mkdirSync, copyFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import { contrastRatio } from '../helpers/contrast';
 import { setTheme, dismissDevErrorDialog, sampleColours } from '../helpers/theme';
 
@@ -218,7 +219,11 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/clients', json([]));
 }
 
-async function stubScreenshotApis(page: Page, jobScreenshots: any[], workspaceScreenshots: any[]) {
+async function stubScreenshotApis(
+  page: Page,
+  jobScreenshots: ReturnType<typeof buildJobScreenshots>,
+  workspaceScreenshots: ReturnType<typeof buildWorkspaceScreenshots>,
+) {
   // Use regex anchors so /screenshots and /screenshot don't shadow
   // each other through Playwright's glob `*` semantics.
   await page.route(/\/api\/(?:jobs|tasks)\/[^/]+\/screenshots(\?.*)?$/, async (route) => {
@@ -320,7 +325,7 @@ test.describe('Visual evidence: per-task strip + lightbox + workspace reel', () 
     await stubScreenshotApis(page, jobScreenshots, buildWorkspaceScreenshots());
     await stubJobDetailForTask(page);
 
-    await page.goto(`http://localhost:4010/?job=${encodeURIComponent(TASK_JOB_ID)}&watchPath=${encodeURIComponent(TASK_WATCH_PATH)}`);
+    await page.goto(`/?job=${encodeURIComponent(TASK_JOB_ID)}&watchPath=${encodeURIComponent(TASK_WATCH_PATH)}`);
     await page.waitForLoadState('domcontentloaded');
     await dismissDevErrorDialog(page);
 
@@ -381,7 +386,7 @@ test.describe('Visual evidence: per-task strip + lightbox + workspace reel', () 
     await stubScreenshotApis(page, [], buildWorkspaceScreenshots());
     await stubJobDetailForTask(page);
 
-    await page.goto(`http://localhost:4010/?job=${encodeURIComponent(TASK_JOB_ID)}&watchPath=${encodeURIComponent(TASK_WATCH_PATH)}`);
+    await page.goto(`/?job=${encodeURIComponent(TASK_JOB_ID)}&watchPath=${encodeURIComponent(TASK_WATCH_PATH)}`);
     await page.waitForLoadState('domcontentloaded');
     await dismissDevErrorDialog(page);
 
@@ -394,7 +399,7 @@ test.describe('Visual evidence: per-task strip + lightbox + workspace reel', () 
     await stubScreenshotApis(page, buildJobScreenshots(), buildWorkspaceScreenshots());
     await stubJobDetailForTask(page);
 
-    await page.goto('http://localhost:4010/#/workspace/screenshots');
+    await page.goto('/#/workspace/screenshots');
     await page.waitForLoadState('domcontentloaded');
 
     const overlay = page.getByTestId('workspace-screenshots-overlay');
@@ -431,7 +436,7 @@ test.describe('Visual evidence: per-task strip + lightbox + workspace reel', () 
       await stubScreenshotApis(page, buildJobScreenshots(), buildWorkspaceScreenshots());
       await stubJobDetailForTask(page);
 
-      await page.goto('http://localhost:4010/#/workspace/screenshots');
+      await page.goto('/#/workspace/screenshots');
       await page.waitForLoadState('domcontentloaded');
       await setTheme(page, theme);
 
@@ -439,10 +444,10 @@ test.describe('Visual evidence: per-task strip + lightbox + workspace reel', () 
       await dismissDevErrorDialog(page);
       await expect(page.locator('.strip__caption-spec').first()).toBeVisible({ timeout: 5_000 });
 
-      const samples: Array<{ what: string; selector: string }> = [
+      const samples: { what: string; selector: string }[] = [
         { what: 'reel title', selector: '.wss__title' },
         { what: 'reel subtitle', selector: '.wss__sub' },
-        { what: 'active window button', selector: '.wss__win-btn--active' },
+        { what: 'active window button', selector: '[data-testid="wss-win-3d"][aria-pressed="true"]' },
         { what: 'bucket title', selector: '.wss__bucket-title' },
         { what: 'caption spec', selector: '.strip__caption-spec' },
         { what: 'caption timestamp', selector: '.strip__caption-ts' },
@@ -477,9 +482,8 @@ function pngBytes(r: number, g: number, b: number): Buffer {
     0, 0, 0
   ]));
   // IDAT: zlib of the filter byte (0) + RGB triple.
-  const zlib = require('node:zlib') as typeof import('node:zlib');
   const raw = Buffer.from([0, r, g, b]);
-  const idat = chunk('IDAT', zlib.deflateSync(raw));
+  const idat = chunk('IDAT', deflateSync(raw));
   const iend = chunk('IEND', Buffer.alloc(0));
   return Buffer.concat([sig, ihdr, idat, iend]);
 }

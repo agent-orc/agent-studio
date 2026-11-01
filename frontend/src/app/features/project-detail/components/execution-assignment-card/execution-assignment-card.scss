@@ -85,38 +85,6 @@
   border: 0;
 }
 
-.execution-card__mode-options {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--studio-spacing-1);
-}
-
-.execution-card__mode-options button {
-  padding: var(--studio-spacing-2);
-  border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
-  background: var(--studio-bg-elevated);
-  color: var(--studio-fg-dim);
-  cursor: pointer;
-}
-
-.execution-card__mode-options button:hover:not(:disabled) {
-  background: var(--studio-bg-active);
-  color: var(--studio-fg);
-}
-
-.execution-card__mode-options .execution-card__mode--active {
-  border-color: var(--studio-accent);
-  background: color-mix(in srgb, var(--studio-accent) 12%, var(--studio-bg-elevated));
-  color: var(--studio-accent-strong);
-  font-weight: 600;
-}
-
-.execution-card__mode-options button:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
-
 .execution-card__field > small {
   color: var(--studio-fg-dim);
   font-size: 0.76rem;

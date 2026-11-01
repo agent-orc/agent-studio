@@ -12,14 +12,7 @@
         {{ projectScopeLabel() }} · {{ kindScopeLabel() }} · newest first
       </p>
     </div>
-    <div class="orch-feed__views" role="group" aria-label="Transparency view">
-      <button type="button" [class.orch-feed__view--active]="activeView() === 'activity'"
-              [attr.aria-pressed]="activeView() === 'activity'" (click)="activeView.set('activity')"
-              data-testid="orchestrator-view-activity">Activity</button>
-      <button type="button" [class.orch-feed__view--active]="activeView() === 'load'"
-              [attr.aria-pressed]="activeView() === 'load'" (click)="activeView.set('load')"
-              data-testid="orchestrator-view-load">Load distribution</button>
-    </div>
+    <app-segmented-control [options]="viewOptions" [value]="activeView()" ariaLabel="Transparency view" (valueChange)="activeView.set($event)" />
     <button type="button" class="orch-feed__refresh" (click)="refresh()" [disabled]="loading()" data-testid="orchestrator-refresh">
       {{ loading() ? '...' : 'Refresh' }}
     </button>

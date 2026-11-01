@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -32,6 +33,7 @@ interface ProjectExecutionSettings {
 @Component({
   selector: 'app-execution-assignment-card',
   standalone: true,
+  imports: [SegmentedControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './execution-assignment-card.html',
   styleUrl: './execution-assignment-card.scss',
@@ -74,6 +76,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
     { id: 'manual' as const, label: 'Manual', hint: 'Only explicit task starts are admitted.' },
     { id: 'paused' as const, label: 'Paused', hint: 'Hold automatic pickup while keeping the selected location.' },
   ];
+  readonly segmentedPickupModes = this.pickupModes.map(mode => ({ value: mode.id, label: mode.label, tooltip: mode.hint, testid: 'project-pickup-mode-' + mode.id }));
 
   ngOnInit(): void {
     this.hostRegistry.ensureLoaded();

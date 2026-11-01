@@ -4,13 +4,7 @@
     <span class="telemetry__context"
           [class.telemetry__context--stale]="stale()"
           data-testid="remote-host-slots-context">{{ context() }}</span>
-    <div class="telemetry__windows" aria-label="Telemetry time window">
-      @for (item of ['1h', '6h', '48h', '14d']; track item) {
-        <button type="button" [attr.aria-pressed]="window() === item"
-                [attr.data-testid]="'remote-host-window-' + item"
-                (click)="selectWindow($any(item))">{{ item }}</button>
-      }
-    </div>
+    <app-segmented-control [options]="windowOptions" [value]="window()" ariaLabel="Telemetry time window" (valueChange)="selectWindow($event)" />
   </div>
   @if (findings().length) {
     <div class="telemetry__findings" data-testid="remote-host-findings">

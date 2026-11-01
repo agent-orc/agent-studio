@@ -36,9 +36,7 @@
   <section class="cwa__panel" data-testid="cli-window-trend">
     <div class="cwa__section-head">
       <div><h3>Captured token trend</h3><p>Workspace event baseline for plausibility. The current timeline API does not identify CLI per bucket.</p></div>
-      <div class="cwa__periods" role="group" aria-label="Analysis period">
-        @for (item of periods; track item) { <button type="button" [class.cwa__period--active]="period() === item" [attr.aria-pressed]="period() === item" [attr.data-testid]="'cli-window-period-' + item" (click)="period.set(item)">{{ item }}</button> }
-      </div>
+      <app-segmented-control [options]="segmentedPeriods" [value]="period()" ariaLabel="Analysis period" (valueChange)="period.set($event)" />
     </div>
     <div class="cwa__trend" [attr.aria-label]="'Captured token trend for ' + period()">
       @for (point of trend(); track point.label) { <span [style.height.%]="point.height" [appTooltip]="point.label + ': ' + formatTokens(point.total)"></span> }

@@ -800,16 +800,17 @@ test.describe('Task-detail multi-commit chain', () => {
     // Default layout is side-by-side (pressed). The combined diff must be
     // rendered for the toolbar toggle to be present.
     await expect(page.getByTestId('git-diff')).toContainText('aggregated across all commits', { timeout: 5_000 });
-    const toggle = page.getByTestId('git-diff-mode-toggle');
-    await expect(toggle).toBeVisible();
-    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-    await expect(toggle).toHaveText('Side-by-side');
+    const unified = page.getByTestId('git-diff-mode-toggle');
+    const sideBySide = page.getByTestId('git-side-by-side-option');
+    await expect(unified).toBeVisible();
+    await expect(sideBySide).toHaveAttribute('aria-pressed', 'true');
+    await expect(unified).toHaveText('Unified');
 
     // Flip to unified/inline; the label + pressed state follow and the
     // choice is written to localStorage.
-    await toggle.click();
-    await expect(toggle).toHaveText('Unified');
-    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await unified.click();
+    await expect(unified).toHaveAttribute('aria-pressed', 'true');
+    await expect(sideBySide).toHaveAttribute('aria-pressed', 'false');
     // diff2html re-renders line-by-line (no side-by-side split columns).
     await expect(page.locator('[data-testid="git-diff"] .d2h-file-side-diff')).toHaveCount(0);
     const stored = await page.evaluate(() => localStorage.getItem('taskboard.gitPane.diffViewMode'));

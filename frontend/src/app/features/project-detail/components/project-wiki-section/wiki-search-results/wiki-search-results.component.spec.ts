@@ -217,8 +217,8 @@ describe('WikiSearchResultsComponent', () => {
 
     expect(root.querySelector('[data-testid="wiki-search-view-tree"]')!.getAttribute('aria-pressed'))
       .toBe('true');
-    // The toolbar uses the quiet segmented variant, not the accent one.
-    expect(root.querySelector('.segmented')!.classList.contains('segmented--subtle')).toBe(true);
+    expect(root.querySelector('[role="group"][aria-label="Darstellung der Suchtreffer"]')).toBeTruthy();
+    expect(root.querySelector('[data-testid="wiki-search-view-list"]')!.getAttribute('aria-pressed')).toBe('false');
 
     root.querySelector<HTMLButtonElement>('[data-testid="wiki-search-view-list"]')!.click();
     fixture.detectChanges();
