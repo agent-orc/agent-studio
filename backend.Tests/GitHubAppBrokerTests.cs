@@ -311,6 +311,26 @@ public sealed class GitHubAppBrokerTests
     }
 
     [Fact]
+    public async Task A_token_minted_just_before_a_disconnect_is_not_handed_out_either()
+    {
+        await ConnectAsync();
+        var answered = _github.TokensAnswered;
+        _github.BeforeTokenAnswer = async () =>
+        {
+            // The other repository's token comes back first, so the disconnect finds it cached.
+            for (var round = 0; round < 3000 && _github.TokensAnswered == answered; round++) await Task.Delay(10);
+            await Task.Delay(100);
+            await _broker.DisconnectAsync("owner", default);
+        };
+
+        var issued = await _broker.IssueAllAsync(RepositoryAccess.Write, "runner-1", default);
+
+        Assert.Empty(issued);
+        Assert.Equal(2, _github.RevokedTokens.Count);
+        Assert.Empty((await _broker.StatusAsync(false, default)).Hosts);
+    }
+
+    [Fact]
     public async Task A_refresh_cannot_be_used_to_spend_the_github_quota()
     {
         await ConnectAsync();
@@ -626,6 +646,7 @@ public sealed class GitHubAppBrokerTests
         public const string ClientId = "Iv1.testclient";
         private readonly TimeProvider _clock;
         private int _serial;
+        private Func<Task>? _beforeTokenAnswer;
 
         public FakeGitHub(TimeProvider clock)
         {
@@ -646,7 +667,8 @@ public sealed class GitHubAppBrokerTests
         public HashSet<string> HangTokensFor { get; } = new(StringComparer.Ordinal);
         public bool HangInstallationLookups { get; set; }
         public bool HangReleased { get; private set; }
-        public Func<Task>? BeforeTokenAnswer { get; set; }
+        public Func<Task>? BeforeTokenAnswer { set => Volatile.Write(ref _beforeTokenAnswer, value); }
+        public int TokensAnswered => Volatile.Read(ref _serial);
         public HashSet<string> RefuseTokensFor { get; } = new(StringComparer.Ordinal);
         public List<(long Id, long AppId, string Account)> UserInstallations { get; } = [(InstallationId, AppId, "owner")];
         public Dictionary<string, long> RepositoryInstallations { get; } = new(StringComparer.Ordinal)
@@ -713,11 +735,7 @@ public sealed class GitHubAppBrokerTests
                 }
                 if (RefuseTokensFor.Contains(repositories[0].ToLowerInvariant()))
                     return new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("{\"message\":\"Forbidden\"}") };
-                if (BeforeTokenAnswer is { } before)
-                {
-                    BeforeTokenAnswer = null;
-                    await before();
-                }
+                if (Interlocked.Exchange(ref _beforeTokenAnswer, null) is { } before) await before();
                 var granted = parsed.RootElement.GetProperty("permissions").EnumerateObject()
                     .ToDictionary(item => item.Name, item => item.Value.GetString());
                 if (GrantExtraPermission) granted["administration"] = "write";

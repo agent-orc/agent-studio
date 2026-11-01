@@ -333,6 +333,8 @@ public sealed class GitHubAppBroker
                 // Out of budget: the host takes what is ready and comes back.
             }
         }
+        // A disconnect during this round revoked what it minted, and the host list starts over.
+        if (CurrentGeneration() != generation) return [];
         var credentials = slots.OfType<RepositoryCredential>().ToArray();
         if (runnerId is not null)
             _hosts[runnerId + "|" + level] = new GitHubAppHostSync(runnerId, level, credentials.Length, Now);
