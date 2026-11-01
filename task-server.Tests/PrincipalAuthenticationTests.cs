@@ -116,6 +116,84 @@ public sealed class PrincipalAuthenticationTests
     }
 
     [Fact]
+    public async Task Host_quota_routes_require_matching_runner_write_principal()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 1, 22, 0, 0, TimeSpan.Zero));
+        await using var factory = Factory(temp.Path, clock);
+        using var manager = Client(factory, StudioToken);
+        var writer = await CreateAsync(manager, "quota-writer", TaskServerPrincipalKinds.Runner,
+            [TaskServerScopes.RunsWrite], "quota-writer");
+        var reader = await CreateAsync(manager, "quota-reader", TaskServerPrincipalKinds.Runner,
+            [TaskServerScopes.TasksRead], "quota-reader");
+        using var runner = Client(factory, writer.Credential);
+        using var readOnly = Client(factory, reader.Credential);
+        var claim = new HostQuotaClaimRequest("instance", "codex",
+            new string('a', 64));
+        var claimPath = "/api/v1/runners/quota-writer/quota/claim";
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await manager.PostAsJsonAsync(claimPath, claim)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await readOnly.PostAsJsonAsync(claimPath, claim)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await runner.PostAsJsonAsync("/api/v1/runners/another/quota/claim", claim)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await runner.PostAsJsonAsync(claimPath, claim)).StatusCode);
+
+        var report = new HostQuotaReportRequest("instance", "codex", claim.SubscriptionKey,
+            "unclaimed", clock.GetUtcNow().UtcDateTime, null, null, [], null);
+        var reportPath = "/api/v1/runners/quota-writer/quota/report";
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await manager.PutAsJsonAsync(reportPath, report)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await readOnly.PutAsJsonAsync(reportPath, report)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict,
+            (await runner.PutAsJsonAsync(reportPath, report)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Healthy_runner_claims_and_reports_parsed_quota_for_studio_read()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 1, 22, 0, 0, TimeSpan.Zero));
+        await using var factory = Factory(temp.Path, clock);
+        using var studio = Client(factory, StudioToken);
+        var issued = await CreateAsync(studio, "quota-host", TaskServerPrincipalKinds.Runner,
+            [TaskServerScopes.RunsWrite], "quota-host");
+        using var runner = Client(factory, issued.Credential);
+        var store = factory.Services.GetRequiredService<TaskServerStore>();
+        await store.RegisterRunnerAsync("quota-host", new RegisterRunnerRequest(
+            "quota-host", "host-a", "instance-a", "1.0", TaskServerProtocol.Current,
+            [ReviewCapabilities.CodingExecutor]), "quota-host", default);
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "quota-host", "instance-a", CapabilityProtocol.CurrentSchemaVersion,
+            clock.GetUtcNow().UtcDateTime, 180, 1,
+            [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor"),
+             new AdvertisedCapabilityDto("provider-auth:codex", "provider-auth")]),
+            "quota-host", default);
+        var digest = new string('a', 64);
+        var claimResponse = await runner.PostAsJsonAsync(
+            "/api/v1/runners/quota-host/quota/claim",
+            new HostQuotaClaimRequest("instance-a", "codex", digest));
+        claimResponse.EnsureSuccessStatusCode();
+        var claim = (await claimResponse.Content.ReadFromJsonAsync<HostQuotaClaimResponse>())!;
+        Assert.True(claim.Granted);
+        var observed = clock.GetUtcNow().UtcDateTime;
+        var reportResponse = await runner.PutAsJsonAsync(
+            "/api/v1/runners/quota-host/quota/report",
+            new HostQuotaReportRequest("instance-a", "codex", digest, claim.ProbeId!,
+                observed, "0.150.0", "Plus", [new("Weekly", 18, null, null)], null));
+        reportResponse.EnsureSuccessStatusCode();
+        var readings = await studio.GetFromJsonAsync<HostQuotaReadingDto[]>("/api/v1/quota/readings");
+        var reading = Assert.Single(readings!);
+        Assert.Equal(observed, reading.ObservedAt);
+        Assert.Equal(18, Assert.Single(reading.Windows).UsedPct);
+        Assert.Equal(digest, reading.SubscriptionKey);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await runner.GetAsync("/api/v1/quota/readings")).StatusCode);
+    }
+
+    [Fact]
     public async Task Runner_without_subscription_scope_cannot_connect_to_hub()
     {
         using var temp = new TempDirectory();

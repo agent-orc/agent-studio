@@ -195,6 +195,8 @@ public static class RoutePermissionCatalog
 
         // --- Runner and engine service routes (credential scopes decide) ----
         Add("R", IamPermissions.RunnerService, "/api/quota/admission/{}");
+        Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/claim");
+        Add("PUT", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/report");
         Add("R", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/desired-state");
         Add("POST", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/observed-state");
         Add("*", IamPermissions.RunnerService,
