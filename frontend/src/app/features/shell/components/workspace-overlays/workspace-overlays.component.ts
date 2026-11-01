@@ -23,6 +23,7 @@ import { WorkspaceManagementComponent } from '../workspace-management/workspace-
 import { RetentionAdminComponent } from '../../../retention';
 import { AccessAreaComponent } from '../../../access';
 import { FirstRunChecklistComponent } from '../first-run-checklist/first-run-checklist.component';
+import { GitHubAppPanelComponent } from '../../../github-app/github-app-panel/github-app-panel.component';
 import type { TaskScreenshot } from '../../../../features/screenshots';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
@@ -74,6 +75,7 @@ interface SettingsRailItem {
   standalone: true,
   imports: [
     NgTemplateOutlet,
+    GitHubAppPanelComponent,
     TokenUsageSectionComponent,
     WorkspaceScreenshotsComponent,
     CliAdminPanelComponent,
@@ -133,6 +135,7 @@ export class WorkspaceOverlaysComponent {
     { key: 'task-server', label: 'Task Server', description: 'Connected URL, workspace store, evidence git, client registry, and management sweeps.', icon: 'file', group: 'global' },
     { key: 'credentials', label: 'Credentials', description: 'Required access, observed custody, expiry and gaps across the installation.', icon: 'check', group: 'global' },
     { key: 'secrets', label: 'Secrets', description: 'Write-only secrets per workspace, project and environment, with versions, rotation, revocation and audit.', icon: 'check', group: 'global' },
+    { key: 'github', label: 'GitHub', description: 'Connect the GitHub App that gives every host short-lived repository tokens.', icon: 'link', group: 'global' },
     { key: 'remote-hosts', label: 'Environment', description: 'Machines, services, connections, health, and repository access.', icon: 'activity', group: 'global' },
     { key: 'orchestrator', label: 'Orchestrator', description: 'Platform-global supervisor, meta-cycle, and auto-intervention lifecycle flags.', icon: 'bot', group: 'global' },
     { key: 'caps', label: 'CLI Management', description: 'What CLIs and models are available, their fallback routes, usage caps and completion contracts.', icon: 'cli', group: 'workspace' },
@@ -215,6 +218,7 @@ export class WorkspaceOverlaysComponent {
       case 'task-server': return 'workspace-task-server-overlay';
       case 'credentials': return 'workspace-credentials-overlay';
       case 'secrets': return 'workspace-secrets-overlay';
+      case 'github': return 'workspace-github-overlay';
       case 'remote-hosts': return 'workspace-remote-hosts-overlay';
       case 'first-run': return 'workspace-first-run-overlay';
       case 'orchestrator': return 'orchestrator-config-overlay';

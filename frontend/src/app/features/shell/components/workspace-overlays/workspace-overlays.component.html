@@ -126,6 +126,11 @@
         @case ('credentials') {
           <app-credential-inventory />
         }
+        @case ('github') {
+          @defer (on immediate) {
+            <app-github-app-panel />
+          }
+        }
         @case ('secrets') {
           @defer (on immediate) {
             <app-secrets-panel [projects]="watchPaths()" />

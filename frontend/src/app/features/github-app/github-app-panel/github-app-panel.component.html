@@ -1,0 +1,109 @@
+<section class="github-app" data-testid="github-app-panel">
+  <header>
+    <h2>GitHub</h2>
+    <p>Connect a GitHub App once. Coding, review and integration then receive tokens that last one hour
+      and reach one repository each, renewed without anyone copying a token.</p>
+  </header>
+
+  @if (service.error(); as error) { <p class="github-app__error" role="alert" data-testid="github-app-error">{{ error }}</p> }
+  @if (service.message(); as message) { <p class="github-app__message" role="status" data-testid="github-app-message">{{ message }}</p> }
+
+  @if (status(); as current) {
+    @if (current.problem) { <p class="github-app__error" role="alert" data-testid="github-app-problem">{{ current.problem }}</p> }
+
+    @if (current.connected) {
+      <dl class="github-app__facts" data-testid="github-app-connected">
+        <div><dt>App</dt><dd>
+          @if (current.htmlUrl) { <a [href]="current.htmlUrl" target="_blank" rel="noopener">{{ current.name }}</a> }
+          @else { {{ current.name }} }
+        </dd></div>
+        <div><dt>Owner</dt><dd>{{ current.ownerLogin }}</dd></div>
+        <div><dt>Connected</dt><dd>{{ current.connectedAtUtc | date: 'medium' }}</dd></div>
+      </dl>
+      <div class="github-app__actions">
+        <button type="button" data-testid="github-app-install" [disabled]="service.busy()" (click)="service.startInstallation()">Add repositories or an account</button>
+        <button type="button" data-testid="github-app-authorize" [disabled]="service.busy()" (click)="service.startAuthorization()">Confirm installations</button>
+        <button type="button" data-testid="github-app-refresh" [disabled]="service.busy()" (click)="service.load(true)">Refresh</button>
+        @if (confirmingDisconnect()) {
+          <button type="button" data-testid="github-app-disconnect-confirm" [disabled]="service.busy()" (click)="disconnect()">Confirm disconnect</button>
+          <button type="button" (click)="confirmingDisconnect.set(false)">Keep connected</button>
+        } @else {
+          <button type="button" data-testid="github-app-disconnect" [disabled]="service.busy()" (click)="confirmingDisconnect.set(true)">Disconnect</button>
+        }
+      </div>
+      @if (confirmingDisconnect()) {
+        <p class="github-app__meta">Hosts lose their tokens within five minutes and fall back to whatever they had configured before.</p>
+      }
+
+      <h3>Installations</h3>
+      @if (current.installations.length) {
+        <ul class="github-app__list" data-testid="github-app-installations">
+          @for (installation of current.installations; track installation.id) {
+            <li><strong>{{ installation.account }}</strong>
+              <span class="github-app__meta">{{ installation.accountType }} · confirmed {{ installation.adoptedAtUtc | date: 'medium' }} by {{ installation.adoptedBy }}</span></li>
+          }
+        </ul>
+      } @else {
+        <p class="github-app__meta" data-testid="github-app-no-installations">None confirmed yet. Install the App, then confirm with your GitHub account.</p>
+      }
+    } @else {
+      <form class="github-app__form" data-testid="github-app-register" (submit)="$event.preventDefault(); service.startRegistration(organization(), anyAccount())">
+        <p>GitHub asks you to create the App, choose its repositories and confirm. The private key goes straight into the secret store.</p>
+        <label>Organization that owns the App (empty: your personal account)
+          <input data-testid="github-app-organization" type="text" autocomplete="off" [value]="organization()" (input)="organization.set($any($event.target).value)" />
+        </label>
+        <label class="github-app__check">
+          <input data-testid="github-app-any-account" type="checkbox" [checked]="anyAccount()" (change)="anyAccount.set($any($event.target).checked)" />
+          Installable on other accounts. Needed when your repositories live under more than one account;
+          tokens are still only issued for installations you confirm here.
+        </label>
+        <button type="submit" data-testid="github-app-connect" [disabled]="service.busy()">Connect GitHub</button>
+      </form>
+
+      <button type="button" class="github-app__toggle" data-testid="github-app-existing-toggle" [attr.aria-expanded]="existingOpen()" (click)="existingOpen.set(!existingOpen())"><app-disclosure-marker [open]="existingOpen()" [size]="10" /> Use an App that already exists</button>
+      @if (existingOpen()) {
+        <form class="github-app__form" data-testid="github-app-existing" (submit)="$event.preventDefault(); connectExisting()">
+          <label>App ID <input data-testid="github-app-existing-id" type="text" inputmode="numeric" autocomplete="off" [value]="appId()" (input)="appId.set($any($event.target).value)" /></label>
+          <label>Client ID <input data-testid="github-app-existing-client" type="text" autocomplete="off" [value]="clientId()" (input)="clientId.set($any($event.target).value)" /></label>
+          <label>Client secret <input data-testid="github-app-existing-secret" type="password" autocomplete="new-password" [value]="clientSecret()" (input)="clientSecret.set($any($event.target).value)" /></label>
+          <label>Private key (PEM) <textarea data-testid="github-app-existing-key" rows="6" autocomplete="off" spellcheck="false" [value]="privateKey()" (input)="privateKey.set($any($event.target).value)"></textarea></label>
+          <p class="github-app__meta">Set the App's callback URL to this Studio's <code>/github-app/callback</code>. Write-only: the values are never shown again.</p>
+          <button type="submit" data-testid="github-app-existing-connect" [disabled]="service.busy() || !existingValid()">Connect this App</button>
+        </form>
+      }
+    }
+
+    <h3>Repositories</h3>
+    @if (current.connected && uncovered()) {
+      <p class="github-app__meta" data-testid="github-app-uncovered">{{ uncovered() }} still use the host's older credentials, if it has any.</p>
+    }
+    <table class="github-app__table" data-testid="github-app-repositories">
+      <thead><tr><th scope="col">Project</th><th scope="col">Repository</th><th scope="col">Access</th></tr></thead>
+      <tbody>
+        @for (repository of current.repositories; track repository.project) {
+          <tr [attr.data-state]="repository.state">
+            <td>{{ repository.project }}</td>
+            <td><code>{{ repository.repositoryUrl ?? '-' }}</code></td>
+            <td [title]="repository.detail ?? ''"><span class="github-app__badge" [attr.data-state]="repository.state">{{ coverageLabel(repository.state) }}</span></td>
+          </tr>
+        }
+      </tbody>
+    </table>
+
+    <h3>Hosts</h3>
+    @if (current.hosts.length) {
+      <table class="github-app__table" data-testid="github-app-hosts">
+        <thead><tr><th scope="col">Host</th><th scope="col">Access</th><th scope="col">Repositories</th><th scope="col">Last fetched</th></tr></thead>
+        <tbody>
+          @for (host of current.hosts; track host.runnerId + host.access) {
+            <tr><td>{{ host.runnerId }}</td><td>{{ host.access }}</td><td>{{ host.repositories }}</td><td>{{ host.lastSyncUtc | date: 'medium' }}</td></tr>
+          }
+        </tbody>
+      </table>
+    } @else {
+      <p class="github-app__meta" data-testid="github-app-no-hosts">No host has fetched tokens since this Studio started.</p>
+    }
+  } @else if (!service.error()) {
+    <p class="github-app__meta">Loading...</p>
+  }
+</section>

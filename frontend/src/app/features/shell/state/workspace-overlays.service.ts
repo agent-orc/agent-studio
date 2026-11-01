@@ -27,6 +27,7 @@ import { ledgerScopeFromHash, type UsageLedgerScope } from '../../usage-cockpit'
 export type WorkspaceSettingsSection =
   | 'overview'
   | 'first-run'
+  | 'github'
   | 'appearance'
   | 'access'
   | 'updates'
@@ -231,6 +232,7 @@ export class WorkspaceOverlaysService {
       case '/workspace/settings/credentials': return 'credentials';
       case '/workspace/settings/secrets': return 'secrets';
       case '/workspace/settings/first-run': return 'first-run';
+      case '/workspace/settings/github': return 'github';
       case '/workspace/settings/environment':
       case '/workspace/settings/execution-hosts':
       case '/workspace/settings/remote-hosts': return 'remote-hosts';
@@ -271,6 +273,7 @@ export class WorkspaceOverlaysService {
       case 'credentials': return '/workspace/settings/credentials';
       case 'secrets': return '/workspace/settings/secrets';
       case 'first-run': return '/workspace/settings/first-run';
+      case 'github': return '/workspace/settings/github';
       case 'remote-hosts': return '/workspace/settings/environment';
       case 'orchestrator': return '/workspace/settings/orchestrator';
       case 'working-memory': return '/workspace/settings/working-memory';
@@ -293,6 +296,7 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/credentials',
     '/workspace/settings/secrets',
     '/workspace/settings/first-run',
+    '/workspace/settings/github',
     '/workspace/settings/execution-hosts',
     '/workspace/settings/environment',
     '/workspace/settings/remote-hosts',

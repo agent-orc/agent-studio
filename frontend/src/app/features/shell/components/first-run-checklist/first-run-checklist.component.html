@@ -57,6 +57,7 @@
     <li data-testid="first-run-git" [attr.data-state]="gitReady() ? 'ready' : 'pending'">
       <span class="first-run__number">3</span>
       <div><h3>GitHub read and write access</h3>
+        <p data-testid="first-run-github-app">Recommended: <a href="#/workspace/settings/github">connect the GitHub App</a>. Every host then receives short-lived tokens and nothing below is needed.</p>
         <p>{{ gitReady() ? 'The registered repository has admitted read and write proof from each online execution host.' : 'Give each execution host access to the registered GitHub repository. Verification fetches and pushes a temporary ref.' }}</p>
         @if (repository().value?.registration?.repositoryUrl) {
           <div class="first-run__form" data-testid="first-run-git-setup">

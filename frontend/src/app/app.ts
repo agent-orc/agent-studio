@@ -1,3 +1,4 @@
+import { GitHubAppService } from './features/github-app/github-app.service';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -233,6 +234,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
 })
 export class App implements OnInit, OnDestroy {
   private readonly firstRunLaunch = inject(FirstRunLaunchService);
+  private readonly gitHubApp = inject(GitHubAppService);
   readonly auth = inject(AuthService); private studioInitialized = false;
   readonly jobService = inject(TaskService);
   readonly errorDialog = inject(ErrorDialogService);
@@ -1058,6 +1060,8 @@ export class App implements OnInit, OnDestroy {
       const studioHandled = this.syncStudioRouteFromHash(fromHistory);
       if (!studioHandled) this.applyProjectShellHash(fromHistory);
     };
+    // GitHub returns to a real path; move on to the settings route it belongs to.
+    this.gitHubApp.captureReturn(window.location, window.history);
     applyHash();
     this.firstRunLaunch.maybeOpen(() => this.openWorkspaceSettingsInStudio('first-run'));
     this.hashListener = applyHash;

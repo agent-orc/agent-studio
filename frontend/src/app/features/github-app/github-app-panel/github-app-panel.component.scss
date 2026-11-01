@@ -1,0 +1,77 @@
+.github-app {
+  display: grid;
+  gap: var(--studio-spacing-4);
+  color: var(--studio-fg-strong);
+}
+
+.github-app__meta { color: var(--studio-fg-muted); }
+.github-app__error { padding: var(--studio-spacing-2); background: var(--notify-error-tint); }
+.github-app__message { padding: var(--studio-spacing-2); background: var(--studio-surface); }
+
+.github-app__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-4);
+  margin: 0;
+}
+
+.github-app__facts dt { color: var(--studio-fg-muted); }
+.github-app__facts dd { margin: 0; }
+
+.github-app__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-3);
+}
+
+.github-app__form {
+  display: grid;
+  gap: var(--studio-spacing-3);
+  max-width: 44rem;
+}
+
+.github-app__form label { display: grid; gap: var(--studio-spacing-1); }
+.github-app__form .github-app__check { display: flex; align-items: baseline; gap: var(--studio-spacing-2); }
+
+.github-app input[type='text'], .github-app input[type='password'], .github-app textarea, .github-app button {
+  color: inherit;
+  background: var(--studio-surface);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  padding: var(--studio-spacing-2);
+}
+
+.github-app textarea { font-family: var(--studio-font-mono, monospace); resize: vertical; }
+.github-app button { cursor: pointer; justify-self: start; }
+.github-app button:disabled { cursor: default; opacity: 0.6; }
+
+.github-app__list {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.github-app__list li { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
+
+.github-app__table { width: 100%; border-collapse: collapse; }
+
+.github-app__table th, .github-app__table td {
+  padding: var(--studio-spacing-2);
+  text-align: left;
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.github-app__table th { color: var(--studio-fg-muted); font-weight: 500; }
+.github-app__table code { overflow-wrap: anywhere; }
+
+.github-app__badge {
+  padding: 0 var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  white-space: nowrap;
+}
+
+.github-app__badge[data-state='not-installed'],
+.github-app__badge[data-state='not-adopted'] { background: var(--notify-error-tint); }
