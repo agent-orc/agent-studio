@@ -30,7 +30,7 @@ async function closeOrchestratorIfOpen(page: Page): Promise<void> {
   if (await close.isVisible()) await close.click({ force: true });
 }
 
-test('Dossier navigation focuses one catalogue path, persists disclosures, and collapses all', async ({
+test('Dossier overview opens a catalogue item and keeps flat navigation current', async ({
   page,
   devBackend,
 }, testInfo) => {
@@ -133,46 +133,13 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
     .reduce((sum, item) => sum + (item.openDecisionCount ?? 1), 0);
   await expect(dossiers).toHaveAttribute('aria-label', `Dossiers, ${waitingDecisions} decisions waiting`);
 
+  await expect(dossiers).not.toHaveAttribute('aria-expanded');
   await dossiers.click();
-  const needsDecision = page.getByTestId(
-    `studio-explorer-workbench-group-${projectName}-needs-decision`);
-  const inImplementation = page.getByTestId(
-    `studio-explorer-workbench-group-${projectName}-in-implementation`);
-  const history = page.getByTestId(`studio-explorer-workbench-history-${projectName}`);
-  await expect(needsDecision).toHaveAttribute('aria-expanded', 'true');
-  await expect(inImplementation).toHaveAttribute('aria-expanded', 'true');
-  if (await history.getAttribute('aria-expanded') === 'true') await history.click();
-  await expect(history).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.getByTestId(`studio-explorer-workbench-status-${projectName}-${pending!.id}`))
-    .toHaveAttribute('data-status', 'decision-pending');
-
-  const pendingRow = page.getByTestId(`studio-explorer-workbench-${projectName}-${pending!.id}`);
-  const pendingBox = await pendingRow.boundingBox();
-  expect(pendingBox?.height).toBe(24);
-  const needsDecisionBox = await needsDecision.boundingBox();
-  expect(needsDecisionBox?.height).toBe(24);
-  const groupChevronBox = await needsDecision.getByLabel('Collapse').boundingBox();
-  const pendingGlyphBox = await page.getByTestId(
-    `studio-explorer-workbench-${projectName}-${pending!.id}-glyph`,
-  ).boundingBox();
-  expect(groupChevronBox).toBeTruthy();
-  expect(pendingGlyphBox).toBeTruthy();
-  expect(Math.abs(groupChevronBox!.x - pendingGlyphBox!.x)).toBeLessThanOrEqual(1);
-  expect(await pendingRow.evaluate(row => getComputedStyle(row).whiteSpace)).toBe('nowrap');
-  await pendingRow.hover();
-  const pendingTooltip = page.getByTestId(
-    `studio-explorer-workbench-tooltip-${projectName}-${pending!.id}`,
-  );
-  await expect(pendingTooltip).toContainText(pending!.title);
-  if (pending!.key) await expect(pendingTooltip).toContainText(pending!.key);
-  await expect(pendingTooltip).toContainText('Decision pending');
-
-  await needsDecision.click();
-  await expect(needsDecision).toHaveAttribute('aria-expanded', 'false');
-  const implementationRow = page.getByTestId(
-    `studio-explorer-workbench-${projectName}-${implementation!.id}`);
-  await implementationRow.click();
-  await expect(implementationRow).toHaveAttribute('aria-current', 'page');
+  await expect(dossiers).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId(`workbench-overview-item-${projectName}-${pending!.id}`)).toBeVisible();
+  await page.getByTestId(`workbench-overview-item-${projectName}-${implementation!.id}`)
+    .getByRole('button', { name: 'Open full view' }).click();
+  await expect(dossiers).toHaveAttribute('aria-current', 'page');
   const cardList = page.getByTestId('dossier-card-list');
   await expect(cardList).toBeVisible();
   await expect(cardList.getByTestId('dossier-slice-progress')).toContainText('1 / 3 implementation slices complete');
@@ -180,30 +147,6 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
   await expect(cardList).toContainText('staging');
   await expect(cardList).toContainText('§4');
   await expect(cardList).toContainText('NV-D2');
-  await expect(needsDecision).toHaveAttribute('aria-expanded', 'false');
-  const rowBox = await implementationRow.boundingBox();
-  const sidebarBox = await page.getByTestId('studio-sidebar').boundingBox();
-  expect(rowBox).toBeTruthy();
-  expect(sidebarBox).toBeTruthy();
-  expect(rowBox!.y).toBeGreaterThanOrEqual(sidebarBox!.y);
-  expect(rowBox!.y + rowBox!.height).toBeLessThanOrEqual(sidebarBox!.y + sidebarBox!.height);
-  expect(rowBox!.height).toBe(24);
-
-  const implementationItems = catalogue!.items
-    .filter(item => item.status === 'active' || item.status === 'decided');
-  const iconPositions: number[] = [];
-  for (const item of implementationItems) {
-    const row = page.getByTestId(`studio-explorer-workbench-${projectName}-${item.id}`);
-    if (!await row.isVisible()) continue;
-    const box = await row.boundingBox();
-    const iconBox = await page.getByTestId(
-      `studio-explorer-workbench-${projectName}-${item.id}-glyph`,
-    ).boundingBox();
-    expect(box?.height).toBe(24);
-    if (iconBox) iconPositions.push(iconBox.x);
-  }
-  expect(new Set(iconPositions.map(value => Math.round(value))).size).toBe(1);
-
   const projectNameNode = page.getByTestId(`studio-explorer-project-${projectName}-name`);
   const projectNameFits = await projectNameNode.evaluate(node => node.scrollWidth <= node.clientWidth);
   expect(projectNameFits).toBe(true);
@@ -221,11 +164,9 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
     });
   }
 
-  await dossiers.getByLabel('Collapse').click();
-  await expect(dossiers).toHaveAttribute('aria-expanded', 'false');
   await styleGuideRow.click();
   await expect(styleGuideRow).toHaveAttribute('aria-current', 'page');
-  await expect(dossiers).toHaveAttribute('aria-expanded', 'false');
+  await expect(dossiers).not.toHaveAttribute('aria-current', 'page');
 
   await page.getByTestId('studio-sidebar-collapse-all').click();
   const workspaceHead = page.getByTestId('studio-explorer-workspace-head');
@@ -236,5 +177,5 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
   await page.reload({ waitUntil: 'domcontentloaded' });
   await closeOrchestratorIfOpen(page);
   await expect(styleGuideRow).toHaveAttribute('aria-current', 'page', { timeout: 20_000 });
-  await expect(dossiers).toHaveAttribute('aria-expanded', 'false');
+  await expect(dossiers).not.toHaveAttribute('aria-current', 'page');
 });

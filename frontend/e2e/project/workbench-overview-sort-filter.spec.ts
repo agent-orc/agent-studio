@@ -143,6 +143,14 @@ async function installMocks(page: Page): Promise<void> {
       urls: [],
     }],
   }]));
+  await page.route(/\/api\/workspaces\/[^/]+\/quota\/admission$/, route => json(route, {
+    workspaceId: 'workspace-dossier-demo',
+    workspace: {
+      projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false,
+    },
+    projects: [],
+  }));
   await page.route('**/api/environment**', route => json(route, {
     isDev: false,
     devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
@@ -281,7 +289,9 @@ test('Dossier sort and live filter share URL and session state across both overv
   const projectRoute = `/#/projects/${PROJECT_ID}/workbenches`;
   const projectRow = page.getByTestId(`studio-explorer-project-${PROJECT}`);
   if (await projectRow.getAttribute('aria-expanded') === 'false') await projectRow.click();
-  await page.getByTestId(`studio-explorer-project-workbenches-${PROJECT}`).click();
+  const dossiersRow = page.getByTestId(`studio-explorer-project-workbenches-${PROJECT}`);
+  await expect(dossiersRow).not.toHaveAttribute('aria-expanded');
+  await dossiersRow.click();
   await expect(page.getByTestId('workbench-overview-scope')).toHaveText(PROJECT);
   const orchestratorClose = page.locator(
     'app-orchestrator-side-sheet.is-open [data-testid="sidesheet-close"]',
@@ -374,7 +384,9 @@ test('collapsing pending decisions brings the active Dossiers into the first vie
   const projectRow = page.getByTestId(`studio-explorer-project-${PROJECT}`);
   await expect(projectRow).toBeVisible();
   if (await projectRow.getAttribute('aria-expanded') === 'false') await projectRow.click();
-  await page.getByTestId(`studio-explorer-project-workbenches-${PROJECT}`).click();
+  const dossiersRow = page.getByTestId(`studio-explorer-project-workbenches-${PROJECT}`);
+  await expect(dossiersRow).not.toHaveAttribute('aria-expanded');
+  await dossiersRow.click();
   await expect(page.getByTestId('workbench-overview-scope')).toHaveText(PROJECT);
 
   const decisionHeader = page.getByTestId('workbench-overview-decision-toggle');

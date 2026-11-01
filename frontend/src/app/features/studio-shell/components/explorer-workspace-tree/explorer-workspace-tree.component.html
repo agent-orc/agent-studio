@@ -181,13 +181,6 @@
                     [counts]="laneCountsFor(p)" [view]="metricView()"
                     [projectName]="p.name" />
                 </app-tree-row>
-                <app-explorer-workbench-list
-                  [projectName]="p.name"
-                  [projectId]="p.projectId"
-                  [activeWorkbenchId]="activeWorkbenchIdFor(p.name)"
-                  [overviewActive]="p.isActive && activeProjectSurface() === 'workbenches'"
-                  (openWorkbench)="openWorkbenchRequest.emit({ projectName: p.name, workbench: $event })"
-                  (openOverview)="openWorkbenchesRequest.emit(p.name)" (openWiki)="openWikiRequest.emit(p.name)" />
                 <app-tree-row level="child" glyph="send"
                               label="Deploy"
                               [active]="p.isActive && activeProjectSurface() === 'deploy'"
@@ -208,6 +201,12 @@
                               [ariaCurrent]="p.isActive && activeProjectSurface() === 'wiki' ? 'page' : null"
                               [testid]="'studio-explorer-project-wiki-' + p.name"
                               (selectRequest)="openWikiRequest.emit(p.name)" />
+                <app-explorer-workbench-list
+                  [projectName]="p.name"
+                  [activeWorkbenchId]="activeWorkbenchIdFor(p.name)"
+                  [overviewActive]="p.isActive && activeProjectSurface() === 'workbenches'"
+                  (openWorkbench)="openWorkbenchRequest.emit({ projectName: p.name, workbench: $event })"
+                  (openOverview)="openWorkbenchesRequest.emit(p.name)" />
                 <app-tree-row level="child" glyph="deck"
                               [attr.data-testid]="'studio-explorer-project-deck-' + p.name"
                               label="Deck"

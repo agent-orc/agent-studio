@@ -38,13 +38,13 @@ async function mockSlowBootProbes(page: Page): Promise<void> {
 /**
  * Regression coverage for the dossier/Wiki viewer 404ing on `<img>` tags that
  * reference a sibling `assets/` subfolder (e.g. `assets/foo.png`). Exercises
- * the real repository fixture at `docs/operations/timeline-redesign/`
- * (Dossier `timeline-redesign`, AGT-2609 screenshot policy) through the real
+ * the real repository fixture at `docs/operations/task-and-board-ui/`
+ * (Dossier `task-and-board-ui`, which carries the AGT-2577 screenshots) through the real
  * Workbench viewer sandboxed iframe, over the real backend asset endpoint -
  * no mocked image bytes, so a regression here reproduces the reported broken
  * image the same way the operator saw it.
  */
-test('the timeline-redesign Dossier renders its assets/ screenshots instead of a broken image', async (
+test('the task-and-board-ui Dossier renders its assets/ screenshots instead of a broken image', async (
   { page, devBackend }, testInfo,
 ) => {
   test.setTimeout(120_000);
@@ -54,16 +54,16 @@ test('the timeline-redesign Dossier renders its assets/ screenshots instead of a
   let projectName: string | null = null;
   for (const candidate of paths) {
     const response = await fetch(
-      `${devBackend.baseUrl}/api/projects/${encodeURIComponent(candidate.name)}/workbenches`,
+      `${devBackend.baseUrl}/api/projects/${encodeURIComponent(candidate.name)}/workbenches?history=true`,
     );
     if (!response.ok) continue;
     const catalogue = await response.json() as { items?: { id: string }[] };
-    if (catalogue.items?.some(item => item.id === 'timeline-redesign')) {
+    if (catalogue.items?.some(item => item.id === 'task-and-board-ui')) {
       projectName = candidate.name;
       break;
     }
   }
-  expect(projectName, 'The real backend must expose the timeline-redesign Dossier.').not.toBeNull();
+  expect(projectName, 'The real backend must expose the task-and-board-ui Dossier.').not.toBeNull();
 
   await mockSlowBootProbes(page);
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
@@ -74,8 +74,9 @@ test('the timeline-redesign Dossier renders its assets/ screenshots instead of a
   if (await projectRow.getAttribute('aria-expanded') === 'false') await projectRow.click();
   const workbenchesRow = page.getByTestId(`studio-explorer-project-workbenches-${projectName}`);
   await expect(workbenchesRow).toBeVisible();
-  if (await workbenchesRow.getAttribute('aria-expanded') === 'false') await workbenchesRow.click();
-  await page.getByTestId(`studio-explorer-workbench-${projectName}-timeline-redesign`).click();
+  await workbenchesRow.click();
+  await page.getByTestId(`workbench-overview-item-${projectName}-task-and-board-ui`)
+    .getByRole('button', { name: 'Open full view' }).click();
 
   const frame = page.getByTestId('workbench-viewer-frame');
   await expect(frame).toBeVisible();
@@ -84,7 +85,7 @@ test('the timeline-redesign Dossier renders its assets/ screenshots instead of a
   await expect(screenshots.first()).toBeVisible({ timeout: 15_000 });
   await screenshots.first().scrollIntoViewIfNeeded();
   await page.getByTestId('studio-editor').screenshot({
-    path: evidencePath(testInfo, 'timeline-redesign-dossier-assets--after--real.png'),
+    path: evidencePath(testInfo, 'task-and-board-ui-dossier-assets--after--real.png'),
   });
 
   const naturalWidths = await screenshots.evaluateAll(

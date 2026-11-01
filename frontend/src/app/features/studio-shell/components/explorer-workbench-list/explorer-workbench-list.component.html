@@ -1,105 +1,19 @@
-@if (styleGuide(); as guide) {
-  <span #styleGuideRow class="studio-workbench-style-guide">
-    <app-tree-row level="child" glyph="book" label="Style Guide"
-                  [active]="isActive(guide)"
-                  [ariaCurrent]="isActive(guide) ? 'page' : null"
-                  [ariaLabel]="'Style Guide, ' + accessibleMeta(guide)"
-                  [tooltip]="navTooltip(guide)"
-                  [tooltipTestId]="'studio-explorer-workbench-tooltip-' + projectName() + '-' + guide.id"
-                  [testid]="'studio-explorer-project-style-guide-' + projectName()"
-                  (selectRequest)="openWorkbench.emit(guide)">
-      <i class="studio-workbench-status-dot" aria-hidden="true" [attr.data-status]="guide.status"></i>
-    </app-tree-row>
-  </span>
-}
-
 <app-tree-row level="child" glyph="book" label="Dossiers"
-              [chevron]="expanded() ? 'expanded' : 'collapsed'"
               [count]="pendingDecisionCount() > 0 ? pendingDecisionCount() : null"
               [ariaLabel]="dossierAriaLabel()"
-              [active]="overviewActive()"
-              [ariaCurrent]="overviewActive() ? 'page' : null"
+              [active]="dossierActive()"
+              [ariaCurrent]="dossierActive() ? 'page' : null"
               [testid]="'studio-explorer-project-workbenches-' + projectName()"
-              (chevronClick)="toggle()" (selectRequest)="openOverviewPage()" />
-@if (expanded()) {
-  <div class="studio-workbench-topics" [attr.data-testid]="'studio-explorer-workbench-list-' + projectName()">
-    @if (loading()) {
-      <span class="studio-workbench-topics__state">Loading…</span>
-    } @else {
-      @for (group of currentGroups(); track group.id) {
-        <app-tree-row class="studio-workbench-group-row" level="child"
-                      [chevron]="groupExpanded(group.id) ? 'expanded' : 'collapsed'"
-                      [label]="group.label"
-                      [count]="group.items.length > 0 ? group.items.length : null"
-                      [ariaControls]="groupContentId(group.id)"
-                      [testid]="'studio-explorer-workbench-group-' + projectName() + '-' + group.id"
-                      (chevronClick)="toggleGroup(group.id)"
-                      (selectRequest)="toggleGroup(group.id)" />
-        @if (groupExpanded(group.id)) {
-          <div class="studio-workbench-group-items"
-               [id]="groupContentId(group.id)"
-               [attr.data-dossier-section-content]="'group-items-' + group.id"
-               [attr.data-testid]="'studio-explorer-workbench-group-items-' + projectName() + '-' + group.id">
-            @for (workbench of group.items; track workbench.id) {
-              <span #workbenchTopic class="studio-workbench-topic-host">
-                <app-tree-row class="studio-workbench-entry-row"
-                  level="child"
-                  [glyph]="patternIcon(workbench)"
-                  [label]="workbench.title"
-                  [active]="isActive(workbench)"
-                  [disabled]="!workbench.valid"
-                  [ariaCurrent]="isActive(workbench) ? 'page' : null"
-                  [ariaLabel]="workbench.title + ', ' + accessibleMeta(workbench)"
-                  [tooltip]="navTooltip(workbench)"
-                  [tooltipTestId]="'studio-explorer-workbench-tooltip-' + projectName() + '-' + workbench.id"
-                  [testid]="'studio-explorer-workbench-' + projectName() + '-' + workbench.id"
-                  (selectRequest)="openWorkbench.emit(workbench)">
-                  <app-tag-chips [ids]="workbench.tags ?? []" [projectName]="projectName()" />
-                  @if (openCount(workbench) > 0) {
-                    <span class="studio-workbench-topic__status"
-                          [attr.data-status]="workbench.status"
-                          [attr.data-testid]="'studio-explorer-workbench-status-' + projectName() + '-' + workbench.id">
-                      {{ openCount(workbench) }} open
-                    </span>
-                  } @else {
-                    <i class="studio-workbench-status-dot" aria-hidden="true"
-                       [attr.data-status]="workbench.status"
-                       [attr.data-testid]="'studio-explorer-workbench-status-' + projectName() + '-' + workbench.id"></i>
-                  }
-                </app-tree-row>
-              </span>
-            } @empty {
-              <span class="studio-workbench-topics__state">{{ group.empty }}</span>
-            }
-          </div>
-        }
-      }
-
-      <app-tree-row class="studio-workbench-group-row" level="child"
-                    [chevron]="groupExpanded('history') ? 'expanded' : 'collapsed'"
-                    label="History"
-                    [count]="historyItems().length > 0 ? historyItems().length : null"
-                    [ariaControls]="groupContentId('history')"
-                    [testid]="'studio-explorer-workbench-history-' + projectName()"
-                    (chevronClick)="toggleGroup('history')"
-                    (selectRequest)="toggleGroup('history')" />
-      @if (groupExpanded('history')) {
-        <div class="studio-workbench-history-items"
-             [id]="groupContentId('history')"
-             data-dossier-section-content="history-items"
-             [attr.data-testid]="'studio-explorer-workbench-history-items-' + projectName()">
-          <app-explorer-workbench-history
-            [projectName]="projectName()"
-            [items]="historyItems()"
-            [activeWorkbenchId]="activeWorkbenchId()"
-            (openWorkbench)="openWorkbench.emit($event)" />
-        </div>
-      }
-
-      <app-tree-row level="child" glyph="book" label="Open wiki"
-                    tooltip="Open wiki\nBrowse the complete project documentation tree"
-                    [testid]="'studio-explorer-workbench-wiki-' + projectName()"
-                    (selectRequest)="openWiki.emit()" />
-    }
-  </div>
+              (selectRequest)="openOverview.emit()" />
+@if (styleGuide(); as guide) {
+  <app-tree-row level="child" glyph="book" label="Style Guide"
+                [active]="activeWorkbenchId() === guide.id"
+                [ariaCurrent]="activeWorkbenchId() === guide.id ? 'page' : null"
+                [ariaLabel]="'Style Guide, ' + accessibleMeta(guide)"
+                [tooltip]="navTooltip(guide)"
+                [tooltipTestId]="'studio-explorer-workbench-tooltip-' + projectName() + '-' + guide.id"
+                [testid]="'studio-explorer-project-style-guide-' + projectName()"
+                (selectRequest)="openWorkbench.emit(guide)">
+    <i class="studio-workbench-status-dot" aria-hidden="true" [attr.data-status]="guide.status"></i>
+  </app-tree-row>
 }
