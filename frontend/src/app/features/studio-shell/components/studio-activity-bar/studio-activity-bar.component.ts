@@ -3,11 +3,11 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import type { StudioActivityItemKey } from './studio-activity-bar.active-key';
 
-export type StudioActivityPanelKey = 'explorer' | 'filters' | 'cli' | 'activity' | 'runbook';
+export type StudioActivityPanelKey = 'explorer' | 'filters' | 'cli' | 'activity';
 
 export interface StudioActivityBarItem {
   key: StudioActivityPanelKey;
-  icon: 'folder' | 'filter' | 'cli' | 'activity' | 'runbook';
+  icon: 'folder' | 'filter' | 'cli' | 'activity';
   label: string;
 }
 

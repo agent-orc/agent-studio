@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deployment structure view | Agent Studio Dossier</title>
+{{ARTICLE_STYLE}}
+  <style data-dossier="deployment-structure-view">
+    nav.contents { margin: 24px 0 36px; font: 0.82rem/1.8 var(--article-sans); }
+    .figure-scroll { overflow-x: auto; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); }
+    .figure-scroll > svg { display: block; width: 100%; height: auto; }
+    .figure-pair { display: grid; grid-template-columns: minmax(0, 1.56fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+    .figure-pair > figure { min-width: 0; }
+    .figure-pair h4 { margin: 0 0 6px; color: var(--article-muted); font-size: 0.8rem; }
+    .decision { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.9rem/1.6 var(--article-sans); }
+    .decision h3 { margin: 0 0 8px; }
+    .decision p { margin-bottom: 8px; }
+    .decision ul { margin-bottom: 8px; }
+    .tag { display: inline-block; padding: 1px 7px; border-radius: 99px; background: var(--article-link-soft); color: var(--article-link); font: 700 0.7rem/1.5 var(--article-sans); }
+    .proto { font-family: var(--article-sans); }
+    .proto-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-bottom: 10px; font-size: 0.8rem; }
+    .proto-bar fieldset { display: flex; gap: 0; margin: 0; padding: 0; border: 0; }
+    .proto-bar fieldset[hidden] { display: none; }
+    .proto-bar legend { float: left; margin-right: 8px; padding: 4px 0; color: var(--article-faint); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    .proto-bar button { padding: 4px 10px; border: 1px solid var(--article-line); background: var(--article-paper); color: var(--article-ink); font: inherit; cursor: pointer; }
+    .proto-bar button + button { margin-left: -1px; }
+    .proto-bar button:first-of-type { border-radius: 6px 0 0 6px; }
+    .proto-bar button:last-of-type { border-radius: 0 6px 6px 0; }
+    .proto-bar button[aria-pressed="true"] { position: relative; border-color: var(--article-link); background: var(--article-link-soft); color: var(--article-link); font-weight: 650; }
+    .proto-bar button:focus-visible { outline: 2px solid var(--article-link); outline-offset: 2px; position: relative; }
+    .proto-stage { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 12px; }
+    .proto-canvas { overflow: auto; max-height: 760px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); }
+    .proto-canvas > svg { display: block; }
+    .proto-side { padding: 14px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-size: 0.82rem; line-height: 1.5; }
+    .proto-side h4 { margin: 0 0 6px; font-size: 0.9rem; }
+    .proto-side dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 8px 0; }
+    .proto-side dt { color: var(--article-faint); }
+    .proto-side dd { margin: 0; }
+    .proto-side ul { padding-left: 18px; margin: 4px 0 0; }
+    .proto-hint { margin-top: 8px; color: var(--article-faint); font-size: 0.75rem; }
+    .proto-outline { margin-top: 10px; font-size: 0.8rem; }
+    .proto-outline summary { cursor: pointer; color: var(--article-link); }
+    .proto-outline ul { margin: 4px 0; padding-left: 18px; }
+    .proto-outline li span { color: var(--article-muted); }
+    td code, th code { font-size: 0.8em; }
+    @media (max-width: 900px) {
+      .proto-stage, .figure-pair { grid-template-columns: 1fr; }
+    }
+{{FIGURE_CSS}}
+  </style>
+</head>
+<body>
+{{DEFS}}
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept Dossier · AGT-3349 · 1 November 2026</p>
+    <h1>Deployment structure view</h1>
+    <p class="lede">One graphical Operations view that draws how a deployment is built: system boundary, locations, hosts, VMs, containers, processes, stores, links, artifacts and registries. It reads one structure model, scoped to the workspace, a project or an environment, and shows it as a host view or a container view at three zoom levels. Declared structure is the skeleton; observed status, version and drift are overlays.</p>
+    <div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>Scope</b> Operations area, workspace and project</span><span><b>Product code</b> unchanged by this Dossier</span></div>
+  </header>
+
+  <nav class="contents" aria-label="Contents"><a href="#request">Request</a> · <a href="#today">Today</a> · <a href="#model">Model</a> · <a href="#facts">Facts</a> · <a href="#language">Visual language</a> · <a href="#setups">Setups</a> · <a href="#prototype">Prototype</a> · <a href="#navigation">Views and navigation</a> · <a href="#libraries">Libraries</a> · <a href="#repositories">Repositories</a> · <a href="#build">Build approach</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#implementation">Implementation</a></nav>
+
+  <section id="request">
+    <h2>Request</h2>
+    <p>Robert asked on 1 November 2026 for a graphical Operations view of deployment structure. It must show AGT's several containers, accommodate very different targets and runtime environments, offer a container view and a host view with a visible system boundary, stay readable from one container to dozens of hosts, take the workspace as the bracket around projects that each show a partial picture, and give libraries a deployment view through their registries. Operations is an area of the one application, with the same sign-in, state, navigation and objects. It is not a separate tool.</p>
+    <div class="callout" data-tone="accent">
+      <h3>The proposal in one paragraph</h3>
+      <p>Add a <b>Structure</b> view to Operations, once at workspace level and once inside each project's Operations area. Both read one projection, <code>GET /api/v1/operations/structure</code>, which joins existing declarations (connectivity manifest, environment declarations, <code>project.yml</code> schema 2) with existing observations (host reports, link health, run-target state, health checks, release drift). One recursive placement node gives nesting of any depth. The renderer is a small, lazy-loaded Angular SVG component built on the house tokens, using C4 deployment semantics rather than a separate tool. The first slice puts a read-only view of AGT, from declared data, in front of Robert.</p>
+    </div>
+  </section>
+
+  <section id="today">
+    <h2>Today</h2>
+    <p>Four surfaces already touch deployment structure. Each shows part of the picture; none draws nesting, a system boundary or artifacts. The screenshots in <a href="#evidence">Evidence</a> show the two that come closest.</p>
+    <table>
+      <thead><tr><th>Surface</th><th>What it shows</th><th>Gap for structure</th><th>New view</th></tr></thead>
+      <tbody>
+        <tr><td>Workspace deployment dashboard, <code>#/workspace/deployments</code></td><td>Projects by environment kind (Staging, Production): release, state, age, health, approval; delivery lanes per project (<code>GET /api/deploy/matrix</code>).</td><td>No hosts, containers, links or boundary. Columns are fixed to two kinds.</td><td><b>Leave alone.</b> Environment nodes link to the matching cell; dashboard rows gain a link to the project's structure (S3).</td></tr>
+        <tr><td>Settings › Environment, Map mode</td><td>Inline SVG topology of machines and connections (<code>EnvironmentMapComponent</code>, <code>buildEnvironmentTopology</code>), machine cards below with role, health, capacity, version, drift.</td><td>Machines are flat boxes on a fixed five-column grid. Components are cards outside the drawing. No VM nesting, boundary, externals or artifacts.</td><td><b>Replace</b> the Map mode with the embedded host view, installation scope (S3). The List mode, host actions and wizards stay.</td></tr>
+        <tr><td>Header Environment view (<code>app-environment-flow</code>)</td><td>Live hosts, queues, lanes, Watcher cases and AI Operator receipts from <code>GET /api/environment/flow</code>, refreshed every 15 seconds.</td><td>Live operation, not structure. Attempt containers group under hosts, but no boundary or declared shape.</td><td><b>Leave alone.</b> Host nodes link to it; the Load overlay reads the same telemetry.</td></tr>
+        <tr><td>Project Operations area, <code>#/projects/{slug}/operations</code>, and the Deploy area's Operations tab</td><td>Environment cards, runbooks, operations rail, product runtime, environment health panel.</td><td>Per environment lists, no structure.</td><td><b>Embed.</b> The project partial picture becomes the first section of the Operations area. Health data feeds the Health overlay; cards stay below.</td></tr>
+        <tr><td>Drift architecture marble (<code>architecture-model.schema.json</code>)</td><td>At most ten software architecture elements per project.</td><td>Software structure, not deployment.</td><td><b>Leave alone.</b></td></tr>
+      </tbody>
+    </table>
+    <p>The visual language below continues the hand-drawn topology sketches of the <a href="../operations/deployment-story/index.html">deployment story</a> and the <a href="../dynamic-placement/index.html">dynamic placement</a> Dossiers. Those decisions stay authoritative for authority, bus and placement; this Dossier only decides how the structure is modelled and drawn.</p>
+  </section>
+
+  <section id="model">
+    <h2>Model</h2>
+    <p>The view draws <b>instances</b>: a deployable unit, released at some version, running in one environment on one placement. Everything else either groups instances (boundary, location, host, VM, cluster) or connects them (link, artifact flow, publication).</p>
+    <figure class="media-breakout">
+      <div class="figure-scroll">
+      <svg class="model-svg" viewBox="0 0 1120 360" role="img" aria-labelledby="model-t model-d"><title id="model-t">Structure model</title><desc id="model-d">Workspace contains projects; a project declares deployable units; an instance is a unit in an environment on a placement node; placement nodes nest recursively; a system groups instances across projects and its boundary is drawn per environment; links connect instances; units produce artifacts that registries hold and consumers use.</desc>
+        <g class="mdl">
+          <rect x="20" y="20" width="200" height="56" rx="7"/><text x="34" y="44" class="h">Workspace</text><text x="34" y="62">bracket, whole picture</text>
+          <rect x="20" y="120" width="200" height="56" rx="7"/><text x="34" y="144" class="h">Project</text><text x="34" y="162">one repository, partial picture</text>
+          <rect x="20" y="220" width="200" height="56" rx="7"/><text x="34" y="244" class="h">Deployable unit</text><text x="34" y="262">project.yml artifact, process</text>
+          <rect x="300" y="120" width="230" height="56" rx="7"/><text x="314" y="144" class="h">System</text><text x="314" y="162">units from one or more projects</text>
+          <rect x="300" y="220" width="230" height="56" rx="7" class="focus"/><text x="314" y="244" class="h">Instance</text><text x="314" y="262">unit × environment × placement</text>
+          <rect x="300" y="20" width="230" height="56" rx="7"/><text x="314" y="44" class="h">Environment</text><text x="314" y="62">production, staging, preview</text>
+          <rect x="610" y="220" width="230" height="56" rx="7"/><text x="624" y="244" class="h">Placement node</text><text x="624" y="262">location, host, VM, cluster, pod</text>
+          <path d="M840 236 h40 v-40 h-60 v24" class="loop"/><text x="848" y="190">parent, any depth</text>
+          <rect x="610" y="120" width="230" height="56" rx="7"/><text x="624" y="144" class="h">System boundary</text><text x="624" y="162">system × environment, drawn</text>
+          <rect x="610" y="20" width="230" height="56" rx="7"/><text x="624" y="44" class="h">Link</text><text x="624" y="62">tunnel, SSH, call, artifact flow</text>
+          <rect x="20" y="300" width="200" height="44" rx="7"/><text x="34" y="327" class="h">Artifact</text>
+          <rect x="300" y="300" width="230" height="44" rx="7"/><text x="314" y="327" class="h">Registry · package · channel</text>
+          <rect x="610" y="300" width="230" height="44" rx="7"/><text x="624" y="327" class="h">Consumer · used version</text>
+          <rect x="910" y="120" width="190" height="156" rx="7" class="facts"/><text x="924" y="144" class="h">Facts on every node</text><text x="924" y="166">declared source</text><text x="924" y="186">observed source, freshness</text><text x="924" y="206">status, version, drift</text><text x="924" y="226">owner project</text><text x="924" y="246">click targets</text>
+          <path d="M120 76 V120 M120 176 V220 M220 248 H300 M415 76 V220 M530 248 H610 M415 176 V220 M530 148 H610 M725 76 V220 M120 276 V300 M220 322 H300 M530 322 H610" class="edge"/>
+        </g>
+      </svg>
+      </div>
+      <figcaption>Figure 1. Structure model. One recursive placement node covers physical machines, VMs, cloud servers, clusters, namespaces and pods. Proposed model, 1 November 2026.</figcaption>
+    </figure>
+    <table>
+      <thead><tr><th>Object</th><th>Meaning</th><th>AGT example</th><th>Exists today as</th></tr></thead>
+      <tbody>
+        <tr><td>Workspace</td><td>Bracket for all projects and shared placement</td><td>The operator's workspace</td><td><code>WorkspaceRecord</code></td></tr>
+        <tr><td>Project</td><td>One repository; owns units and declarations</td><td>Agent Studio, Website, libraries</td><td><code>ProjectRecord</code></td></tr>
+        <tr><td>Deployable unit</td><td>What a project builds and releases</td><td>Studio backend, agent-host, Engine image, chat package</td><td><code>project.yml</code> schema 2 <code>artifacts</code>; release identity; connectivity components</td></tr>
+        <tr><td>System</td><td>Units that form one product, possibly from several projects</td><td>AGT installation</td><td>Partly: <code>ComponentOwnershipMapping</code> (primary and consumer projects)</td></tr>
+        <tr><td>System boundary</td><td>A system's instances in one environment, drawn as a dashed frame</td><td>AGT installation, production</td><td>None</td></tr>
+        <tr><td>Environment</td><td>Release target: production, staging, preview</td><td>Production only for AGT</td><td><code>DeployEnvironment</code>, environment declarations</td></tr>
+        <tr><td>Placement node</td><td>Location, physical machine, cloud server, VM, cluster, namespace, pod; nests by <code>parentId</code></td><td>Home lab › physical machine › VM › container</td><td>Flat: <code>ConnectivityMachine</code>, host <code>HostId</code></td></tr>
+        <tr><td>Container, process</td><td>Running instance of a unit</td><td>Engine container; Studio backend process</td><td><code>ConnectivityComponent</code> (free-form role and kind); <code>RunTargetObservation</code></td></tr>
+        <tr><td>Data store, managed service</td><td>State the system depends on; managed when the platform cannot see inside</td><td>Workspace repository, secret store</td><td><code>data.database</code> secret reference in environment declarations</td></tr>
+        <tr><td>External service</td><td>Outside the boundary, never observed directly</td><td>GitHub, container registry, model providers</td><td>Git remote edge in the Environment map only</td></tr>
+        <tr><td>Link</td><td>Typed connection: tunnel, SSH transport, call, artifact flow, publication, consumption</td><td>Reverse tunnel to the runner host; SSH gate transport</td><td><code>RunnerLinkResource</code>, connectivity routes, gate transport</td></tr>
+        <tr><td>Artifact, registry, package</td><td>Built output, where it is stored, under which channel and version</td><td>Release package; role images; npm package</td><td><code>Release</code>, <code>RegisteredArtifact</code>, <code>PublishTarget</code></td></tr>
+      </tbody>
+    </table>
+    <h3>Nesting of any depth</h3>
+    <p>Placement is one node type with an open <code>kind</code> vocabulary and a <code>parentId</code>. The renderer maps each kind to a shape family (host, VM, cluster, namespace) and treats unknown kinds as plain hosts, so a new runtime such as a Proxmox node or a Nomad allocation needs no new code. Depth is unlimited; the zoom levels decide what is open, not the model.</p>
+    <h3>One repository, several units; several repositories, one system</h3>
+    <p>A unit's identity is <em>project plus unit name</em>, never the repository alone. One repository with several deployed units declares several units in its <code>project.yml</code>. Several repositories forming one system point their units at one workspace-level <b>System</b>, generalising today's <code>ComponentOwnershipMapping</code>. The boundary belongs to the system and environment, so both cases draw the same frame. Placement objects that several projects share, such as the Studio machine or a Web VM, belong to the workspace's installation inventory, not to a project.</p>
+  </section>
+
+  <section id="facts">
+    <h2>Facts</h2>
+    <p>Declared facts give the skeleton. Observed facts attach to it by stable keys (host id, runner id, project and environment id, image digest) and never silently create structure.</p>
+    <table>
+      <thead><tr><th>Fact</th><th>Declared source</th><th>Observed source</th></tr></thead>
+      <tbody>
+        <tr><td>Units and artifacts</td><td><code>.agent-studio/project.yml</code> schema 2: <code>artifacts</code> (name, static or container, image), <code>deploy</code> steps with targets</td><td>Releases and <code>RegisteredArtifact</code> records; deploy records</td></tr>
+        <tr><td>Environments</td><td><code>project.yml</code> <code>environments</code> and <code>lifecycles</code>; <code>docs/deployments/environments/*.json</code> (target host, template, destination, health URL, data)</td><td><code>DeploymentRecord</code> (host, release); environment health checks (HTTP, TCP, TLS, uptime, latency)</td></tr>
+        <tr><td>Placement</td><td>Connectivity manifest <code>machines[]</code> with components (placement inventory, role and kind free-form); run-target host id; runner deploy target kinds (SSH Docker, Kubernetes, Cloud Run)</td><td>Host capability reports (<code>RunnerCapabilitySnapshotDto</code>: host id, release, telemetry, active gates); run-target observed state (state, running artifact, restarts)</td></tr>
+        <tr><td>Links</td><td>Connectivity <code>mode</code>, runner routes (loopback, reverse SSH, private HTTPS), listeners; remote gate settings</td><td>Link supervisor state (up, degraded, down, paused); Task Server connection telemetry; gate reachability</td></tr>
+        <tr><td>Versions</td><td>Release and promotion records</td><td>Host release identity and <code>HostReleaseDriftVerdict</code>; run-target running artifact; registry lookups (new)</td></tr>
+        <tr><td>Externals and managed services</td><td>New <code>structure</code> section in <code>project.yml</code> schema 2 (externals, managed services) and installation externals in the manifest</td><td>Control-plane probes only (TCP, TLS, HTTP); otherwise none</td></tr>
+        <tr><td>Consumers</td><td><code>ComponentOwnershipMapping</code> consumer projects</td><td>Lock files of workspace projects (new parser), publish targets</td></tr>
+      </tbody>
+    </table>
+    <h3>Showing a difference</h3>
+    <table>
+      <thead><tr><th>State</th><th>Meaning</th><th>Drawn as</th></tr></thead>
+      <tbody>
+        <tr><td>Matched</td><td>Declared and observed agree</td><td>Solid outline, status glyph</td></tr>
+        <tr><td>Declared only</td><td>No source reported it inside the freshness window</td><td>Dashed outline, hollow glyph, words "Not observed" and the last report time</td></tr>
+        <tr><td>Undeclared</td><td>Observed, no declaration</td><td>Hatched fill, chip "not declared"</td></tr>
+        <tr><td>Differs</td><td>Version, image digest or placement differs from the declaration or from the release</td><td>Chip "≠ declared" or "↓ behind" with both values in the detail</td></tr>
+        <tr><td>Stale</td><td>Last observation older than the source's window (host heartbeat 90 s, health check interval, registry lookup 6 h)</td><td>Hollow glyph with age; never a healthy zero</td></tr>
+        <tr><td>Unreachable by design</td><td>Managed or external service the platform cannot enter</td><td>Dashed outline; "declared · probed via TLS" when a control-plane probe exists, otherwise "not observed"</td></tr>
+      </tbody>
+    </table>
+    <p>Hosts report no container list today; container state reaches the backend only through run-target observations. Undeclared containers therefore need one addition: an optional container summary (name, image digest, state) in the host capability report (S2).</p>
+  </section>
+
+  <section id="language">
+    <h2>Visual language</h2>
+    <p>Shapes encode kind, outlines encode provenance, glyph shapes encode status, chips carry versions and differences, and dash patterns encode link kinds. All colours are the house document tokens; this file follows the reader's light or dark preference.</p>
+    <figure class="media-breakout">
+      <div class="figure-scroll">{{FIG:key}}</div>
+      <figcaption>Figure 2. Visual language key, drawn by the prototype renderer. Proposed shapes, 1 November 2026.</figcaption>
+    </figure>
+    <ul>
+      <li><b>Boundary:</b> dashed rounded frame in ink with its name; everything outside sits in an "Outside the boundary" column or row.</li>
+      <li><b>Placement:</b> host, VM (inner inset line) and cluster boxes with a small kind icon and an uppercase kind line; locations and environments are quiet tinted lanes.</li>
+      <li><b>Instances:</b> container (tinted rounded box), process (pill), data store and managed service (cylinder), external (dashed, transparent), package (tabbed box), artifact (folded corner).</li>
+      <li><b>Status:</b> filled circle with tick, triangle with exclamation mark, square with cross, hollow circle with question mark. Each has the word in its tooltip, the outline and the screen-reader label. Healthy stays small and calm; only degraded and down draw attention (hard rule R4).</li>
+      <li><b>Collapsed groups:</b> a box with a stacked edge, its child counts and the number that need attention. Counts equal the children shown when the group is opened (hard rule R3).</li>
+      <li><b>Links:</b> solid with arrow for calls, long dash for tunnels, short dash for SSH transport, dotted bold for artifact and package flow. Each link carries a number that resolves in the key under the drawing, because readable text labels do not fit into gutters between nested boxes.</li>
+    </ul>
+    <h3>Scale</h3>
+    <ul>
+      <li><b>Three semantic zoom levels.</b> Level 1, Overview: boundaries, environments and locations with collapsed machines, clusters and groups. Level 2, Hosts: machines open, nested placement (VM, namespace) collapsed. Level 3, Full: everything open. Any box can be opened or closed individually.</li>
+      <li><b>Replica grouping.</b> Identical siblings collapse into one node with a count (Review host ×3) below level 3. In the container view the same unit placed in several regions merges into one node with "2 placements".</li>
+      <li><b>Link attachment.</b> Links attach to the nearest visible machine or group box, so tunnels read as machine-to-machine and stay readable at any level. Selecting a node draws its own links at instance level.</li>
+      <li><b>Layout.</b> Deterministic nested flow layout: the same data gives the same picture, so screenshots and memory stay stable. Large drawings scroll; the outline is the complete text alternative.</li>
+    </ul>
+    <h3>Themes and keyboard</h3>
+    <p>The product component reads <code>--studio-*</code> semantic tokens (<code>--studio-success</code>, <code>--studio-warn</code>, <code>--studio-error</code>, surfaces, borders), never hex values, and uses the spacing scale. Every box is a focusable button with a label that states name, kind, status, version and drift. Tab follows the outline order, Enter or Space opens and closes a group or selects an instance, keys 1 to 3 set the level, H and C switch the view, and Escape clears the selection. The outline under the drawing lists the same nodes as a tree. No animation is needed; any later transition collapses under reduced motion.</p>
+  </section>
+
+  <section id="setups">
+    <h2>Setups</h2>
+    <p>All figures in this section are produced by the same renderer as the prototype from the scenario data in <code>src/scenarios.js</code>. Status, version and drift values are illustrative, not observations.</p>
+
+    <h3>Very simple: one website, one container, one VM</h3>
+    <figure class="media-breakout">
+      <div class="figure-scroll">{{FIG:simple}}</div>
+      <figcaption>Figure 3. One website in one container on one cloud VM, with its edge process. Visitors and the built-in registry stay outside the boundary. Illustrative values.</figcaption>
+    </figure>
+
+    <h3>AGT today, host view</h3>
+    <figure class="media-breakout">
+      <div class="figure-scroll">{{FIG:agt-host}}</div>
+      <figcaption>Figure 4. AGT in the host view, level 3. Three locations inside one boundary; the home lab shows three nesting levels (physical machine, VM, containers). The Studio machine has processes and stores but no containers. The second Studio instance is hatched because no declaration in the repository describes it running alongside the workstation instance (see <a href="#card-check">card check</a>). Version chips show that parts run different releases at the same time. Roles only; illustrative status values.</figcaption>
+    </figure>
+
+    <h3>AGT today, container view</h3>
+    <figure class="media-breakout">
+      <div class="figure-scroll">{{FIG:agt-container}}</div>
+      <figcaption>Figure 5. The same AGT instances in the container view, grouped by function. Machines disappear as boxes and reappear as "on …" placement text; links attach to the groups. Roles only; illustrative values.</figcaption>
+    </figure>
+
+    <h3>AGT today, version overlay at level 2</h3>
+    <figure class="media-breakout">
+      <div class="figure-scroll">{{FIG:agt-version}}</div>
+      <figcaption>Figure 6. Version overlay, level 2. The VM collapses to "4 containers" and the three review hosts would merge into "Review host ×3". Behind-release chips mark the Engine image, the second Studio and the locally built review images. Illustrative values.</figcaption>
+    </figure>
+
+    <h3>Complex: environments, regions, Kubernetes, managed data, dozens of services</h3>
+    <figure class="media-breakout">
+      <div class="figure-scroll">{{FIG:complex-collapsed}}</div>
+      <figcaption>Figure 7. Collapsed, level 1. A shop platform with production in two regions, staging and development. Each cluster reads as one box with "26 containers (56 replicas) · 4 namespaces"; the US cluster reports "2 need attention · 1 drift". Managed PostgreSQL, queue and object storage are dashed: declared, probed from the control plane or not observed. Illustrative values.</figcaption>
+    </figure>
+    <figure class="media-breakout">
+      <div class="figure-scroll" style="max-height: 900px; overflow-y: auto;">{{FIG:complex-expanded}}</div>
+      <figcaption>Figure 8. Expanded, level 3, with the US cluster, staging and development closed again by hand. The EU cluster shows four namespaces and 26 deployments with replica counts. Illustrative values.</figcaption>
+    </figure>
+    <figure class="media-breakout">
+      <div class="figure-scroll">{{FIG:complex-container}}</div>
+      <figcaption>Figure 9. The complex setup in the container view, level 2: each service appears once per namespace with its placements merged (web ×8, 2 placements). Illustrative values.</figcaption>
+    </figure>
+
+    <h3>Library project</h3>
+    <figure class="media-breakout">
+      <div class="figure-scroll">{{FIG:library}}</div>
+      <figcaption>Figure 10. A library project without hosts. The npm package goes to the internal JFrog registry (channels next and latest) and to npm; the demo image goes to Docker Hub, whose last lookup failed. Consumers inside the workspace show the version they use; the Website is two releases behind. Illustrative values.</figcaption>
+    </figure>
+
+    <h3>Workspace whole picture and one project's partial picture</h3>
+    <div class="media-breakout figure-pair">
+      <figure style="margin: 0;"><h4>Workspace</h4><div class="figure-scroll">{{FIG:workspace}}</div></figure>
+      <figure style="margin: 0;"><h4>Project: Website</h4><div class="figure-scroll">{{FIG:workspace-web}}</div></figure>
+    </div>
+    <p class="dim" style="font: 0.8rem/1.5 var(--article-sans); margin-top: 10px;">Figure 11. Left: three projects in one workspace with shared externals. Right: the Website project's partial picture of the same objects. Its own instances are drawn normally; the AGT run-target agent on the Web VM and the library's npm channel appear faded as other projects' objects, because they share a placement or a link with the Website. Everything else is omitted. Illustrative values.</p>
+  </section>
+
+  <section id="prototype">
+    <h2>Prototype</h2>
+    <p>The prototype uses the same renderer. Switch scenario, view, level and overlay; open or close any box by clicking it or pressing Enter; select an instance to see its own links and where a click would lead in the product.</p>
+    <div class="proto media-breakout" id="proto">
+      <div class="proto-bar" role="toolbar" aria-label="Prototype controls">
+        <fieldset data-control="scenario"><legend>Setup</legend><button type="button" data-value="simple">Simple</button><button type="button" data-value="agt">AGT</button><button type="button" data-value="complex">Complex</button><button type="button" data-value="library">Library</button><button type="button" data-value="workspace">Workspace</button></fieldset>
+        <fieldset data-control="view"><legend>View</legend><button type="button" data-value="host">Host</button><button type="button" data-value="container">Container</button></fieldset>
+        <fieldset data-control="level"><legend>Level</legend><button type="button" data-value="1">1 Overview</button><button type="button" data-value="2">2 Hosts</button><button type="button" data-value="3">3 Full</button></fieldset>
+        <fieldset data-control="overlay"><legend>Overlay</legend><button type="button" data-value="health">Health</button><button type="button" data-value="version">Version</button><button type="button" data-value="drift">Drift</button></fieldset>
+        <fieldset data-control="scope" hidden><legend>Scope</legend><button type="button" data-value="workspace">Workspace</button><button type="button" data-value="agt">AGT</button><button type="button" data-value="web">Website</button><button type="button" data-value="lib">Library</button></fieldset>
+      </div>
+      <div class="proto-stage">
+        <div class="proto-canvas" id="proto-canvas"><noscript><p style="padding: 12px;">The prototype needs JavaScript. The static figures above show the same drawings.</p></noscript></div>
+        <aside class="proto-side" id="proto-side" aria-live="polite"><h4>Selection</h4><p>Select an instance to see its links and click targets.</p></aside>
+      </div>
+      <p class="proto-hint">Keys inside the drawing: Tab moves between boxes, Enter or Space opens, closes or selects, 1 to 3 set the level, H and C switch the view, Escape clears the selection.</p>
+      <details class="proto-outline"><summary>Outline of the current drawing (text alternative)</summary><div id="proto-outline"></div></details>
+    </div>
+  </section>
+
+  <section id="navigation">
+    <h2>Views and navigation</h2>
+    <table>
+      <thead><tr><th>Scope</th><th>Route (hash routes, as today)</th><th>Shows</th></tr></thead>
+      <tbody>
+        <tr><td>Workspace whole picture</td><td><code>#/workspace/operations/structure</code>, new Operations entry in the workspace section of the explorer, next to the Deployment dashboard entry</td><td>Every system boundary, shared placement and external</td></tr>
+        <tr><td>Project partial picture</td><td><code>#/projects/{slug}/operations/structure</code>, first section of the project Operations area</td><td>The project's instances; other projects' objects that share a placement or a link, faded</td></tr>
+        <tr><td>One environment</td><td>Environment filter on both, <code>?env=production</code></td><td>Only that environment's boundary and placements</td></tr>
+      </tbody>
+    </table>
+    <p>The query string keeps <code>view</code> (host or container), <code>level</code>, <code>overlay</code> and <code>focus</code>, so a link to a selected node can be pasted into a card. The application has no Angular router; routes are parsed in <code>studio-route.ts</code>, and the view mounts inside the tab view with <code>@defer</code> and a dynamic import, like the deployment dashboard.</p>
+    <h3>Container view and host view</h3>
+    <p>Both are projections of the same instances. The host view nests by placement and answers "what runs where". The container view groups by system and unit and answers "what is this system made of, and which versions run". A selection survives the switch.</p>
+    <h3>Overlays</h3>
+    <p>One overlay at a time keeps the drawing calm: <b>Health</b> (default; status glyphs and attention counts), <b>Version</b> (version chips, behind marks), <b>Drift</b> (difference chips; everything without a difference fades), and <b>Load</b> (CPU and memory band per host from host telemetry, S2).</p>
+    <h3>Click targets</h3>
+    <table>
+      <thead><tr><th>Node</th><th>Click leads to</th></tr></thead>
+      <tbody>
+        <tr><td>Host, server, VM</td><td>The host row in Settings › Environment, host telemetry history, the header Environment view filtered to the host</td></tr>
+        <tr><td>Container, process</td><td>The deploy run that placed the current version (Deploy › History), its logs (Deploy › Operations), the environment's runbooks</td></tr>
+        <tr><td>Boundary, environment</td><td>The deployment dashboard cell and the release page</td></tr>
+        <tr><td>Link</td><td>Link health and actions (reconnect, pause) for tunnels; gate status for SSH transport</td></tr>
+        <tr><td>Managed or external service</td><td>Its health checks and the declaration line that defines it</td></tr>
+        <tr><td>Registry, package</td><td>The publish panel, the release page, the registry's own page</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="libraries">
+    <h2>Libraries</h2>
+    <p>A project without hosts still has a deployment view: its artifacts, the registries that hold them, and the projects that consume them (Figure 10). The same model covers it: a registry is a group, a channel or tag is a package node, publication and consumption are links.</p>
+    <table>
+      <thead><tr><th>Field</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td>Registry, internal or external</td><td>Declared per artifact: <code>image</code> today, plus <code>registry</code> (npm, NuGet, Docker Hub, GitHub, JFrog or another internal registry, with a secret reference for private registries) in the proposed <code>structure</code> section</td></tr>
+        <tr><td>Package, version, channel</td><td>npm dist-tags, Docker tags, JFrog repositories, GitHub releases; read by a registry lookup</td></tr>
+        <tr><td>Last publish</td><td>Registry lookup; the publish run when AGT published it</td></tr>
+        <tr><td>Consumers in the workspace</td><td>Lock files of workspace projects (<code>package-lock.json</code>, <code>packages.lock.json</code>), matched by package name; <code>ComponentOwnershipMapping</code> consumer projects</td></tr>
+        <tr><td>Drift</td><td>Consumer behind the latest stable channel; channel differs between internal and public registries; lookup failed or stale</td></tr>
+      </tbody>
+    </table>
+    <p>Today the publishing feature derives targets from workflows and manifests and takes the current version from the last <code>v*</code> Git tag; it does not ask any registry, and no JFrog support exists. AGT itself is a first consumer case: its release identity names a NuGet package and the npm package <code>coding-agent-chat</code>, which the frontend pins at 0.4.1.</p>
+  </section>
+
+  <section id="repositories">
+    <h2>Repositories</h2>
+    <p>The view needs four things to work for both one mono repository and several projects: unit identity independent of the repository, a workspace-level System, shared placement in the workspace's installation inventory, and the faded partial-picture rule. With these, splitting a repository later changes the owner project of some units and nothing in the drawing.</p>
+    <div class="callout" data-tone="accent">
+      <h3>Recommendation: keep AGT's services in the mono repository</h3>
+      <p>Do not split now. AGT has one release identity, one promotion and gate per commit, and shared contracts (Task Server contracts, orchestration decisions) that change together; a split would add cross-repository version pinning without a consumer outside AGT. The structure view does not need a split. Revisit per unit when it gains its own release cadence and an outside consumer; <code>coding-agent-chat</code> already has its own package version and is the first candidate, the runner and agent-host the second.</p>
+    </div>
+  </section>
+
+  <section id="build">
+    <h2>Build approach</h2>
+    <p>The initial bundle limit is 3,800 kB and this commit's production build reports 3.66 MB initial, so the view must be a lazy chunk. Sizes below were measured on 1 November 2026 from the published npm packages.</p>
+    <table>
+      <thead><tr><th>Option</th><th>Licence</th><th>Size (raw / gzip)</th><th>Fit</th></tr></thead>
+      <tbody>
+        <tr><td><b>Own Angular SVG renderer</b>, nested flow layout and gutter routing</td><td>House code</td><td>Prototype renderer {{RENDER_KB}} kB unminified, no dependency</td><td>Full control of tokens, focus, labels, determinism. Link routing across nesting levels is the hard part; the prototype solves it by attaching links to visible boxes.</td></tr>
+        <tr><td>ELK.js (layered, hierarchical)</td><td>EPL-2.0 or GPL-3.0</td><td>1,646 kB / 477 kB</td><td>Best automatic nested layout with orthogonal routing across hierarchy levels. Weak copyleft needs a licence review; runs well in a worker. Candidate fallback router.</td></tr>
+        <tr><td>Cytoscape.js</td><td>MIT</td><td>436 kB / 136 kB</td><td>Compound nodes, canvas rendering. Canvas makes text, focus and theme tokens harder; compound layouts need extensions.</td></tr>
+        <tr><td>dagre</td><td>MIT</td><td>49 kB / 17 kB</td><td>Small, but layered graphs only; clusters are not real nested containers.</td></tr>
+        <tr><td>Mermaid (C4 diagrams) or Graphviz WASM</td><td>MIT</td><td>Mermaid 5,495 kB; Graphviz via viz.js 1,177 kB</td><td>Text in, SVG out. Fixed styling, little interactivity, no per-node state.</td></tr>
+        <tr><td>Structurizr or Backstage</td><td>Structurizr DSL and core: Apache-2.0; Backstage: Apache-2.0</td><td>Separate applications</td><td>Second tool with its own sign-in and catalog, which the request excludes. Their concepts are reused: C4 deployment nodes and container instances; Backstage system, component and resource.</td></tr>
+      </tbody>
+    </table>
+    <p><b>Notation.</b> C4 deployment diagrams already have the needed semantics: deployment nodes nest to any depth, container instances sit inside them, infrastructure nodes and external systems sit around a boundary. The view uses that vocabulary in house shapes and tokens; UML deployment notation adds stereotypes nobody in Operations reads.</p>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives">
+    <h2>Alternatives</h2>
+    <h3>Rendering and notation</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>R-A · Own SVG renderer, C4 semantics</h3><p>Angular standalone component, lazy, deterministic nested layout, numbered link keys, outline alternative. Smallest chunk, full accessibility and theme control. Risk: link routing quality at very large expanded views.</p></article>
+      <article class="variant"><h3>R-B · ELK.js for layout and routing</h3><p>Automatic hierarchical layout with orthogonal edges across levels. About 477 kB gzip lazy, EPL licence review, non-deterministic feel when data changes slightly; rendering still house code.</p></article>
+      <article class="variant"><h3>R-C · Cytoscape.js compound graph</h3><p>Mature interaction model, canvas renderer. Theme tokens, keyboard focus and screen-reader labels need a parallel DOM; nested boxes are less natural.</p></article>
+      <article class="variant"><h3>R-D · Mermaid C4 or Graphviz</h3><p>Fast to start from text. Styling, collapse state, overlays and click targets fight the tool; Mermaid alone exceeds the remaining initial budget many times over.</p></article>
+      <article class="variant"><h3>R-E · Structurizr or Backstage</h3><p>Established notation and catalog, but a separate tool, sign-in and data store. Excluded by the request.</p></article>
+    </div>
+    <h3>Data sources</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>F-A · Declared only</h3><p>Fast and stable, but blind to what runs: an undeclared container or a stale host looks healthy.</p></article>
+      <article class="variant"><h3>F-B · Observed only</h3><p>Shows reality, but structure flickers with outages, managed services and externals vanish, and nothing defines the boundary.</p></article>
+      <article class="variant"><h3>F-C · Declared skeleton with observed overlay</h3><p>Declarations define nodes and boundary; observations attach by stable keys; differences are explicit states. Needs two small declaration extensions and one host report field.</p></article>
+      <article class="variant"><h3>F-D · Import an external model</h3><p>Read a Structurizr workspace or a Backstage catalog. Useful as an optional import later; makes a second source of truth the master today.</p></article>
+    </div>
+    <h3>Placement in the application</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>P-A · Operations, workspace and project</h3><p>Workspace Operations entry plus a section in each project's Operations area; same sign-in, objects and links.</p></article>
+      <article class="variant"><h3>P-B · Settings › Environment only</h3><p>Reuses the existing map, but hides structure in configuration and has no project partial picture.</p></article>
+      <article class="variant"><h3>P-C · Inside the deployment dashboard</h3><p>One place for releases and structure, but the matrix and a drawing compete for the same width.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation">
+    <h2>Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>R-A with F-C and P-A, in six slices</h3>
+      <p>Build an own lazy SVG renderer in Angular with C4 deployment semantics in house shapes, fed by a declared skeleton with observed overlays, placed at workspace and project level in Operations. Start with a read-only AGT view from declared data. Keep ELK.js as a measured fallback for link routing only if the complex-setup slice misses its crossing target.</p>
+    </div>
+    <ul>
+      <li>One projection endpoint, <code>GET /api/v1/operations/structure</code>, joins existing declarations and observations. It never writes; edits stay in the declaration owners and the application API.</li>
+      <li>Extend, do not replace, declarations: optional <code>parentId</code>, <code>kind</code> and <code>location</code> on connectivity manifest machines; a <code>structure</code> section in <code>project.yml</code> schema 2 for externals, managed services and registries.</li>
+      <li>Replace only the Settings Environment Map mode; leave the deployment dashboard, header Environment view and architecture marble alone; embed the project partial picture in the project Operations area.</li>
+      <li>Keep AGT's services in the mono repository.</li>
+      <li>Budget: route registration adds at most 2 kB to the initial bundle; the structure chunk stays at or below 120 kB raw.</li>
+    </ul>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence">
+    <h2>Evidence</h2>
+    <p>Evidence is classified as observed (read in the repository or measured), inferred, or proposed. Repository references are relative to the checkout at commit <code>3abd8478a</code>.</p>
+
+    <figure class="evidence-figure media-breakout">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/environment-map-components-below-light--mocked.png" alt="Settings Environment page in Map mode: three flat boxes named Studio machine, Linux runner host and Home-lab VM joined by labelled lines, with component cards for the Studio machine listed below the drawing and a separate Connections list on the right.">
+          <span class="figure-annotation">Components sit in cards below, not inside the machines</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/environment-map-components-below-dark--mocked.png" alt="The same Environment map in the dark theme with the same three flat machine boxes, component cards and connections list.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> Today's Environment map draws each machine as one flat box on a grid. The declared components (the Home-lab VM's four containers in the fixture) are not drawn inside their machine, and the drawing has no VM nesting, system boundary or external service.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-01">1 November 2026</time> by <code>capture.mjs</code> from the production build of commit 3abd8478a, all API responses from its role-named fixture, no backend.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-01">1 November 2026</time>, same build and fixture.</span>
+        </span>
+      </figcaption>
+    </figure>
+
+    <figure class="evidence-figure media-breakout">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/deployment-dashboard-matrix-light--mocked.png" alt="Deployment dashboard with filters for project group, environment and tenant, and one row for the Website project with a Staging cell and a Production cell, each showing release, Succeeded, age and Healthy.">
+          <span class="figure-annotation">Release state per environment, no structure</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/deployment-dashboard-matrix-dark--mocked.png" alt="The same deployment dashboard row in the dark theme.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> The workspace deployment dashboard is a project by environment-kind matrix with release, state, age and health per cell. It shows no host, container, link or boundary, so the structure view complements it instead of replacing it.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-01">1 November 2026</time> by <code>capture.mjs</code> from the production build of commit 3abd8478a, role-named fixture, no backend.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-01">1 November 2026</time>, same build and fixture.</span>
+        </span>
+      </figcaption>
+    </figure>
+
+    <div class="evidence-list">
+      <a class="evidence" href="#ev-budget"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-budget">Initial bundle at 3.66 MB of a 3,800 kB error budget</b><small><code>frontend/angular.json</code> production budgets: initial warning 3 MB, error 3800 kB. <code>npm --prefix frontend run build</code> on this commit: "Initial total 3.66 MB", budget warning.</small></span></a>
+      <a class="evidence" href="#ev-lazy"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-lazy">No router; hash routes and template defer</b><small><code>studio-shell/services/studio-route.ts</code> parses <code>#/workspace/deployments</code> and project sections; the dashboard mounts under <code>@defer (on idle)</code> in <code>studio-shell.component.html</code>; heavy libraries load by dynamic import (<code>utils/diff2html-lazy.ts</code>).</small></span></a>
+      <a class="evidence" href="#ev-deps"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-deps">No graph or layout library in the frontend</b><small><code>frontend/package.json</code> runtime dependencies contain no d3, ELK, dagre, Cytoscape, Mermaid or similar.</small></span></a>
+      <a class="evidence" href="#ev-map"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-map">Flat machines in the snapshot and topology</b><small><code>features/remote-hosts/models/environment-map.ts</code> (<code>EnvironmentSnapshot.machines[].components[]</code>, no parent) and <code>environment-topology.ts</code> (fixed five-column grid, 180 px spacing).</small></span></a>
+      <a class="evidence" href="#ev-manifest"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-manifest">Connectivity manifest already holds placement inventory</b><small><code>backend/Features/Management/Connectivity/InstallationConnectivity.cs</code>: "Optional placement inventory. It declares identity and roles, not runtime health." Role and kind are free-form strings.</small></span></a>
+      <a class="evidence" href="#ev-yml"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-yml">project.yml schema 2 declares artifacts, environments and deploy steps</b><small><code>contracts/TaskServer.Contracts/ProjectPreparation.cs</code>, <code>ProjectDeploymentDefinition.cs</code>, sections pipeline, artifacts, environments, lifecycles, deploy, variables, tenants, channels, runbooks. No externals, managed services or registries. This repository's own <code>.agent-studio/project.yml</code> is schema 1.</small></span></a>
+      <a class="evidence" href="#ev-containers"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-containers">Hosts report no container list</b><small><code>HostTelemetrySnapshotDto</code> in <code>contracts/.../CapabilityContracts.cs</code> carries CPU, memory, disk, slots and connection data; container state arrives only through <code>RunTargetObservation</code>.</small></span></a>
+      <a class="evidence" href="#ev-owner"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-owner">Cross-project ownership exists in one place</b><small><code>ComponentOwnershipMapping</code> in <code>backend/Shared/Models/RegistryModels.cs</code>: primary project, repository, consumer projects, release artifact, deployment steps.</small></span></a>
+      <a class="evidence" href="#ev-publish"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-publish">Publish versions come from Git tags</b><small><code>backend/Features/Publishing/PublishModels.cs</code> <code>PublishTarget.CurrentVersion</code>; no registry lookup and no JFrog reference in the repository.</small></span></a>
+      <a class="evidence" href="#ev-sizes"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-sizes">Library sizes and licences</b><small><code>npm pack</code> on 1 November 2026: elkjs 0.12.1 <code>elk.bundled.js</code> 1,646,241 B (477,480 B gzip -9), EPL-2.0 or GPL-3.0; cytoscape 3.34.4 <code>cytoscape.min.js</code> 435,649 B (136,431 B); @dagrejs/dagre 3.1.3 <code>dagre.min.js</code> 49,326 B (17,215 B); mermaid 12.2.0 <code>mermaid.min.js</code> 5,494,801 B; @viz-js/viz 3.31.0 <code>lib/backend.js</code> 1,177,473 B.</small></span></a>
+      <a class="evidence" href="#ev-proto"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-proto">Prototype renderer handles every requested setup</b><small><code>src/render.js</code>, {{RENDER_KB}} kB unminified, draws all figures in this Dossier from <code>src/scenarios.js</code> with no dependency.</small></span></a>
+      <a class="evidence" href="#ev-routing"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-routing">Routing, not boxes, is the hard part</b><small>Nested box layout took a small flow algorithm; links between instances in different nested boxes crossed content until they attached to the nearest visible machine or group box. That is why the recommendation keeps ELK.js as a measured fallback router.</small></span></a>
+      <a class="evidence" href="#ev-tokens"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-tokens">Product rendering on house tokens</b><small>The product component maps this file's document tokens to <code>--studio-*</code> semantic tokens and the spacing scale; no new colour system.</small></span></a>
+    </div>
+
+    <h3 id="card-check">Card check against the repository</h3>
+    <p>The card's description of AGT today was checked against the runbooks. These differences are drawn as the card states them and are left for the S1 declaration to settle; they are also good test cases for the drift states.</p>
+    <table>
+      <thead><tr><th>Card statement</th><th>Repository finding</th><th>How the figures draw it</th></tr></thead>
+      <tbody>
+        <tr><td>A second Studio instance runs as a container on the Linux runner host.</td><td><code>docs/operations/setup/move-studio-to-server.md</code> describes a move (application lifecycle D15 option B), with guards against two Studios, not a parallel instance.</td><td>Hatched, "not declared"</td></tr>
+        <tr><td>The promotion on the runner host produces the release package; it is copied to the gate host and fetched by the Studio machine.</td><td><code>develop-main-promotion.md</code> "One-gate deploy package" runs the train with <code>--release-dir</code> on the gate host; no copy step is documented and the named fetch script is not in the repository.</td><td>Artifact links as stated</td></tr>
+        <tr><td>Host images are built where they run.</td><td>Role images are released digest-pinned to the container registry (<code>.github/workflows/release.yml</code>, <code>scripts/release/promote-images.sh</code>); only the development Compose profile builds from the checkout.</td><td>Review-host images "local", behind</td></tr>
+        <tr><td>Coding host and review host are two systemd services of the same binary.</td><td>Confirmed in <code>linux-runner-host.md</code>; unit names differ between that runbook and <code>multi-machine.md</code>.</td><td>Two processes, roles only</td></tr>
+        <tr><td>The gate runs as a container on the home-lab VM; the runner host has a verification checkout.</td><td>The gate VM is documented; a gate container and a separate verification checkout are not named.</td><td>As stated</td></tr>
+        <tr><td>Studio machine ports: hosts through tunnels, operator port.</td><td>Confirmed: 5031 for hosts through reverse tunnel port 15031, 5032 operator listener, 4011 frontend proxy, 5039 update service (<code>connectivity-manifest.md</code>, <code>github-app.md</code>).</td><td>Port text on the processes</td></tr>
+      </tbody>
+    </table>
+    <p class="dim">Capture details: <code>capture.mjs</code> serves the prebuilt frontend with <code>frontend/scripts/serve-prebuilt-frontend.mjs</code> against a closed backend port, answers every API call from a role-named fixture, waits for the map or dashboard test ids, rejects page errors, and writes <code>assets/capture-manifest.json</code>. The fixture reports the product's seeded runner under a role-named host so no machine name appears.</p>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions">
+    <h2>Open decisions</h2>
+    <p>Each decision names a recommended working option for implementation cards. The decisions remain pending sight review and operator acceptance.</p>
+    <div class="decision" data-decision-id="D1"><h3>D1 · Notation</h3><ul><li>A: C4 deployment semantics in house shapes <span class="tag">Recommended</span></li><li>B: UML deployment notation</li><li>C: free notation</li></ul><p>A gives nesting, container instances and boundaries with a vocabulary readers already know, without stereotypes.</p></div>
+    <div class="decision" data-decision-id="D2"><h3>D2 · Rendering</h3><ul><li>A: own lazy Angular SVG renderer; ELK.js only as a measured fallback router <span class="tag">Recommended</span></li><li>B: ELK.js for all layout</li><li>C: Cytoscape.js</li><li>D: Mermaid or Graphviz</li></ul><p>A keeps the chunk small, the picture deterministic and accessibility in house hands. The fallback triggers only if S5 misses its crossing target.</p></div>
+    <div class="decision" data-decision-id="D3"><h3>D3 · Data basis</h3><ul><li>A: declared skeleton with observed overlay and explicit difference states <span class="tag">Recommended</span></li><li>B: declared only</li><li>C: observed only</li><li>D: import an external model as master</li></ul><p>A is the only option that shows an undeclared container, a stale host and a managed service at the same time.</p></div>
+    <div class="decision" data-decision-id="D4"><h3>D4 · Where structure is declared</h3><ul><li>A: optional <code>parentId</code>, <code>kind</code>, <code>location</code> on connectivity manifest machines for installation placement; a <code>structure</code> section in <code>project.yml</code> schema 2 for externals, managed services and registries <span class="tag">Recommended</span></li><li>B: one new workspace-level structure file</li><li>C: database records edited only in the UI</li></ul><p>A extends files that already own these facts and stays backward compatible. Workspace-level Systems are created through the application API, never by editing workspace metadata directly.</p></div>
+    <div class="decision" data-decision-id="D5"><h3>D5 · Navigation</h3><ul><li>A: workspace Operations entry plus the first section of each project's Operations area <span class="tag">Recommended</span></li><li>B: Settings › Environment only</li><li>C: inside the deployment dashboard</li></ul></div>
+    <div class="decision" data-decision-id="D6"><h3>D6 · Default view, level and overlay</h3><ul><li>A: host view, level 2, Health overlay; the last choice is remembered per user and scope <span class="tag">Recommended</span></li><li>B: container view, level 1</li></ul><p>Operations questions start with "where does it run and is it healthy".</p></div>
+    <div class="decision" data-decision-id="D7"><h3>D7 · Settings Environment map</h3><ul><li>A: replace the Map mode with the embedded host view after S3; keep the List mode <span class="tag">Recommended</span></li><li>B: keep both drawings</li></ul><p>Two drawings of the same machines would drift apart.</p></div>
+    <div class="decision" data-decision-id="D8"><h3>D8 · Registry lookups</h3><ul><li>A: record each publish, plus a cached control-plane lookup every 6 hours and on demand; private registries through secret references <span class="tag">Recommended</span></li><li>B: live lookup on every view</li><li>C: publish records only</li></ul></div>
+    <div class="decision" data-decision-id="D9"><h3>D9 · Repository layout of AGT</h3><ul><li>A: keep the mono repository; revisit per unit when it gains its own cadence and an outside consumer <span class="tag">Recommended</span></li><li>B: split services into projects now</li></ul></div>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2>Implementation</h2>
+    <p>Six bounded slices are defined in <a href="workbench.json">workbench.json</a>. No product code is changed by this Dossier.</p>
+    <table>
+      <thead><tr><th>Slice</th><th>Delivers</th><th>Acceptance target</th></tr></thead>
+      <tbody>
+        <tr><td>S1 · Read-only AGT structure</td><td>Declared projection endpoint, manifest placement fields, lazy workspace Structure view with host and container views, levels, link key and outline</td><td>AGT shows one boundary, three locations, three machines, the home-lab VM with four containers (three nesting levels) and three externals; initial bundle grows at most 2 kB; chunk at most 120 kB raw</td></tr>
+        <tr><td>S2 · Observed status and drift</td><td>Host, link, run-target, health and release observations joined by stable keys; container summary in host reports; Health, Version, Drift, Load overlays</td><td>A stopped link or host turns its node within one 15-second refresh; each difference state has a fixture and a screenshot in both themes</td></tr>
+        <tr><td>S3 · Navigation and Settings map</td><td>Project Operations section, click targets, deep links, dashboard links, Settings Map mode replaced</td><td>Every node kind opens its documented target; a pasted deep link restores view, level, overlay and focus</td></tr>
+        <tr><td>S4 · Workspace and partial pictures</td><td>Systems across projects, shared placement, faded other-project objects</td><td>The Website partial picture shows its instances and exactly the shared run-target agent and npm channel, faded</td></tr>
+        <tr><td>S5 · Complex setups and scale</td><td>Cluster, namespace, region, managed service declarations; replica grouping; layout and routing at scale</td><td>A 60-service, two-region fixture renders level 1 in one 1440 px wide screen and lays out in under 50 ms; links cross no instance box</td></tr>
+        <tr><td>S6 · Libraries and registries</td><td>Registry declarations, lookups for npm, Docker Hub, GitHub, JFrog; channels, last publish, consumers from lock files</td><td>The chat library fixture shows three registries, channel versions, a failed lookup and a consumer two releases behind</td></tr>
+      </tbody>
+    </table>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+<script>
+{{PROTO_SCRIPT}}
+</script>
+</body>
+</html>

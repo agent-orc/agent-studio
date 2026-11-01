@@ -6,13 +6,13 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { StudioActivityBarComponent, StudioActivityBarItem } from './studio-activity-bar.component';
 import { resolveActiveActivityKey } from './studio-activity-bar.active-key';
+import { StudioPanelStateService } from '../../services/studio-panel-state.service';
 
 const ITEMS: readonly StudioActivityBarItem[] = [
   { key: 'explorer', icon: 'folder', label: 'Explorer' },
   { key: 'filters', icon: 'filter', label: 'Filters' },
   { key: 'cli', icon: 'cli', label: 'Agents / CLI' },
   { key: 'activity', icon: 'activity', label: 'Activity' },
-  { key: 'runbook', icon: 'runbook', label: 'Runbook' },
 ];
 
 /**
@@ -70,6 +70,12 @@ describe('StudioActivityBarComponent settings destination', () => {
     return fixture;
   }
 
+  it('renders no Runbook button (removed panel)', () => {
+    const fixture = mount();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="studio-ab-runbook"]')).toBeNull();
+  });
+
   it('renders no Admin button (removed destination)', () => {
     const fixture = mount();
     const host = fixture.nativeElement as HTMLElement;
@@ -119,13 +125,26 @@ describe('StudioActivityBarComponent settings destination', () => {
  * toggle and the editor route into one exclusive key.
  */
 describe('resolveActiveActivityKey', () => {
-  it('lets the editor destination win over an open sidebar panel', () => {
-    // Explorer sidebar open and a Dossiers tab active. Only Dossiers wins.
+  it('lets the editor destination win over an open sidebar panel when the editor was activated last', () => {
+    // Explorer sidebar open and a Dossiers tab active. The tab was activated
+    // last (or no owner is stored yet), so only Dossiers wins.
+    for (const markerOwner of ['editor', undefined] as const) {
+      expect(resolveActiveActivityKey({
+        activeTabKind: 'workbenches',
+        activePanel: 'explorer',
+        sidebarVisible: true,
+        markerOwner,
+      })).toBe('workbenches');
+    }
+  });
+
+  it('lets the sidebar panel win over the editor destination when the panel was activated last', () => {
     expect(resolveActiveActivityKey({
       activeTabKind: 'workbenches',
       activePanel: 'explorer',
       sidebarVisible: true,
-    })).toBe('workbenches');
+      markerOwner: 'panel',
+    })).toBe('explorer');
   });
 
   it('maps the workspace-settings tab to the settings item', () => {
@@ -174,5 +193,86 @@ describe('resolveActiveActivityKey', () => {
       activePanel: 'explorer',
       sidebarVisible: false,
     })).toBe('workbenches');
+  });
+});
+
+/**
+ * AGT-3351: the marker follows the most recent activation. Each row of the
+ * card table is replayed through the service transitions the shell uses
+ * (`toggle`/`open` mark the panel, a tab activation marks the editor).
+ */
+describe('resolveActiveActivityKey · most recent activation wins', () => {
+  type State = Parameters<typeof resolveActiveActivityKey>[0];
+  const dossierTab: State = {
+    activeTabKind: 'workbenches', activePanel: 'explorer', sidebarVisible: true, markerOwner: 'editor',
+  };
+  const clickPanel = (s: State, panel: State['activePanel']): State =>
+    s.activePanel === panel && s.sidebarVisible
+      ? { ...s, sidebarVisible: false }
+      : { ...s, activePanel: panel, sidebarVisible: true, markerOwner: 'panel' };
+  const activateTab = (s: State, kind: State['activeTabKind']): State =>
+    ({ ...s, activeTabKind: kind, markerOwner: 'editor' });
+
+  const cases: { name: string; state: State; expected: string | null }[] = [
+    { name: 'Dossier tab + click Chats', state: clickPanel(dossierTab, 'chats'), expected: 'chats' },
+    { name: 'Dossier tab + click Filters', state: clickPanel(dossierTab, 'filters'), expected: 'filters' },
+    { name: 'Dossier tab + click Agents / CLI', state: clickPanel(dossierTab, 'cli'), expected: 'cli' },
+    {
+      name: 'Chats marked + click Dossiers',
+      state: activateTab(clickPanel(dossierTab, 'chats'), 'workbenches'),
+      expected: 'workbenches',
+    },
+    {
+      name: 'Chats marked + select the Settings destination tab',
+      state: activateTab(clickPanel({ ...dossierTab, activeTabKind: 'board' }, 'chats'), 'workspace-settings'),
+      expected: 'settings',
+    },
+    {
+      name: 'Chats marked on a Dossier tab + click Chats again',
+      state: clickPanel(clickPanel(dossierTab, 'chats'), 'chats'),
+      expected: 'workbenches',
+    },
+    {
+      name: 'Explorer open + click Settings',
+      state: activateTab({ activeTabKind: 'board', activePanel: 'explorer', sidebarVisible: true, markerOwner: 'panel' }, 'workspace-settings'),
+      expected: 'settings',
+    },
+    {
+      name: 'sidebar hidden on a board tab',
+      state: { activeTabKind: 'board', activePanel: 'chats', sidebarVisible: false, markerOwner: 'panel' },
+      expected: null,
+    },
+  ];
+
+  for (const c of cases) {
+    it(c.name, () => {
+      expect(resolveActiveActivityKey(c.state)).toBe(c.expected);
+    });
+  }
+
+  it('keeps the Chats panel open when the marker returns to Dossiers', () => {
+    const state = activateTab(clickPanel(dossierTab, 'chats'), 'workbenches');
+    expect(state.sidebarVisible).toBe(true);
+    expect(state.activePanel).toBe('chats');
+  });
+});
+
+/** AGT-3351: the Runbook panel was removed; stored state lands on the Explorer. */
+describe('stored Runbook panel migration', () => {
+  it('opens the Explorer for a persisted active:runbook', () => {
+    TestBed.resetTestingModule();
+    localStorage.setItem('atp.studio.panelState.v1', JSON.stringify({ active: 'runbook', visible: true }));
+    try {
+      const panels = TestBed.inject(StudioPanelStateService);
+      expect(panels.active()).toBe('explorer');
+      expect(resolveActiveActivityKey({
+        activeTabKind: 'board',
+        activePanel: panels.active(),
+        sidebarVisible: panels.visible(),
+        markerOwner: panels.markerOwner(),
+      })).toBe('explorer');
+    } finally {
+      localStorage.removeItem('atp.studio.panelState.v1');
+    }
   });
 });

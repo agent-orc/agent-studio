@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "deployment-structure-view",
+  "title": "Deployment structure view",
+  "summary": "Graphical Operations view of deployment structure: one recursive placement model, declared skeleton with observed overlays, host and container views at three zoom levels, workspace and project scopes, libraries through registries. Own lazy SVG renderer with C4 deployment semantics; first slice shows AGT read-only from declared data.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "updatedAt": "2026-11-01T18:30:00Z",
+  "sourceTaskKeys": [
+    "AGT-3349"
+  ],
+  "relatedTo": [
+    "AGT-2906",
+    "AGT-3171"
+  ],
+  "implementationTasks": [
+    {
+      "id": "DSV-S1",
+      "title": "Read-only AGT structure view from declared data",
+      "promptMarkdown": "# Read-only AGT structure view from declared data\n\nSource: `docs/deployment-structure-view/index.html` (AGT-3349). Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md, the frontend and tasks domain maps, and the Dossier sections Model, Facts, Visual language and Views and navigation before editing. Use each Dossier recommendation (D1 to D9) as the working decision unless a recorded operator decision selects another option; record the option implemented. Use central `--studio-*` tokens, the spacing scale and existing components; no coloured left accent bars; both themes; reduced motion. Fixtures use role names only, never machine names, addresses or account names. Never edit workspace metadata or project folders directly; use the application API. Git ownership stays with the platform. This is one bounded slice; scope outside its criteria stays in sibling cards.\n\n## Deliver\n1. Add `GET /api/v1/operations/structure?scope=workspace|project:{id}&environment={id}` as a read-only projection. Join the connectivity manifest (`InstallationConnectivity.cs`, `Connectivity:ManifestPath`), environment declarations (`docs/deployments/environments/*.json` via `ProjectEnvironmentService`) and `project.yml` schema 2 artifacts. Return nodes (`id`, `kind`, `label`, `parentId`, `unitId`, `environmentId`, `project`, `provenance: declared`, `sourceRef`) and typed links (`from`, `to`, `kind`, `label`, `sourceRef`).\n2. Extend `ConnectivityMachine` with optional `parentId`, `kind` (open vocabulary: physical, cloud-server, vm, cluster, namespace) and `location`, and add optional installation externals. Keep existing manifests valid; update `docs/operations/setup/connectivity-manifest.md` and the samples in `deploy/connectivity/` with a role-named AGT example (three locations, Studio machine, Linux runner host, home-lab physical machine with VM and four containers, GitHub, container registry, model providers).\n3. Add a lazy standalone `StructureViewComponent` at `#/workspace/operations/structure` (parse in `studio-route.ts`, mount with `@defer` and a dynamic import), with a workspace explorer entry beside the Deployment dashboard. Port the Dossier renderer (`src/render.js`) to typed Angular: nested flow layout, host and container projections, levels 1 to 3 with per-node toggles, replica grouping, link attachment to the nearest visible machine or group box, numbered link key, outline tree, focusable nodes with full labels, keys 1 to 3, H, C, Escape.\n\n## Acceptance criteria\n- The AGT fixture renders one boundary, three locations, three machines, the home-lab VM nested in its physical machine with four containers (three nesting levels) and three externals in the host view; the container view shows the same instances grouped by function.\n- Every collapsed summary equals the children shown when that box opens (unit test over all fixtures).\n- The production build's initial bundle grows by at most 2 kB; the structure chunk is at most 120 kB raw; layout of a 200-node fixture takes under 50 ms in a unit benchmark.\n- Playwright with mocked API captures host and container views at 1440 and 1920 px in light and dark under the task results folder; Tab reaches every node, Enter toggles, the outline lists the same nodes, no page errors.\n\nFinish with changed files, checks and evidence paths.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Read-only AGT structure view from declared data",
+        "criteria": [
+          "The AGT fixture renders one boundary, three locations, three machines, the home-lab VM nested in its physical machine with four containers (three nesting levels) and three externals in the host view; the container view shows the same instances grouped by function.",
+          "Every collapsed summary equals the children shown when that box opens (unit test over all fixtures).",
+          "The production build's initial bundle grows by at most 2 kB; the structure chunk is at most 120 kB raw; layout of a 200-node fixture takes under 50 ms in a unit benchmark.",
+          "Playwright with mocked API captures host and container views at 1440 and 1920 px in light and dark under the task results folder; Tab reaches every node, Enter toggles, the outline lists the same nodes, no page errors."
+        ]
+      }
+    },
+    {
+      "id": "DSV-S2",
+      "title": "Observed status, versions and drift overlay",
+      "promptMarkdown": "# Observed status, versions and drift overlay\n\nSource: `docs/deployment-structure-view/index.html` (AGT-3349). Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md, the frontend and tasks domain maps, and the Dossier sections Model, Facts, Visual language and Views and navigation before editing. Use each Dossier recommendation (D1 to D9) as the working decision unless a recorded operator decision selects another option; record the option implemented. Use central `--studio-*` tokens, the spacing scale and existing components; no coloured left accent bars; both themes; reduced motion. Fixtures use role names only, never machine names, addresses or account names. Never edit workspace metadata or project folders directly; use the application API. Git ownership stays with the platform. This is one bounded slice; scope outside its criteria stays in sibling cards.\n\n## Deliver\n1. Join observations to declared nodes by stable keys: host capability reports (`RunnerCapabilitySnapshotDto`, host id, release, telemetry), link supervisor state (`RunnerLinkResource`), run-target observed state (`RunTargetObservation`), environment health checks, `HostReleaseDriftVerdict`, engine and gate state.\n2. Add an optional container summary (name, image digest, state) to the host capability report so undeclared containers can be detected; keep older hosts valid.\n3. Compute the difference states from the Dossier: matched, declared only, undeclared, differs, stale (per-source freshness window), unreachable by design. Add Health (default), Version, Drift and Load overlays; refresh every 15 seconds while visible.\n\n## Acceptance criteria\n- Stopping a link or host in a fixture turns its node to the stale or down state within one 15-second refresh; a missing metric reads as not observed, never as healthy.\n- Each difference state has a fixture, a unit test and a screenshot in both themes; status is readable without colour (glyph shape and word).\n- Version overlay shows the differing releases of the AGT fixture and marks behind-release instances.\n- Undeclared containers from the new host summary render hatched with a 'not declared' chip; hosts without the field still render.\n\nFinish with changed files, checks and evidence paths.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Observed status, versions and drift overlay",
+        "criteria": [
+          "Stopping a link or host in a fixture turns its node to the stale or down state within one 15-second refresh; a missing metric reads as not observed, never as healthy.",
+          "Each difference state has a fixture, a unit test and a screenshot in both themes; status is readable without colour (glyph shape and word).",
+          "Version overlay shows the differing releases of the AGT fixture and marks behind-release instances.",
+          "Undeclared containers from the new host summary render hatched with a 'not declared' chip; hosts without the field still render."
+        ]
+      }
+    },
+    {
+      "id": "DSV-S3",
+      "title": "Navigation, click targets and Settings map replacement",
+      "promptMarkdown": "# Navigation, click targets and Settings map replacement\n\nSource: `docs/deployment-structure-view/index.html` (AGT-3349). Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md, the frontend and tasks domain maps, and the Dossier sections Model, Facts, Visual language and Views and navigation before editing. Use each Dossier recommendation (D1 to D9) as the working decision unless a recorded operator decision selects another option; record the option implemented. Use central `--studio-*` tokens, the spacing scale and existing components; no coloured left accent bars; both themes; reduced motion. Fixtures use role names only, never machine names, addresses or account names. Never edit workspace metadata or project folders directly; use the application API. Git ownership stays with the platform. This is one bounded slice; scope outside its criteria stays in sibling cards.\n\n## Deliver\n1. Add the project partial picture as the first section of the project Operations area at `#/projects/{slug}/operations/structure`; environment cards stay below.\n2. Wire click targets from the Dossier table: host rows and telemetry, deploy runs, logs and runbooks, dashboard cells and release pages, link actions, health checks and declaration lines, publish panels. Keep `view`, `level`, `overlay`, `env` and `focus` in the query string.\n3. Replace the Settings › Environment Map mode with the embedded host view at installation scope (D7 A); keep the List mode, host actions and wizards. Add a structure link to each deployment dashboard row.\n\n## Acceptance criteria\n- Every node kind opens its documented target; a Playwright test covers one target per kind.\n- A pasted deep link restores view, level, overlay, environment and focus.\n- Settings › Environment has one drawing; existing remote-hosts specs pass or are updated with equivalent assertions.\n- Screenshots of the project section and the replaced Settings map in both themes are stored under the task results folder.\n\nFinish with changed files, checks and evidence paths.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Navigation, click targets and Settings map replacement",
+        "criteria": [
+          "Every node kind opens its documented target; a Playwright test covers one target per kind.",
+          "A pasted deep link restores view, level, overlay, environment and focus.",
+          "Settings › Environment has one drawing; existing remote-hosts specs pass or are updated with equivalent assertions.",
+          "Screenshots of the project section and the replaced Settings map in both themes are stored under the task results folder."
+        ]
+      }
+    },
+    {
+      "id": "DSV-S4",
+      "title": "Workspace whole picture and project partial picture",
+      "promptMarkdown": "# Workspace whole picture and project partial picture\n\nSource: `docs/deployment-structure-view/index.html` (AGT-3349). Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md, the frontend and tasks domain maps, and the Dossier sections Model, Facts, Visual language and Views and navigation before editing. Use each Dossier recommendation (D1 to D9) as the working decision unless a recorded operator decision selects another option; record the option implemented. Use central `--studio-*` tokens, the spacing scale and existing components; no coloured left accent bars; both themes; reduced motion. Fixtures use role names only, never machine names, addresses or account names. Never edit workspace metadata or project folders directly; use the application API. Git ownership stays with the platform. This is one bounded slice; scope outside its criteria stays in sibling cards.\n\n## Deliver\n1. Add a workspace-level System created through the application API that references units from one or more projects, generalising `ComponentOwnershipMapping`; boundaries are drawn per system and environment.\n2. Move shared placement (machines used by several projects) into the workspace installation inventory; ownership per instance stays with its project.\n3. Implement the partial-picture rule: a project's own instances, plus other projects' objects that share a placement or a link with them, faded and labelled as another project's; shared externals never pull in other projects.\n\n## Acceptance criteria\n- The workspace fixture shows AGT, Website and the library with shared externals; the Website partial picture shows its own instances and exactly the AGT run-target agent and the library npm channel, faded.\n- Splitting one unit into another project in a fixture changes only its owner label, not its position or links.\n- Outline and screen-reader labels state 'other project' for faded objects; both themes captured.\n\nFinish with changed files, checks and evidence paths.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Workspace whole picture and project partial picture",
+        "criteria": [
+          "The workspace fixture shows AGT, Website and the library with shared externals; the Website partial picture shows its own instances and exactly the AGT run-target agent and the library npm channel, faded.",
+          "Splitting one unit into another project in a fixture changes only its owner label, not its position or links.",
+          "Outline and screen-reader labels state 'other project' for faded objects; both themes captured."
+        ]
+      }
+    },
+    {
+      "id": "DSV-S5",
+      "title": "Complex setups and scale",
+      "promptMarkdown": "# Complex setups and scale\n\nSource: `docs/deployment-structure-view/index.html` (AGT-3349). Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md, the frontend and tasks domain maps, and the Dossier sections Model, Facts, Visual language and Views and navigation before editing. Use each Dossier recommendation (D1 to D9) as the working decision unless a recorded operator decision selects another option; record the option implemented. Use central `--studio-*` tokens, the spacing scale and existing components; no coloured left accent bars; both themes; reduced motion. Fixtures use role names only, never machine names, addresses or account names. Never edit workspace metadata or project folders directly; use the application API. Git ownership stays with the platform. This is one bounded slice; scope outside its criteria stays in sibling cards.\n\n## Deliver\n1. Accept cluster, namespace, region and managed-service declarations in the `structure` section of `project.yml` schema 2 and map runner deploy target kinds (SSH Docker, Kubernetes, Cloud Run) to placement kinds.\n2. Probe declared managed services from the control plane where a health check exists; otherwise show them as declared, not observed.\n3. Harden layout and routing: replica grouping across placements in the container view, approach-from-above routes, link keys. Measure crossings; only if the target below fails, evaluate ELK.js in a worker as a router (D2 fallback) with a licence review.\n\n## Acceptance criteria\n- A 60-service, two-region fixture with staging and development renders level 1 within one 1440 px wide screen and lays out in under 50 ms.\n- At levels 1 and 2 no link crosses an instance box in the complex, AGT and workspace fixtures (automated geometry check).\n- Managed services render dashed with 'probed via TLS' or 'not observed' according to their declarations.\n\nFinish with changed files, checks and evidence paths.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Complex setups and scale",
+        "criteria": [
+          "A 60-service, two-region fixture with staging and development renders level 1 within one 1440 px wide screen and lays out in under 50 ms.",
+          "At levels 1 and 2 no link crosses an instance box in the complex, AGT and workspace fixtures (automated geometry check).",
+          "Managed services render dashed with 'probed via TLS' or 'not observed' according to their declarations."
+        ]
+      }
+    },
+    {
+      "id": "DSV-S6",
+      "title": "Library and registry view",
+      "promptMarkdown": "# Library and registry view\n\nSource: `docs/deployment-structure-view/index.html` (AGT-3349). Read AGENTS.md, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md, the frontend and tasks domain maps, and the Dossier sections Model, Facts, Visual language and Views and navigation before editing. Use each Dossier recommendation (D1 to D9) as the working decision unless a recorded operator decision selects another option; record the option implemented. Use central `--studio-*` tokens, the spacing scale and existing components; no coloured left accent bars; both themes; reduced motion. Fixtures use role names only, never machine names, addresses or account names. Never edit workspace metadata or project folders directly; use the application API. Git ownership stays with the platform. This is one bounded slice; scope outside its criteria stays in sibling cards.\n\n## Deliver\n1. Declare registries per artifact (npm, NuGet, Docker Hub, GitHub, JFrog or another internal registry) with secret references for private registries.\n2. Record each publish and run a cached control-plane registry lookup every 6 hours and on demand (D8 A) for versions, channels or tags and last publish time; surface lookup failures and staleness.\n3. Find consumers inside the workspace from lock files (`package-lock.json`, `packages.lock.json`) and ownership mappings; mark consumers behind the latest stable channel.\n\n## Acceptance criteria\n- The chat library fixture shows three registries, channel versions, a failed Docker Hub lookup and a consumer two releases behind, in both themes.\n- AGT's own `coding-agent-chat` dependency appears as a consumer at the version pinned in `frontend/package.json`.\n- No registry credential value is returned by any endpoint; a missing secret reads as lookup unavailable.\n\nFinish with changed files, checks and evidence paths.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Library and registry view",
+        "criteria": [
+          "The chat library fixture shows three registries, channel versions, a failed Docker Hub lookup and a consumer two releases behind, in both themes.",
+          "AGT's own `coding-agent-chat` dependency appears as a consumer at the version pinned in `frontend/package.json`.",
+          "No registry credential value is returned by any endpoint; a missing secret reads as lookup unavailable."
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quality Studio inside Agent Studio | Article document</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+  <style data-dossier-figures>
+    /* Diagram classes. Colours come only from the article-document-v2 variables. */
+    .dg { font-family: var(--article-sans); }
+    .dg text { fill: var(--article-ink); font-size: 13px; }
+    .dg .t-small { font-size: 11px; }
+    .dg .t-tiny { font-size: 10px; }
+    .dg .t-head { font-size: 14px; font-weight: 700; }
+    .dg .t-kicker { fill: var(--article-faint); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; }
+    .dg .t-muted { fill: var(--article-muted); }
+    .dg .t-link { fill: var(--article-link); }
+    .dg .t-good { fill: var(--article-good); }
+    .dg .t-warn { fill: var(--article-warn); }
+    .dg .t-bad { fill: var(--article-bad); }
+    .dg .t-mono { font-family: var(--article-mono); font-size: 11px; }
+    .dg .box { fill: var(--article-surface); stroke: var(--article-line); }
+    .dg .paper { fill: var(--article-paper); stroke: var(--article-line); }
+    .dg .strong { fill: var(--article-surface-strong); stroke: var(--article-line); }
+    .dg .accent { fill: var(--article-link-soft); stroke: var(--article-link); }
+    .dg .good { fill: var(--article-good-soft); stroke: var(--article-good); }
+    .dg .warn { fill: var(--article-warn-soft); stroke: var(--article-warn); }
+    .dg .bad { fill: var(--article-bad-soft); stroke: var(--article-bad); }
+    .dg .wire { fill: none; stroke: var(--article-faint); stroke-width: 1.5; }
+    .dg .wire-dash { fill: none; stroke: var(--article-faint); stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .dg .flow { fill: none; stroke: var(--article-link); stroke-width: 1.8; }
+    .dg .head-fill { fill: var(--article-link); }
+    .dg .head-faint { fill: var(--article-faint); }
+    .dg .node { fill: var(--article-paper); stroke: var(--article-ink); stroke-width: 1.6; }
+    .dg .node-accent { fill: var(--article-link); stroke: var(--article-link); }
+    .dg .dot-bad { fill: var(--article-bad); }
+    .dg .dot-good { fill: var(--article-good); }
+    .dg .dot-warn { fill: var(--article-warn); }
+    .decision-ref { white-space: nowrap; }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept Dossier · AGT-3352 · 1 November 2026</p>
+    <h1>Quality Studio inside Agent Studio</h1>
+    <p class="lede">Quality becomes an area of the one application: a project jump in the Deck, a Quality panel on every card that shows the verdict for exactly the card's commit range, and one sign-in. Quality Studio keeps working on its own. The two products meet through a versioned HTTP contract and never share a data store.</p>
+    <div class="meta">
+      <span><b>Pattern</b> concept</span>
+      <span><b>Status</b> decision-pending</span>
+      <span><b>Phase</b> decision-ready</span>
+      <span><b>Source</b> AGT-3352</span>
+      <span><b>Builds on</b> QS-W6 (decided), QS-W31 (pending)</span>
+      <span><b>Agent Studio snapshot</b> <code>a3b98b11b</code></span>
+      <span><b>Quality Studio snapshot</b> <code>7dd46b54</code> (27 Oct 2026)</span>
+    </div>
+  </header>
+
+  <nav aria-label="Contents">
+    <p class="kicker">Contents</p>
+    <ol>
+      <li><a href="#summary">Decision summary</a></li>
+      <li><a href="#today">Current state</a></li>
+      <li><a href="#jump">Jump per project</a></li>
+      <li><a href="#hosting">Hosting and sign-in</a></li>
+      <li><a href="#change-set">The card as a change set</a></li>
+      <li><a href="#surfaces">Other surfaces</a></li>
+      <li><a href="#standalone">Standalone operation and contract</a></li>
+      <li><a href="#ownership">Ownership</a></li>
+      <li><a href="#alternatives">Alternatives</a></li>
+      <li><a href="#recommendation">Recommendation</a></li>
+      <li><a href="#evidence">Evidence</a></li>
+      <li><a href="#open-decisions">Open decisions</a></li>
+      <li><a href="#implementation">Implementation</a></li>
+    </ol>
+  </nav>
+
+  <section id="summary">
+    <h2><span class="number">00</span> Decision summary</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended direction</h3>
+      <p>Run Quality Studio as an opt-in service in Studio's server stack, under its own sibling hostname (for example <code>quality-robert.omgai.dev</code>), not under a path of the Studio origin. The signed-in user moves across with a <b>signed hand-off</b>: Studio mints a 60-second, single-use assertion for Quality Studio and delivers it in a POST body, never in a URL, and Quality Studio opens its own session. The card shows <b>one verdict</b>: Agent Studio's review outcome, in which Quality Studio produces the code-quality aspect (QS-W31 option B). That verdict is computed once on the Review Plane for the range <code>merge-base..Result-SHA</code> and stored on both sides. Opening Quality Studio never runs a review again.</p>
+    </div>
+    <table>
+      <thead><tr><th>Question</th><th>Recommended answer</th><th>Decision</th></tr></thead>
+      <tbody>
+        <tr><td>Jump per project</td><td>A "Quality Studio" row in the Deck's Quality group opens a status panel with "Open in Quality Studio" (new tab). The Explorer project tree also gets a one-click row. The target is the repository dashboard, <code>/?repo=&lt;id&gt;</code>.</td><td><a href="#d1">D1</a></td></tr>
+        <tr><td>Project to repository</td><td>Studio stores the Quality Studio repository id per project, registers automatically on project creation, and reconciles later. The id is the lowercase project id, for example <code>proj-002</code>. Exact-path matching is retired.</td><td><a href="#d2">D2</a></td></tr>
+        <tr><td>Hosting</td><td>Same host and compose stack, own sibling hostname, same Cloudflare edge mode. Repository checkouts are mounted read-only.</td><td><a href="#d3">D3</a></td></tr>
+        <tr><td>Sign-in</td><td>Signed hand-off now, shaped like OIDC so that OIDC can replace it later without touching Quality Studio's session model.</td><td><a href="#d4">D4</a></td></tr>
+        <tr><td>Card change set</td><td>The reviewed range per delivery round, <code>merge-base(integration ref, Result-SHA)..Result-SHA</code>, plus a landed-range note after integration.</td><td><a href="#d5">D5</a></td></tr>
+        <tr><td>Verdict model</td><td>One verdict. Agent Studio decides, and Quality Studio decides only the code-quality aspect inside it.</td><td><a href="#d6">D6</a></td></tr>
+        <tr><td>Paying once</td><td>Compute on the Review Plane once, push to the Quality Studio store, key by range and rule set. No automatic review on jump.</td><td><a href="#d7">D7</a></td></tr>
+        <tr><td>Other surfaces</td><td>Card first, then Deck, a board signal for block only, and releases. Dossiers, host and environment views stay out.</td><td><a href="#d8">D8</a></td></tr>
+        <tr><td>Repository writes from hosted Quality Studio</td><td>They become Agent Studio cards. The platform publishes them.</td><td><a href="#d9">D9</a></td></tr>
+        <tr><td>Versions</td><td>A capabilities document, contract <code>agent-studio-integration/1</code>, both sides accept N and N-1, and either side degrades rather than failing.</td><td><a href="#d10">D10</a></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="today">
+    <h2><span class="number">01</span> Current state</h2>
+    <p>Every statement in the card was checked against both repositories. Most of it holds. Five details change the design.</p>
+    <table>
+      <thead><tr><th>Card statement</th><th>What the code says</th></tr></thead>
+      <tbody>
+        <tr><td>Quality Studio has local mode (loopback, no tokens) and hosted mode (one container, token on every request).</td><td>Correct. Local mode binds <code>127.0.0.1:5127</code> and refuses non-loopback addresses (<code>LocalModeBindingGuard.cs:41-56</code>). Hosted mode accepts only <code>Authorization: Bearer</code>, compares SHA-256 hashes of configured client credentials (<code>ApiSecurity.cs:116-128</code>), and has no users, cookies or OIDC. The browser keeps the token in <code>localStorage</code> as <code>qs-api-token</code> (<code>api-access.ts:3</code>). <b>New:</b> hosted mode also requires <code>X-Client-Id</code> on every mutation (<code>Program.cs:209-217</code>), and the Quality Studio frontend never sends that header, so browser edits in hosted mode are refused. This was read in the code, not exercised at runtime.</td></tr>
+        <tr><td><code>POST /api/repos/{id}/change-review</code> returns a verdict for a base..head range, and no gate consumes it.</td><td>Correct (<code>Program.cs:368-369</code>, <code>change-reviews.md:26</code>). <b>New:</b> it is synchronous, makes one model call (retained responses took 5.4 to 18.1 s, median about 11 s), stores nothing, has no GET, and has no UI page. It requires full 40-character SHAs and computes a two-dot <code>git diff base head</code> (<code>ChangeReviewVerdictService.cs:79</code>), so the caller must pass the merge-base, not the integration tip.</td></tr>
+        <tr><td>Quality Studio has sensors, an attack coverage matrix, a boundary inventory and a finding lifecycle.</td><td>Correct, with two limits: the attack coverage matrix is a dialog, not a route, and the boundary inventory has no page. The frontend has no router; position lives in query parameters <code>repo</code>, <code>path</code>, <code>kind</code>, <code>finding</code>, <code>location</code>, <code>theme</code> (<code>shell/app.ts:74-76</code>). Nothing addresses a commit range yet.</td></tr>
+        <tr><td>Agent Studio calls the sensor API and shows review evidence in the card's protocol pane.</td><td>Partly. <code>QualityAnalysisStepRunner</code> calls only the <code>eslint</code> sensor over HTTP. It finds the repository by an exact <code>rootPath</code> match (<code>QualityAnalysisStepRunner.cs:210-218</code>), runs only in the local monolith review, and is report-only. The findings render as "Code review" rows in the panel under the card's <b>Evidence</b> tab (<code>prompt-pane.component.html:148</code>); the component folder sits under <code>protocol-pane</code>. The keys <code>QualityStudio:BaseUrl</code>, <code>ApiToken</code> and <code>ClientId</code> appear in no deploy file, and no settings UI exists.</td></tr>
+        <tr><td>Studio moves to a public server; a loopback link would break.</td><td>Correct. D15 option B moves Studio to <code>agent-runner-01</code> as <code>robert.omgai.dev</code> behind Cloudflare (<code>move-studio-to-server.md:3</code>). Three facts constrain the design. The shell CSP is <code>connect-src 'self'; frame-src 'self'</code> (<code>Caddyfile.frontend:35</code>). The session cookie is <code>__Host-agentstudio-session</code>, host-only, <code>SameSite=Strict</code> (<code>AccessSecurityEndpoints.cs:367-374</code>). And Studio has no OIDC and no forward-auth endpoint.</td></tr>
+      </tbody>
+    </table>
+    <p>Two earlier Quality Studio decisions already frame the review side. <b>QS-W6</b> (decided 11 August 2026, <code>docs/operations/studio-integration/</code> in Quality Studio) gives Quality Studio the code-quality semantics and the finding envelope. Agent Studio keeps subject fencing, the delivery grade, council, gates and lanes. Quality Studio stays the engineer room, and Studio links to it. <b>QS-W31</b> (decision pending, <code>docs/qs-review-decider/</code>) recommends that Quality Studio decide the code-quality aspect only, after a paired trial. This Dossier does not reopen either decision. It adds the user-facing integration on top of them.</p>
+  </section>
+
+  <section id="jump">
+    <h2><span class="number">02</span> Jump per project</h2>
+    <p>The project Deck already groups quality surfaces: Security, Test Quality, Audits &amp; Checks and Proposals (see <a href="#fig-deck">Evidence, figure E1</a>). Quality Studio belongs in that group. Deck rows open panels and never leave the app, so the row opens a small status panel, and the panel's primary button opens Quality Studio in a new tab. For people who only want the jump, the Explorer project tree (Board, Dossiers, Deploy, Operations, Wiki, Deck) gets a "Quality Studio" row with the same external-open affordance the Project URL rows already use.</p>
+    <figure class="media-breakout" id="fig-jump">
+      <svg class="dg" viewBox="0 0 1060 420" role="img" aria-labelledby="fig-jump-title fig-jump-desc">
+        <title id="fig-jump-title">Project jump from the Deck</title>
+        <desc id="fig-jump-desc">The Deck's Quality group gains a Quality Studio row. It opens a panel with connection, repository and findings status and an Open in Quality Studio button, which opens the Quality Studio repository dashboard in a new tab after a signed hand-off.</desc>
+        <defs>
+          <marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head-fill" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <rect class="box" x="16" y="16" width="250" height="388" rx="10"/>
+        <text class="t-kicker" x="34" y="44">DECK  ·  DEMO APP</text>
+        <text class="t-kicker" x="34" y="78">INSIGHT</text>
+        <text class="t-muted" x="46" y="102">Overview · Project URLs · …</text>
+        <text class="t-kicker" x="34" y="140">QUALITY</text>
+        <text x="46" y="166">Security</text>
+        <text x="46" y="192">Test Quality</text>
+        <text x="46" y="218">Audits &amp; Checks</text>
+        <text x="46" y="244">Proposals</text>
+        <rect class="accent" x="30" y="256" width="222" height="30" rx="6"/>
+        <text x="46" y="276" class="t-link">Quality Studio</text>
+        <text x="186" y="276" class="t-small t-muted">new row</text>
+        <text class="t-kicker" x="34" y="320">CONTEXT</text>
+        <text class="t-muted" x="46" y="344">Architecture · Wiki · …</text>
+
+        <path class="flow" d="M252,271 C290,271 290,120 318,120" marker-end="url(#ah1)"/>
+
+        <rect class="paper" x="320" y="16" width="370" height="388" rx="10"/>
+        <text class="t-head" x="342" y="48">Quality Studio</text>
+        <text class="t-small t-muted" x="342" y="68">Code quality, security and findings for this project</text>
+        <rect class="box" x="342" y="88" width="326" height="148" rx="8"/>
+        <text class="t-small t-muted" x="358" y="114">Connection</text>
+        <circle class="dot-good" cx="470" cy="110" r="4"/><text class="t-small" x="482" y="114">Ready · contract v1</text>
+        <text class="t-small t-muted" x="358" y="142">Repository</text>
+        <text class="t-small" x="470" y="142"><tspan class="t-mono">proj-002</tspan> · registered automatically</text>
+        <text class="t-small t-muted" x="358" y="170">Open findings</text>
+        <text class="t-small" x="470" y="170">14 open · 2 high · 0 critical</text>
+        <text class="t-small t-muted" x="358" y="198">Last change review</text>
+        <text class="t-small" x="470" y="198">AGT-3350 · Pass · 2 h ago</text>
+        <text class="t-small t-muted" x="358" y="222">Code score</text>
+        <text class="t-small" x="470" y="222">B (78 / 100)</text>
+        <rect class="accent" x="342" y="256" width="200" height="34" rx="7"/>
+        <text class="t-link" x="358" y="278">Open in Quality Studio ↗</text>
+        <text class="t-small t-muted" x="342" y="320">Other states shown in the same panel:</text>
+        <text class="t-small" x="342" y="342">Not connected (Owner: "Connect" to Settings)</text>
+        <text class="t-small" x="342" y="362">Not registered (Owner: "Register now")</text>
+        <text class="t-small" x="342" y="382">Unreachable since 14:02 · Version too old</text>
+
+        <path class="flow" d="M542,273 L716,273" marker-end="url(#ah1)"/>
+        <text class="t-small t-link" x="552" y="264">new tab</text>
+        <text class="t-small t-muted" x="552" y="292">signed hand-off (fig. 3)</text>
+
+        <rect class="box" x="718" y="16" width="326" height="388" rx="10"/>
+        <rect class="strong" x="718" y="16" width="326" height="34" rx="10"/>
+        <text class="t-small" x="734" y="38">Quality Studio · proj-002</text>
+        <rect class="paper" x="734" y="60" width="294" height="24" rx="12"/>
+        <text class="t-mono t-muted" x="746" y="76">quality-robert.omgai.dev/?repo=proj-002</text>
+        <text class="t-head" x="734" y="118">Repository dashboard</text>
+        <rect class="paper" x="734" y="134" width="294" height="64" rx="8"/>
+        <text class="t-small t-muted" x="748" y="158">Signed in as robert (operator)</text>
+        <text class="t-small t-muted" x="748" y="178">via Agent Studio · ← Back to Demo App</text>
+        <rect class="paper" x="734" y="212" width="140" height="80" rx="8"/>
+        <text class="t-small" x="748" y="238">Findings</text>
+        <text class="t-small t-muted" x="748" y="258">ledger, states</text>
+        <rect class="paper" x="888" y="212" width="140" height="80" rx="8"/>
+        <text class="t-small" x="902" y="238">Sensors</text>
+        <text class="t-small t-muted" x="902" y="258">coverage, boundaries</text>
+        <rect class="paper" x="734" y="304" width="294" height="84" rx="8"/>
+        <text class="t-small" x="748" y="330">Explorer, review runs, attack coverage</text>
+        <text class="t-small t-muted" x="748" y="350">unchanged Quality Studio UI</text>
+      </svg>
+      <figcaption>Figure 1. Proposed jump. The panel values are illustrative, not product data.</figcaption>
+    </figure>
+    <h3>Deep-link contract v1</h3>
+    <p>Quality Studio owns its URLs. Studio builds links only from the contract that Quality Studio declares in its capabilities document. All parameters are routing data. None is a credential.</p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Values</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>repo</code></td><td>Repository id, for example <code>proj-002</code></td><td>Required. Without other parameters, opens the repository dashboard.</td></tr>
+        <tr><td><code>view</code></td><td><code>dashboard</code> · <code>change</code> · <code>finding</code> · <code>explorer</code></td><td>Target view. Unknown values fall back to <code>dashboard</code>.</td></tr>
+        <tr><td><code>base</code>, <code>head</code></td><td>40-character lowercase SHAs</td><td>Required for <code>view=change</code>. <code>base</code> is the merge-base, never a branch tip.</td></tr>
+        <tr><td><code>finding</code>, <code>path</code>, <code>kind</code>, <code>location</code></td><td>As today</td><td>Existing parameters, unchanged (<code>review-navigation.ts:6-20</code>).</td></tr>
+        <tr><td><code>card</code></td><td>Studio key, for example <code>AGT-3352</code></td><td>Display only: title of the change view and the "Back to card" link. Never used for authorization.</td></tr>
+      </tbody>
+    </table>
+    <h3>Mapping and registration</h3>
+    <p>Studio stores the mapping as project setting <code>qualityStudio.repositoryId</code>. It does not find the repository by an exact checkout path, as <code>QualityAnalysisStepRunner</code> does today. Path matching breaks as soon as Quality Studio sees the checkout under another mount path or on another host. When Studio creates a project and the integration is connected, Studio registers the repository with its service credential: <code>POST /api/repos</code> with id <code>proj-002</code>, the project's display name, the canonical checkout path on the Quality Studio host, and a new <code>externalRef</code> of <code>agent-studio:PROJ-002</code>. Registration is a separate, non-blocking step. A failure never stops project creation. A reconcile loop retries every 15 minutes, which covers the case where the checkout does not exist yet because the runner clones later. The same loop backfills existing projects when the integration is first connected, and archives the registration when the project is archived.</p>
+    <table>
+      <thead><tr><th>Situation</th><th>Deck row</th><th>Panel</th><th>Card panel</th></tr></thead>
+      <tbody>
+        <tr><td>Integration not configured</td><td>Hidden. Owners see it with state "Not connected".</td><td>Explains the integration. Owner action: Settings › Integrations.</td><td>Hidden</td></tr>
+        <tr><td>Quality Studio unreachable</td><td>Shown</td><td>"Unreachable since 14:02". The jump is disabled with that reason.</td><td>Shows stored results. The jump is disabled.</td></tr>
+        <tr><td>Version older than contract v1</td><td>Shown</td><td>"This Quality Studio version has no Agent Studio sign-in". Owners get an upgrade hint. In local mode on the workstation, a plain link still works because local mode needs no sign-in.</td><td>Stored results only</td></tr>
+        <tr><td>Repository not registered</td><td>Shown</td><td>"Not registered yet" with the reason (for example "checkout not present"). Owner action: "Register now".</td><td>"Repository not registered"</td></tr>
+        <tr><td>Ready</td><td>Shown</td><td>Status and "Open in Quality Studio"</td><td>Full panel (<a href="#change-set">section 04</a>)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="hosting">
+    <h2><span class="number">03</span> Hosting and sign-in</h2>
+    <h3>Where Quality Studio runs</h3>
+    <p>Quality Studio joins the networked monolith stack on <code>agent-runner-01</code> as an opt-in compose profile <code>quality</code>: one more container on the existing bridge network. The edge Caddy, which is already the only published listener, gets a second site block for <code>QUALITY_DOMAIN</code>. It uses the same edge mode as Studio (Cloudflare Authenticated Origin Pulls, <code>Caddyfile.cloudflare</code>), so Quality Studio is exactly as exposed as Studio and no more. The container publishes no port. It runs in hosted mode, trusts only the edge IP as proxy, and mounts the runner's canonical repository checkouts <b>read-only at the identical path</b>, so Studio and Quality Studio name the same directory the same way. Quality Studio's data root and registry live on their own volume under <code>/srv/agent-studio/quality</code>. Studio never reads them.</p>
+    <p>Two operational facts follow. First, the container runs as uid 10001 and the checkouts belong to the runner account, so the image needs a <code>safe.directory</code> entry for the mounted root, or Git refuses to read them. Second, Quality Studio's own model calls (standing reviews, "Run review") need provider CLI credentials in its container. The first slice ships without them: spend routes then answer <code>provider-unavailable</code>, and every read surface works. Change verdicts for cards are computed on the Review Plane anyway (<a href="#d7">D7</a>), which already has credentials.</p>
+    <figure class="media-breakout" id="fig-topology">
+      <svg class="dg" viewBox="0 0 1060 360" role="img" aria-labelledby="fig-topo-title fig-topo-desc">
+        <title id="fig-topo-title">Hosting next to the public Studio</title>
+        <desc id="fig-topo-desc">The browser reaches Cloudflare, then the edge Caddy on agent-runner-01. Caddy routes robert.omgai.dev to the Studio frontend and API and quality-robert.omgai.dev to the Quality Studio container. Studio's API calls Quality Studio on the internal network with a service token. Quality Studio mounts runner checkouts read-only.</desc>
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head-fill" d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="ah2f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head-faint" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <rect class="box" x="16" y="120" width="130" height="90" rx="10"/>
+        <text class="t-head" x="34" y="152">Browser</text>
+        <text class="t-small t-muted" x="34" y="174">two tabs,</text>
+        <text class="t-small t-muted" x="34" y="190">two origins</text>
+        <path class="flow" d="M146,165 L192,165" marker-end="url(#ah2)"/>
+        <rect class="box" x="194" y="120" width="130" height="90" rx="10"/>
+        <text class="t-head" x="210" y="152">Cloudflare</text>
+        <text class="t-small t-muted" x="210" y="174">proxy, TLS,</text>
+        <text class="t-small t-muted" x="210" y="190">origin pull mTLS</text>
+        <path class="flow" d="M324,165 L370,165" marker-end="url(#ah2)"/>
+        <rect class="paper" x="372" y="16" width="672" height="328" rx="12"/>
+        <text class="t-kicker" x="390" y="40">AGENT-RUNNER-01 · COMPOSE STACK MONOLITH-NETWORKED</text>
+        <rect class="box" x="390" y="110" width="170" height="110" rx="10"/>
+        <text class="t-head" x="406" y="138">edge (Caddy)</text>
+        <text class="t-small t-muted" x="406" y="158">only listener :443</text>
+        <text class="t-small" x="406" y="182">robert.omgai.dev</text>
+        <text class="t-small t-link" x="406" y="202">quality-robert.omgai.dev</text>
+        <rect class="box" x="640" y="58" width="180" height="70" rx="10"/>
+        <text class="t-head" x="656" y="86">Studio frontend + api</text>
+        <text class="t-small t-muted" x="656" y="108">session, IAM, hand-off issuer</text>
+        <rect class="accent" x="640" y="200" width="180" height="80" rx="10"/>
+        <text class="t-head" x="656" y="228">quality-studio</text>
+        <text class="t-small t-muted" x="656" y="248">hosted mode, profile quality</text>
+        <text class="t-small t-muted" x="656" y="266">no published port</text>
+        <path class="flow" d="M560,150 C600,150 600,93 638,93" marker-end="url(#ah2)"/>
+        <path class="flow" d="M560,190 C600,190 600,240 638,240" marker-end="url(#ah2)"/>
+        <path class="wire-dash" d="M730,128 L730,198" marker-end="url(#ah2f)"/>
+        <text class="t-small t-muted" x="738" y="158">service token from</text>
+        <text class="t-small t-muted" x="738" y="174">secret provider</text>
+        <rect class="strong" x="860" y="58" width="168" height="70" rx="10"/>
+        <text class="t-small" x="874" y="86">/srv/agent-studio/data</text>
+        <text class="t-small t-muted" x="874" y="106">Studio only</text>
+        <rect class="strong" x="860" y="200" width="168" height="54" rx="10"/>
+        <text class="t-small" x="874" y="224">/srv/agent-studio/quality</text>
+        <text class="t-small t-muted" x="874" y="242">QS data root only</text>
+        <rect class="strong" x="860" y="270" width="168" height="62" rx="10"/>
+        <text class="t-small" x="874" y="292">runner checkouts</text>
+        <text class="t-small t-muted" x="874" y="310">read-only, same path</text>
+        <path class="wire" d="M820,93 L858,93"/>
+        <path class="wire" d="M820,228 L858,228"/>
+        <path class="wire-dash" d="M820,262 L858,296"/>
+      </svg>
+      <figcaption>Figure 2. Proposed topology. Each product keeps its own data volume. The repository checkout is the shared subject, mounted read-only into Quality Studio. It is neither product's store.</figcaption>
+    </figure>
+    <h3>Path or hostname</h3>
+    <p>A path such as <code>robert.omgai.dev/quality/</code> looks simpler, but it puts Quality Studio's JavaScript on Studio's origin. Quality Studio renders untrusted material: repository source, diffs and model output. One script injection there would act with the Studio session. It could read the CSRF cookie and call Owner routes for secrets and deployments. Studio's own URL preview proxy sandboxes foreign pages into an opaque origin for exactly this reason (<code>ProjectUrlPreviewProxy.cs:51-148</code>). Quality Studio also cannot run under a sub-path today: <code>&lt;base href="/"&gt;</code>, hard-coded <code>/api/</code> URLs and no <code>UsePathBase</code>. A separate origin is therefore both safer and less work. The comparison is in <a href="#alt-signin">Alternatives</a>.</p>
+    <p>On the name: Cloudflare's Universal SSL certificate covers the apex and one subdomain level. <code>quality-robert.omgai.dev</code> sits at the same level as <code>robert.omgai.dev</code> and is covered. <code>quality.robert.omgai.dev</code> would need an advanced certificate. The name stays configurable as <code>QUALITY_DOMAIN</code>. Both hosts share the registrable domain <code>omgai.dev</code>, so they are same-site. Studio already treats sibling hosts as potentially hostile for unsafe requests (<code>BrowserOriginPolicy.cs:10-15</code>), and Quality Studio must do the same: it checks <code>Origin</code> on every unsafe request.</p>
+    <h3>Sign-in: signed hand-off</h3>
+    <figure class="media-breakout" id="fig-signin">
+      <svg class="dg" viewBox="0 0 1060 470" role="img" aria-labelledby="fig-signin-title fig-signin-desc">
+        <title id="fig-signin-title">Signed hand-off sequence</title>
+        <desc id="fig-signin-desc">Six steps between browser, Studio and Quality Studio. The browser opens a Studio route with routing parameters only. Studio returns a self-submitting form whose body holds a 60-second single-use assertion. The browser posts it to Quality Studio, which verifies it, sets its own session cookie and redirects to the target without any token in the URL.</desc>
+        <defs>
+          <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head-fill" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <rect class="box" x="40" y="14" width="200" height="42" rx="8"/><text class="t-head" x="110" y="41">Browser</text>
+        <rect class="box" x="430" y="14" width="200" height="42" rx="8"/><text class="t-head" x="445" y="41">Studio (robert.…)</text>
+        <rect class="accent" x="820" y="14" width="210" height="42" rx="8"/><text class="t-head" x="832" y="41">Quality Studio (quality-…)</text>
+        <path class="wire-dash" d="M140,56 L140,456"/>
+        <path class="wire-dash" d="M530,56 L530,456"/>
+        <path class="wire-dash" d="M925,56 L925,456"/>
+
+        <path class="flow" d="M140,92 L528,92" marker-end="url(#ah3)"/>
+        <text class="t-small" x="152" y="84">1  GET …/quality-studio/open?project=PROJ-002&amp;card=AGT-3352</text>
+        <text class="t-small t-muted" x="152" y="108">Studio session cookie (SameSite=Strict, same-site link). Routing data only.</text>
+
+        <rect class="paper" x="546" y="120" width="360" height="62" rx="8"/>
+        <text class="t-small" x="558" y="142">2  check session, project read right, mapping;</text>
+        <text class="t-small" x="558" y="160">resolve range; sign assertion (EdDSA): iss, aud, sub,</text>
+        <text class="t-small" x="558" y="176">role, repos, sid, target, jti, exp = now + 60 s</text>
+
+        <path class="flow" d="M528,212 L142,212" marker-end="url(#ah3)"/>
+        <text class="t-small" x="152" y="204">3  200 text/html: self-submitting form, assertion in the body</text>
+        <text class="t-small t-muted" x="152" y="228">no-store · Referrer-Policy no-referrer · CSP form-action quality-…</text>
+
+        <path class="flow" d="M140,262 L923,262" marker-end="url(#ah3)"/>
+        <text class="t-small" x="152" y="254">4  POST /auth/agent-studio  (form body: handoff=…)   Origin: https://robert.omgai.dev</text>
+
+        <rect class="paper" x="600" y="276" width="440" height="62" rx="8"/>
+        <text class="t-small" x="612" y="298">5  verify signature with Studio's public key, aud, exp, Origin;</text>
+        <text class="t-small" x="612" y="316">record jti (single use); create session bound to sid;</text>
+        <text class="t-small" x="612" y="332">role and repositories from the assertion</text>
+
+        <path class="flow" d="M923,368 L142,368" marker-end="url(#ah3)"/>
+        <text class="t-small" x="152" y="360">6  303 Location: /?repo=proj-002&amp;view=change&amp;base=…&amp;head=…&amp;card=AGT-3352</text>
+        <text class="t-small t-muted" x="152" y="384">Set-Cookie: __Host-qs-session (HttpOnly, Secure, SameSite=Lax)</text>
+
+        <path class="flow" d="M140,420 L923,420" marker-end="url(#ah3)"/>
+        <text class="t-small" x="152" y="412">7  GET target with Quality Studio session. Studio is no longer involved.</text>
+        <text class="t-small t-bad" x="152" y="446">Never in a URL, Referer or Location: the assertion, a session id, the service token.</text>
+      </svg>
+      <figcaption>Figure 3. Proposed sign-in path. Starting from a Quality Studio bookmark without a session reverses step 1: Quality Studio redirects to the Studio route with <code>return=&lt;Quality Studio relative path&gt;</code>, which Studio validates as relative.</figcaption>
+    </figure>
+    <ul>
+      <li><b>Keys.</b> Studio keeps an Ed25519 signing key in its secret provider and publishes the public half at <code>/.well-known/agent-studio/jwks.json</code>. Quality Studio pins the issuer and fetches the key set. Rotation publishes the new key before signing with it.</li>
+      <li><b>Claims.</b> The claims use OIDC names (<code>iss</code>, <code>aud</code>, <code>sub</code>, <code>exp</code>, <code>iat</code>, <code>jti</code>, <code>sid</code>) plus <code>role</code> (viewer, operator, owner), <code>repos</code> (the Quality Studio repository ids the user may open, from Studio project rights), <code>target</code> and <code>ver: 1</code>.</li>
+      <li><b>Rights in Quality Studio.</b> Viewer reads. Operator also changes finding states, starts reviews (spend, rate-limited per user) and creates handover cards. Owner also registers repositories and edits the rule pool.</li>
+      <li><b>Session end.</b> Quality Studio sessions are idle 60 min and absolute 12 h. On logout, password change, role change or user removal, Studio calls <code>POST /api/v1/federation/revoke</code> with the <code>sid</code> or <code>sub</code>, through the outbox with retries.</li>
+      <li><b>Logs.</b> Proxies log URLs and headers, not bodies. Studio's <code>CredentialRedactor</code> gets the field name <code>handoff</code>. Quality Studio logs no request bodies, and its access log names the <code>sub</code>, never the assertion.</li>
+      <li><b>Machine calls.</b> Studio's backend calls Quality Studio (registration, verdict ingest, revoke, status) with a bearer client <code>agent-studio</code> whose secret lives in Studio's secret provider. That client never reaches a browser. Quality Studio already supports several clients, so rotation adds a second credential, switches, then removes the first.</li>
+      <li><b>Standalone.</b> Local mode and bearer-token hosted mode stay as they are. The hand-off receiver exists only when <code>AgentStudio:Federation:Issuer</code> is configured. Otherwise <code>/auth/agent-studio</code> answers 404.</li>
+    </ul>
+  </section>
+
+  <section id="change-set">
+    <h2><span class="number">04</span> The card as a change set</h2>
+    <h3>Definition</h3>
+    <p>A card's change set is the range Agent Studio's own review judges, nothing wider and nothing narrower:</p>
+    <table>
+      <thead><tr><th>Field</th><th>Source today</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td>Repository</td><td>Project's canonical repository; Quality Studio id from <code>qualityStudio.repositoryId</code></td><td>One repository per project. Multi-repository projects are out of scope.</td></tr>
+        <tr><td><code>head</code></td><td><code>ResultSha</code> of the reviewed RunAttempt, in <code>review-subject.json</code> (<code>ReviewSubjectStore.cs:11-42</code>)</td><td>Fenced and immutable per attempt.</td></tr>
+        <tr><td><code>base</code></td><td><code>merge-base(integration ref, ResultSha)</code>, computed by Remote Review (<code>RemoteReviewWorkspace.cs:2447-2481</code>)</td><td>Must be recorded with the verdict. Not <code>BaseSha</code>: that is the checkout base of one round, and after a fix round it is the previous result.</td></tr>
+        <tr><td><code>round</code></td><td><code>DeliveryGeneration</code> on <code>commits[]</code> (<code>TaskMutationService.cs:354-430</code>)</td><td>One change set version per delivered round.</td></tr>
+        <tr><td>Commits</td><td><code>TaskInfo.Commits</code>, the union of all rounds, oldest first</td><td>Shown as a count. Commits marked <code>supersededBySha</code> after a rebase are not counted.</td></tr>
+        <tr><td><code>landed</code></td><td><code>IntegratedSha</code> and <code>Merge.MergeCommit</code> (<code>TaskServerReviewLoopStore.cs:665</code>, <code>TaskProvenanceService.cs:265-282</code>)</td><td>After integration only. The landed range is <code>landed^1..landed</code> for a <code>--no-ff</code> merge, or <code>previous tip..ResultSha</code> for a fast-forward.</td></tr>
+      </tbody>
+    </table>
+    <figure class="media-breakout" id="fig-range">
+      <svg class="dg" viewBox="0 0 1060 330" role="img" aria-labelledby="fig-range-title fig-range-desc">
+        <title id="fig-range-title">Change set ranges of one card</title>
+        <desc id="fig-range-desc">The integration branch develop runs left to right. The card branch forks at the merge-base. Round 1 ends at result H1, the fix round at result H2. Both reviewed ranges start at the merge-base. The landed merge commit M on develop defines the landed range from its first parent to M.</desc>
+        <defs>
+          <marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-faint" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <text class="t-kicker" x="20" y="64">DEVELOP</text>
+        <path class="wire" d="M100,60 L1030,60" marker-end="url(#ah4)"/>
+        <circle class="node" cx="140" cy="60" r="8"/>
+        <circle class="node-accent" cx="240" cy="60" r="9"/><text class="t-small t-link" x="210" y="40">merge-base B</text>
+        <circle class="node" cx="420" cy="60" r="8"/><text class="t-small t-muted" x="404" y="40">d2</text>
+        <circle class="node" cx="620" cy="60" r="8"/><text class="t-small t-muted" x="604" y="40">d3</text>
+        <circle class="node" cx="880" cy="60" r="10"/><text class="t-small" x="842" y="40">M "Integrate AGT-3352"</text>
+
+        <text class="t-kicker" x="20" y="174">CARD</text>
+        <path class="wire" d="M240,60 C260,170 280,170 300,170 L760,170"/>
+        <circle class="node" cx="320" cy="170" r="8"/><text class="t-small t-muted" x="312" y="196">c1</text>
+        <circle class="node" cx="400" cy="170" r="8"/><text class="t-small t-muted" x="392" y="196">c2</text>
+        <circle class="node-accent" cx="480" cy="170" r="9"/><text class="t-small t-link" x="462" y="196">H1 (round 1)</text>
+        <circle class="node" cx="620" cy="170" r="8"/><text class="t-small t-muted" x="612" y="196">c3 fix</text>
+        <circle class="node-accent" cx="740" cy="170" r="9"/><text class="t-small t-link" x="722" y="196">H2 (round 2)</text>
+        <path class="wire" d="M740,170 C800,170 840,90 872,66"/>
+
+        <rect class="accent" x="240" y="222" width="240" height="26" rx="6"/>
+        <text class="t-small t-link" x="252" y="240">reviewed range r1: B..H1</text>
+        <rect class="accent" x="240" y="258" width="500" height="26" rx="6"/>
+        <text class="t-small t-link" x="252" y="276">reviewed range r2: B..H2 (shown by default, r1 selectable)</text>
+        <rect class="box" x="650" y="92" width="150" height="26" rx="6"/>
+        <text class="t-small" x="662" y="110">landed range: M^1..M</text>
+        <text class="t-small t-muted" x="20" y="316">If the card branch merges develop or is rebased onto it, the merge-base moves forward and the reviewed range still contains only the card's changes. commits[] = c1, c2, c3.</text>
+      </svg>
+      <figcaption>Figure 4. Which range the card means. The reviewed range is the decision subject. The landed range is shown only when its patch differs from the reviewed one (conflict resolution, rebase or mechanical merge).</figcaption>
+    </figure>
+    <h3>What the card shows</h3>
+    <p>A <b>Quality</b> panel at the top of the card's Evidence tab, above Review evidence. Its rows of type <code>quality-studio:&lt;fingerprint&gt;</code> move into the panel, so no finding appears twice. It uses existing tokens and components: a status badge for the verdict (background tint, no left bar), count badges per severity, and finding rows like the review evidence rows.</p>
+    <figure class="media-breakout" id="fig-panel">
+      <svg class="dg" viewBox="0 0 1060 430" role="img" aria-labelledby="fig-panel-title fig-panel-desc">
+        <title id="fig-panel-title">Card Quality panel</title>
+        <desc id="fig-panel-desc">Panel header Quality with a Concerns badge and the note that it is the code-quality aspect of the Agent Studio review. A line gives round 2, the short base and head SHAs, four commits, review time and rule set. Severity counts follow, then three findings with rule id, location and message, and the buttons Open this range in Quality Studio and Round 1. A legend on the right lists all panel states.</desc>
+        <rect class="paper" x="16" y="16" width="680" height="398" rx="10"/>
+        <text class="t-head" x="36" y="48">Quality</text>
+        <rect class="warn" x="104" y="32" width="84" height="24" rx="12"/>
+        <text class="t-small t-warn" x="118" y="49">Concerns</text>
+        <text class="t-small t-muted" x="200" y="49">code-quality aspect of the Agent Studio review · decides</text>
+        <text class="t-mono t-muted" x="36" y="80">Round 2 · 3f2a91c..8be04d1 · 4 commits · reviewed 14:32 · rules 1a2b9c</text>
+        <rect class="box" x="36" y="96" width="92" height="24" rx="12"/><text class="t-small" x="50" y="113">0 critical</text>
+        <rect class="bad" x="136" y="96" width="70" height="24" rx="12"/><text class="t-small t-bad" x="150" y="113">1 high</text>
+        <rect class="warn" x="214" y="96" width="94" height="24" rx="12"/><text class="t-small t-warn" x="228" y="113">2 medium</text>
+        <rect class="box" x="316" y="96" width="70" height="24" rx="12"/><text class="t-small" x="330" y="113">0 low</text>
+        <text class="t-small t-muted" x="400" y="113">1 new since round 1 · 2 fixed</text>
+
+        <rect class="box" x="36" y="134" width="640" height="56" rx="8"/>
+        <rect class="bad" x="48" y="146" width="44" height="20" rx="10"/><text class="t-tiny t-bad" x="56" y="160">HIGH</text>
+        <text class="t-mono" x="102" y="160">QS-NET-004</text>
+        <text class="t-mono t-muted" x="190" y="160">backend/Features/Export/ExportEndpoints.cs:88</text>
+        <text class="t-small" x="102" y="180">User-supplied file name reaches Path.Combine without a root check.</text>
+        <rect class="box" x="36" y="198" width="640" height="56" rx="8"/>
+        <rect class="warn" x="48" y="210" width="56" height="20" rx="10"/><text class="t-tiny t-warn" x="56" y="224">MEDIUM</text>
+        <text class="t-mono" x="114" y="224">QS-NG-011</text>
+        <text class="t-mono t-muted" x="196" y="224">frontend/src/app/features/reports/export.ts:41</text>
+        <text class="t-small" x="114" y="244">Subscription in a component without teardown.</text>
+        <rect class="box" x="36" y="262" width="640" height="40" rx="8"/>
+        <text class="t-small t-muted" x="48" y="287">+ 1 more finding in Quality Studio</text>
+
+        <rect class="accent" x="36" y="320" width="260" height="34" rx="7"/>
+        <text class="t-link" x="52" y="342">Open this range in Quality Studio ↗</text>
+        <rect class="box" x="306" y="320" width="110" height="34" rx="7"/>
+        <text class="t-small" x="322" y="342">Round 1 ▾</text>
+        <text class="t-small t-muted" x="36" y="386">Landed as 9c41e07 on develop · landed patch equals reviewed patch</text>
+
+        <rect class="box" x="720" y="16" width="324" height="398" rx="10"/>
+        <text class="t-kicker" x="740" y="44">PANEL STATES</text>
+        <text class="t-small" x="740" y="74">Not configured: panel hidden</text>
+        <text class="t-small" x="740" y="100">Repository not registered</text>
+        <text class="t-small" x="740" y="126">Waiting for review (no Result-SHA yet)</text>
+        <text class="t-small" x="740" y="152">Reviewing (Review Plane step running)</text>
+        <rect class="good" x="740" y="166" width="54" height="22" rx="11"/><text class="t-small t-good" x="752" y="182">Pass</text>
+        <rect class="warn" x="800" y="166" width="80" height="22" rx="11"/><text class="t-small t-warn" x="812" y="182">Concerns</text>
+        <rect class="bad" x="886" y="166" width="56" height="22" rx="11"/><text class="t-small t-bad" x="898" y="182">Block</text>
+        <text class="t-small" x="740" y="214">Unavailable: provider, timeout, auth,</text>
+        <text class="t-small" x="740" y="230">unparseable (never shown as Pass)</text>
+        <text class="t-small" x="740" y="256">Shadow: verdict recorded, does not decide</text>
+        <text class="t-small" x="740" y="282">Outdated: card head moved past the</text>
+        <text class="t-small" x="740" y="298">reviewed head; new review pending</text>
+        <text class="t-small" x="740" y="324">Not reviewed: no verdict for this range;</text>
+        <text class="t-small" x="740" y="340">Quality Studio offers "Run review"</text>
+        <text class="t-small t-muted" x="740" y="372">Board card: one red dot only for Block</text>
+        <text class="t-small t-muted" x="740" y="390">in review lanes (R4, acute only).</text>
+      </svg>
+      <figcaption>Figure 5. Proposed card panel. All values are illustrative. Production uses the Studio design tokens and shared badge components in both themes.</figcaption>
+    </figure>
+    <h3>change-review and Agent Studio's review</h3>
+    <p>Today the card carries one decision (the Remote Review outcome: Pass, ProductFailure or ReviewInfra). It also carries a reporting-only delivery grade A to D (<code>PipelineCatalogue.cs:407-421</code>). Remote Review runs four model aspects; the code-quality aspect is the one that blocks in practice (50 of 83 Agent Studio product failures in QS-W31's sample). Quality Studio's <code>change-review</code> judges exactly what that aspect judges, so two independent verdicts would charge twice for the same question and could disagree on the same card.</p>
+    <p><b>One verdict.</b> Agent Studio's review outcome stays the only card verdict, and Agent Studio decides lanes, fix rounds and gates. Inside it, Quality Studio's verdict replaces the model code-quality aspect, as QS-W31 option B describes, through that card's off, shadow and decide switch. The Quality panel shows that aspect with its findings and says whether it decides or is in shadow. The delivery grade keeps its name, "Delivery grade", and is not mapped onto Quality Studio's 0 to 100 code score (QS-W6).</p>
+    <p><b>Paying once.</b></p>
+    <ol>
+      <li>The Review Plane step computes the verdict once per reviewed range, on the fenced workspace that already holds the commits, with the pinned Quality Studio package (QS-W31 slice 1).</li>
+      <li>The verdict document (<code>change-review-verdict.v1</code> plus <code>base</code>, <code>head</code>, <code>policyHash</code>, <code>ruleSetHash</code>, <code>catalogueVersion</code>) is stored on the card as an artifact. Studio's outbox then pushes it to Quality Studio's new change-review store: <code>PUT /api/v1/repos/{id}/change-reviews</code>, idempotent per key.</li>
+      <li>Quality Studio's own <code>POST change-review</code> first looks up the same key and returns the stored document. It makes a model call only on a miss.</li>
+      <li>The card panel and the jump never trigger a review. A range without a verdict shows "Not reviewed", and Quality Studio offers "Run review" as an explicit, rate-limited operator action.</li>
+      <li>During the QS-W31 shadow week both producers run. That double cost is intended, bounded by the trial, and ends with the decide switch.</li>
+    </ol>
+    <p>Findings keep their Quality Studio fingerprints across rounds, so the panel can say "new since round 1" and "fixed" without a second ledger. A fix round reviews a new range (<code>B..H2</code>) and costs one new verdict, about 11 s and 15k to 82k input tokens per call in Quality Studio's retained samples.</p>
+  </section>
+
+  <section id="surfaces">
+    <h2><span class="number">05</span> Other surfaces</h2>
+    <p>Ranked by how often an operator meets them and whether Quality Studio adds a fact that the surface lacks.</p>
+    <table>
+      <thead><tr><th>Rank</th><th>Surface</th><th>What it gets</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Card (Evidence tab, decision surface)</td><td>Quality panel; one verdict line on the human decision surface</td><td>Every reviewed card, at the moment of decision</td></tr>
+        <tr><td>2</td><td>Project Deck and Explorer</td><td>Quality Studio row, status panel, jump</td><td>Daily entry into the standing view</td></tr>
+        <tr><td>3</td><td>Board card</td><td>A red dot for <b>Block</b> in review lanes only; nothing for Pass or Concerns</td><td>Glance value. R4 allows acute signals only, and the board already carries many chips.</td></tr>
+        <tr><td>4</td><td>Deploy › Releases</td><td>Verdict rollup of the release's <code>cardKeys[]</code> and a jump to <code>merge-base(previous, this)..this</code></td><td>Release decisions per release. The data exists in <code>Release.commitSha</code> and <code>cardKeys[]</code>.</td></tr>
+        <tr><td>5</td><td>Project Overview</td><td>Code score and open high findings as one tile, later</td><td>Useful but redundant with the Deck panel</td></tr>
+        <tr><td>Out</td><td>Dossiers</td><td>Nothing</td><td>No code range. Their implementation slices become cards, which carry the panel.</td></tr>
+        <tr><td>Out</td><td>Hosts, environments, Operations</td><td>Nothing from this concept</td><td>Quality Studio judges code at a commit, not running systems.</td></tr>
+        <tr><td>Out</td><td>Integration lane, workspace deployment dashboard, orchestrator chat</td><td>Nothing</td><td>The verdict is settled before the queue. The landed-range note on the card covers merges.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      <p><b>Public-site security scans</b> belong to the related Quality Studio card. On the Agent Studio side, that card would use the per-environment Project URLs and the project Operations view (<code>#/projects/&lt;slug&gt;/operations</code>) as its target list and result place. On the Quality Studio side it would use the sensor scan surface (<code>/api/repos/{id}/sensors/{sensor}/scan</code>). This Dossier does not design it.</p>
+    </div>
+  </section>
+
+  <section id="standalone">
+    <h2><span class="number">06</span> Standalone operation and contract</h2>
+    <p>The boundary is a versioned HTTP contract named <code>agent-studio-integration/1</code> and a small event set delivered from Studio's outbox. There is no shared database, file or volume. The repository checkout is the subject both products read, not a store either one writes to the other through.</p>
+    <table>
+      <thead><tr><th>Direction</th><th>Surface</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>Studio → QS</td><td><code>GET /api/v1/capabilities</code></td><td>Product version, contract versions, features (<code>federation</code>, <code>change-review-store</code>, <code>deep-link/1</code>, <code>external-ref</code>), and whether spend routes have a provider.</td></tr>
+        <tr><td>Studio → QS</td><td><code>POST/PUT/DELETE /api/repos</code> with <code>externalRef</code>, and <code>GET /api/v1/repos?externalRef=</code></td><td>Registration, reconcile and archive</td></tr>
+        <tr><td>Studio → QS</td><td><code>PUT /api/v1/repos/{id}/change-reviews</code></td><td>Verdict ingest, event <code>change-review.recorded</code></td></tr>
+        <tr><td>Studio → QS</td><td><code>POST /api/v1/federation/revoke</code></td><td>Event <code>session.revoked</code></td></tr>
+        <tr><td>Studio → QS</td><td>Sensor scans (existing)</td><td>Unchanged; switches to the stored mapping</td></tr>
+        <tr><td>Browser → QS</td><td><code>POST /auth/agent-studio</code>, deep link v1</td><td>Sign-in and navigation</td></tr>
+        <tr><td>QS → Studio</td><td><code>/.well-known/agent-studio/jwks.json</code>, <code>/api/integrations/quality-studio/open?return=</code></td><td>Key set, sign-in start</td></tr>
+        <tr><td>QS → Studio</td><td><code>POST /api/tasks</code> (existing handover)</td><td>Findings and repository-write requests become cards</td></tr>
+      </tbody>
+    </table>
+    <p>Studio's outbox retries with bounded backoff for 7 days. After that, the item is dropped and an operator-feed event names it. Quality Studio emits no events. It does not need to: Studio reads what it shows from its own artifacts.</p>
+    <table>
+      <thead><tr><th>Situation</th><th>Agent Studio does</th><th>Quality Studio does</th></tr></thead>
+      <tbody>
+        <tr><td>The other product is absent</td><td>Hides the panel and the Deck row (Owners see "Not connected"). Review uses the model code-quality aspect, and the analysis step reports Disabled, as today.</td><td>Unchanged local and hosted modes. <code>/auth/agent-studio</code> answers 404. Handover stays off.</td></tr>
+        <tr><td>The other product is unreachable</td><td>Shows stored results with "unreachable since"; disables the jump; outbox waits. In decide mode, a missing verdict is ReviewInfra, never Pass (QS-W31).</td><td>A start from a bookmark shows "Agent Studio does not answer" with a retry link. Existing sessions continue until they expire.</td></tr>
+        <tr><td>The other product is older</td><td>Reads capabilities. Without them (404), it treats Quality Studio as legacy: no sign-in, no range link. It links <code>/?repo=</code> only when Quality Studio is in local mode on the same machine.</td><td>Rejects assertions with an unknown <code>ver</code> and ingest documents with an unknown <code>schemaVersion</code> (422) with a readable reason.</td></tr>
+        <tr><td>Version policy</td><td colspan="2">Each side supports contract versions N and N-1 and picks the highest common one. A feature missing on the other side degrades the surface. It never makes the Studio page fail.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="ownership">
+    <h2><span class="number">07</span> Ownership</h2>
+    <table>
+      <thead><tr><th>Concern</th><th>Quality Studio</th><th>Agent Studio</th></tr></thead>
+      <tbody>
+        <tr><td>Code-quality, security and performance review logic; change-review verdict</td><td>Owns</td><td>Consumes the verdict as the code-quality aspect</td></tr>
+        <tr><td>Delivery review: requirement fit, tests and evidence, documentation impact, delivery grade, council, fix rounds, gates, lanes</td><td>No part</td><td>Owns</td></tr>
+        <tr><td>Prompts</td><td><code>backend/AgentOrchestrator.CodeQuality/prompts/</code></td><td><code>prompts/runtime/</code>. <code>review-aspect-code-quality</code> retires after the trial (QS-W6 slice 5).</td></tr>
+        <tr><td>Rules and policy</td><td>Rule pool, <code>.quality/rules/</code>, <code>.quality/policy.json</code></td><td>Only <code>.quality/agent-studio.json</code> step selection</td></tr>
+        <tr><td>Finding ledger and lifecycle states</td><td>Sole owner</td><td>Keeps immutable per-card observations (verdict document, fingerprints). Never mirrors states.</td></tr>
+        <tr><td>Findings as cards</td><td>Proposes through handover. Learns of the fix when the finding is no longer observed.</td><td>Owns the card from creation. The card stores the fingerprint and links back. It never writes finding states.</td></tr>
+        <tr><td>Repository writes from hosted Quality Studio (suppressions, project rules)</td><td>Creates a handover card with the exact patch</td><td>Applies it as a normal card. Platform-owned commits keep the single-publisher rule.</td></tr>
+        <tr><td>Change set (base, head, rounds, landed)</td><td>Reads it</td><td>Defines it</td></tr>
+        <tr><td>Identity and sign-in</td><td>Own sessions, local mode, bearer clients</td><td>Issues hand-off assertions; owns users and roles</td></tr>
+        <tr><td>Hosting next to Studio</td><td>Image, hosted-mode configuration</td><td>Compose profile, Caddy site, secrets</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section data-document-section="alternatives" data-concept-section="alternatives" id="alternatives">
+    <h2><span class="number">08</span> Alternatives</h2>
+    <h3 id="alt-signin">Hosting and sign-in</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>A. Path under the Studio origin, Studio as authenticating proxy</h3><p><code>robert.omgai.dev/quality/</code>. Studio checks the session and forwards to Quality Studio with the service token. The Studio cookie covers it automatically. Quality Studio would need sub-path support (base href, API prefix, interceptor, fallback), and Studio would carry all Quality Studio traffic, including its 1.5 s polling. Quality Studio's code runs on Studio's origin: a script injection from rendered repository content or model output gets the Studio session with Owner reach.</p></article>
+      <article class="variant"><h3>B. Own hostname, shared session cookie</h3><p>Studio would set its cookie with <code>Domain=omgai.dev</code>. That means giving up the <code>__Host-</code> prefix and sending the session to every sibling host, including apps the platform will host on domains of the same zone (integrated platform, run zone). Rejected for any public installation.</p></article>
+      <article class="variant"><h3>C. Own hostname, signed hand-off (recommended)</h3><p>A 60-second, single-use, audience-bound assertion is delivered by form POST, and Quality Studio opens its own session. The origins stay isolated, the Studio cookie stays untouched, and no token appears in a URL. Costs: a second hostname, a session model in Quality Studio, a revoke call.</p></article>
+      <article class="variant"><h3>D. OIDC with Studio as provider</h3><p>Authorization code flow with PKCE and <code>response_mode=form_post</code>, with Quality Studio as a registered client. This is the standard, but Studio has no OIDC provider: discovery, authorize, token, JWKS, end-session and a client registry would all be new. The planned OIDC work (AGT-3228) is the opposite direction, Studio as client of an external IdP. When an external IdP exists, Quality Studio can become a client of the same IdP.</p></article>
+    </div>
+    <table>
+      <thead><tr><th>Criterion</th><th>A. Path proxy</th><th>B. Shared cookie</th><th>C. Signed hand-off</th><th>D. OIDC provider</th></tr></thead>
+      <tbody>
+        <tr><td>Second login</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
+        <tr><td>Token in a URL</td><td>No</td><td>No</td><td>No (POST body)</td><td>Not with <code>form_post</code></td></tr>
+        <tr><td>Origin isolation</td><td>None: Quality Studio code acts as Studio</td><td>Cookie leaks to sibling hosts</td><td>Full</td><td>Full</td></tr>
+        <tr><td>Holds on a public installation</td><td>Only with full trust in Quality Studio's rendering</td><td>No</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>Quality Studio work</td><td>Sub-path support, trust proxy identity</td><td>Session reading Studio's cookie format</td><td>Receiver, session, CSRF</td><td>OIDC client, session, CSRF</td></tr>
+        <tr><td>Agent Studio work</td><td>Streaming proxy with auth</td><td>Weaken session cookie</td><td>Issuer route, key, revoke</td><td>Full provider</td></tr>
+        <tr><td>Relative effort (inferred)</td><td>M</td><td>S</td><td>M</td><td>L</td></tr>
+        <tr><td>Later path</td><td>Hard to leave</td><td>None</td><td>Swap issuer for OIDC; claims already OIDC-named</td><td>Final form</td></tr>
+      </tbody>
+    </table>
+    <h3 id="alt-verdict">Verdict model</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>V1. Two verdicts side by side</h3><p>Agent Studio's review outcome and a separate Quality Studio change-review verdict, both shown, with Studio deciding alone. This is QS-W6 slice 3 as a permanent state. It pays twice for code quality, and the card can say Pass and Block at once. Advisory findings in long lists go unread: 470 findings and six genuine highs in the 28 September run (QS-W31).</p></article>
+      <article class="variant"><h3>V2. One verdict, Quality Studio decides the code-quality aspect (recommended)</h3><p>QS-W31 option B. One card verdict owned by Agent Studio. Quality Studio replaces the model code-quality aspect. It is reached through shadow, then decide. Cost is neutral: one model call replaces another. Requirement fit and the other aspects stay with Studio.</p></article>
+      <article class="variant"><h3>V3. Quality Studio is the sole decider</h3><p>QS-W31 option C. Quality Studio has no input for requirement fit or documentation impact, and it would move lane authority across the product boundary that QS-W6 decided. Rejected.</p></article>
+    </div>
+    <table>
+      <thead><tr><th>Criterion</th><th>V1. Two verdicts</th><th>V2. One verdict, QS aspect</th><th>V3. QS sole</th></tr></thead>
+      <tbody>
+        <tr><td>Verdicts on the card</td><td>2, may contradict</td><td>1</td><td>1</td></tr>
+        <tr><td>Who decides</td><td>Agent Studio</td><td>Agent Studio, with the QS aspect inside</td><td>Quality Studio</td></tr>
+        <tr><td>Model calls for code quality per range</td><td>2</td><td>1 (2 during the shadow week)</td><td>1</td></tr>
+        <tr><td>Requirement fit covered</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+        <tr><td>Rollout risk</td><td>Low</td><td>Medium, reversible per project</td><td>High</td></tr>
+      </tbody>
+    </table>
+    <h3>Project mapping</h3>
+    <p><b>M1</b> keeps exact-path matching. It needs no state, and it breaks on any mount or host difference. <b>M2</b> stores the repository id per project, with <code>externalRef</code> for lookup and automatic registration (recommended). <b>M3</b> lets Quality Studio pull projects from Studio, as its existing import does. That puts Quality Studio in charge of Studio's projects and needs Studio credentials inside Quality Studio. Rejected.</p>
+  </section>
+
+  <section data-document-section="recommendation" data-concept-section="recommendation" id="recommendation">
+    <h2><span class="number">09</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended default</h3>
+      <p>Host Quality Studio in Studio's server stack under its own sibling hostname, and sign users in with a signed hand-off (C). Map projects by stored id with automatic registration (M2). Put the jump in the Deck's Quality group and the Explorer tree. Define the card's change set as <code>merge-base..Result-SHA</code> per round. Show one verdict in which Quality Studio decides the code-quality aspect (V2), computed once on the Review Plane and stored on both sides.</p>
+    </div>
+    <ul>
+      <li><b>Why C over A.</b> It is the only option that is both seamless and safe to put on the public internet without trusting every line of Quality Studio's rendering with Studio's Owner session. It also needs no sub-path work in Quality Studio.</li>
+      <li><b>Why C over D now.</b> It delivers the same user experience and isolation with a fraction of the surface. Because the claims carry OIDC names and Quality Studio's session model is the same, D can replace the issuer later.</li>
+      <li><b>Why V2.</b> It answers "one verdict or two" with one and "who decides" with Agent Studio. It removes the double payment after the trial. It also builds directly on QS-W6 (decided) and QS-W31 (pending), instead of a third review path.</li>
+      <li><b>Order.</b> The project jump works on the moved Studio first (QSI-1 with QSI-2). Registration follows (QSI-3, QSI-4). The card panel comes next, once the QS-W31 Review Plane step exists (QSI-5, QSI-6). Releases and repository writes come last (QSI-7, QSI-8).</li>
+      <li><b>If QS-W31 decides otherwise.</b> If the operator keeps Quality Studio advisory (QS-W31 option A), the same panel shows the verdict with the "Shadow, does not decide" state. Nothing else in this Dossier changes.</li>
+    </ul>
+  </section>
+
+  <section data-document-section="evidence" data-concept-section="evidence" id="evidence">
+    <h2><span class="number">10</span> Evidence</h2>
+    <p>Observed facts were read in code or captured from the running product at the snapshots named in the header. Inferred statements are labelled. Proposed items are this Dossier's design.</p>
+    <figure class="evidence-figure media-breakout" id="fig-deck">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/project-deck-quality-group-light--pinned.png" alt="Agent Studio with the Demo App Deck open on Security. The Deck rail shows groups Insight, Quality, Context and Config. Under Quality: Security, Test Quality, Audits and Checks, Proposals.">
+          <span class="figure-annotation">Quality group: four rows, no Quality Studio</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/project-deck-quality-group-dark--pinned.png" alt="The same Deck rail and Security panel in the dark theme.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence E1.</b> The project Deck's Quality group lists Security, Test Quality, Audits &amp; Checks and Proposals, and has no Quality Studio entry. The jump in section 02 adds a fifth row here.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-01">1 November 2026</time> from the Agent Studio production build at <code>a3b98b11b</code>, isolated ADR-0056 demo workspace, by <code>docs/quality-studio-integration/capture/run.sh</code>.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-01">1 November 2026</time>, same build, workspace and script.</span>
+        </span>
+      </figcaption>
+    </figure>
+    <figure class="evidence-figure media-breakout" id="fig-evidence-tab">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/card-evidence-review-panel-light--pinned.png" alt="Evidence tab of card DEMO-9: Visual evidence, Test evidence, then Review evidence with two findings. A warn row from Code review, run 1, with a file reference, and an info row from Task check, run 1, acknowledged.">
+          <span class="figure-annotation">Rows carry source, run and file, no commit range</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/card-evidence-review-panel-dark--pinned.png" alt="The same Evidence tab in the dark theme.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence E2.</b> The card's Evidence tab shows Review evidence as rows with severity, source, run number and file reference. No row names the base and head of what was judged, and nothing names a verdict from another product. Quality Studio's sensor findings arrive here today as "Code review" rows. The Quality panel in section 04 sits above this list.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-01">1 November 2026</time>, card DEMO-9 of the ADR-0056 demo seed, Agent Studio <code>a3b98b11b</code>, same script.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-01">1 November 2026</time>, same card, build and script.</span>
+        </span>
+      </figcaption>
+    </figure>
+    <figure class="evidence-figure media-breakout" id="fig-grade">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/card-code-review-grade-light--pinned.png" alt="Card DEMO-5, Code Review tab: one review run with Grade B and the summary Export flow is ready for human review. The Result header shows Human review and Grade B.">
+          <span class="figure-annotation">Delivery grade B, Studio's own review</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/card-code-review-grade-dark--pinned.png" alt="The same Code Review tab in the dark theme.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence E3.</b> The card's Code Review tab shows Agent Studio's own review runs with a letter grade (here B) and a summary, and the Result header repeats the grade. This is the delivery grade that stays separate from Quality Studio's code score.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-01">1 November 2026</time>, card DEMO-5 of the ADR-0056 demo seed, Agent Studio <code>a3b98b11b</code>, same script.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-01">1 November 2026</time>, same card, build and script.</span>
+        </span>
+      </figcaption>
+    </figure>
+    <div class="evidence-list">
+      <a class="evidence" href="#today"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Quality Studio hosted mode is bearer-only</b><small><code>ApiSecurity.cs:116-139</code>, <code>Program.cs:172-254</code>; token in <code>localStorage</code> (<code>api-access.ts:3,37-53</code>). No cookies, sessions or OIDC. Mutations require <code>X-Client-Id</code>, and the frontend never sends it (grep of <code>frontend/src</code>: no match).</small></span></a>
+      <a class="evidence" href="#today"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>change-review is synchronous, uncached, two-dot</b><small><code>Program.cs:368-369,1173-1195</code>; <code>ChangeReviewVerdictService.cs:7-8,66-101</code>, <code>:79</code> <code>git diff base head</code>; 20 retained responses in <code>results/qs-verdicts/</code>, 5.4 to 18.1 s.</small></span></a>
+      <a class="evidence" href="#hosting"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Quality Studio has no sub-path support</b><small><code>frontend/src/index.html:6</code> <code>&lt;base href="/"&gt;</code>; <code>api-interceptor.ts:54-61</code> attaches credentials only to <code>/api</code>; no <code>UsePathBase</code>; <code>StaticUiHosting.cs:80-88</code>.</small></span></a>
+      <a class="evidence" href="#hosting"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Studio's networked edge and session</b><small>Shell CSP <code>connect-src 'self'; frame-src 'self'</code> (<code>deploy/compose/monolith-networked/Caddyfile.frontend:35</code>); <code>__Host-agentstudio-session</code>, <code>SameSite=Strict</code>, no Domain (<code>AccessSecurityEndpoints.cs:367-374</code>); sibling hosts treated as cross-origin (<code>BrowserOriginPolicy.cs:10-15</code>); no OIDC or forward-auth in backend.</small></span></a>
+      <a class="evidence" href="#today"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Studio's current Quality Studio client</b><small><code>QualityAnalysisStepRunner.cs:200-273</code>: exact <code>rootPath</code> match, <code>eslint</code> sensor only, report-only; called only from <code>ReviewDecisionOrchestrator.cs:2575</code>. <code>runner/CoverageRunCommand.cs:80-83,356</code> uses the coverage sensor.</small></span></a>
+      <a class="evidence" href="#change-set"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Range facts per card</b><small><code>ReviewSubjectStore.cs:11-42</code> (ResultSha, BaseSha); <code>RemoteReviewWorkspace.cs:2447-2542</code> (merge-base, review diff); <code>TaskMutationService.cs:354-430</code> (commits union, DeliveryGeneration); <code>RemoteIntegrationDaemon.cs:208-221</code> (<code>--no-ff</code> "Integrate {TaskId}"); squash never used (<code>rebase-merge-and-integration-invariants.md:122-123</code>).</small></span></a>
+      <a class="evidence" href="#change-set"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Prior decisions</b><small>Quality Studio <code>docs/operations/studio-integration/</code> (QS-W6, decided 11 Aug 2026) and <code>docs/qs-review-decider/</code> (QS-W31, decision pending, 29 Sep 2026), including the cost figures quoted in section 04.</small></span></a>
+      <a class="evidence" href="#jump"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Navigation and project creation</b><small><code>project-shell.config.ts:169-210</code> (Quality group); Explorer project rows and the external-open affordance (<code>explorer-workspace-tree.component.ts:269-272</code>); inline onboarding steps in <code>RegistryEndpoints.cs:197-449</code>, with no hook bus.</small></span></a>
+      <a class="evidence" href="#hosting"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Certificate coverage of the hostname</b><small>Cloudflare Universal SSL covers the apex and first-level subdomains, so <code>quality-robert.omgai.dev</code> is covered and <code>quality.robert.omgai.dev</code> is not. Not verified against the account; QSI-1 checks it.</small></span></a>
+      <a class="evidence" href="#hosting"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Commits are present for Quality Studio on one host</b><small>Run worktrees share the canonical clone's object store on <code>agent-runner-01</code>, so delivery commits are readable from the read-only mount. With runners on several hosts, Quality Studio needs its own fetch-capable mirror. QSI-4 reports a missing SHA as "commit not present on this host".</small></span></a>
+      <a class="evidence" href="#alternatives"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Contract agent-studio-integration/1</b><small>Capabilities, external reference, change-review store, federation receiver and revoke, deep link v1. Defined in sections 02, 03 and 06 and cut into QSI-1 to QSI-8.</small></span></a>
+    </div>
+    <p class="dim">The captures run with <code>bash docs/quality-studio-integration/capture/run.sh</code> after <code>npm --prefix frontend run build</code>. The spec starts the dev backend only through <code>frontend/e2e/fixtures/dev-backend.ts</code> with the demo workspace, fails on any page error, and writes <code>assets/capture-manifest.json</code>. Figures 1 to 5 are drawings, not captures. Quality Studio's UI was not captured, because no claim in this Dossier rests on how it looks today.</p>
+  </section>
+
+  <section data-document-section="open-decisions" data-concept-section="open-decisions" id="open-decisions">
+    <h2><span class="number">11</span> Open decisions</h2>
+    <p>Each decision has a recommended working option. Implementation slices use that option unless a recorded operator decision selects another.</p>
+    <table>
+      <thead><tr><th>Decision</th><th>Options</th><th>Recommended</th></tr></thead>
+      <tbody>
+        <tr id="d1"><td>D1. Where the jump sits and what it opens</td><td>(a) Deck row with status panel and new-tab button, plus Explorer row; (b) Deck row that opens the new tab directly; (c) title bar button</td><td><b>(a)</b>. The panel can explain every unavailable state. The Explorer row gives one-click access. Target: repository dashboard.</td></tr>
+        <tr id="d2"><td>D2. Project to repository mapping</td><td>(M1) exact path; (M2) stored id, <code>externalRef</code>, automatic registration with reconcile; (M3) Quality Studio imports from Studio</td><td><b>(M2)</b>, id = lowercase project id, registration non-blocking on create, 15-minute reconcile.</td></tr>
+        <tr id="d3"><td>D3. Where Quality Studio runs</td><td>(a) Studio's compose stack, own sibling hostname; (b) path under the Studio origin; (c) stays on the workstation, reached through a tunnel</td><td><b>(a)</b> with <code>QUALITY_DOMAIN</code> defaulting to <code>quality-&lt;studio host&gt;</code>, same edge mode, read-only checkouts.</td></tr>
+        <tr id="d4"><td>D4. Sign-in</td><td>(A) path proxy; (B) shared cookie; (C) signed hand-off; (D) OIDC provider</td><td><b>(C)</b>, claims OIDC-named so D can follow when an IdP exists.</td></tr>
+        <tr id="d5"><td>D5. The card's change set</td><td>(a) <code>merge-base..Result-SHA</code> per round; (b) per-round delta <code>BaseSha..Result-SHA</code>; (c) attributed commits only</td><td><b>(a)</b>. Older rounds are selectable. The landed range appears when its patch differs. (b) is available as "this round only" inside Quality Studio.</td></tr>
+        <tr id="d6"><td>D6. Verdict model</td><td>(V1) two verdicts; (V2) one verdict, QS decides the code-quality aspect; (V3) QS sole decider</td><td><b>(V2)</b>, through QS-W31's shadow and decide switch. With QS-W31 option A, the panel shows "Shadow".</td></tr>
+        <tr id="d7"><td>D7. Paying once</td><td>(a) compute on the Review Plane, push to the QS store, cache by key, no automatic run on jump; (b) Quality Studio computes on demand when the card or jump asks; (c) both compute independently</td><td><b>(a)</b>. Key: repository, base, head, <code>policyHash</code>, <code>ruleSetHash</code>, <code>catalogueVersion</code>.</td></tr>
+        <tr id="d8"><td>D8. Other surfaces</td><td>(a) card, Deck, board Block dot, releases; (b) also Project Overview and Dossiers; (c) card and Deck only</td><td><b>(a)</b>. The Overview tile may follow. Dossiers, host and environment views stay out.</td></tr>
+        <tr id="d9"><td>D9. Repository writes from hosted Quality Studio</td><td>(a) handover card with the patch; (b) Quality Studio writes the checkout; (c) disabled in integrated mode</td><td><b>(a)</b>. Agent Studio's platform owns commits; local mode keeps writing as today.</td></tr>
+        <tr id="d10"><td>D10. Version policy</td><td>(a) capabilities and N/N-1; (b) lockstep releases; (c) no versioning</td><td><b>(a)</b>. Degrade, never fail the Studio page.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">12</span> Implementation</h2>
+    <p>Eight independently reviewable slices, defined in <code>workbench.json</code> <code>implementationTasks</code>, each with one target project and a bounded <code>acceptanceScope</code>. QSI-1 is the first user-visible slice. Its end-to-end acceptance on the moved Studio runs against QSI-2, and both can be built in parallel against the contract fixtures. QSI-6 also needs the QS-W31 Review Plane step ("Package the diff-bound code-quality verdict as a pinned Review Plane step" and its Agent Studio off, shadow and decide counterpart). This Dossier does not duplicate those slices.</p>
+    <table>
+      <thead><tr><th>Slice</th><th>Target</th><th>Scope</th><th>Needs</th></tr></thead>
+      <tbody>
+        <tr><td>QSI-1</td><td>Agent Studio</td><td>Project jump on the moved Studio: compose profile, Caddy site, connection settings, hand-off issuer, Deck and Explorer rows with status panel, revoke on logout.</td><td>QSI-2 for end-to-end</td></tr>
+        <tr><td>QSI-2</td><td>Quality Studio</td><td>Hand-off receiver and session, capabilities, <code>/api/v1</code> integration routes, deep link v1 (dashboard), <code>X-Client-Id</code> fix for browser callers, <code>safe.directory</code>.</td><td>None</td></tr>
+        <tr><td>QSI-3</td><td>Quality Studio</td><td><code>externalRef</code> on registrations and lookup by it.</td><td>None</td></tr>
+        <tr><td>QSI-4</td><td>Agent Studio</td><td>Automatic registration, stored mapping, reconcile and archive; the analysis step and coverage run switch to the mapping.</td><td>QSI-3</td></tr>
+        <tr><td>QSI-5</td><td>Quality Studio</td><td>Change-review store and ingest, cache-first <code>change-review</code>, change view <code>view=change</code> with "Run review".</td><td>QSI-2</td></tr>
+        <tr><td>QSI-6</td><td>Agent Studio</td><td>Card change-set projection, Quality panel, outbox push, range jump, board Block dot.</td><td>QSI-1, QSI-5, QS-W31 Review Plane step</td></tr>
+        <tr><td>QSI-7</td><td>Agent Studio</td><td>Release verdict rollup and release range jump.</td><td>QSI-6</td></tr>
+        <tr><td>QSI-8</td><td>Quality Studio</td><td>Repository writes in integrated hosted mode become handover cards.</td><td>QSI-2</td></tr>
+      </tbody>
+    </table>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

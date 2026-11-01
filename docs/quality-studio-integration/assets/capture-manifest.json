@@ -1,0 +1,30 @@
+{
+  "capturedAt": "2026-11-01T18:08:10.581Z",
+  "provenance": "Agent Studio frontend production build served by frontend/scripts/serve-prebuilt-frontend.mjs, dev backend from this worktree started by frontend/e2e/fixtures/dev-backend.ts with demoWorkspace (ADR-0056 pinned seed). Browser clock fixed at 2026-08-09T13:00:00Z.",
+  "frames": [
+    {
+      "file": "project-deck-quality-group-light--pinned.png",
+      "claim": "Project Deck rail lists Security, Test Quality, Audits & Checks and Proposals under Quality; no Quality Studio entry."
+    },
+    {
+      "file": "project-deck-quality-group-dark--pinned.png",
+      "claim": "Project Deck rail lists Security, Test Quality, Audits & Checks and Proposals under Quality; no Quality Studio entry."
+    },
+    {
+      "file": "card-evidence-review-panel-light--pinned.png",
+      "claim": "Card Evidence tab: Review evidence lists per-row source, severity, run index and file reference; no commit range or external verdict."
+    },
+    {
+      "file": "card-evidence-review-panel-dark--pinned.png",
+      "claim": "Card Evidence tab: Review evidence lists per-row source, severity, run index and file reference; no commit range or external verdict."
+    },
+    {
+      "file": "card-code-review-grade-light--pinned.png",
+      "claim": "Card Code Review tab shows the Agent Studio review grade and verdict per review run."
+    },
+    {
+      "file": "card-code-review-grade-dark--pinned.png",
+      "claim": "Card Code Review tab shows the Agent Studio review grade and verdict per review run."
+    }
+  ]
+}
