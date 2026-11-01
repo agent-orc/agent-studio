@@ -28,6 +28,9 @@ async function bootStudio(page: Page): Promise<void> {
     const url = route.request().url();
     const json = (body: unknown) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    if (url.includes('/api/v1/studio/auth/status')) {
+      return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
+    }
     if (url.includes('/api/v1/studio/board')) return json(EMPTY_GROUPED);
     if (url.includes('/api/v1/studio/runner/status')) return json({ projects: {} });
     if (/\/api\/tasks(\?|$)/.test(url)) return json([]);
@@ -97,4 +100,83 @@ test.describe('studio-shell · Activity Bar marks exactly one active item', () =
     await bar.screenshot({ path });
     await testInfo.attach('activity-bar-single-active--mocked', { path, contentType: 'image/png' });
   });
+
+  // AGT-3351: the marker follows the most recent activation — a sidebar panel
+  // opened over a Dossier tab takes the marker; the destination takes it back.
+  async function openDossierTab(page: Page): Promise<void> {
+    await page.getByTestId('studio-ab-workbenches').click();
+    await expect(page.getByTestId('studio-ab-workbenches')).toHaveClass(/studio-ab__btn--active/);
+    await expect(activeButtons(page)).toHaveCount(1);
+  }
+
+  for (const panel of ['chats', 'filters'] as const) {
+    test(`Dossier tab + ${panel}: only the ${panel} button is marked`, async ({ page }) => {
+      await bootStudio(page);
+      await openDossierTab(page);
+
+      await page.getByTestId(`studio-ab-${panel}`).click();
+
+      await expect(activeButtons(page)).toHaveCount(1);
+      await expect(page.getByTestId(`studio-ab-${panel}`)).toHaveClass(/studio-ab__btn--active/);
+      await expect(page.getByTestId('studio-ab-workbenches')).not.toHaveClass(/studio-ab__btn--active/);
+    });
+  }
+
+  test('clicking Dossiers moves the marker back while the Chats panel stays open', async ({ page }) => {
+    await bootStudio(page);
+    await openDossierTab(page);
+    await page.getByTestId('studio-ab-chats').click();
+    await expect(page.getByTestId('studio-ab-chats')).toHaveClass(/studio-ab__btn--active/);
+
+    await page.getByTestId('studio-ab-workbenches').click();
+
+    await expect(activeButtons(page)).toHaveCount(1);
+    await expect(page.getByTestId('studio-ab-workbenches')).toHaveClass(/studio-ab__btn--active/);
+    await expect(page.locator('app-chat-sessions-panel')).toBeVisible();
+  });
+
+  test('hiding the Chats panel hands the marker back to Dossiers', async ({ page }) => {
+    await bootStudio(page);
+    await openDossierTab(page);
+    await page.getByTestId('studio-ab-chats').click();
+    await expect(page.getByTestId('studio-ab-chats')).toHaveClass(/studio-ab__btn--active/);
+
+    await page.getByTestId('studio-ab-chats').click();
+
+    await expect(activeButtons(page)).toHaveCount(1);
+    await expect(page.getByTestId('studio-ab-workbenches')).toHaveClass(/studio-ab__btn--active/);
+  });
+
+  test('the Chats marker over a Dossier tab survives a reload', async ({ page }) => {
+    await bootStudio(page);
+    await openDossierTab(page);
+    await page.getByTestId('studio-ab-chats').click();
+    await expect(page.getByTestId('studio-ab-chats')).toHaveClass(/studio-ab__btn--active/);
+
+    await page.reload();
+    await expect(page.getByTestId('app-root')).toBeVisible({ timeout: 15_000 });
+
+    await expect(activeButtons(page)).toHaveCount(1);
+    await expect(page.getByTestId('studio-ab-chats')).toHaveClass(/studio-ab__btn--active/);
+  });
+
+  for (const theme of ['dark', 'light'] as const) {
+    test(`evidence screenshot — Dossier tab with Chats open (${theme})`, async ({ page }, testInfo) => {
+      await bootStudio(page);
+      await page.evaluate(t => {
+        localStorage.setItem('atp.studio.theme', t);
+        document.documentElement.dataset['studioTheme'] = t;
+      }, theme);
+      await openDossierTab(page);
+      await page.getByTestId('studio-ab-chats').click();
+      await expect(activeButtons(page)).toHaveCount(1);
+      await page.waitForTimeout(150);
+
+      const name = `activity-bar-dossier-chats--${theme}.png`;
+      const dir = process.env.EVIDENCE_DIR;
+      const path = dir ? `${dir}/${name}` : testInfo.outputPath(name);
+      await page.getByTestId('studio-activity-bar').screenshot({ path });
+      await testInfo.attach(name, { path, contentType: 'image/png' });
+    });
+  }
 });
