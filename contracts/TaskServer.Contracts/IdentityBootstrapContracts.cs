@@ -48,7 +48,8 @@ public sealed record CreateEnrolmentRequest(
     string PrincipalId,
     string Kind,
     string? RunnerId = null,
-    int? TimeToLiveSeconds = null);
+    int? TimeToLiveSeconds = null,
+    bool RepositoryWrite = false);
 
 /// <summary>
 /// The enrolment code is short-lived and single-use. Transfer it over the

@@ -16,6 +16,8 @@ public static class TaskServerScopes
     public const string TasksWrite = "tasks:write";
     public const string RunsClaim = "runs:claim";
     public const string RunsWrite = "runs:write";
+    /// <summary>May fetch GitHub App tokens that push. Enrolment leaves it out for a review host.</summary>
+    public const string RepositoriesWrite = "repositories:write";
     public const string ReviewsClaim = "reviews:claim";
     public const string ReviewsWrite = "reviews:write";
     public const string OrchestrationClaim = "orchestration:claim";
