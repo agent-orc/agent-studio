@@ -311,7 +311,7 @@ public sealed class ExternalSecretStoreTests
 
     private static Task<ResolvedSecret> Resolve(SecretProvider provider, string reference) =>
         provider.GetForWorkloadAsync(SecretReference.Parse(reference),
-            new SecretWorkload(SecretWorkload.TaskRun, "runner", "project-a", null), "task:test");
+            new SecretWorkload(SecretWorkload.TaskRun, "runner", "project-a", null, ["API_KEY"]), "task:test");
 
     private sealed class SingleClientFactory(HttpClient client) : IHttpClientFactory
     {
