@@ -18,6 +18,10 @@ built-in encrypted store as the default and external stores selected for an
 individual workspace, project, or environment scope. OIDC sign-in belongs to
 AGT-3228 and its follow-up, not IP-9 storage adapters.
 
+The platform reads its own root material through `GetForPlatformAsync`, limited
+to the workspace scope and audited like a workload read: today the
+[GitHub App](../setup/github-app.md) private key and client secret.
+
 ## External stores and selection
 
 Settings > Access > Secrets chooses storage for the currently selected scope.

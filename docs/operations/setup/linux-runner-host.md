@@ -967,6 +967,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_CLI_TYPE` | `--cli-type` | `claude` | Default coding provider. Accepted values are `claude` and `codex`; a card-level typed run spec may select either available provider. |
 | `RUNNER_CLAUDE_CLI_BIN` | `--claude-cli` | `claude` | Claude binary used for Claude-pinned cards when the primary CLI is Codex. The native setup flow writes the discovered path. |
 | `RUNNER_CODEX_CLI_BIN` | `--codex-cli` | `codex` | Codex binary used for Codex-pinned cards and the GPT-only project chat path when the primary CLI is Claude. The native setup flow writes the discovered path. |
+| `RUNNER_REPOSITORY_KEY_FILE` | none | (none) | Owner-only file with this host's key for fetching GitHub App repository tokens in the local profile. See [GitHub App](github-app.md). A networked host needs none. |
 | `RUNNER_AUTH_TOKEN_FILE` | `--auth-token-file` | (none on loopback) | Protected file containing the owner-enrolled Runner service credential. Required for every non-loopback Task Server. |
 | `RUNNER_AUTH_TOKEN` | none | (none) | Compatibility environment input. Prefer the credential file so the secret is absent from process diagnostics. |
 | `RUNNER_TTL_SECONDS` | `--ttl` | `900` | Requested lease TTL; the server clamps it. The default grants a bounded 15-minute authority window so an already-claimed run can survive ten minutes of transport loss. |

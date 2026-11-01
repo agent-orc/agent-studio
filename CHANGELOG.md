@@ -12,6 +12,11 @@ release yet.
 
 ## [Unreleased]
 
+### Security
+
+- Settings > GitHub connects one GitHub App in the browser: registration, installation and an OAuth check that the installation is really yours. Coding, review and integration then get one-hour tokens for one repository each, so nobody copies a personal access token. Review hosts only ever get read tokens; the private key stays in the secret provider and no workload can resolve it. See `docs/operations/setup/github-app.md`.
+- A local Studio whose hosts reach it through SSH tunnels can give the browser path its own port (`OPERATOR_PORT`). Routes that decide who may reach which repository or secret then answer only there, and they refuse a page from another origin on every port.
+
 ### Fixed
 
 - A card integrated through a curated mapping reads `released: true` once the mapped integration commit is on `main`; the answer was taken from the source commit, which never reaches `main`. The delivery-claim sweep no longer reports a card whose containment status is `integrated` as `unintegrated-delivery` when one of its commit lines misses containment (a second commit of a curated-mapped attempt, or a repository-key mismatch) (AGT-3097).

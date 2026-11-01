@@ -36,7 +36,9 @@ The local management plane has one deliberate profile-specific trust rule:
 requests to `/api/v1/management/*` are accepted without a human session only
 when they arrive over loopback as the seeded `X-Client-Id: local-default`
 operator. This preserves account-free single-seat operation without turning
-`X-Client-Id` into a network credential. In the `networked` profile every
+`X-Client-Id` into a network credential. A Studio whose hosts reach it through
+SSH tunnels should set an [operator port](../setup/github-app.md#keep-the-tunnels-out-of-the-operators-routes)
+so those hosts cannot reach the routes that decide who may reach what. In the `networked` profile every
 management request requires a human owner or operator session; anonymous
 requests return `401` with the Studio login entry.
 
