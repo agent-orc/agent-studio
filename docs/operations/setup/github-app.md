@@ -92,9 +92,19 @@ else answers only on the operator port, including this page, this installation's
 access, its secrets, project settings and the project URL commands that run on this
 machine. The refusal is `operator-listener-required`, logged once per route.
 
-Your own scripts that change those things need the operator port as well. A website
-that rebinds its name to this machine is refused every write on every port by its
-`Origin`.
+Your own scripts that change those things need the operator port as well, and so
+does the update service, which sets the runner mode: start it with
+`ATP_BACKEND_URL=http://127.0.0.1:<operator port>`. A promotion on a host reaches
+only the ordinary port, so its branch reclaim is refused and the periodic sweep does
+that work. A website that rebinds its name to this machine is refused every write
+on every port by its `Origin`.
+
+## See what exists
+
+**Settings > Credentials** lists the App, the repositories it covers, each host's key
+and tokens, the secret store's items, enrolled service identities, and the logins and
+Git access the hosts report. It shows metadata only, and on an installation without a
+Task Server the operator port answers it, like this page.
 
 ## How Git finds the token
 

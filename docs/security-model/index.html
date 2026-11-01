@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security model for Agent Studio and the operator agent | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+
+<style>
+  nav.contents { margin: 24px 0 36px; font: 0.82rem/1.8 var(--article-sans); }
+  .diagram text { font-family: var(--article-sans); }
+  .diagram .zone { fill: none; stroke: var(--article-line); stroke-width: 1.5; stroke-dasharray: 6 4; }
+  .diagram .zone-label { fill: var(--article-faint); font-size: 13px; font-weight: 750; letter-spacing: 0.06em; text-transform: uppercase; }
+  .diagram .node { fill: var(--article-surface); stroke: var(--article-line); }
+  .diagram .focus { fill: var(--article-link-soft); stroke: var(--article-link); }
+  .diagram .ext { fill: var(--article-surface-strong); stroke: var(--article-line); }
+  .diagram .gap { fill: var(--article-warn-soft); stroke: var(--article-warn); }
+  .diagram .label { fill: var(--article-ink); font-size: 15px; font-weight: 650; }
+  .diagram .sub { fill: var(--article-muted); font-size: 12.5px; }
+  .diagram .edge-label { fill: var(--article-link); font-size: 12px; font-weight: 650; }
+  .diagram .edge { fill: none; stroke: var(--article-link); stroke-width: 2; }
+  .diagram .edge-muted { fill: none; stroke: var(--article-faint); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .diagram .divider { stroke: var(--article-line); stroke-width: 1; }
+  .diagram .arrowhead { fill: var(--article-link); }
+  .diagram .arrowhead-muted { fill: var(--article-faint); }
+  .decision { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.9rem/1.6 var(--article-sans); }
+  .decision h3 { margin: 0 0 8px; }
+  .decision p { margin-bottom: 8px; }
+</style></head>
+<body><main class="article">
+<header class="page"><p class="kicker">Concept Dossier · AGT-3353 · 1 November 2026</p>
+<h1>Security model for Agent Studio and the operator agent</h1>
+<p class="lede">Studio is about to run as a public website, and a trusted operator agent can already control the whole system through the owner's account. This Dossier sets the target: five trust zones, the operator agent as a first-class actor with its own identity, tiered authority, owner approval and an audit trail it cannot rewrite, contained coding agents, and an order of work from an owner-only site to outside customers.</p>
+<div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>Source</b> AGT-3353</span><span><b>Scope</b> Threat model, zones, operator agent, containment, credentials, public baseline, stages</span></div></header>
+<nav class="contents" aria-label="Contents"><a href="#scope">Scope</a> · <a href="#current-state">Current state</a> · <a href="#threats">Threat model</a> · <a href="#zones">Trust zones</a> · <a href="#operator">Operator agent</a> · <a href="#containment">Agent containment</a> · <a href="#credentials">Credentials and secrets</a> · <a href="#public">Public product</a> · <a href="#stages">Stages</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#implementation">Implementation</a></nav>
+
+<section id="scope"><h2>Scope</h2>
+<p>On 1 November 2026 the owner asked for a security concept that covers a trusted operator agent which may control the whole system. Studio moves to a public website first; hardening follows the move. This Dossier therefore fixes the order of the work and the target it converges on.</p>
+<p>The repository is public. The Dossier describes the target model and <em>classes</em> of gaps. It names no host, address or account, and it does not describe an unfixed weakness at a level that could be followed as instructions. Concrete findings, with the code locations that establish them, are in a private handoff delivered with the task results and kept out of the repository.</p>
+<p>Terms used throughout:</p>
+<ul>
+<li><b>Owner</b>: the person who holds the installation's Owner role.</li>
+<li><b>Operator agent</b>: an interactive coding agent session that the owner runs on their own machine to operate Studio and its hosts. It is distinct from the in-product AI Operator (the watcher that proposes or applies stall interventions), which already acts under its own actor name.</li>
+<li><b>Coding and review agents</b>: CLI sessions that execute cards on execution hosts.</li>
+<li><b>Control plane</b>: Studio API, Task Server, identity, secrets, audit, Operations Server. <b>Work plane</b>: execution hosts and the agents running there.</li>
+</ul>
+<p>This card changes no product code. The work it proposes is cut into <a href="#implementation">implementation slices</a> ordered by <a href="#stages">stage</a>.</p>
+</section>
+
+<section id="current-state"><h2>Current state</h2>
+<p>The card's description of who can do what was checked against the repository on 1 November 2026. It holds. The table restates it at class level; the right column names the gap class that the target model closes. Controls that already exist and stay are listed below the table, because the starting point is stronger than a password-only site suggests.</p>
+<table>
+<thead><tr><th>Actor</th><th>Authority today</th><th>Gap class</th></tr></thead>
+<tbody>
+<tr><td>Owner</td><td>Signs in with username and password. Login throttling per client, network and username, salted adaptive hashing, host-only secure cookies with idle and absolute expiry, CSRF plus origin checks, password reset revokes sessions.</td><td>One factor guards the most privileged account on a public URL. No second factor in the product, no identity-aware access layer in front, no list of one's own sessions and no sign-out of all sessions.</td></tr>
+<tr><td>Operator agent</td><td>Acts through the owner's OS account and SSH keys, including privileged access on execution hosts. Restarts services, edits host configuration, pushes to <code>develop</code>, runs the promotion to <code>main</code> with the owner's Git credential, enrolls hosts, can reach credential files. In the local profile the management plane trusts the seeded loopback client.</td><td>No identity in Studio, no scoped credential, no record separate from the owner, no approval step. Authority rests on verbal delegation in chat. Content it reads can try to steer it.</td></tr>
+<tr><td>Coding and review agents</td><td>Run as processes under the host service's OS user. The per-run work container executor exists and is hardened, but its mode defaults to off. The documented accepted risk (25 October 2026) treats everyone who can submit coding work to a shared host as one trust group.</td><td>No boundary between a run and the host: the run can read the host service credential, provider logins and repository tokens, and container runtime access on that host is equivalent to root.</td></tr>
+<tr><td>Service credentials</td><td>Runner credentials are hash-only at rest, scoped by route family, revocable and rotatable with overlap. Repository tokens from the GitHub App are short-lived and issued per repository.</td><td>Scope is wider than the work: a runner credential is not bound to projects, has no default expiry, reads any card, and can claim a review for any project and then report it. A host receives tokens for every registered repository; write tokens include workflow files.</td></tr>
+<tr><td>Studio server</td><td>One API container holds the GitHub App key, the secret store, accounts, CLI logins and all project data. External secret backends exist as adapters.</td><td>One compromise reaches every secret class at once. Signing material is not separated from request handling.</td></tr>
+<tr><td>Audit</td><td>Append-only JSONL files for IAM changes, service-account and API-token calls, secrets, deploys and remote runs; a separate table in the Task Server; in-place records for watcher interventions and operator intents.</td><td>Ordinary human browser actions are not recorded. Audit files live on the host they describe, without a hash chain or an off-host copy, so whoever controls that host can rewrite them.</td></tr>
+<tr><td>Repository and release</td><td>Release archives carry checksums and build provenance attestations. Protected-branch movement by a run is detected after the fact.</td><td>No enforced repository rules on <code>develop</code>, <code>main</code> or tags from the platform side; workflow actions referenced by tag rather than digest; tags unsigned.</td></tr>
+<tr><td>Review and gate hosts, engine, hosted apps</td><td>Described in <a href="../operations/security/overview.md">Security overview</a> and the deploy and run-target code. The gate receives its source as a bundle and needs no repository token.</td><td>Same host-level classes as coding hosts; covered by the containment and zone rules below.</td></tr>
+</tbody></table>
+<h3>Controls that stay</h3>
+<ul>
+<li>Role bindings per scope (Owner, Admin, Developer, Product, Viewer, Approver) on every route, with a test that fails for an undeclared route.</li>
+<li><b>Service accounts</b> with their own bearer tokens, expiry (default 90 days), last use and revocation, attributed as a non-human actor, unable to approve production or administer access. This is the natural base for the operator agent's identity.</li>
+<li>Runner enrollment with one-time codes, scoped and revocable runner credentials, and a dual-principal run audit.</li>
+<li>Secrets written without read: no human route returns a value; runners resolve secrets only against a live lease.</li>
+<li>Append-only JSONL audits for IAM changes, API-token and service-account calls, secret operations and remote runs.</li>
+<li>Edge baseline for the website: origin limited to the CDN with account-specific origin authentication, firewall rules ahead of the container runtime, strict response headers, fail-closed anonymous access.</li>
+<li>Operations Server with bearer principals, per-operation scopes, idempotency keys and two typed operations (inspect, restart from an allowlist). It is built and released, but not yet part of the default deployment.</li>
+<li>Work containers that run as a fixed unprivileged UID with a read-only root, all capabilities dropped, no new privileges, refused runtime-socket and credential-directory mounts, and a zone egress policy with deny-by-default for the work zone.</li>
+</ul>
+</section>
+
+<section id="threats"><h2>Threat model</h2>
+<p>Each actor is listed with what must never be possible and what is accepted. "Accepted" always names the stage after which the acceptance ends (see <a href="#stages">Stages</a>).</p>
+<table>
+<thead><tr><th>Actor</th><th>Must never be possible</th><th>Accepted</th></tr></thead>
+<tbody>
+<tr><td>Anonymous internet</td><td>Read or change any project data; reach the API, hubs or host services except sign-in and health; learn whether an account exists; reach the origin around the edge.</td><td>Brute-force noise absorbed by edge and API throttles. Availability attacks beyond the CDN's protection.</td></tr>
+<tr><td>Signed-in Viewer or Product</td><td>Mutate outside their role; read another project; see secret values, raw logs, hosts or credentials.</td><td>Reading everything in the granted scope, including secret metadata for Viewers.</td></tr>
+<tr><td>Signed-in Developer or Admin</td><td>Act outside bound projects; administer access; approve their own production release; read secret values.</td><td>Starting agents that can change the project's checkout within their grant.</td></tr>
+<tr><td>Owner account, taken over</td><td>Takeover with a password alone; silent takeover (no alert, no session visible); removal of the audit trail.</td><td>A takeover that defeats both factors is damage-limited by the off-host audit and the break-glass review, not prevented.</td></tr>
+<tr><td>Coding agent, honest</td><td>Read another project's checkout, host credentials, provider logins of other runs, or the runtime socket; publish without the gate; approve its own delivery.</td><td>Full authority over its own attempt's working tree within its egress allowlist. Until Stage 2: shared host for one trust group.</td></tr>
+<tr><td>Coding or review agent, prompt-injected</td><td>Everything above, plus: exfiltrate data outside the allowlist; obtain a token that outlives the lease; mark a review passed for a delivery it did not review.</td><td>A wrong change in its own attempt, caught by review and gate.</td></tr>
+<tr><td>Operator agent, honest</td><td>Any action without an attributed identity; a high-risk action without the owner's approval; holding long-lived keys or secret values.</td><td>Observation of the whole system; routine operations within a standing grant.</td></tr>
+<tr><td>Operator agent, prompt-injected or hijacked</td><td>Escalate beyond its grants; obtain an approval by wording; rewrite or suppress audit; survive the kill switch; reach credential files or the owner's keys.</td><td>Routine operations within its current grant until the owner reacts. Grants are scoped and expire so that this window stays small.</td></tr>
+<tr><td>Execution host, compromised</td><td>Reach the control plane beyond the runner protocol; obtain tokens for other hosts, projects or repositories; publish to protected branches; read secrets of other hosts.</td><td>Loss of the runs currently on that host and of their attempt tokens until expiry.</td></tr>
+<tr><td>Control plane host, compromised</td><td>Rewrite the audit history already forwarded off-host; sign a release without the separate signing key (from Stage 3).</td><td>Until the signer split (Stage 2): disclosure of root keys and data. The incident runbook rotates everything.</td></tr>
+<tr><td>Dependency or CI, compromised</td><td>A release whose provenance cannot be checked; a workflow change merged without review; an unpinned action or image pulled at run time.</td><td>Vulnerable versions inside the patch window, reported by Quality Studio sensors.</td></tr>
+</tbody></table>
+</section>
+
+<section id="zones"><h2>Trust zones</h2>
+<p>Five zones. A zone is a set of components that may trust each other's requests without further proof. Every crossing carries an identity that the receiving zone verifies, and every crossing that changes state is recorded by the audit writer in the control plane.</p>
+<figure class="media-breakout" id="figure-zones"><svg class="diagram" viewBox="0 0 1120 560" role="img" aria-labelledby="zones-title zones-desc"><title id="zones-title">Target trust zones and the paths that cross them</title><desc id="zones-desc">Five zones. The owner reaches the control plane through the edge with a session and a second factor. The operator agent runs under its own OS user and reaches the control plane only with an operator session token. The control plane holds identity, grants, approvals, secrets, the signer and the audit writer, and forwards audit entries to a write-once sink outside every zone. Execution hosts pull leases outbound and run each attempt in its own container with an attempt token for one repository and an egress allowlist. Hosted apps receive gated releases and their environment secrets and have no path back into the control plane.</desc>
+<defs><marker id="zones-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead"/></marker></defs>
+<rect class="zone" x="16" y="28" width="236" height="168" rx="12"/><text class="zone-label" x="32" y="54">Z1 · Owner</text>
+<rect class="node" x="32" y="70" width="204" height="54" rx="8"/><text class="label" x="46" y="93">Browser session</text><text class="sub" x="46" y="112">password plus second factor</text>
+<rect class="node" x="32" y="132" width="204" height="50" rx="8"/><text class="label" x="46" y="154">Approval and kill switch</text><text class="sub" x="46" y="172">step-up in Studio</text>
+<rect class="zone" x="16" y="226" width="236" height="200" rx="12"/><text class="zone-label" x="32" y="252">Z2 · Operator agent</text>
+<rect class="node" x="32" y="268" width="204" height="54" rx="8"/><text class="label" x="46" y="291">Agent sessions</text><text class="sub" x="46" y="310">own OS user, no owner keys</text>
+<rect class="node" x="32" y="330" width="204" height="80" rx="8"/><text class="label" x="46" y="353">Holds only</text><text class="sub" x="46" y="372">session token, hours</text><text class="sub" x="46" y="390">host certificate, minutes</text>
+<rect class="zone" x="318" y="28" width="452" height="398" rx="12"/><text class="zone-label" x="334" y="54">Z3 · Control plane</text>
+<rect class="node" x="334" y="70" width="420" height="44" rx="8"/><text class="label" x="348" y="98">Edge and access layer</text><text class="sub" x="560" y="98">TLS, origin rules, rate limits</text>
+<rect class="focus" x="334" y="126" width="204" height="70" rx="8"/><text class="label" x="348" y="152">Studio and Task Server</text><text class="sub" x="348" y="172">cards, leases, fences</text>
+<rect class="focus" x="550" y="126" width="204" height="70" rx="8"/><text class="label" x="564" y="152">Identity and policy</text><text class="sub" x="564" y="172">principals, grants, approvals</text>
+<rect class="node" x="334" y="208" width="204" height="70" rx="8"/><text class="label" x="348" y="234">Operations Server</text><text class="sub" x="348" y="254">typed host operations</text>
+<rect class="node" x="550" y="208" width="204" height="70" rx="8"/><text class="label" x="564" y="234">Secret store and signer</text><text class="sub" x="564" y="254">write without read</text>
+<rect class="node" x="334" y="354" width="420" height="56" rx="8"/><text class="label" x="348" y="378">Audit writer</text><text class="sub" x="348" y="397">hash-chained, attributes every actor, never edits an entry</text>
+<rect class="node" x="334" y="290" width="420" height="52" rx="8"/><text class="label" x="348" y="313">Accounts, project data, backups</text><text class="sub" x="348" y="331">encrypted at rest, restore tested</text>
+<rect class="zone" x="836" y="28" width="268" height="250" rx="12"/><text class="zone-label" x="852" y="54">Z4 · Work plane</text>
+<rect class="node" x="852" y="70" width="236" height="54" rx="8"/><text class="label" x="866" y="93">Host agent</text><text class="sub" x="866" y="112">service user, outbound only</text>
+<rect class="focus" x="852" y="136" width="236" height="126" rx="8"/><text class="label" x="866" y="160">Run container per attempt</text><text class="sub" x="866" y="180">coding, review or gate</text><text class="sub" x="866" y="198">own UID, no runtime socket</text><text class="sub" x="866" y="216">attempt token, one repository</text><text class="sub" x="866" y="234">egress allowlist</text>
+<rect class="zone" x="836" y="300" width="268" height="126" rx="12"/><text class="zone-label" x="852" y="326">Z5 · Hosted apps</text>
+<rect class="node" x="852" y="340" width="236" height="70" rx="8"/><text class="label" x="866" y="364">App per environment</text><text class="sub" x="866" y="384">gated release, own secrets</text>
+<rect class="ext" x="16" y="474" width="236" height="62" rx="10"/><text class="label" x="32" y="500">Internet</text><text class="sub" x="32" y="520">anonymous, hostile</text>
+<rect class="ext" x="318" y="474" width="220" height="62" rx="10"/><text class="label" x="334" y="500">Write-once audit sink</text><text class="sub" x="334" y="520">no operator credential</text>
+<rect class="ext" x="550" y="474" width="220" height="62" rx="10"/><text class="label" x="566" y="500">GitHub</text><text class="sub" x="566" y="520">protected branches and tags</text>
+<rect class="ext" x="836" y="474" width="268" height="62" rx="10"/><text class="label" x="852" y="500">Model providers</text><text class="sub" x="852" y="520">reached through the allowlist</text>
+<path class="edge" d="M236 97 H334" marker-end="url(#zones-arrow)"/>
+<path class="edge" d="M236 295 C290 295 290 170 334 165" marker-end="url(#zones-arrow)"/><text class="edge-label" x="256" y="206">operator</text><text class="edge-label" x="256" y="220">token</text>
+<path class="edge" d="M252 505 H312 V108 H334" marker-end="url(#zones-arrow)"/><text class="edge-label" x="258" y="462">HTTPS</text>
+<path class="edge" d="M852 97 H770" marker-end="url(#zones-arrow)"/><text class="edge-label" x="782" y="88">pull lease</text>
+<path class="edge" d="M520 208 V202 H790 C815 202 830 130 852 118" marker-end="url(#zones-arrow)"/><text class="edge-label" x="774" y="176">operation</text>
+<path class="edge" d="M754 316 C800 316 810 375 852 375" marker-end="url(#zones-arrow)"/><text class="edge-label" x="760" y="300">release</text>
+<path class="edge" d="M428 410 V474" marker-end="url(#zones-arrow)"/>
+<path class="edge" d="M852 250 H806 V440 C806 462 700 456 680 474" marker-end="url(#zones-arrow)"/>
+<path class="edge" d="M1088 236 H1096 V474" marker-end="url(#zones-arrow)"/>
+</svg><figcaption>Target trust zones (proposed). Arrows show the direction of the request that crosses a boundary: the owner and the operator agent call the control plane, hosts pull work outbound, only the control plane deploys to hosted apps, and audit entries leave every zone for a sink that no zone can rewrite. Placement of zones on machines is decided in <a href="#d6">D6</a>.</figcaption></figure>
+
+<table>
+<thead><tr><th>Zone</th><th>Holds</th><th>Crosses a boundary with</th><th>May share</th></tr></thead>
+<tbody>
+<tr><td>Z1 Owner</td><td>Password and second factor, approval and kill-switch authority, the sealed break-glass credential.</td><td>Browser session over HTTPS through the edge.</td><td>A machine with Z2, never an OS user.</td></tr>
+<tr><td>Z2 Operator agent</td><td>An operator session token (hours) and, during the transition, a host certificate (minutes). No long-lived key, no secret value, no owner key or SSH agent.</td><td>Operator session token to the Studio API; certificate to a host only through the policy step.</td><td>The owner's machine under its own OS user or a container.</td></tr>
+<tr><td>Z3 Control plane</td><td>Accounts, sessions, grants, approvals, secret store, GitHub App key, audit writer, project data, Operations Server.</td><td>Answers Z1 and Z2; issues leases, attempt tokens and typed operations to Z4; deploys releases to Z5; forwards audit off-host.</td><td>Separate containers per role on one host until Stage 2, then its own host (<a href="#d6">D6</a>).</td></tr>
+<tr><td>Z4 Work plane</td><td>Host enrollment credential (host agent only), attempt tokens inside the attempt's container, the attempt's checkout.</td><td>Outbound claim, heartbeat, logs and completion to Z3; repository and provider traffic through the egress allowlist.</td><td>A host with Z3 only until Stage 2 and only with separate OS users and no runtime access for agents.</td></tr>
+<tr><td>Z5 Hosted apps</td><td>Running releases and their environment secrets.</td><td>Receives releases and secrets from Z3; no route back into Z3 or the secret store.</td><td>A host with Z4 only with separate users, networks and the run-zone deny rules.</td></tr>
+</tbody></table>
+<p>Outside every zone sit the internet, GitHub, the model providers and a write-once audit sink. No zone holds a credential that can delete or change entries in that sink.</p>
+</section>
+
+<section id="operator"><h2>Operator agent</h2>
+<p>The operator agent stays useful: it observes everything, does routine work without asking, and prepares high-risk work for a fast owner decision. What changes is that every one of its actions passes through Studio under its own name, within a recorded grant, and leaves an entry it cannot remove.</p>
+<figure class="media-breakout" id="figure-operator-paths"><svg class="diagram" viewBox="0 0 1120 530" role="img" aria-labelledby="paths-title paths-desc"><title id="paths-title">Operator agent paths today and in the target model</title><desc id="paths-desc">Today the operator agent session acts through the owner's operating-system account, SSH agent and keys. From there it reaches execution hosts with a privileged shell, pushes to the repository and starts promotions, calls the local management plane, and can read credential files. No record separates its actions from the owner's. In the target model the session runs under its own OS user and authenticates to Studio as the operator agent. Every request passes the policy step, which allows observation, checks routine operations against a standing grant, and sends high-risk actions to the owner for approval. Allowed actions run as typed host operations, as cards through the gate, or as reads. The audit writer records every decision and forwards it off the host. The owner's kill switch ends the identity, every session and every grant at once.</desc>
+<defs><marker id="paths-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead"/></marker><marker id="paths-arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead-muted"/></marker></defs>
+<text class="zone-label" x="16" y="30">Today</text>
+<rect class="node" x="16" y="48" width="200" height="64" rx="8"/><text class="label" x="30" y="74">Operator agent session</text><text class="sub" x="30" y="94">authority from chat</text>
+<rect class="node" x="276" y="48" width="240" height="64" rx="8"/><text class="label" x="290" y="74">Owner's OS account</text><text class="sub" x="290" y="94">SSH agent and long-lived keys</text>
+<rect class="node" x="600" y="40" width="240" height="44" rx="8"/><text class="label" x="614" y="67">Execution hosts, privileged shell</text>
+<rect class="node" x="600" y="92" width="240" height="44" rx="8"/><text class="label" x="614" y="119">Repository push and promotion</text>
+<rect class="node" x="864" y="40" width="240" height="44" rx="8"/><text class="label" x="878" y="67">Local management plane</text>
+<rect class="node" x="864" y="92" width="240" height="44" rx="8"/><text class="label" x="878" y="119">Credential files</text>
+<rect class="gap" x="276" y="150" width="828" height="40" rx="8"/><text class="sub" x="290" y="175">No identity in Studio · no scoped credential · no separate record · no approval step · read content can steer it</text>
+<path class="edge-muted" d="M216 80 H276" marker-end="url(#paths-arrow-muted)"/>
+<path class="edge-muted" d="M516 72 C560 72 560 62 600 62" marker-end="url(#paths-arrow-muted)"/>
+<path class="edge-muted" d="M516 88 C560 88 560 114 600 114" marker-end="url(#paths-arrow-muted)"/>
+<path class="edge-muted" d="M516 64 C540 20 840 20 864 56" marker-end="url(#paths-arrow-muted)"/>
+<path class="edge-muted" d="M516 96 C560 146 820 146 864 122" marker-end="url(#paths-arrow-muted)"/>
+<line class="divider" x1="16" y1="222" x2="1104" y2="222"/>
+<text class="zone-label" x="16" y="254">Target</text>
+<rect class="node" x="16" y="272" width="200" height="64" rx="8"/><text class="label" x="30" y="298">Operator agent session</text><text class="sub" x="30" y="318">own OS user, no owner keys</text>
+<rect class="focus" x="268" y="272" width="200" height="64" rx="8"/><text class="label" x="282" y="298">Operator identity</text><text class="sub" x="282" y="318">principal plus session</text>
+<rect class="focus" x="520" y="262" width="220" height="146" rx="8"/><text class="label" x="534" y="288">Policy</text><text class="sub" x="534" y="310">T0 observe: allow</text><text class="sub" x="534" y="330">T1 routine: standing grant</text><text class="sub" x="534" y="350">T2 high risk: owner approval</text><text class="sub" x="534" y="370">T3 break-glass: owner opens</text><text class="sub" x="534" y="390">otherwise: refuse</text>
+<rect class="node" x="800" y="262" width="304" height="44" rx="8"/><text class="label" x="814" y="289">Typed host operation</text><text class="sub" x="990" y="289">host agent runs it</text>
+<rect class="node" x="800" y="314" width="304" height="44" rx="8"/><text class="label" x="814" y="341">Change as card</text><text class="sub" x="990" y="341">gate decides</text>
+<rect class="node" x="800" y="366" width="304" height="44" rx="8"/><text class="label" x="814" y="393">Read through the API</text><text class="sub" x="990" y="393">no secret values</text>
+<rect class="node" x="268" y="440" width="200" height="64" rx="8"/><text class="label" x="282" y="466">Owner</text><text class="sub" x="282" y="486">approves with step-up</text>
+<rect class="node" x="520" y="440" width="220" height="64" rx="8"/><text class="label" x="534" y="466">Audit writer</text><text class="sub" x="534" y="486">every request and outcome</text>
+<rect class="ext" x="800" y="440" width="304" height="64" rx="8"/><text class="label" x="814" y="466">Write-once sink off the host</text><text class="sub" x="814" y="486">operator holds no credential</text>
+<rect class="gap" x="16" y="440" width="220" height="64" rx="8"/><text class="label" x="30" y="466">Kill switch</text><text class="sub" x="30" y="486">ends identity, sessions, grants</text>
+<path class="edge" d="M216 304 H268" marker-end="url(#paths-arrow)"/>
+<path class="edge" d="M468 304 H520" marker-end="url(#paths-arrow)"/>
+<path class="edge" d="M740 284 H800" marker-end="url(#paths-arrow)"/>
+<path class="edge" d="M740 336 H800" marker-end="url(#paths-arrow)"/>
+<path class="edge" d="M740 388 H800" marker-end="url(#paths-arrow)"/>
+<path class="edge" d="M468 472 C500 472 500 380 520 372" marker-end="url(#paths-arrow)"/>
+<path class="edge" d="M630 408 V440" marker-end="url(#paths-arrow)"/>
+<path class="edge" d="M740 472 H800" marker-end="url(#paths-arrow)"/>
+<path class="edge" d="M200 440 C240 400 290 380 310 336" marker-end="url(#paths-arrow)"/>
+</svg><figcaption>Operator agent paths. Top: the current state as described in the card and checked against the repository (<a href="#current-state">Current state</a>), at class level only. Bottom: the proposed target. The policy step is the only way from the operator identity to an effect, and the owner and the kill switch act on it from outside the agent's reach.</figcaption></figure>
+
+
+<h3>Identity</h3>
+<p>Studio gets a principal kind <code>operator-agent</code>, built on the existing service-account model (own bearer tokens, expiry, last use, revocation, non-human actor). Each interactive session is a child of that principal with its own session id. Every request, audit entry, timeline event and Git commit trailer carries <code>operator-agent:&lt;id&gt;/session:&lt;sid&gt;</code> and <code>delegatedBy: human:&lt;owner&gt;</code>. The owner's account never appears as the actor of something the agent did. The in-product AI Operator keeps its own actor name; both appear in one activity view.</p>
+
+<h3>Credentials</h3>
+<ul>
+<li><b>Session token.</b> The owner starts an operator session in Studio (one click, step-up with the second factor). Studio issues a token bound to that session, valid for at most 8 hours and renewable only by the owner. The agent stores it in its own OS user's protected file, never in the repository or prompt.</li>
+<li><b>Host access.</b> Target: host actions are typed operations through the Operations Server, executed by the host's operations agent. Transition: when an operation does not exist yet, Studio issues a short-lived SSH certificate (at most 60 minutes) for an unprivileged operations account with a fixed command allowlist, after the policy step. The owner's long-lived keys are removed from the agent's reach.</li>
+<li><b>Repository.</b> The operator agent no longer pushes protected branches with the owner's credential. A change becomes a card or a delivery that the gate decides. Promotion to <code>main</code> runs as a Studio operation that checks gate evidence, not as a script with the owner's credential (<a href="#d2">D2</a>, <a href="#d3">D3</a>).</li>
+<li><b>Secrets.</b> None. Operations that need a secret resolve it inside the control plane or on the target host; the value never enters the agent's context.</li>
+</ul>
+
+<h3>Tiers</h3>
+<table>
+<thead><tr><th>Tier</th><th>Examples</th><th>Condition</th><th>Record</th></tr></thead>
+<tbody>
+<tr><td>T0 Observe</td><td>Read board, cards, runs, logs, metrics, host status, audit, credential metadata.</td><td>Always allowed to an active operator session.</td><td>Session-level access log.</td></tr>
+<tr><td>T1 Routine</td><td>Requeue, steer, restart an allowlisted service, drain or resume a host, re-run a gate, deploy a gate-verified commit to stage, promote a gate-verified commit (<a href="#d2">D2</a>).</td><td>A standing grant that covers the operation, scope and rate.</td><td>Audit entry with grant id.</td></tr>
+<tr><td>T2 High risk</td><td>Read or change secrets, firewall and exposure, delete data, force push or history rewrite, any gate bypass, rotate keys, enroll or remove hosts, change access or grants, change the operator agent's own limits.</td><td>Owner approval in Studio for this exact request.</td><td>Audit entry with approval id and parameter digest.</td></tr>
+<tr><td>T3 Break-glass</td><td>Interactive privileged shell during an outage.</td><td>Opened by the owner, not requested by wording; time-boxed.</td><td>Separate stream, review card afterwards.</td></tr>
+</tbody></table>
+<p>An operation not in the catalogue is refused. Adding an operation to the catalogue or moving it between tiers is itself T2.</p>
+
+<h3>Standing grants</h3>
+<p>A standing grant replaces "you may restart services whenever needed" in chat history or agent memory. It is a record in the identity store with: id, principal, tier (T1 only), operation set, scope (workspace, project, environment or host), constraints (rate per hour, time window), issued by, issued at, expires at (default 7 days, at most 30), revoked at and a reason. Only the owner creates, renews or revokes a grant, in Studio, with step-up. Grant changes go to the IAM audit. An agent's memory file or a chat message never creates authority; the policy step reads only grant records.</p>
+
+<h3>Approval</h3>
+<p>A T2 request creates an approval request instead of an effect. It shows the exact operation and parameters, the parameter digest, the target, the session, the requesting instruction source (owner chat, card, repository file, web page, log) and the agent's stated reason. The owner approves or rejects in Studio with step-up. An approval is single-use, bound to the digest, and expires after 15 minutes. Execution re-checks the digest and records the result against the approval. The existing decision-card record is the model for the fields, but approval actors come from the authenticated session, never from a client-supplied header.</p>
+
+<h3>Audit trail</h3>
+<p>The audit writer runs in the control plane, not on the host the agent acts on. Each entry carries actor, session, grant or approval id, operation, target, parameter digest, outcome and the hash of the previous entry. Entries are forwarded within 60 seconds to a write-once sink outside every zone; the operator agent and the Studio host hold append-only credentials there at most, and no zone can delete. A scheduled verification compares the local chain with the sink and raises an acute alert on a gap or mismatch. Host-side, the operations agent journals every executed command with the operation id, so a host action without a matching central entry is visible.</p>
+
+<h3>Break-glass</h3>
+<p>For a real emergency, for example Studio itself down: the owner opens a break-glass window with a sealed credential that is kept offline and the second factor. The window lasts at most 2 hours, opens an interactive privileged path for the named sessions, writes to a separate audit stream, alerts on open, and creates a review card when it closes. If the control plane is down, the host-side journal and the sink receive the entries; the review reconciles them after recovery.</p>
+
+<h3>Kill switch</h3>
+<p>One owner action in Studio, plus an out-of-band command on the control plane host for when the UI is unreachable, ends all operator access at once: the operator principal is disabled, every session token and grant is revoked, certificate issuance stops and the host revocation list is pushed, pending approvals are cancelled, and operations agents terminate running operator operations. Target: every operator call refused within 60 seconds, verified by a monthly drill. A per-session kill exists for one runaway session.</p>
+
+<h3>Untrusted content</h3>
+<ul>
+<li>Authority comes only from the owner's channel and recorded grants. Text in cards, repository files, web pages, CLI output or logs is data; it can propose, never authorize.</li>
+<li>Every action request carries its instruction source. A T1 request whose source is untrusted content is allowed only when the grant says so; T2 always shows the source to the owner.</li>
+<li>Browsing the web or reading unfamiliar repositories happens in an observe-only session (T0 token). A session that read untrusted content cannot be upgraded; the owner starts a fresh one.</li>
+<li>Secret values never reach the agent, so injected text cannot ask it to print one.</li>
+</ul>
+
+<h3>Several sessions</h3>
+<p>Several sessions run under one principal, each with its own session id and an optional subset of the principal's grants. Effects on shared resources use the existing fences and leases, so two sessions cannot apply conflicting host or card operations. The activity view groups by session. Approvals name the session that asked. The kill switch acts on one session or all.</p>
+</section>
+
+<section id="containment"><h2>Agent containment</h2>
+<ul>
+<li><b>One container per attempt.</b> Coding, review and gate runs each get a fresh work container under its own UID, with only that attempt's repository mounted. The existing executor becomes the default after its canary (coordinated with <a href="../dynamic-placement/index.html">Dynamic placement</a> slices 3 and 5).</li>
+<li><b>No runtime socket.</b> The host service user leaves the container-runtime group; only the host agent launches containers, through a narrow launcher.</li>
+<li><b>Egress.</b> The work-zone deny-by-default policy applies on every host that runs agents, allowing the control plane, Git hosts, package registries and model providers only.</li>
+<li><b>Attempt-bound tokens.</b> Repository and provider tokens are minted per attempt, bound to lease, fence, project and repository, delivered as tmpfs files, and revoked at completion. Write tokens omit workflow permission unless the card is explicitly authorized to change CI (<a href="#d10">D10</a>).</li>
+<li><b>No secrets readable from the run.</b> Host enrollment credentials, provider root logins and other projects' material stay outside the container.</li>
+<li><b>No self-approval.</b> A review verdict is accepted only from a review principal different from the coding principal of that delivery, and only for an attempt that principal claimed. Runner credentials are bound to role and project.</li>
+<li><b>Protected references.</b> <code>main</code>, <code>develop</code> and release tags are protected by repository rules: no force push, no deletion, updates only by the platform's identity after gate evidence. The ruleset's bypass list contains no agent identity.</li>
+<li><b>Signed releases.</b> Today's checksums and build provenance attestations extend to every image and archive, release tags are signed, and every deploy verifies signature and provenance before it starts. The signing identity lives outside the API container. Workflow actions and base images are pinned by digest.</li>
+</ul>
+</section>
+
+<section id="credentials"><h2>Credentials and secrets</h2>
+<p>Settings &gt; Credentials is the inventory surface: it lists metadata only, never values (see <a href="#evidence">Evidence</a>). The <a href="../credentials-and-logins/index.html">Credentials and logins</a> Dossier owns renewal, probes and the typed runbooks; this section sets placement and the takeover order on top of it.</p>
+<table>
+<thead><tr><th>Class</th><th>Target holder</th><th>Lifetime</th><th>Rotation</th></tr></thead>
+<tbody>
+<tr><td>Owner password and second factor</td><td>Owner only; factor on a separate device</td><td>Password without schedule; factor until replaced</td><td>On suspicion; recovery codes sealed offline</td></tr>
+<tr><td>Break-glass credential</td><td>Sealed offline, used with the second factor</td><td>Single use per window</td><td>After every use</td></tr>
+<tr><td>Operator session token and host certificate</td><td>Operator agent's own OS user</td><td>8 hours; 60 minutes</td><td>Never rotated, re-issued</td></tr>
+<tr><td>Service accounts and API tokens</td><td>The script or job that uses them</td><td>Default 90 days, at most one year</td><td>Overlap rotation, revoke old</td></tr>
+<tr><td>Host enrollment credential</td><td>Host agent's service user only</td><td>Default 30 days (<a href="#d7">D7</a>)</td><td>Overlap rotation, proven daemon, revoke old</td></tr>
+<tr><td>Attempt repository and provider tokens</td><td>The attempt's container, tmpfs</td><td>Lease, at most one hour</td><td>Re-minted per attempt</td></tr>
+<tr><td>Provider root logins</td><td>Credential broker on the host, outside run containers</td><td>Provider-defined</td><td>Guided renewal (Credentials and logins)</td></tr>
+<tr><td>GitHub App private key and client secret</td><td>External secret backend or signer, not the API container's disk (from Stage 2)</td><td>Until rotated</td><td>Yearly and after any control-plane incident</td></tr>
+<tr><td>Secret store key-encryption key</td><td>Outside the data volume: KMS, external backend or a host secret readable only at start</td><td>Until rotated</td><td>Re-wrap on rotation</td></tr>
+<tr><td>App secrets per environment</td><td>Secret store; delivered to hosted apps only</td><td>App-defined</td><td>Studio rotation with versions</td></tr>
+<tr><td>Edge certificates and origin authentication</td><td>Edge only; monitoring copy without key</td><td>Certificate validity</td><td>Before expiry, alerted at 30 and 14 days</td></tr>
+<tr><td>Administration SSH keys</td><td>Replaced by certificates from the Studio-issued CA; long-lived keys only in break-glass custody</td><td>Minutes</td><td>CA key rotation yearly</td></tr>
+<tr><td>Backup encryption key</td><td>Owner custody, separate from the backups</td><td>Until rotated</td><td>Re-encrypt on rotation; restore test after</td></tr>
+</tbody></table>
+<h3>Backups</h3>
+<p>Backups of workspace, access state, secret store and audit are encrypted with a key that is not stored next to them, kept in a second location, and restored on a schedule into a scratch installation; the restore test's result is a monitored signal. The audit sink is not part of the same backup chain, so a restore cannot overwrite it.</p>
+<h3>After a takeover</h3>
+<p>The runbook acts in five steps for every case: contain, revoke, rotate, verify, review. The order of rotation follows what the attacker could have held.</p>
+<table>
+<thead><tr><th>Case</th><th>Contain</th><th>Rotate, in order</th></tr></thead>
+<tbody>
+<tr><td>Operator agent session or its machine</td><td>Kill switch</td><td>Operator principal and grants; host certificates (CA revocation list); any secret an approval exposed during the window; then review the audit window against the sink.</td></tr>
+<tr><td>Execution host</td><td>Revoke the host credential, drain, isolate network</td><td>Host credential; attempt tokens (expire on their own, revoke now); provider logins held by that host's broker; repository access for every repository the host could reach; rebuild the host from image.</td></tr>
+<tr><td>Control plane host</td><td>Edge to maintenance mode; kill switch; revoke all sessions</td><td>GitHub App key and client secret; key-encryption key and every secret value; all service-account, API and runner credentials; session signing state; edge origin authentication; then rebuild and restore from a backup older than the first suspicious sink entry.</td></tr>
+<tr><td>Owner account</td><td>Revoke all owner sessions from break-glass; disable operator agent</td><td>Owner password and factor; recovery codes; every grant the owner issued in the window; review every approval in the window.</td></tr>
+</tbody></table>
+</section>
+
+<section id="public"><h2>Public product</h2>
+<ul>
+<li><b>Owner sign-in.</b> Stage 0 puts an identity-aware access layer in front of the whole site, so the login form is not reachable without a second factor at the edge. Stage 1 adds in-product WebAuthn passkeys and TOTP with recovery codes, required for Owner and Admin and for every step-up (<a href="#d5">D5</a>).</li>
+<li><b>Sessions.</b> Each user sees their active sessions with device, address and last use, can revoke one or all, and gets a notice on a new session. The owner can revoke all sessions of any user.</li>
+<li><b>Project isolation.</b> The role bindings stay the boundary. A cross-project probe suite runs in CI and in Quality Studio against every route family before a second user is admitted.</li>
+<li><b>Audit.</b> Every state-changing request by a human, service account or agent is recorded with actor, route and outcome in the hash-chained audit, visible to the owner in an activity view.</li>
+<li><b>Deployment baseline.</b> Firewall ahead of the container runtime (exists), unattended security updates on hosts with a reboot window, containers non-root with read-only roots, dropped capabilities and no new privileges, images pinned by digest and verified, encrypted backups with restore tests, monitoring of login failures, new sessions, grant and approval use, kill-switch drills, certificate expiry and audit-sink lag, with alerts to the owner.</li>
+<li><b>Continuous checks.</b> Quality Studio runs the security posture as sensors on every release and nightly: dependency and secret scans (exist), header and TLS checks against the public URL, unpinned actions and images, missing repository rules, route permission inventory, and the cross-project probes. The related card QS-130 is the delivery vehicle.</li>
+</ul>
+</section>
+
+<section id="stages"><h2>Stages</h2>
+<p>Each stage has an entry condition. Work listed for a stage must be done before that stage starts; work from a later stage may start earlier.</p>
+<table>
+<thead><tr><th>Stage</th><th>Must hold</th><th>Slices</th></tr></thead>
+<tbody>
+<tr><td>0 · Owner only, behind an access layer</td><td>Operator agent has its own identity and audit trail; kill switch works; access layer with second factor in front of the site; deployment baseline and encrypted, tested backups.</td><td>SM-1, SM-2, SM-3</td></tr>
+<tr><td>1 · Public login</td><td>In-product second factor and session management; operator tiers, standing grants and owner approval; host actions without the owner's keys; break-glass; runner credentials bound and expiring; repository rules and pinned actions; continuous checks.</td><td>SM-4 to SM-10</td></tr>
+<tr><td>2 · A second user</td><td>Per-attempt containers by default with no shared OS user and no runtime access; attempt-bound tokens without workflow permission by default; control plane on its own host; root keys outside the API container.</td><td>SM-11, SM-12</td></tr>
+<tr><td>3 · Outside customers</td><td>Separate work hosts per customer, signed and verified releases, external penetration test, incident response commitment.</td><td>SM-13</td></tr>
+</tbody></table>
+</section>
+
+<section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives"><h2>Alternatives</h2>
+<h3>Operator credential models</h3>
+<div class="variant-grid">
+<article class="variant"><h3>O1 · Owner's account and long-lived keys</h3><p>Today's model. Fast and complete, but every action is the owner's, no scope or expiry exists, revocation means changing the owner's own keys, and an injected session holds full authority.</p></article>
+<article class="variant"><h3>O2 · Dedicated OS user with a long-lived key and a sudo allowlist</h3><p>Separates the agent from the owner's keys and limits commands on hosts. Studio still cannot see or approve anything, the key lives indefinitely, and the allowlist drifts host by host.</p></article>
+<article class="variant"><h3>O3 · Studio identity with short-lived certificates</h3><p>Studio issues the operator session and, after the policy step, an SSH certificate valid for minutes for an unprivileged account with a command allowlist. Attribution, expiry, tiers and the kill switch work. A shell remains, so the allowlist must be tight and the host journal must be trusted.</p></article>
+<article class="variant"><h3>O4 · Studio identity with typed operations only</h3><p>No shell. Every host effect is a catalogued operation executed by the host's operations agent, every repository effect is a card or Studio operation. Strongest attribution and the smallest injection blast radius; needs operations for everything routine and a break-glass path for the rest.</p></article>
+<article class="variant"><h3>O5 · External access broker</h3><p>A third-party privileged-access product records shells and issues certificates. Mature session recording, but a second identity system to operate, with no knowledge of cards, gates or grants.</p></article>
+</div>
+<table>
+<thead><tr><th>Criterion</th><th>O1</th><th>O2</th><th>O3</th><th>O4</th><th>O5</th></tr></thead>
+<tbody>
+<tr><td>Actions attributed to the agent</td><td>No</td><td>On host only</td><td>Yes</td><td>Yes</td><td>Yes, outside Studio</td></tr>
+<tr><td>Scope and expiry</td><td>No</td><td>Commands, no expiry</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Owner approval per action</td><td>No</td><td>No</td><td>Yes</td><td>Yes</td><td>Partial</td></tr>
+<tr><td>Kill switch in one step</td><td>No</td><td>Per host</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Blast radius of an injected session</td><td>Everything</td><td>Allowlist on every host</td><td>Current grant plus shell allowlist</td><td>Current grant</td><td>Recorded shell</td></tr>
+<tr><td>Usable in an outage</td><td>Yes</td><td>Yes</td><td>Needs control plane</td><td>Needs control plane</td><td>Needs broker</td></tr>
+<tr><td>Effort</td><td>None</td><td>Low</td><td>Medium</td><td>Medium to high</td><td>Medium plus operation</td></tr>
+</tbody></table>
+
+<h3>Host separation</h3>
+<div class="variant-grid">
+<article class="variant"><h3>H1 · Shared host and shared OS user</h3><p>Today's default: control plane and agents on one host, agents as processes under the host service user. Cheapest; a run reaches everything on the host.</p></article>
+<article class="variant"><h3>H2 · One host, separate users and per-attempt containers</h3><p>Control plane in its own containers; host agent under its own service user without runtime group; each attempt in a hardened container with its own UID and egress allowlist. Closes the run-to-host path at low cost. A kernel or runtime escape still reaches the control plane.</p></article>
+<article class="variant"><h3>H3 · Control plane on its own host, work plane hosts with per-attempt containers</h3><p>H2 plus a machine boundary between control and work planes. An escape from a run reaches only other runs on that work host. One more machine to run.</p></article>
+<article class="variant"><h3>H4 · Per-attempt sandbox VM or user-space kernel</h3><p>H3 with a microVM or user-space kernel per attempt. Strongest isolation for code from outside customers; startup cost, nested-virtualization needs and image tooling.</p></article>
+</div>
+<table>
+<thead><tr><th>Criterion</th><th>H1</th><th>H2</th><th>H3</th><th>H4</th></tr></thead>
+<tbody>
+<tr><td>Run reads host credentials</td><td>Yes</td><td>No</td><td>No</td><td>No</td></tr>
+<tr><td>Runtime escape reaches control plane</td><td>Yes</td><td>Yes</td><td>No</td><td>No</td></tr>
+<tr><td>Runtime escape reaches other runs</td><td>Yes</td><td>Yes</td><td>On that host</td><td>Unlikely</td></tr>
+<tr><td>Fits two or more trust groups</td><td>No</td><td>One group plus staff</td><td>Yes</td><td>Yes, including outside customers</td></tr>
+<tr><td>Cost</td><td>None</td><td>Low; executor exists</td><td>One more machine</td><td>High</td></tr>
+</tbody></table>
+
+<h3>Audit storage</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A1 · Local append-only files</h3><p>Today. Simple, but the host that is described can rewrite the record.</p></article>
+<article class="variant"><h3>A2 · Local hash chain plus off-host write-once sink</h3><p>Studio keeps the chain for queries and forwards each entry to a sink no zone can rewrite. Tampering becomes detectable and the history survives a control-plane takeover.</p></article>
+<article class="variant"><h3>A3 · External log service only</h3><p>Strong retention, but queries for the activity view depend on an outside service and its availability.</p></article>
+</div>
+</section>
+
+<section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation"><h2>Recommendation</h2>
+<div class="callout" data-tone="accent"><h3>Give the operator agent a name first, then narrow everything else by stage</h3>
+<p>Adopt <b>O4</b> as the operator credential target with <b>O3</b> as the transition and the break-glass path, on top of the existing service-account model. Keep the agent's authority in recorded, expiring grants; route high-risk actions to an owner approval with step-up; record everything in an <b>A2</b> hash-chained audit with an off-host sink; and make the kill switch a tested one-step action.</p>
+<p>Separate hosts as <b>H2</b> now, because the hardened work-container executor already exists and closes the run-to-host path at low cost, move to <b>H3</b> before a second user, and offer <b>H4</b> for work from outside customers.</p>
+<p>Order the work by stage: SM-1 (operator identity and audit trail), SM-2 (kill switch and sessions) and SM-3 (access layer and baseline) before the site goes public behind its access layer; tiers, approvals, host operations, second factor, bound runner credentials and repository rules before the login is public; containment and key placement before a second user.</p></div>
+<p>The most important reason: today the system's most powerful actor is indistinguishable from the owner. Until it has its own identity and record, no later control can be audited, revoked or reviewed, which is why the identity and the audit trail come first.</p>
+</section>
+
+<section id="evidence" data-concept-section="evidence" data-document-section="evidence"><h2>Evidence</h2>
+<p>Evidence is classified as observed (read in the repository or captured from the running product on 1 November 2026), inferred, or proposed. Concrete gap locations are in the private handoff and are not repeated here.</p>
+
+<figure class="evidence-figure media-breakout">
+<div class="evidence-captures">
+<div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/sign-in-password-only-light--networked.png" alt="Studio sign-in card with a username field, a password field and a Sign in button, and no other sign-in option."><span class="figure-annotation">Password is the only factor</span></div>
+<div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/sign-in-password-only-dark--networked.png" alt="The same sign-in card in the dark theme: username, password, Sign in."></div>
+</div>
+<figcaption><span class="figure-claim"><b>Evidence.</b> The networked Studio sign-in asks for a username and a password and offers no second factor, passkey or other sign-in method.</span>
+<span class="figure-as-of"><span><b>Light:</b> captured <time datetime="2026-11-01">1 November 2026</time> from a fresh networked monolith built from this task's worktree (commit a3b98b11b), started by the Playwright prebuilt stack in the <code>networked-monolith</code> profile; cropped to the sign-in card.</span><span><b>Dark:</b> captured <time datetime="2026-11-01">1 November 2026</time>, same stack and crop.</span></span></figcaption>
+</figure>
+
+<figure class="evidence-figure media-breakout">
+<div class="evidence-captures">
+<div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/access-service-accounts-and-runners-light--networked.png" alt="Settings Access panels titled Service accounts and API tokens, with a form for a new service account, and Runner enrollments and runners, with a form for an enrollment code and an empty runner table."><span class="figure-annotation">Two non-human kinds, none for an operator agent</span></div>
+<div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/access-service-accounts-and-runners-dark--networked.png" alt="The same two Access panels in the dark theme."></div>
+</div>
+<figcaption><span class="figure-claim"><b>Evidence.</b> Settings &gt; Access offers service accounts, each with its own tokens, expiry and revocation, and enrolled runners as the non-human identities; it has no separate kind for an operator agent.</span>
+<span class="figure-as-of"><span><b>Light:</b> captured <time datetime="2026-11-01">1 November 2026</time> as the bootstrapped Owner on the same fresh networked monolith; element crop of the two panels. The rest of the page lists users, role bindings and groups.</span><span><b>Dark:</b> captured <time datetime="2026-11-01">1 November 2026</time>, same stack and crop.</span></span></figcaption>
+</figure>
+
+<figure class="evidence-figure media-breakout">
+<div class="evidence-captures">
+<div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/credentials-inventory-metadata-only-light--networked.png" alt="Settings Credentials inventory with host, kind and state filters and one row for the GitHub App marked Missing, with expiry and last use unknown."><span class="figure-annotation">Metadata only, no values</span></div>
+<div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/credentials-inventory-metadata-only-dark--networked.png" alt="The same Credentials inventory in the dark theme."></div>
+</div>
+<figcaption><span class="figure-claim"><b>Evidence.</b> Settings &gt; Credentials is a metadata inventory: it states that values and token prefixes are never part of it and shows holder, kind, state, expiry and last use per credential.</span>
+<span class="figure-as-of"><span><b>Light:</b> captured <time datetime="2026-11-01">1 November 2026</time> as the Owner on the same fresh networked monolith, which has no Task Server and no GitHub App connected, hence the single Missing row; element crop of the inventory.</span><span><b>Dark:</b> captured <time datetime="2026-11-01">1 November 2026</time>, same stack and crop.</span></span></figcaption>
+</figure>
+<p class="dim">The capture stack serves the frontend over a loopback HTTP proxy, so its live-update connection stayed offline and the full page showed a connection banner. The crops exclude that banner; it is a property of the test harness and does not affect the facts shown.</p>
+
+<div class="evidence-list">
+<a class="evidence" href="../operations/security/overview.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Security overview</b><small>Networked threat model, sign-in protections, role bindings, service accounts with expiry, runner scopes, JSONL audit files, the accepted shared-host risk of 25 October 2026.</small></span></a>
+<a class="evidence" href="../../backend/Features/Security/Iam/"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>IAM code</b><small>Six roles, named permissions per scope, service accounts as the non-human actor, append-only IAM audit. No principal kind for an operator agent; no general record of human browser actions.</small></span></a>
+<a class="evidence" href="../../backend/Features/Security/"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Sign-in and sessions</b><small>Username and password only; throttling and lockout; idle and absolute session expiry; logout ends the current session only; other sessions end on password change, reset or disable.</small></span></a>
+<a class="evidence" href="../operations/setup/github-app.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>GitHub App</b><small>One-hour tokens per repository, issued for every registered repository to a host; write tokens include workflow files; the guide itself records that a CLI under the host service user could find the token files.</small></span></a>
+<a class="evidence" href="../operations/setup/studio-website.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Studio website</b><small>One Compose stack: edge, frontend, API. The API container's data volumes hold workspace with access state and secret store, home with CLI logins, and projects. Edge with origin authentication and a firewall ahead of the container runtime.</small></span></a>
+<a class="evidence" href="../operations/security/secret-provider.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Secret provider</b><small>Write without read, external Vault, OpenBao and 1Password adapters, the GitHub App key read as platform root material.</small></span></a>
+<a class="evidence" href="../../runner/WorkContainers/"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Work containers and zones</b><small>Hardened per-attempt executor (fixed UID, read-only root, no capabilities, refused runtime-socket and credential mounts) with mode off by default; zone policy with a deny-by-default work zone in <code>deploy/zones/</code>.</small></span></a>
+<a class="evidence" href="../../operations-server/"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Operations Server</b><small>Bearer principals, per-operation scopes, idempotency, two typed operations; no human approval step; attempt state rewritten in place; deployed only in a rehearsal stack. Boundary decided in the Operations Server Dossier (AGT-W49).</small></span></a>
+<a class="evidence" href="../operations/develop-main-promotion.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Promotion to main</b><small>An operator command run with the operator checkout's Git credential; no force push and no gate bypass in the execute path; no approval enforced in the product.</small></span></a>
+<a class="evidence" href="../../.github/workflows/release.yml"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Release workflow</b><small>Checksums and build provenance attestations exist; most actions are referenced by tag, not digest; tags are not signed.</small></span></a>
+<a class="evidence" href="../operations/decision-cards.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Decision cards</b><small>Structured options, decider, choice, actor and time: the model for approval records, with the caveat that the actor must come from an authenticated session.</small></span></a>
+<a class="evidence" href="#operator"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Operator agent authority</b><small>From the card and the code paths above: the agent's power equals the owner's OS account plus everything that account's keys reach. Studio cannot distinguish it, so no later control can be attributed or revoked until it has its own identity.</small></span></a>
+<a class="evidence" href="#containment"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Cheapest large reduction</b><small>Turning on the existing work-container executor and removing runtime access from the agent user closes the run-to-host path without new architecture.</small></span></a>
+<a class="evidence" href="#alternatives"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Target model</b><small>Zones, tiers, grants, approvals, A2 audit, kill switch, staged slices: proposals of this Dossier, not current behavior.</small></span></a>
+<a class="evidence" href="../credentials-and-logins/index.html"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Related Dossiers</b><small>Credentials and logins (AGT-W67), Dynamic placement (AGT-W80), Integrated platform (AGT-W81, zones and secrets), Observation (AGT-W58, AI Operator autonomy classes). This Dossier aligns with their recommendations and does not reopen them.</small></span></a>
+</div>
+</section>
+
+<section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions"><h2>Open decisions</h2>
+<p>Each block recommends a working option. Implementation slices use the recommendation unless a recorded operator decision selects another option.</p>
+<div class="decision" id="d1" data-decision-id="SM-D1"><h3>D1 · Operator credential model</h3><p><b>Options:</b> O1 owner's account and keys; O2 dedicated OS user with long-lived key and sudo allowlist; O3 Studio identity with short-lived certificates; O4 Studio identity with typed operations only; O5 external access broker. <b>Recommend O4 as target, O3 as transition and break-glass path.</b> O1 and O2 cannot attribute, approve or revoke in one step; O5 adds a second identity system that knows nothing of cards and gates.</p></div>
+<div class="decision" id="d2" data-decision-id="SM-D2"><h3>D2 · Tier of a promotion to main</h3><p><b>Options:</b> A routine (T1) when the commit carries full gate evidence, high risk otherwise; B always high risk; C routine without conditions. <b>Recommend A.</b> The gate already proves the tree; an approval for every green promotion trains the owner to click through. Any promotion without complete gate evidence is a gate bypass and therefore T2.</p></div>
+<div class="decision" id="d3" data-decision-id="SM-D3"><h3>D3 · Direct pushes by the operator agent</h3><p><b>Options:</b> A no direct push to protected branches; changes go through cards and the gate; direct push only in break-glass; B direct push to <code>develop</code> under a standing grant; C unchanged. <b>Recommend A.</b> It keeps one path to protected branches, which repository rules can then enforce for every identity.</p></div>
+<div class="decision" id="d4" data-decision-id="SM-D4"><h3>D4 · Audit storage</h3><p><b>Options:</b> A1 local append-only files; A2 local hash chain plus off-host write-once sink; A3 external log service only. <b>Recommend A2.</b> It keeps queries local and makes the history survive a takeover of the control plane.</p></div>
+<div class="decision" id="d5" data-decision-id="SM-D5"><h3>D5 · Owner second factor</h3><p><b>Options:</b> A identity-aware access layer only; B in-product WebAuthn and TOTP only; C access layer at Stage 0, in-product factor before public login, both kept. <b>Recommend C.</b> The access layer is available now without code; the in-product factor is needed for step-up approvals and for users the access layer does not know.</p></div>
+<div class="decision" id="d6" data-decision-id="SM-D6"><h3>D6 · Host separation</h3><p><b>Options:</b> H1 shared host and user; H2 one host, separate users, per-attempt containers; H3 control plane on its own host; H4 per-attempt sandbox VM. <b>Recommend H2 through Stage 1, H3 before Stage 2, H4 offered for outside customers at Stage 3.</b> This revisits the co-location chosen in application lifecycle D15 only from Stage 2 on, when a second trust group arrives.</p></div>
+<div class="decision" id="d7" data-decision-id="SM-D7"><h3>D7 · Lifetimes</h3><p><b>Options:</b> A operator session 8 hours, host certificate 60 minutes, standing grant default 7 days and at most 30, approval 15 minutes, host enrollment credential default 30 days with overlap rotation; B longer lifetimes with manual review; C shorter, per-action tokens only. <b>Recommend A.</b> Short enough that a stolen token expires within a working day, long enough that routine work does not stall.</p></div>
+<div class="decision" id="d8" data-decision-id="SM-D8"><h3>D8 · Approval channel</h3><p><b>Options:</b> A in Studio with step-up, optional push notification that links to it; B chat reply to the agent; C email link. <b>Recommend A.</b> A chat reply is exactly the channel an injected agent can fake or misread; an approval must be made where the agent cannot write.</p></div>
+<div class="decision" id="d9" data-decision-id="SM-D9"><h3>D9 · Break-glass custody</h3><p><b>Options:</b> A sealed offline credential plus second factor, 2-hour window, automatic review card; B a standing admin key on the owner's machine; C no break-glass. <b>Recommend A.</b> B recreates today's standing authority; C leaves an outage of the control plane without a recorded path.</p></div>
+<div class="decision" id="d10" data-decision-id="SM-D10"><h3>D10 · Workflow permission on repository tokens</h3><p><b>Options:</b> A withheld by default, granted per attempt only when the card is marked as changing CI, with mandatory human review; B always granted (today); C never granted to agents. <b>Recommend A.</b> Workflow files run with repository secrets; changing them is a privilege escalation path that should be deliberate.</p></div>
+<div class="decision" id="d11" data-decision-id="SM-D11"><h3>D11 · Where the operator agent runs</h3><p><b>Options:</b> A own OS user or container on the owner's machine, without the owner's SSH agent, keys or credential files; B the owner's account with a restricted shell profile; C a separate operations machine. <b>Recommend A.</b> It removes the owner's keys from the agent's reach at no infrastructure cost; C remains open if several people operate.</p></div>
+</section>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation"><h2>Implementation</h2>
+<p>Thirteen bounded slices are defined in <a href="workbench.json">workbench.json</a>, ordered by stage. Each has a measurable acceptance target. This Dossier changes no product code.</p>
+<table>
+<thead><tr><th>Slice</th><th>Stage</th><th>Acceptance target</th></tr></thead>
+<tbody>
+<tr><td>SM-1 Operator agent identity and audit trail</td><td>0</td><td>100% of operator requests in a scripted session are attributed to the operator agent, none to the owner; a changed or deleted audit entry fails chain verification; entries reach the sink within 60 s.</td></tr>
+<tr><td>SM-2 Kill switch and operator sessions</td><td>0</td><td>After the kill switch every operator call is refused within 60 s; a per-session kill leaves other sessions working; drill recorded.</td></tr>
+<tr><td>SM-3 Access layer and deployment baseline</td><td>0</td><td>Site unreachable without the access layer's second factor; baseline check script passes; encrypted backup restored into a scratch installation.</td></tr>
+<tr><td>SM-4 Operation catalogue, tiers and standing grants</td><td>1</td><td>Every catalogued operation has a tier; uncovered T1 and every T2 request is refused with a typed reason; grants expire and revoke in tests.</td></tr>
+<tr><td>SM-5 Owner approval with step-up</td><td>1</td><td>A T2 request runs only after a digest-bound, single-use approval made with step-up; replay, changed parameters and expiry are refused.</td></tr>
+<tr><td>SM-6 Host operations without the owner's keys</td><td>1</td><td>Routine host work runs as typed operations; remaining shell access uses certificates of at most 60 minutes; no long-lived operator key on any host.</td></tr>
+<tr><td>SM-7 Break-glass window</td><td>1</td><td>Window opens only with sealed credential and second factor, closes after at most 2 hours, writes a separate stream and creates a review card.</td></tr>
+<tr><td>SM-8 Second factor and session management</td><td>1</td><td>Owner and Admin cannot sign in or step up without WebAuthn or TOTP; users list and revoke their sessions; new-session notice sent.</td></tr>
+<tr><td>SM-9 Bound and expiring runner credentials</td><td>1</td><td>A runner cannot read, claim or report work outside its projects and role; new credentials expire after 30 days by default.</td></tr>
+<tr><td>SM-10 Repository rules, pinned actions and continuous checks</td><td>1</td><td>Protected references refuse force push and non-platform updates; all actions pinned by digest; Quality Studio reports the posture on every release.</td></tr>
+<tr><td>SM-11 Per-attempt containment by default</td><td>2</td><td>A probe run cannot read host credentials, reach the runtime socket or a non-allowlisted address, or use a token after its lease.</td></tr>
+<tr><td>SM-12 Control plane separation and key placement</td><td>2</td><td>Control plane on its own host; GitHub App key and key-encryption key absent from the API data volume; takeover runbook rehearsed.</td></tr>
+<tr><td>SM-13 Customer isolation and verified releases</td><td>3</td><td>Each customer's work runs on its own host pool; deploys refuse an unsigned or unprovenanced release; external penetration test findings closed or accepted.</td></tr>
+</tbody></table>
+<ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+</ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

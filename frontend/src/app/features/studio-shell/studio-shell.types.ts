@@ -12,7 +12,7 @@
 export type StudioTabKind = 'board' | 'feed' | 'task' | 'hub' | 'workbenches' | 'workbench' | 'diff' | 'activity' | 'url-preview' | 'workspace-settings' | 'deployment-dashboard' | 'welcome';
 
 /** Sidebar panel kinds reachable from the ActivityBar. */
-export type StudioPanelKind = 'explorer' | 'filters' | 'cli' | 'activity' | 'runbook' | 'settings' | 'chats';
+export type StudioPanelKind = 'explorer' | 'filters' | 'cli' | 'activity' | 'settings' | 'chats';
 
 /** Board tab - one per project; key `board:<projectName>` or `board:__all__`. */
 export interface BoardTab { kind: 'board'; projectName: string; }

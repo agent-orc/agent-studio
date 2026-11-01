@@ -221,6 +221,7 @@ public static class RoutePermissionCatalog
         // (TaskServerPlaneProxy.MapTaskServerPlaneProxy).
         // The App key can reach every repository; connecting it is the Owner's.
         Add("*", IamPermissions.WorkspaceAdminister, "/api/v1/management/github-app", "/api/v1/management/github-app/**");
+        Add("GET", IamPermissions.WorkspaceAdminister, "/api/v1/management/credential-inventory");
         Add("*", IamPermissions.WorkspaceOperate, "/api/v1/management/**");
 
         // --- Environments and production approval --------------------------

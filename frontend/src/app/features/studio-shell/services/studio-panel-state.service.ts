@@ -1,5 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 import type { StudioPanelKind } from '../studio-shell.types';
+import type { StudioActivityMarkerOwner } from '../components/studio-activity-bar/studio-activity-bar.active-key';
 
 const PANEL_STATE_STORAGE_KEY = 'atp.studio.panelState.v1';
 const STUDIO_PANEL_KINDS = new Set<StudioPanelKind>([
@@ -7,7 +8,6 @@ const STUDIO_PANEL_KINDS = new Set<StudioPanelKind>([
   'filters',
   'cli',
   'activity',
-  'runbook',
   'settings',
   'chats',
 ]);
@@ -15,6 +15,8 @@ const STUDIO_PANEL_KINDS = new Set<StudioPanelKind>([
 interface StudioPanelPersistedState {
   active?: StudioPanelKind;
   visible?: boolean;
+  /** Which surface was activated last; drives the ActivityBar marker (AGT-3351). */
+  markerOwner?: StudioActivityMarkerOwner;
 }
 
 /**
@@ -29,6 +31,7 @@ export class StudioPanelStateService {
   private readonly initialState = readPanelState();
   private readonly _active = signal<StudioPanelKind>(this.initialState.active ?? 'explorer');
   private readonly _visible = signal<boolean>(this.initialState.visible ?? true);
+  private readonly _markerOwner = signal<StudioActivityMarkerOwner | undefined>(this.initialState.markerOwner);
   // Mockup default width is 240 px (`docs/mockups/vscode-layout/`).
   // The previous 280 px default was a holdover that made the editor
   // pane noticeably narrower than the mockup intended.
@@ -41,6 +44,8 @@ export class StudioPanelStateService {
 
   readonly active = this._active.asReadonly();
   readonly visible = this._visible.asReadonly();
+  /** `'panel'` once a sidebar panel was activated after the last editor activation. */
+  readonly markerOwner = this._markerOwner.asReadonly();
   readonly sidebarWidth = this._sidebarWidth.asReadonly();
   readonly activityBarSide = this._activityBarSide.asReadonly();
 
@@ -65,6 +70,7 @@ export class StudioPanelStateService {
     }
     this._active.set(panel);
     this._visible.set(true);
+    this._markerOwner.set('panel');
     this.persist();
     return true;
   }
@@ -72,6 +78,18 @@ export class StudioPanelStateService {
   open(panel: StudioPanelKind): void {
     this._active.set(panel);
     this._visible.set(true);
+    this._markerOwner.set('panel');
+    this.persist();
+  }
+
+  /**
+   * An editor tab was activated (tab strip, rail destination, …). The
+   * ActivityBar marker moves back to the main-area destination; the sidebar
+   * itself stays as it is.
+   */
+  noteEditorActivation(): void {
+    if (this._markerOwner() === 'editor') return;
+    this._markerOwner.set('editor');
     this.persist();
   }
 
@@ -95,6 +113,7 @@ export class StudioPanelStateService {
     writePanelState({
       active: this._active(),
       visible: this._visible(),
+      markerOwner: this._markerOwner(),
     });
   }
 }
@@ -116,9 +135,16 @@ function readPanelState(): StudioPanelPersistedState {
     // now a full editor tab). A persisted active:'settings' would land on the
     // "Panel not implemented" fallback, so fall back to the Explorer.
     if (active === 'settings') active = 'explorer';
+    // AGT-3351 migration: the Runbook sidebar panel was removed. A persisted
+    // active:'runbook' would land on the "Panel not implemented" fallback, so
+    // fall back to the Explorer.
+    if ((parsed.active as string) === 'runbook') active = 'explorer';
     return {
       active,
       visible: typeof parsed.visible === 'boolean' ? parsed.visible : undefined,
+      markerOwner: parsed.markerOwner === 'panel' || parsed.markerOwner === 'editor'
+        ? parsed.markerOwner
+        : undefined,
     };
   } catch {
     return {};

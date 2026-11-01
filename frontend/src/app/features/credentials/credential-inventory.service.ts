@@ -54,13 +54,13 @@ export class CredentialInventoryService {
   }
 
   load(): void {
-    // The local monolith has no Task Server credential inventory route.
+    // The public demo has no owner and nothing to list; every other profile answers this route.
     const profile = this.auth.status()?.profile;
     if (!profile) {
       this.waitingForProfile = true;
       return;
     }
-    if (profile && profile !== 'networked') {
+    if (profile !== 'networked' && profile !== 'local') {
       this.inventory.set(null);
       this.state.set('unsupported');
       return;

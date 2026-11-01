@@ -4,6 +4,8 @@ using AgentStudio.TaskServer.Contracts.GitHubApp;
 
 namespace AgentStudio.GitHubApp;
 
+public sealed record GitHubAppHostKey(string RunnerId, string Access);
+
 /// <summary>
 /// Which host may fetch repository tokens when the local profile has no service
 /// identities. The local API is reachable through the hosts' SSH tunnels, so a
@@ -28,6 +30,20 @@ public sealed class GitHubAppHostKeys(string securityFolder)
             if (CryptographicOperations.FixedTimeEquals(presented, stored)) return access;
         }
         return null;
+    }
+
+    /// <summary>Who holds a key, for the Credentials page. Hashes stay here.</summary>
+    public IReadOnlyList<GitHubAppHostKey> List()
+    {
+        if (!Directory.Exists(Folder)) return [];
+        var keys = new List<GitHubAppHostKey>();
+        foreach (var access in new[] { RepositoryAccess.Write, RepositoryAccess.Read })
+        {
+            var suffix = $".{access}.sha256";
+            foreach (var path in Directory.GetFiles(Folder, "*" + suffix))
+                keys.Add(new GitHubAppHostKey(Path.GetFileName(path)[..^suffix.Length], access));
+        }
+        return keys.OrderBy(key => key.RunnerId, StringComparer.Ordinal).ToArray();
     }
 
     private static bool ValidRunnerId(string runnerId)

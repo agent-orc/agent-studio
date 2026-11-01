@@ -14,6 +14,7 @@ release yet.
 
 ### Security
 
+- Settings > Credentials also works on an installation without a Task Server: it lists the GitHub App, covered repositories, host keys and tokens, the secret store's items, service identities, and the logins and Git access hosts report. Metadata only.
 - Settings > GitHub connects one GitHub App in the browser: registration, installation and an OAuth check that the installation is really yours. Coding, review and integration then get one-hour tokens for one repository each, so nobody copies a personal access token. Review hosts only ever get read tokens; the private key stays in the secret provider and no workload can resolve it. See `docs/operations/setup/github-app.md`.
 - A local Studio whose hosts reach it through SSH tunnels can give the browser path its own port (`OPERATOR_PORT`). Routes that decide who may reach which repository or secret then answer only there, and they refuse a page from another origin on every port.
 

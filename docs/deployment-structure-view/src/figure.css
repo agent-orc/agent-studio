@@ -1,0 +1,65 @@
+    .ds-svg { display: block; font-family: var(--article-sans); }
+    .ds-svg text { fill: var(--article-ink); }
+    .ds-boundary > .ds-box { fill: none; stroke: var(--article-ink); stroke-width: 1.6; stroke-dasharray: 9 5; }
+    .ds-environment > .ds-box { fill: var(--article-surface); stroke: none; }
+    .ds-location > .ds-box { fill: none; stroke: var(--article-line); stroke-width: 1.2; }
+    .ds-host > .ds-box, .ds-server > .ds-box, .ds-vm > .ds-box, .ds-cluster > .ds-box, .ds-registry > .ds-box, .ds-project > .ds-box { fill: var(--article-paper); stroke: var(--article-muted); stroke-width: 1.3; }
+    .ds-namespace > .ds-box, .ds-group > .ds-box { fill: var(--article-surface); stroke: none; }
+    .ds-collapsed > .ds-box { fill: var(--article-paper); stroke: var(--article-muted); stroke-width: 1.3; }
+    .ds-inset { fill: none; stroke: var(--article-line); stroke-width: 1; }
+    .ds-stack { fill: var(--article-line); }
+    .ds-container > .ds-shape { fill: var(--article-link-soft); stroke: color-mix(in srgb, var(--article-link) 70%, var(--article-line)); stroke-width: 1.2; }
+    .ds-process > .ds-shape { fill: var(--article-surface-strong); stroke: var(--article-muted); stroke-width: 1; }
+    .ds-store > .ds-shape, .ds-store > .ds-shape-line { fill: var(--article-surface); stroke: var(--article-muted); stroke-width: 1.1; }
+    .ds-managed > .ds-shape, .ds-managed > .ds-shape-line { fill: var(--article-paper); stroke: var(--article-muted); stroke-width: 1.1; }
+    .ds-store > .ds-shape-line, .ds-managed > .ds-shape-line, .ds-package > .ds-shape-line { fill: none; }
+    .ds-external > .ds-shape { fill: none; stroke: var(--article-faint); stroke-width: 1.1; stroke-dasharray: 4 3; }
+    .ds-package > .ds-shape, .ds-package > .ds-shape-line { fill: var(--article-paper); stroke: var(--article-muted); stroke-width: 1.1; }
+    .ds-artifact > .ds-shape { fill: var(--article-surface); stroke: var(--article-muted); stroke-width: 1.1; }
+    .ds-declared > .ds-shape, .ds-declared > .ds-shape-line, .ds-declared > .ds-box { stroke-dasharray: 5 4; }
+    .ds-undeclared > .ds-shape, .ds-undeclared > .ds-box { fill: url(#ds-hatch); }
+    .ds-ghost { opacity: 0.45; }
+    .ds-faded { opacity: 0.32; }
+    .ds-label { font-size: 12.5px; font-weight: 600; }
+    .ds-rep { font-weight: 700; fill: var(--article-muted); }
+    .ds-sub { font-size: 11px; fill: var(--article-muted) !important; }
+    .ds-glabel { font-size: 13px; font-weight: 650; }
+    .ds-kind { font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; fill: var(--article-faint) !important; }
+    .ds-outside-label { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; fill: var(--article-faint) !important; }
+    .ds-summary { font-size: 11px; fill: var(--article-muted) !important; }
+    .ds-summary-attn { fill: var(--article-warn) !important; font-weight: 600; }
+    .ds-toggle { font-size: 10px; fill: var(--article-link) !important; }
+    .ds-chip rect { fill: var(--article-surface-strong); }
+    .ds-chip text { font: 10px var(--article-mono); fill: var(--article-muted) !important; }
+    .ds-chip-warn rect { fill: var(--article-warn-soft); stroke: color-mix(in srgb, var(--article-warn) 40%, transparent); }
+    .ds-chip-warn text { fill: var(--article-warn) !important; }
+    .ds-st path { fill: none; stroke: var(--article-paper); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .ds-st-ok circle { fill: var(--article-good); }
+    .ds-st-warn .ds-st-shape { fill: var(--article-warn); stroke: none; }
+    .ds-st-down rect { fill: var(--article-bad); }
+    .ds-st-unknown circle { fill: var(--article-paper); stroke: var(--article-faint); stroke-width: 1.2; }
+    .ds-st-unknown path { stroke: var(--article-faint); stroke-width: 1.3; }
+    .ds-icon * { fill: none; stroke: var(--article-muted); stroke-width: 1.2; }
+    .ds-link-halo { fill: none; stroke: var(--article-paper); stroke-width: 5; stroke-linejoin: round; }
+    .ds-link { fill: none; stroke: var(--article-muted); stroke-width: 1.4; stroke-linejoin: round; }
+    .ds-link-tunnel { stroke: var(--article-link); stroke-dasharray: 8 4; }
+    .ds-link-ssh { stroke: var(--article-link); stroke-dasharray: 2 3; stroke-width: 1.8; }
+    .ds-link-artifact, .ds-link-publish { stroke: var(--article-ink); stroke-dasharray: 0.5 4; stroke-width: 2.2; stroke-linecap: round; }
+    .ds-link-consume { stroke: var(--article-faint); }
+    .ds-arrow-head { fill: var(--article-muted); }
+    .ds-hatch-line { stroke: var(--article-line); stroke-width: 1.2; }
+    .ds-hatch-bg { fill: var(--article-paper); }
+    .ds-link-label rect { fill: var(--article-paper); opacity: 0.92; }
+    .ds-link-label text { font-size: 10.5px; fill: var(--article-muted) !important; }
+    .ds-svg [tabindex] { cursor: pointer; outline: none; }
+    .ds-svg [tabindex]:focus-visible > .ds-box, .ds-svg [tabindex]:focus-visible > .ds-shape { stroke: var(--article-link); stroke-width: 2.6; }
+    .ds-link-key circle { fill: var(--article-paper); stroke: var(--article-link); stroke-width: 1.3; }
+    .ds-link-key text { font-size: 10px; font-weight: 700; fill: var(--article-link) !important; }
+    .ds-key-text { font-size: 11px; fill: var(--article-muted) !important; }
+    .model-svg { display: block; width: 100%; height: auto; font-family: var(--article-sans); }
+    .model-svg .mdl rect { fill: var(--article-surface); stroke: var(--article-line); stroke-width: 1.2; }
+    .model-svg .mdl rect.focus { fill: var(--article-link-soft); stroke: var(--article-link); }
+    .model-svg .mdl rect.facts { fill: var(--article-paper); stroke: var(--article-muted); stroke-dasharray: 5 4; }
+    .model-svg .mdl text { font-size: 12px; fill: var(--article-muted); }
+    .model-svg .mdl text.h { font-size: 13px; font-weight: 650; fill: var(--article-ink); }
+    .model-svg .mdl .edge, .model-svg .mdl .loop { fill: none; stroke: var(--article-muted); stroke-width: 1.3; }

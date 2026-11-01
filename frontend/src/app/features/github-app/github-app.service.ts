@@ -232,7 +232,7 @@ export class GitHubAppService {
 
   private fail(failure: unknown): void {
     const body = failure instanceof HttpErrorResponse ? (failure.error as { message?: unknown } | null) : null;
-    this.error.set(typeof body?.message === 'string' ? body.message : 'GitHub could not be reached through Studio.');
+    this.error.set(typeof body?.message === 'string' ? body.message : 'Studio could not finish this step. Its log has the details.');
   }
 
   private origin(): string {

@@ -37,9 +37,21 @@ describe('CredentialInventoryService', () => {
     http.verify();
   });
 
-  it('does not request Task Server inventory in the local profile', () => {
+  it('requests the inventory in the local profile', () => {
     TestBed.inject(AuthSessionState).status.set({
       profile: 'local', bootstrapRequired: false, authenticated: false,
+    });
+    const service = TestBed.inject(CredentialInventoryService);
+    const http = TestBed.inject(HttpTestingController);
+    service.load();
+    http.expectOne('/api/v1/management/credential-inventory').flush({ generatedAt: '2026-11-01T00:00:00Z', items: [] });
+    expect(service.state()).toBe('ready');
+    http.verify();
+  });
+
+  it('does not request the inventory in the public demo', () => {
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'public-demo-readonly', bootstrapRequired: false, authenticated: false,
     });
     const service = TestBed.inject(CredentialInventoryService);
     const http = TestBed.inject(HttpTestingController);
@@ -57,7 +69,7 @@ describe('CredentialInventoryService', () => {
     const http = TestBed.inject(HttpTestingController);
     service.ensureLoaded();
     http.expectNone('/api/v1/management/credential-inventory');
-    auth.status.set({ profile: 'local', bootstrapRequired: false, authenticated: false });
+    auth.status.set({ profile: 'public-demo-readonly', bootstrapRequired: false, authenticated: false });
     TestBed.tick();
     http.expectNone('/api/v1/management/credential-inventory');
     expect(service.state()).toBe('unsupported');

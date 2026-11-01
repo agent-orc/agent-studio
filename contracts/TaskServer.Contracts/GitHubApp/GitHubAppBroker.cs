@@ -371,11 +371,21 @@ public sealed class GitHubAppBroker
         try
         {
             if (await _vault.LoadConnectionAsync(ct) is not null) throw AlreadyConnected();
-            await _vault.WriteSecretsAsync(conversion.Secrets, actor, ct);
             connection = new GitHubAppConnection(
                 conversion.AppId, conversion.Slug, conversion.Name, conversion.ClientId, conversion.OwnerLogin,
                 conversion.HtmlUrl, Now, actor, conversion.WritePermissions, []);
-            await _vault.SaveConnectionAsync(connection, ct);
+            try
+            {
+                await _vault.WriteSecretsAsync(conversion.Secrets, actor, ct);
+                await _vault.SaveConnectionAsync(connection, ct);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // The App now exists at GitHub and the key cannot be asked for again, so name what to remove.
+                throw new GitHubAppException("registration-not-saved",
+                    $"GitHub created the App {conversion.Name}, but Studio could not save it: {exception.Message} "
+                    + $"Delete the App at {conversion.HtmlUrl} and connect again.", 500);
+            }
             ForgetCaches();
         }
         finally { _connectionWrites.Release(); }
