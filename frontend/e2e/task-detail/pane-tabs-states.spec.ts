@@ -77,7 +77,18 @@ test.describe('F38: pane-tab indicator states', () => {
         await page.evaluate(value => localStorage.setItem('atp.studio.theme', value), theme);
         await page.reload();
         await expect(activity).toBeVisible();
-        await activity.locator('..').screenshot({ path: join(output, `pane-tabs-pill-${theme}--real.png`), animations: 'disabled' });
+        // The app currently mounts this tablist in its header variant. Apply
+        // the pill variant classes to the same tablist to review the shared
+        // track and thumb while retaining its role="tablist" contract.
+        const tablist = activity.locator('..');
+        await expect(tablist).toHaveAttribute('role', 'tablist');
+        await tablist.evaluate(element => {
+          element.classList.remove('pane-tabs--header');
+          element.classList.add('pane-tabs--pill');
+          element.closest('app-pane-tabs')?.classList.remove('pane-tabs-host--header');
+        });
+        await expect(tablist).toHaveClass(/pane-tabs--pill/);
+        await tablist.screenshot({ path: join(output, `pane-tabs-pill-${theme}--real.png`), animations: 'disabled' });
       }
     } finally {
       await api(`/api/tasks/${encodeURIComponent(job.id)}?watchPath=${encodeURIComponent(watchPath)}`, { method: 'DELETE' });
