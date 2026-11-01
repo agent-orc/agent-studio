@@ -44,8 +44,12 @@ COPY scripts/monolith-seed-cli-auth.sh /usr/local/bin/monolith-seed-cli-auth.sh
 ENV ASPNETCORE_URLS=http://0.0.0.0:5031 \
     TaskRepository=/data/workspace
 # /data/workspace: task repository (cards, metadata). /data/projects: project checkouts.
-RUN mkdir -p /data/workspace /data/projects /data/home && chown -R agentstudio:agentstudio /app /data
-VOLUME ["/data/workspace", "/data/projects"]
+# /data/home: HOME of agentstudio. Its .local/share holds machine-local state
+# (batch gates, gate result cache, quota and routing state); the API creates it
+# at startup and refuses to start when it cannot. Mount /data/home from the
+# data volume so that state survives a container recreate.
+RUN mkdir -p /data/workspace /data/projects /data/home/.local/share && chown -R agentstudio:agentstudio /app /data
+VOLUME ["/data/workspace", "/data/projects", "/data/home"]
 EXPOSE 5031
 USER agentstudio
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=24 \

@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
 
 namespace AgentStudio.TaskServer;
@@ -267,9 +268,7 @@ public sealed class TaskServerBootstrapOptions
     {
         if (!string.Equals(path, "user-data", StringComparison.OrdinalIgnoreCase))
             return ResolvePath(path);
-        var userData = Environment.GetFolderPath(
-            Environment.SpecialFolder.LocalApplicationData);
-        return Path.Combine(userData, "AgentStudio", "task-server");
+        return LocalStateRoot.Combine("AgentStudio", "task-server");
     }
 
     private static string First(params string?[] values)

@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.TaskServer;
 
 public sealed class TaskServerOptions
@@ -103,10 +105,7 @@ public sealed class TaskServerOptions
     public string ResolveDataDirectory()
     {
         if (string.Equals(DataDirectory, "user-data", StringComparison.OrdinalIgnoreCase))
-        {
-            var userData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return Path.Combine(userData, "AgentStudio", "task-server");
-        }
+            return LocalStateRoot.Combine("AgentStudio", "task-server");
         return Path.GetFullPath(Path.IsPathRooted(DataDirectory)
             ? DataDirectory
             : Path.Combine(AppContext.BaseDirectory, DataDirectory));

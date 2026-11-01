@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -206,7 +207,7 @@ public sealed class CliQuotaFallbackService
     {
         var root = _config["TaskRepository"];
         if (string.IsNullOrWhiteSpace(root))
-            root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "agent-taskboard");
+            root = LocalStateRoot.Combine("agent-taskboard");
         return Path.Combine(root, FileName);
     }
 

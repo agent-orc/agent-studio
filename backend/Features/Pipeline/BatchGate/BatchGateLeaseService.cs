@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -22,8 +23,7 @@ public sealed class BatchGateLeaseService
 
     public BatchGateLeaseService(string? root = null, Func<DateTimeOffset>? now = null)
     {
-        var data = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        _root = root ?? Path.Combine(data, "agentstudio", "batch-gate-leases");
+        _root = root ?? LocalStateRoot.Combine("agentstudio", "batch-gate-leases");
         _now = now ?? (() => DateTimeOffset.UtcNow);
     }
 

@@ -170,6 +170,14 @@ A full restore requires maintenance mode and a stopped writer; follow the
 then run `backup restore-full <backup-id>` in the Task Server container. Keep an
 off-host copy of the backup volume for host-loss recovery.
 
+The Task Server backup covers the Task Server store only. The API keeps its
+local state (batch gate store and leases, gate result cache, quota and routing
+state) below `/data/home/.local/share` in the `agent-studio_api-home` volume,
+and the Task Server keeps its service account home in
+`agent-studio_task-server-home`. Include both volumes in the off-host copy. Stop
+the services first. The API refuses to start if it cannot create its local
+state folder, so the state never falls back into the container layer.
+
 Inspect health and bounded service logs with:
 
 ```sh
