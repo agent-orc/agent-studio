@@ -34,13 +34,7 @@
         </button>
         <span class="swp__spacer"></span>
         <span class="swp__label" id="branch-sweep-mode-label">Mode</span>
-        <div class="swp__modes" role="group" aria-labelledby="branch-sweep-mode-label">
-          <button type="button" class="swp__mode" [class.swp__mode--on]="mode() === 'report-only'"
-                  [disabled]="busy()" (click)="setMode('report-only')">report-only</button>
-          <button type="button" class="swp__mode" [class.swp__mode--on]="mode() === 'reclaim'"
-                  [disabled]="busy()" (click)="setMode('reclaim')"
-                  data-testid="branch-sweep-mode-reclaim">reclaim</button>
-        </div>
+        <app-segmented-control [disabled]="busy()" [options]="modeOptions" [value]="mode()" ariaLabel="Sweep mode" (valueChange)="setMode($event)" />
       </div>
 
       @if (reportError()) {

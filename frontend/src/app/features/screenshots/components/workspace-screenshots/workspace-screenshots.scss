@@ -39,27 +39,6 @@
   flex-wrap: wrap;
 }
 
-.wss__win {
-  display: inline-flex;
-  gap: 0;
-  border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.wss__win-btn {
-  background: transparent;
-  border: 0;
-  color: var(--studio-fg);
-  font: inherit;
-  font-size: 0.84rem;
-  padding: 6px 10px;
-  cursor: pointer;
-
-  &--active { background: color-mix(in srgb, var(--studio-accent-3) 25%, transparent); }
-  &:hover { background: color-mix(in srgb, var(--studio-accent-3) 15%, transparent); }
-}
-
 .wss__project {
   background: var(--studio-bg-hover);
   border: 1px solid var(--studio-border-strong);

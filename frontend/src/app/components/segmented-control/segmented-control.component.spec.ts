@@ -56,25 +56,14 @@ describe('SegmentedControlComponent', () => {
     expect(emitted).toEqual(['dark']);
   });
 
-  it('defaults to the accent appearance (no subtle modifier) so Settings stay untouched', () => {
+  it('renders one track and preserves optional tooltips', () => {
     const fixture = setup('light');
-    const group = fixture.nativeElement.querySelector('.segmented');
-    expect(group.classList.contains('segmented--subtle')).toBe(false);
-    // Icon-less options render pure text buttons — no icon span, no icon class.
-    expect(group.querySelector('.segmented__icon')).toBeNull();
-    expect(group.querySelector('.segmented__option--with-icon')).toBeNull();
-  });
-
-  it('renders the subtle appearance without the accent styling hook', () => {
-    const fixture = setup('light');
-    fixture.componentRef.setInput('appearance', 'subtle');
+    fixture.componentRef.setInput('options', [
+      { value: 'dark', label: 'Dark', tooltip: 'Use dark colours' },
+      { value: 'light', label: 'Light' },
+    ]);
     fixture.detectChanges();
-    const group = fixture.nativeElement.querySelector('.segmented');
-    expect(group.classList.contains('segmented--subtle')).toBe(true);
-    // Selection contract is appearance-independent.
-    const light = fixture.nativeElement.querySelector('[data-testid="opt-light"]');
-    expect(light.getAttribute('aria-pressed')).toBe('true');
-    expect(light.classList.contains('segmented__option--active')).toBe(true);
+    expect(fixture.nativeElement.querySelector('button[title]')?.title).toBe('Use dark colours');
   });
 
   it('renders a studio icon only for options that declare one', () => {

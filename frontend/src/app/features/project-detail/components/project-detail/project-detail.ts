@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TaskService } from '../../../../services/task.service';
@@ -75,7 +76,7 @@ export type ProjectDetailView =
 @Component({
   selector: 'app-project-detail',
   standalone: true,
-  imports: [
+  imports: [SegmentedControlComponent,
     FormsModule,
     TokenSummaryBlockComponent,
     GlobalOrchestratorCardComponent,
@@ -265,6 +266,8 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
       isDefault: true
     }
   ];
+  readonly segmentedModes = this.modes.map(m => ({ value: m.id, label: m.label, tooltip: m.tooltip, testid: 'project-detail-mode-' + m.id }));
+  readonly segmentedAutoPushOptions = this.autoPushOptions.map(opt => ({ value: opt.id, label: opt.label + (opt.isDefault ? ' (default)' : ''), tooltip: opt.tooltip, testid: 'project-detail-auto-push-' + opt.id }));
 
   readonly effectiveMode = computed(() => {
     const status = this.runnerStatus();

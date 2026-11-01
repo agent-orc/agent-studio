@@ -11,10 +11,10 @@ import { StudioIconComponent, StudioIconName } from '../studio-icon/studio-icon.
  * One choice in a {@link SegmentedControlComponent}.
  *
  * The control is data-driven (vs. content projection per option) so every
- * caller hands it an array and the visual chrome — active fill, dimmed
+ * caller hands it an array and the visual chrome: raised thumb, dimmed
  * inactive, hover, focus ring — stays identical across surfaces.
  */
-export interface SegmentedOption<T extends string = string> {
+export interface SegmentedOption<T extends string | number = string> {
   /** Stable value emitted via `valueChange` and compared against `value`. */
   readonly value: T;
   /** User-facing label rendered in the segment. */
@@ -25,15 +25,9 @@ export interface SegmentedOption<T extends string = string> {
   readonly testid?: string;
   /** Disables this one segment but keeps it in the strip. */
   readonly disabled?: boolean;
+  /** Optional native tooltip for a choice. */
+  readonly tooltip?: string;
 }
-
-/**
- * Visual weight of the control. `accent` is the original loud variant (active
- * option fills with the brand accent — Settings toggles); `subtle` is a quiet
- * bordered container whose active option only lifts to a muted surface fill,
- * for in-content toolbars where the accent would shout (wiki search tree|list).
- */
-export type SegmentedAppearance = 'accent' | 'subtle';
 
 /**
  * Shared two-or-more option segmented control (single-select toggle).
@@ -42,7 +36,7 @@ export type SegmentedAppearance = 'accent' | 'subtle';
  * Activity bar Left|Right) and any future "pick one of N" control that
  * wants the same look. Renders a `role="group"` container with one
  * `<button>` per option; the selected option carries `aria-pressed="true"`
- * and a filled accent, the rest stay dimmed — so the active choice reads
+ * and a raised thumb, the rest stay dimmed, so the active choice reads
  * at a glance in both light and dark themes.
  */
 @Component({
@@ -54,22 +48,22 @@ export type SegmentedAppearance = 'accent' | 'subtle';
   templateUrl: './segmented-control.component.html',
   styleUrl: './segmented-control.component.scss',
 })
-export class SegmentedControlComponent<T extends string = string> {
+export class SegmentedControlComponent<T extends string | number = string> {
   readonly options = input.required<readonly SegmentedOption<T>[]>();
   readonly value = input.required<T>();
   /** Accessible name for the whole group (e.g. "Theme", "Activity bar"). */
   readonly ariaLabel = input<string | null>(null);
-  /** Visual variant; the default keeps existing callers pixel-identical. */
-  readonly appearance = input<SegmentedAppearance>('accent');
+  /** Disables the full choice group during an operation. */
+  readonly disabled = input(false);
 
   readonly valueChange = output<T>();
 
-  trackOption(_index: number, option: SegmentedOption<T>): string {
+  trackOption(_index: number, option: SegmentedOption<T>): string | number {
     return option.value;
   }
 
   select(option: SegmentedOption<T>): void {
-    if (option.disabled) return;
+    if (this.disabled() || option.disabled) return;
     if (option.value === this.value()) return;
     this.valueChange.emit(option.value);
   }

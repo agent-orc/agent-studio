@@ -4,13 +4,7 @@
       <h3>Budget load distribution</h3>
       <p>Quota pressure, captured token history, and routing decisions in one operational view.</p>
     </div>
-    <div class="load__periods" role="group" aria-label="Usage period">
-      @for (item of periods; track item.id) {
-        <button type="button" [class.load__period--active]="period() === item.id"
-                [attr.aria-pressed]="period() === item.id" (click)="selectPeriod(item.id)"
-                [attr.data-testid]="'load-period-' + item.id">{{ item.label }}</button>
-      }
-    </div>
+    <app-segmented-control [options]="segmentedPeriods" [value]="period()" ariaLabel="Usage period" (valueChange)="selectPeriod($event)" />
   </header>
 
   <div class="load__summary">
@@ -60,9 +54,7 @@
 
     <section class="load__section load__decisions" data-testid="load-decision-stream">
       <div class="load__section-head"><div><h4>Decision stream</h4><p>AGT-2055 budget actions with the recorded rationale.</p></div></div>
-      <div class="load__decision-filters" role="group" aria-label="Decision type">
-        @for (kind of decisionKinds; track kind) { <button type="button" [class.load__decision-filter--active]="decisionFilter() === kind" (click)="decisionFilter.set(kind)">{{ kind }}</button> }
-      </div>
+      <app-segmented-control [options]="segmentedDecisionKinds" [value]="decisionFilter()" ariaLabel="Decision type" (valueChange)="decisionFilter.set($event)" />
       <div class="load__decision-list">
         @for (entry of decisions(); track entry.ts + entry.summary) {
           <button type="button" class="load__decision" (click)="openTask(entry)" [disabled]="!entry.jobId || !entry.watchPath">

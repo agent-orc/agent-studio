@@ -7,13 +7,6 @@ h3, h4, p { margin: 0; }
 h3 { color: var(--studio-fg-strong); font-size: 17px; }
 h4 { color: var(--studio-fg-strong); font-size: 13px; }
 .load__toolbar p, .load__section-head p, .load__disclaimer { color: var(--studio-fg-dim); font-size: 11px; }
-.load__periods, .load__decision-filters { display: flex; gap: var(--studio-spacing-1); }
-.load__periods button, .load__decision-filters button {
-  border: 1px solid var(--studio-border); border-radius: 5px; padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  color: var(--studio-fg-dim); background: transparent; cursor: pointer; font: inherit; font-size: 11px; text-transform: capitalize;
-}
-.load__periods button:hover, .load__decision-filters button:hover { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
-.load__periods .load__period--active, .load__decision-filters .load__decision-filter--active { background: var(--studio-bg-selected); color: var(--studio-fg-strong); font-weight: 650; }
 .load__summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--studio-spacing-2); }
 .load__summary article, .load__section { border: 1px solid var(--studio-border); border-radius: 8px; background: var(--studio-bg-editor); }
 .load__summary article { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding: var(--studio-spacing-3); }
@@ -46,7 +39,6 @@ h4 { color: var(--studio-fg-strong); font-size: 13px; }
 .load__effort span:nth-child(3n + 2) { background: var(--studio-accent-warn); }
 .load__effort span:nth-child(3n) { background: var(--studio-accent-5); }
 .load__model footer { padding-top: var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: 10px; }
-.load__decision-filters { margin-bottom: var(--studio-spacing-2); flex-wrap: wrap; }
 .load__decision-list { display: flex; flex-direction: column; gap: var(--studio-spacing-2); max-height: 370px; overflow: auto; }
 .load__decision { display: grid; grid-template-columns: auto 1fr; gap: var(--studio-spacing-1) var(--studio-spacing-2); padding: var(--studio-spacing-2); text-align: left; border: 1px solid var(--studio-border); border-radius: 6px; background: transparent; color: var(--studio-fg); font: inherit; cursor: pointer; }
 .load__decision:hover:not(:disabled) { background: var(--studio-bg-hover); }

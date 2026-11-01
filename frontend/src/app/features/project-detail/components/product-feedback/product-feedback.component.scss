@@ -26,12 +26,10 @@
   &__status { display: flex; gap: var(--studio-spacing-2); flex-wrap: wrap; align-items: baseline; }
   &__status strong { color: var(--studio-accent); }
   &__status span, &__hint { color: var(--studio-fg-dim); }
-  &__shots { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
   &__comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--studio-spacing-2); }
   &__comparison figure { min-width: 0; margin: 0; }
   &__comparison img { display: block; width: 100%; height: auto; }
   &__comparison figcaption { color: var(--studio-fg-dim); }
-  &__shots button[aria-pressed='true'] { border-color: var(--studio-accent); background: var(--studio-bg-hover); }
   &__image-wrap { position: relative; width: min(100%, 600px); }
   &__image-wrap img { display: block; width: 100%; height: auto; touch-action: none; cursor: crosshair; }
   &__selection { position: absolute; pointer-events: none; border: 2px solid var(--studio-accent);

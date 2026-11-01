@@ -201,24 +201,6 @@
 }
 .proj-detail__hint--inline { margin: 0 0 0 8px; }
 
-.proj-detail__modes { display: flex; flex-wrap: wrap; gap: 6px; }
-.proj-detail__mode {
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--studio-card-muted-border);
-  background: var(--studio-card-muted-bg);
-  color: var(--studio-fg-dim);
-  font-size: 0.80rem;
-  cursor: pointer;
-}
-.proj-detail__mode:hover { color: var(--studio-fg); border-color: var(--studio-card-border-hover); }
-.proj-detail__mode--active {
-  background: var(--severity-info);
-  color: var(--studio-bg-editor);
-  border-color: var(--severity-info);
-  font-weight: 600;
-}
-
 .proj-detail__model-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 
 .proj-detail__model-select {
@@ -362,45 +344,6 @@
   background: var(--studio-card-muted-bg);
   padding: 1px 4px;
   border-radius: 3px;
-}
-
-.proj-detail__push-options {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
-  gap: 8px;
-}
-.proj-detail__push-option {
-  min-width: 0;
-  min-height: 42px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--studio-card-muted-border);
-  border-radius: 6px;
-  background: var(--studio-card-muted-bg);
-  color: var(--studio-fg);
-  font: inherit;
-  font-size: 0.83rem;
-  cursor: pointer;
-  text-align: left;
-}
-.proj-detail__push-option:hover {
-  border-color: color-mix(in srgb, var(--severity-info) 48%, transparent);
-  background: color-mix(in srgb, var(--severity-info) 10%, transparent);
-}
-.proj-detail__push-option--active {
-  border-color: var(--studio-accent-teal);
-  background: color-mix(in srgb, var(--studio-accent-teal) 16%, transparent);
-  color: var(--studio-fg-strong);
-  font-weight: 600;
-}
-.proj-detail__push-option small {
-  flex: 0 0 auto;
-  color: var(--studio-accent-teal);
-  font-size: 0.68rem;
-  font-weight: 600;
 }
 
 /* Queue-health summary strip. Healthy is the quiet default panel; the

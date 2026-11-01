@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -62,7 +63,7 @@ interface BucketSegment {
 @Component({
   selector: 'app-workspace-token-timeline',
   standalone: true,
-  imports: [BetterCandidateUsageReportComponent, WorkspaceTokenModelTableComponent],
+  imports: [SegmentedControlComponent, BetterCandidateUsageReportComponent, WorkspaceTokenModelTableComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-token-timeline.html',
   styleUrl: './workspace-token-timeline.scss'
@@ -85,6 +86,7 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
     { hours: 24,  label: '24h', testId: '24h' },
     { hours: 168, label: '7d',  testId: '7d' },
   ];
+  readonly segmentedWindowOptions = this.windowOptions.map(opt => ({ value: opt.hours, label: opt.label, testid: 'wtt-win-' + opt.testId }));
 
   readonly windowHours = signal<WindowHours>(this.readSavedWindow());
   readonly bucketMinutes = computed<number>(() => {

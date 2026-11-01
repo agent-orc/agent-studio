@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -32,12 +33,13 @@ export const WATCHER_DECISION_TOPIC = 'watcher-decision-required';
 @Component({
   selector: 'app-orchestrator-feed',
   standalone: true,
-  imports: [FormsModule, CredentialAlertsComponent, GlobalOrchestratorCardComponent, LoadDistributionComponent, OrchestratorFeedEntryComponent, TooltipDirective, WatcherDecisionPanelComponent],
+  imports: [SegmentedControlComponent, FormsModule, CredentialAlertsComponent, GlobalOrchestratorCardComponent, LoadDistributionComponent, OrchestratorFeedEntryComponent, TooltipDirective, WatcherDecisionPanelComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-feed.html',
   styleUrl: './orchestrator-feed.scss'
 })
 export class OrchestratorFeedComponent {
+  readonly viewOptions = [{ value: 'activity', label: 'Activity', testid: 'orchestrator-view-activity' }, { value: 'load', label: 'Load distribution', testid: 'orchestrator-view-load' }] as const;
   readonly projectName = input.required<string>();
   readonly embedded = input(false);
   readonly openTask = output<{ jobId: string; watchPath: string }>();

@@ -2,15 +2,7 @@
   @if (view() === 'jobs') {
     <section class="proj-detail__group">
       <h3>Runner mode</h3>
-      <div class="proj-detail__modes">
-        @for (m of modes; track m.id) {
-          <button class="proj-detail__mode"
-                  [class.proj-detail__mode--active]="effectiveMode() === m.id"
-                  [attr.data-testid]="'project-detail-mode-' + m.id"
-                  [cacTooltip]="m.tooltip"
-                  (click)="setMode(m.id)">{{ m.label }}</button>
-        }
-      </div>
+      <app-segmented-control [options]="segmentedModes" [value]="effectiveMode()" ariaLabel="Runner mode" (valueChange)="setMode($event)" />
       <p class="proj-detail__hint">{{ modeHint() }}</p>
     </section>
 
@@ -174,22 +166,7 @@
 
     <section class="proj-detail__group">
       <h3>Auto-push</h3>
-      <div class="proj-detail__push-options" data-testid="project-detail-auto-push">
-        @for (opt of autoPushOptions; track opt.id) {
-          <button type="button"
-                  class="proj-detail__push-option"
-                  [class.proj-detail__push-option--active]="autoPushStrategyDraft === opt.id"
-                  [cacTooltip]="opt.tooltip"
-                  [attr.aria-pressed]="autoPushStrategyDraft === opt.id"
-                  [attr.data-testid]="'project-detail-auto-push-' + opt.id"
-                  (click)="setAutoPushStrategy(opt.id)">
-            <span>{{ opt.label }}</span>
-            @if (opt.isDefault) {
-              <small>Default</small>
-            }
-          </button>
-        }
-      </div>
+      <app-segmented-control data-testid="project-detail-auto-push" [options]="segmentedAutoPushOptions" [value]="autoPushStrategyDraft" ariaLabel="Auto-push" (valueChange)="setAutoPushStrategy($event)" />
       <p class="proj-detail__hint">
         Completed pushes use <code>git push origin &lt;sha&gt;:refs/heads/main</code> and never force-push. Immediate mode also pushes after auto-commit, before final review.
       </p>

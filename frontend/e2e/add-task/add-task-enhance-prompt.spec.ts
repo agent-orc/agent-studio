@@ -123,7 +123,7 @@ test.describe('Add Task - Enhance prompt button', () => {
 
     // Lane defaults to Ready post-Enhance (was Preparation).
     const readyLane = page.getByTestId('create-lane-2-ready');
-    await expect(readyLane).toHaveClass(/create-lane-picker__btn--active/);
+    await expect(readyLane).toHaveAttribute('aria-pressed', 'true');
 
     const afterBuf = await dialog.screenshot();
     await testInfo.attach('enhance-after', { body: afterBuf, contentType: 'image/png' });
@@ -229,18 +229,18 @@ test.describe('Add Task - Lane selector', () => {
     const ready = page.getByTestId('create-lane-2-ready');
 
     // Default open lands on Preparation.
-    await expect(prep).toHaveClass(/create-lane-picker__btn--active/);
-    await expect(backlog).not.toHaveClass(/create-lane-picker__btn--active/);
-    await expect(ready).not.toHaveClass(/create-lane-picker__btn--active/);
+    await expect(prep).toHaveAttribute('aria-pressed', 'true');
+    await expect(backlog).toHaveAttribute('aria-pressed', 'false');
+    await expect(ready).toHaveAttribute('aria-pressed', 'false');
 
     // Switch to Backlog and confirm header updates.
     await backlog.click();
-    await expect(backlog).toHaveClass(/create-lane-picker__btn--active/);
+    await expect(backlog).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByTestId('create-dialog-header')).toContainText(/Backlog/i);
 
     // Switch to Ready and confirm header again.
     await ready.click();
-    await expect(ready).toHaveClass(/create-lane-picker__btn--active/);
+    await expect(ready).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByTestId('create-dialog-header')).toContainText(/Ready/i);
   });
 

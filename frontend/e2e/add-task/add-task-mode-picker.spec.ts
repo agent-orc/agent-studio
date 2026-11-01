@@ -47,7 +47,7 @@ test.describe('Add Task - mode picker', () => {
     const webToggle = page.getByTestId('create-web-access');
 
     // Default: coding active, web access off.
-    await expect(coding).toHaveClass(/create-type-picker__btn--active/);
+    await expect(coding).toHaveAttribute('aria-pressed', 'true');
     await expect(webToggle).toHaveAttribute('aria-checked', 'false');
 
     const codingPath = test.info().outputPath('mode-picker-coding-default.png');
@@ -56,7 +56,7 @@ test.describe('Add Task - mode picker', () => {
 
     // Research turns web access on by default.
     await research.click();
-    await expect(research).toHaveClass(/create-type-picker__btn--active/);
+    await expect(research).toHaveAttribute('aria-pressed', 'true');
     await expect(webToggle).toHaveAttribute('aria-checked', 'true');
 
     const researchPath = test.info().outputPath('mode-picker-research-web-on.png');
@@ -65,7 +65,7 @@ test.describe('Add Task - mode picker', () => {
 
     // Planning is read-only with web access off.
     await planning.click();
-    await expect(planning).toHaveClass(/create-type-picker__btn--active/);
+    await expect(planning).toHaveAttribute('aria-pressed', 'true');
     await expect(webToggle).toHaveAttribute('aria-checked', 'false');
 
     // The toggle is an independent control: opt web back on for the planning run.

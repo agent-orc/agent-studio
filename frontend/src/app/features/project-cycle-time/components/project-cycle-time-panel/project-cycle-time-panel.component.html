@@ -7,16 +7,7 @@
       </p>
     </div>
     <div class="cyc__controls">
-      <div class="cyc__windows" role="group" aria-label="Time window">
-        @for (w of windows; track w) {
-          <button type="button"
-                  class="cyc__window"
-                  [class.cyc__window--active]="window() === w"
-                  [attr.aria-pressed]="window() === w"
-                  [attr.data-testid]="'cycle-time-window-' + w"
-                  (click)="selectWindow(w)">{{ windowLabel(w) }}</button>
-        }
-      </div>
+      <app-segmented-control [options]="segmentedWindows" [value]="window()" ariaLabel="Time window" (valueChange)="selectWindow($event)" />
       <button type="button"
               class="cyc__reload"
               data-testid="cycle-time-reload"

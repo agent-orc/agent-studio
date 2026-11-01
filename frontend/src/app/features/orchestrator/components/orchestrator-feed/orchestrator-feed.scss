@@ -72,27 +72,6 @@
 }
 .orch-feed__refresh:hover:not(:disabled) { background: var(--studio-bg-selected); }
 .orch-feed__refresh:disabled { opacity: .5; cursor: progress; }
-.orch-feed__views {
-  display: inline-flex;
-  padding: var(--studio-spacing-1);
-  gap: var(--studio-spacing-1);
-  border: 1px solid var(--studio-border);
-  border-radius: 7px;
-  background: var(--studio-bg-editor);
-}
-.orch-feed__views button {
-  border: 0;
-  border-radius: 5px;
-  padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  color: var(--studio-fg-dim);
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-}
-.orch-feed__views button:hover { color: var(--studio-fg-strong); background: var(--studio-bg-hover); }
-.orch-feed__views .orch-feed__view--active { color: var(--studio-fg-strong); background: var(--studio-bg-selected); font-weight: 650; }
-
 .orch-feed__error {
   color: var(--notify-error-icon-fg);
   background: var(--notify-error-tint);
@@ -366,10 +345,6 @@
   .orch-feed__head {
     align-items: stretch;
     flex-wrap: wrap;
-  }
-
-  .orch-feed__views {
-    order: 3;
   }
 
   .orch-feed__grid {

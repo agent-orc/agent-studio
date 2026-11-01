@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, OnDestroy, inject, output, signal } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import type { GateEconomicsResponse, PipelineBaseline } from '../../../task-pipeline/models/gate-economics.model';
@@ -6,11 +7,13 @@ import { projectIdentity } from '../../../../services/project-identity.util';
 @Component({
   selector: 'app-gate-economics-block',
   standalone: true,
+  imports: [SegmentedControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './gate-economics-block.html',
   styleUrl: './gate-economics-block.scss',
 })
 export class GateEconomicsBlockComponent implements OnDestroy {
+  readonly windowOptions = [{ value: '7d', label: '7 days' }, { value: '30d', label: '30 days' }] as const;
   private readonly tasks = inject(TaskService);
   readonly data = signal<GateEconomicsResponse | null>(null);
   readonly window = signal<'7d' | '30d'>('7d');

@@ -55,41 +55,14 @@
       </label>
       <div class="field">
         <span class="field__label">Lane</span>
-        <div class="create-lane-picker" data-testid="create-lane-picker">
-          @for (lane of laneOptions; track lane.state) {
-            <button type="button"
-                    class="create-lane-picker__btn"
-                    [class.create-lane-picker__btn--active]="newTargetState() === lane.state"
-                    [attr.data-testid]="'create-lane-' + lane.state"
-                    (click)="setTargetState(lane.state)">
-              <span class="create-lane-picker__icon" aria-hidden="true">{{ lane.icon }}</span>
-              {{ lane.label }}
-            </button>
-          }
-        </div>
+        <app-segmented-control data-testid="create-lane-picker" [options]="segmentedLaneOptions" [value]="newTargetState()" ariaLabel="Lane" (valueChange)="setTargetState($event)" />
       </div>
     </div>
     <h3 class="create-dialog__section-title">Configuration</h3>
     <div class="create-dialog__grid">
       <div class="field">
         <span class="field__label">Type</span>
-        <div class="create-type-picker" data-testid="create-task-type">
-          <button type="button"
-                  class="create-type-picker__btn"
-                  [class.create-type-picker__btn--active]="newTaskType() === 'bug'"
-                  data-testid="create-task-type-bug"
-                  (click)="newTaskType.set('bug')">🐞 Bug</button>
-          <button type="button"
-                  class="create-type-picker__btn"
-                  [class.create-type-picker__btn--active]="newTaskType() === 'feature'"
-                  data-testid="create-task-type-feature"
-                  (click)="newTaskType.set('feature')">✨ Feature</button>
-          <button type="button"
-                  class="create-type-picker__btn"
-                  [class.create-type-picker__btn--active]="newTaskType() === 'chore'"
-                  data-testid="create-task-type-chore"
-                  (click)="newTaskType.set('chore')">· Chore</button>
-        </div>
+        <app-segmented-control data-testid="create-task-type" [options]="taskTypeOptions" [value]="newTaskType()" ariaLabel="Task type" (valueChange)="newTaskType.set($event)" />
       </div>
       <div class="field">
         <span class="field__label">Agent</span>

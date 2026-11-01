@@ -51,12 +51,7 @@
         </div>
       }
 
-      <div class="project-graph__toolbar" role="group" aria-label="Project graph view">
-        <button type="button" [class.is-active]="view() === 'graph'" [attr.aria-pressed]="view() === 'graph'"
-                data-testid="project-graph-view-graph" (click)="setView('graph')">Graph</button>
-        <button type="button" [class.is-active]="view() === 'list'" [attr.aria-pressed]="view() === 'list'"
-                data-testid="project-graph-view-list" (click)="setView('list')">Components</button>
-      </div>
+      <app-segmented-control [options]="viewOptions" [value]="view()" ariaLabel="Project graph view" (valueChange)="setView($event)" />
 
       @if (view() === 'graph') {
         <section class="project-graph__canvas" data-testid="project-graph-canvas" aria-label="Component dependency graph">

@@ -143,37 +143,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-// Diff-layout toggle (Side-by-side <-> Unified/inline). A compact,
-// text-only pill in the diff toolbar; its pressed state (side-by-side)
-// tints with the accent so the current layout reads at a glance. Choice
-// is persisted in localStorage by the component.
-.git-view__diff-mode-toggle {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 8px;
-  border: 1px solid var(--studio-border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--studio-fg-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
-}
-.git-view__diff-mode-toggle:hover {
-  background: var(--studio-bg-hover);
-  color: var(--studio-fg-strong);
-}
-.git-view__diff-mode-toggle:focus-visible {
-  outline: 2px solid var(--studio-accent);
-  outline-offset: 1px;
-}
-.git-view__diff-mode-toggle[aria-pressed="true"] {
-  color: var(--studio-accent);
-  border-color: color-mix(in srgb, var(--studio-accent) 55%, var(--studio-border));
-}
 .git-view__diff {
   flex: 1;
   min-height: 0;
@@ -196,13 +165,6 @@
 }
 
 // --- md/html preview (AGT-2008) --------------------------------------
-// The Preview toggle is a sibling of the Side-by-side/Unified pill; give it
-// the accent-pressed treatment when active so the current mode reads at a
-// glance, consistent with the diff-mode toggle.
-.git-view__preview-toggle[aria-pressed="true"] {
-  color: var(--studio-accent);
-  border-color: color-mix(in srgb, var(--studio-accent) 55%, var(--studio-border));
-}
 // Rendered-preview surface: fills the same slot the diff would, scrolls
 // independently, and paints the editor background so markdown/html read on a
 // calm surface in both themes.

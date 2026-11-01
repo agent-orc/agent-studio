@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
@@ -46,11 +47,13 @@ import { TaskCommitRoundsComponent } from '../task-commit-rounds/task-commit-rou
   selector: 'app-git-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DatePipe, NgTemplateOutlet, GitFileTreeComponent, TaskCommitRoundsComponent, TooltipDirective, AppTooltipDirective, MarkdownViewComponent, ResizableSplitterDirective],
+  imports: [SegmentedControlComponent, DatePipe, NgTemplateOutlet, GitFileTreeComponent, TaskCommitRoundsComponent, TooltipDirective, AppTooltipDirective, MarkdownViewComponent, ResizableSplitterDirective],
   templateUrl: './git-pane.component.html',
   styleUrls: ['./git-pane.component.scss']
 })
 export class GitPaneComponent {
+  readonly previewOptions = [{ value: 'diff', label: 'Diff', testid: 'git-diff-option' }, { value: 'preview', label: 'Preview', testid: 'git-preview-toggle' }] as const;
+  readonly diffViewOptions = [{ value: 'line-by-line', label: 'Unified', testid: 'git-diff-mode-toggle' }, { value: 'side-by-side', label: 'Side-by-side', testid: 'git-side-by-side-option' }] as const;
   /** Whether this pane is currently the maximized one. */
   readonly maximized = input(false);
   /** Flex weight to apply when not maximized. */
@@ -125,10 +128,10 @@ export class GitPaneComponent {
    */
   readonly diffViewMode = signal<DiffViewMode>(readDiffViewMode());
 
-  toggleDiffViewMode(): void {
-    const next: DiffViewMode = this.diffViewMode() === 'side-by-side' ? 'line-by-line' : 'side-by-side';
-    this.diffViewMode.set(next);
-    writeDiffViewMode(next);
+  setDiffViewMode(mode: DiffViewMode): void {
+    if (mode === this.diffViewMode()) return;
+    this.diffViewMode.set(mode);
+    writeDiffViewMode(mode);
   }
 
   // --- Tree | diff splitter (draggable, persisted) -----------------------
@@ -262,8 +265,9 @@ export class GitPaneComponent {
     }
   });
 
-  togglePreview(): void {
-    const next = !this.previewActive();
+  setPreviewMode(mode: 'diff' | 'preview'): void {
+    const next = mode === 'preview';
+    if (next === this.previewActive()) return;
     this.previewActive.set(next);
     const path = this.git.selectedDiffPath();
     if (next && path) this.git.loadPreview(path);

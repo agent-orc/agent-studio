@@ -1,17 +1,6 @@
 <section class="fsh" [class.fsh--dense]="dense()" data-testid="file-source-history">
   <header class="fsh__toolbar">
-    <div class="fsh__mode" role="group" aria-label="File source view">
-      <button type="button"
-              class="fsh__mode-button"
-              data-testid="file-source-current"
-              [class.fsh__mode-button--active]="mode() === 'file'"
-              (click)="showFile()">File</button>
-      <button type="button"
-              class="fsh__mode-button"
-              data-testid="file-source-history-toggle"
-              [class.fsh__mode-button--active]="mode() === 'history'"
-              (click)="showHistory()">History</button>
-    </div>
+    <app-segmented-control [options]="modeOptions" [value]="mode()" ariaLabel="File source view" (valueChange)="$event === 'file' ? showFile() : showHistory()" />
     <span class="fsh__path">{{ path() }}</span>
   </header>
 

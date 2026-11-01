@@ -1,10 +1,7 @@
 <section class="ge" data-testid="gate-economics">
   <header class="ge__head">
     <div><h2>Gate economics and integration lane</h2><p>Shared host capacity and delivery flow across projects</p></div>
-    <div class="ge__windows" aria-label="Measurement window">
-      <button type="button" [attr.aria-pressed]="window() === '7d'" (click)="setWindow('7d')">7 days</button>
-      <button type="button" [attr.aria-pressed]="window() === '30d'" (click)="setWindow('30d')">30 days</button>
-    </div>
+    <app-segmented-control [options]="windowOptions" [value]="window()" ariaLabel="Measurement window" (valueChange)="setWindow($event)" />
   </header>
   @if (data(); as projection) {
     <div class="ge__scroll"><table>

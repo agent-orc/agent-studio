@@ -1,3 +1,4 @@
+import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, model } from '@angular/core';
 import type { TaskMode } from '../../../../models/task.model';
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -5,7 +6,6 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 interface ModeOption {
   readonly value: TaskMode;
   readonly label: string;
-  readonly icon: string;
   readonly hint: string;
 }
 
@@ -25,7 +25,7 @@ interface ModeOption {
   selector: 'app-create-mode-picker',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective],
+  imports: [SegmentedControlComponent, TooltipDirective],
   templateUrl: './create-mode-picker.component.html',
   styleUrl: './create-mode-picker.component.scss',
 })
@@ -36,11 +36,12 @@ export class CreateModePickerComponent {
   readonly allowWebAccess = model<boolean>(false);
 
   readonly modeOptions: readonly ModeOption[] = [
-    { value: 'coding', label: 'Coding', icon: '💻', hint: 'Default. The agent reads and writes source to implement the task.' },
-    { value: 'planning', label: 'Planning', icon: '🗺️', hint: 'Read-only. The agent investigates and produces a plan without writing source.' },
-    { value: 'research', label: 'Research', icon: '🔍', hint: 'Read-only with web access. The agent gathers information and reports findings.' },
-    { value: 'concept', label: 'Concept', icon: '◈', hint: 'One docs-only Dossier for human review; product code stays unchanged.' },
+    { value: 'coding', label: 'Coding', hint: 'Default. The agent reads and writes source to implement the task.' },
+    { value: 'planning', label: 'Planning', hint: 'Read-only. The agent investigates and produces a plan without writing source.' },
+    { value: 'research', label: 'Research', hint: 'Read-only with web access. The agent gathers information and reports findings.' },
+    { value: 'concept', label: 'Concept', hint: 'One docs-only Dossier for human review; product code stays unchanged.' },
   ];
+  readonly segmentedModeOptions = this.modeOptions.map(m => ({ value: m.value, label: m.label, tooltip: m.hint, testid: 'create-mode-' + m.value }));
 
   /** Per-mode default for the web-access toggle (Decision 2). */
   static webDefaultFor(mode: TaskMode): boolean {

@@ -213,17 +213,7 @@
   background: var(--studio-card-muted-bg);
   border-color: var(--studio-card-muted-border);
 }
-.pdrift__btn--status {
-  background: var(--studio-card-muted-bg);
-  border-color: var(--studio-card-muted-border);
-  color: var(--studio-fg-dim);
-}
-.pdrift__btn--status.pdrift__btn--active {
-  background: color-mix(in srgb, var(--severity-pending) 18%, transparent);
-  border-color: color-mix(in srgb, var(--severity-pending) 55%, transparent);
-  color: var(--studio-fg-strong);
-  font-weight: 600;
-}
+
 
 .pdrift__action-msg {
   margin: 8px 0 0;

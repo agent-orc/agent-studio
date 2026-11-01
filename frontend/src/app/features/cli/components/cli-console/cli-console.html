@@ -2,10 +2,7 @@
   <div class="console__header">
     <span class="console__title">{{ title() }}</span>
     <div class="console__controls">
-      <button class="console__btn" [class.console__btn--active]="filterStream() === 'all'" (click)="filterStream.set('all')">All</button>
-      <button class="console__btn" [class.console__btn--active]="filterStream() === 'stdout'" (click)="filterStream.set('stdout')">stdout</button>
-      <button class="console__btn" [class.console__btn--active]="filterStream() === 'stderr'" (click)="filterStream.set('stderr')">stderr</button>
-      <span class="console__separator">|</span>
+      <app-segmented-control [options]="streamOptions" [value]="filterStream()" ariaLabel="Output stream" (valueChange)="filterStream.set($event)" />
       <button class="console__btn" [class.console__btn--active]="autoScroll()" (click)="autoScroll.set(!autoScroll())">
         {{ autoScroll() ? '📌' : '📋' }} Auto-scroll
       </button>

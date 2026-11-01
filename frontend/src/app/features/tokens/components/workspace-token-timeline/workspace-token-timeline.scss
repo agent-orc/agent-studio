@@ -28,28 +28,6 @@
   align-items: center;
   gap: 8px;
 }
-.wtt__win {
-  display: inline-flex;
-  background: var(--studio-bg-hover);
-  border: 1px solid var(--studio-border-strong);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.wtt__win-btn {
-  background: transparent;
-  border: 0;
-  color: var(--studio-fg-dim);
-  padding: 4px 10px;
-  font-size: 0.78rem;
-  cursor: pointer;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-.wtt__win-btn:hover { color: var(--studio-fg-strong); background: var(--studio-bg-hover); }
-.wtt__win-btn--active {
-  background: color-mix(in srgb, var(--severity-pending) 30%, transparent);
-  color: var(--studio-fg-strong);
-}
 .wtt__refresh {
   background: var(--studio-bg-hover);
   border: 1px solid var(--studio-border-strong);
