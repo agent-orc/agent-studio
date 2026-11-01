@@ -81,6 +81,7 @@ internal sealed class CliOutputLogMaintenanceService
             "/logs/bus/",
             "/.metadata/attempt-authority*",
             "/.runtime/",
+            AgentStudio.Git.SecurityStorePathPolicy.IgnorePattern,
         }.Where(rule => !lines.Contains(rule)).ToList();
         if (rules.Count == 0) return false;
 

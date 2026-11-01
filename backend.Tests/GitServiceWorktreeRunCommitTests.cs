@@ -176,6 +176,45 @@ public class GitServiceWorktreeRunCommitTests : IDisposable
     }
 
     [Fact]
+    public void WorktreeRunCommit_RefusesSecurityStoreAndCommitsTheRest()
+    {
+        var repoRoot = SeedRepo("Ada Lovelace", "ada@example.com");
+        var worktree = Path.Combine(_tempDir, "security-worktree");
+        RunGit(repoRoot, $"worktree add -q -b task/security {worktree}");
+        var git = BuildGitService(repoRoot);
+        Directory.CreateDirectory(Path.Combine(worktree, ".security", "secrets"));
+        File.WriteAllText(Path.Combine(worktree, ".security", "access-state.json"), "{}\n");
+        File.WriteAllText(Path.Combine(worktree, ".security", "secrets", "store.bin"), "local\n");
+        File.WriteAllText(Path.Combine(worktree, "feature.txt"), "feature\n");
+
+        var result = git.WorktreeRunCommit("Proj", worktree, "feat: add feature",
+            taskId: "security", expectedBranch: "task/security");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Contains(result.Gate!.Findings, f =>
+            f.Code == "security-store-path" && f.ExcludesCandidate && f.Path == ".security/access-state.json");
+        Assert.All(result.Gate.Candidates.Where(c => c.Path.StartsWith(".security/", StringComparison.Ordinal)), c =>
+        {
+            Assert.False(c.Included);
+            Assert.Equal("security-store-path", c.ExclusionReason);
+            Assert.Null(c.Sha256);
+        });
+        Assert.Equal("feature.txt", RunGitCapture(worktree, "show --name-only --pretty=format: HEAD").Trim());
+        Assert.Equal("", RunGitCapture(worktree, "ls-tree -r --name-only HEAD -- .security"));
+        Assert.True(File.Exists(Path.Combine(worktree, ".security", "access-state.json")));
+    }
+
+    [Theory]
+    [InlineData(".security", true)]
+    [InlineData(".security/access-state.json", true)]
+    [InlineData("./.security/secrets/x", true)]
+    [InlineData(".Security/secrets/x", true)]
+    [InlineData("docs/.security/notes.md", false)]
+    [InlineData(".security-notes.md", false)]
+    public void SecurityStorePathPolicy_MatchesOnlyTheRootFolder(string path, bool expected)
+        => Assert.Equal(expected, SecurityStorePathPolicy.IsSecurityStorePath(path));
+
+    [Fact]
     public void WorktreeRunCommit_WrongTaskBranchBlocksBeforeStaging()
     {
         var repoRoot = SeedRepo("Ada Lovelace", "ada@example.com");

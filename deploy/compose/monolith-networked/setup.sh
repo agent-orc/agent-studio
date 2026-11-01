@@ -55,8 +55,15 @@ chmod 755 "$data_dir/caddy-data" "$data_dir/caddy-config"
 chmod 755 "$data_dir/origin-pull"
 if [ ! -d "$data_dir/workspace/.git" ]; then
   git -C "$data_dir/workspace" init -q -b main
-  git -C "$data_dir/workspace" -c user.name='Studio Installer' -c user.email='installer@studio.invalid' -c commit.gpgsign=false commit -qm 'Initialize Studio workspace' --allow-empty
+  # .security/ holds access state and secrets; it stays out of every commit.
+  printf '%s\n' '/.security/' > "$data_dir/workspace/.gitignore"
+  git -C "$data_dir/workspace" add .gitignore
+  git -C "$data_dir/workspace" -c user.name='Studio Installer' -c user.email='installer@studio.invalid' -c commit.gpgsign=false commit -qm 'Initialize Studio workspace'
 fi
+exclude_file="$(git -C "$data_dir/workspace" rev-parse --git-path info/exclude)"
+case "$exclude_file" in /*) ;; *) exclude_file="$data_dir/workspace/$exclude_file";; esac
+mkdir -p "$(dirname "$exclude_file")"
+grep -qxF '/.security/' "$exclude_file" 2>/dev/null || printf '%s\n' '/.security/' >> "$exclude_file"
 if [ "$(id -u)" -eq 0 ]; then
   chown -R 10001:10001 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home"
 else

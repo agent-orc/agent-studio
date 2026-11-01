@@ -99,6 +99,7 @@ public sealed class LogIngestionRotationTests : IDisposable
             1,
             File.ReadLines(ignore).Count(line => line == CliOutputLogFile.RotationIgnorePattern));
         Assert.Contains("/logs/bus/", content, StringComparison.Ordinal);
+        Assert.Equal(1, File.ReadLines(ignore).Count(line => line == "/.security/"));
     }
 
     [Fact]

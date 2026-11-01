@@ -63,6 +63,42 @@ public sealed class WorkspaceRepositoryMaintenanceServiceTests : IDisposable
             $"Expected maintenance to reduce {looseBefore} loose objects, found {LooseObjectCount()}.");
     }
 
+    [Fact]
+    public void UntrackSecurityStore_UntracksOnceKeepsFilesAndSweepRecordsTheRemoval()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".security", "secrets"));
+        File.WriteAllText(Path.Combine(_root, ".security", "access-state.json"), "{}\n");
+        File.WriteAllText(Path.Combine(_root, ".security", "secrets", "store.json"), "{}\n");
+        RunGit("add", ".security");
+        RunGit("commit", "-q", "-m", "tracked security store");
+
+        var configuration = Config();
+        var commits = new WorkspaceArtifactCommitService(
+            configuration, NullLogger<WorkspaceArtifactCommitService>.Instance);
+        var logger = new ListLogger();
+        var service = new WorkspaceRepositoryMaintenanceService(
+            configuration, commits, new ReadyLoadGate(), logger);
+
+        var first = service.UntrackSecurityStore();
+        var second = service.UntrackSecurityStore();
+
+        Assert.True(first.Success, $"{first.Phase}: {first.Error}");
+        Assert.True(second.Success, $"{second.Phase}: {second.Error}");
+        Assert.Single(logger.Messages, m => m.Contains("workspace-security-store-untracked", StringComparison.Ordinal));
+        Assert.Empty(Git("ls-files", ".security").Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.True(File.Exists(Path.Combine(_root, ".security", "access-state.json")));
+        Assert.True(File.Exists(Path.Combine(_root, ".security", "secrets", "store.json")));
+        Assert.Equal(".security/access-state.json", Git("check-ignore", ".security/access-state.json").Trim());
+
+        var sweep = commits.TryCommitTrackedSweep(_root);
+
+        Assert.True(sweep.DidCommit, sweep.Error);
+        Assert.Empty(Git("ls-tree", "-r", "--name-only", "HEAD", "--", ".security")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.True(File.Exists(Path.Combine(_root, ".security", "access-state.json")));
+        Assert.Empty(Git("status", "--porcelain").Split('\n', StringSplitOptions.RemoveEmptyEntries));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); }
@@ -115,6 +151,16 @@ public sealed class WorkspaceRepositoryMaintenanceServiceTests : IDisposable
         var stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();
         return (stdout, stderr, process.ExitCode);
+    }
+
+    private sealed class ListLogger : Microsoft.Extensions.Logging.ILogger<WorkspaceRepositoryMaintenanceService>
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => Messages.Add(formatter(state, exception));
     }
 
     private sealed class ReadyLoadGate : AgentStudio.Runner.ILoadThrottleGate
