@@ -72,11 +72,15 @@ public sealed class ProjectProposalService
         return items;
     }
 
+    /// <summary>Largest evidence screenshot the proposals screen serves.</summary>
+    internal const long MaxEvidenceBytes = 16L * 1024 * 1024;
+
     /// <summary>
     /// Resolves evidence from the catalogue index produced by <see cref="List"/>.
     /// The proposals screen always loads that catalogue before requesting images,
     /// so image requests remain O(1) instead of reparsing every proposal per image.
-    /// A direct image request lazily warms the same index once.
+    /// A direct image request lazily warms the same index once. Only a regular
+    /// checkout file of at most <see cref="MaxEvidenceBytes"/> is returned.
     /// </summary>
     public string? GetEvidencePath(string projectName, string relPath)
     {
@@ -89,7 +93,9 @@ public sealed class ProjectProposalService
             if (!_evidenceByRoot.TryGetValue(root, out evidence) || !evidence.TryGetValue(key, out full))
                 return null;
         }
-        return File.Exists(full) ? full : null;
+        return FilesystemPathBoundary.CheckCheckoutFile(root, full, MaxEvidenceBytes) == CheckoutFileStatus.Readable
+            ? full
+            : null;
     }
 
     public ProjectProposal? Get(string projectName, string id) =>
