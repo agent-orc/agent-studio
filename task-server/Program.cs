@@ -76,6 +76,16 @@ builder.Services.AddHttpClient<AgentStudio.TaskServer.AttemptCredentials.IReposi
 builder.Services.AddSingleton<DeviceLoginSessions>();
 builder.Services.AddHostedService<DeviceLoginAuditSweep>();
 builder.Services.AddSingleton<RunnerGitSetupStore>();
+builder.Services.AddHttpClient("github-app", client => client.Timeout = TimeSpan.FromSeconds(20))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<AgentStudio.TaskServer.Contracts.GitHubApp.IGitHubAppVault, AttemptRootGitHubAppVault>();
+builder.Services.AddSingleton<AgentStudio.TaskServer.Contracts.GitHubApp.IRegisteredRepositoryCatalog, TaskServerRepositoryCatalog>();
+builder.Services.AddSingleton(services => new AgentStudio.TaskServer.Contracts.GitHubApp.GitHubAppBroker(
+    new AgentStudio.TaskServer.Contracts.GitHubApp.GitHubAppClient(
+        services.GetRequiredService<IHttpClientFactory>().CreateClient("github-app"), TimeProvider.System),
+    services.GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.IGitHubAppVault>(),
+    services.GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.IRegisteredRepositoryCatalog>(),
+    TimeProvider.System));
 builder.Services.AddSingleton<RuntimeCapacitySettingsService>();
 builder.Services.AddSingleton<HostProjectPolicyService>();
 builder.Services.AddSingleton<LegacyMigrationService>();
@@ -268,7 +278,8 @@ if (bootstrap.RequiresAuthentication)
             TaskServerPrincipalKinds.Runner,
             bootstrap.BootstrapRunnerAuthenticationToken,
             bootstrap.BootstrapRunnerId,
-            app.Lifetime.ApplicationStopping);
+            app.Lifetime.ApplicationStopping,
+            repositoryWrite: true);
     if (bootstrap.BootstrapReviewRunnerAuthenticationToken is not null)
         await BootstrapPrincipalAsync(
             store,
@@ -329,6 +340,7 @@ app.MapStudioP2Endpoints();
 app.MapStudioP3AdministrationEndpoints();
 app.MapIdentityBootstrapEndpoints();
 app.MapRunnerGitSetupEndpoints();
+app.MapGitHubAppEndpoints();
 app.MapHostJoinTokenEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
@@ -343,14 +355,16 @@ static async Task BootstrapPrincipalAsync(
     string kind,
     string? configuredCredential,
     string? runnerId,
-    CancellationToken cancellationToken)
+    CancellationToken cancellationToken,
+    bool repositoryWrite = false)
 {
     var issued = await store.EnsureBootstrapPrincipalAsync(
         principalId,
         kind,
         configuredCredential,
         runnerId,
-        cancellationToken);
+        cancellationToken,
+        repositoryWrite);
     if (issued is not null && configuredCredential is null)
         Console.WriteLine(
             $"INITIAL {kind.ToUpperInvariant()} CREDENTIAL (shown once): {issued.Credential}");

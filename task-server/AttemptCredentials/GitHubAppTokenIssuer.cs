@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts.GitHubApp;
 
 namespace AgentStudio.TaskServer.AttemptCredentials;
 
@@ -15,13 +16,21 @@ public interface IRepositoryTokenIssuer
 }
 
 /// <summary>Requests a single-repository GitHub App installation token with contents:read.</summary>
-public sealed class GitHubAppTokenIssuer(HttpClient http, IAttemptRootSecretStore roots) : IRepositoryTokenIssuer
+public sealed class GitHubAppTokenIssuer(HttpClient http, IAttemptRootSecretStore roots, GitHubAppBroker? broker = null)
+    : IRepositoryTokenIssuer
 {
     public async Task<IssuedRepositoryToken> IssueReadAsync(string repositoryKey, string repositoryUrl, CancellationToken ct)
     {
         var rootName = "github-app-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(repositoryKey))).ToLowerInvariant();
-        var rootJson = await roots.ReadAsync(rootName, ct)
-            ?? throw new InvalidOperationException("GitHub App root is not provisioned for this repository.");
+        var rootJson = await roots.ReadAsync(rootName, ct);
+        if (rootJson is null)
+        {
+            // No root imported for this repository: the App connected in Settings > GitHub serves it.
+            var connected = broker is null ? null : await broker.IssueDedicatedAsync(repositoryUrl, RepositoryAccess.Read, ct);
+            return connected is null
+                ? throw new InvalidOperationException("GitHub App root is not provisioned for this repository.")
+                : new IssuedRepositoryToken(connected.Value, connected.ExpiresAtUtc, 0);
+        }
         var root = JsonSerializer.Deserialize<GitHubAppRoot>(rootJson)
             ?? throw new InvalidDataException("GitHub App root is invalid.");
         if (root.RepositoryId <= 0 || root.AppId <= 0 || root.InstallationId <= 0

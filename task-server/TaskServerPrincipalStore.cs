@@ -35,6 +35,7 @@ public sealed partial class TaskServerStore
                     TaskServerScopes.TasksRead,
                     TaskServerScopes.RunsClaim,
                     TaskServerScopes.RunsWrite,
+                    TaskServerScopes.RepositoriesWrite,
                     TaskServerScopes.ReviewsClaim,
                     TaskServerScopes.ReviewsWrite,
                     TaskServerScopes.EventsWrite,
@@ -47,9 +48,10 @@ public sealed partial class TaskServerStore
         string kind,
         string? credential,
         string? runnerId,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool repositoryWrite = false)
     {
-        var scopes = DefaultScopes(kind);
+        var scopes = DefaultScopes(kind, repositoryWrite);
         await _writeGate.WaitAsync(ct);
         try
         {
@@ -245,8 +247,16 @@ public sealed partial class TaskServerStore
         return principal! with { RevokedAt = principal.RevokedAt ?? now };
     }
 
-    private static IReadOnlySet<string> DefaultScopes(string kind)
-        => AllowedScopesByKind[NormalizeKind(kind)];
+    /// <summary>
+    /// What a principal holds unless an Owner says otherwise. Pushing through a
+    /// repository token is never assumed: enrolment grants it for a coding host's role.
+    /// </summary>
+    internal static IReadOnlySet<string> DefaultScopes(string kind, bool repositoryWrite = false)
+    {
+        var scopes = AllowedScopesByKind[NormalizeKind(kind)].ToHashSet(StringComparer.Ordinal);
+        if (!repositoryWrite) scopes.Remove(TaskServerScopes.RepositoriesWrite);
+        return scopes;
+    }
 
     private static IReadOnlySet<string> ValidateScopes(
         string kind,
@@ -254,7 +264,7 @@ public sealed partial class TaskServerStore
     {
         var allowed = AllowedScopesByKind[kind];
         if (requested is null || requested.Count == 0)
-            return allowed;
+            return DefaultScopes(kind);
         var scopes = requested
             .Select(scope => scope.Trim())
             .Where(scope => scope.Length > 0)

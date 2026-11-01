@@ -78,6 +78,7 @@ public sealed partial class TaskServerStore
             );
             """, ct);
         await AddColumnIfMissingAsync(connection, "project_repositories", "repository_visibility", "TEXT", ct);
+        await AddColumnIfMissingAsync(connection, "service_enrolments", "repository_write", "INTEGER NOT NULL DEFAULT 0", ct);
         if (await ReadMetaAsync(connection, null, InstallationIdKey, ct) is null)
         {
             await SetMetaAsync(connection, null, InstallationIdKey,
@@ -390,12 +391,12 @@ public sealed partial class TaskServerStore
                 UPDATE service_enrolments SET revoked_at = $now
                  WHERE principal_id = $principal AND consumed_at IS NULL AND revoked_at IS NULL;
                 INSERT INTO service_enrolments(
-                    enrolment_id, code_hash, principal_id, kind, runner_id, created_by, created_at, expires_at)
-                VALUES ($id, $hash, $principal, $kind, $runner, $actor, $now, $expires);
+                    enrolment_id, code_hash, principal_id, kind, runner_id, created_by, created_at, expires_at, repository_write)
+                VALUES ($id, $hash, $principal, $kind, $runner, $actor, $now, $expires, $repositoryWrite);
                 """, ct, transaction,
                 ("$id", enrolmentId), ("$hash", HashOneTimeSecret(code)), ("$principal", principalId),
                 ("$kind", kind), ("$runner", runnerId), ("$actor", actorId), ("$now", Iso(now)),
-                ("$expires", Iso(expires)));
+                ("$expires", Iso(expires)), ("$repositoryWrite", request.RepositoryWrite && kind == TaskServerPrincipalKinds.Runner ? 1 : 0));
             await AuditAsync(connection, transaction, actorId, "enrolment.created", "principal", principalId,
                 JsonSerializer.Serialize(new { enrolmentId, kind, runnerId, ttl }), ct);
         }, ct);
@@ -457,7 +458,7 @@ public sealed partial class TaskServerStore
         {
             var installationId = await ReadMetaAsync(connection, transaction, InstallationIdKey, ct) ?? string.Empty;
             await using var command = Command(connection, """
-                SELECT enrolment_id, principal_id, kind, runner_id, expires_at, consumed_at, revoked_at
+                SELECT enrolment_id, principal_id, kind, runner_id, expires_at, consumed_at, revoked_at, repository_write
                   FROM service_enrolments WHERE code_hash = $hash;
                 """, transaction, ("$hash", codeHash));
             await using var reader = await command.ExecuteReaderAsync(ct);
@@ -469,6 +470,7 @@ public sealed partial class TaskServerStore
             var expiresAt = found ? Parse(reader.GetString(4)) : DateTime.MinValue;
             var consumed = found && !reader.IsDBNull(5);
             var revoked = found && !reader.IsDBNull(6);
+            var repositoryWrite = found && reader.GetInt64(7) != 0;
             await reader.DisposeAsync();
             var existing = found ? await ReadPrincipalAsync(connection, transaction, principalId, ct) : null;
             var replaceRunner = existing is not null && kind == TaskServerPrincipalKinds.Runner
@@ -487,13 +489,19 @@ public sealed partial class TaskServerStore
                 return;
             }
 
-            var scopes = DefaultScopes(kind);
+            var scopes = DefaultScopes(kind, repositoryWrite);
             if (replaceRunner)
             {
                 await ExecuteAsync(connection,
                     "UPDATE principal_credentials SET revoked_at = $now WHERE principal_id = $id AND revoked_at IS NULL;",
                     ct, transaction, ("$now", Iso(now)), ("$id", principalId));
                 await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct);
+                // Enrolling a host again states its role anew; its other scopes stay as they are.
+                var updated = existing!.Scopes.Where(scope => scope != TaskServerScopes.RepositoriesWrite).ToList();
+                if (repositoryWrite) updated.Add(TaskServerScopes.RepositoriesWrite);
+                await ExecuteAsync(connection,
+                    "UPDATE principals SET scopes_json = $scopes WHERE principal_id = $id;",
+                    ct, transaction, ("$scopes", JsonSerializer.Serialize(updated.Order(StringComparer.Ordinal))), ("$id", principalId));
             }
             else
                 await InsertPrincipalAsync(connection, transaction, principalId, kind, scopes, runnerId, credential, now, ct);

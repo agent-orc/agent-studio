@@ -48,7 +48,7 @@ public static class HostJoinTokenEndpoints
             {
                 var enrolment = await store.CreateEnrolmentAsync(
                     new CreateEnrolmentRequest("runner:" + runnerId,
-                        TaskServerPrincipalKinds.Runner, runnerId),
+                        TaskServerPrincipalKinds.Runner, runnerId, RepositoryWrite: request.Role == "coding"),
                     TaskServerEndpoints.Actor(context), ct);
                 return Results.Json(new IssuedHostJoinToken(
                     HostJoinTokenEncoder.Encode(enrolment, request.ServerUrl,
