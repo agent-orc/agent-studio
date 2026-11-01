@@ -618,7 +618,6 @@ export class StudioShellComponent {
     { key: 'filters', icon: 'filter', label: 'Filters' },
     { key: 'cli', icon: 'cli', label: 'Agents / CLI' },
     { key: 'activity', icon: 'activity', label: 'Activity' },
-    { key: 'runbook', icon: 'runbook', label: 'Runbook' },
   ];
 
   /**
@@ -634,6 +633,7 @@ export class StudioShellComponent {
       activeTabKind: this.activeTab()?.kind,
       activePanel: this.activePanel(),
       sidebarVisible: this.sidebarVisible(),
+      markerOwner: this.panelState.markerOwner(),
     }),
   );
 
@@ -668,6 +668,7 @@ export class StudioShellComponent {
   openFeed(): void {
     this.orchestratorFeed.markAlertsSeen();
     this.tabState.open({ kind: 'feed' });
+    this.panelState.noteEditorActivation();
   }
 
 
@@ -716,10 +717,13 @@ export class StudioShellComponent {
 
   openWorkbenches(projectName: string | null): void {
     this.tabState.open({ kind: 'workbenches', projectName });
+    // Re-clicking Dossiers on the already active tab still takes the marker back.
+    this.panelState.noteEditorActivation();
   }
 
   selectTab(key: string): void {
     this.tabState.select(key);
+    this.panelState.noteEditorActivation();
   }
 
   closeTab(key: string, event?: Event): void {

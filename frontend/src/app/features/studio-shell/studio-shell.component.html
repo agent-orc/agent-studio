@@ -376,27 +376,6 @@
                    open in the orchestrator side sheet. -->
               <app-chat-sessions-panel class="studio-chats" [projects]="knownProjectNames()" />
             }
-            @case ('runbook') {
-              <section class="studio-runbook">
-                <app-section-header title="Runbook" />
-                <p class="studio-empty studio-empty--note">
-                  The Runbook surface aggregates per-project ops content (auto-pickup config, project chat,
-                  deployments). Click below for the live equivalent in the workspace overlay.
-                </p>
-                <button type="button" class="studio-button studio-button--ghost"
-                        (click)="openOrchFeed.emit()">
-                  Open project orchestrator feed
-                </button>
-                <button type="button" class="studio-button studio-button--ghost"
-                        (click)="openWorkspaceScreenshots.emit()">
-                  Workspace screenshots
-                </button>
-                <button type="button" class="studio-button studio-button--ghost"
-                        (click)="openCliAdmin.emit()">
-                  CLI admin
-                </button>
-              </section>
-            }
             @default {
               <app-empty-state>Panel not implemented.</app-empty-state>
             }

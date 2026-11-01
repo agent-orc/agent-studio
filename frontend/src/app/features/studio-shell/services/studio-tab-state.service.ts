@@ -626,6 +626,9 @@ export class StudioTabStateService {
   }
 
   private activate(key: string): void {
+    // Only a real switch hands the ActivityBar marker to the editor; a boot-time
+    // route restore re-activating the same tab must keep a persisted panel marker.
+    if (this._activeKey() !== key) this.panels.noteEditorActivation();
     this._activeKey.set(key);
     this.recordActivation(key);
   }
