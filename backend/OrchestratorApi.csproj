@@ -7,7 +7,7 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <!-- AGT-3218: EngineApplierContract.For has no default arm, so a new
          TransitionAction without an applier effect stops the build. -->
-    <WarningsAsErrors>$(WarningsAsErrors);CS8509</WarningsAsErrors>
+    <WarningsAsErrors>$(WarningsAsErrors);CS8509;CA1416</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>

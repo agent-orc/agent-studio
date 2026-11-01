@@ -100,15 +100,12 @@ public static class RepositoryGitCredentialFiles
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
+        // Setting this at all throws on Windows, even to null.
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
         try
         {
-            using (var stream = new FileStream(temporary, new FileStreamOptions
-            {
-                Mode = FileMode.CreateNew,
-                Access = FileAccess.Write,
-                Share = FileShare.None,
-                UnixCreateMode = OperatingSystem.IsWindows() ? null : UnixFileMode.UserRead | UnixFileMode.UserWrite,
-            }))
+            using (var stream = new FileStream(temporary, options))
             using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
             {
                 writer.Write(content);

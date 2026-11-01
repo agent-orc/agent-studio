@@ -347,6 +347,25 @@ public sealed class GitHubAppBrokerTests
     }
 
     [Fact]
+    public async Task An_App_that_cannot_be_saved_is_named_and_connecting_again_works()
+    {
+        var form = await _broker.StartRegistrationAsync(new StartGitHubAppRegistrationRequest(Origin, null), default);
+        _vault.FailSaves = true;
+
+        var failure = await Assert.ThrowsAsync<GitHubAppException>(() =>
+            _broker.AdvanceAsync(new AdvanceGitHubAppFlowRequest(Origin, form.State, "manifest-code", null, null), "owner", default));
+
+        Assert.Equal("registration-not-saved", failure.Code);
+        Assert.Contains("The disk refused.", failure.Message);
+        Assert.Contains("https://github.com/", failure.Message);
+        Assert.Null(await _vault.LoadConnectionAsync(default));
+
+        _vault.FailSaves = false;
+        await RegisterAsync();
+        Assert.NotNull(await _vault.LoadConnectionAsync(default));
+    }
+
+    [Fact]
     public async Task A_second_registration_is_refused_while_connected()
     {
         await RegisterAsync();
@@ -631,7 +650,13 @@ public sealed class GitHubAppBrokerTests
         public GitHubAppSecrets? Secrets { get; set; }
         private GitHubAppConnection? _connection;
         public Task<GitHubAppConnection?> LoadConnectionAsync(CancellationToken ct) => Task.FromResult(_connection);
-        public Task SaveConnectionAsync(GitHubAppConnection connection, CancellationToken ct) { _connection = connection; return Task.CompletedTask; }
+        public bool FailSaves { get; set; }
+        public Task SaveConnectionAsync(GitHubAppConnection connection, CancellationToken ct)
+        {
+            if (FailSaves) throw new IOException("The disk refused.");
+            _connection = connection;
+            return Task.CompletedTask;
+        }
         public Task DeleteConnectionAsync(CancellationToken ct) { _connection = null; return Task.CompletedTask; }
         public Task<GitHubAppSecrets?> ReadSecretsAsync(CancellationToken ct) => Task.FromResult(Secrets);
         public Task WriteSecretsAsync(GitHubAppSecrets secrets, string actor, CancellationToken ct) { Secrets = secrets; return Task.CompletedTask; }
