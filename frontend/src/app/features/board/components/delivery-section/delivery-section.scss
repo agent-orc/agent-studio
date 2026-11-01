@@ -16,21 +16,6 @@
 [data-delivery-tone='attention'] { --delivery-tone-fg: var(--studio-warn); }
 [data-delivery-tone='danger'] { --delivery-tone-fg: var(--studio-error); }
 
-.delivery__head {
-  display: flex;
-  align-items: center;
-  gap: var(--studio-spacing-2);
-  padding: var(--studio-spacing-1) var(--studio-spacing-2) 0;
-  color: var(--studio-fg-dim);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.delivery__label {
-  font-weight: 700;
-}
-
 .delivery__count,
 .delivery-column__count {
   font-variant-numeric: tabular-nums;
@@ -42,9 +27,24 @@
   align-items: center;
   gap: var(--studio-spacing-1);
   margin-left: auto;
+  min-width: 0;
+  white-space: nowrap;
   letter-spacing: normal;
   text-transform: none;
   cursor: pointer;
+
+  input {
+    flex: 0 0 auto;
+    width: 13px;
+    height: 13px;
+    margin: 0;
+  }
+}
+
+.delivery__option-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .delivery__notice {
@@ -210,13 +210,6 @@
 // environment columns stack the same way and the column list is the group's
 // one scroll surface. The horizontal legacy board keeps them side by side.
 :host-context(.dashboard--studio) {
-  .delivery__head {
-    padding: var(--studio-spacing-3) var(--studio-spacing-4) var(--studio-spacing-2);
-    border-bottom: 1px solid var(--studio-border);
-    color: var(--studio-fg);
-    letter-spacing: 0.08em;
-  }
-
   .delivery__columns {
     flex-direction: column;
     gap: var(--studio-spacing-1);
