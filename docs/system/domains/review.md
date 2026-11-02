@@ -1122,14 +1122,20 @@ time, per-class totals, the slowest 50 tests, retry status, and host load and
 active test-process count sampled when the report is captured. A missing or
 malformed TRX is logged and does not change the test verdict.
 
-Both gates run for every review of this repository, not only for deliveries that
-touch `runner/` or `task-server/`. A review plan is frozen before the attempt is
-claimed and is immutable by contract, and the plan builder has no merge-base
-diff at that point, so the review plane has no path-scoped command selection.
-The diff-scoped selector (`TestSelectionPlanner` with its impact rules) belongs
-to the local build and test gate. Making the review plan path-scoped would mean
-resolving the delivery diff at plan-build time, which is a separate change to
-the plan contract rather than a configuration entry.
+For a delivery that changes `backend/`, the review plan inserts the declared
+.NET guard commands before its selected tests. These use
+`FullyQualifiedName~.Architecture.|Category=Guard` together with each command's
+existing filter. The guard commands come from the project inventory, so class
+selection cannot omit them, including when it selects no other test class.
+The route inventory's three-profile permission census and the
+`TaskFolderAccessIsolationTest` class carry the Guard category because their
+namespaces do not match the architecture filter.
+
+With full review testing, both suites run for every review of this repository,
+including deliveries outside `runner/` and `task-server/`. A review plan is
+frozen before the attempt is claimed and is immutable by contract. The later
+per-card and batch review selectors use the delivery diff to narrow the
+remaining test commands; the backend guard step above stays in the plan.
 
 When a .NET review test step is red, the clean repeat now keeps the original
 category filter and reruns only the classes that reported failures, up to five
