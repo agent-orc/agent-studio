@@ -114,7 +114,7 @@ public class BacklogLaneAndTagsTests : IDisposable
         // areas, the quality and document facets - plus the curated legacy rows
         // and the two provenance tags. Ids are unique across all of them.
         Assert.Equal(entries.Count, entries.Select(t => t.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-        foreach (var id in new[] { "ui-ux", "performance", "quality", "architecture", "security", "docs", "observability", "orchestrator-moved", "outcome-silent-finish" })
+        foreach (var id in new[] { "ui-ux", "performance", "quality", "architecture", "security", "docs", "observability", "ci-change", "orchestrator-moved", "outcome-silent-finish" })
             Assert.Contains(entries, t => t.Id == id);
         foreach (var area in AgentStudio.Areas.AreaTaxonomy.ProductDefaults)
             Assert.Contains(entries, t => t.Id == area.Id && t.Kind == TagKinds.Area);

@@ -3,7 +3,7 @@
 # with a read-only root, no host container socket, a writable attempt volume
 # at /work and versioned npm, NuGet and repository-mirror caches below /cache.
 # Build context is this directory: docker build -f deploy/work-container/Dockerfile deploy/work-container
-FROM mcr.microsoft.com/dotnet/sdk:10.0
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 ARG CODEX_CLI_VERSION=0.154.0

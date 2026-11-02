@@ -12,6 +12,8 @@ namespace AgentStudio.Shared;
 /// </summary>
 public static class TimelineEventKinds
 {
+    /// <summary>A human reviewed a card's withheld CI workflow candidates before commit.</summary>
+    public const string WorkflowChangeReviewed = "workflow_change_reviewed";
     /// <summary>An engine occurrence lost its source lane before its decision could apply.</summary>
     public const string OrchestrationDecisionSuperseded = "orchestration_decision_superseded";
     public const string ReviewPriorityChanged = "review_priority_changed";

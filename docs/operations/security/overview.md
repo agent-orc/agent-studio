@@ -586,3 +586,39 @@ with captured evidence in
 [runbook-rehearsal-evidence.md](runbook-rehearsal-evidence.md). The detailed
 target contract and lifecycle matrix are in
 [distributed-agent-studio-target-architecture.md](../../concepts/distributed-agent-studio-target-architecture.md).
+
+## Repository publication posture
+
+The recommended SM-D3 option A keeps protected-reference updates on the card and
+gate path. The recommended SM-D10 option A withholds workflow permission from
+ordinary repository tokens. A CI-changing card needs the seeded `ci-change` tag and
+a recorded human review. The broker's dedicated token method requires both
+flags before it requests workflow permission; attempt issuance does not yet
+call this method. The
+manual withheld-candidate action records the reviewer and a digest of the
+workflow paths in the card timeline before committing them.
+
+Run `python3 scripts/security/repository_posture.py` from the checkout to check
+workflow action SHAs and Docker base image digests. For a live repository, pass
+`--repository OWNER/REPO --token "$GITHUB_TOKEN" --platform-app-id ID
+--agent-app-id ID --gate-check CHECK`. The platform publisher App must be a
+different GitHub identity from the App that issues coding tokens. The script
+checks separate branch and release-tag rulesets:
+deletion and non-fast-forward rules have no bypass, publisher restrictions bypass
+only the platform App, and required gate checks have no bypass. `--apply`
+reconciles those rulesets with a credential that can administer repository rules.
+Use a rehearsal repository first and confirm force push and a non-platform
+protected-reference update are refused. The report is JSON, and a finding makes
+the command exit nonzero.
+
+`scripts/security/update_pins.py` refreshes action SHAs from their annotated or
+lightweight tags and image digests from registry manifests. Review its diff
+before delivery. Release tags are made with `scripts/release/sign-tag.sh VERSION`;
+the release workflow verifies the tag with the configured public signing key.
+The release and nightly workflows also write security posture artifacts with repository
+rules, pinned references, public URL TLS and response headers, and the route
+permission inventory result. Set `PLATFORM_APP_ID`,
+`AGENT_APP_ID`, `PROTECTED_REF_GATE_CHECK`, `PUBLIC_URL`, and
+`RELEASE_TAG_PUBLIC_KEY` as
+repository variables. The public URL is configured at runtime, so no deployment
+hostname is stored in this public checkout.

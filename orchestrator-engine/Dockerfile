@@ -1,6 +1,6 @@
 # Orchestrator engine (headless worker against the Task Server) - target-architecture component.
 # Build context is the repository root: docker build -f orchestrator-engine/Dockerfile .
-FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.301@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5 AS build
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 WORKDIR /src
@@ -10,7 +10,7 @@ RUN dotnet publish orchestrator-engine/OrchestratorEngine.csproj -c Release -o /
 
 # TaskServer.Contracts currently brings ASP.NET Core abstractions into the
 # published runtime graph, so the engine needs the shared ASP.NET runtime.
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:de0ee358cdd672f7017a003bed21e9ac9ed48a27c922a59b18175b6e82fa7fee
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 LABEL org.opencontainers.image.title="agent-orchestrator-engine" \

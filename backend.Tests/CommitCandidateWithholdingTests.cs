@@ -221,10 +221,39 @@ public class CommitCandidateWithholdingTests : IDisposable
         Assert.Contains("No withheld commit candidates", attempt.Error, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Workflow_change_without_ci_marker_is_blocked()
+    {
+        var env = Setup(declaredAssetPaths: null);
+        WriteFile(env.Worktree, ".github/workflows/check.yml", "name: check\n");
+
+        var result = env.Git.WorktreeRunCommit("Demo", env.Worktree, "ci: check",
+            taskId: env.JobId, expectedBranch: "task/" + env.JobId);
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Gate!.Findings, finding => finding.Code == "workflow-ci-marker-required");
+    }
+
+    [Fact]
+    public void Ci_marked_workflow_change_waits_for_human_review()
+    {
+        var env = Setup(declaredAssetPaths: null, ciMarked: true);
+        WriteFile(env.Worktree, ".github/workflows/check.yml", "name: check\n");
+
+        var result = env.Git.WorktreeRunCommit("Demo", env.Worktree, "ci: check",
+            taskId: env.JobId, expectedBranch: "task/" + env.JobId);
+        Assert.False(result.Success);
+        Assert.Contains(result.Gate!.Findings, finding => finding.Code == "workflow-human-review-required");
+
+        WithheldCommitCandidateStore.Persist(env.JobFolder, WithheldCommitCandidatePolicy.Describe(result.Gate));
+        var reviewed = env.Git.CommitWithheldCandidates(env.JobId, env.WatchPath);
+        Assert.True(reviewed.Success, reviewed.Error);
+    }
+
     private sealed record Environment(
         GitService Git, string RepoRoot, string Worktree, string JobId, string JobFolder, string WatchPath);
 
-    private Environment Setup(IReadOnlyList<string>? declaredAssetPaths)
+    private Environment Setup(IReadOnlyList<string>? declaredAssetPaths, bool ciMarked = false)
     {
         var repoRoot = Path.Combine(_tempDir, "repo");
         var watchPath = Path.Combine(repoRoot, ".orchestrator", "jobs");
@@ -247,6 +276,7 @@ public class CommitCandidateWithholdingTests : IDisposable
             state = "3-progress",
             order = 1,
             agent = "claude",
+            tags = ciMarked ? new[] { "ci-change" } : Array.Empty<string>(),
             createdAt = DateTime.UtcNow.ToString("o"),
         }));
         File.WriteAllText(Path.Combine(jobFolder, "prompt.md"), "Capture 12 screenshots.");

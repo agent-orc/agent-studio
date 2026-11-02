@@ -2,7 +2,7 @@
 # CLI inside this container is the container-default execution boundary: the
 # container is the isolation, the CLI itself runs unsandboxed within it.
 # Build context is the repository root: docker build -f runner/Dockerfile .
-FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.301@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5 AS build
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 WORKDIR /src
@@ -12,7 +12,7 @@ RUN dotnet publish runner/AgentRunner.csproj -c Release -o /app /p:UseAppHost=fa
 
 # SDK base image on purpose: coding agents build and test the projects they
 # work on, so the execution container needs the full toolchain.
-FROM mcr.microsoft.com/dotnet/sdk:10.0
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 ARG CODEX_CLI_VERSION=0.154.0

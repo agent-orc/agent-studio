@@ -15,15 +15,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.301'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Security posture report
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          AGENT_APP_ID: ${{ vars.AGENT_APP_ID }}
+          GATE_CHECK: ${{ vars.PROTECTED_REF_GATE_CHECK }}
+          PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+        run: |
+          mkdir -p artifacts/security-posture
+          python3 scripts/security/repository_posture.py \
+            --repository "$GITHUB_REPOSITORY" --token "$GH_TOKEN" \
+            --platform-app-id "${PLATFORM_APP_ID:-0}" --agent-app-id "${AGENT_APP_ID:-0}" \
+            --gate-check "${GATE_CHECK:-unconfigured}" --public-url "$PUBLIC_URL" --release \
+            > artifacts/security-posture/report.json
+          cat artifacts/security-posture/report.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload security posture report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nightly-security-posture-${{ github.sha }}
+          path: artifacts/security-posture/report.json
+          if-no-files-found: warn
       - name: Check installation evidence contract
         run: |
           python3 scripts/release/installation-scenarios.test.py
@@ -51,7 +74,7 @@ jobs:
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" scripts/release/package-release.sh \
             "$version" "$sha" artifacts/publish frontend/dist/frontend/browser artifacts/release
       - name: Upload candidate assets for clean containers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nightly-linux-candidate
           path: artifacts/release/
@@ -96,7 +119,7 @@ jobs:
         run: python3 scripts/release/installation-scenarios.py --scenario simulated-user --candidate-dir artifacts/release --report-dir artifacts/installation-evidence
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nightly-installation-linux
           path: artifacts/installation-evidence/
@@ -112,12 +135,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ['ubuntu:24.04', 'debian:13', 'fedora:latest']
+        image: ['ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852', 'debian:13@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1', 'fedora:latest@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80']
     container:
       image: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: nightly-linux-candidate
           path: artifacts/release
@@ -129,7 +152,7 @@ jobs:
         run: bash scripts/release/installation-container-probe.sh artifacts/release artifacts/installation-evidence
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nightly-installation-native-${{ strategy.job-index }}
           path: artifacts/installation-evidence/
@@ -143,11 +166,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.x'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: nightly-linux-candidate
           path: artifacts/linux-release
@@ -187,7 +210,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows cross-host scenario failed.' }
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nightly-installation-windows
           path: artifacts/installation-evidence/

@@ -78,7 +78,8 @@ public sealed record CommitGateRequest(
     bool ExplicitlyReviewed = false,
     string? EvidenceDirectory = null,
     bool RequireExplicitPaths = false,
-    IReadOnlyCollection<string>? EvidenceAssetPaths = null);
+    IReadOnlyCollection<string>? EvidenceAssetPaths = null,
+    bool CiChangeMarked = false);
 
 public sealed class CommitBoundIndex : IDisposable
 {
@@ -294,6 +295,14 @@ public sealed class CommitCandidateGate
                     "Credential/config-home path was excluded and requires explicit review.",
                     "policy", ExcludesCandidate: true));
             }
+            if (included && normalized.StartsWith(".github/workflows/", StringComparison.OrdinalIgnoreCase))
+            {
+                findings.Add(request.CiChangeMarked
+                    ? new CommitGateFinding("workflow-human-review-required", CommitGateSeverities.Warning, normalized,
+                        "Workflow changes require recorded human review before a platform commit.", "policy")
+                    : new CommitGateFinding("workflow-ci-marker-required", CommitGateSeverities.Block, normalized,
+                        "Mark the card ci-change before a workflow file can be committed.", "policy"));
+            }
             if (size > OversizedBytes)
             {
                 findings.Add(new CommitGateFinding(
@@ -344,7 +353,9 @@ public sealed class CommitCandidateGate
         var unresolvedWarnings = findings.Any(f =>
             f.Severity == CommitGateSeverities.Warning && !f.ExcludesCandidate);
         var hasWarning = findings.Any(f => f.Severity == CommitGateSeverities.Warning);
-        var canCommit = !hasBlock && (!unresolvedWarnings || request.ExplicitlyReviewed);
+        var workflowReviewNeeded = findings.Any(f => f.Code == "workflow-human-review-required")
+            && request.Operation != "operator-withheld-review";
+        var canCommit = !hasBlock && !workflowReviewNeeded && (!unresolvedWarnings || request.ExplicitlyReviewed);
         var decision = hasBlock ? CommitGateDecisions.Block : hasWarning ? CommitGateDecisions.Warn : CommitGateDecisions.Allow;
         var result = new CommitGateResult(
             decision, canCommit, provenance, snapshots.Select(s => s.Entry).ToArray(), findings,

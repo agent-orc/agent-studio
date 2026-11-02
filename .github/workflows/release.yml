@@ -31,9 +31,12 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Check out exact tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+
+      - name: Check pinned workflow and image references
+        run: python3 scripts/security/repository_posture.py --root .
 
       - name: Validate tag and repository version
         id: version
@@ -45,10 +48,17 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == push ]]; then
             test "$GITHUB_REF_NAME" = "v$version"
             test "$(git tag --points-at "$GITHUB_SHA" | grep -Fx "$GITHUB_REF_NAME")" = "$GITHUB_REF_NAME"
+            test -n "$RELEASE_TAG_PUBLIC_KEY"
+            export GNUPGHOME="$(mktemp -d)"
+            trap 'rm -rf "$GNUPGHOME"' EXIT
+            printf '%s\n' "$RELEASE_TAG_PUBLIC_KEY" | gpg --batch --import
+            git verify-tag "$GITHUB_REF_NAME"
           fi
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain --untracked-files=all)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_TAG_PUBLIC_KEY: ${{ vars.RELEASE_TAG_PUBLIC_KEY }}
 
   test-build-release:
     name: Test and build Linux release
@@ -57,17 +67,17 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Check out exact tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.301'
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
@@ -116,6 +126,32 @@ jobs:
           --filter "Category!=MachineBound"
           --logger "console;verbosity=minimal"
 
+      - name: Security posture report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          AGENT_APP_ID: ${{ vars.AGENT_APP_ID }}
+          GATE_CHECK: ${{ vars.PROTECTED_REF_GATE_CHECK }}
+          PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+        run: |
+          mkdir -p artifacts/security-posture
+          python3 scripts/security/repository_posture.py \
+            --repository "$GITHUB_REPOSITORY" --token "$GH_TOKEN" \
+            --platform-app-id "${PLATFORM_APP_ID:-0}" --agent-app-id "${AGENT_APP_ID:-0}" \
+            --gate-check "${GATE_CHECK:-unconfigured}" \
+            --public-url "$PUBLIC_URL" --release --route-inventory \
+            > artifacts/security-posture/report.json
+          cat artifacts/security-posture/report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload security posture report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: security-posture-${{ github.sha }}
+          path: artifacts/security-posture/report.json
+          if-no-files-found: warn
+
       - name: Test release topology
         run: |
           dotnet test runner.Tests/AgentRunner.Tests.csproj \
@@ -137,7 +173,7 @@ jobs:
 
       - name: Upload deployment regression scenario reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: deployment-regression-scenario-${{ github.sha }}
           path: artifacts/scenario-reports/
@@ -217,7 +253,7 @@ jobs:
             artifacts/release
 
       - name: Upload Linux release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-release-artifacts
           path: artifacts/release/
@@ -233,12 +269,12 @@ jobs:
       WINDOWS_CODESIGN_PFX: ${{ secrets.WINDOWS_CODESIGN_PFX }}
     steps:
       - name: Check out exact tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.301'
 
@@ -293,7 +329,7 @@ jobs:
           }
 
       - name: Download Linux release artifacts for Studio UI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: linux-release-artifacts
           path: linux-release
@@ -353,7 +389,7 @@ jobs:
         run: dotnet test setup.Tests/AgentOrchestratorSetup.Tests.csproj --filter "FullyQualifiedName~WindowsNativeSetupTests" --logger "console;verbosity=minimal"
 
       - name: Upload Windows release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-release-artifacts
           path: |
@@ -368,7 +404,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build and save pinned images
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -396,7 +432,7 @@ jobs:
           done
           mkdir -p artifacts/images
           docker save "${images[@]}" | zstd -T0 -3 | split -b 1024m - artifacts/images/candidate-images.tar.zst.part-
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: candidate-images
           path: artifacts/images/candidate-images.tar.zst.part-*
@@ -410,15 +446,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.301'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: linux-release-artifacts
           path: artifacts/release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: candidate-images
           path: artifacts/images
@@ -472,7 +508,7 @@ jobs:
         run: python3 scripts/release/installation-scenarios.py --scenario simulated-user --candidate-dir artifacts/release --report-dir artifacts/installation-evidence
       - name: Upload installation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installation-linux-${{ github.sha }}
           path: artifacts/installation-evidence/
@@ -485,11 +521,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.301'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: windows-release-artifacts
           path: artifacts/release
@@ -508,7 +544,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows cross-host scenario failed.' }
       - name: Upload installation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installation-windows-${{ github.sha }}
           path: artifacts/installation-evidence/
@@ -523,12 +559,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ['ubuntu:24.04', 'debian:13', 'fedora:latest']
+        image: ['ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852', 'debian:13@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1', 'fedora:latest@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80']
     container:
       image: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: linux-release-artifacts
           path: artifacts/release
@@ -542,7 +578,7 @@ jobs:
           bash scripts/release/installation-container-probe.sh artifacts/release artifacts/installation-evidence
       - name: Upload installation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installation-native-${{ strategy.job-index }}-${{ github.sha }}
           path: artifacts/installation-evidence/
@@ -555,12 +591,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: linux-release-artifacts
           path: artifacts/release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: windows-release-artifacts
           path: artifacts/release
@@ -576,7 +612,7 @@ jobs:
           chmod +x artifacts/release/agent-studio-setup artifacts/release/install.sh
           (cd artifacts/release && rm -f SHA256SUMS && sha256sum *.tar.gz *.zip agent-studio-setup agent-studio-setup.exe install.sh RELEASE-NOTES.md > SHA256SUMS)
           (cd artifacts/release && sha256sum -c SHA256SUMS)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-candidate-${{ github.sha }}
           path: artifacts/release/
@@ -590,7 +626,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: candidate-images
           path: artifacts/images
@@ -621,21 +657,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-candidate-${{ github.sha }}
           path: artifacts/release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: work-container-images
           path: artifacts/work-container
       - name: Verify release assets
         run: (cd artifacts/release && sha256sum -c SHA256SUMS)
       - name: Attest release assets
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: |
             artifacts/release/*.tar.gz
@@ -663,9 +699,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install regctl for exact digest restore and tag removal
-        uses: regclient/actions/regctl-installer@dd58ad94f76adb73d8ac1bf75ed25f01545d5b32
+        uses: regclient/actions/regctl-installer@dd58ad94f76adb73d8ac1bf75ed25f01545d5b32 # v0.2.0
         with:
           release: 'v0.11.2'
       - name: Promote the staged images to version and latest tags
@@ -681,7 +717,7 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: scripts/release/work-container-image-manifest.sh "$VERSION" artifacts/work-container-images.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: work-container-images
           path: artifacts/work-container-images.json

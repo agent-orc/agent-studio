@@ -142,8 +142,20 @@ covered. Once all are, remove the old entries from `~/.git-credentials` and
 A remote rewritten to SSH, such as by a deploy key's `url.*.insteadOf`, keeps using
 that key until you remove the rewrite.
 
-Check repository rules before relying on the App for protected branches: a ruleset
-that names people or teams in its bypass list needs the App added as well.
+Before using the App for protected branches, apply the rulesets described in
+[Repository publication posture](../security/overview.md#repository-publication-posture).
+The publisher App must have a different identity from the App that issues
+coding tokens. Only the publisher App identity may bypass the publisher restriction. The
+deletion, non-fast-forward and gate rulesets have no bypass, including for the
+platform App. Do not add a coding or review agent to any bypass list.
+
+The App may retain the Workflows permission at installation level, but ordinary
+installation tokens request only Contents and Metadata. A workflow-capable
+attempt must be tied to a card marked `ci-change` and to recorded human review.
+Use `python3 scripts/security/update_pins.py` to refresh pinned action and image
+references, then inspect the diff. Release operators sign an annotated version
+tag with `scripts/release/sign-tag.sh VERSION` before publishing it. Configure
+the release workflow's public verification key as `RELEASE_TAG_PUBLIC_KEY`.
 
 ## Problems
 

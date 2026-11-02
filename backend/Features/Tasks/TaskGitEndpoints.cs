@@ -1,6 +1,7 @@
 
 
 using System.Text;
+using System.Security.Cryptography;
 
 using static AgentStudio.Tasks.TaskEndpointHelpers;
 
@@ -74,9 +75,31 @@ public static class TaskGitEndpoints
         // list above, commit it. The gate re-inspects the exact bytes and still
         // refuses anything that BLOCKS - explicit review clears warnings, never
         // secret material.
-        group.MapPost("/{jobId}/git/withheld-candidates/commit", (string jobId, string? project, string? watchPath, CommitWithheldCandidatesRequest? req, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapPost("/{jobId}/git/withheld-candidates/commit", (string jobId, string? project, string? watchPath, CommitWithheldCandidatesRequest? req, GitService git, AgentStudio.Registry.ProjectRegistry projects, TaskScannerService scanner, TimelineLog timeline, IConfiguration configuration, HttpContext context) =>
         {
+            if (AgentStudio.Security.SecurityProfiles.IsNetworked(configuration)
+                && context.Items[AgentStudio.Security.AccessSecurityMiddleware.HumanPrincipalItem] is null)
+                return Results.StatusCode(403);
             watchPath = ResolveWatchPath(projects, project, watchPath);
+            var card = scanner.FindJob(jobId, watchPath);
+            var withheld = card is null ? null : WithheldCommitCandidateStore.TryRead(card.FolderPath);
+            var reviewedPaths = withheld?.Candidates
+                .Where(candidate => candidate.Path.StartsWith(".github/workflows/", StringComparison.OrdinalIgnoreCase))
+                .Select(candidate => candidate.Path).Order(StringComparer.Ordinal).ToArray() ?? [];
+            if (reviewedPaths.Length > 0)
+            {
+                var actor = context.Items[AgentStudio.Security.AccessSecurityMiddleware.HumanPrincipalItem]
+                    is AgentStudio.Security.HumanPrincipal human
+                    ? TimelineActors.Human(human.User.Id)
+                    : TimelineActors.Human(context.Items["ClientId"] as string ?? "local");
+                if (!timeline.Append(card!.FolderPath, TimelineEventKinds.WorkflowChangeReviewed, actor,
+                    "Reviewed CI workflow candidates before commit.", details: new Dictionary<string, string>
+                    {
+                        ["pathCount"] = reviewedPaths.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["pathsSha256"] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', reviewedPaths)))).ToLowerInvariant(),
+                    }))
+                    return Results.StatusCode(503);
+            }
             var result = git.CommitWithheldCandidates(jobId, watchPath, req?.Message, req?.Paths);
             return result.Success
                 ? Results.Ok(new { sha = result.Sha, committed = result.Gate?.IncludedPaths ?? [] })

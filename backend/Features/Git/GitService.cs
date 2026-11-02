@@ -2777,7 +2777,7 @@ public partial class GitService
         var gate = _commitGate.Inspect(new CommitGateRequest(
             operation, projectId, repoRoot, taskId, runnerId, expectedPaths,
             requireTaskWorktree, expectedBranch, explicitlyReviewed, evidenceDirectory,
-            requireExplicitPaths, ResolveEvidenceAssetPaths(projectId)));
+            requireExplicitPaths, ResolveEvidenceAssetPaths(projectId), ResolveCiChangeMarker(taskId)));
         _logger.LogInformation(
             "Commit candidate gate {Decision} for {Operation} project={Project} task={TaskId} runner={RunnerId} candidates={Candidates} included={Included} findings={Findings} evidence={Evidence}",
             gate.Decision, operation, projectId, taskId ?? "<none>", runnerId ?? "<none>",
@@ -2802,6 +2802,20 @@ public partial class GitService
         {
             _logger.LogDebug(ex, "Commit gate could not resolve evidence-asset paths for {Project}", projectId);
             return [];
+        }
+    }
+
+    private bool ResolveCiChangeMarker(string? taskId)
+    {
+        if (string.IsNullOrWhiteSpace(taskId)) return false;
+        try
+        {
+            return _scanner.FindJob(taskId)?.Tags.Contains("ci-change", StringComparer.OrdinalIgnoreCase) == true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Commit gate could not resolve CI marker for {TaskId}", taskId);
+            return false;
         }
     }
 

@@ -150,6 +150,23 @@ public sealed class GitHubAppBrokerTests
     }
 
     [Fact]
+    public async Task Workflow_permission_requires_both_the_ci_marker_and_human_review()
+    {
+        await ConnectAsync();
+        await _broker.IssueDedicatedAsync("https://github.com/owner/core.git", RepositoryAccess.Write, default);
+        Assert.Equal(["contents=write", "metadata=read"], _github.TokenRequests[^1].Permissions);
+
+        await Assert.ThrowsAsync<GitHubAppException>(() => _broker.IssueDedicatedAsync(
+            "https://github.com/owner/core.git", RepositoryAccess.Write, default, ciChangeMarked: true));
+        await Assert.ThrowsAsync<GitHubAppException>(() => _broker.IssueDedicatedAsync(
+            "https://github.com/owner/core.git", RepositoryAccess.Write, default, humanReviewed: true));
+
+        await _broker.IssueDedicatedAsync("https://github.com/owner/core.git", RepositoryAccess.Write,
+            default, ciChangeMarked: true, humanReviewed: true);
+        Assert.Equal(["contents=write", "metadata=read", "workflows=write"], _github.TokenRequests[^1].Permissions);
+    }
+
+    [Fact]
     public async Task A_forged_installation_number_is_not_adopted()
     {
         await RegisterAsync();
@@ -428,7 +445,7 @@ public sealed class GitHubAppBrokerTests
         Assert.All(_github.TokenRequests, request => Assert.Equal(FakeGitHub.InstallationId, request.InstallationId));
         Assert.All(_github.TokenRequests, request => Assert.Single(request.Repositories));
         Assert.Equal(["contents=read", "metadata=read"], _github.TokenRequests[0].Permissions);
-        Assert.Equal(["contents=write", "metadata=read", "workflows=write"], _github.TokenRequests[2].Permissions);
+        Assert.Equal(["contents=write", "metadata=read"], _github.TokenRequests[2].Permissions);
     }
 
     [Fact]

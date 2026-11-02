@@ -8,12 +8,12 @@
 # image is the plain .NET runtime, not the SDK, so nothing here can build,
 # clone, or execute project code. The replay credential and the trace are
 # mounted read-only at deploy time and never baked into a layer.
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b AS build
 WORKDIR /src
 COPY . ./
 RUN dotnet publish demo-replay-runner/DemoReplayRunner.csproj -c Release -o /app /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0
+FROM mcr.microsoft.com/dotnet/runtime:10.0@sha256:a3f9f81954b9c810af2ed18849716c8dc74a4707bd0907fdbd69be81554c0f30
 WORKDIR /opt/demo-replay
 COPY --from=build /app ./
 

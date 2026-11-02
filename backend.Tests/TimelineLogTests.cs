@@ -49,6 +49,21 @@ public class TimelineLogTests : IDisposable
     }
 
     [Fact]
+    public void Workflow_review_event_records_the_human_and_candidate_digest()
+    {
+        var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(".github/workflows/check.yml"))).ToLowerInvariant();
+        Assert.True(_log.Append(_jobFolder, TimelineEventKinds.WorkflowChangeReviewed,
+            TimelineActors.Human("reviewer"), "Reviewed CI workflow candidates before commit.",
+            details: new Dictionary<string, string> { ["pathCount"] = "1", ["pathsSha256"] = digest }));
+
+        var entry = Assert.Single(_log.ReadAll(_jobFolder));
+        Assert.Equal("workflow_change_reviewed", entry.Kind);
+        Assert.Equal("human:reviewer", entry.Actor);
+        Assert.Equal(digest, entry.Details?["pathsSha256"]);
+    }
+
+    [Fact]
     public void Append_WritesCamelCaseJsonl_OmittingNulls()
     {
         _log.Append(_jobFolder,

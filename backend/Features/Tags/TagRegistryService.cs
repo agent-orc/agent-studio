@@ -57,9 +57,8 @@ public sealed class TagRegistryService
     };
 
     /// <summary>
-    /// Curated rows that predate the area vocabulary and are owned by no other
-    /// list. They stay in the seed so an existing workspace keeps its labels,
-    /// colours, and the two system provenance tags.
+    /// Curated rows and task markers owned by no other list. They stay in the
+    /// seed so an existing workspace keeps its labels, colours, and system tags.
     /// </summary>
     private static readonly TagRegistryEntry[] LegacySeed =
     [
@@ -67,6 +66,7 @@ public sealed class TagRegistryService
         new() { Id = "quality",       Label = "Quality",       Color = "#a6e3a1", Description = "Tests, regressions, robustness, logging, observability of bugs." },
         new() { Id = "docs",          Label = "Docs",          Color = "#94e2d5", Description = "README / AGENTS / ADR / skill files / lookup index updates." },
         new() { Id = "observability", Label = "Observability", Color = "#f9e2af", Description = "Logs, metrics, drift reports, token aggregates, supervisor signals." },
+        new() { Id = "ci-change", Label = "CI change", Color = "#94a3b8", Description = "Card may change repository workflow files after human review." },
         new() { Id = "orchestrator-moved", Label = "Orchestrator: moved", Color = "#b4befe", Description = "The orchestrator advanced this task toward Completed (accept-as-done), as opposed to a human accepting it." },
         new() { Id = "outcome-silent-finish", Label = "Outcome: silent finish", Color = "#f9e2af", Description = "Codex stopped after its final tool call without a closing sentinel; the runner detected the silent-completion shape and finalized the run. The work is likely complete but the sign-off is missing - double-check before promoting." }
     ];

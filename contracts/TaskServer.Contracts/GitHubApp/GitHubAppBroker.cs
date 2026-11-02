@@ -348,17 +348,23 @@ public sealed class GitHubAppBroker
     /// revoking it at the attempt's end touches nothing else. Null when the App
     /// does not reach the repository.
     /// </summary>
-    public async Task<GitHubInstallationToken?> IssueDedicatedAsync(string repositoryUrl, string access, CancellationToken ct)
+    public async Task<GitHubInstallationToken?> IssueDedicatedAsync(
+        string repositoryUrl, string access, CancellationToken ct,
+        bool ciChangeMarked = false, bool humanReviewed = false)
     {
         var level = RepositoryAccess.Normalize(access)
             ?? throw new GitHubAppException("invalid-access", "Access must be 'read' or 'write'.");
+        if (ciChangeMarked != humanReviewed || (ciChangeMarked && level != RepositoryAccess.Write))
+            throw new GitHubAppException("ci-review-required", "Workflow access requires a CI-marked card and recorded human review.");
         if (GitHubRepositoryName.TryParse(repositoryUrl) is not { } repository) return null;
         if (await _vault.LoadConnectionAsync(ct) is not { } connection) return null;
+        if (ciChangeMarked && !connection.WritePermissions.Contains("workflows", StringComparer.Ordinal))
+            throw new GitHubAppException("workflow-permission-unavailable", "The connected App cannot issue a workflow-capable token.");
         if (await ReadSecretsAsync(ct) is not { } secrets) return null;
         var installationId = await InstallationAsync(connection, secrets, repository, ct);
         if (installationId is not { } id || connection.Installations.All(item => item.Id != id)) return null;
         return await _github.CreateInstallationTokenAsync(connection.AppId, secrets.PrivateKeyPem, id, repository,
-            Permissions(connection, level), ct);
+            Permissions(connection, level, ciChangeMarked && humanReviewed), ct);
     }
 
     private async Task<GitHubAppFlowStep> FinishRegistrationAsync(Flow flow, string? code, string actor, CancellationToken ct)
@@ -518,15 +524,16 @@ public sealed class GitHubAppBroker
     private static RepositoryCredential Credential(GitHubRepositoryName repository, GitHubInstallationToken token, string access)
         => new(repository.CloneUrl, CredentialUsername, token.Value, token.ExpiresAtUtc, access);
 
-    /// <summary>What a token may do. Metadata is implied by every token; workflows only if the App holds it.</summary>
-    private static IReadOnlyDictionary<string, string> Permissions(GitHubAppConnection connection, string access)
+    /// <summary>Workflow access is absent from ordinary tokens, even when the installation grants it.</summary>
+    private static IReadOnlyDictionary<string, string> Permissions(GitHubAppConnection connection, string access, bool allowWorkflows = false)
     {
         var permissions = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["contents"] = access,
             ["metadata"] = RepositoryAccess.Read,
         };
-        if (access == RepositoryAccess.Write && connection.WritePermissions.Contains("workflows", StringComparer.Ordinal))
+        if (allowWorkflows && access == RepositoryAccess.Write
+            && connection.WritePermissions.Contains("workflows", StringComparer.Ordinal))
             permissions["workflows"] = RepositoryAccess.Write;
         return permissions;
     }
