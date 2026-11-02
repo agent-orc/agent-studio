@@ -30,6 +30,7 @@ class ProbeStub {
     if (status === 'failed') return { kind: 'http-error', statusCode: 500, framePolicy: 'allowed', detail: null, durationMs: 1 };
     if (status === 'blocked') return { kind: 'frame-blocked', statusCode: 200, framePolicy: 'blocked', detail: 'X-Frame-Options is DENY.', durationMs: 1 };
     if (status === 'offline') return { kind: 'offline', statusCode: null, framePolicy: 'unknown', detail: null, durationMs: 1 };
+    if (status === 'local-only') return { kind: 'local-only', statusCode: null, framePolicy: 'unknown', detail: 'This URL points at a loopback or link-local address.', durationMs: 1 };
     return { kind: 'unknown', statusCode: null, framePolicy: 'unknown', detail: null, durationMs: null };
   });
   statusFor(): ProjectUrlStatus { return this.status(); }
@@ -209,6 +210,23 @@ describe('ProjectUrlPreviewTabComponent', () => {
     expect(offline?.textContent).toContain('npm run website');
     expect(offline?.textContent).toContain('c:/demo');
     expect(el.querySelector('[data-testid="url-preview-start"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="url-preview-frame"]')).toBeFalsy();
+  });
+
+  it('shows a loopback URL the networked server does not request as local only, not offline', () => {
+    const { fixture, http, probe } = mount('url-1', 'networked');
+    probe.status.set('local-only');
+    http.expectOne(req => req.url.endsWith('/workspaces')).flush(workspacesWith([STARTABLE_URL]));
+    fixture.detectChanges();
+
+    const el: HTMLElement = fixture.nativeElement;
+    const pill = el.querySelector('[data-testid="url-preview-status"]');
+    expect(pill?.getAttribute('data-status')).toBe('local-only');
+    expect(pill?.textContent?.trim()).toBe('local only');
+    const card = el.querySelector('.url-preview__state-card');
+    expect(card?.textContent).toContain('Preview is local only');
+    expect(card?.textContent).toContain('This URL points at a loopback or link-local address.');
+    expect(card?.textContent).not.toContain('Preview is offline');
     expect(el.querySelector('[data-testid="url-preview-frame"]')).toBeFalsy();
   });
 

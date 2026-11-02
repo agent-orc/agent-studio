@@ -21,7 +21,7 @@ import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.
 import { TaskService } from '../../../../services/task.service';
 import { AuthService } from '../../../../services/auth.service';
 import {
-  ProjectUrlProbeService,
+  ProjectUrlProbeService, ProjectUrlStatusLabelPipe,
   type ProjectUrlReadiness,
 } from '../../../../services/project-url-probe.service';
 import type { ProjectUrlDiagnostic, ProjectUrlSuggestion, RegistryProjectUrl } from '../../../../models/task.model';
@@ -40,7 +40,7 @@ import {
 import { buildEmbedMenuItems, httpErrorMessage, projectPreviewProxyUrl, type StartFailure } from './project-url-preview-tab.helpers';
 import { diagnosticText, presentProjectUrlDiagnosis } from './project-url-diagnostic.model';
 
-type PreviewPill = 'running' | 'offline' | 'checking' | 'building' | 'blocked' | 'failed' | 'custom';
+type PreviewPill = 'running' | 'offline' | 'checking' | 'building' | 'blocked' | 'failed' | 'local-only' | 'custom';
 
 /** Readiness kinds that warrant loading the full backend diagnosis. */
 const DIAGNOSABLE_KINDS: ReadonlySet<ProjectUrlReadiness['kind']> =
@@ -82,6 +82,7 @@ const DIAGNOSABLE_KINDS: ReadonlySet<ProjectUrlReadiness['kind']> =
     ProductFeedbackComponent,
     ProjectUrlProcessConsoleComponent,
     ProjectUrlSettingsDialogComponent,
+    ProjectUrlStatusLabelPipe,
   ],
   providers: [ProjectUrlProcessController, ProjectUrlEmbedNavigationController],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -204,7 +205,7 @@ export class ProjectUrlPreviewTabComponent {
     if (this.diagnostic()?.startupFailureReason) return 'failed';
     if (this.readiness().kind === 'frame-blocked') return 'blocked';
     if (this.readiness().kind === 'http-error') return 'failed';
-    return 'offline';
+    return this.readiness().kind === 'local-only' ? 'local-only' : 'offline';
   });
 
   readonly canReload = computed(() => this.resolveState() === 'resolved' && !this.building());
