@@ -1818,6 +1818,26 @@ move-error dialog.
   complete stdout and stderr artifacts are retained in the Remote Review grade.
   A missing preparation directory is also copied into the grade Detail line so
   the path is visible without opening stderr.
+- What the dependency cache may skip (AGT-3429). A cache hit proves only that
+  each lockfile scope's `node_modules` and `.nm-state` marker match its
+  lockfiles. It skips a preparation command only when every scope of that
+  command hits and the plan marks the command as covered by its scopes
+  (`CoveredByDependencyScopes`, decided by `DependencyPreparationSkipPolicy`).
+  The planner marks a conventional `npm ci` for one lockfile root as covered. A
+  build-profile `installCmd` is opaque shell and runs on every attempt, unless
+  the profile sets `installCoveredByLockfiles: true` to state that its
+  `lockfiles` cover everything the command prepares; leave it false when the
+  command also runs `dotnet restore` or anything else outside the lockfile
+  scopes. `dotnet restore` has no scope and always runs. A plan without the
+  field runs the command. The opt-in is part of the profile fingerprint only
+  when set, so existing validations stay valid. Restored `**/obj` content stays
+  valid in a later Remote Review attempt because every attempt and role uses
+  the host-stable NuGet folder `<review-workdir>/.dependency-cache/nuget-packages`
+  with a shared `nuget-scratch` for NuGet's extraction locks, so a cached
+  `project.assets.json` never names a package folder deleted with an earlier
+  attempt (NETSDK1064). The review retention sweep removes package versions
+  extracted more than 30 days ago while no attempt is active; the next restore
+  extracts them again.
 - Compatibility dependency preparation and verification consume one shared `gate-run` budget.
   Machine-gate queue wait, exact workspace materialization, and exact workspace
   cleanup have separate named budgets. Local Git operations receive the remaining
@@ -1961,8 +1981,20 @@ move-error dialog.
   the full suite once on that exact source SHA, records
   `post-steps/pre-main-test-gate-*.log`, rechecks both branch tips after the
   suite, and only then fast-forwards `main`. A red or incomplete result leaves
-  `main` unchanged. The future manifest-based release workflow must use the
-  same boundary.
+  `main` unchanged. In a repository that integrates straight into `main`, a
+  delivery that already descends from `main` takes that fast-forward path. A
+  delivery behind `main` (AGT-3435) gets the same `--no-ff` merge as the
+  develop path, under the gate journal. The full suite then runs on the exact
+  merge SHA. A red verdict rolls the lane back and nothing is published. A green
+  verdict stands only while the merge base still contains the freshly fetched
+  `origin/main`. When `main` moved during the suite, the lane is rolled back and
+  the delivery is merged and gated again, at most
+  `ReleaseLineMergePolicy.MaxAttempts` (3) times; the last refusal is
+  `release-line-moving`. A real conflict returns `agent-round-required` with the
+  conflicted files, which starts the one bounded automatic round. A mechanical
+  rebase records its SHA mapping like the develop path. The old
+  `source-needs-rebase` refusal is no longer written for this case. The future
+  manifest-based release workflow must use the same boundary.
 - Framework-specific catalogue steps declare `appliesTo`; `any` remains the
   default. The project catalogue response includes derived `detectedStacks`, an
   `applicable` flag, and the effective resolved command list for every step.

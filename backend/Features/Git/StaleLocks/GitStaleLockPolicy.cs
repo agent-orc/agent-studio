@@ -34,10 +34,15 @@ public enum GitLockVerdict
 /// failed on "Unable to create '.../index.lock': File exists" for 36 hours,
 /// because the only recovery was a sub-second retry that waits for a live
 /// writer to finish. A lock nobody holds never goes away on its own.</para>
+///
+/// <para>The threshold only spares a lock that git is writing right now from a
+/// process inventory. Ownership decides everything after it, so it is short: a
+/// 10-minute threshold kept an <c>index.lock</c> from a killed git process for
+/// 9 minutes and failed every evidence flush meanwhile.</para>
 /// </summary>
 public static class GitStaleLockPolicy
 {
-    public static readonly TimeSpan DefaultThreshold = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan DefaultThreshold = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan DefaultWait = TimeSpan.FromSeconds(1);
 
     /// <summary>
@@ -48,6 +53,15 @@ public static class GitStaleLockPolicy
     /// a live git that wrote its lock right after it started.
     /// </summary>
     public static readonly TimeSpan KilledCommandClockSlack = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// The time the ownership probe compares process start times with: the
+    /// lock's last write plus <see cref="KilledCommandClockSlack"/>. A git
+    /// process that started a moment after that write by the clocks we can read
+    /// may still be the writer, so it counts as a possible holder.
+    /// </summary>
+    public static DateTime OwnerStartedBefore(DateTime lockLastWriteTimeUtc)
+        => lockLastWriteTimeUtc + KilledCommandClockSlack;
 
     /// <summary>
     /// Age is checked first so a young lock never needs a process inventory. A

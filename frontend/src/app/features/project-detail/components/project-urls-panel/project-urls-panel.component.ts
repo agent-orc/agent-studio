@@ -14,7 +14,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import { TaskService } from '../../../../services/task.service';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
-import { ProjectUrlProbeService, type ProjectUrlStatus } from '../../../../services/project-url-probe.service';
+import { ProjectUrlProbeService, ProjectUrlStatusLabelPipe, type ProjectUrlStatus } from '../../../../services/project-url-probe.service';
 import { WorkspaceManagerService } from '../../../shell/state/workspace-manager.service';
 import { ProjectUrlRecoveryService } from '../../services/project-url-recovery.service';
 import type {
@@ -40,7 +40,7 @@ type UrlPill = ProjectUrlStatus | 'building';
 @Component({
   selector: 'app-project-urls-panel',
   standalone: true,
-  imports: [FormsModule, StudioIconComponent, TooltipDirective],
+  imports: [FormsModule, StudioIconComponent, TooltipDirective, ProjectUrlStatusLabelPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './project-urls-panel.component.html',

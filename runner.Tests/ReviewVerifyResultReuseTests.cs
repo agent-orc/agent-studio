@@ -416,6 +416,8 @@ public sealed class ReviewVerifyResultReuseTests : IDisposable
             Role = "review",
             WorkDir = Path.Combine(_root, "coding"),
             ReviewWorkDir = _reviewRoot,
+            // Keeps the short attempt temp roots inside the test root (AGT-3429).
+            ReviewTempBase = Path.Combine(_root, "t"),
             BaseBranch = "main",
             ClaudeCliBin = "unused",
             CodexCliBin = _fakeCodex ?? "codex",

@@ -4,7 +4,8 @@ namespace AgentRunner;
 /// Removes what one review command left in its own temp directory (AGT-2858).
 ///
 /// The attempt workspace already points <c>TMPDIR</c>/<c>TMP</c>/<c>TEMP</c> and
-/// <c>MSBUILDDEBUGPATH</c> at <c>review-work/&lt;attempt&gt;/tmp</c>, so a verify
+/// <c>MSBUILDDEBUGPATH</c> at its short temp root <c>/tmp/rv-&lt;digest&gt;/c</c>
+/// (<see cref="ReviewAttemptTemp"/>), so a verify
 /// command's residue - test fixture directories, MSBuild node files, the
 /// diagnostic sockets of killed test hosts - never reaches the host's shared
 /// <c>/tmp</c>. What it did not do is bound the residue *inside* the attempt: a
@@ -50,7 +51,7 @@ internal static class ReviewTempResidue
 
     /// <summary>
     /// Fence for <see cref="Purge"/>: a temp path is only ever emptied when it
-    /// lies strictly below the attempt root. A command that carries a foreign or
+    /// lies strictly below the attempt's temp root. A command that carries a foreign or
     /// host-shared <c>TMPDIR</c> - or none at all - is left alone, because this
     /// executor does not own what is in it.
     ///
