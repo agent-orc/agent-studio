@@ -358,6 +358,12 @@ Member replay routes (AGT-3104, chosen by the pure `BatchReplayPolicy`):
 | Contains a merge commit (a fix round that merged the integration branch) | `git merge --no-ff` of the untouched result commit | the result SHA maps to that one merge commit |
 | Result already contained in the tip | none | unattributable, member ejected |
 
+Direct-merge projects use a different route when a delivery with merge commits
+is behind their current integration tip. They replay the final delivery tree's
+net change against the merge base as one commit on the tip. The gate and push
+use that exact commit, and the card maps each delivery commit absent from the
+tip to it. A tree conflict names its files and starts an agent round.
+
 The merge route is the documented strategy for non-linear deliveries. It is
 the same `--no-ff` merge the per-task integration uses, so every delivery SHA,
 the fix round's own merge included, stays an ancestor of the candidate and no

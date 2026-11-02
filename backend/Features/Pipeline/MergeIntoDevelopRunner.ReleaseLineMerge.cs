@@ -12,7 +12,7 @@ public sealed partial class MergeIntoDevelopRunner
     /// <list type="number">
     /// <item>merge the delivery onto the release lane with the same
     ///   <c>--no-ff</c> merge the develop path uses, so every delivery SHA stays
-    ///   an ancestor or, after a mechanical rebase, is mapped one-to-one;</item>
+    ///   an ancestor or is mapped to the gated commit after mechanical replay;</item>
     /// <item>a real conflict returns <see cref="MergeIntoIntegrationOutcome.AgentRoundRequired"/>
     ///   with the conflicted files, which starts one bounded automatic round;</item>
     /// <item>run the mandatory full suite on the exact merge SHA; a red verdict

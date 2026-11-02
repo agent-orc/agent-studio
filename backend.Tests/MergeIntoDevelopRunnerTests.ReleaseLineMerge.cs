@@ -15,6 +15,53 @@ namespace AgentStudio.Tests;
 public sealed partial class MergeIntoDevelopRunnerTests
 {
     [Fact]
+    public async Task RunAsync_MainTarget_MergeRound_GatesAndPublishesMappedNetChange()
+    {
+        var (repo, remote) = SeedRepoWithOrigin("release-merge-round");
+        const string deliveryRef = "agent-studio/results/run-merge-round/result";
+        RunGit(repo, "checkout -q -b task/merge-round");
+        File.WriteAllText(Path.Combine(repo, "delivery.txt"), "delivery work");
+        Commit(repo, "feat: delivery work");
+        RunGit(repo, "checkout -q main");
+        File.WriteAllText(Path.Combine(repo, "earlier.txt"), "earlier main work");
+        Commit(repo, "feat: earlier main work");
+        RunGit(repo, "push -q origin main");
+        RunGit(repo, "checkout -q task/merge-round");
+        Assert.Equal(0, RunGit(repo, "merge -q --no-ff main -m \"Merge main into delivery\"").Code);
+        var resultSha = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, $"push -q origin HEAD:refs/heads/{deliveryRef}");
+        RunGit(repo, "checkout -q main");
+        File.WriteAllText(Path.Combine(repo, "later.txt"), "later main work");
+        Commit(repo, "feat: later main work");
+        RunGit(repo, "push -q origin main");
+        var before = RunGit(repo, "rev-parse main").Out.Trim();
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        var gateRunner = new CapturingBuildTestGateRunner(FullSuite(BuildTestGateVerdict.Ok));
+        var runner = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preMainTestGate: new PreMainTestGate(gateRunner));
+        var jobFolder = BeginRun(log, repo, "merge-round");
+        WriteRemoteSubject(jobFolder, repo, "AGT-MERGE-ROUND", "run-merge-round", resultSha, deliveryRef);
+
+        var outcome = await runner.RunAsync("Fixture", "merge-round", jobFolder, repo, "main", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.MergedAfterRebase, outcome.Outcome);
+        var published = Assert.IsType<string>(outcome.MergedSha);
+        Assert.Equal(before, RunGit(repo, $"rev-parse {published}^1").Out.Trim());
+        Assert.Contains(outcome.RebasedCommits, item => item.OriginalSha == resultSha && item.RebasedSha == published);
+        Assert.Equal(published, gateRunner.Request!.ExpectedSha);
+        Assert.Equal(TestExecutionLevels.Full, gateRunner.Request.RequiredTestLevel);
+        Assert.Equal(published, IntegrationVerificationStore.Read(jobFolder)!.Sha);
+
+        var pushed = await runner.PushIntegrationBranchAsync(
+            "Fixture", "merge-round", jobFolder, repo, "main", CancellationToken.None, approvedSha: published);
+        Assert.True(pushed.Success, pushed.Error);
+        Assert.Equal(published, RemoteSha(remote, "main"));
+    }
+
+    [Fact]
     public async Task RunAsync_MainTarget_DeliveryBehindMain_MergesGatesAndPublishesTheMergeResult()
     {
         var (repo, remote) = SeedRepoWithOrigin("release-behind-main");

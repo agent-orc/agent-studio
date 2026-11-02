@@ -238,6 +238,32 @@ public class TaskCommitBindingTests : IDisposable
     }
 
     [Fact]
+    public void RecordMechanicalRebase_ManyDeliveryCommitsToOnePublishedCommit_AcceptanceReadsOneActiveSha()
+    {
+        var (scanner, mutations) = Build();
+        var jobDir = SeedJobFolder("net-change", "3-progress", legacyCommit: null);
+        var first = MakeCommit("aaaaaaa", "feat: delivery", 1, "2026-05-09T10:00:00Z");
+        var result = MakeCommit("bbbbbbb", "Merge develop into delivery", 1, "2026-05-09T10:10:00Z");
+        var published = Pad("ccccccc");
+        Assert.True(mutations.AppendJobCommitOnFolder(jobDir, first));
+        Assert.True(mutations.AppendJobCommitOnFolder(jobDir, result));
+
+        Assert.True(mutations.RecordMechanicalRebaseOnFolder(jobDir,
+        [
+            new RebasedCommitReplacement(first.Sha, published),
+            new RebasedCommitReplacement(result.Sha, published),
+        ]));
+
+        var card = scanner.FindJob("net-change", _watchPath);
+        Assert.NotNull(card);
+        Assert.Equal(3, card!.Commits.Count);
+        Assert.Equal(published, card.Commits[0].SupersededBySha);
+        Assert.Equal(published, card.Commits[1].SupersededBySha);
+        Assert.Equal(published, card.Commits[2].Sha);
+        Assert.Equal([published], TaskIntegrationStatusService.AttributedCommits(card));
+    }
+
+    [Fact]
     public void AppendCommit_WithExistingSha_ReplacesInPlace_DoesNotDuplicate()
     {
         var (scanner, mutations) = Build();
