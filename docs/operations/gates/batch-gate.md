@@ -90,6 +90,15 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   batch gate does not reconcile code push markers.
   Disabling the push step keeps code batching on hold while the local merge
   is still unpublished.
+- Red-batch isolation keeps durable findings for each delivery and tested base.
+  A green child can publish without waiting for sibling probes. If a sibling's
+  delivery changes, only that member leaves isolation; its remaining siblings
+  continue. A red singleton, or the sole member of a red child not already
+  proven green, is sent back to its agent with the failing gate evidence and
+  stays out of planning until its delivery changes. Green members are admitted
+  first on the same base. Restart reconstruction uses these findings and the
+  closed child verdicts. The state route and report expose the findings as
+  `proven-red`, `proven-green`, and `superseded`.
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
   and member state. The existing report includes observed batch green rate.
 - AGT-3055 (D16 option A): the batch suite is claimable gate work by default.

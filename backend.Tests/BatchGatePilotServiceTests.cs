@@ -1577,6 +1577,91 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         AssertLane(offender.Key, TaskStates.Escalated);
     }
 
+    [Fact]
+    public async Task Isolation_publishes_green_child_and_continues_after_other_member_changes_delivery()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 3);
+        var a = SeedMember(factory, "DOC-ISO-A", "docs/iso-a.md");
+        var b = SeedMember(factory, "DOC-ISO-B", "docs/iso-b.md");
+        var c = SeedMember(factory, "DOC-ISO-C", "docs/iso-c.md");
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var changed = false;
+        _gate.Batch = request =>
+        {
+            var hasA = TreeHas(request.ExpectedSha!, "docs/iso-a.md");
+            var hasB = TreeHas(request.ExpectedSha!, "docs/iso-b.md");
+            var hasC = TreeHas(request.ExpectedSha!, "docs/iso-c.md");
+            if (hasB && hasC && !hasA && !changed)
+            {
+                changed = true;
+                Supersede(authority, b.Key);
+            }
+            return hasB ? Red(request.ExpectedSha) : Green(request.ExpectedSha);
+        };
+        _gate.Fallback = _ => throw new InvalidOperationException("Isolation member ran fallback.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.True(changed);
+        AssertLane(a.Key, TaskStates.HumanReview);
+        Assert.Null(Ownership(b.Key));
+        Assert.Contains(store.ListManifests(), child => child.ParentBatchId is not null
+            && child.Members.Select(member => member.TaskKey).SequenceEqual([c.Key])
+            && store.ListRuns(child.BatchId).Count > 0);
+        Assert.Contains(store.ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == b.Key && finding.Status == "superseded");
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.NotEqual(store.ListManifests().Single(parent => parent.ParentBatchId is null).BaseSha,
+            RemoteTip());
+    }
+
+    [Fact]
+    public async Task Red_pair_and_green_child_persist_the_culprit_across_restart()
+    {
+        using var factory = BuildFactory();
+        var client = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var a = SeedMember(factory, "DOC-PAIR-A", "docs/pair-a.md");
+        var b = SeedMember(factory, "DOC-PAIR-B", "docs/pair-b.md");
+        SeedMember(factory, "DOC-PAIR-C", "docs/pair-c.md");
+        SeedMember(factory, "DOC-PAIR-D", "docs/pair-d.md");
+        _gate.Batch = request => TreeHas(request.ExpectedSha!, "docs/pair-b.md")
+            ? Red(request.ExpectedSha) : Green(request.ExpectedSha);
+        _gate.Fallback = _ => throw new InvalidOperationException("Proven culprit ran fallback.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var findings = store.ListIsolationFindings(ProjectName);
+        Assert.Contains(findings, finding => finding.TaskKey == b.Key
+            && finding.Status == "proven-red");
+        Assert.Contains(findings, finding => finding.TaskKey == a.Key
+            && finding.Status == "proven-green");
+        AssertLane(b.Key, TaskStates.Escalated);
+        AssertLane(a.Key, TaskStates.HumanReview);
+        using var state = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/state"));
+        Assert.Contains(state.RootElement.GetProperty("isolationFindings").EnumerateArray(),
+            finding => finding.GetProperty("status").GetString() == "proven-red");
+        using var report = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/report"));
+        Assert.Contains(report.RootElement.GetProperty("isolationFindings").EnumerateArray(),
+            finding => finding.GetProperty("status").GetString() == "proven-green");
+
+        factory.Dispose();
+        using var restarted = BuildFactory();
+        _ = restarted.CreateClient();
+        EnableBatchGate(restarted, closeSize: 4);
+        Assert.Contains(restarted.Services.GetRequiredService<BatchGateStore>()
+            .ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == b.Key && finding.Status == "proven-red");
+    }
+
     // A merged member keeps every delivery SHA: the candidate merge has the
     // tip before it and the untouched result SHA as its exact parents, so the
     // result maps to that merge and no commit of the card is rewritten.

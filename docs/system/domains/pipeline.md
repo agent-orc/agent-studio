@@ -376,6 +376,16 @@ Member evidence, the curated mapping and the integration bookkeeping record
 use that merge commit; the card's commit chain is not superseded. Red
 isolation reassembles each diagnostic subset from the base with the same
 routes, so a merged member can be isolated or survive like any other.
+Isolation records delivery-bound findings outside the closed manifest. A green
+child publishes as soon as its members are current and the tested base is still
+the integration tip; the usual stale-base path applies otherwise. A changed
+delivery removes only that member from diagnostic work. A red singleton, or a
+red child with all other members proven green, marks its remaining member red
+until that delivery changes and hands its failing evidence back to the agent.
+Green findings remain reusable on the tested base. Interruption recovery reads
+the child verdicts and findings before planning the remaining members. The
+batch state and pilot report expose proven-red, proven-green, and superseded
+findings.
 
 Assembly sorts a replay that is not a conflict into three outcomes
 (`BatchGatePolicy.ReplayDisposition`): a mapped success is admitted; a member

@@ -29,7 +29,8 @@ public sealed record BatchGatePilotSnapshot(
     int ReviewVerificationRuns = 0,
     double ReviewVerificationHostMinutes = 0,
     double ReviewVerificationBaselineMinutes = 0,
-    double TotalVerificationHostMinutes = 0);
+    double TotalVerificationHostMinutes = 0,
+    IReadOnlyList<BatchGateIsolationFinding>? IsolationFindings = null);
 
 public static class BatchGatePilotSnapshotReader
 {
@@ -120,7 +121,8 @@ public static class BatchGatePilotSnapshotReader
             ReviewVerificationRuns: reviewVerifications.Count(item => item.CountedCommands > 0),
             ReviewVerificationHostMinutes: reviewMinutes,
             ReviewVerificationBaselineMinutes: reviewVerifications.Sum(item => item.BaselineMinutes),
-            TotalVerificationHostMinutes: hostMinutes + reviewMinutes);
+            TotalVerificationHostMinutes: hostMinutes + reviewMinutes,
+            IsolationFindings: store.ListIsolationFindings(project));
     }
 
     private static double? Ratio(double numerator, double denominator)
