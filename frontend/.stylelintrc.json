@@ -357,6 +357,22 @@
       }
     },
     {
+      "comment": "Environment surfaces enforce spacing and type tokens.",
+      "files": ["src/app/features/remote-hosts/**/*.scss"],
+      "rules": {
+        "declaration-property-value-allowed-list": {
+          "font-size": ["/^var\\(--studio-font-size-(sm|md|lg|xl|2xl)\\)$/"]
+        },
+        "scale-unlimited/declaration-strict-value": [
+          ["padding", "padding-top", "padding-right", "padding-bottom", "padding-block", "padding-inline",
+           "margin", "margin-top", "margin-right", "margin-bottom", "margin-block", "margin-inline",
+           "gap", "row-gap", "column-gap", "font-size"],
+          { "ignoreValues": ["transparent", "currentColor", "inherit", "initial", "unset", "none", "revert", "revert-layer", "0", "auto"],
+            "ignoreFunctions": false, "disableFix": true, "severity": "error" }
+        ]
+      }
+    },
+    {
       "comment": "Living styling-guide proof slice: raw hex colors are an error on the Task Detail decision actions.",
       "files": [
         "src/app/features/task-detail/components/escalation-summary/_escalation-summary-actions.scss"

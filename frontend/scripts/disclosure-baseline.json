@@ -18,6 +18,8 @@
     "src/app/features/quota/components/workspace-quota-disclosure/workspace-quota-disclosure.html",
     "src/app/features/project-detail/components/workbench-overview/workbench-overview.component.html",
     "src/app/features/remote-hosts/components/host-credentials/host-credentials.html",
+    "src/app/features/remote-hosts/components/environment-attention/environment-attention.html",
+    "src/app/features/remote-hosts/components/remote-host-detail-summary/remote-host-detail-summary.html",
     "src/app/features/task-detail/components/prompt-pane/agent-work-detail/agent-work-detail.component.html",
     "src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.html",
     "src/app/features/task-detail/components/prompt-pane/overview-pane/pipeline-decision-chain/pipeline-decision-chain.component.html",
@@ -117,14 +119,6 @@
       "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
     },
     "src/app/features/regression-radar/components/regression-radar/regression-radar.component.html": {
-      "kind": "staged-adoption",
-      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
-    },
-    "src/app/features/remote-hosts/components/remote-host-card/remote-host-card.html": {
-      "kind": "staged-adoption",
-      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
-    },
-    "src/app/features/remote-hosts/components/remote-host-detail-summary/remote-host-detail-summary.html": {
       "kind": "staged-adoption",
       "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
     },

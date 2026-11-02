@@ -10,10 +10,7 @@ import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-te
 import { HostReleaseIdentityComponent } from '../host-release-identity/host-release-identity';
 import { RemoteHostDetailSummaryComponent } from '../remote-host-detail-summary/remote-host-detail-summary';
 import { HostCredentialsComponent } from '../host-credentials/host-credentials';
-import {
-  RemoteHostRoleRowComponent,
-  roleSlotTotal,
-} from '../remote-host-role-row/remote-host-role-row';
+import { roleSlotTotal } from '../../models/role-slots';
 import {
   RuntimeCapacityEditorComponent,
   type HostProjectPolicyChange,
@@ -51,6 +48,7 @@ import {
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
 import { HostCredentialBadgeComponent } from '../../../credentials/host-credential-badge/host-credential-badge.component';
+import { hostReadiness } from '../../models/host-readiness';
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {
   key: string;
@@ -68,8 +66,7 @@ interface Meter {
  * accent bar (style-guide R1). History (retired / draining) renders calm (R4).
  */
 @Component({
-  // eslint-disable-next-line @angular-eslint/component-selector -- A native tbody keeps valid table and accessibility semantics.
-  selector: 'tbody[appRemoteHostCard]',
+  selector: 'app-remote-host-card',
   standalone: true,
   imports: [
     DatePipe,
@@ -80,7 +77,6 @@ interface Meter {
     HostTelemetryHistoryComponent,
     HostReleaseIdentityComponent,
     RuntimeCapacityEditorComponent,
-    RemoteHostRoleRowComponent,
     RemoteHostDetailSummaryComponent,
     HostCredentialsComponent,
     HostCredentialBadgeComponent,
@@ -100,6 +96,8 @@ export class RemoteHostCardComponent {
   private readonly codexSignIn = inject(CodexSignInDialogService);
   private readonly claudeSignIn = inject(ClaudeSignInDialogService);
   readonly host = input.required<RemoteHost>();
+  readonly readiness = computed(() => hostReadiness(this.host(), this.now()));
+  readonly repositoryAccess = input('Unknown');
   readonly roles = input<readonly RemoteHost[]>([]);
   readonly rolesShareRelease = computed(() => {
     const roles = this.roles();

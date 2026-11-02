@@ -79,12 +79,43 @@ function mount(host: RemoteHost, expanded = true, expandSections = true) {
 }
 
 describe('RemoteHostCardComponent', () => {
-  it('keeps the primary table row compact until its detail is disclosed', () => {
+  it('keeps retired actions in the selected detail and emits delete', () => {
+    const host = { ...HOST, status: 'retired' as const };
+    const fixture = mount(host, true, false);
+    let action: { kind: string; id: string } | undefined;
+    fixture.componentInstance.action.subscribe(value => { action = value; });
+    const revive = fixture.nativeElement.querySelector('[data-testid="remote-host-action-revive"]');
+    const remove = fixture.nativeElement.querySelector('[data-testid="remote-host-action-delete"]') as HTMLButtonElement;
+    expect(revive).toBeTruthy();
+    expect(remove).toBeTruthy();
+    remove.click();
+    expect(action).toEqual({ kind: 'delete', id: HOST.id });
+  });
+
+  it('shows review restart and quota facts in the selected detail', () => {
+    const fixture = mount({ ...HOST, serviceRole: 'review', restartedAt: '2026-07-10T11:55:00Z',
+      reviewsLost: 6, roleMaxParallelism: 6, reviewPlane: {
+        observedAt: '2026-07-10T11:59:00Z', cpuMax: '400000 100000',
+        planeCpuCores: 4, cpuQuotaPercent: 400, hostCores: 12,
+        workerEnvelopeCores: 2.4, workerEnvelopeCpuQuotaPercent: 480,
+        currentCeiling: 2, rollingReviewDurationSeconds: 2453,
+        throttledShare: 0.34, sustainedThrottling: true,
+        alarmSuggestion: 'Raise the review role quota.',
+      } });
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="remote-host-role-restart"]')?.textContent).toContain('6 reviews lost');
+    expect(el.querySelector('[data-testid="remote-host-review-plane"]')?.textContent)
+      .toContain('CPU quota 4 cores · 2 slot ceiling · throttled 34%');
+    expect(el.querySelector('[data-testid="remote-host-review-plane-alarm"]')?.textContent)
+      .toContain('Raise the review role quota.');
+    expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('0 / 2');
+  });
+
+  it('shows compact facts before the detail disclosures', () => {
     const el: HTMLElement = mount(HOST, false).nativeElement;
-    expect(el.querySelector('[data-testid="remote-host-detail-row"]')).toBeNull();
-    expect(el.querySelector('[data-testid="remote-host-slots-summary"]')?.textContent).toContain('0 / 20');
+    expect(el.querySelector('[data-testid="remote-host-detail-row"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('0 / 20');
-    expect(el.querySelector('[data-testid="remote-host-load"]')?.textContent).toContain('54%');
+    expect(el.querySelector('[data-testid="remote-host-detail-toggle-load"]')?.textContent).toContain('54%');
     expect(el.querySelector('[data-testid="remote-host-release"]')?.textContent)
       .toContain('release-20260811.1');
   });

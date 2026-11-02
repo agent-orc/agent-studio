@@ -10,7 +10,7 @@
   </header>
   <div class="deployment__grid">
     <section class="deployment__item" data-testid="deployment-identity">
-      <h4>H1 · Installation and access</h4>
+      <h4>Installation and access</h4>
       @if (localProfile()) {
         <p class="deployment__limit">Installation identity is not applicable in the local profile. This browser is connected to {{ origin }}.</p>
       } @else if (identity(); as installation) {
@@ -30,7 +30,7 @@
     </section>
 
     <section class="deployment__item" data-testid="deployment-projects">
-      <h4>H2 · Project repository</h4>
+      <h4>Project repository</h4>
       @if (localProfile()) {
         <p class="deployment__limit">Canonical Task Server repository registration and placement are not applicable in the local profile. Project checkout settings remain available in each project.</p>
       } @else if (projectsError()) {
@@ -74,9 +74,9 @@
     </section>
 
     <section class="deployment__item" data-testid="deployment-upgrade">
-      <h4>H6 · Deployed versions</h4>
+      <h4>Deployed versions</h4>
       @if (stableRelease(); as stable) {
-        <p>{{ localProfile() ? 'Local API' : 'Task Server' }} reference: <code>{{ stable.version }}</code>. Host role versions and drift are in the table below.</p>
+        <p>{{ localProfile() ? 'Local API' : 'Task Server' }} reference (seen from this browser): <code>{{ stable.version }}</code>. Host role versions and drift are in Hosts.</p>
       } @else {
         <p class="deployment__action">Release reference unavailable. Refresh host release telemetry.</p>
       }
@@ -84,7 +84,7 @@
     </section>
 
     <section class="deployment__item" data-testid="deployment-recovery">
-      <h4>H7 · Recovery</h4>
+      <h4>Recovery</h4>
       @if (localProfile()) {
         <p class="deployment__limit">Task Server full backup inventory is not applicable in the local profile. Check the local workspace backup and restore procedure for this installation.</p>
       } @else if (backupsError()) {
