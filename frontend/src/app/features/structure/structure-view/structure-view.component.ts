@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, afterNextRender, computed, effect, inject, signal } from '@angular/core';
-import { NgTemplateOutlet } from '@angular/common';
+import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
@@ -8,11 +8,22 @@ import { nearestVisible, projectStructure, summaryText, visibleBoxes,
   type StructureBox, type StructureData, type StructureLink } from '../structure.model';
 
 interface DrawnLink { index: number; path: string; x: number; y: number; kind: string; label: string; }
+interface LibraryChannel { name: string; version: string; publishedAt: string | null; }
+interface LibraryRegistry {
+  projectId: string; artifact: string; provider: string; package: string; repository: string | null;
+  private: boolean; state: 'current' | 'unavailable' | 'stale'; checkedAt: string | null;
+  lastPublishAt: string | null; channels: LibraryChannel[];
+}
+interface LibraryConsumer {
+  projectId: string; project: string; package: string; version: string; source: string;
+  latestStable: string | null; releasesBehind: number | null; ownershipMapped: boolean;
+}
+interface StructureLibrary { registries: LibraryRegistry[]; consumers: LibraryConsumer[]; }
 
 @Component({
   selector: 'app-structure-view',
   standalone: true,
-  imports: [NgTemplateOutlet, DisclosureMarkerComponent, SegmentedControlComponent],
+  imports: [DatePipe, NgTemplateOutlet, DisclosureMarkerComponent, SegmentedControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './structure-view.component.html',
   styleUrl: './structure-view.component.scss',
@@ -24,6 +35,9 @@ export class StructureViewComponent {
   readonly viewOptions = [{ value: 'host', label: 'Host' }, { value: 'container', label: 'Container' }] as const;
   readonly levelOptions = [{ value: 1, label: '1' }, { value: 2, label: '2' }, { value: 3, label: '3' }] as const;
   readonly error = signal<string | null>(null);
+  readonly library = signal<StructureLibrary>({ registries: [], consumers: [] });
+  readonly libraryError = signal<string | null>(null);
+  readonly refreshing = signal(false);
   readonly view = signal<'host' | 'container'>('host');
   readonly level = signal<1 | 2 | 3>(2);
   readonly toggles = signal<Record<string, boolean>>({});
@@ -50,6 +64,23 @@ export class StructureViewComponent {
       if (saved.level === 1 || saved.level === 2 || saved.level === 3) this.level.set(saved.level);
     } catch { /* Optional preference. */ }
     void this.load();
+    void this.loadLibrary(false);
+  }
+
+  async loadLibrary(refresh: boolean): Promise<void> {
+    this.refreshing.set(refresh);
+    try {
+      this.library.set(await firstValueFrom(refresh
+        ? this.http.post<StructureLibrary>('/api/v1/operations/structure/library/refresh', {})
+        : this.http.get<StructureLibrary>('/api/v1/operations/structure/library')));
+      this.libraryError.set(null);
+    } catch { this.libraryError.set('Registry inventory is unavailable.'); }
+    finally { this.refreshing.set(false); }
+  }
+
+  registryLabel(provider: string): string {
+    return ({ npm: 'npm', nuget: 'NuGet', 'docker-hub': 'Docker Hub', github: 'GitHub',
+      jfrog: 'JFrog', internal: 'Internal registry' } as Record<string, string>)[provider] ?? provider;
   }
 
   private async load(): Promise<void> {

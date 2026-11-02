@@ -100,6 +100,16 @@ health, version and drift overlays belong to later slices of the deployment
 structure Dossier. Its role-named manifest example is in
 `deploy/connectivity/one-box.json`.
 
+The same view lists library registries declared in schema 2
+`structure.registries` (artifact, provider, package, optional repository and
+private registry `secretRef`). `GET /api/v1/operations/structure/library` returns
+cached channel versions, publish times, lookup state and workspace consumers
+from npm and NuGet lock files. The on-demand refresh endpoint is
+`POST /api/v1/operations/structure/library/refresh`; a control-plane timer also
+refreshes every six hours. Lookup failures preserve the last known channel
+data and show unavailable or stale state. Endpoints expose only whether a
+registry is private, never its credential value.
+
 The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.
 It lists projects against Staging and Production, with release version, deploy
 age and state, health, pending approval, and newer release. Project group and

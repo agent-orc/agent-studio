@@ -228,6 +228,8 @@ public static class RoutePermissionCatalog
         // Studio's browser reads installation-wide declared topology, even when
         // a project scope is requested. Runner credentials do not call it.
         Add("GET", IamPermissions.WorkspaceOperate, "/api/v1/operations/structure");
+        Add("GET", IamPermissions.WorkspaceOperate, "/api/v1/operations/structure/library");
+        Add("POST", IamPermissions.WorkspaceOperate, "/api/v1/operations/structure/library/refresh");
 
         // --- Environments and production approval --------------------------
         // Environment keys are canonical kinds (IamEnvironments): a release
