@@ -261,6 +261,15 @@ public record MergeIntoIntegrationResult(
     /// </summary>
     public bool VerificationPending { get; init; }
 
+    /// <summary>AGT-3434: the merge gate ran its suite on this merge result.</summary>
+    public bool GateExecuted { get; init; }
+
+    /// <summary>
+    /// AGT-3434: the merge gate stood on the per-task batch fallback verdict for
+    /// the same tree on the same integration tip and ran no suite.
+    /// </summary>
+    public bool GateVerdictReused { get; init; }
+
     /// <summary>
     /// Typed cause of an <see cref="MergeIntoIntegrationOutcome.Error"/> result
     /// (<see cref="AcceptedIntegrationFailureCodes"/>). Every Error names one, so
@@ -6193,21 +6202,8 @@ public partial class GitService
     public BatchReplayResult ReplayBatchMember(
         string repoRoot, string immutableResultRef, string expectedResultSha, string batchTip)
     {
-        var (resolved, error, code) = RunGitArgs(
-            repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
-        if (code != 0
-            && immutableResultRef.StartsWith("refs/heads/agent-studio/results/", StringComparison.Ordinal))
-        {
-            var (_, fetchError, fetchCode) = RunGitArgs(
-                repoRoot, "fetch", "origin", $"{immutableResultRef}:{immutableResultRef}");
-            if (fetchCode != 0)
-                return BatchReplayResult.Infrastructure(fetchError.Trim());
-            (resolved, error, code) = RunGitArgs(
-                repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
-        }
-        if (code != 0 || !string.Equals(resolved.Trim(), expectedResultSha, StringComparison.OrdinalIgnoreCase))
-            return BatchReplayResult.Unattributable(
-                code == 0 ? "Immutable result ref does not resolve to the expected SHA." : error.Trim());
+        if (ResolveImmutableResult(repoRoot, immutableResultRef, expectedResultSha) is { } unresolved)
+            return unresolved;
         var (_, _, containedCode) = RunGitArgs(
             repoRoot, "merge-base", "--is-ancestor", expectedResultSha, batchTip);
         var (_, _, descendantCode) = RunGitArgs(
@@ -6264,6 +6260,77 @@ public partial class GitService
                 => MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip),
             _ => BatchReplayResult.Infrastructure(replay.Error ?? "Mechanical rebase failed."),
         };
+    }
+
+    /// <summary>
+    /// Null when the immutable result ref resolves to the expected SHA. The
+    /// Studio checkout holds result commits only under refs/remotes/origin, so
+    /// a missing local result ref is fetched once.
+    /// </summary>
+    private BatchReplayResult? ResolveImmutableResult(
+        string repoRoot, string immutableResultRef, string expectedResultSha)
+    {
+        var (resolved, error, code) = RunGitArgs(
+            repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
+        if (code != 0
+            && immutableResultRef.StartsWith("refs/heads/agent-studio/results/", StringComparison.Ordinal))
+        {
+            var (_, fetchError, fetchCode) = RunGitArgs(
+                repoRoot, "fetch", "origin", $"{immutableResultRef}:{immutableResultRef}");
+            if (fetchCode != 0)
+                return BatchReplayResult.Infrastructure(fetchError.Trim());
+            (resolved, error, code) = RunGitArgs(
+                repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
+        }
+        return code != 0 || !string.Equals(resolved.Trim(), expectedResultSha, StringComparison.OrdinalIgnoreCase)
+            ? BatchReplayResult.Unattributable(
+                code == 0 ? "Immutable result ref does not resolve to the expected SHA." : error.Trim())
+            : null;
+    }
+
+    /// <summary>
+    /// The tree the per-task batch fallback gate tests (AGT-3434): the
+    /// immutable delivery merged onto the integration tip. A delivery already
+    /// based on the tip is its own candidate. Any other delivery is merged
+    /// without fast-forward in a disposable worktree, keeping the integration
+    /// version of a conflict confined to declared report paths, as the merge
+    /// runner does; both therefore produce the same tree. Another conflict
+    /// names its files. No canonical ref moves.
+    /// </summary>
+    public BatchReplayResult MergeDeliveryOntoTip(
+        string repoRoot, string immutableResultRef, string expectedResultSha, string integrationTip)
+    {
+        if (ResolveImmutableResult(repoRoot, immutableResultRef, expectedResultSha) is { } unresolved)
+            return unresolved;
+        var (_, _, containedCode) = RunGitArgs(
+            repoRoot, "merge-base", "--is-ancestor", expectedResultSha, integrationTip);
+        var (_, _, descendantCode) = RunGitArgs(
+            repoRoot, "merge-base", "--is-ancestor", integrationTip, expectedResultSha);
+        if (containedCode is not (0 or 1) || descendantCode is not (0 or 1))
+            return BatchReplayResult.Infrastructure("Integration tip ancestry could not be verified.");
+        if (containedCode == 0)
+            return BatchReplayResult.Unattributable(
+                "The integration tip already contains the result SHA.", BatchReplayRoute.AlreadyContained);
+        if (descendantCode == 0)
+            return new BatchReplayResult(true, expectedResultSha,
+                [new RebasedCommitReplacement(expectedResultSha, expectedResultSha)], [], null);
+        return MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, integrationTip);
+    }
+
+    /// <summary>
+    /// Keeps a per-task fallback candidate reachable while its gate runs, so a
+    /// remote gate can bundle it and garbage collection cannot drop it. Null
+    /// <paramref name="sha"/> removes the pin.
+    /// </summary>
+    public bool PinFallbackCandidate(string repoRoot, string reviewAttemptId, string? sha)
+    {
+        var safe = Regex.Replace(reviewAttemptId, "[^A-Za-z0-9_-]", "-", RegexOptions.CultureInvariant);
+        if (safe.Length == 0) return false;
+        var candidateRef = $"refs/agent-studio/fallback-candidates/{safe}";
+        if (sha is null)
+            return RunGitArgs(repoRoot, "update-ref", "-d", candidateRef).Code == 0;
+        if (!Regex.IsMatch(sha, "^[a-fA-F0-9]{40,64}$", RegexOptions.CultureInvariant)) return false;
+        return RunGitArgs(repoRoot, "update-ref", candidateRef, sha).Code == 0;
     }
 
     /// <summary>
