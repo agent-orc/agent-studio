@@ -25,6 +25,18 @@ windows only. The Task Server keeps the last reading for 600 seconds. Other
 hosts with a healthy sign-in take over when the lease expires or a probe fails.
 Gate, post, and integration role images do not need this change.
 
+The authenticated host channel uses `POST /api/v1/runners/{runnerId}/quota/claim`
+with `instanceId`, `provider`, and a SHA-256 `subscriptionKey`. A granted claim
+returns a `probeId`. The same runner submits `PUT
+/api/v1/runners/{runnerId}/quota/report` with that probe ID, the actual
+`observedAt`, CLI version, plan, parsed window labels, used percentages and reset
+times, or a short error. The route requires the matching runner identity and
+provider capability; read-only keys cannot report. The 90-second probe lease
+prevents concurrent reads, and the 600-second reading TTL prevents a probe per
+host. Studio reads the Task Server's parsed readings through its internal
+`GET /api/v1/quota/readings` sync. No terminal transcript, token or account
+secret is part of the wire contract.
+
 An older coding or review host keeps its existing claim and execution behavior.
 It does not report quota; a mixed fleet starts reporting as soon as one updated
 host with the same sign-in is deployed. The Studio server never starts a
