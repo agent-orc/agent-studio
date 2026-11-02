@@ -19,6 +19,8 @@ testSuites:
   - id: backend-routine
     category: routine
     expectedDurationSeconds: 1440
+    # Measured on the gate host, see "Sharded test suites in the gate" in docs/system/domains/pipeline.md.
+    shards: 4
     command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
   - id: runner-routine
     category: routine

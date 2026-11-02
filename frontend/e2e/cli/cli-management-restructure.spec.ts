@@ -13,7 +13,6 @@ import { setTheme, dismissDevErrorDialog } from '../helpers/theme';
  *   3. CAPS stays its own clearly-delineated area on the hub.
  *   4. COMPLETION CONTRACTS carry an explainer head (adapter self-report:
  *      typed yes/no, completion signal, usage source; read-only by design).
- *   5. CLI SESSIONS and CLI PATHS are their own encapsulated rail pages.
  *
  * Fully route-stubbed so it runs against a static/dev frontend with no backend;
  * screenshots are labelled --mocked.
@@ -80,7 +79,11 @@ async function stub(page: Page) {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/v1/studio/board*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/board*', json({
+    backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+    failedPickup: [], codeNotComplete: [], review: [], autoReview: [], humanReview: [],
+    escalated: [], completed: [], archive: [],
+  }));
   await page.route('**/api/watch-paths', json([]));
   await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
   await page.route('**/api/runner/token-summary-aggregate*', json({
@@ -141,6 +144,12 @@ async function stub(page: Page) {
     const p = new URL(route.request().url()).pathname;
     let body: unknown = {};
     if (p.endsWith('/quota/model-routes')) body = modelRoutes;
+    else if (p.endsWith('/quota/history')) body = {
+      cliType: new URL(route.request().url()).searchParams.get('cli'),
+      from: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+      to: new Date().toISOString(),
+      windows: [],
+    };
     else if (p.endsWith('/quota/fallback-preference')) body = {
       cliType: 'claude', active: true,
       enabledAt: new Date().toISOString(),
@@ -154,7 +163,7 @@ async function stub(page: Page) {
       const m = /\/api\/cli\/([^/]+)\/models/.exec(p);
       const vendor = m ? m[1].charAt(0).toUpperCase() + m[1].slice(1) : 'CLI';
       body = modelCatalog(vendor);
-    } else if (p.includes('/working-memory')) body = { available: false, root: null, capturedAt: new Date().toISOString(), entries: [] };
+    }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
   await page.route('**/api/clients', json([]));
@@ -164,10 +173,12 @@ async function stub(page: Page) {
 }
 
 async function openHome(page: Page) {
-  await page.getByTestId('status-bar-settings').click();
+  await page.goto('/#/workspace/settings');
   await expect(page.locator(
     '[data-testid="workspace-settings-inline"], [data-testid="workspace-settings-overlay"]',
   )).toBeVisible({ timeout: 10_000 });
+  await dismissDevErrorDialog(page);
+  await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"]').forEach(node => node.remove()));
 }
 
 test.describe('CLI Management restructure (AGT-2101)', () => {
@@ -244,38 +255,31 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
 
   });
 
-  test('CLI sessions and CLI paths are their own encapsulated rail pages', async ({ page }) => {
+
+  test('retired CLI settings routes open CLI Management without errors', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
     await openHome(page);
-
-    // Both rail entries exist.
-    await expect(page.getByTestId('workspace-settings-rail-cli-sessions')).toBeVisible();
-    await expect(page.getByTestId('workspace-settings-rail-cli-paths')).toBeVisible();
-
-    // CLI sessions page.
-    await page.getByTestId('workspace-settings-rail-cli-sessions').click();
-    await expect(page.getByTestId('cli-sessions-overlay')).toBeVisible();
-    const sessions = page.getByTestId('cli-sessions-panel');
-    await expect(sessions).toBeVisible();
-    await expect(sessions.getByText('Loading native CLI session stores...')).toHaveCount(0, { timeout: 10_000 });
-    // The stubbed inventory renders (confirms the usage report loaded).
-    await expect(sessions.getByText('a1', { exact: true })).toBeVisible();
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
-      await page.getByTestId('cli-sessions-overlay').screenshot({ path: join(SHOT_DIR, `cli-sessions-page--mocked-${theme}.png`) });
+      await expect(page.getByTestId('workspace-settings-rail-caps')).toBeVisible();
+      await expect(page.getByTestId('workspace-settings-rail-prompts')).toBeVisible();
+      for (const key of ['cli-sessions', 'cli-paths', 'working-memory']) {
+        await expect(page.getByTestId(`workspace-settings-rail-${key}`)).toHaveCount(0);
+      }
+      await dismissDevErrorDialog(page);
+      await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"]').forEach(node => node.remove()));
+      await page.getByTestId('workspace-settings-overlay').screenshot({ path: join(SHOT_DIR, `cli-settings-rail-${theme}.png`) });
     }
-
-    // CLI paths page: per-CLI executable + project roots.
-    await page.getByTestId('workspace-settings-rail-cli-paths').click();
-    await expect(page.getByTestId('cli-paths-overlay')).toBeVisible();
-    const paths = page.getByTestId('cli-paths-panel');
-    await expect(paths).toBeVisible();
-    const claudePaths = paths.getByTestId('cli-paths-row-claude');
-    await expect(claudePaths).toBeVisible();
-    await expect(claudePaths).toContainText('/usr/local/bin/claude');
-    await expect(claudePaths).toContainText('/repos/agent-taskboard');
-    for (const theme of ['light', 'dark'] as const) {
-      await setTheme(page, theme);
-      await page.getByTestId('cli-paths-overlay').screenshot({ path: join(SHOT_DIR, `cli-paths-page--mocked-${theme}.png`) });
+    for (const key of ['cli-sessions', 'cli-paths', 'working-memory']) {
+      await page.goto(`/#/workspace/settings/${key}`);
+      await dismissDevErrorDialog(page);
+      await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"]').forEach(node => node.remove()));
+      await expect(page.getByTestId('cli-admin-overlay')).toBeVisible();
+      await expect(page.getByTestId('workspace-settings-rail-caps')).toHaveAttribute('aria-current', 'page');
     }
+    await expect(page.getByTestId('workspace-settings-rail-prompts')).toBeVisible();
+    expect(errors).toEqual([]);
   });
+
 });

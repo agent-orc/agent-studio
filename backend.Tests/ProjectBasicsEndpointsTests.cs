@@ -13,6 +13,40 @@ namespace AgentStudio.Tests;
 
 public sealed class ProjectBasicsEndpointsTests
 {
+    [Fact]
+    public async Task PutPipelineStep_RefusesAModelThatDoesNotBelongToTheStepCli()
+    {
+        var taskRepository = TempPath("pipeline-step-model-pair");
+        Directory.CreateDirectory(taskRepository);
+        try
+        {
+            await using var factory = BuildFactory(taskRepository);
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+            var project = await CreateProject(client, "Model Pair Project", "MPP");
+
+            var response = await client.PutAsJsonAsync(
+                $"/api/projects/{Uri.EscapeDataString(project.DisplayName)}/pipeline-step",
+                new SetPipelineStepRequest
+                {
+                    StepId = "aspect-code-quality",
+                    CliType = "claude",
+                    Model = "gpt-5.5",
+                });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains("pipelineSteps.aspect-code-quality.model", await response.Content.ReadAsStringAsync());
+            var steps = PipelineTypeSettings.ForType(
+                factory.Services.GetRequiredService<ProjectSettingsService>().Get(project.DisplayName),
+                PipelineTypes.Task)?.PipelineSteps;
+            Assert.True(steps is null || !steps.ContainsKey("aspect-code-quality"));
+        }
+        finally
+        {
+            DeleteBestEffort(taskRepository);
+        }
+    }
+
     [Theory]
     [InlineData("prompt-enrichment")]
     [InlineData(PipelineCatalogue.PromptEnrichmentStepId)]

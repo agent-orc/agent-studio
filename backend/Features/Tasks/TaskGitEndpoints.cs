@@ -40,7 +40,7 @@ public static class TaskGitEndpoints
         group.MapGet("/{jobId}/git/file", (string jobId, string? project, string? watchPath, string? path, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            return FileContentResult(git.GetFileContentResult(jobId, watchPath, path, sha: null, preferRunLocation: true));
+            return FileContentResult(git.GetFileContentResult(jobId, watchPath, path, preferRunLocation: true));
         });
 
         group.MapPost("/{jobId}/git/commit", (string jobId, string? project, string? watchPath, GitCommitRequest req, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>

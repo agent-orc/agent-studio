@@ -39,8 +39,22 @@ public static class GateEnvironmentKinds
     public const string ProvenIntermittent = "proven-intermittent";
 }
 
+/// <summary>Which delivery fault a <see cref="GateFailureClasses.Product"/> verdict names, when it is not a failing item.</summary>
+public static class GateProductKinds
+{
+    /// <summary>
+    /// The delivery's own <c>.agent-studio/project.yml</c> is invalid, so the
+    /// gate stopped before it ran a command. The issues belong to this delivery
+    /// alone: the same issue code on another card is not a shared cause.
+    /// </summary>
+    public const string Definition = "definition";
+}
+
 /// <param name="Class">One <see cref="GateFailureClasses"/> value.</param>
-/// <param name="Kind">The <see cref="GateEnvironmentKinds"/> value for an environment class, otherwise null.</param>
+/// <param name="Kind">
+/// The <see cref="GateEnvironmentKinds"/> value for an environment class, the
+/// <see cref="GateProductKinds"/> value for a product class that has one, otherwise null.
+/// </param>
 /// <param name="Fingerprint">
 /// Identity of the cause. For a class with failing items it depends on the
 /// sorted item names only, so the same failing test on two cards is one
@@ -124,6 +138,11 @@ public static partial class GateFailureTriagePolicy
             return Undecidable([],
                 $"the newest merge-gate log records verdict {log.Verdict ?? "none"}, not a failure",
                 []);
+
+        // AOW-15: an invalid definition is read from the delivery's own tree. It
+        // outranks every experiment and marker, because no command ever ran.
+        if (ProjectDefinitionIssueText.IsInvalidReason(log.Reason))
+            return Definition(log.Reason);
 
         var items = FailingItems(log.Output);
         var flakeClaim = GateFlakeLabelPolicy.Check(log.RetryPerformed, log.FlakyClassification, log.FlakyQuarantined);
@@ -230,6 +249,33 @@ public static partial class GateFailureTriagePolicy
             $"The merge gate failed on {Describe(items)}.",
             null,
             markers);
+
+    /// <summary>
+    /// The rule an agent needs to repair the file. Repeated in the reason line
+    /// because AOW-15 took three rounds to learn it one issue at a time.
+    /// </summary>
+    public const string DefinitionRule =
+        "Fix .agent-studio/project.yml in the delivery: commands.prepare is required and names a " +
+        "repository-relative script that exists in the delivery and is committed executable " +
+        "(see docs/system/domains/pipeline.md).";
+
+    private static GateFailureTriage Definition(string reason)
+    {
+        var start = reason.IndexOf(ProjectDefinitionIssueText.InvalidPrefix, StringComparison.Ordinal);
+        var text = reason[start..];
+        // A log written before AOW-15 carries the diagnosis suffix; it is not part of the issues.
+        var diagnosis = text.IndexOf("; diagnosis=", StringComparison.Ordinal);
+        if (diagnosis >= 0) text = text[..diagnosis];
+        var items = ProjectDefinitionIssueText.IssueKeys(text);
+        return new GateFailureTriage(
+            GateFailureClasses.Product,
+            GateProductKinds.Definition,
+            "gate-definition:" + (items.Count == 0 ? "unspecified" : ItemFingerprint(items)),
+            items,
+            text.Trim().TrimEnd('.') + ". " + DefinitionRule,
+            null,
+            ["definition-invalid"]);
+    }
 
     private static GateFailureTriage Environment(string kind, string reason, IReadOnlyList<string> markers)
         => new(GateFailureClasses.Environment, kind, "gate-environment:" + kind, [], reason, null, markers);

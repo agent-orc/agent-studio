@@ -80,6 +80,11 @@ public sealed class MonolithOrchestrationApplier(
             throw new InvalidDataException("The engine batch plan is missing its decision.");
         var decision = plan.Deserialize<AgentStudio.TaskServer.Contracts.BatchGate.BatchPlanDecision>(Json)
             ?? throw new InvalidDataException("The engine batch plan is empty.");
+        // An older engine names no considered cards; the occurrence carries the snapshot it planned on.
+        if (decision.Considered is null
+            && JsonSerializer.Deserialize<BatchPlanOccurrencePayload>(occurrence.Run.PayloadJson, Json)
+                is { Facts.Snapshot.Waiting: { } waiting })
+            decision = decision with { Considered = waiting.Select(card => card.TaskKey).ToArray() };
         batches.AcceptEngineBatchPlan(occurrence.Run.RunId, occurrence.Run.TaskId, decision);
     }
 

@@ -52,6 +52,13 @@ export class GitHubAppPanelComponent {
     return coverageStates[state] ?? coverageStates.unknown;
   }
 
+  /** GitHub's own answer; review plans treat a repository it reports as private as private. */
+  visibilityLabel(visibility: 'private' | 'public' | null | undefined): string {
+    if (visibility === 'private') return 'Private';
+    if (visibility === 'public') return 'Public';
+    return '-';
+  }
+
   connectExisting(): void {
     if (!this.existingValid()) return;
     this.service.connectExisting({

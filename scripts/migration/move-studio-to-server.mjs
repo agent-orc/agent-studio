@@ -86,7 +86,8 @@ export function stripUrlCredentials(value) {
 
 function isTransient(relative) {
   const lower = relative.toLowerCase();
-  return lower.endsWith('.tmp') || /\.relocate-\d+$/.test(lower) || lower.split('/').includes('.migration-backups');
+  return lower.endsWith('.tmp') || /\.relocate-\d+$/.test(lower) || lower.split('/').includes('.migration-backups')
+    || /^\.metadata\/[^/]*\.corrupt-[^/]*$/.test(lower);
 }
 
 /** Workspace area of one relative path, independent of its Git state. */
@@ -126,13 +127,14 @@ export function classifyPath(relative, { tracked = false, dirty = false, present
   return { area, state, transfer: 'archive' };
 }
 
-/** Lists every file and symlink below the workspace except Git internals and dependency folders. */
-export function scanWorkspace(root) {
+/** Lists every file and symlink below the workspace except Git internals, dependency folders and `skip` folders. */
+export function scanWorkspace(root, { skip = [] } = {}) {
   const found = [];
   const walk = relative => {
     for (const item of readdirSync(path.join(root, relative), { withFileTypes: true })) {
       if (item.isDirectory() && skippedDirectories.has(item.name)) continue;
       const child = relative ? `${relative}/${item.name}` : item.name;
+      if (item.isDirectory() && skip.includes(child)) continue;
       if (item.isDirectory()) { walk(child); continue; }
       if (!item.isFile() && !item.isSymbolicLink()) continue;
       const stats = lstatSync(path.join(root, child));
@@ -193,17 +195,30 @@ export function fileTokenPattern(file) {
  * Moves archive entries that contain a known token shape to the exclusions.
  * The access state is exempt: it is the account store the move must carry.
  * Scan every candidate on every pass. Size and modification time do not prove
- * content stayed unchanged, including for modified tracked files.
+ * content stayed unchanged, including for modified tracked files. `accepted`
+ * holds `<shape>\t<prefix><path>` lines an operator reviewed and found harmless,
+ * such as test fixtures in a delivered task's log. A new shape in the same file
+ * still counts, because the line names the shape found.
  */
-export function screenTokens(entries, { scan }) {
+export function screenTokens(entries, { scan, accepted = new Set(), prefix = '' }) {
   return entries.map(entry => {
     if (entry.transfer !== 'archive') return entry;
     const result = scan(entry.path);
     const { hash, token } = typeof result === 'string' || result === null ? { token: result } : result;
     const screened = { ...entry, ...(hash ? { hash } : {}) };
-    return token && entry.area !== 'access-state'
+    return token && entry.area !== 'access-state' && !accepted.has(`${token}\t${prefix}${entry.path}`)
       ? { ...screened, transfer: 'exclude', reason: 'token-pattern', token } : screened;
   });
+}
+
+/** Workspace folders to leave out, from `MOVE_SKIP_DIRS` (colon-separated relative paths). */
+export function skippedFolders(value = process.env.MOVE_SKIP_DIRS) {
+  return (value ?? '').split(':').map(item => item.trim()).filter(Boolean).map(normalized);
+}
+
+/** The operator's reviewed token hits, from the file `MOVE_ACCEPTED_TOKEN_HITS` names. */
+export function acceptedTokenHits(file = process.env.MOVE_ACCEPTED_TOKEN_HITS) {
+  return new Set(file ? readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean) : []);
 }
 
 export function summarize(entries) {
@@ -275,6 +290,76 @@ export function registryRepositoryUrl(project) {
   const entry = project.urls.find(url => url.id.toLowerCase() === 'repo'
     || ['repo', 'repository'].includes(url.label.toLowerCase()));
   return isUsableRemote(entry?.url) ? entry.url.trim() : null;
+}
+
+/**
+ * The https form an anonymous `git ls-remote` can probe, without credentials:
+ * a GitHub ssh remote becomes its https URL; another ssh host cannot be probed
+ * without a key and yields null.
+ */
+export function anonymousProbeUrl(value) {
+  const url = stripUrlCredentials(value);
+  if (!url) return null;
+  const github = /^(?:ssh:\/\/)?(?:[^@/\s]+@)?github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(url);
+  if (github && !/^https?:/i.test(url)) return `https://github.com/${github[1]}/${github[2]}.git`;
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
+// What git prints when a repository needs credentials: GitHub answers an anonymous
+// request for a private repository with "Repository not found".
+const missingReadAccess = /could not read Username|Authentication failed|Repository not found|terminal prompts disabled|HTTP 40[13]/i;
+
+/** Visibility from one anonymous ls-remote: public when it succeeds, private when it asks for credentials, else unknown. */
+export function classifyAnonymousProbe({ exitCode, stderr = '' }) {
+  if (exitCode === 0) return 'public';
+  return missingReadAccess.test(stderr) ? 'private' : null;
+}
+
+const visibilityValue = value => {
+  const lower = String(value ?? '').trim().toLowerCase();
+  return lower === 'private' || lower === 'public' ? lower : null;
+};
+
+/** `project-settings.json` at the workspace root, keyed by project display name; empty when absent. */
+export function readProjectSettings(workspace) {
+  const file = path.join(workspace, 'project-settings.json');
+  if (!existsSync(file)) return {};
+  const parsed = JSON.parse(readFileSync(file, 'utf8'));
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+}
+
+/**
+ * AGT-3408: the repository visibility of each project. An explicit setting
+ * travels inside project-settings.json; a project without one takes the result
+ * of the workstation's anonymous probe, which the move then writes into the
+ * server copy, so a private repository reaches the server marked private.
+ */
+export function projectVisibilities({ projects, settings, probes = {} }) {
+  return projects.map(project => {
+    const configured = visibilityValue(field(field(settings, project.displayName), 'RepositoryVisibility'));
+    if (configured) return { id: project.id, displayName: project.displayName, visibility: configured, source: 'setting' };
+    const probed = probes[project.id] ? classifyAnonymousProbe(probes[project.id]) : null;
+    return probed
+      ? { id: project.id, displayName: project.displayName, visibility: probed, source: 'probe' }
+      : { id: project.id, displayName: project.displayName, visibility: null, source: 'unknown' };
+  });
+}
+
+/** Writes each carried visibility into a settings map, never over a value the project already has. */
+export function carryVisibility(settings, carried) {
+  const result = { ...settings };
+  const changed = [];
+  for (const [displayName, value] of Object.entries(carried)) {
+    const visibility = visibilityValue(value);
+    if (!visibility) continue;
+    const key = Object.keys(result).find(candidate => candidate.toLowerCase() === displayName.toLowerCase()) ?? displayName;
+    const current = result[key] && typeof result[key] === 'object' ? result[key] : {};
+    if (visibilityValue(field(current, 'RepositoryVisibility'))) continue;
+    const existing = Object.keys(current).find(candidate => candidate.toLowerCase() === 'repositoryvisibility');
+    result[key] = { ...current, [existing ?? 'RepositoryVisibility']: visibility };
+    changed.push(displayName);
+  }
+  return { settings: result, changed };
 }
 
 const slug = value => normalized(value).split('/').pop().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|-+$/g, '') || 'project';
@@ -465,11 +550,12 @@ export function tokenStateIssues(entries, roots = []) {
  */
 export function buildInventory({
   workspace, files, tracked, dirty, projects, remotes, extra, home, exists, credentialHelper, now,
-  scanTokens = null, storageSnapshots = [],
+  scanTokens = null, storageSnapshots = [], settings = {}, probes = {},
 }) {
   const classified = classifyWorkspace({ files, tracked, dirty });
-  const entries = scanTokens ? screenTokens(classified, { scan: scanTokens }) : classified;
+  const entries = scanTokens ? screenTokens(classified, { scan: scanTokens, accepted: acceptedTokenHits() }) : classified;
   const plan = generateMapping({ workspace, projects, remotes, extra });
+  const visibilities = new Map(projectVisibilities({ projects, settings, probes }).map(item => [item.id, item]));
   return {
     generatedAt: now().toISOString(),
     workspace,
@@ -478,6 +564,7 @@ export function buildInventory({
     projects: projects.map(project => ({
       id: project.id, displayName: project.displayName, archived: project.archived,
       storageLocation: project.storageLocation, repositoryPath: project.repositoryPath, rootPath: project.rootPath,
+      repositoryVisibility: visibilities.get(project.id).visibility, visibilitySource: visibilities.get(project.id).source,
     })),
     mapping: plan.mapping,
     checkouts: plan.checkouts,
@@ -507,6 +594,9 @@ export function formatInventory(inventory) {
     for (const [label, value] of [['storage', project.storageLocation], ['repository', project.repositoryPath], ['root', project.rootPath]]) {
       if (value) lines.push(`    ${label}: ${value}`);
     }
+    if (project.visibilitySource === 'setting') lines.push(`    visibility: ${project.repositoryVisibility} (project setting)`);
+    else if (project.visibilitySource === 'probe') lines.push(`    visibility: ${project.repositoryVisibility} (anonymous probe; written to the server copy)`);
+    else if (project.visibilitySource === 'unknown') lines.push('    visibility: unknown (the server takes it from the GitHub App, otherwise public)');
   }
   lines.push('Path mapping:');
   for (const [from, to] of Object.entries(inventory.mapping)) lines.push(`  ${from} -> ${to}`);
@@ -543,6 +633,24 @@ function parseArgs(args) {
   return options;
 }
 
+/** `<project-id>\t<exit code>\t<stderr line>` per anonymous probe the shell ran. */
+function readProbes(file) {
+  const probes = {};
+  if (!file || !existsSync(file)) return probes;
+  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const [id, exitCode, ...stderr] = line.split('\t');
+    if (id && exitCode !== undefined && exitCode !== '') probes[id] = { exitCode: Number(exitCode), stderr: stderr.join('\t') };
+  }
+  return probes;
+}
+
+/** The carried visibilities: only probe results, a setting already travels inside project-settings.json. */
+export function carriedVisibilities(inventory) {
+  return Object.fromEntries(inventory.projects
+    .filter(project => project.visibilitySource === 'probe')
+    .map(project => [project.displayName, project.repositoryVisibility]));
+}
+
 function readRemotes(file) {
   const remotes = {};
   if (!file || !existsSync(file)) return remotes;
@@ -570,6 +678,22 @@ export function runCli(argv, {
     }
     return 0;
   }
+  if (command === 'probe-targets') {
+    // The anonymous URL each project's repository is probed at: registry URL first, workstation origin second.
+    const remotes = readRemotes(options.remotes);
+    for (const project of readProjectRegistry(options.workspace)) {
+      const url = anonymousProbeUrl(registryRepositoryUrl(project) ?? remotes[project.id] ?? '');
+      if (url) write(`${project.id}\t${url}\n`);
+    }
+    return 0;
+  }
+  if (command === 'carry-visibility') {
+    const file = path.join(options.workspace, 'project-settings.json');
+    const { settings, changed } = carryVisibility(readProjectSettings(options.workspace), readJson(options.visibility, {}));
+    if (changed.length) writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+    write(`Repository visibility carried for ${changed.length} project(s)${changed.length ? ': ' + changed.join(', ') : ''}\n`);
+    return 0;
+  }
   if (command === 'inventory') {
     const out = options['out-dir'];
     const registry = readProjectRegistry(options.workspace);
@@ -584,6 +708,8 @@ export function runCli(argv, {
         const classified = classifyWorkspace({ files: scanWorkspace(root.source) });
         const entries = screenTokens(classified, {
           scan: relative => scanFileContent(path.join(root.source, ...relative.split('/'))),
+          accepted: acceptedTokenHits(),
+          prefix: `${root.source}/`,
         });
         return { ...root, entries, summary: summarize(entries), issues: entries
           .filter(entry => entry.reason === 'token-pattern')
@@ -595,7 +721,7 @@ export function runCli(argv, {
     const inventory = buildInventory({
       // The registry records the workspace in its Windows form; Git Bash may hand a different spelling to --workspace.
       workspace: options['source-workspace'] ?? options.workspace,
-      files: scanWorkspace(options.workspace),
+      files: scanWorkspace(options.workspace, { skip: skippedFolders() }),
       tracked: readList(options.tracked),
       dirty: readList(options.dirty),
       projects: registry,
@@ -607,10 +733,13 @@ export function runCli(argv, {
       now,
       scanTokens: relative => scanFileContent(path.join(options.workspace, ...relative.split('/'))),
       storageSnapshots,
+      settings: readProjectSettings(options.workspace),
+      probes: readProbes(options['visibility-probes']),
     });
     writeFileSync(path.join(out, 'inventory.json'), JSON.stringify(inventory, null, 2) + '\n');
     writeFileSync(path.join(out, 'path-map.json'), JSON.stringify(inventory.mapping, null, 2) + '\n');
     writeFileSync(path.join(out, 'checkouts.tsv'), inventory.checkouts.map(item => `${item.name}\t${item.repositoryUrl ?? ''}\n`).join(''));
+    writeFileSync(path.join(out, 'visibility.json'), JSON.stringify(carriedVisibilities(inventory), null, 2) + '\n');
     writeFileSync(path.join(out, 'storage.tsv'), inventory.storageRoots.map(item => `${item.id}\t${item.source}\n`).join(''));
     write(formatInventory(inventory) + '\n');
     return inventory.issues.length ? 3 : 0;
@@ -627,7 +756,7 @@ export function runCli(argv, {
     write(`Delta: ${delta.copy.length} to copy, ${delta.remove.length} to remove, ${delta.unchanged} unchanged\n`);
     return 0;
   }
-  throw new Error('Usage: move-studio-to-server.mjs projects|inventory|delta|strip-url [--option value]...');
+  throw new Error('Usage: move-studio-to-server.mjs projects|probe-targets|inventory|delta|carry-visibility|strip-url [--option value]...');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

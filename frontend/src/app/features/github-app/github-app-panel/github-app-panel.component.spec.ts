@@ -19,7 +19,7 @@ const connected: GitHubAppStatus = {
   connectedAtUtc: '2026-11-01T10:00:00Z',
   installations: [{ id: 1, account: 'owner', accountType: 'User', adoptedAtUtc: '2026-11-01T10:01:00Z', adoptedBy: 'local-operator' }],
   repositories: [
-    { project: 'Covered', repositoryUrl: 'https://github.com/owner/a.git', state: 'covered', installationId: 1, detail: null },
+    { project: 'Covered', repositoryUrl: 'https://github.com/owner/a.git', state: 'covered', installationId: 1, detail: null, visibility: 'private' },
     { project: 'Missing', repositoryUrl: 'https://github.com/owner/b.git', state: 'not-installed', installationId: null, detail: 'Not installed.' },
     { project: 'Local', repositoryUrl: null, state: 'no-repository-url', installationId: null, detail: null },
   ],
@@ -72,6 +72,8 @@ describe('GitHubAppPanelComponent', () => {
     const rows = element.querySelectorAll('[data-testid="github-app-repositories"] tbody tr');
     expect(rows.length).toBe(3);
     expect(rows[1].textContent).toContain('App not installed');
+    const visibility = [...element.querySelectorAll('[data-testid="github-app-repository-visibility"]')].map(cell => cell.textContent?.trim());
+    expect(visibility).toEqual(['Private', '-', '-']);
     expect(element.querySelector('[data-testid="github-app-uncovered"]')?.textContent).toContain('1 still use');
     expect(element.querySelector('[data-testid="github-app-hosts"]')?.textContent).toContain('runner-1');
   });

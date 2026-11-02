@@ -350,16 +350,36 @@ public sealed class SecretEndpointTests : IDisposable
 
         var security = factory.Services.GetRequiredService<AccessSecurityStore>();
         var runner = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("coder", null, null, null)).Code);
-        _leases.Runs[TaskKey] = new TaskRunLease(TaskKey, Project, runner.Runner.Id, "lease-1");
-        using var resolveRequest = new HttpRequestMessage(HttpMethod.Post, SecretEndpoints.ResolvePath)
+        HttpRequestMessage ResolveRequest()
         {
-            Content = JsonContent.Create(new
+            var message = new HttpRequestMessage(HttpMethod.Post, SecretEndpoints.ResolvePath)
             {
-                reference = $"secret://{Project}/API_TOKEN", purpose = "task:build",
-                workload = new { kind = "task-run", taskKey = TaskKey, leaseId = "lease-1" },
-            }),
-        };
-        resolveRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", runner.Secret);
+                Content = JsonContent.Create(new
+                {
+                    reference = $"secret://{Project}/API_TOKEN", purpose = "task:build",
+                    workload = new { kind = "task-run", taskKey = TaskKey, leaseId = "lease-1" },
+                }),
+            };
+            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", runner.Secret);
+            return message;
+        }
+
+        // A task run without declared names is refused, and the refusal is audited.
+        _leases.Runs[TaskKey] = new TaskRunLease(TaskKey, Project, runner.Runner.Id, "lease-1");
+        using (var undeclared = ResolveRequest())
+        {
+            var refused = await client.SendAsync(undeclared);
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+            Assert.DoesNotContain(value, await refused.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        }
+        using (var audit = JsonDocument.Parse(await client.GetStringAsync("/api/secrets/audit")))
+            Assert.Contains(audit.RootElement.GetProperty("entries").EnumerateArray(), entry =>
+                entry.GetProperty("action").GetString() == "resolve"
+                && entry.GetProperty("outcome").GetString() == "denied:workload-undeclared"
+                && entry.GetProperty("workload").GetString() == "task-run");
+
+        _leases.Runs[TaskKey] = new TaskRunLease(TaskKey, Project, runner.Runner.Id, "lease-1", ["API_TOKEN"]);
+        using var resolveRequest = ResolveRequest();
         Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(resolveRequest)).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(SecretEndpoints.ResolvePath,
             new { reference = $"secret://{Project}/API_TOKEN", purpose = "task:build", workload = new { kind = "task-run", taskKey = TaskKey, leaseId = "lease-1" } })).StatusCode);

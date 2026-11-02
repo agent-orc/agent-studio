@@ -26,6 +26,15 @@ export function relocate(value, mappings) {
 
 const isJsonFile = file => file.endsWith('.json') || file.endsWith('.json.bak');
 
+const isWindowsPathValue = token => {
+  try {
+    const value = JSON.parse(token);
+    return typeof value === 'string' && windowsPath.test(value);
+  } catch {
+    return false;
+  }
+};
+
 async function walkJson(dir, found = []) {
   for (const item of await readdir(dir, { withFileTypes: true })) {
     const file = path.join(dir, item.name);
@@ -63,7 +72,7 @@ export async function inventory({ workspace, config = [], checkout = [], link = 
   for (const file of unique) {
     const original = await readFile(file, 'utf8');
     const json = isJsonFile(file);
-    if (json) JSON.parse(original);
+    if (json) JSON.parse(original.replace(/^\uFEFF/, ''));
     const token = json ? /"(?:\\.|[^"\\])*"/g : /[^\r\n]+/g;
     const updated = original.replace(token, match => {
       let value;
@@ -97,11 +106,14 @@ export async function inventory({ workspace, config = [], checkout = [], link = 
       await writeFile(temp, change.updated, { mode });
       await rename(temp, change.file);
     }
-    // Re-read all source files, including files with no planned change.
+    // Re-read all source files, including files with no planned change. In JSON a
+    // setting is a whole string value; a path quoted in stored message text is history.
     for (const file of unique) {
       const content = await readFile(file, 'utf8');
-      if (/"[a-z]:[\\/]|(?:gitdir:|=)\s*[a-z]:[\\/]|^\\\\/im.test(content))
-        throw new Error(`Windows path remains after apply: ${file}`);
+      const remains = isJsonFile(file)
+        ? (content.match(/"(?:\\.|[^"\\])*"/g) ?? []).some(isWindowsPathValue)
+        : /"[a-z]:[\\/]|(?:gitdir:|=)\s*[a-z]:[\\/]|^\\\\/im.test(content);
+      if (remains) throw new Error(`Windows path remains after apply: ${file}`);
     }
   }
   return { entries, unresolved: unresolved.length, changedFiles: changes.map(change => change.file), backup };

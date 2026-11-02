@@ -24,6 +24,7 @@ member CodexDetectedDefaultCollection AgentDefaultsMaterializationTests
 member CodexDetectedDefaultCollection CodexCliServiceTests
 member CodexDetectedDefaultCollection CodexDetectedDefaultTests
 member CodexDetectedDefaultCollection CodexModelDiscoveryTests
+member CodexDetectedDefaultCollection NetworkedModelDiscoveryTests
 member CodexDetectedDefaultCollection SetJobCliTypeSyncsAgentTests
 
 collection ModelFamilyResolverCollection its members write the process-global vendor availability in ModelMetadataRegistry, which every other test reads.
@@ -48,7 +49,6 @@ process-start backend.Tests/TempRootBootstrap.cs the module initializer removes 
 
 environment-baseline backend.Tests/BackendCrashSurfaceTests.cs 2
 environment-baseline backend.Tests/CliContextConventionsTests.cs 4
-environment-baseline backend.Tests/CliWorkingMemoryServiceTests.cs 2
 environment-baseline backend.Tests/PtySessionEnvironmentTests.cs 4
 
 collection PersistedBoardRestartCollection unrestricted parallel runs still timed out on the restored read after hosted index waits were removed; the timeout stack showed no product worker waiting on the held scan and the test-host endpoint warmup still waits synchronously (AGT-3340).

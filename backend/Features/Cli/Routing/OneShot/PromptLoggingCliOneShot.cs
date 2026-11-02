@@ -48,7 +48,7 @@ public sealed class PromptLoggingCliOneShot : ICliOneShot
         if (checkedPrompt.Failure is { } failure)
         {
             var now = DateTime.UtcNow;
-            return CliOneShotResult.SpawnFailure("decision-input-incomplete:" + failure, now, now);
+            return CliOneShotResult.SpawnFailure(OrchestratorPromptBoundary.FailurePrefix + failure, now, now);
         }
         if (checkedPrompt.Prompt != request.Prompt)
             request = request with { Prompt = checkedPrompt.Prompt };

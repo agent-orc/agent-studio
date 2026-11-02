@@ -53,3 +53,5 @@ export {
   relativeHeartbeat,
   hostExecutorRole,
 } from './models/remote-host.model';
+export { summarizeStatusBarSlotsByRole } from './models/plane-slots';
+export type { StatusBarPlaneHostSlots, StatusBarPlaneSlots, StatusBarSlotsByRole } from './models/plane-slots';

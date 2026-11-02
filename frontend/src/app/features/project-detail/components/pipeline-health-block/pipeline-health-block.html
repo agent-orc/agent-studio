@@ -6,6 +6,7 @@
     <header class="ph__head">
       <span class="ph__title"><i aria-hidden="true"></i>Pipeline health</span>
       <span class="ph__state">{{ h.status === 'alarm' ? 'Attention needed' : (h.status === 'running' ? 'Gate running' : 'Healthy') }}</span>
+      <button type="button" class="ph__flow" data-testid="pipeline-health-open-flow" (click)="openFlowHealth.emit()">Flow health</button>
     </header>
     <div class="ph__grid">
       <section class="ph__metric" data-testid="pipeline-health-gate">
