@@ -16,7 +16,10 @@ public sealed class LastSeenPersistenceService(
         {
             while (await timer.WaitForNextTickAsync(stoppingToken)) Flush();
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        catch (OperationCanceledException ex) when (stoppingToken.IsCancellationRequested)
+        {
+            SilentCatch.Note(ex, "LastSeenPersistenceService: timer stopped during shutdown");
+        }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
