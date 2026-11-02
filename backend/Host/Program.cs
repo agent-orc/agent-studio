@@ -1140,6 +1140,15 @@ builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
 builder.Services.AddSingleton<ProjectSettingsService>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
+// AGT-3412: the readiness report of the operations page and the move tool.
+builder.Services.AddSingleton<AgentStudio.Readiness.IReadinessGit, AgentStudio.Readiness.ProcessReadinessGit>();
+builder.Services.AddSingleton<AgentStudio.Readiness.ReadinessGitFacts>();
+builder.Services.AddSingleton<AgentStudio.Readiness.ServerReadinessCollector>();
+builder.Services.AddSingleton(sp => new AgentStudio.Readiness.ServerReadinessMonitor(
+    sp.GetRequiredService<AgentStudio.Readiness.ServerReadinessCollector>().CollectAsync,
+    sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<ILogger<AgentStudio.Readiness.ServerReadinessMonitor>>()));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Readiness.ServerReadinessMonitor>());
 builder.Services.AddSingleton<AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService>();
 builder.Services.AddSingleton<GitCleanupService>();
 builder.Services.AddSingleton<BranchRetentionEvidenceWriter>();

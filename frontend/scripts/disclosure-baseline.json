@@ -25,7 +25,8 @@
     "src/app/features/task-detail/components/parked-blocker/parked-blocker.component.html",
     "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.html",
     "src/app/features/task-detail/components/protocol-pane/protocol-verdict-banner/protocol-verdict-banner.component.html",
-    "src/app/features/usage-cockpit/components/usage-slot-chip/usage-slot-chip.html"
+    "src/app/features/usage-cockpit/components/usage-slot-chip/usage-slot-chip.html",
+    "src/app/features/server-readiness/components/server-readiness-panel/server-readiness-panel.component.html"
   ],
   "documented": {
     "src/app/components/cli-model-selector/cli-model-selector.component.html": {

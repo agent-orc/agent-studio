@@ -176,6 +176,27 @@ server_disable_push() {
   done
 }
 
+# The readiness report the server computes about itself (AGT-3412), read from
+# inside the API container: its probe route answers loopback callers only.
+# Lists every check that is not ready with its remedy; never fails the move,
+# which already switched by the time it runs.
+server_readiness() {
+  report=$1; domain=$2; shift 2
+  attempt=0
+  until "$@" exec -T api curl --fail --silent --show-error --max-time 10 -H "Host: $domain" \
+      http://127.0.0.1:5031/healthz/readiness >"$report" 2>/dev/null \
+      && [ "$(json_field state <"$report" 2>/dev/null)" != pending ]; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 60 ]; then
+      echo 'readiness: the server computed no readiness report within two minutes; open the operations page and Recheck'
+      return 0
+    fi
+    sleep 2
+  done
+  node "$script_dir/readiness-report.mjs" "$report" || true
+  echo "readiness: report kept at $report"
+}
+
 server_smoke() {
   host=$1; port=$2; work=$3
   base="https://$host:$port"
@@ -241,6 +262,7 @@ server_smoke() {
   rm -f "$work/runner.curl"
   [ "$status" = 200 ] || fail "runner: claim with the test credential returned HTTP $status"
   echo "check: runner claim ok ($runner_name, status $(json_field status <"$work/claim.json"))"
+  server_readiness "$root/move-bin/rehearsal-readiness.json" "$host" compose
 }
 
 server_rehearse() {
@@ -418,6 +440,7 @@ server_apply() {
   rm -rf "$root/move-staging"
   echo 'staging: removed'
   live ps --format '{{.Service}} {{.State}}'
+  server_readiness "$root/move-bin/readiness.json" "$domain" live
 }
 
 if [ "${1:-}" = --server-side ]; then
@@ -586,6 +609,7 @@ inventory() {
 transfer_pass() {
   upload "$self" move-studio-to-server.sh
   upload "$script_dir/relocate-workspace-paths.mjs" relocate-workspace-paths.mjs
+  upload "$script_dir/readiness-report.mjs" readiness-report.mjs
   upload "$state_dir/path-map.json" path-map.json
   git -C "$workspace" remote get-url origin >/dev/null 2>&1 || fail 'the workspace has no origin remote to clone on the server'
   workspace_url=$(git -C "$workspace" remote get-url origin | strip_url)
@@ -816,5 +840,6 @@ case "$mode" in
     log 'Studio now runs on the server. Stable stays stopped: the watchdog is in maintenance and api.sh refuses to start past the guard.'
     rollback_hint
     log 'Then: sign in at the public URL, re-point remote runners, and complete the credential replacements listed above.'
+    log "Fix every FAIL line of the readiness report above before the first card runs; the operations page shows the same report ($server_root/move-bin/readiness.json)."
     ;;
 esac
