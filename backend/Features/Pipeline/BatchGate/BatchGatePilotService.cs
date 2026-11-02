@@ -1257,6 +1257,8 @@ public sealed partial class BatchGatePilotService
             {
                 State(manifest, BatchPhase.Abandoned, null, lease.Fence, "no-admitted-members");
                 ReturnToPending(manifest);
+                // Cascade-deferred members stay queued; replay conflicts return
+                // to the agent round without entering the per-task gate.
                 foreach (var key in assembly.EjectedKeys.Except(conflictKeys))
                     fallbackKeys.Add(key);
                 if (assembly.DeferredKeys.Count > 0)
@@ -1899,50 +1901,59 @@ public sealed partial class BatchGatePilotService
         if (candidate.Verdict != BuildTestGateVerdict.Fail
             || candidate.FailureKind != BuildTestGateFailureKind.Code)
             return false;
-        var baseline = _store.ReadBaseVerdict(manifest.Scope.Project,
-            manifest.BaseSha, run.GateProfileDigest);
-        if (baseline is null)
-        {
-            var settings = _settings.Get(manifest.Scope.Project);
-            if (GateProfile(settings.BuildProfile, repo) != run.GateProfileDigest)
-                throw new InvalidDataException("Batch gate profile changed before base verification.");
-            var started = _time.GetUtcNow();
-            var result = await _gate.RunAsync(new BuildTestGateRequest(
-                    repo, manifest.BaseSha, "batch-base")
-                {
-                    Project = manifest.Scope.Project,
-                    GateId = "batch-base",
-                    SubjectRef = manifest.BaseSha,
-                    IntegrationRef = manifest.BaseSha,
-                    RequiredTestLevel = TestExecutionLevels.Full,
-                    TestExecution = settings.TestExecution,
-                    DisableVerdictCache = true,
-                }, null, settings.BuildProfile, PostStepMode.Fail,
-                TimeSpan.FromMinutes(settings.BatchGate.GateTimeoutMinutes), ct)
-                .ConfigureAwait(false);
-            if (GateProfile(_settings.Get(manifest.Scope.Project).BuildProfile, repo)
-                != run.GateProfileDigest)
-                throw new InvalidDataException("Batch gate profile changed during base verification.");
-            if (!string.Equals(result.TestedSha, manifest.BaseSha,
-                    StringComparison.OrdinalIgnoreCase)
-                || result.IsInfrastructureFailure)
-                throw new IOException("The base verification did not produce an exact-SHA verdict.");
-            var evidencePath = Path.Combine(_store.BatchDirectory(manifest.BatchId),
-                "base-" + manifest.BaseSha + ".json");
-            File.WriteAllText(evidencePath, JsonSerializer.Serialize(result));
-            baseline = new BatchGateBaseVerdict(manifest.Scope.Project,
-                manifest.BaseSha, run.GateProfileDigest,
-                result.Verdict == BuildTestGateVerdict.Ok ? "pass" : "fail",
-                result.Verdict == BuildTestGateVerdict.Fail
-                    ? BuildTestGateRunner.DiagnosticFingerprint(result) : null,
-                result.Reason, evidencePath, _time.GetUtcNow());
-            _store.RecordBaseVerdict(baseline);
-            _store.RecordExecution(new BatchGateExecutionFact(
-                manifest.Scope.Project, manifest.BatchId, null, manifest.BaseSha,
-                result.Verdict.ToString(), Environment.MachineName,
-                started, _time.GetUtcNow(), result.GateQueueWaitMs, 0, evidencePath));
-        }
+        var baseline = await BaseVerdictAsync(manifest.Scope.Project, manifest.BaseSha,
+            run.GateProfileDigest, repo,
+            Path.Combine(_store.BatchDirectory(manifest.BatchId), "base-" + manifest.BaseSha + ".json"),
+            manifest.BatchId, ct).ConfigureAwait(false);
         return baseline.Outcome == "fail";
+    }
+
+    /// <summary>
+    /// The durable full-suite verdict of one integration base and gate
+    /// profile. The first caller runs it; batches and per-task fallbacks on the
+    /// same base share it.
+    /// </summary>
+    private async Task<BatchGateBaseVerdict> BaseVerdictAsync(string project, string baseSha,
+        string gateProfileDigest, string repo, string evidencePath, string? batchId,
+        CancellationToken ct)
+    {
+        var baseline = _store.ReadBaseVerdict(project, baseSha, gateProfileDigest);
+        if (baseline is not null) return baseline;
+        var settings = _settings.Get(project);
+        if (GateProfile(settings.BuildProfile, repo) != gateProfileDigest)
+            throw new InvalidDataException("Batch gate profile changed before base verification.");
+        var started = _time.GetUtcNow();
+        var result = await _gate.RunAsync(new BuildTestGateRequest(
+                repo, baseSha, "batch-base")
+            {
+                Project = project,
+                GateId = "batch-base",
+                SubjectRef = baseSha,
+                IntegrationRef = baseSha,
+                RequiredTestLevel = TestExecutionLevels.Full,
+                TestExecution = settings.TestExecution,
+                DisableVerdictCache = true,
+            }, null, settings.BuildProfile, PostStepMode.Fail,
+            TimeSpan.FromMinutes(settings.BatchGate.GateTimeoutMinutes), ct)
+            .ConfigureAwait(false);
+        if (GateProfile(_settings.Get(project).BuildProfile, repo) != gateProfileDigest)
+            throw new InvalidDataException("Batch gate profile changed during base verification.");
+        if (!string.Equals(result.TestedSha, baseSha, StringComparison.OrdinalIgnoreCase)
+            || result.IsInfrastructureFailure)
+            throw new IOException("The base verification did not produce an exact-SHA verdict.");
+        Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+        File.WriteAllText(evidencePath, JsonSerializer.Serialize(result));
+        baseline = new BatchGateBaseVerdict(project, baseSha, gateProfileDigest,
+            result.Verdict == BuildTestGateVerdict.Ok ? "pass" : "fail",
+            result.Verdict == BuildTestGateVerdict.Fail
+                ? BuildTestGateRunner.DiagnosticFingerprint(result) : null,
+            result.Reason, evidencePath, _time.GetUtcNow());
+        _store.RecordBaseVerdict(baseline);
+        _store.RecordExecution(new BatchGateExecutionFact(
+            project, batchId, null, baseSha,
+            result.Verdict.ToString(), Environment.MachineName,
+            started, _time.GetUtcNow(), result.GateQueueWaitMs, 0, evidencePath));
+        return baseline;
     }
 
     private async Task ReleaseMemberAsync(BatchGateManifest manifest,
@@ -2150,7 +2161,8 @@ public sealed partial class BatchGatePilotService
         var alreadyPassed = ownership?.ReviewAttemptId == pending.ReviewAttemptId
             && string.Equals(ownership.FallbackTestedSha, pending.Subject.ResultSha,
                 StringComparison.OrdinalIgnoreCase)
-            && File.Exists(evidence);
+            && File.Exists(Path.Combine(TaskPaths.LogsDir(task.FolderPath),
+                ownership.FallbackEvidencePath ?? Path.GetFileName(evidence)));
         // AGT-3139: a patch equivalent publication carries the result's tree
         // under another SHA. The per-task coordinator checks ancestry, so it
         // would merge and gate it again; the containment record releases it.
@@ -2179,28 +2191,47 @@ public sealed partial class BatchGatePilotService
                 await EscalateFallbackAsync(task, pending,
                     $"GateInfra: per-task gate interrupted {starts} times", infrastructure: true,
                     recordInStore, ct).ConfigureAwait(false);
+                RecordFallbackSuites(pending, "escalated");
                 return FallbackSettled(pending);
             }
+            // AGT-3434: the gate tests the delivery merged onto the current
+            // integration tip. A conflict goes to the agent without a gate.
+            var ownBase = ownership?.ReviewAttemptId == pending.ReviewAttemptId && ownership.FallbackOwnBase;
+            var subject = PrepareFallbackSubject(pending, ownership, ownBase, ct);
+            if (subject.Kind == PerTaskFallbackSubjectKind.MergeRound)
+            {
+                await StartFallbackMergeRoundAsync(task, pending, subject, recordInStore, ct)
+                    .ConfigureAwait(false);
+                return FallbackSettled(pending);
+            }
+            if (ownBase)
+                evidence = Path.Combine(TaskPaths.LogsDir(task.FolderPath),
+                    FallbackOwnBaseEvidenceName(pending.ReviewAttemptId));
             BatchGateOwnershipStore.Write(task.FolderPath,
                 new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
-                    FallbackGateActive: true, FallbackGateStarts: starts + 1));
+                    FallbackGateActive: true, FallbackGateStarts: starts + 1,
+                    FallbackBaseSha: subject.BaseSha,
+                    FallbackCandidateSha: subject.Merged ? subject.TestedSha : null,
+                    FallbackCandidateTreeSha: subject.TreeSha, FallbackOwnBase: ownBase));
             var started = _time.GetUtcNow();
-            // AGT-3414: the per-task gate runs what a batch of the same
-            // subject runs, classified on the exact SHA it gates.
-            var level = BatchGatePolicy.GateTestLevel([pending.Subject],
-                DeliveryPaths(pending.RepositoryPath, pending.Subject.IntegrationBranch,
-                    pending.Subject.ResultSha),
-                BuildStepPlanned(pending.RepositoryPath, pending.Subject.Project));
+            // AGT-3414: classify the exact tree this fallback gate tests.
+            var level = FallbackTestLevel(pending, subject);
             Lane(pending, "gate-requested", level: level,
-                reason: "per-task-fallback");
+                reason: subject.Merged ? "per-task-fallback" : "per-task-fallback-own-base");
+            _logger.LogInformation(
+                "batch-fallback-subject task={TaskKey} attempt={AttemptId} kind={Kind} tested={TestedSha} base={BaseSha} reason={Reason}",
+                pending.Subject.TaskKey, pending.ReviewAttemptId, subject.Kind, subject.TestedSha,
+                subject.BaseSha ?? "own", subject.Reason);
+            if (subject.Merged)
+                _git.PinFallbackCandidate(pending.RepositoryPath, pending.ReviewAttemptId, subject.TestedSha);
             BuildTestGateResult gate;
             try
             {
                 gate = await _gate.RunAsync(new BuildTestGateRequest(
-                        pending.RepositoryPath, pending.Subject.ResultSha, "batch-fallback")
+                        pending.RepositoryPath, subject.TestedSha, "batch-fallback")
                     {
                         Project = pending.Subject.Project,
-                        SubjectRef = pending.Subject.ResultRef,
+                        SubjectRef = subject.Merged ? subject.TestedSha : pending.Subject.ResultRef,
                         RequiredTestLevel = level,
                         TestExecution = _settings.Get(pending.Subject.Project).TestExecution,
                         OnMachineGateSlotWaiting = (busy, total) => _queueStalls.Waiting(
@@ -2239,6 +2270,8 @@ public sealed partial class BatchGatePilotService
             {
                 // Every exit, a cancellation included, ends this request's slot wait.
                 _queueStalls.Left(pending.ReviewAttemptId);
+                if (subject.Merged)
+                    _git.PinFallbackCandidate(pending.RepositoryPath, pending.ReviewAttemptId, null);
             }
             // A stale result resolves as superseded; a queue overrun returns
             // to the queue. Neither reaches the settlement. A cancellation
@@ -2319,18 +2352,37 @@ public sealed partial class BatchGatePilotService
                 }
             }
             if (gate.Verdict != BuildTestGateVerdict.Ok
-                || !string.Equals(gate.TestedSha, pending.Subject.ResultSha,
+                || !string.Equals(gate.TestedSha, subject.TestedSha,
                     StringComparison.OrdinalIgnoreCase))
             {
+                if (await TipIsRedAsync(task, pending, subject, gate, ct).ConfigureAwait(false))
+                {
+                    // What the old base protected: a red integration branch
+                    // does not escalate a delivery that is green on its own.
+                    _logger.LogWarning(
+                        "batch-fallback-red-tip task={TaskKey} attempt={AttemptId} tip={Tip}: retesting the delivery on its own base",
+                        pending.Subject.TaskKey, pending.ReviewAttemptId, subject.BaseSha);
+                    BatchGateOwnershipStore.Write(task.FolderPath,
+                        new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                            FallbackGateActive: true, FallbackOwnBase: true));
+                    return await RunPerTaskFallbackCoreAsync(pending, ct, recordInStore)
+                        .ConfigureAwait(false);
+                }
                 await EscalateFallbackAsync(task, pending,
                     gate.Reason ?? (gate.IsInfrastructureFailure
                         ? "GateInfra" : "deterministic-suite-red"), gate.IsInfrastructureFailure,
                     recordInStore, ct).ConfigureAwait(false);
+                RecordFallbackSuites(pending, "escalated");
                 return FallbackSettled(pending);
             }
+            // FallbackTestedSha keeps naming the delivery whose gate passed;
+            // lane release and acceptance compare it with the result SHA.
             ownership = new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
-                FallbackTestedSha: gate.TestedSha,
-                FallbackEvidencePath: Path.GetFileName(evidence));
+                FallbackTestedSha: pending.Subject.ResultSha,
+                FallbackEvidencePath: Path.GetFileName(evidence),
+                FallbackBaseSha: subject.BaseSha,
+                FallbackCandidateSha: subject.Merged ? subject.TestedSha : null,
+                FallbackCandidateTreeSha: subject.TreeSha, FallbackOwnBase: ownBase);
             BatchGateOwnershipStore.Write(task.FolderPath, ownership);
             // The review passed its gate; its queue wait no longer counts.
             _store.ClearQueueWait(pending.ReviewAttemptId);
@@ -2343,6 +2395,10 @@ public sealed partial class BatchGatePilotService
                 task.ProjectName, task.Id, task.FolderPath, task.WatchPath,
                 pending.Subject.IntegrationBranch, pending.IntegrationStrategy,
                 pending.PipelineType, pending.Subject.ReviewCompletedAtUtc)).ConfigureAwait(false);
+            if (containedInSha is null && result.Outcome.IsSuccessfulIntegration())
+                RecordFallbackSuites(pending, "published", result);
+            else if (containedInSha is null && result.Outcome == MergeIntoIntegrationOutcome.GateFailed)
+                RecordFallbackSuites(pending, "publish-failed", result);
             if (!result.Outcome.IsSuccessfulIntegration())
             {
                 // A contained member whose tree already failed its gate has a
@@ -2358,7 +2414,7 @@ public sealed partial class BatchGatePilotService
         }
         var fallbackRelease = new BatchGateOutcome(FallbackReleaseKey(pending, containedInSha),
             containedInSha is null
-                ? "Per-task fallback gate passed on the immutable result SHA."
+                ? FallbackPassedReason(ownership)
                 : "The integration branch already contained the result SHA.");
         if (HoldForEngineBatchDecision(task, pending.ReviewAttemptId, fallbackRelease)) return false;
         RecordBatchShadowIntent(task, pending.ReviewAttemptId, fallbackRelease);
@@ -2378,7 +2434,7 @@ public sealed partial class BatchGatePilotService
             _reviewJournal.RecordRemoteReviewParkVerdict(task.ProjectName, task.Id,
                 moved.NewFolderPath ?? task.FolderPath, "Pass",
                 containedInSha is null
-                    ? "Per-task fallback gate passed on the immutable result SHA."
+                    ? FallbackPassedReason(ownership)
                     : $"The integration branch already contained the result SHA at {containedInSha}; "
                       + "no batch candidate and no gate ran.");
         }
@@ -2419,6 +2475,30 @@ public sealed partial class BatchGatePilotService
             _logger.LogWarning(ex, "batch-gate-delivery-diff-unavailable sha={Sha}", resultSha);
             return null;
         }
+    }
+
+    private string FallbackTestLevel(BatchGatePendingRecord pending, PerTaskFallbackSubject subject)
+    {
+        IReadOnlyList<string>? paths;
+        if (subject.Merged)
+        {
+            try
+            {
+                paths = _git.ChangedPathsAgainstMergeBase(pending.RepositoryPath,
+                    subject.BaseSha!, subject.TestedSha!);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "batch-fallback-candidate-diff-unavailable sha={Sha}",
+                    subject.TestedSha);
+                paths = null;
+            }
+        }
+        else
+            paths = DeliveryPaths(pending.RepositoryPath, pending.Subject.IntegrationBranch,
+                pending.Subject.ResultSha);
+        return BatchGatePolicy.GateTestLevel([pending.Subject], paths,
+            BuildStepPlanned(pending.RepositoryPath, pending.Subject.Project));
     }
 
     /// <summary>
