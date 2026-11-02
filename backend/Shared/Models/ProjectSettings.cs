@@ -1057,6 +1057,17 @@ public record BuildProfile
     public IReadOnlyList<string>? Lockfiles { get; init; }
 
     /// <summary>
+    /// States that <see cref="Lockfiles"/> cover everything
+    /// <see cref="InstallCmd"/> prepares, for example an install command that is
+    /// only <c>npm --prefix frontend ci</c>. Only then may a dependency-cache hit
+    /// on every lockfile scope skip the install command in a gate or Remote
+    /// Review workspace. Leave it false when the command also prepares anything
+    /// else, such as <c>dotnet restore</c>: a skipped restore leaves a cached
+    /// <c>obj</c> without its packages (AGT-3429).
+    /// </summary>
+    public bool InstallCoveredByLockfiles { get; init; }
+
+    /// <summary>
     /// Glob patterns the worktree clean step must preserve (e.g.
     /// <c>["node_modules", ".angular", "bin", "obj"]</c>) so an expensive
     /// dependency/build cache survives recycling. Maps to the clean step's

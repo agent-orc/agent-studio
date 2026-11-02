@@ -373,6 +373,49 @@ public sealed class VerifyCommandPlannerTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-3429: which planned preparation a dependency-cache hit may skip. A
+    /// conventional <c>npm ci</c> prepares exactly its lockfile root; a profile
+    /// install command is opaque shell and is covered only by the profile's
+    /// explicit statement; <c>dotnet restore</c> has no scope at all.
+    /// </summary>
+    [Fact]
+    public void GatePreparation_MarksOnlyCommandsTheirLockfileScopesCover()
+    {
+        Write("App.sln", "");
+        Write("frontend/package.json", """{ "scripts": { "build": "ng build" } }""");
+        Write("frontend/package-lock.json", """{ "lockfileVersion": 3 }""");
+        const string install = "dotnet restore App.sln && npm --prefix frontend ci";
+        var opaque = new BuildProfile
+        {
+            InstallCmd = install,
+            Lockfiles = ["frontend/package-lock.json"],
+            BuildCmds = ["dotnet build App.sln --no-restore", "npm --prefix frontend run build"],
+        };
+        var declared = opaque with { InstallCmd = "npm --prefix frontend ci", InstallCoveredByLockfiles = true };
+        var declaredWithoutLockfiles = declared with { Lockfiles = [] };
+        var conventional = GatePreparationPlanner.Plan(
+            _root,
+            profile: null,
+            VerifyCommandPlanner.Plan(_root, profile: null).Commands);
+
+        Assert.False(Assert.Single(conventional, command => command.Command == "dotnet restore")
+            .CoveredByDependencyScopes);
+        Assert.True(Assert.Single(conventional, command => command.Command == "npm ci")
+            .CoveredByDependencyScopes);
+        Assert.False(Assert.Single(GatePreparationPlanner.Plan(
+            _root, opaque, VerifyCommandPlanner.Plan(_root, opaque).Commands)).CoveredByDependencyScopes);
+        Assert.True(Assert.Single(GatePreparationPlanner.Plan(
+            _root, declared, VerifyCommandPlanner.Plan(_root, declared).Commands)).CoveredByDependencyScopes);
+        Assert.False(Assert.Single(GatePreparationPlanner.Plan(
+            _root, declaredWithoutLockfiles,
+            VerifyCommandPlanner.Plan(_root, declaredWithoutLockfiles).Commands)).CoveredByDependencyScopes);
+        Assert.False(Assert.Single(V1ReviewPlaneEndpoints.FallbackPlan(_root, opaque, "refs/heads/main")
+            .Preparation!).CoveredByDependencyScopes);
+        Assert.True(Assert.Single(V1ReviewPlaneEndpoints.FallbackPlan(_root, declared, "refs/heads/main")
+            .Preparation!).CoveredByDependencyScopes);
+    }
+
+    /// <summary>
     /// AGT-2819: the lint gate was attributed to every card because it was never
     /// compared against the merge base. Every deterministic gate is now
     /// baseline-compared, and a lint or build gate is compared on exit status

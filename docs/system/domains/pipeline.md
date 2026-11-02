@@ -1812,6 +1812,26 @@ move-error dialog.
   complete stdout and stderr artifacts are retained in the Remote Review grade.
   A missing preparation directory is also copied into the grade Detail line so
   the path is visible without opening stderr.
+- What the dependency cache may skip (AGT-3429). A cache hit proves only that
+  each lockfile scope's `node_modules` and `.nm-state` marker match its
+  lockfiles. It skips a preparation command only when every scope of that
+  command hits and the plan marks the command as covered by its scopes
+  (`CoveredByDependencyScopes`, decided by `DependencyPreparationSkipPolicy`).
+  The planner marks a conventional `npm ci` for one lockfile root as covered. A
+  build-profile `installCmd` is opaque shell and runs on every attempt, unless
+  the profile sets `installCoveredByLockfiles: true` to state that its
+  `lockfiles` cover everything the command prepares; leave it false when the
+  command also runs `dotnet restore` or anything else outside the lockfile
+  scopes. `dotnet restore` has no scope and always runs. A plan without the
+  field runs the command. The opt-in is part of the profile fingerprint only
+  when set, so existing validations stay valid. Restored `**/obj` content stays
+  valid in a later Remote Review attempt because every attempt and role uses
+  the host-stable NuGet folder `<review-workdir>/.dependency-cache/nuget-packages`
+  with a shared `nuget-scratch` for NuGet's extraction locks, so a cached
+  `project.assets.json` never names a package folder deleted with an earlier
+  attempt (NETSDK1064). The review retention sweep removes package versions
+  extracted more than 30 days ago while no attempt is active; the next restore
+  extracts them again.
 - Compatibility dependency preparation and verification consume one shared `gate-run` budget.
   Machine-gate queue wait, exact workspace materialization, and exact workspace
   cleanup have separate named budgets. Local Git operations receive the remaining
