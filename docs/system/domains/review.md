@@ -377,12 +377,29 @@ One host runs several fenced ReviewAttempts at once. Isolation is what makes
 that safe, and it has three layers.
 
 **Filesystem and network.** `RemoteReviewWorkspace` roots every writable path
-under the attempt directory (`HOME`, `TMPDIR`, `XDG_CACHE_HOME`,
-`NUGET_PACKAGES`, `npm_config_cache`, `PIP_CACHE_DIR`, `CARGO_HOME`,
-`GRADLE_USER_HOME`, `DOTNET_CLI_HOME`). The lease supplies the attempt's
-`ResourceNamespace` for containers and databases and an eight-port window from
-`PortBase`. The baseline worktree gets its own sub-root inside the same attempt,
-so candidate and baseline never share a cache either.
+under the attempt directory (`HOME`, `XDG_CACHE_HOME`, `npm_config_cache`,
+`PIP_CACHE_DIR`, `CARGO_HOME`, `GRADLE_USER_HOME`, `DOTNET_CLI_HOME`). The lease
+supplies the attempt's `ResourceNamespace` for containers and databases and an
+eight-port window from `PortBase`. The baseline worktree gets its own sub-root
+inside the same attempt, so candidate and baseline never share these caches
+either. Two paths are deliberately outside the attempt directory (AGT-3429):
+
+- `TMPDIR` is a short, owner-only root `/tmp/rv-<12 hex>` named by a digest
+  of the attempt directory (`runner/ReviewAttemptTemp.cs`): `c` for the
+  candidate and one 12-character command segment per baseline or clean repeat.
+  Below the attempt directory a socket path such as Chrome's
+  `$TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket` exceeded the 107-byte
+  Unix socket limit and ChromeHeadless could not start. The root's `.owner`
+  file names its attempt; cleanup removes it with the attempt and the retention
+  sweep removes one whose attempt is gone.
+- `NUGET_PACKAGES` and `NUGET_SCRATCH` are the host-stable
+  `.dependency-cache/nuget-packages` and `nuget-scratch`, shared by every
+  attempt and role. The dependency cache preserves `**/obj`, and a cached
+  `project.assets.json` must name a package folder that still exists. The
+  folder is content addressed by package id and version, so candidate and
+  baseline resolve identical bits for identical versions, and the shared
+  scratch folder holds NuGet's extraction locks. See
+  [pipeline.md](pipeline.md) for what a dependency-cache hit may skip.
 
 **Build servers.** Path isolation does not cover them. On Linux, Roslyn's
 `VBCSCompiler` listens on `/tmp/<pipename>` derived from the compiler directory

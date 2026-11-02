@@ -1136,6 +1136,7 @@ public static class ProjectSettingsEndpoints
                 BuildCmds = req.BuildCmds,
                 TestCmds = req.TestCmds,
                 Lockfiles = req.Lockfiles,
+                InstallCoveredByLockfiles = req.InstallCoveredByLockfiles,
                 PreserveGlobs = req.PreserveGlobs,
                 PoolSize = req.PoolSize,
             });

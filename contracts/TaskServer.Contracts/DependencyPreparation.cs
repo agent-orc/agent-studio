@@ -106,6 +106,26 @@ public static class DependencyPreparationState
 }
 
 /// <summary>
+/// Which preparation command a dependency-cache hit may skip (AGT-3429). A hit
+/// only proves that each lockfile scope's dependency directory matches its
+/// lockfile. That is everything a command prepares only when the planner marks
+/// it as covered by its scopes: a conventional <c>npm ci</c> for one lockfile
+/// root, or a build-profile install command whose profile states that its
+/// lockfiles cover it. Any other command - an opaque profile install that may
+/// also run <c>dotnet restore</c>, or a command without scopes - always runs,
+/// because skipping it would leave whatever else it prepares stale.
+/// </summary>
+public static class DependencyPreparationSkipPolicy
+{
+    public static bool MaySkip(
+        bool coveredByDependencyScopes,
+        IReadOnlyCollection<ReviewDependencyCacheEvidenceDto> scopeDecisions)
+        => coveredByDependencyScopes
+           && scopeDecisions.Count > 0
+           && scopeDecisions.All(decision => decision.State == "hit");
+}
+
+/// <summary>
 /// Shared dependency-cache transfer protocol for disposable exact-subject
 /// workspaces. Content is mirrored by repository-relative path, while candidate
 /// and baseline roles receive separate namespaces so build outputs never cross

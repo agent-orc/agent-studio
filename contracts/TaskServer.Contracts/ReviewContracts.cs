@@ -61,6 +61,11 @@ public sealed record ReviewDependencyScopeDto(
     string WorkingSubdir,
     IReadOnlyList<string> Lockfiles);
 
+/// <param name="CoveredByDependencyScopes">
+/// True only when the scopes' lockfiles cover everything the command prepares,
+/// so a dependency-cache hit on every scope may skip it. A plan without the
+/// field runs the command (<see cref="DependencyPreparationSkipPolicy"/>).
+/// </param>
 public sealed record ReviewPreparationCommandDto(
     string StepId,
     string FileName,
@@ -68,7 +73,8 @@ public sealed record ReviewPreparationCommandDto(
     string WorkingSubdir = "",
     int TimeoutSeconds = 1800,
     IReadOnlyList<ReviewDependencyScopeDto>? DependencyScopes = null,
-    ReviewLibraryStepDto? LibraryStep = null);
+    ReviewLibraryStepDto? LibraryStep = null,
+    bool CoveredByDependencyScopes = false);
 
 public sealed record ScopedReviewPlanDto(
     bool Enabled,
