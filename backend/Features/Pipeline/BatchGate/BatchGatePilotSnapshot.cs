@@ -10,6 +10,9 @@ namespace AgentStudio.Pipeline;
 /// They are counted from the deploy that introduced them onward; reviews
 /// settled earlier have no fact and are not reconstructed from evidence.
 /// <c>TotalVerificationHostMinutes</c> is the sum of both sides.
+/// The per-task fallback fields (AGT-3434) count the cards that path settled,
+/// the suites they ran (per-task gates plus publish gates), the mean per card,
+/// and the publish steps that reused the per-task verdict instead of a suite.
 /// </summary>
 public sealed record BatchGatePilotSnapshot(
     string Project, int ClosedBatches, int EligibleDeliveredMembers,
@@ -30,6 +33,10 @@ public sealed record BatchGatePilotSnapshot(
     double ReviewVerificationHostMinutes = 0,
     double ReviewVerificationBaselineMinutes = 0,
     double TotalVerificationHostMinutes = 0,
+    int PerTaskFallbackCards = 0,
+    int PerTaskFallbackSuiteRuns = 0,
+    double? PerTaskFallbackSuitesPerCard = null,
+    int PerTaskPublishVerdictReuses = 0,
     IReadOnlyList<BatchGateIsolationFinding>? IsolationFindings = null);
 
 public static class BatchGatePilotSnapshotReader
@@ -105,6 +112,8 @@ public static class BatchGatePilotSnapshotReader
         var reviewVerifications = store.ListReviewVerifications(project);
         var reviewMinutes = reviewVerifications.Sum(item =>
             item.CandidateMinutes + item.BaselineMinutes);
+        var fallbackCards = store.ListFallbackSuites(project);
+        var fallbackSuites = fallbackCards.Sum(item => item.Suites);
         return new BatchGatePilotSnapshot(
             project, primary.Length, eligible, executions.Count,
             Ratio(executions.Count, eligible), Ratio(attempted, primary.Length),
@@ -122,6 +131,10 @@ public static class BatchGatePilotSnapshotReader
             ReviewVerificationHostMinutes: reviewMinutes,
             ReviewVerificationBaselineMinutes: reviewVerifications.Sum(item => item.BaselineMinutes),
             TotalVerificationHostMinutes: hostMinutes + reviewMinutes,
+            PerTaskFallbackCards: fallbackCards.Count,
+            PerTaskFallbackSuiteRuns: fallbackSuites,
+            PerTaskFallbackSuitesPerCard: Ratio(fallbackSuites, fallbackCards.Count),
+            PerTaskPublishVerdictReuses: fallbackCards.Count(item => item.PublishVerdictReused),
             IsolationFindings: store.ListIsolationFindings(project));
     }
 

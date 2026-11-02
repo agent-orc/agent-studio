@@ -168,5 +168,5 @@ Enable one project with `scope: code`, `planner: look-ahead`,
 `lookAheadMinutes: 45`, `riskPolicy: balanced`, `overlap: adjacent`,
 `reviewTestLevel: work-package`, `gateTimeoutMinutes: 150`, and
 `advisor.mode: advise`. Roll back with `scope: documentation` or
-`enabled: false`; pending members use the per-task gate on their immutable
-result SHA. The setting does not authorize a project-wide rollout.
+`enabled: false`; pending members use the per-task gate, which tests their
+immutable result SHA merged onto the current integration tip (AGT-3434). The setting does not authorize a project-wide rollout.

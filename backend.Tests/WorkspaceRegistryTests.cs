@@ -34,6 +34,25 @@ public class WorkspaceRegistryTests : IDisposable
     private WorkspaceRegistry Build() => new(_config, NullLogger<WorkspaceRegistry>.Instance);
 
     [Fact]
+    public void SystemUpsertPersistsCrossProjectUnitReferencesAndRejectsForeignProjects()
+    {
+        var registry = Build();
+        var workspace = registry.EnsureDefaultWorkspace();
+        var projects = new[] {
+            new ProjectRecord { Id = "PROJ-001", WorkspaceId = workspace.Id },
+            new ProjectRecord { Id = "PROJ-002", WorkspaceId = workspace.Id },
+            new ProjectRecord { Id = "PROJ-003", WorkspaceId = "ws-elsewhere" },
+        };
+        var system = new WorkspaceSystem { Id = "product", Name = "Product", Units = [
+            new("PROJ-001", "agent"), new("PROJ-002", "website") ] };
+        registry.UpsertSystem(workspace.Id, system, projects);
+        Assert.Equal(system.Units, Assert.Single(Build().Find(workspace.Id)!.Systems).Units);
+        Assert.Throws<ArgumentException>(() => registry.UpsertSystem(workspace.Id,
+            system with { Units = [new("PROJ-003", "library")] }, projects));
+        Assert.Single(Build().Find(workspace.Id)!.Systems);
+    }
+
+    [Fact]
     public void EnsureDefaultWorkspace_WritesFile_AndIsIdempotent()
     {
         var reg = Build();

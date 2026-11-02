@@ -361,6 +361,7 @@ public sealed class PersistedBoardReadTests : IDisposable
             Assert.Equal(HttpStatusCode.NotModified, (await Get(restartedClient, "/api/tasks/grouped", grouped.ETag)).Status);
 
             // The first publication was started once, off the reads, and is still held.
+            await gate.Started.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.Equal(1, gate.Scans);
         }
         finally

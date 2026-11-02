@@ -26,6 +26,7 @@
     "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.html",
     "src/app/features/task-detail/components/protocol-pane/protocol-verdict-banner/protocol-verdict-banner.component.html",
     "src/app/features/usage-cockpit/components/usage-slot-chip/usage-slot-chip.html",
+    "src/app/features/server-readiness/components/server-readiness-panel/server-readiness-panel.component.html",
     "src/app/features/structure/structure-view/structure-view.component.html"
   ],
   "documented": {

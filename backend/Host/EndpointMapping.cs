@@ -135,6 +135,7 @@ public static class EndpointMapping
         app.MapPublishEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapFilesystemLayerEndpoints();
         app.MapSystemEndpoints();
+        AgentStudio.Readiness.ServerReadinessEndpoints.MapServerReadinessEndpoints(app);
         app.MapCliEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapDevToolsEndpoints();
         app.MapAdminConfigEndpoints();
