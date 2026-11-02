@@ -1,12 +1,32 @@
 using AgentStudio.Watcher;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.Configuration;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
 public sealed class OperationalStallDetectorTests
 {
+    [Theory]
+    [InlineData("local", true)]
+    [InlineData("networked", false)]
+    public void Legacy_client_hosts_are_only_collected_in_the_local_profile(string profile, bool expected)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Security:Profile"] = profile,
+        }).Build();
+        Assert.Equal(expected, OperationalStallProbe.UseLegacyClientIdentities(config));
+    }
+
+    [Fact]
+    public void Capability_host_role_comes_from_its_executor()
+    {
+        Assert.Equal("coding", OperationalStallProbe.RoleOf([CapabilityProtocol.CodingExecutor]));
+        Assert.Equal("review", OperationalStallProbe.RoleOf([CapabilityProtocol.ReviewExecutor]));
+    }
     private readonly FakeTimeProvider _clock = new(DateTimeOffset.Parse("2026-10-16T20:00:00Z"));
     private DateTime Now => _clock.GetUtcNow().UtcDateTime;
 
@@ -109,6 +129,21 @@ public sealed class OperationalStallDetectorTests
         var issue = Assert.Single(OperationalStallDetector.Detect(
             new OperationalStallSnapshot([], [], [], [], [], [], [], [stopped]), new(), Now));
         Assert.Contains("is stopped", issue.Summary);
+        Assert.Equal("warning", issue.Severity);
+    }
+
+    [Theory]
+    [InlineData(false, false, "warning")]
+    [InlineData(true, false, "critical")]
+    [InlineData(false, true, "critical")]
+    public void Offline_severity_follows_blocked_work_or_a_running_attempt(
+        bool waiting, bool running, string severity)
+    {
+        var heartbeat = new HostHeartbeatFact("host", "coding", Now.AddMinutes(-11),
+            waiting ? ["AGT-1"] : [], RunningAttempt: running);
+        var eventForHost = Assert.Single(OperationalStallDetector.Detect(
+            new OperationalStallSnapshot([], [], [], [], [], [], [], [heartbeat]), new(), Now));
+        Assert.Equal(severity, eventForHost.Severity);
     }
 
     [Fact]

@@ -127,6 +127,39 @@ public static class IntegrationVerificationProjection
                   + $"'{outcome}' has no gate evidence for that exact tree.");
     }
 
+    /// <summary>
+    /// AGT-3436: the newest passed gate another card recorded on a published
+    /// tree that the branch still carries and that contains this card's
+    /// delivery. Containment alone never verifies (AGT-3002): a red gate, a
+    /// tree the branch no longer carries, or a tree without the delivery is no
+    /// evidence. Null when nothing qualifies.
+    /// </summary>
+    /// <param name="branchCarries">Whether the current branch history contains a SHA.</param>
+    /// <param name="treeContainsDelivery">Whether a tree contains every commit of the card's delivery.</param>
+    public static PublishedGateEvidence? FindPublishedGate(
+        IEnumerable<PublishedGateEvidence> records,
+        string currentIntegrationBranch,
+        Func<string, bool> branchCarries,
+        Func<string, bool> treeContainsDelivery)
+        => records
+            .Where(record => record.Passed
+                             && SameBranch(record.IntegrationBranch, currentIntegrationBranch)
+                             && ReviewSubjectStore.IsValidResultSha(record.TreeSha))
+            .OrderByDescending(record => record.RecordedAtUtc)
+            .FirstOrDefault(record => branchCarries(record.TreeSha) && treeContainsDelivery(record.TreeSha));
+
+    /// <summary>The card's verdict when it relies on <paramref name="gate"/>.</summary>
+    public static TaskIntegrationVerification FromPublishedGate(
+        PublishedGateEvidence gate, string currentIntegrationBranch, string? currentIntegrationSha) => new()
+    {
+        State = IntegrationVerificationStates.Verified,
+        Sha = gate.TreeSha,
+        Evidence = IntegrationVerificationEvidence.PublishedGate,
+        GateVerdict = gate.GateVerdict,
+        Reason = $"{gate.Describe()} That tree contains this delivery, and {currentIntegrationBranch} still carries it"
+                 + (string.IsNullOrWhiteSpace(currentIntegrationSha) ? "." : $" at {currentIntegrationSha}."),
+    };
+
     /// <summary>Only a verified record naming the exact integration SHA and branch proves this tree.</summary>
     public static bool NamesVerifiedTree(IEnumerable<TaskIntegrationRecord> records, string sha, string branch)
         => records.Any(record => string.Equals(

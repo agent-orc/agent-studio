@@ -211,6 +211,9 @@ export interface RemoteHostCapabilityHealth {
   version?: string | null;
   identity?: string | null;
   detail?: string | null;
+  since?: string | null;
+  httpStatus?: number | null;
+  request?: string | null;
   /** Typed provider condition. A ready transient state retains last-good admission. */
   signal?: 'ok' | 'transient-auth-error' | 'rate-limited' | 'signed-out' | 'credentials-expiring' | 'binary-missing'
     | 'healthy' | 'indeterminate' | 'credential_invalid' | 'provider_incident' | 'quota_exhausted' | 'network_failure' | null;
@@ -602,11 +605,18 @@ export type TaskServerRouteStatus = 'reachable' | 'degraded' | 'unreachable' | '
 export function taskServerRouteStatus(host: RemoteHost): TaskServerRouteStatus {
   if (host.status === 'retired') return 'unknown';
   const capability = host.capabilityHealth?.find(item => item.key === 'task-server:connectivity');
-  if (!capability) return host.taskServerConnection?.status ?? 'unknown';
+  if (!capability) {
+    const connection = host.taskServerConnection;
+    if (!connection) return 'unknown';
+    if (connection.status !== 'unreachable') return connection.status;
+    const first = Date.parse(connection.failureStartedAt ?? '');
+    const observed = Date.parse(connection.observedAt ?? '');
+    return connection.consecutiveFailures >= 3 && Number.isFinite(first)
+      && Number.isFinite(observed) && observed - first >= 60_000 ? 'unreachable' : 'reachable';
+  }
   if (!capability.isFresh || capability.advertisedStatus !== 'ready'
       || capability.healthState === 'draining') return 'unreachable';
   if (capability.healthState === 'suspect' || capability.healthState === 'half-open') return 'degraded';
-  if (host.taskServerConnection?.status === 'unreachable') return 'unreachable';
   return 'reachable';
 }
 
@@ -615,8 +625,8 @@ export function taskServerRouteDetail(host: RemoteHost): string {
   if (capability && !capability.isFresh) {
     return `No connectivity advertisement has arrived since ${capability.advertisedAt}. Check the tunnel or Task Server route.`;
   }
-  return host.taskServerConnection?.lastError
+  return capability?.detail
+    || host.taskServerConnection?.lastError
     || capability?.reason
-    || capability?.detail
     || 'No route observation has been reported yet.';
 }

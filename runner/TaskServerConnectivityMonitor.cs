@@ -21,6 +21,8 @@ public sealed class TaskServerConnectivityMonitor
     private DateTime? _lastRecoveredAt;
     private int _consecutiveFailures;
     private string? _lastError;
+    private int? _httpStatus;
+    private string? _request;
     private DateTime? _observedAt;
     private bool? _reachable;
 
@@ -46,7 +48,9 @@ public sealed class TaskServerConnectivityMonitor
         _consecutiveFailures,
         _escalatedAt,
         _lastError,
-        _lastRecoveredAt);
+        _lastRecoveredAt,
+        _httpStatus,
+        _request);
 
     /// <summary>Records a successful Task Server operation and logs recovery once.</summary>
     public bool RecordSuccess(DateTime observedAt, string operation)
@@ -71,6 +75,8 @@ public sealed class TaskServerConnectivityMonitor
         _lastSummaryAt = null;
         _consecutiveFailures = 0;
         _lastError = null;
+        _httpStatus = null;
+        _request = null;
         return recovered;
     }
 
@@ -91,6 +97,20 @@ public sealed class TaskServerConnectivityMonitor
         _failureStartedAt ??= observedAt;
         _consecutiveFailures++;
         _lastError = Bounded(exception.Message, 500);
+        _httpStatus = exception switch
+        {
+            HttpRequestException { StatusCode: { } status } => (int)status,
+            TaskServerException server => server.StatusCode,
+            _ => null,
+        };
+        _request = operation switch
+        {
+            "claim poll" => "POST /api/runner/claim",
+            "review claim poll" => "POST /api/v1/runners/{runnerId}/review-claims",
+            "capability advertisement" or "review capability advertisement"
+                or "capability re-registration" => "PUT /api/v1/runners/{runnerId}/capabilities",
+            _ => operation,
+        };
 
         if (firstFailure)
         {
@@ -152,4 +172,6 @@ public sealed record TaskServerConnectivitySnapshot(
     int ConsecutiveFailures,
     DateTime? EscalatedAt,
     string? LastError,
-    DateTime? LastRecoveredAt);
+    DateTime? LastRecoveredAt,
+    int? HttpStatus = null,
+    string? Request = null);

@@ -22,6 +22,7 @@ import type {
 import { seedRemoteHosts } from './remote-hosts.seed';
 import { ProviderAuthStatusService } from './provider-auth-status.service';
 import { NotificationService } from '../../../services/notification.service';
+import { AuthSessionState } from '../../../services/auth.service';
 
 function sameRelease(left: HostReleaseIdentity | null | undefined,
   right: HostReleaseIdentity | null | undefined): boolean {
@@ -105,7 +106,12 @@ export class RemoteHostsService {
   private readonly http = tryInjectHttpClient();
   private readonly providerAuth = tryInjectProviderAuthStatus();
   private readonly notifications = tryInjectNotificationService();
+  private readonly auth = tryInjectAuthSession();
+  private seed(): RemoteHost[] {
+    return seedRemoteHosts(Date.now(), this.auth?.status()?.profile ?? 'local');
+  }
   private readonly notifiedLinkFailures = new Set<string>();
+  private capabilityRunnerIds = new Set<string>();
 
   /** Every mount revalidates live state; cached cards are never authoritative. */
   ensureLoaded(): void {
@@ -118,7 +124,7 @@ export class RemoteHostsService {
    */
   refresh(): void {
     if (this.hosts().length === 0) {
-      this.hosts.set(seedRemoteHosts(Date.now()).map(host => ({
+      this.hosts.set(this.seed().map(host => ({
         ...host,
         liveDataState: 'loading',
         telemetryLoading: false,
@@ -132,7 +138,7 @@ export class RemoteHostsService {
     this.error.set(null);
     try {
       const current = this.hosts();
-      this.hosts.set((current.length ? current : seedRemoteHosts(Date.now())).map(host => ({
+      this.hosts.set((current.length ? current : this.seed()).map(host => ({
         ...host,
         liveDataState: 'loading',
         telemetryLoading: false,
@@ -162,7 +168,8 @@ export class RemoteHostsService {
         const byId = new Map((clients ?? []).map(client => [client.id, client]));
         const now = Date.now();
         this.hosts.update(hosts => {
-          const projected = hosts.map(host => {
+          const projected = (this.auth?.status()?.profile === 'networked'
+            ? hosts.filter(host => this.capabilityRunnerIds.has(host.clientId)) : hosts).map(host => {
           const client = byId.get(host.clientId);
           if (!client) return {
             ...host,
@@ -189,7 +196,7 @@ export class RemoteHostsService {
             : projectedHost;
           });
           const known = new Set(projected.map(host => host.clientId));
-          const discovered = (clients ?? [])
+          const discovered = (this.auth?.status()?.profile === 'networked' ? [] : clients ?? [])
             .filter(client => !known.has(client.id) && isRunnerIdentity(client))
             .map(client => projectClient({
               id: client.id, name: client.displayName, role: 'remote', address: null, clientId: client.id,
@@ -256,9 +263,12 @@ export class RemoteHostsService {
     this.http.get<TaskServerRunnerCapabilitySnapshot[]>('/api/v1/management/remote-hosts').subscribe({
       next: snapshots => {
         this.providerAuth?.ingest(snapshots ?? []);
+        this.capabilityRunnerIds = new Set((snapshots ?? []).map(snapshot => snapshot.runnerId));
         const now = Date.now();
         this.hosts.update(hosts => {
-          const projected = [...hosts];
+          const projected = this.auth?.status()?.profile === 'networked'
+            ? hosts.filter(host => this.capabilityRunnerIds.has(host.clientId))
+            : [...hosts];
           for (const snapshot of snapshots ?? []) {
             const index = projected.findIndex(host =>
               host.clientId === snapshot.runnerId || host.id === snapshot.runnerId);
@@ -936,6 +946,14 @@ function tryInjectProviderAuthStatus(): ProviderAuthStatusService | null {
 function tryInjectNotificationService(): NotificationService | null {
   try {
     return inject(NotificationService, { optional: true });
+  } catch {
+    return null;
+  }
+}
+
+function tryInjectAuthSession(): AuthSessionState | null {
+  try {
+    return inject(AuthSessionState, { optional: true });
   } catch {
     return null;
   }

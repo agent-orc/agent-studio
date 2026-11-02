@@ -147,7 +147,7 @@ public sealed partial class TaskServerStore
                     INSERT INTO runner_capabilities(
                         runner_id, capability_key, category, schema_version,
                         advertised_status, health_state, reason, version,
-                        identity_value, detail, signal, credential_expires_at,
+                        identity_value, detail, failure_since, http_status, request, signal, credential_expires_at,
                         limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json,
                         credential_generation, credential_observed_at, last_real_success_at, expiry_provenance,
                         access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json,
@@ -156,7 +156,7 @@ public sealed partial class TaskServerStore
                         generation, recovery_history_json, updated_at)
                     VALUES (
                         $runner, $key, $category, $schema, $status, 'healthy',
-                        NULL, $version, $identity, $detail, $signal, $expires,
+                        NULL, $version, $identity, $detail, $failure_since, $http_status, $request, $signal, $expires,
                         $limited, $credential_modified, $evidence_id, $evidence_excerpt, $supported_models,
                         $credential_generation, $credential_observed, $last_real_success, $expiry_provenance,
                         $access_expires, $effective_source, $native_shadowed, $evidence_refs,
@@ -177,6 +177,9 @@ public sealed partial class TaskServerStore
                         version = excluded.version,
                         identity_value = excluded.identity_value,
                         detail = excluded.detail,
+                        failure_since = excluded.failure_since,
+                        http_status = excluded.http_status,
+                        request = excluded.request,
                         signal = excluded.signal,
                         credential_expires_at = excluded.credential_expires_at,
                         limited_until = excluded.limited_until,
@@ -213,6 +216,9 @@ public sealed partial class TaskServerStore
                     ("$version", capability.Version),
                     ("$identity", capability.Identity),
                     ("$detail", advertisedDetail),
+                    ("$failure_since", capability.Since is { } since ? Iso(since.ToUniversalTime()) : null),
+                    ("$http_status", capability.HttpStatus),
+                    ("$request", capability.Request),
                     ("$signal", capability.Signal),
                     ("$expires", capability.ExpiresAt is null ? null : Iso(capability.ExpiresAt.Value.ToUniversalTime())),
                     ("$limited", capability.LimitedUntil is null ? null : Iso(capability.LimitedUntil.Value.ToUniversalTime())),
@@ -575,7 +581,8 @@ public sealed partial class TaskServerStore
                        limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json,
                        credential_generation, credential_observed_at, last_real_success_at, expiry_provenance,
                        access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json,
-                       health_outcome, service_availability, credential_health
+                       health_outcome, service_availability, credential_health,
+                       failure_since, http_status, request
                   FROM runner_capabilities
                  WHERE runner_id = $runner
                  ORDER BY category, capability_key;
@@ -622,7 +629,10 @@ public sealed partial class TaskServerStore
                         reader.IsDBNull(30) ? null : JsonSerializer.Deserialize<string[]>(reader.GetString(30)),
                         reader.IsDBNull(31) ? null : reader.GetString(31),
                         reader.IsDBNull(32) ? null : reader.GetString(32),
-                        reader.IsDBNull(33) ? null : reader.GetString(33)));
+                        reader.IsDBNull(33) ? null : reader.GetString(33),
+                        reader.IsDBNull(34) ? null : Parse(reader.GetString(34)),
+                        reader.IsDBNull(35) ? null : reader.GetInt32(35),
+                        reader.IsDBNull(36) ? null : reader.GetString(36)));
                 }
             }
             if (runner.Status == "active"

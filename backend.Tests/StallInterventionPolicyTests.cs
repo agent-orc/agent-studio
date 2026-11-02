@@ -90,7 +90,7 @@ public sealed class StallInterventionPolicyTests
 
         Assert.Equal((AiOperatorDisposition.Propose, AutonomyClass.A2, StallInterventionActions.ProposeRestartService, reason),
             (decision.Disposition, decision.Autonomy, decision.Effect, decision.ReasonCode));
-        Assert.Contains("nothing was changed", decision.Intervention!.Done);
+        Assert.Contains("No action was taken", decision.Intervention!.Done);
     }
 
     [Fact]
@@ -219,7 +219,7 @@ public sealed class StallInterventionPolicyTests
 
         Assert.Equal((AiOperatorDisposition.Propose, AutonomyClass.A2, StallInterventionActions.ProposeReviewToolchain),
             (decision.Disposition, decision.Autonomy, decision.Effect));
-        Assert.Contains("add compose-render to the review image", decision.Intervention!.Proposal);
+        Assert.Contains("Add compose-render to the review image", decision.Intervention!.Proposal);
     }
 
     [Fact]
@@ -536,7 +536,7 @@ public sealed class StallInterventionPolicyTests
 
         Assert.Equal(StallInterventionPolicy.WaitingForLogin, waiting.ReasonCode);
         Assert.Equal(StallInterventionActions.ConfirmCleared, renewed.Effect);
-        Assert.Contains("route attempts to agent-runner-01 again", renewed.Intervention!.Done);
+        Assert.Contains("attempts route to agent-runner-01 again", renewed.Intervention!.Done);
         Assert.Equal((AiOperatorDisposition.Ask, StallInterventionPolicy.EffectMissing), (lost.Disposition, lost.ReasonCode));
     }
 

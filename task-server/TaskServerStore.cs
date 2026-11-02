@@ -3982,6 +3982,9 @@ public sealed partial class TaskServerStore
                 version TEXT,
                 identity_value TEXT,
                 detail TEXT,
+                failure_since TEXT,
+                http_status INTEGER,
+                request TEXT,
                 signal TEXT,
                 credential_expires_at TEXT,
                 limited_until TEXT,
@@ -4624,6 +4627,9 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runners", "release_identity_json", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "instance_started_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "signal", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "failure_since", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "http_status", "INTEGER", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "request", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_expires_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "limited_until", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_modified_at", "TEXT", ct);
