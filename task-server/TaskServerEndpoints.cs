@@ -93,12 +93,10 @@ public static class TaskServerEndpoints
         {
             var options = configured.Value;
             var requestBytes = Math.Max(1, options.MaxRequestBodyBytes);
-            var reserve = Math.Min(64L * 1024, requestBytes / 4);
-            var requestSafeRawBytes = Math.Max(1, (requestBytes - reserve) / 4 * 3);
             var maxTotalBytes = Math.Max(1, options.ResultArtifactMaxTotalBytes);
             return Results.Ok(new ArtifactTransferLimitsResponse(
                 requestBytes,
-                Math.Min(Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes), requestSafeRawBytes), maxTotalBytes),
+                Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes), maxTotalBytes),
                 maxTotalBytes));
         });
 
@@ -697,6 +695,32 @@ public static class TaskServerEndpoints
             return await InvokeAsync(() => store.IngestArtifactAsync(runId, request, Actor(context), ct),
                 StatusCodes.Status201Created);
         });
+        runs.MapGet("/{runId}/artifact-chunks/{sha256}", (
+            string runId, string sha256, int count, long sizeBytes, ArtifactChunkStore chunks) =>
+        {
+            try { return Results.Ok(chunks.Status(runId, sha256, count, sizeBytes)); }
+            catch (ArtifactChunkTooLargeException ex) { return ArtifactRequestLimitMiddleware.Problem(ex.Limit, sizeBytes); }
+            catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-artifact-chunks", ex.Message)); }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
+        runs.MapPost("/{runId}/artifact-chunks", (
+            string runId, ArtifactChunkRequest request, ArtifactChunkStore chunks) =>
+        {
+            try { return Results.Ok(chunks.Put(runId, request)); }
+            catch (ArtifactChunkTooLargeException ex) { return ArtifactRequestLimitMiddleware.Problem(ex.Limit, request.SizeBytes); }
+            catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-artifact-chunks", ex.Message)); }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
+        runs.MapPost("/{runId}/artifact-chunks/complete", async (
+            HttpContext context, string runId, ArtifactChunkCompleteRequest request,
+            ArtifactChunkStore chunks, TaskServerStore store, CancellationToken ct) =>
+        {
+            try { return await InvokeAsync(() => chunks.CompleteAsync(runId, request, store, Actor(context), ct),
+                StatusCodes.Status201Created); }
+            catch (ArtifactChunkTooLargeException ex) { return ArtifactRequestLimitMiddleware.Problem(ex.Limit, request.SizeBytes); }
+            catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-artifact-chunks", ex.Message)); }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
         runs.MapGet("/{runId}/artifacts", async (string runId, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListArtifactsAsync(runId, ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);

@@ -4,6 +4,32 @@ This runbook is the operator path for adding, connecting, draining, retiring,
 reviving, and permanently removing a remote agent host. The detailed Linux
 installation reference remains [linux-runner-host.md](setup/linux-runner-host.md).
 
+## Cloudflare request limits
+
+The public host URL has a 100 second request and 100 MB body ceiling. Host
+requests use a 90 second client timeout even if
+`RUNNER_SERVER_REQUEST_TIMEOUT_SECONDS` is configured higher. HTTP 413 is
+`ProxyBodyLimitExceeded`; HTTP 524 is `ProxyOriginTimeout`. Both names appear
+in host errors and the resulting task or host Operations failure detail.
+For artifacts above the default 8 MiB per-file and 100 MiB total budgets,
+raise `TaskServer:ResultArtifactMaxFileBytes` and
+`TaskServer:ResultArtifactMaxTotalBytes` explicitly; the proxy body ceiling
+still applies to each chunk request.
+
+| Host route | Limit exposure | Handling |
+|---|---|---|
+| `POST /api/v1/runs/{runId}/artifacts` and legacy `/api/runner/artifacts` | Base64 content expands the request body | Versioned uploads above 4 MiB use `GET /artifact-chunks/{sha256}`, `POST /artifact-chunks`, and `POST /artifact-chunks/complete`. Each chunk is at most 4 MiB raw. The server checks the configured file and total limits before staging and checks the assembled size and SHA-256 before the fenced write. A repeated chunk with different bytes is rejected. Legacy uploads remain per-file and bounded by their advertised request-safe limit. |
+| `POST /api/v1/runs/{runId}/events` and legacy `/api/runner/logs` | A batch of long log lines can exceed 100 MB | The host ships at most one million text characters per log batch. |
+| `POST /api/v1/runners/{runnerId}/claims` and legacy `/api/runner/claim` | Claim preparation can take time | Claims return a lease or a refusal; execution and evidence work continue outside the claim request. The host polls for more work. |
+| `POST /api/v1/reviews/attempts/{attemptId}/report` | Review projection can take time; inline command output can enlarge the body | Command capture retains a bounded tail and inline artifact content has a 16 MiB JSON wire budget. The report retains metadata for omitted bodies and the host logs their count. The report acknowledges the fenced verdict before background evidence projection. The host uses a 10 second acknowledgement timeout and replays by idempotency key after a lost response. |
+| `POST /api/v1/runs/{runId}/result-finalization` and legacy artifact finalization | Summary generation can take time | The versioned route bounds generation to `TaskServer:ResultFinalizationGenerationTimeoutSeconds` (60 seconds by default, at most 75), returns `Retryable` on timeout, and the host polls with the next attempt. The legacy route queues a retry if its acknowledgement budget is spent. |
+
+A host on the same machine may set its Task Server URL to a loopback listener,
+avoiding Cloudflare. This is a transport choice, not an authentication bypass:
+in the `networked` profile it must still send its scoped Runner bearer credential.
+Do not expose that listener on a public interface or use the `local` profile's
+unauthenticated loopback management rule as a substitute for Runner identity.
+
 ## Remote build/test gate capacity
 
 The SSH gate worker uses `RemoteGate:GateSlots` numbered file locks on the gate

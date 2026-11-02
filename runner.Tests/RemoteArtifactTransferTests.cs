@@ -30,7 +30,73 @@ public sealed class RemoteArtifactTransferTests
                 CancellationToken.None));
 
         Assert.Equal(413, error.StatusCode);
+        Assert.Equal("ProxyBodyLimitExceeded", error.ErrorCode);
         Assert.Contains(problem, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Proxy_timeout_has_a_named_host_error()
+    {
+        var error = new TaskServerException(524, "POST /api/v1/runners/runner/claims -> 524");
+        Assert.Equal("ProxyOriginTimeout", error.ErrorCode);
+        Assert.StartsWith("ProxyOriginTimeout:", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Host_request_timeout_stays_below_Cloudflare_limit()
+        => Assert.Equal(TimeSpan.FromSeconds(90), TaskServerClient.EffectiveRequestTimeout(240));
+
+    [Fact]
+    public async Task Durable_artifact_replay_uses_proxy_sized_chunks_and_preserves_sequence()
+    {
+        var bytes = new byte[5 * 1024 * 1024];
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        var handler = new ChunkRecordingHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = new TaskServerClient(http, "runner-under-test", usesDurableTaskServer: true);
+        var payload = new DurableArtifactPayload("results/proof.bin", "application/octet-stream",
+            Convert.ToBase64String(bytes), sha);
+        var authority = new RunOutboxAuthority("run-1", "AGT-1", "runner-under-test",
+            "instance-1", "lease-1", 4);
+        var item = new RunOutboxItem(7, "artifact", JsonSerializer.Serialize(payload),
+            "artifact-replay-1", DateTime.UnixEpoch);
+
+        await client.SendOutboxItemAsync(authority, item, default);
+
+        Assert.Equal(2, handler.ChunkPosts);
+        Assert.Equal(7L, handler.CompletedSequence);
+        Assert.True(handler.LargestRequestBytes < 100_000_000);
+    }
+
+    private sealed class ChunkRecordingHandler : HttpMessageHandler
+    {
+        public int ChunkPosts { get; private set; }
+        public long? CompletedSequence { get; private set; }
+        public long LargestRequestBytes { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = request.Content is null ? []
+                : await request.Content.ReadAsByteArrayAsync(cancellationToken);
+            LargestRequestBytes = Math.Max(LargestRequestBytes, body.LongLength);
+            if (request.Method == HttpMethod.Get)
+                return Reply(new AgentStudio.TaskServer.Contracts.ArtifactChunkStatus([], 2, 5L * 1024 * 1024));
+            if (request.RequestUri!.AbsolutePath.EndsWith("/complete", StringComparison.Ordinal))
+            {
+                using var document = JsonDocument.Parse(body);
+                CompletedSequence = document.RootElement.GetProperty("sequence").GetInt64();
+                return Reply(new { artifactId = "art-proof" });
+            }
+            ChunkPosts++;
+            return Reply(new { receivedIndices = new[] { ChunkPosts - 1 }, count = 2, sizeBytes = 5L * 1024 * 1024 });
+        }
+
+        private static HttpResponseMessage Reply<T>(T payload)
+            => new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+            };
     }
 
     private sealed class ArtifactLimitHandler(string problem) : HttpMessageHandler

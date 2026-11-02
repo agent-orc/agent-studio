@@ -1112,8 +1112,10 @@ public sealed class RemoteReviewWorkspace
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds, 1, 7200)));
             using var silenceWatcher = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
-            var completeStdout = new StringBuilder();
-            var completeStderr = new StringBuilder();
+            const int reviewStdoutChars = 2 * 1024 * 1024;
+            const int reviewStderrChars = 256 * 1024;
+            var completeStdout = new BoundedOutputBuffer(reviewStdoutChars);
+            var completeStderr = new BoundedOutputBuffer(reviewStderrChars);
             var watching = WatchForSilenceAsync(
                 stepId, clock, stall, silenceWindow, timeout, silenceWatcher.Token);
             try
@@ -1125,12 +1127,14 @@ public sealed class RemoteReviewWorkspace
                     onStdOut: line =>
                     {
                         clock.Mark();
-                        completeStdout.AppendLine(line);
+                        completeStdout.Append(line.Length > reviewStdoutChars
+                            ? line[^reviewStdoutChars..] : line);
                     },
                     onStdErr: line =>
                     {
                         clock.Mark();
-                        completeStderr.AppendLine(line);
+                        completeStderr.Append(line.Length > reviewStderrChars
+                            ? line[^reviewStderrChars..] : line);
                     },
                     environment: environment ?? ProcessEnvironment(),
                     clearEnvironment: true,

@@ -18,6 +18,7 @@ namespace AgentRunner;
 /// </summary>
 public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFacts.ISourceFactsClient
 {
+    private const int ArtifactChunkBytes = Contract.ArtifactChunkProtocol.MaxChunkBytes;
     private static readonly JsonSerializerOptions Json = CreateJsonOptions();
     private static readonly JsonSerializerOptions TaskServerContractJson =
         new(JsonSerializerDefaults.Web);
@@ -62,7 +63,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         _http = new HttpClient(CreateServiceHandler(options))
         {
             BaseAddress = new Uri(options.ServerUrl),
-            Timeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds),
+            Timeout = EffectiveRequestTimeout(options.ServerRequestTimeoutSeconds),
         };
         _configuredClientId = options.ClientId;
         _usesServiceCredential = !string.IsNullOrWhiteSpace(options.AuthToken);
@@ -131,7 +132,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         _deviceLoginRunnerId = runnerId;
         if (options is not null)
         {
-            var configuredTimeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds);
+            var configuredTimeout = EffectiveRequestTimeout(options.ServerRequestTimeoutSeconds);
             if (_http.Timeout == Timeout.InfiniteTimeSpan || _http.Timeout > configuredTimeout)
                 _http.Timeout = configuredTimeout;
         }
@@ -1927,20 +1928,27 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             var bytes = Convert.FromBase64String(artifact.ContentBase64);
             var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
             var key = $"runner-artifact:{authority.RunId}:{artifact.Path}:{sha}";
-            await PostJsonAsync<Contract.ArtifactIngestRequest, Contract.ArtifactDto>(
-                $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifacts",
-                new Contract.ArtifactIngestRequest(
-                    $"art_{Guid.NewGuid():N}",
-                    artifact.Path,
-                    MediaType(artifact.Path),
-                    artifact.ContentBase64,
-                    sha,
-                    key,
-                    authority.Fence,
-                    authority.RunnerId,
-                    authority.InstanceId,
-                    authority.LeaseId),
-                ct);
+            if (bytes.Length > ArtifactChunkBytes)
+            {
+                await UploadArtifactChunksAsync(authority, artifact.Path, bytes, sha, key, ct);
+            }
+            else
+            {
+                await PostJsonAsync<Contract.ArtifactIngestRequest, Contract.ArtifactDto>(
+                    $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifacts",
+                    new Contract.ArtifactIngestRequest(
+                        $"art_{Guid.NewGuid():N}",
+                        artifact.Path,
+                        MediaType(artifact.Path),
+                        artifact.ContentBase64,
+                        sha,
+                        key,
+                        authority.Fence,
+                        authority.RunnerId,
+                        authority.InstanceId,
+                        authority.LeaseId),
+                    ct);
+            }
             files.Add(artifact.Path);
         }
         if (!req.FinalizeResult)
@@ -1955,6 +1963,39 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             ResultDocumentStatus: finalization.Status == Contract.ResultFinalizationStatus.Ready
                 ? "generated"
                 : $"degraded:{finalization.Error ?? "summary retry budget exhausted"}");
+    }
+
+    private async Task UploadArtifactChunksAsync(
+        RunOutboxAuthority authority, string path, byte[] bytes,
+        string sha, string key, CancellationToken ct, long? sequence = null,
+        string? artifactId = null)
+    {
+        var baseUrl = $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifact-chunks";
+        var count = (bytes.Length + ArtifactChunkBytes - 1) / ArtifactChunkBytes;
+        using var response = await _http.GetAsync(
+            $"{baseUrl}/{sha}?count={count}&sizeBytes={bytes.LongLength}", ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode,
+                $"Artifact chunk status failed: {(int)response.StatusCode}",
+                ProxyErrorCode((int)response.StatusCode));
+        var status = await response.Content.ReadFromJsonAsync<Contract.ArtifactChunkStatus>(Json, ct)
+            ?? throw new InvalidDataException("Task Server returned empty artifact chunk status.");
+        var received = status.ReceivedIndices.ToHashSet();
+        for (var index = 0; index < count; index++)
+        {
+            if (received.Contains(index)) continue;
+            var offset = index * ArtifactChunkBytes;
+            var length = Math.Min(ArtifactChunkBytes, bytes.Length - offset);
+            await PostJsonAsync<Contract.ArtifactChunkRequest, Contract.ArtifactChunkStatus>(
+                baseUrl,
+                new Contract.ArtifactChunkRequest(path, MediaType(path), sha, bytes.LongLength,
+                    index, count, Convert.ToBase64String(bytes.AsSpan(offset, length))), ct);
+        }
+        await PostJsonAsync<Contract.ArtifactChunkCompleteRequest, Contract.ArtifactDto>(
+            baseUrl + "/complete",
+            new Contract.ArtifactChunkCompleteRequest(artifactId ?? $"art_{Guid.NewGuid():N}", path,
+                MediaType(path), sha, bytes.LongLength, count, key, authority.Fence,
+                authority.RunnerId, authority.InstanceId, authority.LeaseId, sequence), ct);
     }
 
     public async Task<ArtifactTransferLimitsResponse> GetArtifactTransferLimitsAsync(
@@ -2121,6 +2162,14 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             {
                 var payload = JsonSerializer.Deserialize<DurableArtifactPayload>(item.PayloadJson, Json)
                               ?? throw new InvalidDataException("Durable artifact payload is empty.");
+                var bytes = Convert.FromBase64String(payload.ContentBase64);
+                if (bytes.Length > ArtifactChunkBytes)
+                {
+                    await UploadArtifactChunksAsync(authority, payload.Name, bytes,
+                        payload.Sha256, item.IdempotencyKey, ct, item.Sequence,
+                        $"art_{HashId(item.IdempotencyKey)}");
+                    return;
+                }
                 await SendJsonAsync<Contract.ArtifactIngestRequest, Contract.ArtifactDto>(
                     HttpMethod.Post,
                     $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifacts",
@@ -2322,7 +2371,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             throw new TaskServerException(
                 (int)resp.StatusCode,
                 $"POST {url} -> {(int)resp.StatusCode}: {(resp.StatusCode == HttpStatusCode.RequestEntityTooLarge ? text : Trim(text))}",
-                errorCode);
+                ProxyErrorCode((int)resp.StatusCode) ?? errorCode);
         }
         return await resp.Content.ReadFromJsonAsync<TResp>(Json, ct);
     }
@@ -2354,6 +2403,16 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
 
     private static string Trim(string s) => s.Length <= 300 ? s : s[..300] + "...";
 
+    private static string? ProxyErrorCode(int statusCode) => statusCode switch
+    {
+        413 => "ProxyBodyLimitExceeded",
+        524 => "ProxyOriginTimeout",
+        _ => null,
+    };
+
+    internal static TimeSpan EffectiveRequestTimeout(int configuredSeconds)
+        => TimeSpan.FromSeconds(Math.Clamp(configuredSeconds, 1, 90));
+
     private static string? TryReadApiErrorCode(string response)
     {
         try
@@ -2370,8 +2429,19 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
 }
 
 /// <summary>A non-success HTTP reply from the Task Server, carrying the status code for branching.</summary>
-public sealed class TaskServerException(int statusCode, string message, string? errorCode = null) : Exception(message)
+public sealed class TaskServerException(int statusCode, string message, string? errorCode = null)
+    : Exception(statusCode switch
+    {
+        413 => $"ProxyBodyLimitExceeded: {message}",
+        524 => $"ProxyOriginTimeout: {message}",
+        _ => message,
+    })
 {
     public int StatusCode { get; } = statusCode;
-    public string? ErrorCode { get; } = errorCode;
+    public string? ErrorCode { get; } = statusCode switch
+    {
+        413 => "ProxyBodyLimitExceeded",
+        524 => "ProxyOriginTimeout",
+        _ => errorCode,
+    };
 }

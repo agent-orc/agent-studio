@@ -31,6 +31,7 @@ public sealed class LogShipper
     // of building one giant request (and, on the v1 path, one giant burst of
     // per-line POSTs) that would hold the whole batch live at once.
     private const int MaxBatchLines = 2_000;
+    private const int MaxBatchChars = 1_000_000;
     private const int MaxLineChars = 64 * 1024;
 
     private readonly TaskServerClient _client;
@@ -142,10 +143,14 @@ public sealed class LogShipper
             }
         }
         var batch = new List<CliOutputLine>();
-        while (batch.Count < MaxBatchLines && _pending.TryDequeue(out var line))
+        var batchChars = 0;
+        while (batch.Count < MaxBatchLines && _pending.TryPeek(out var next)
+               && (batch.Count == 0 || batchChars + next.Text.Length <= MaxBatchChars)
+               && _pending.TryDequeue(out var line))
         {
             Interlocked.Decrement(ref _pendingCount);
             batch.Add(line);
+            batchChars += line.Text.Length;
         }
         if (batch.Count == 0) return true;
 

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.TaskServer;
 
@@ -12,13 +13,23 @@ public sealed class ArtifactRequestLimitMiddleware(
         var path = context.Request.Path.Value ?? string.Empty;
         if (!HttpMethods.IsPost(context.Request.Method)
             || !path.StartsWith("/api/v1/runs/", StringComparison.OrdinalIgnoreCase)
-            || !path.EndsWith("/artifacts", StringComparison.OrdinalIgnoreCase))
+            || !(path.EndsWith("/artifacts", StringComparison.OrdinalIgnoreCase)
+                 || path.EndsWith("/artifact-chunks", StringComparison.OrdinalIgnoreCase)
+                 || path.EndsWith("/artifact-chunks/complete", StringComparison.OrdinalIgnoreCase)))
         {
             await next(context);
             return;
         }
 
-        var limit = configured.Value.MaxRequestBodyBytes;
+        // System.Text.Json escapes some base64 characters as six-byte Unicode
+        // sequences, so leave room beyond the mathematical 4/3 expansion.
+        var chunkLimit = ArtifactChunkProtocol.MaxChunkBytes * 2L;
+        var limit = Math.Min(configured.Value.MaxRequestBodyBytes,
+            path.EndsWith("/artifact-chunks", StringComparison.OrdinalIgnoreCase)
+                ? chunkLimit
+                : path.EndsWith("/artifact-chunks/complete", StringComparison.OrdinalIgnoreCase)
+                    ? 64L * 1024
+                    : configured.Value.MaxRequestBodyBytes);
         var received = context.Request.ContentLength;
         if (received > limit)
         {

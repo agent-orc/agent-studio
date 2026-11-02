@@ -38,7 +38,7 @@ public sealed class ProtocolTests
 
         Assert.NotNull(limits);
         Assert.Equal(10L * 1024 * 1024, limits!.MaxRequestBodyBytes);
-        Assert.True(limits.MaxFileBytes < limits.MaxRequestBodyBytes);
+        Assert.Equal(20L * 1024 * 1024, limits.MaxFileBytes);
         Assert.Equal(30L * 1024 * 1024, limits.MaxTotalBytes);
     }
 

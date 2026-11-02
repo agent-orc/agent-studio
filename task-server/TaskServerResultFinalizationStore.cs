@@ -80,13 +80,21 @@ public sealed partial class TaskServerStore
             ResultSummaryGeneration generated;
             try
             {
-                generated = await _resultSummaries.GenerateAsync(
-                    new ResultSummaryContext(task, run, events, artifacts),
-                    ct);
+                using var generationTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                generationTimeout.CancelAfter(TimeSpan.FromSeconds(
+                    Math.Clamp(_options.ResultFinalizationGenerationTimeoutSeconds, 1, 75)));
+                var context = new ResultSummaryContext(task, run, events, artifacts);
+                generated = await Task.Run(
+                    () => _resultSummaries.GenerateAsync(context, generationTimeout.Token),
+                    generationTimeout.Token).WaitAsync(generationTimeout.Token);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (OperationCanceledException)
+            {
+                generated = ResultSummaryGeneration.Failure("Result summary generation timed out.");
             }
             catch (Exception exception)
             {

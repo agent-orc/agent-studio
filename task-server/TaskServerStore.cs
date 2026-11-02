@@ -2691,11 +2691,17 @@ public sealed partial class TaskServerStore
 
     public async Task<ArtifactDto> IngestArtifactAsync(string runId, ArtifactIngestRequest request, string actorId, CancellationToken ct)
     {
-        RequireWritable();
-        ArtifactDto? result = null;
         byte[] content;
         try { content = Convert.FromBase64String(request.ContentBase64); }
         catch (FormatException) { throw new ArgumentException("Artifact content is not valid base64."); }
+        return await IngestArtifactBytesAsync(runId, request, content, actorId, ct);
+    }
+
+    internal async Task<ArtifactDto> IngestArtifactBytesAsync(
+        string runId, ArtifactIngestRequest request, byte[] content, string actorId, CancellationToken ct)
+    {
+        RequireWritable();
+        ArtifactDto? result = null;
         var actualSha = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
         if (!string.Equals(actualSha, request.Sha256, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Artifact SHA-256 does not match the uploaded content.");

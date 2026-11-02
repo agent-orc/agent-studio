@@ -112,6 +112,25 @@ public sealed class ResultFinalizationStoreTests
     }
 
     [Fact]
+    public async Task Timed_out_summary_returns_retryable_and_the_next_poll_can_finish()
+    {
+        using var temp = new TempDirectory();
+        var generator = new TimedOutThenReadyGenerator();
+        var store = Store(temp.Path, generator, maxAttempts: 3, generationTimeoutSeconds: 1);
+        var (_, _, _, run, lease) = await SeedClaimedAsync(store);
+
+        var first = await store.FinalizeResultAsync(
+            run.RunId, Request(lease, 1), "runner-a", default);
+        Assert.Equal(ResultFinalizationStatus.Retryable, first.Status);
+        Assert.Contains("timed out", first.Error, StringComparison.OrdinalIgnoreCase);
+
+        var second = await store.FinalizeResultAsync(
+            run.RunId, Request(lease, 2), "runner-a", default);
+        Assert.Equal(ResultFinalizationStatus.Ready, second.Status);
+        Assert.Equal(2, generator.Calls);
+    }
+
+    [Fact]
     public async Task Exhausted_summary_budget_is_typed_degraded_and_core_completion_remains_reviewable()
     {
         using var temp = new TempDirectory();
@@ -181,12 +200,14 @@ public sealed class ResultFinalizationStoreTests
     private static TaskServerStore Store(
         string path,
         IResultFinalizationSummaryGenerator generator,
-        int maxAttempts)
+        int maxAttempts,
+        int generationTimeoutSeconds = 60)
         => new(
             Options.Create(new TaskServerOptions
             {
                 DataDirectory = path,
                 ResultFinalizationMaxAttempts = maxAttempts,
+                ResultFinalizationGenerationTimeoutSeconds = generationTimeoutSeconds,
             }),
             TimeProvider.System,
             generator);
@@ -254,6 +275,21 @@ public sealed class ResultFinalizationStoreTests
             return Task.FromResult(_results.Count > 0
                 ? _results.Dequeue()
                 : ResultSummaryGeneration.Failure("unexpected extra summary attempt"));
+        }
+    }
+
+    private sealed class TimedOutThenReadyGenerator : IResultFinalizationSummaryGenerator
+    {
+        public int Calls { get; private set; }
+
+        public async Task<ResultSummaryGeneration> GenerateAsync(
+            ResultSummaryContext context,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            if (Calls == 1)
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return ResultSummaryGeneration.Success("# Status\n\n- Result: Success\n");
         }
     }
 }

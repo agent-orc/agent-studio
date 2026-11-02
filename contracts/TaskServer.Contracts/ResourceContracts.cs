@@ -135,6 +135,36 @@ public sealed record ArtifactIngestRequest(
     string? LeaseId = null,
     long? Sequence = null);
 
+public sealed record ArtifactChunkRequest(
+    string Name,
+    string MediaType,
+    string Sha256,
+    long SizeBytes,
+    int Index,
+    int Count,
+    string ContentBase64);
+
+public static class ArtifactChunkProtocol
+{
+    public const int MaxChunkBytes = 4 * 1024 * 1024;
+}
+
+public sealed record ArtifactChunkStatus(IReadOnlyList<int> ReceivedIndices, int Count, long SizeBytes);
+
+public sealed record ArtifactChunkCompleteRequest(
+    string ArtifactId,
+    string Name,
+    string MediaType,
+    string Sha256,
+    long SizeBytes,
+    int Count,
+    string IdempotencyKey,
+    long Fence,
+    string? RunnerId,
+    string? InstanceId,
+    string? LeaseId,
+    long? Sequence = null);
+
 public sealed record ArtifactDto(
     string ArtifactId,
     string RunId,
