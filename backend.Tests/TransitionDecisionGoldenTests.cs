@@ -107,6 +107,7 @@ public sealed class TransitionDecisionGoldenTests
     [InlineData("noop", false, "4-auto-review")]
     [InlineData("needsinput", false, "5e-escalated")]
     [InlineData("stopped", false, "2-ready")]
+    [InlineData("transientfailure", false, "2-ready")]
     [InlineData("done", true, "5e-escalated")]
     [InlineData("invalid", false, "")]
     public void Completion_routing_preserves_the_lease_contract(string outcome, bool rejected, string lane)

@@ -5,6 +5,7 @@ import { take } from 'rxjs';
 import { metric, ratio, type OperationsLogResult, type ProjectOperations } from './project-operations.model';
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 
 @Component({
   selector: 'app-project-operations', standalone: true, imports: [DatePipe, OperationsTrendComponent, LoadingSurfaceComponent],
@@ -31,6 +32,7 @@ export class ProjectOperationsComponent {
   readonly telemetryAvailable = computed(() => this.snapshot()?.environments.some(row => row.telemetryAvailable) ?? false);
   readonly metric = metric;
   readonly ratio = ratio;
+  readonly projectSlug = computed(() => studioProjectSlug(this.projectName()));
 
   constructor() { effect(() => this.load(this.projectName())); }
 

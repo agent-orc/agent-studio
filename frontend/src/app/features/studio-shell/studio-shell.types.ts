@@ -160,7 +160,7 @@ export function studioTabKey(tab: StudioTab): string {
     case 'url-preview': return `url-preview:${tab.projectName}:${tab.urlId}`;
     case 'workspace-settings': return 'workspace-settings';
     case 'deployment-dashboard': return 'deployment-dashboard';
-    case 'structure': return tab.projectName ? `structure:${tab.projectName}` : 'structure';
+    case 'structure': return `structure:${tab.projectName ?? 'workspace'}`;
     case 'welcome':  return 'welcome';
   }
 }

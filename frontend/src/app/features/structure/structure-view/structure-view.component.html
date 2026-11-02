@@ -1,7 +1,7 @@
 <section class="structure-view" [class.structure-view--embedded]="embedded()" data-testid="structure-view" aria-label="Declared structure">
   <header class="structure-header">
     <div><p class="structure-eyebrow">Operations</p><h1>Structure</h1>
-      <p>Declared placement and units</p></div>
+      <p>{{ projectName() ? projectName() + ' partial picture' : 'Workspace whole picture' }}</p></div>
     <div class="structure-controls" aria-label="Structure controls">
       @if (!hostOnly()) {
         <app-segmented-control [options]="viewOptions" [value]="view()" ariaLabel="Projection"
@@ -53,7 +53,7 @@
             <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=history&focus=' + node.id">Deploy runs</a>
             <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=operations&focus=' + node.id">Logs</a>
             <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=runbooks&focus=' + node.id">Runbooks</a>
-          } @else if (node.kind === 'boundary' || node.kind === 'environment' || node.kind === 'location') {
+          } @else if (node.kind === 'boundary' || node.kind === 'system' || node.kind === 'environment' || node.kind === 'location') {
             <a [href]="'#/workspace/deployments?env=' + (node.environmentId || node.label)">Deployment dashboard</a>
             <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=releases'">Release page</a>
           } @else if (node.kind === 'registry' || node.kind === 'package' || node.kind === 'unit') {
@@ -72,8 +72,10 @@
         </section>
       }
       @for (box of visible(); track box.id) {
-        <button type="button" [attr.data-outline-id]="box.id" (click)="focus(box.id)">
-          <span>{{ box.label }}</span><small>{{ box.kind }}</small>
+        <button type="button" [attr.data-outline-id]="box.id" [attr.data-other-project]="box.otherProject || null"
+                [attr.aria-label]="accessibleLabel(box)"
+                (click)="focus(box.id)">
+          <span>{{ box.label }}</span><small>{{ ownerDescription(box) }}</small>
         </button>
       }
     </aside>
@@ -82,13 +84,14 @@
 </section>
 
 <ng-template #boxTemplate let-box>
-  <div class="structure-box" [attr.data-kind]="box.kind" [attr.data-selected]="selected() === box.id">
+  <div class="structure-box" [attr.data-kind]="box.kind" [attr.data-selected]="selected() === box.id"
+       [attr.data-other-project]="box.otherProject || null">
     <button type="button" class="structure-node" [attr.data-node-id]="box.id"
-            [attr.aria-label]="box.label + ', ' + box.kind + (box.collapsed ? ', ' + summaryText(box) : '')"
+            [attr.aria-label]="accessibleLabel(box)"
             [attr.aria-expanded]="box.children.length ? !box.collapsed : null"
             (click)="toggle(box)">
       @if (box.children.length) { <app-disclosure-marker [open]="!box.collapsed" /> }
-      <strong>{{ box.label }}</strong><small>{{ box.kind }}</small>
+      <strong>{{ box.label }}</strong><small>{{ ownerDescription(box) }}</small>
       @if (box.replicas > 1) { <span class="structure-replicas">×{{ box.replicas }}</span> }
       @if (box.collapsed) { <span class="structure-summary">{{ summaryText(box) }}</span> }
     </button>

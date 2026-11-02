@@ -29,10 +29,24 @@ const nodes = [
   makeNode('package-node', 'package', 'Release package', 'registry-node'),
   { ...makeNode('environment-node', 'environment', 'Production', 'b'), environmentId: 'production' },
   makeNode('unit-node', 'unit', 'Service unit', 'b'),
+  makeNode('system-node', 'system', 'Product system', 'b'),
 ];
 const links = [
   { from: 'api', to: 'coding', kind: 'tunnel', label: 'Runner route', sourceRef: 'role fixture' },
   { from: 'coding', to: 'github', kind: 'call', label: 'Git', sourceRef: 'role fixture' },
+];
+const partialNodes = [
+  { ...makeNode('boundary', 'boundary', 'Product', null), environmentId: 'production' },
+  makeNode('web-placement', 'vm', 'Web placement', 'boundary'),
+  makeNode('runner-placement', 'physical', 'Runner placement', 'boundary'),
+  { ...makeNode('website', 'process', 'Website process', 'web-placement'), project: 'PROJ-002', ownerLabel: 'Website' },
+  { ...makeNode('agent', 'process', 'Run-target agent', 'web-placement'), project: 'PROJ-001', ownerLabel: 'AGT', otherProject: true },
+  { ...makeNode('channel', 'registry', 'npm channel', 'runner-placement'), project: 'PROJ-003', ownerLabel: 'Library', otherProject: true },
+  makeNode('external', 'external', 'Shared external', null),
+];
+const partialLinks = [
+  { from: 'website', to: 'channel', kind: 'artifact', label: 'Package', sourceRef: 'role fixture' },
+  { from: 'website', to: 'external', kind: 'call', label: 'Service', sourceRef: 'role fixture' },
 ];
 
 test('declared structure is accessible in both projections, widths and themes', async ({ page }) => {
@@ -46,7 +60,8 @@ test('declared structure is accessible in both projections, widths and themes', 
   await page.context().route('**/api/**', route => {
     const url = route.request().url();
     const json = (body: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
-    if (url.includes('/api/v1/operations/structure')) return json({ nodes, links });
+    if (url.includes('/api/v1/operations/structure')) return json(new URL(url).searchParams.get('scope') === 'project:Website'
+      ? { nodes: partialNodes, links: partialLinks } : { nodes, links });
     if (url.includes('/api/diagnostics/api-stalls')) return json({ status: 'ok', intervalMs: 1000, maxDelayMs: 0, alarmThresholdMs: 1000, alarmWindowMinutes: 5, recent: [] });
     if (url.includes('/api/system/execution-infrastructure')) return json({ gate: { host: null, busy: 0, total: 0, reachability: 'unknown', lastReachedAt: null, lastFailureAt: null }, taskServer: 'local monolith', engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null }, workstation: 'local' });
     if (/\/api\/projects\/[^/]+\/environments(?:\?|$)/.test(url)) return json({ project: 'Fixture project', environments: [], promotions: [], failureCards: [] });
@@ -58,8 +73,8 @@ test('declared structure is accessible in both projections, widths and themes', 
     if (url.includes('/api/usage/cockpit')) return json({ workspaceId: 'workspace', clis: [], cost: null });
     if (url.includes('/api/cli/usage')) return json({ at: '2026-11-02T00:00:00Z', sessions: [] });
     if (url.includes('/api/cli/quota')) return json({ at: '2026-11-02T00:00:00Z', ttlSeconds: 600, snapshots: [] });
-    if (url.includes('/api/watch-paths')) return json([{ name: 'Fixture project', path: '/tmp/fixture-project', rootPath: '/tmp/fixture-project' }]);
-    if (url.includes('/api/v1/workspaces')) return json([{ id: 'fixture-workspace', displayName: 'Workspace', projects: [{ id: 'fixture-project', displayName: 'Fixture project', storageLocation: '/tmp/fixture-project' }] }]);
+    if (url.includes('/api/watch-paths')) return json([{ name: 'Fixture project', path: '/tmp/fixture-project', rootPath: '/tmp/fixture-project' }, { name: 'Website', path: '/tmp/website', rootPath: '/tmp/website' }]);
+    if (url.includes('/api/v1/workspaces')) return json([{ id: 'fixture-workspace', displayName: 'Workspace', projects: [{ id: 'fixture-project', displayName: 'Fixture project', storageLocation: '/tmp/fixture-project' }, { id: 'website', displayName: 'Website', storageLocation: '/tmp/website' }] }]);
     if (url.includes('/api/v1/projects') || url.includes('/api/workspaces')) return json([]);
     if (url.includes('/api/v1/studio/board')) return json({ backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [], codeNotComplete: [], autoReview: [], review: [], humanReview: [], escalated: [], completed: [], archive: [] });
     if (url.includes('/api/tasks/archive')) return json({ items: [], total: 0, offset: 0, limit: 50 });
@@ -71,8 +86,8 @@ test('declared structure is accessible in both projections, widths and themes', 
   await page.goto('/#/workspace/operations/structure');
   const view = page.getByTestId('structure-view');
   await expect(view).toBeVisible();
-  await expect(view.locator('[data-node-id]')).toHaveCount(19);
-  await expect(view.locator('[data-outline-id]')).toHaveCount(19);
+  await expect(view.locator('[data-node-id]')).toHaveCount(20);
+  await expect(view.locator('[data-outline-id]')).toHaveCount(20);
   await view.locator('[data-node-id="vm"]').focus();
   await page.keyboard.press('Enter');
   await expect(view.locator('[data-node-id="gate"]')).toBeVisible();
@@ -110,6 +125,7 @@ test('declared structure is accessible in both projections, widths and themes', 
     ['engine', 'Logs'], ['b', 'Deployment dashboard'], ['models', 'Health checks'],
     ['managed', 'Declaration'], ['registry-node', 'Publish panel'], ['package-node', 'Release page'],
     ['environment-node', 'Deployment dashboard'], ['unit-node', 'Publish panel'], ['cloud', 'Deployment dashboard'],
+    ['system-node', 'Deployment dashboard'],
   ] as const) {
     const destinationPage = await page.context().newPage();
     await destinationPage.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
@@ -139,8 +155,6 @@ test('declared structure is accessible in both projections, widths and themes', 
   await expect(view.getByTestId('structure-overlay')).toHaveValue('drift');
   await expect(view.getByTestId('structure-environment')).toHaveValue('production');
   await expect(view.getByTestId('structure-targets')).toContainText('Orchestrator Engine');
-  await page.route('**/api/watch-paths**', route => route.fulfill({ json: [{ name: 'Fixture project', path: '/tmp/fixture-project', rootPath: '/tmp/fixture-project' }] }));
-  await page.route('**/api/v1/workspaces**', route => route.fulfill({ json: [{ id: 'fixture-workspace', displayName: 'Workspace', projects: [{ id: 'fixture-project', displayName: 'Fixture project', storageLocation: '/tmp/fixture-project' }] }] }));
   await page.goto('/#/projects/fixture-project/operations/structure?view=host&level=2&overlay=health&focus=studio');
   await expect(page.getByTestId('structure-view')).toBeVisible();
   await expect(page.getByTestId('structure-targets')).toContainText('Studio host');
@@ -166,4 +180,15 @@ test('declared structure is accessible in both projections, widths and themes', 
     await settingsPage.getByTestId('structure-view').screenshot({ path: path.join(results, `settings-structure-${theme}.png`) });
   }
   await settingsPage.close();
+  await page.goto('/#/projects/website/operations/structure');
+  await expect(view.getByText('Website partial picture')).toBeVisible();
+  await page.keyboard.press('3');
+  await expect(view.locator('[data-other-project="true"] [data-node-id]')).toHaveCount(2);
+  await expect(view.locator('[data-outline-id][data-other-project="true"]')).toHaveCount(2);
+  await expect(view.locator('[data-node-id="agent"]')).toHaveAttribute('aria-label', /other project, AGT/);
+  await expect(view.locator('[data-node-id="channel"]')).toHaveAttribute('aria-label', /other project, Library/);
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+    await view.screenshot({ path: path.join(results, `structure-website-partial-${theme}.png`) });
+  }
 });

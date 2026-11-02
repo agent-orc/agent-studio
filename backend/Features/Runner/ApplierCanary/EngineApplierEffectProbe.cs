@@ -361,8 +361,14 @@ public sealed class EngineApplierEffectProbe(
 
     private bool LinkedFollowUp(MonolithOrchestrationOccurrence occurrence, TaskInfo task)
     {
-        var followUp = scanner.ScanAllJobs().FirstOrDefault(candidate =>
-            candidate.CreationSource == "engine-follow-up:" + occurrence.Run.RunId);
+        var key = timeline.ReadAll(task.FolderPath).FirstOrDefault(entry =>
+            entry.Kind == TimelineEventKinds.ReviewFollowUpRouted
+            && entry.Details?.GetValueOrDefault("orchestrationRunId") == occurrence.Run.RunId)
+            ?.Details?.GetValueOrDefault("followUpTaskKey");
+        if (key is null) return false;
+        var followUp = scanner.ScanAllJobsWithArchive().FirstOrDefault(candidate =>
+            candidate.ProjectName == task.ProjectName
+            && (candidate.Key == key || candidate.Id == key));
         return followUp is not null
             && followUp.References.FollowUpOf.Contains(task.Key ?? task.Id, StringComparer.OrdinalIgnoreCase)
             && task.References.RaisedFollowUps.Contains(followUp.Key ?? followUp.Id,

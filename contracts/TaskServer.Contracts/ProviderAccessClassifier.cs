@@ -11,6 +11,7 @@ public enum ProviderAccessEvidenceKind
     RequestRejected,
     TransientFailure,
     IndeterminateFailure,
+    ModelCapacity,
 }
 
 public sealed record ProviderAccessEvidence(
@@ -42,8 +43,6 @@ public static partial class ProviderAccessClassifier
         "rate_limit_exceeded",
         "insufficient_quota",
         "too many requests",
-        "model is at capacity",
-        "at capacity",
         "status=rejected",
         "· rejected ·",
     ];
@@ -91,6 +90,8 @@ public static partial class ProviderAccessClassifier
         "refresh already in progress",
         "refresh race",
     ];
+
+    private static readonly string[] ModelCapacitySignals = ["model is at capacity", "selected model is at capacity"];
 
     public static ProviderAccessEvidence Classify(
         int exitCode,
@@ -147,6 +148,11 @@ public static partial class ProviderAccessClassifier
                 reset ?? now.Add(UnknownLimitRetry),
                 reset is not null);
         }
+
+        if (Contains(text, ModelCapacitySignals))
+            return new ProviderAccessEvidence(
+                ProviderAccessEvidenceKind.ModelCapacity,
+                FirstMatchingLine(text, ModelCapacitySignals, "selected model is at capacity"));
 
         if (Contains(text, AuthenticationSignals)
             || ExplicitHttp401Regex().IsMatch(text)

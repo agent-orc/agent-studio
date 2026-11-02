@@ -45,6 +45,15 @@ export class StructureViewComponent {
   readonly visible = computed(() => visibleBoxes(this.roots()));
   readonly drawnLinks = signal<DrawnLink[]>([]);
   readonly summaryText = summaryText;
+  private readGeneration = 0;
+  ownerDescription(box: StructureBox): string {
+    return box.otherProject ? `other project · ${box.ownerLabel ?? box.project}` : box.kind;
+  }
+  accessibleLabel(box: StructureBox): string {
+    return `${box.label}, ${box.kind}` +
+      (box.otherProject ? `, other project, ${box.ownerLabel ?? box.project}` : '') +
+      (box.collapsed ? `, ${summaryText(box)}` : '');
+  }
   private frame = 0;
   private readonly linkRefresh = effect(() => {
     this.roots();
@@ -82,11 +91,14 @@ export class StructureViewComponent {
   }
 
   private async load(): Promise<void> {
+    const generation = ++this.readGeneration;
     try {
-      this.data.set(await firstValueFrom(this.http.get<StructureData>('/api/v1/operations/structure',
-        { params: { scope: this.projectName() ? `project:${this.projectName()}` : 'workspace', ...(this.environment() ? { environment: this.environment() } : {}) } })));
+      const data = await firstValueFrom(this.http.get<StructureData>('/api/v1/operations/structure',
+        { params: { scope: this.projectName() ? `project:${this.projectName()}` : 'workspace', ...(this.environment() ? { environment: this.environment() } : {}) } }));
+      if (generation !== this.readGeneration) return;
+      this.data.set(data);
       this.error.set(null);
-    } catch { this.error.set('Structure declarations could not be loaded.'); }
+    } catch { if (generation === this.readGeneration) this.error.set('Structure declarations could not be loaded.'); }
   }
 
   setView(view: 'host' | 'container'): void {
