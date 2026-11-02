@@ -71,6 +71,28 @@ public sealed class ReviewBaselineService(
     /// attribution order. Superseded commits are left out. Unknown (null) when
     /// the card has no commits or one of them is not published yet.
     /// </summary>
+    /// <summary>
+    /// The card's changed paths and added plus removed lines over the same
+    /// attributed commits as <see cref="MaterialSizes"/>; package formation
+    /// unions the paths of its members. Null when a commit is not published.
+    /// </summary>
+    internal static (IReadOnlyList<string> Paths, int Lines)? MaterialPaths(
+        IReadOnlyList<TaskCommitInfo> commits, Func<string, GitCommitFact?> lookup)
+    {
+        var active = commits.Where(commit => !TaskCommitSupersession.IsSuperseded(commit)
+            && !string.IsNullOrWhiteSpace(commit.Sha)).ToList();
+        if (active.Count == 0) return null;
+        var paths = new SortedSet<string>(StringComparer.Ordinal);
+        var lines = 0;
+        foreach (var commit in active)
+        {
+            if (lookup(commit.Sha) is not { } fact) return null;
+            foreach (var file in fact.Files) paths.Add(file.Path);
+            lines += fact.Added + fact.Removed;
+        }
+        return (paths.ToArray(), lines);
+    }
+
     internal static (ReviewMaterialSize? Card, IReadOnlyDictionary<string, ReviewMaterialSize> BySha) MaterialSizes(
         IReadOnlyList<TaskCommitInfo> commits, Func<string, GitCommitFact?> lookup)
     {

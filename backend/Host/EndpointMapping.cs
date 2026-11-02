@@ -73,6 +73,7 @@ public static class EndpointMapping
         if (mapsLocalV1)
         {
             app.MapV1ReviewPlaneEndpoints();
+            app.MapReviewPackagePlaneEndpoints();
             app.MapMonolithOrchestrationEndpoints();
             app.MapMonolithGateEndpoints();
             app.MapGitHubAppEndpoints();
@@ -110,6 +111,7 @@ public static class EndpointMapping
         app.MapProjectTokenUsageEndpoints();
         app.MapReviewStatisticsEndpoints();
         app.MapReviewObservationEndpoints();
+        app.MapReviewPackageEndpoints();
         app.MapUsageCockpitEndpoints();
         app.MapTokenAnalysisEndpoints();
         app.MapPipelineHealthEndpoints();

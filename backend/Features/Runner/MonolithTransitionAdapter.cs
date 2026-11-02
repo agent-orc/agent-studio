@@ -107,6 +107,10 @@ public static class MonolithTransitionAdapter
 
     public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
 
+    /// <summary>AGT-3400 S4: shadow review package formation; no lane, verdict or settlement effect.</summary>
+    public static IReadOnlyList<ReviewPackageFormationDecision> ReviewPackageFormation(ReviewPackageFormationInput input)
+        => ReviewPackageFormationPolicy.Plan(input);
+
     public static bool GateQueueStallRaisesEvent(bool episodeOpen) => GateQueueStallPolicy.RaisesStallEvent(episodeOpen);
 
     public static bool GateQueueEpisodeDrained(int queueDepth) => GateQueueStallPolicy.EpisodeDrained(queueDepth);
