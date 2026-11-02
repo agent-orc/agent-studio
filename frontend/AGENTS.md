@@ -146,6 +146,20 @@ A divergence needs a `kind` (`popup-trigger`, `tree-chevron`, `staged-adoption`)
 and a written reason. Adopt the marker and move the file into `enforced` when you
 next touch a `staged-adoption` surface.
 
+## Status labels: one indicator, six tones (AGT-3402)
+
+A state label renders through `<app-status-indicator tone="..." label="...">`
+([`src/app/components/status-indicator/`](src/app/components/status-indicator/)):
+a tone icon (`aria-hidden`) in front of the visible text, tinted from the
+`--studio-status-*` tokens, optional `detail` tooltip, optional `compact`
+form. Tones are `success`, `warning`, `danger`, `info`, `neutral`, `running`.
+Map states to tones in a typed record or pure function next to the data, with
+unknown states falling back to `neutral`. Tags, counts, filters, lanes and
+banners are not states; the boundary and the mapping table live in
+[docs/quality/design/status-indicator.md](../docs/quality/design/status-indicator.md),
+and the legacy displays still to migrate are listed in
+[status-display-inventory.md](../docs/quality/design/status-display-inventory.md).
+
 ## Single-choice segmented controls
 
 Use `<app-segmented-control>` for compact pick-one-of-N choices. It owns the

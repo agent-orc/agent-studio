@@ -42,9 +42,9 @@
           </div>
         }
         @if ((status()?.mainVersion?.behindBy ?? status()?.behindBy ?? 0) === 0) {
-          <span class="upd-center__pill upd-center__pill--ok">Matches main</span>
+          <app-status-indicator tone="success" label="Matches main" testId="update-center-main-state" />
         } @else {
-          <span class="upd-center__pill upd-center__pill--behind">Update available</span>
+          <app-status-indicator tone="warning" label="Update available" testId="update-center-main-state" />
         }
       </section>
 
@@ -89,11 +89,7 @@
           <ul class="upd-center__list" data-testid="update-center-history">
             @for (h of history(); track h.runId) {
               <li class="upd-center__run">
-                <span class="upd-center__pill"
-                      [class.upd-center__pill--ok]="h.status === 'ok'"
-                      [class.upd-center__pill--fail]="h.status === 'failed'">
-                  {{ h.status }}
-                </span>
+                <app-status-indicator [tone]="historyTone(h.status)" [label]="h.status" [compact]="true" testId="update-center-run-status" />
                 <code>{{ h.headBefore }} → {{ h.headAfter }}</code>
                 @if (h.intendedTag) { <span>{{ h.releaseDirection }} · {{ h.intendedTag }}</span> }
                 <span class="upd-center__dim">{{ h.durationSeconds }}s</span>

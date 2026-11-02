@@ -90,17 +90,6 @@
 .host__disclosure:focus-visible,
 .host__btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 .host__status { gap: var(--studio-spacing-2); white-space: nowrap; }
-.host__dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--studio-fg-muted);
-}
-.host__dot[data-tone='ok'] { background: var(--severity-pass); }
-.host__dot[data-tone='warn'] { background: var(--severity-warn); }
-.host__dot[data-tone='error'] { background: var(--severity-high); }
-.host__dot[data-tone='idle'] { background: var(--studio-fg-dim); }
 .host__number {
   font-family: var(--font-mono, monospace);
   font-variant-numeric: tabular-nums;
@@ -189,26 +178,7 @@
 .detail__badges { flex-wrap: wrap; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-3); }
 
 .provider-auth { flex-wrap: wrap; gap: var(--studio-spacing-2); }
-.provider-auth__badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
-  background: var(--studio-bg-selected);
-  color: var(--studio-fg-muted);
-  font-size: 10px;
-}
-.provider-auth__badge strong { color: var(--studio-fg-strong); }
-.provider-auth__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--studio-fg-dim); }
-.provider-auth__badge[data-state='unavailable'] { background: var(--notify-error-tint); color: var(--notify-error-icon-fg); }
-.provider-auth__badge[data-state='unavailable'] .provider-auth__dot { background: var(--severity-high); }
-.provider-auth__badge[data-state='retrying'],
-.provider-auth__badge[data-state='limited'],
-.provider-auth__badge[data-state='expiring'] { background: var(--notify-warning-icon-bg); color: var(--notify-warning-icon-fg); }
-.provider-auth__badge[data-state='retrying'] .provider-auth__dot,
-.provider-auth__badge[data-state='limited'] .provider-auth__dot,
-.provider-auth__badge[data-state='expiring'] .provider-auth__dot { background: var(--severity-medium); }
+.provider-auth__badge { display: inline-flex; }
 .provider-auth__expiry { color: var(--notify-warning-icon-fg); font-size: 10px; }
 .provider-auth__history { color: var(--studio-fg-muted); font-size: 10px; }
 .provider-auth__sign-in {

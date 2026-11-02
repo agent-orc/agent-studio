@@ -131,22 +131,13 @@
   gap: var(--studio-spacing-2);
   margin-bottom: var(--studio-spacing-3);
 }
-.ts__dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 999px;
-  flex: 0 0 auto;
-  background: var(--studio-fg-muted);
-}
-.ts__dot[data-tone='ok']    { background: var(--severity-pass); }
-.ts__dot[data-tone='warn']  { background: var(--severity-warn); }
-.ts__dot[data-tone='error'] { background: var(--severity-high); }
 .ts__block-title {
   margin: 0;
   font-size: 13px;
   font-weight: 700;
   color: var(--studio-fg-strong);
 }
+.ts__status { margin-left: auto; }
 .ts__badge {
   margin-left: auto;
   flex: 0 0 auto;
@@ -158,18 +149,6 @@
   padding: 1px var(--studio-spacing-2);
   background: var(--studio-bg-selected);
   color: var(--studio-fg-dim);
-}
-.ts__badge[data-tone='ok'] {
-  background: var(--notify-success-tint);
-  color: var(--notify-success-icon-fg);
-}
-.ts__badge[data-tone='warn'] {
-  background: var(--notify-warning-icon-bg);
-  color: var(--notify-warning-icon-fg);
-}
-.ts__badge[data-tone='error'] {
-  background: var(--notify-error-icon-bg);
-  color: var(--notify-error-icon-fg);
 }
 
 // --- key/value rows ----------------------------------------------------------

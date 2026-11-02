@@ -1,15 +1,17 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
 import { GitHubAppService, type GitHubAppCoverageState } from '../github-app.service';
 
-const coverageLabels: Readonly<Record<GitHubAppCoverageState, string>> = {
-  covered: 'Connected',
-  'not-installed': 'App not installed',
-  'not-adopted': 'Needs confirmation',
-  'no-repository-url': 'No repository',
-  'not-github': 'Not on GitHub',
-  unknown: 'Unknown',
+/** Repository access per coverage state; tones follow docs/quality/design/status-indicator.md. */
+const coverageStates: Readonly<Record<GitHubAppCoverageState, { tone: StatusTone; label: string }>> = {
+  covered: { tone: 'success', label: 'Connected' },
+  'not-installed': { tone: 'warning', label: 'App not installed' },
+  'not-adopted': { tone: 'warning', label: 'Needs confirmation' },
+  'no-repository-url': { tone: 'neutral', label: 'No repository' },
+  'not-github': { tone: 'neutral', label: 'Not on GitHub' },
+  unknown: { tone: 'neutral', label: 'Unknown' },
 };
 
 /**
@@ -19,7 +21,7 @@ const coverageLabels: Readonly<Record<GitHubAppCoverageState, string>> = {
 @Component({
   selector: 'app-github-app-panel',
   standalone: true,
-  imports: [DatePipe, DisclosureMarkerComponent],
+  imports: [DatePipe, DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './github-app-panel.component.html',
   styleUrl: './github-app-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -46,8 +48,8 @@ export class GitHubAppPanelComponent {
     if (!this.service.resumePending()) this.service.load();
   }
 
-  coverageLabel(state: GitHubAppCoverageState): string {
-    return coverageLabels[state];
+  coverage(state: GitHubAppCoverageState): { tone: StatusTone; label: string } {
+    return coverageStates[state] ?? coverageStates.unknown;
   }
 
   connectExisting(): void {

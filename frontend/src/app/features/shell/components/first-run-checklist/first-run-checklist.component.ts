@@ -11,18 +11,17 @@ import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.
 import { ProviderAuthStatusService } from '../../../remote-hosts/services/provider-auth-status.service';
 import { CodexSignInDialogService } from '../../../remote-hosts/services/codex-sign-in-dialog.service';
 import { ClaudeSignInDialogService } from '../../../remote-hosts/services/claude-sign-in-dialog.service';
-import { claudeSignInTarget, signInTarget } from '../../../remote-hosts/models/provider-auth.model';
-import type { ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
-import { latestRepositoryProbes } from '../../../remote-hosts/models/deployment-checkpoints';
-import { normalizeProjectRegistryEntries } from '../../../remote-hosts/models/deployment-checkpoints';
+import { claudeSignInTarget, providerAuthTone, signInTarget, type ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
+import { latestRepositoryProbes, normalizeProjectRegistryEntries } from '../../../remote-hosts/models/deployment-checkpoints';
 import type { InstallationIdentity, ProjectRegistryEntry, ProjectRegistryRead, RepositoryStatus } from '../../../remote-hosts/models/deployment-checkpoints';
-import { credentialFreeRepositoryUrl } from './first-run-checklist.models';
-import type { Probe, ProofCard, NetworkProof, DeviceLogin, HostJoinToken, GitSetup } from './first-run-checklist.models';
+import { credentialFreeRepositoryUrl, deviceLoginTone, gitSetupTone, type DeviceLogin, type GitSetup, type HostJoinToken, type NetworkProof, type Probe, type ProofCard } from './first-run-checklist.models';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 /** Installation facts are re-read from the authority and runner probes on every refresh. */
 @Component({
   selector: 'app-first-run-checklist',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './first-run-checklist.component.html',
   styleUrl: './first-run-checklist.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -42,6 +41,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   private gitPoll: ReturnType<typeof setInterval> | null = null;
   private reloadQueued = false;
   readonly openProjectSettings = output<string>();
+  readonly tones = { provider: providerAuthTone, git: gitSetupTone, deviceLogin: deviceLoginTone };
   readonly loading = signal(false);
   readonly nowMs = signal(Date.now());
   readonly identity = signal<Probe<InstallationIdentity>>({ value: null, error: false });

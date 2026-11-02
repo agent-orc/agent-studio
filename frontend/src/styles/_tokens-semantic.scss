@@ -148,6 +148,17 @@
   --studio-auto-pickup-manual:  var(--studio-fg-muted);
   --studio-auto-pickup-blocked: var(--studio-accent-warn-strong);
 
+  // Shared status indicator tones (AGT-3402, <app-status-indicator>). One
+  // readable foreground per tone; the component derives its tint and border
+  // from it. Redeclared in the light block so each alias resolves against
+  // that theme's pigments. Contract: docs/quality/design/status-indicator.md.
+  --studio-status-success: var(--studio-success);
+  --studio-status-warning: var(--studio-warn);
+  --studio-status-danger:  var(--studio-error);
+  --studio-status-info:    var(--studio-accent-teal);
+  --studio-status-running: var(--studio-accent-3-strong);
+  --studio-status-neutral: var(--studio-fg-dim);
+
   // F39: "Strong" text-pigment variants of the accent family. Use these for
   // text/icon foregrounds layered on a tinted background of the same accent
   // (e.g. running/active/failed pills) so the pigment stays WCAG-AA legible
@@ -736,6 +747,13 @@
   --studio-auto-pickup-paused:  var(--studio-fg-dim);
   --studio-auto-pickup-manual:  var(--studio-fg-muted);
   --studio-auto-pickup-blocked: var(--studio-accent-warn-strong);
+
+  --studio-status-success: var(--studio-success);
+  --studio-status-warning: var(--studio-warn);
+  --studio-status-danger:  var(--studio-error);
+  --studio-status-info:    var(--studio-accent-teal);
+  --studio-status-running: var(--studio-accent-3-strong);
+  --studio-status-neutral: var(--studio-fg-dim);
 
   // Navigation active-item fill on the white shell. Mixed over the opaque
   // elevated grey (not the translucent orange bg-selected) so the band stays a

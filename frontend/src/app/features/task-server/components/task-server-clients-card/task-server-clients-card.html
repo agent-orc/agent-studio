@@ -34,7 +34,8 @@
           <span class="client__id">{{ client.id }}</span>
         </span>
         <span class="client__kind" [attr.data-kind]="client.kind">{{ kindLabel(client.kind) }}</span>
-        <span class="client__seen">{{ client.managementState || 'registered' }}</span>
+        <app-status-indicator class="client__state" [tone]="stateTone(client.managementState)" [label]="client.managementState || 'registered'"
+          [compact]="true" [testId]="'task-server-client-state-' + client.id" />
         <span class="client__seen">seen {{ lastSeen(client) }}</span>
         <span class="client__owned">
           <strong>{{ client.ownedTaskCount }}</strong> {{ client.ownedTaskCount === 1 ? 'task' : 'tasks' }}

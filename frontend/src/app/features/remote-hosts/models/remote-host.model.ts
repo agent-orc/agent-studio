@@ -1,6 +1,7 @@
 import type { CliType } from '../../../models/task.model';
 import type { RunnerProjectPreflight } from '../../../models/task.model';
 import type { HostReleaseDrift, HostReleaseIdentity } from './host-release-drift';
+import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
 
 /**
  * Remote-hosts registry model (AGT-1921).
@@ -519,6 +520,19 @@ export function hostStatusTone(status: HostHeartbeatStatus): HostStatusTone {
     case 'offline': return 'error';
     case 'draining': return 'idle';
     case 'retired': return 'calm';
+  }
+}
+
+/**
+ * Host heartbeat on the shared status indicator. Idle, draining and retired
+ * hosts stay neutral: they are settled operator choices, not outcomes (R4).
+ */
+export function hostStatusIndicatorTone(status: HostHeartbeatStatus): StatusTone {
+  switch (status) {
+    case 'online': return 'success';
+    case 'degraded': return 'warning';
+    case 'offline': return 'danger';
+    default: return 'neutral';
   }
 }
 

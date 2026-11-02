@@ -11,6 +11,7 @@
  * Live projection of `GET /api/v1/management/status`. The recovery console and
  * Agent Studio consume this same authoritative contract.
  */
+import type { StatusTone as IndicatorTone } from '../../../components/status-indicator/status-indicator.component';
 
 /** Which deployment phase the connected server is in. */
 export type TaskServerPhase = 'local' | 'central';
@@ -215,6 +216,33 @@ export function evidenceStateTone(state: string): StatusTone {
   if (state === 'available') return 'ok';
   if (state === 'empty' || state === 'pending') return 'calm';
   return 'warn';
+}
+
+/** Shared status-indicator tone for a panel tone (docs/quality/design/status-indicator.md). */
+export function indicatorTone(tone: StatusTone): IndicatorTone {
+  switch (tone) {
+    case 'ok': return 'success';
+    case 'warn': return 'warning';
+    case 'error': return 'danger';
+    case 'calm': return 'neutral';
+  }
+}
+
+/** Evidence state on the shared indicator: a pending count is work in progress, not a calm state. */
+export function evidenceIndicatorTone(state: string): IndicatorTone {
+  return state === 'pending' ? 'running' : indicatorTone(evidenceStateTone(state));
+}
+
+/** Registry state of a host identity on the shared indicator. Unknown states stay neutral. */
+export function clientStateTone(state: string | undefined): IndicatorTone {
+  switch (state ?? 'registered') {
+    case 'registered':
+    case 'active': return 'success';
+    case 'draining':
+    case 'drained':
+    case 'credential-rotating': return 'warning';
+    default: return 'neutral';
+  }
 }
 
 /** Human label for a client identity kind. */

@@ -104,6 +104,14 @@ display: grid; place-items: center; line-height: 1;
 
 Short label inside a card / row, no tint, no count semantics. Today four call sites (`.create-dialog__enhance-tag`, `.psr-modal__file-tag`, `.psr-modal__skill-tag`, `.steer-card__upload-btn`). Footprint is small enough that a shared mixin is not yet justified.
 
+## Status labels use `<app-status-indicator>`
+
+A state (connected, failed, running, unknown) is not a pill any more: use the
+shared `<app-status-indicator tone="..." label="...">` with its tone icon and
+sentence-case label. See [status-indicator.md](../../design/status-indicator.md).
+The pill recipe below remains for legacy mode labels until the
+[inventory](../../design/status-display-inventory.md) migrates them.
+
 ## Open question — should we ship `<app-pill tone="...">`?
 
 A typed Angular wrapper would give:

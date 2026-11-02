@@ -27,6 +27,7 @@ import {
   hostRoleLabel,
   hostIsStale,
   hostStatusLabel,
+  hostStatusIndicatorTone,
   hostStatusTone,
   meterTone,
   ramUsedPct,
@@ -43,6 +44,7 @@ import type { StableReleaseIdentity } from '../../models/host-release-drift';
 import {
   claudeSignInTarget,
   providerAuthBadgesForHost,
+  providerAuthTone,
   providerLoginStateLabel,
   providerSignInLabel,
   signInTarget,
@@ -51,6 +53,7 @@ import {
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
 import { HostCredentialBadgeComponent } from '../../../credentials/host-credential-badge/host-credential-badge.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {
   key: string;
@@ -63,7 +66,7 @@ interface Meter {
  * One execution location in the Remote-Hosts table (AGT-1921 / AGT-2629): one
  * compact row with detail. The parent preserves disclosure across sorting.
  *
- * Status is encoded with a dot + a badge, and acute states (degraded / offline)
+ * Status is encoded with the shared status indicator, and acute states (degraded / offline)
  * additionally wash the affected row with a warn / error tint, never a left
  * accent bar (style-guide R1). History (retired / draining) renders calm (R4).
  */
@@ -84,6 +87,7 @@ interface Meter {
     RemoteHostDetailSummaryComponent,
     HostCredentialsComponent,
     HostCredentialBadgeComponent,
+    StatusIndicatorComponent,
   ],
   templateUrl: './remote-host-card.html',
   styleUrl: './remote-host-card.scss',
@@ -97,6 +101,7 @@ interface Meter {
 })
 export class RemoteHostCardComponent {
   readonly providerLoginStateLabel = providerLoginStateLabel;
+  readonly providerAuthTone = providerAuthTone;
   private readonly codexSignIn = inject(CodexSignInDialogService);
   private readonly claudeSignIn = inject(ClaudeSignInDialogService);
   readonly host = input.required<RemoteHost>();
@@ -136,6 +141,7 @@ export class RemoteHostCardComponent {
   readonly liveLoading = computed(() => this.host().liveDataState === 'loading');
   readonly liveError = computed(() => this.host().liveDataState === 'error');
   readonly tone = computed(() => this.liveLoading() ? 'idle' : hostStatusTone(this.host().status));
+  readonly indicatorTone = computed<StatusTone>(() => this.liveLoading() ? 'running' : hostStatusIndicatorTone(this.host().status));
   readonly statusLabel = computed(() => this.liveLoading() ? 'Loading live status' : hostStatusLabel(this.host().status));
   readonly statusReason = computed(() => this.host().status === 'degraded' ? 'A runner role is degraded. Inspect its role row and Capabilities detail.' : null);
   readonly roleLabel = computed(() => hostRoleLabel(this.host().role));

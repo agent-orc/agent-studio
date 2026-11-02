@@ -1,10 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { SecretsService, type SecretBackendBinding } from '../secrets.service';
+import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
 
 /** Scope-specific storage selection. Credentials remain in the built-in store or process environment. */
 @Component({
   selector: 'app-secret-backend-settings',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './secret-backend-settings.component.html',
   styleUrl: './secret-backend-settings.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

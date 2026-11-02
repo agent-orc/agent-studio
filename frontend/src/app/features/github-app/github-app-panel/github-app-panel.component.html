@@ -18,7 +18,8 @@
           @else { {{ current.name }} }
         </dd></div>
         <div><dt>Owner</dt><dd>{{ current.ownerLogin }}</dd></div>
-        <div><dt>Connected</dt><dd>{{ current.connectedAtUtc | date: 'medium' }}</dd></div>
+        <div><dt>Status</dt><dd class="github-app__status"><app-status-indicator tone="success" label="Connected" testId="github-app-connection-status" />
+          <span class="github-app__meta">since {{ current.connectedAtUtc | date: 'medium' }}</span></dd></div>
       </dl>
       <div class="github-app__actions">
         <button type="button" data-testid="github-app-install" [disabled]="service.busy()" (click)="service.startInstallation()">Add repositories or an account</button>
@@ -39,12 +40,14 @@
       @if (current.installations.length) {
         <ul class="github-app__list" data-testid="github-app-installations">
           @for (installation of current.installations; track installation.id) {
-            <li><strong>{{ installation.account }}</strong>
+            <li><app-status-indicator tone="success" label="Confirmed" [compact]="true" [testId]="'github-app-installation-' + installation.id" />
+              <strong>{{ installation.account }}</strong>
               <span class="github-app__meta">{{ installation.accountType }} · confirmed {{ installation.adoptedAtUtc | date: 'medium' }} by {{ installation.adoptedBy }}</span></li>
           }
         </ul>
       } @else {
-        <p class="github-app__meta" data-testid="github-app-no-installations">None confirmed yet. Install the App, then confirm with your GitHub account.</p>
+        <p class="github-app__meta" data-testid="github-app-no-installations"><app-status-indicator tone="warning" label="None confirmed" [compact]="true" />
+          Install the App, then confirm with your GitHub account.</p>
       }
     } @else {
       <form class="github-app__form" data-testid="github-app-register" (submit)="$event.preventDefault(); service.startRegistration(organization(), anyAccount())">
@@ -84,7 +87,8 @@
           <tr [attr.data-state]="repository.state">
             <td>{{ repository.project }}</td>
             <td><code>{{ repository.repositoryUrl ?? '-' }}</code></td>
-            <td [title]="repository.detail ?? ''"><span class="github-app__badge" [attr.data-state]="repository.state">{{ coverageLabel(repository.state) }}</span></td>
+            <td><app-status-indicator [tone]="coverage(repository.state).tone" [label]="coverage(repository.state).label"
+                [detail]="repository.detail" [testId]="'github-app-coverage-' + repository.project" /></td>
           </tr>
         }
       </tbody>

@@ -14,6 +14,7 @@ import { UpdateHistoryEntry } from '../../../../models/update-service.model';
 
 import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 /**
  * Drawer-style overlay opened from the version badge. Three sections:
  *
@@ -27,7 +28,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 @Component({
   selector: 'app-update-center',
   standalone: true,
-  imports: [TooltipDirective, OverlayPortalDirective],
+  imports: [TooltipDirective, OverlayPortalDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './update-center.component.html',
   styleUrl: './update-center.component.scss',
@@ -65,6 +66,13 @@ export class UpdateCenterComponent implements OnDestroy {
 
   close(): void {
     this.client.closeCenter();
+  }
+
+  /** Deploy-run outcome on the shared indicator: degraded and aborted runs need a look, failed ones failed. */
+  historyTone(status: UpdateHistoryEntry['status']): StatusTone {
+    if (status === 'ok') return 'success';
+    if (status === 'failed') return 'danger';
+    return 'warning';
   }
 
   shortSha(value: string | null | undefined): string {

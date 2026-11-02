@@ -1,6 +1,7 @@
 import type { PhysicalHostGroup } from './physical-host-group';
 import type { RemoteHost } from './remote-host.model';
 import type { CredentialInventory } from '../../credentials/credential-inventory.service';
+import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
 
 export interface EnvironmentSnapshot {
   controlHost: string;
@@ -192,4 +193,22 @@ export function buildEnvironmentMap(
 function knownRole(role: string): EnvironmentNode['role'] {
   return role === 'coding' || role === 'review' || role === 'gate' || role === 'integration' || role === 'link'
     ? role : 'control';
+}
+
+/**
+ * A map health word on the shared status indicator. The map mixes host
+ * heartbeats, reachability and engine states; a word not listed stays neutral.
+ */
+export function environmentHealthTone(health: string): StatusTone {
+  if (['online', 'ok', 'reachable', 'ready', 'healthy'].includes(health)) return 'success';
+  if (['degraded', 'warn', 'unverified'].includes(health)) return 'warning';
+  if (['offline', 'unreachable', 'engine-not-live'].includes(health)) return 'danger';
+  return 'neutral';
+}
+
+/** Repository access of a map node: writing is the goal, read-only is a known limit. */
+export function repositoryAccessTone(access: EnvironmentNode['repositoryAccess']): StatusTone {
+  if (access === 'writes') return 'success';
+  if (access === 'reads only') return 'info';
+  return access === 'no access' ? 'warning' : 'neutral';
 }

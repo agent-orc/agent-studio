@@ -5,10 +5,31 @@ import { CodexSignInDialogService } from '../../remote-hosts/services/codex-sign
 import { ProviderAuthStatusService } from '../../remote-hosts/services/provider-auth-status.service';
 import type { CredentialInventoryItem } from '../credential-inventory.service';
 import type { ProviderAuthBadge } from '../../remote-hosts/models/provider-auth.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
+
+type CredentialState = CredentialInventoryItem['state'];
+
+/** Inventory state per credential; tones follow docs/quality/design/status-indicator.md. */
+const credentialStates: Readonly<Record<CredentialState, { tone: StatusTone; label: string }>> = {
+  ok: { tone: 'success', label: 'OK' },
+  expiring: { tone: 'warning', label: 'Expiring' },
+  missing: { tone: 'danger', label: 'Missing' },
+  unused: { tone: 'neutral', label: 'Unused' },
+  unexpected: { tone: 'danger', label: 'Unexpected write access' },
+};
+
+const loginTones: Readonly<Record<string, StatusTone>> = {
+  ok: 'success',
+  'rate limited': 'warning',
+  expiring: 'warning',
+  expired: 'danger',
+  missing: 'danger',
+};
 
 @Component({
   selector: 'app-credential-inventory',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './credential-inventory.component.html',
   styleUrl: './credential-inventory.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -45,6 +66,18 @@ export class CredentialInventoryComponent {
     return item.category === 'service' || item.category === 'human'
       ? { section: 'task-server', label: 'Open Task Server actions' }
       : { section: 'remote-hosts', label: 'Open Execution Hosts' };
+  }
+
+  stateTone(state: CredentialState): StatusTone {
+    return credentialStates[state]?.tone ?? 'neutral';
+  }
+
+  stateLabel(state: CredentialState): string {
+    return credentialStates[state]?.label ?? state;
+  }
+
+  loginTone(state: string): StatusTone {
+    return loginTones[state] ?? 'neutral';
   }
 
   lastChecked(item: CredentialInventoryItem): string {
