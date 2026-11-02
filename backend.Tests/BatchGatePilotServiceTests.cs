@@ -8,6 +8,7 @@ using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts.BatchGate;
+using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -51,24 +52,32 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         _origin = Path.Combine(_workspace, "origin.git");
         foreach (var state in TaskStates.All)
             Directory.CreateDirectory(Path.Combine(_watchPath, state));
-        Directory.CreateDirectory(_repo);
-        Git(_workspace, "init", "-q", "--bare", "--initial-branch=develop", _origin);
-        Git(_repo, "init", "-q", "-b", "develop");
-        Git(_repo, "config", "user.email", "batch-test@example.invalid");
-        Git(_repo, "config", "user.name", "Batch Test");
-        Directory.CreateDirectory(Path.Combine(_repo, ".agent-studio"));
-        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "prepare"), "#!/bin/sh\nexit 0\n");
-        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "project.yml"),
+        GitRepositoryTemplate.CopyTo("batch-gate-pilot:repo-and-origin:v1", _workspace, SeedRepositoryAndOrigin);
+    }
+
+    // Built once per test process; each test starts from a copy (AGT-3419).
+    private static void SeedRepositoryAndOrigin(string root)
+    {
+        var repo = Path.Combine(root, "repo");
+        var origin = Path.Combine(root, "origin.git");
+        Directory.CreateDirectory(repo);
+        Git(root, "init", "-q", "--bare", "--initial-branch=develop", origin);
+        Git(repo, "init", "-q", "-b", "develop");
+        Git(repo, "config", "user.email", "batch-test@example.invalid");
+        Git(repo, "config", "user.name", "Batch Test");
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "prepare"), "#!/bin/sh\nexit 0\n");
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"),
             "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
             + "  prepare: .agent-studio/prepare\n  build:\n  test: [echo test]\n"
             + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
-        File.WriteAllText(Path.Combine(_repo, "README.md"), "Batch pilot.\n");
-        Git(_repo, "add", ".");
-        Git(_repo, "commit", "-qm", "base");
-        Git(_repo, "remote", "add", "origin", _origin);
-        Git(_repo, "push", "-q", "origin", "develop");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "Batch pilot.\n");
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-qm", "base");
+        Git(repo, "remote", "add", "origin", origin);
+        Git(repo, "push", "-q", "origin", "develop");
         // Publication fast-forwards the local integration ref; keep it unchecked-out.
-        Git(_repo, "checkout", "-q", "--detach");
+        Git(repo, "checkout", "-q", "--detach");
     }
 
     public void Dispose()

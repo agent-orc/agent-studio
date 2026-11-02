@@ -180,6 +180,34 @@ public static class V1ReviewPlaneEndpoints
             }
         });
 
+        api.MapPost("/runners/{runnerId}/quota/claim", (
+            HttpContext context, string runnerId, Contract.HostQuotaClaimRequest request,
+            V1ReviewExecutorRegistry registry, Contract.HostQuotaCoordinator quota) =>
+        {
+            if (!RunnerMatches(context, runnerId)) return Results.Unauthorized();
+            var healthy = registry.HealthyQuotaHosts(request.Provider);
+            var canProbe = registry.HoldsQuotaCapability(runnerId, request.InstanceId,
+                request.Provider, healthyOnly: true);
+            return Results.Ok(quota.Claim(runnerId, request, DateTime.UtcNow, canProbe, healthy));
+        });
+
+        api.MapPut("/runners/{runnerId}/quota/report", (
+            HttpContext context, string runnerId, Contract.HostQuotaReportRequest request,
+            V1ReviewExecutorRegistry registry, Contract.HostQuotaCoordinator quota,
+            QuotaService quotaService) =>
+        {
+            if (!RunnerMatches(context, runnerId)) return Results.Unauthorized();
+            var holds = registry.HoldsQuotaCapability(runnerId, request.InstanceId,
+                request.Provider, healthyOnly: false);
+            if (!quota.Report(runnerId, request, DateTime.UtcNow, holds))
+                return Results.Conflict(new Contract.ApiError("quota-report-rejected",
+                    "Quota probe lease or provider capability is invalid."));
+            var reading = quota.Readings().FirstOrDefault(item => item.Provider == request.Provider
+                && item.SubscriptionKey == request.SubscriptionKey);
+            if (reading is not null) quotaService.IngestHostReading(reading);
+            return Results.Ok(new { recorded = true });
+        });
+
         api.MapMethods("/runners/{runnerId}/capabilities", new[] { "POST", "PUT" }, (
             HttpContext context,
             string runnerId,
@@ -2808,7 +2836,8 @@ public static class V1ReviewPlaneEndpoints
                     .Select(scope => new Contract.ReviewDependencyScopeDto(
                         scope.WorkingSubdir,
                         scope.Lockfiles))
-                    .ToArray()))
+                    .ToArray(),
+                CoveredByDependencyScopes: command.CoveredByDependencyScopes))
             .ToArray();
         var commands = verify.Commands
             .Select((command, index) =>
@@ -3472,13 +3501,12 @@ public static class V1ReviewPlaneEndpoints
         IEnumerable<ReviewAttemptDto> pending, IConfiguration configuration,
         IEnumerable<CliModelRouteProfile>? profiles = null)
     {
-        var defaultModel = configuration.GetValue(
-            "ReviewDecisionOrchestrator:AspectModel", PipelineStepModelDefaults.SupportModel);
-        var defaultCli = ReviewDecisionOrchestrator.NormalizeReviewCliType(
-            configuration.GetValue("ReviewDecisionOrchestrator:Cli", PipelineStepModelDefaults.DefaultCli));
+        var hostDefault = ReviewAspectModelPolicy.ResolveDefault(
+            configuration[ReviewAspectModelPolicy.CliSetting] ?? PipelineStepModelDefaults.DefaultCli,
+            configuration[ReviewAspectModelPolicy.ModelSetting]);
         var routes = new List<Contract.ConfiguredModelRouteDto>
         {
-            new(defaultCli, defaultModel),
+            new(hostDefault.CliType, hostDefault.Model),
         };
         if (configuration["DeepReview:Mode"] == DeepReviewPolicy.Active)
             routes.Add(new Contract.ConfiguredModelRouteDto("codex", DeepReviewPolicy.Model));
@@ -3528,6 +3556,39 @@ public static class V1ReviewPlaneEndpoints
 
 public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
 {
+    public IReadOnlySet<string> HealthyQuotaHosts(string provider)
+    {
+        lock (_gate)
+        {
+            var now = _time.GetUtcNow().UtcDateTime;
+            return _registrations.Where(entry =>
+                    HoldsQuotaCapabilityLocked(entry.Key, entry.Value.InstanceId,
+                        provider, healthyOnly: true, now))
+                .Select(entry => entry.Key)
+                .ToHashSet(StringComparer.Ordinal);
+        }
+    }
+
+    public bool HoldsQuotaCapability(string runnerId, string instanceId, string provider,
+        bool healthyOnly)
+    {
+        lock (_gate) return HoldsQuotaCapabilityLocked(runnerId, instanceId,
+            provider, healthyOnly, _time.GetUtcNow().UtcDateTime);
+    }
+
+    private bool HoldsQuotaCapabilityLocked(string runnerId, string instanceId, string provider,
+        bool healthyOnly, DateTime now)
+    {
+        if (!_registrations.TryGetValue(runnerId, out var registration)
+            || registration.InstanceId != instanceId
+            || !_capabilityStates.TryGetValue(runnerId, out var state)
+            || state.InstanceId != instanceId) return false;
+        return state.Capabilities.Any(capability => capability.Key == "provider-auth:" + provider
+            && (!healthyOnly || registration.LastSeenAt > now.AddMinutes(-3)
+                && capability.FreshUntil > now && capability.AdvertisedStatus == "ready"
+                && capability.HealthOutcome is not ("credential_invalid" or "provider_incident" or "indeterminate")));
+    }
+
     public event Action<string, DateTime>? CapabilitySnapshotAdvertised;
     /// <summary>Consecutive failures that turn a suspect capability into a drained one.</summary>
     private const int CapabilityFailureThreshold = 2;

@@ -9,6 +9,9 @@ public interface IAttemptRootSecretStore
     Task<string?> ReadAsync(string name, CancellationToken ct);
     Task WriteAsync(string name, string value, CancellationToken ct);
     Task DeleteAsync(string name, CancellationToken ct);
+
+    /// <summary>Throws when <see cref="WriteAsync"/> would fail now, for example without a wrapping key. Stores nothing.</summary>
+    Task EnsureWritableAsync(CancellationToken ct);
 }
 
 /// <summary>
@@ -72,6 +75,17 @@ public sealed class EncryptedAttemptRootSecretStore(string directory, string wra
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
         CryptographicOperations.ZeroMemory(plaintext);
+    }
+
+    public Task EnsureWritableAsync(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        CryptographicOperations.ZeroMemory(Key());
+        Directory.CreateDirectory(directory);
+        var probe = Path.Combine(directory, ".write-check-" + Guid.NewGuid().ToString("N") + ".tmp");
+        File.WriteAllBytes(probe, []);
+        File.Delete(probe);
+        return Task.CompletedTask;
     }
 
     public Task DeleteAsync(string name, CancellationToken ct)

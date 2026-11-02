@@ -47,6 +47,8 @@ export class ProjectPipelinePanelComponent {
   readonly projectName = input.required<string>();
   /** Deep-link to the Prompts registry rail (content is managed there). */
   readonly openPrompts = output<void>();
+  /** The Pipeline health block links to the project's flow-health view. */
+  readonly openFlowHealth = output<void>();
   private readonly jobService = inject(TaskService);
   readonly catalogue = signal<readonly PipelineCatalogueStep[]>([]);
   readonly pipelineType = signal<PipelineType>('task');

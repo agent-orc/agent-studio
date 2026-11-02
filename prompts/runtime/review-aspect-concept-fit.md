@@ -63,6 +63,8 @@ after this template. That material is the source for Dossier content.
 
 Respond in under 150 words, then emit exactly one verdict sentinel:
 
+`concerns` needs a concrete gap too: `missing` names it in one sentence. Without a gap the status is `pass`.
+
 ```
 [[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence>; evidence_checked=<brief and Dossier files or sections>; missing=<exact gap, or none>]]
 ```

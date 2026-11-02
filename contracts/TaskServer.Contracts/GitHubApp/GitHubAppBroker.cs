@@ -93,6 +93,8 @@ public sealed class GitHubAppBroker
         if (string.IsNullOrEmpty(organization)) organization = null;
         if (organization is not null && !ValidAccount(organization))
             throw new GitHubAppException("invalid-account", "The organization name is not a valid GitHub account.");
+        // GitHub hands out the private key once, after it created the App: the store must be able to keep it first.
+        await RequireWritableVaultAsync(ct);
         var state = NewFlow(new Flow(FlowKind.Registration, origin, null, null, Now + FlowLifetime));
         var callback = origin + ReturnPath;
         var suffix = (organization ?? Convert.ToHexString(RandomNumberGenerator.GetBytes(3))).ToLowerInvariant();
@@ -632,6 +634,17 @@ public sealed class GitHubAppBroker
 
     private static GitHubAppException AlreadyConnected()
         => new("already-connected", "A GitHub App is already connected. Disconnect it before connecting another one.", 409);
+
+    private async Task RequireWritableVaultAsync(CancellationToken ct)
+    {
+        try { await _vault.EnsureWritableAsync(ct); }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            throw new GitHubAppException("secret-store-unavailable",
+                $"Studio cannot store the App's private key: {exception.Message} "
+                + "Fix the secret store, then connect GitHub again. Nothing was created at GitHub.", 503);
+        }
+    }
 
     private async Task<GitHubAppConnection> RequireConnectionAsync(CancellationToken ct)
         => await _vault.LoadConnectionAsync(ct)

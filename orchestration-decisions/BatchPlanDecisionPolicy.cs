@@ -99,7 +99,10 @@ public static class BatchPlanDecisionPolicy
     /// <summary>
     /// Authority floors for a decision the authority did not compute itself.
     /// Members come from the eligible snapshot, a close respects the size
-    /// bounds, and a hold never outlives the configured windows.
+    /// bounds, and a hold never outlives the configured windows. A per-task
+    /// decision is refused when the current facts hold a second eligible card
+    /// that the decision's snapshot did not consider (AGT-3407): that card may
+    /// be the batch partner, so the authority plans again instead.
     /// </summary>
     public static bool Admissible(BatchPlanFacts facts, BatchPlanDecision decision, out string error)
     {
@@ -117,6 +120,10 @@ public static class BatchPlanDecisionPolicy
                 ? "batch size outside configured bounds"
             : decision.Decision == "per-task" && members.Count == 0
                 ? "per-task decision names no card"
+            : decision.Decision == "per-task" && waiting.Count >= 2
+              && decision.Considered is { } considered
+              && waiting.Any(key => !considered.Contains(key, StringComparer.Ordinal))
+                ? "per-task decision did not consider every eligible card"
             : decision.Decision == "idle" && (members.Count > 0 || waiting.Count > 0)
                 ? "idle decision with eligible cards"
             : decision.Decision == "wait" && decision.CloseAtUtc is { } until

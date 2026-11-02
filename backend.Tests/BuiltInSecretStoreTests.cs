@@ -340,6 +340,32 @@ public sealed class BuiltInSecretStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Write_check_on_an_empty_store_prepares_the_key_and_stores_nothing()
+    {
+        var store = Store();
+
+        await store.EnsureWritableAsync(SecretScope.Workspace, default);
+
+        Assert.True(File.Exists(KeyFile));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(store.Root, "items")));
+        Assert.Empty((await store.ListAsync(default)).Records);
+    }
+
+    [Fact]
+    public async Task Write_check_refuses_a_store_whose_key_is_missing()
+    {
+        await Append(Store(), SecretScope.Workspace, "MAIL", _value);
+        File.Delete(KeyFile);
+        var store = Store();
+        var before = Directory.EnumerateFiles(store.Root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToList();
+
+        await Assert.ThrowsAsync<SecretKeyUnavailableException>(() => store.EnsureWritableAsync(SecretScope.Workspace, default));
+
+        Assert.False(File.Exists(KeyFile));
+        Assert.Equal(before, Directory.EnumerateFiles(store.Root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
     public void Key_file_inside_the_workspace_is_refused()
     {
         var config = Configuration(("Secrets:KeyFile", Path.Combine(Workspace, ".security", "secrets.kek")));

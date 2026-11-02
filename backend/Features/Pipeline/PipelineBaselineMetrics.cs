@@ -24,6 +24,9 @@ public sealed record PipelineBaseline(
     double? GateSourceBytesMedian, double? GateSourceBytesP90,
     double? GateSourceSecondsMedian, double? GateSourceSecondsP90, int GateSourceRuns)
 {
+    /// <summary>The full-suite runs of the window by origin (AGT-3400 S2); null without any evidence.</summary>
+    public FullSuiteAttribution? FullSuiteBreakdown { get; init; }
+
     public static readonly PipelineBaseline Unknown = new(null, null, 0, 0, null, null, 0, 0,
         null, null, null, null, null, null, null, null, 0);
 }
@@ -43,9 +46,12 @@ internal sealed record BaselineFolder(IReadOnlyList<IntegrationLaneEvent> Events
 /// <summary>
 /// T1 minutes of one Remote Review attempt: the executed tool commands of its
 /// verification phase. Null when a counted command has no duration or the
-/// attempt carries no command evidence.
+/// attempt carries no command evidence. <paramref name="FullSelection"/> tells
+/// whether those commands ran the test suites without a class selection; null
+/// for an attempt read from its grade report, which names no command lines.
 /// </summary>
-internal sealed record ReviewVerifyMetric(string AttemptId, DateTimeOffset AtUtc, double? Minutes);
+internal sealed record ReviewVerifyMetric(string AttemptId, DateTimeOffset AtUtc, double? Minutes,
+    bool? FullSelection = null);
 
 internal static class PipelineBaselineMetrics
 {
@@ -73,7 +79,8 @@ internal static class PipelineBaselineMetrics
     /// publication, without queue wait.
     /// </summary>
     public static PipelineBaseline Compute(IEnumerable<BaselineFolder> folders,
-        IReadOnlyList<BatchGateMetric> batches, DateTimeOffset since, DateTimeOffset now)
+        IReadOnlyList<BatchGateMetric> batches, DateTimeOffset since, DateTimeOffset now,
+        IReadOnlyList<BatchGateExecutionFact>? gateFacts = null)
     {
         var leadTimes = new List<double>();
         var leadUnknown = 0;
@@ -83,12 +90,21 @@ internal static class PipelineBaselineMetrics
         var knownLevelRuns = 0;
         var sourceBytes = new List<double>();
         var sourceSeconds = new List<double>();
+        var reviewFull = 0;
+        var reviewAttempts = 0;
+        var reviewUnknown = 0;
         var publishedBatches = batches.Where(sample => sample.Published
                 && sample.Fact.Outcome is "Ok" or "Warn" && sample.Members > 0)
             .GroupBy(sample => (sample.Fact.BatchId, sample.Fact.BatchRunId))
             .Select(run => run.OrderBy(sample => sample.Fact.CompletedAtUtc).Last()).ToArray();
         foreach (var folder in folders)
         {
+            foreach (var review in folder.Reviews.Where(review => review.AtUtc >= since && review.AtUtc <= now))
+            {
+                reviewAttempts++;
+                if (review.FullSelection is null) reviewUnknown++;
+                else if (review.FullSelection.Value) reviewFull++;
+            }
             var executed = folder.Receipts.Where(Executed).ToArray();
             foreach (var receipt in executed)
             {
@@ -130,6 +146,14 @@ internal static class PipelineBaselineMetrics
         var batchRuns = batches.Count;
         var days = Math.Max((now - since).TotalDays, 1d / 24);
         int? fullSuites = knownLevelRuns + batchRuns == 0 ? null : fullSuiteRuns + batchRuns;
+        var facts = gateFacts ?? [];
+        var origins = knownLevelRuns + batchRuns + facts.Count + reviewAttempts == 0 ? null
+            : new FullSuiteAttribution(
+                batches.Count(sample => !sample.Isolation), batches.Count(sample => sample.Isolation),
+                facts.Count(fact => FullSuiteOrigins.Of(fact, false) == FullSuiteOrigins.PerCardFallback),
+                fullSuiteRuns,
+                facts.Count(fact => FullSuiteOrigins.Of(fact, false) == FullSuiteOrigins.BaseCheck),
+                reviewAttempts == 0 ? null : reviewFull, reviewUnknown);
         return new PipelineBaseline(
             Percentile(leadTimes, .5), Percentile(leadTimes, .9), leadTimes.Count, leadUnknown,
             Percentile(gateMinutes, .5), Percentile(gateMinutes, .9), gateMinutes.Count, gateUnknown,
@@ -137,7 +161,10 @@ internal static class PipelineBaselineMetrics
             // Red develop time needs the post-merge T3 verdicts (Dossier P4).
             null, null,
             Percentile(sourceBytes, .5), Percentile(sourceBytes, .9),
-            Percentile(sourceSeconds, .5), Percentile(sourceSeconds, .9), sourceBytes.Count);
+            Percentile(sourceSeconds, .5), Percentile(sourceSeconds, .9), sourceBytes.Count)
+        {
+            FullSuiteBreakdown = origins,
+        };
     }
 
     /// <summary>
@@ -212,7 +239,9 @@ internal static class PipelineBaselineMetrics
     /// T1 minutes from one settlement journal: tool commands of the
     /// verification phase (builds, tests, fast checks), finish minus start.
     /// Agent aspects, preparation and reused results or baselines are not
-    /// counted. Null for a journal that cannot be read as a report.
+    /// counted. The executed candidate commands also tell whether the attempt
+    /// ran a full test selection. Null for a journal that cannot be read as a
+    /// report.
     /// </summary>
     internal static ReviewVerifyMetric? ParseSettlement(string json)
     {
@@ -228,6 +257,8 @@ internal static class PipelineBaselineMetrics
                 || commands.ValueKind != JsonValueKind.Array)
                 return null;
             var total = 0d;
+            var minutesUnknown = false;
+            var candidateLines = new List<string>();
             foreach (var command in commands.EnumerateArray())
             {
                 if (Text(command, "phase") is not ("verification" or null)
@@ -236,14 +267,17 @@ internal static class PipelineBaselineMetrics
                     || (Text(command, "workspaceRole") ?? "").StartsWith("baseline-", StringComparison.Ordinal)
                     && Text(command, "baselineReusedFromAttemptId") is { Length: > 0 })
                     continue;
+                if (!(Text(command, "workspaceRole") ?? "").StartsWith("baseline-", StringComparison.Ordinal))
+                    candidateLines.Add(CommandLine(command));
                 if (!DateTimeOffset.TryParse(Text(command, "startedAt"), CultureInfo.InvariantCulture,
                         DateTimeStyles.AssumeUniversal, out var started)
                     || !DateTimeOffset.TryParse(Text(command, "finishedAt"), CultureInfo.InvariantCulture,
                         DateTimeStyles.AssumeUniversal, out var finished))
-                    return new ReviewVerifyMetric(attemptId, receivedAt, null);
-                total += Math.Max(0, (finished - started).TotalMinutes);
+                    minutesUnknown = true;
+                else total += Math.Max(0, (finished - started).TotalMinutes);
             }
-            return new ReviewVerifyMetric(attemptId, receivedAt, total);
+            return new ReviewVerifyMetric(attemptId, receivedAt, minutesUnknown ? null : total,
+                FullSuiteOrigins.IsFullSelection(candidateLines));
         }
         catch (JsonException ex)
         {
@@ -255,6 +289,16 @@ internal static class PipelineBaselineMetrics
     private static string? Text(JsonElement element, string name)
         => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value)
             && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    // The executable and its arguments, as the review runner started them.
+    private static string CommandLine(JsonElement command)
+    {
+        var parts = new List<string> { Text(command, "fileName") ?? "" };
+        if (command.TryGetProperty("arguments", out var arguments) && arguments.ValueKind == JsonValueKind.Array)
+            parts.AddRange(arguments.EnumerateArray().Where(argument => argument.ValueKind == JsonValueKind.String)
+                .Select(argument => argument.GetString() ?? ""));
+        return string.Join(' ', parts);
+    }
 
     internal static ReviewVerifyMetric ParseReview(string text, string fallbackId, DateTimeOffset writtenAtUtc)
     {

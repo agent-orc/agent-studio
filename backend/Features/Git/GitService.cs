@@ -2514,28 +2514,28 @@ public partial class GitService
 
         if (!string.IsNullOrWhiteSpace(path))
         {
-            var abs = Path.Combine(root, path);
-            if (File.Exists(abs))
-            {
-                try { return new GitDiffLookupResult(true, File.ReadAllText(abs), null); } catch (Exception __ex) { SilentCatch.Note(__ex, "GitService: best-effort"); /* best-effort */ }
-            }
+            var (status, bytes) = ReadWorkingTreeFile(root, path);
+            if (status == CheckoutFileStatus.Readable)
+                return new GitDiffLookupResult(true, Encoding.UTF8.GetString(bytes), null);
         }
         return new GitDiffLookupResult(true, output, null);
     }
 
+    /// <summary>Largest working-tree file the Git pane reads for a preview or an untracked diff.</summary>
+    internal const long MaxWorkingTreeFileReadBytes = 4L * 1024 * 1024;
+
     /// <summary>
-    /// Full text of a single tracked file, for the git-pane's rendered
-    /// md/html preview (AGT-2008). With a non-empty <paramref name="sha"/> the
-    /// content is read from that commit (<c>git show &lt;sha&gt;:&lt;path&gt;</c>)
-    /// so a historical / commit-mode preview matches the diff; otherwise the
-    /// live working-tree copy is read. <paramref name="preferRunLocation"/>
+    /// Full working-tree text of a single file, for the git-pane's rendered
+    /// md/html preview (AGT-2008). <paramref name="preferRunLocation"/>
     /// mirrors <see cref="GetDiffResult"/> so a per-task worktree run previews
-    /// its own file, never a sibling checkout's. A NUL-containing blob is
-    /// reported as binary (Success=true, IsBinary=true) so the caller can show
-    /// a "not previewable" note rather than raw bytes.
+    /// its own file, never a sibling checkout's. Only a regular file inside the
+    /// checkout is read: a link, Git metadata and a file above
+    /// <see cref="MaxWorkingTreeFileReadBytes"/> are refused. A NUL-containing
+    /// file is reported as binary (Success=true, IsBinary=true) so the caller
+    /// can show a "not previewable" note rather than raw bytes.
     /// </summary>
     public GitFileContentResult GetFileContentResult(
-        string jobId, string? watchPath, string? path, string? sha, bool preferRunLocation = false)
+        string jobId, string? watchPath, string? path, bool preferRunLocation = false)
     {
         if (string.IsNullOrWhiteSpace(path))
             return new GitFileContentResult(false, "", false, "No file path given.");
@@ -2544,22 +2544,6 @@ public partial class GitService
         if (normalizedPath.Length == 0 || normalizedPath.Split('/').Contains(".."))
             return new GitFileContentResult(false, "", false, "Invalid file path.");
 
-        // Historical preview: read the blob at a specific commit. Validated the
-        // same way as the diff endpoints so an arbitrary ref can't be shown.
-        if (!string.IsNullOrWhiteSpace(sha))
-        {
-            if (!IsLikelyShaOrRef(sha))
-                return new GitFileContentResult(false, "", false, "Invalid commit SHA.");
-            var commitRoot = ResolveRepoRoot(jobId, watchPath);
-            if (commitRoot == null) return new GitFileContentResult(false, "", false, "Could not resolve repo root.");
-            var (blob, blobErr, blobCode) = RunGitArgs(commitRoot, "show", $"{sha}:{normalizedPath}");
-            if (blobCode != 0)
-                return new GitFileContentResult(false, "", false,
-                    string.IsNullOrWhiteSpace(blobErr) ? "File not found in that commit." : blobErr.Trim());
-            return ClassifyContent(blob);
-        }
-
-        // Live preview: read the working-tree file at the run location.
         string? root;
         if (preferRunLocation)
         {
@@ -2574,23 +2558,44 @@ public partial class GitService
             if (root == null) return new GitFileContentResult(false, "", false, "Could not resolve repo root.");
         }
 
-        var full = Path.GetFullPath(Path.Combine(root, normalizedPath));
-        var rootFull = Path.GetFullPath(root);
-        // Containment guard: never read outside the repo root even if the
-        // normalized path somehow re-escapes (belt-and-braces with the `..`
-        // reject above).
-        if (!full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
-            return new GitFileContentResult(false, "", false, "Invalid file path.");
-        if (!File.Exists(full))
-            return new GitFileContentResult(false, "", false, "File is not present in the working tree.");
+        var (status, bytes) = ReadWorkingTreeFile(root, normalizedPath);
+        return status switch
+        {
+            CheckoutFileStatus.Readable => ClassifyContent(Encoding.UTF8.GetString(bytes), bytes),
+            CheckoutFileStatus.Missing => new GitFileContentResult(false, "", false, "File is not present in the working tree."),
+            CheckoutFileStatus.TooLarge => new GitFileContentResult(false, "", false, "File is too large to preview."),
+            _ => new GitFileContentResult(false, "", false, "Invalid file path."),
+        };
+    }
+
+    /// <summary>
+    /// Reads one working-tree file through the checkout boundary shared by every
+    /// route that serves checkout content.
+    /// </summary>
+    private static (CheckoutFileStatus Status, byte[] Bytes) ReadWorkingTreeFile(string root, string relativePath)
+    {
+        string full;
+        try
+        {
+            if (Path.IsPathRooted(relativePath)) return (CheckoutFileStatus.Refused, []);
+            full = Path.GetFullPath(Path.Combine(root, relativePath));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return (CheckoutFileStatus.Refused, []);
+        }
+        var status = FilesystemPathBoundary.CheckCheckoutFile(root, full, MaxWorkingTreeFileReadBytes);
+        if (status != CheckoutFileStatus.Readable) return (status, []);
         try
         {
             var bytes = File.ReadAllBytes(full);
-            return ClassifyContent(Encoding.UTF8.GetString(bytes), bytes);
+            return bytes.LongLength > MaxWorkingTreeFileReadBytes
+                ? (CheckoutFileStatus.TooLarge, [])
+                : (CheckoutFileStatus.Readable, bytes);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return new GitFileContentResult(false, "", false, ex.Message);
+            return (CheckoutFileStatus.Missing, []);
         }
     }
 
@@ -8273,6 +8278,22 @@ public partial class GitService
 
         var (output, _, code) = RunGitArgs(root, "show", $"{sha}:{repoRelPath.Replace('\\', '/')}");
         return code == 0 ? output : null;
+    }
+
+    /// <summary>
+    /// True when <paramref name="repoRelPath"/> names a tracked file at
+    /// <paramref name="sha"/>; false when it does not or cannot be read. Uses
+    /// <c>git cat-file -e</c>, so a large file is never loaded.
+    /// </summary>
+    public bool FileExistsAtCommit(string repoRoot, string sha, string repoRelPath)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(repoRelPath)) return false;
+        if (string.IsNullOrWhiteSpace(sha) || !IsLikelyShaOrRef(sha) || sha.StartsWith('-')) return false;
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return false;
+
+        var (_, _, code) = RunGitArgs(root, "cat-file", "-e", $"{sha}:{repoRelPath.Replace('\\', '/')}");
+        return code == 0;
     }
 
     /// <summary>

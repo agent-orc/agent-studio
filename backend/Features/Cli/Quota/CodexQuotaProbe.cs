@@ -197,43 +197,15 @@ public sealed class CodexQuotaProbe : QuotaProbeBase
     }
 
     public static List<QuotaWindow> ParseStatusWindows(string snap)
-    {
-        var windows = new List<QuotaWindow>();
-        var sparkHeader = SparkHeaderRegex.Match(snap);
-        // The standard 5-hour/Weekly windows are read ONLY from the region above
-        // the Spark header. This is what keeps the Spark sub-block's own
-        // near-empty 5h/Weekly lines from being mistaken for the main windows
-        // (AGT-2064). See SparkHeaderRegex for why the header match is
-        // version-agnostic.
-        var standardSnap = sparkHeader.Success ? snap[..sparkHeader.Index] : snap;
-
-        AddLimitWindow(windows, standardSnap, FiveHourRegex, LegacyFiveHourRegex, "5-hour");
-        AddLimitWindow(windows, standardSnap, WeeklyRegex, LegacyWeeklyRegex, "Weekly");
-
-        if (sparkHeader.Success)
-        {
-            var sparkSnap = snap[(sparkHeader.Index + sparkHeader.Length)..];
-            AddLimitWindow(windows, sparkSnap, FiveHourRegex, LegacyFiveHourRegex, "Spark 5-hour");
-            AddLimitWindow(windows, sparkSnap, WeeklyRegex, LegacyWeeklyRegex, "Spark Weekly");
-        }
-
-        // Footer fallback when /status didn't render: at least we still
-        // get usage percentages, just no reset time.
-        if (windows.Count == 0 && FooterRegex.Match(snap) is { Success: true } fmm
-            && int.TryParse(fmm.Groups["h5left"].Value, out var h5)
-            && int.TryParse(fmm.Groups["wkleft"].Value, out var wk))
-        {
-            windows.Add(new QuotaWindow { Label = "5-hour", UsedPct = 100 - h5, Unit = "%" });
-            windows.Add(new QuotaWindow { Label = "Weekly", UsedPct = 100 - wk, Unit = "%" });
-        }
-
-        return windows;
-    }
+        => AgentStudio.CliHosting.SubscriptionQuotaParser.ParseCodex(snap, DateTime.UtcNow)
+            .Select(window => new QuotaWindow
+            {
+                Label = window.Label, UsedPct = window.UsedPct, Unit = "%",
+                ResetAt = window.ResetAt, ResetLabel = window.ResetLabel
+            }).ToList();
 
     public static string? ParsePlan(string snap)
-        => PlanRegex.Match(snap) is { Success: true } match
-            ? match.Groups["plan"].Value.Trim()
-            : null;
+        => AgentStudio.CliHosting.SubscriptionQuotaParser.CodexPlan(snap);
 
     private static void AddLimitWindow(
         List<QuotaWindow> windows,

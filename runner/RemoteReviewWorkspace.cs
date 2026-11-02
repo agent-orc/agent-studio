@@ -57,11 +57,16 @@ public sealed class RemoteReviewWorkspace
         RepositoryPath = Path.Combine(AttemptRoot, "repository");
         ArtifactPath = Path.Combine(AttemptRoot, "artifacts");
         CachePath = Path.Combine(AttemptRoot, "cache");
-        TempPath = Path.Combine(AttemptRoot, "tmp");
+        TempRoot = ReviewAttemptTemp.Root(
+            options.ReviewTempBase ?? ReviewAttemptTemp.DefaultBase(),
+            AttemptRoot);
+        TempPath = ReviewAttemptTemp.Candidate(TempRoot);
         HomePath = Path.Combine(AttemptRoot, "home");
         BaselineCacheRoot = Path.Combine(root, ".baseline-cache");
         VerifyCacheRoot = Path.Combine(root, ".verify-cache");
         DependencyCacheRoot = Path.Combine(root, ".dependency-cache");
+        NuGetPackagesPath = Path.Combine(DependencyCacheRoot, NuGetPackagesDirectoryName);
+        NuGetScratchPath = Path.Combine(DependencyCacheRoot, NuGetScratchDirectoryName);
         _agentCommands = new RemoteReviewAgentCommandRunner(
             options,
             lease,
@@ -75,11 +80,40 @@ public sealed class RemoteReviewWorkspace
     public string RepositoryPath { get; }
     public string ArtifactPath { get; }
     public string CachePath { get; }
+
+    /// <summary>
+    /// Short per-attempt temp root outside the attempt directory, so a socket
+    /// below <c>TMPDIR</c> fits the Unix path limit (AGT-3429). Removed with the
+    /// attempt.
+    /// </summary>
+    public string TempRoot { get; }
+
+    /// <summary>Candidate <c>TMPDIR</c>, below <see cref="TempRoot"/>.</summary>
     public string TempPath { get; }
     public string HomePath { get; }
     public string BaselineCacheRoot { get; }
     public string VerifyCacheRoot { get; }
     public string DependencyCacheRoot { get; }
+
+    internal const string NuGetPackagesDirectoryName = "nuget-packages";
+    internal const string NuGetScratchDirectoryName = "nuget-scratch";
+
+    /// <summary>
+    /// Host-stable NuGet global packages folder shared by every attempt and role
+    /// (AGT-3429). The dependency cache preserves <c>**/obj</c>, and a cached
+    /// <c>project.assets.json</c> names this folder; a per-attempt folder was
+    /// deleted with its attempt and the next cache hit failed with NETSDK1064.
+    /// The folder is content addressed by package id and version, so candidate
+    /// and baseline resolve identical bits for identical versions.
+    /// </summary>
+    public string NuGetPackagesPath { get; }
+
+    /// <summary>
+    /// <c>NUGET_SCRATCH</c> beside <see cref="NuGetPackagesPath"/>. NuGet keeps
+    /// the file locks that serialize concurrent package extraction there, so
+    /// attempts that share the package folder must share these locks too.
+    /// </summary>
+    public string NuGetScratchPath { get; }
 
     public IReadOnlyDictionary<string, string?> ProcessEnvironment()
     {
@@ -95,7 +129,8 @@ public sealed class RemoteReviewWorkspace
             ["TMP"] = TempPath,
             ["TEMP"] = TempPath,
             ["XDG_CACHE_HOME"] = CachePath,
-            ["NUGET_PACKAGES"] = Path.Combine(CachePath, "nuget"),
+            ["NUGET_PACKAGES"] = NuGetPackagesPath,
+            ["NUGET_SCRATCH"] = NuGetScratchPath,
             ["npm_config_cache"] = Path.Combine(CachePath, "npm"),
             ["PIP_CACHE_DIR"] = Path.Combine(CachePath, "pip"),
             ["CARGO_HOME"] = Path.Combine(CachePath, "cargo"),
@@ -152,9 +187,14 @@ public sealed class RemoteReviewWorkspace
             throw new ReviewInfrastructureException(
                 "DirtyBefore",
                 $"Review attempt workspace already exists: {AttemptRoot}");
+        if (Directory.Exists(TempRoot) || File.Exists(TempRoot))
+            throw new ReviewInfrastructureException(
+                "DirtyBefore",
+                $"Review attempt temp directory already exists: {TempRoot}");
         Directory.CreateDirectory(AttemptRoot);
         Directory.CreateDirectory(ArtifactPath);
         Directory.CreateDirectory(CachePath);
+        ReviewAttemptTemp.Ensure(TempRoot, AttemptRoot, mustBeNew: true);
         Directory.CreateDirectory(TempPath);
         Directory.CreateDirectory(HomePath);
         Directory.CreateDirectory(BaselineCacheRoot);
@@ -211,6 +251,10 @@ public sealed class RemoteReviewWorkspace
             throw new ReviewInfrastructureException(
                 "PreparedWorkspaceMissing",
                 $"Prepared review repository is missing: {RepositoryPath}");
+        // The temp root lives below /tmp, outside the attempt directory, so a
+        // host reboot between preparation and adoption can remove it.
+        ReviewAttemptTemp.Ensure(TempRoot, AttemptRoot, mustBeNew: false);
+        Directory.CreateDirectory(TempPath);
 
         var head = await GitValueAsync("rev-parse", "HEAD", ct);
         if (!string.Equals(head, _subject.ExpectedResultSha, StringComparison.OrdinalIgnoreCase))
@@ -497,6 +541,16 @@ public sealed class RemoteReviewWorkspace
                         command,
                         execution.AgentUsage));
                     SaveCaches(candidateCache);
+                    // AGT-3420: a CLI that refuses its model failed on the
+                    // project's review setting, not on this host's toolchain.
+                    if (AgentModelUnknownToCli(command, execution.Process))
+                        throw await InfrastructureFailureAsync(
+                            ReviewModelConfigurationPolicy.Classification,
+                            ReviewModelConfigurationPolicy.Summary(command.StepId, command.CliType, command.Model) +
+                            $" {CommandLine(command)}; exit={execution.Process.ExitCode}.",
+                            commands,
+                            artifacts,
+                            ct);
                     throw await InfrastructureFailureAsync(
                         "ToolUnavailable",
                         $"Review command '{command.StepId}' could not use its declared toolchain: " +
@@ -1167,13 +1221,13 @@ public sealed class RemoteReviewWorkspace
     /// The unit is the step, not the process: a flake retry is a second run of
     /// the same command and must still see whatever its own first run left in
     /// <c>TMPDIR</c>, exactly as a developer re-running it locally would.
-    /// Bounded to paths below <see cref="AttemptRoot"/> by
+    /// Bounded to paths below this attempt's <see cref="TempRoot"/> by
     /// <see cref="ReviewTempResidue.IsInside"/>, so this executor can never
     /// empty a host-shared or foreign temp directory.
     /// </summary>
     private void PurgeStepTemp(string stepId)
     {
-        var purge = ReviewTempResidue.Purge(TempPath, AttemptRoot);
+        var purge = ReviewTempResidue.Purge(TempPath, TempRoot);
         if (!purge.Observed) return;
         _log($"review-temp-purged step={stepId} removed={purge.Removed} retained={purge.Retained}");
     }
@@ -1271,8 +1325,12 @@ public sealed class RemoteReviewWorkspace
                         Decision: DependencyPreparationState.Evaluate(installRoot, scope));
                 })
                 .ToArray();
-            var installNeeded = dependencyDecisions.Length == 0
-                                || dependencyDecisions.Any(item => item.Decision.State != "hit");
+            var installNeeded = !DependencyPreparationSkipPolicy.MaySkip(
+                command.CoveredByDependencyScopes,
+                dependencyDecisions.Select(item => item.Decision).ToArray());
+            if (installNeeded && dependencyDecisions.Length > 0
+                && dependencyDecisions.All(item => item.Decision.State == "hit"))
+                _log($"dependency-cache hit not covering step={command.StepId}; running preparation");
             CommandExecution execution;
             if (installNeeded)
             {
@@ -2422,7 +2480,7 @@ public sealed class RemoteReviewWorkspace
     {
         var root = Path.Combine(AttemptRoot, $"baseline-runtime-{commandHash[..12]}");
         var cache = Path.Combine(root, "cache");
-        var temp = Path.Combine(root, "tmp");
+        var temp = BaselineTempPath(commandHash);
         var home = Path.Combine(root, "home");
         Directory.CreateDirectory(cache);
         Directory.CreateDirectory(temp);
@@ -2434,7 +2492,8 @@ public sealed class RemoteReviewWorkspace
         environment["TMP"] = temp;
         environment["TEMP"] = temp;
         environment["XDG_CACHE_HOME"] = cache;
-        environment["NUGET_PACKAGES"] = Path.Combine(cache, "nuget");
+        // NUGET_PACKAGES and NUGET_SCRATCH stay the host-stable folders from
+        // ProcessEnvironment: the baseline restores its role's cached obj too.
         environment["npm_config_cache"] = Path.Combine(cache, "npm");
         environment["PIP_CACHE_DIR"] = Path.Combine(cache, "pip");
         environment["CARGO_HOME"] = Path.Combine(cache, "cargo");
@@ -2443,6 +2502,13 @@ public sealed class RemoteReviewWorkspace
         ReviewBuildServerIsolation.ApplyTo(environment, temp);
         return environment;
     }
+
+    /// <summary>
+    /// <c>TMPDIR</c> of a baseline or clean-repeat runtime: one short directory
+    /// per command hash below <see cref="TempRoot"/> (AGT-3429).
+    /// </summary>
+    internal string BaselineTempPath(string commandHash)
+        => ReviewAttemptTemp.Role(TempRoot, commandHash);
 
     private async Task<string> ResolveBaselineShaAsync(CancellationToken ct)
     {
@@ -2734,6 +2800,7 @@ public sealed class RemoteReviewWorkspace
                 ["cache"] = CachePath,
                 ["baselineResultCache"] = BaselineCacheRoot,
                 ["dependencyCache"] = DependencyCacheRoot,
+                ["nugetPackages"] = NuGetPackagesPath,
                 ["temp"] = TempPath,
                 ["ports"] = $"{_lease.PortBase}-{_lease.PortBase + 7}",
                 ["buildServers"] = ReviewBuildServerIsolation.IsIsolated(ProcessEnvironment())
@@ -2752,7 +2819,11 @@ public sealed class RemoteReviewWorkspace
 
     public async Task<bool> CleanupAsync(string attemptId = "unknown")
     {
-        if (!Directory.Exists(AttemptRoot)) return true;
+        if (!Directory.Exists(AttemptRoot))
+        {
+            RemoveTempRoot();
+            return true;
+        }
         var expectedRoot = Path.GetFullPath(_options.ReviewWorkDir)
             .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var target = Path.GetFullPath(AttemptRoot);
@@ -2766,10 +2837,22 @@ public sealed class RemoteReviewWorkspace
         // from under a live process turns it into an untraceable "(deleted)" cwd
         // zombie (AGT-2759), so every process rooted here is reaped first.
         await CliProcessReaper.ReapWorkspaceAsync(target, attemptId, _log, CancellationToken.None);
+        await CliProcessReaper.ReapWorkspaceAsync(TempRoot, attemptId, _log, CancellationToken.None);
+        RemoveTempRoot();
         // The attempt root holds a clone, so it contains read-only git objects
         // and possibly reparse points - a plain recursive delete cannot remove it.
         ResilientDirectory.Delete(target);
         return !Directory.Exists(target);
+    }
+
+    /// <summary>
+    /// Best effort: a temp root that survives is an orphan once the attempt
+    /// directory is gone, and the retention sweep removes it by its owner file.
+    /// </summary>
+    private void RemoveTempRoot()
+    {
+        if (!ReviewAttemptTemp.Remove(TempRoot))
+            _log($"review temp cleanup failed path={TempRoot}; retention sweep retries");
     }
 
     private async Task MaterializeGitAsync(string repositoryUrl,
@@ -3382,6 +3465,16 @@ public sealed class RemoteReviewWorkspace
         => ReviewCommandKinds.IsAgent(command.ExecutionKind)
            && !result.Success
            && !result.StdOut.Contains("[[ASPECT_VERDICT:", StringComparison.Ordinal);
+
+    /// <summary>
+    /// AGT-3420: a failed agent aspect whose CLI does not know its model. A
+    /// missing CLI binary (exit 127) stays a host <c>ToolUnavailable</c>.
+    /// </summary>
+    internal static bool AgentModelUnknownToCli(ReviewCommandDto command, ProcessResult result)
+        => AgentCommandUnavailable(command, result)
+           && result.ExitCode != 127
+           && ReviewModelConfigurationPolicy.IsModelUnknownToCli(
+               command.CliType ?? command.FileName, command.Model, result.StdOut + "\n" + result.StdErr);
 
     /// <summary>
     /// True when an agent-aspect call was killed on its own timeout budget
