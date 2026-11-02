@@ -85,11 +85,16 @@
             <svg class="structure-link-sample" aria-hidden="true" width="24" height="8">
               <path class="structure-link" [attr.data-kind]="link.kind" d="M0 4 H24" />
             </svg>
-            <a [href]="'#/workspace/settings/environment?host=' + linkHost(link.from) + '&link=' + link.kind"
-               [attr.data-testid]="'structure-link-' + (link.number - 1)">{{ link.label }}{{ link.count > 1 ? ' ×' + link.count : '' }} · {{ link.kind }} ·
-              {{ link.fromLabel }} → {{ link.toLabel }}</a></li>
+            <span>{{ link.label }}{{ link.count > 1 ? ' ×' + link.count : '' }} · {{ link.kind }} ·
+              {{ link.fromLabel }} → {{ link.toLabel }}</span></li>
         }
       </ol>
+      <ul class="structure-link-key" aria-label="Connection actions">
+        @for (link of data().links; track $index) {
+          <li><a [href]="'#/workspace/settings/environment?host=' + linkHost(link.from) + '&link=' + link.kind"
+                 [attr.data-testid]="'structure-link-' + $index">{{ link.label }} · {{ link.kind }} health and actions</a></li>
+        }
+      </ul>
     </div>
     <aside class="structure-outline" aria-label="Structure outline">
       <h2>Outline</h2>
