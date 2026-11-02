@@ -341,6 +341,66 @@ public sealed class IntegrationVerificationPolicyTests
         Assert.True(IntegrationVerificationStates.PermitsCompletion(projected));
     }
 
+    private const string Replayed = "cccccccccccccccccccccccccccccccccccccccc";
+
+    private static TaskIntegrationRecord BatchMapping(string sourceSha = Delivery, string branch = "develop") => new()
+    {
+        Id = "batch-map:b:r:KEY-1",
+        Classification = IntegrationRecordClasses.CuratedMapping,
+        IntegrationBranch = branch,
+        SourceSha = sourceSha,
+        IntegrationSha = Replayed,
+    };
+
+    private static TaskIntegrationRecord BatchGateRecord(string branch = "develop", string commit = Replayed) => new()
+    {
+        Id = "batch-gate:b:r:KEY-1",
+        Classification = IntegrationRecordClasses.IntegratedVerified,
+        IntegrationBranch = branch,
+        CommitShas = [commit],
+        Evidence = "Batch b, run r, tested candidate and verified remote tip.",
+    };
+
+    /// <summary>
+    /// A published batch records its verdict by replayed commit. Later commits
+    /// from other cards moved the tip, and the card must stay acceptable.
+    /// </summary>
+    [Fact]
+    public void Projection_BatchGateRecord_VerifiesTheDeliveryWhileTheBranchCarriesItsCommit()
+    {
+        var projected = IntegrationVerificationProjection.Resolve(
+            null, null, [BatchMapping(), BatchGateRecord()], LaterTip, "origin/develop", Delivery, sha => sha == Replayed);
+
+        Assert.Equal(IntegrationVerificationStates.Verified, projected.State);
+        Assert.Equal(Replayed, projected.Sha);
+        Assert.Contains("Batch b", projected.Reason);
+        Assert.Contains(LaterTip, projected.Reason);
+        Assert.True(IntegrationVerificationStates.PermitsCompletion(projected));
+    }
+
+    public static TheoryData<string, TaskIntegrationRecord[], string?, bool> UnprovenBatchCases => new()
+    {
+        { "rewritten", [BatchMapping(), BatchGateRecord()], Delivery, false },
+        { "newer-delivery", [BatchMapping(), BatchGateRecord()], "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", true },
+        { "no-delivery", [BatchMapping(), BatchGateRecord()], null, true },
+        { "other-branch-mapping", [BatchMapping(branch: "main"), BatchGateRecord()], Delivery, true },
+        { "other-branch-gate", [BatchMapping(), BatchGateRecord(branch: "main")], Delivery, true },
+        { "gate-names-another-commit", [BatchMapping(), BatchGateRecord(commit: LaterTip)], Delivery, true },
+        { "mapping-only", [BatchMapping()], Delivery, true },
+        { "gate-only", [BatchGateRecord()], Delivery, true },
+    };
+
+    [Theory]
+    [MemberData(nameof(UnprovenBatchCases))]
+    public void Projection_BatchGateRecord_VerifiesOnlyTheMappedDeliveryOnTheSameHistory(
+        string scenario, TaskIntegrationRecord[] records, string? currentDelivery, bool branchCarriesCommit)
+    {
+        var projected = IntegrationVerificationProjection.Resolve(
+            null, null, records, LaterTip, "develop", currentDelivery, sha => branchCarriesCommit && sha == Replayed);
+
+        Assert.True(IntegrationVerificationStates.Unverified == projected.State, scenario);
+    }
+
     public static TheoryData<string, IntegrationVerificationRecord, string?, bool> StaleCarryCases => new()
     {
         // The branch was rewritten: tree A is no longer in its history.

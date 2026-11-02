@@ -191,7 +191,7 @@ protocol pane and the workspace-wide visual evidence reel:
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /api/tasks/{id}/results/{**path}?watchPath=...` | Guarded, task-relative artifact server for top-level and nested `results/` files. HTML is served inline under a response sandbox; known preview types retain their MIME type and unknown types retain download behavior. |
+| `GET /api/tasks/{id}/results/{**path}?watchPath=...` | Guarded, task-relative artifact server for top-level and nested `results/` files. HTML renders inline under a response sandbox only when a Studio page frames it (`Sec-Fetch-Dest: iframe` from the same origin) and is a download otherwise; known preview types retain their MIME type and unknown types retain download behavior. |
 | `GET /api/tasks/{id}/screenshots?watchPath=...` | Recursive walk over `<job>/results/`, ordered oldest-first, captioned by spec/folder name with optional pass-fail status from `results/playwright/index.json`. Drives the per-task strip + lightbox above the protocol body. |
 | `GET /api/tasks/{id}/screenshot?path=<rel>&watchPath=...` | Compatibility image server used by screenshot listings. Path-traversal-guarded; only image content types are served. |
 | `GET /api/workspace/screenshots?windowHours=N&projectFilter=...` | Newest-first reel across every watched job whose `results/` folder was touched inside the window. Drives the workspace "Visual evidence" overlay (`#/workspace/screenshots`). |
@@ -265,8 +265,9 @@ or an execution-host filesystem path:
 | Absolute runner path ending in `results/<path>` or `logs/<path>` | Same task-relative route after discarding the host-specific prefix |
 
 Artifact links open in a new tab. The server response decides inline preview or
-download by content type. External URLs, source references, Wiki links, and
-task references keep their existing navigation behavior. Traversal and encoded
+download by content type; result HTML opened in a tab downloads, because it
+renders inline only inside a Studio frame. External URLs, source references,
+Wiki links, and task references keep their existing navigation behavior. Traversal and encoded
 traversal are not rewritten.
 
 Image sources use the same card context and map as follows:

@@ -386,6 +386,13 @@
       </thead>
       <tbody>
         <tr>
+          <td>2026-11-02</td>
+          <td><code>AOW-15</code><br><span class="small">review-model-cli-mismatch (fix <code>AGT-3420</code>)</span></td>
+          <td>Every review aspect exited after about 2.5 seconds and was reported as <code>ToolUnavailable</code>. After three infrastructure retries the card escalated. Terminal at discovery: escalated, with the host's semantic-review capability drained for a fault the host did not have.</td>
+          <td>The project had no review step setting, so <code>RemoteReviewPlanBuilder</code> fell back to <code>ReviewDecisionOrchestrator:AspectModel</code> and <code>ReviewDecisionOrchestrator:Cli</code>. They resolved independently, so the plan was sealed with the Claude CLI and a GPT model.</td>
+          <td><code>ReviewAspectModelPolicy</code> resolves the default aspect model from the review CLI through the model metadata registry. A rejected host pair is logged as a planning error naming the setting, a rejected project step pair falls back to the valid default, and the settings route refuses the pair. A CLI that refuses its model is reported as <code>ModelConfigurationFault</code>, which drains no host capability.</td>
+        </tr>
+        <tr>
           <td>2026-10-20</td>
           <td><code>AGT-3245</code>, <code>AGT-3246</code>, <code>AGT-3227</code><br><span class="small">salvage-base-delivery-refusal (fix <code>AGT-3257</code>)</span></td>
           <td>Codex attempts ended Unknown or were interrupted after publishing salvage. Their next deliveries were refused because the fenced base was the earlier salvage commit but the result did not contain it. Terminal at discovery: delivery refused, with the cards escalated and the good new work stranded.</td>
@@ -3057,6 +3064,13 @@
           <td>No CLI crashed. After the batch-gate fix of 17.10. the re-armed batch members fell back to per-task gates. With 2 gate slots and 25-45 minute suites, 16 cards with a passed review (for example AGT-3213, 3214, 3215, 3217, 3186, 3209, 3206, 3203) hit <code>machine-gate-queue budget (limit=9327000ms, consumed=9327018ms, phase=queue)</code>.</td>
           <td>The per-task fallback escalated every non-green gate result. A budget spent waiting for a slot was treated like a red suite, although the gate never ran.</td>
           <td>The observed terminal was <span class="lane">5e-escalated</span> with blocker <code>operator-decision</code>. A queue-phase overrun now keeps the card in <span class="lane">4-auto-review</span> and returns its request to the batch queue; one stall event is raised per queue episode, and a backlogged queue makes the planners prefer batches. An execution-phase overrun still escalates. Parked cards return to the queue by one release action in the escalation summary. Follow-up of 20.10.: the summed queue wait of a review generation is capped at four queue budgets, after which the card reaches <span class="lane">5e-escalated</span> with blocker <code>gate-capacity</code>; the stall episode is durable and re-raised every four hours while it stays open; cards deferred behind a backlog age out to a per-task gate after two batch deadlines. Follow-up of 20.10. (19./20.10. incident): a gate result that returned after a person moved the card, a follow-up was queued or a newer review generation started had parked the card in <span class="lane">5e-escalated</span> from <span class="lane">2-ready</span>, <span class="lane">3-progress</span> or <span class="lane">5-human-review</span>, because the escalation named no source lane. Such a result, of any verdict, now resolves as superseded and the card keeps its lane; the escalation requires <span class="lane">4-auto-review</span> as its source, and the release refuses cards parked from another lane or with a pending follow-up. A batch gate queue overrun requeues its members for the next batch instead of a same-candidate retry and a GateInfra pause.</td>
+        </tr>
+        <tr id="case-killed-git-add-workspace-lock">
+          <td>2026-11-01</td>
+          <td><code>AGT-3409</code><br><span class="small">killed-git-add-workspace-lock</span></td>
+          <td>No CLI crashed. An evidence flush's <code>git add</code> in the workspace repository hit the 30-second git limit and was killed. The killed add left <code>.git/index.lock</code>, so the workspace repository got no commit for 70 minutes: 232 <code>Unable to create index.lock</code> lines in three hours, <code>workspace-evidence-flush-failed</code>, and <code>HumanReviewEscalation: workspace artifact commit failed</code>. No git process was running.</td>
+          <td>SIGKILL skips git's own lock cleanup. The stale-lock guard keeps a lock as young for 10 minutes, and one large log file made the add slower than the fixed limit. An artifact commit that hit the lock returned a failure to the card's run boundary.</td>
+          <td>The observed terminal was Escalated; the escalation's own evidence commit failed on the lock. The process boundary now removes the locks a killed git command wrote when no other git process can hold them. A lock it must keep is cleared by the next write once its holder is gone, without the age wait. <code>git add</code> and its commit get 30 seconds plus the bytes to hash at 2 MiB/s, capped at 10 minutes. A run-boundary, completion or upload commit refused on a lock returns <code>deferred</code> and is retried for about 19 minutes. No code path fails or escalates a card on that result.</td>
         </tr>
       </tbody>
     </table>

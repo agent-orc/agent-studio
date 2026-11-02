@@ -338,6 +338,9 @@ versioned `postMessage` bridge may expose presentation-only events such as
 window, a per-frame capability token, schema version, event name, and payload
 size. An opaque sandbox reports a `null` origin, so origin checking alone is
 never treated as authentication. Mutating actions always stay in host chrome.
+A link the frame reports goes through the host: a `docs/` target opens in the
+Wiki, and an absolute HTTP(S) target opens in a new tab only after the shared
+confirm dialog names its host and the operator chooses Open page (AGT-3364).
 The frame never persists state itself. Studio keeps live responses in trusted
 host state and writes the settled receipt through `WorkbenchDecisionService`.
 

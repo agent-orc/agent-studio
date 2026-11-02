@@ -370,6 +370,41 @@ public static class TaskServerEndpoints
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and capability runner ids differ."));
             return await InvokeAsync(() => store.AdvertiseCapabilitiesAsync(request, Actor(context), ct));
         });
+        runners.MapPost("/{runnerId}/quota/claim", async (
+            HttpContext context, string runnerId, HostQuotaClaimRequest request,
+            HostQuotaCoordinator quota, TaskServerStore store, TimeProvider clock, CancellationToken ct) =>
+        {
+            if (context.TaskServerPrincipal() is not
+                { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } bound }
+                || bound != runnerId) return Results.Forbid();
+            var hosts = await store.ListRunnerCapabilitySnapshotsAsync(ct);
+            var now = clock.GetUtcNow().UtcDateTime;
+            var healthy = hosts.Where(host => HostQuotaCapabilityPolicy.Healthy(host, request.Provider, now))
+                .Select(host => host.RunnerId).ToHashSet(StringComparer.Ordinal);
+            var current = hosts.FirstOrDefault(host => host.RunnerId == runnerId
+                && host.InstanceId == request.InstanceId);
+            return Results.Ok(quota.Claim(runnerId, request, now,
+                current is not null && healthy.Contains(runnerId), healthy));
+        });
+        runners.MapPut("/{runnerId}/quota/report", async (
+            HttpContext context, string runnerId, HostQuotaReportRequest request,
+            HostQuotaCoordinator quota, TaskServerStore store, TimeProvider clock, CancellationToken ct) =>
+        {
+            if (context.TaskServerPrincipal() is not
+                { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } bound }
+                || bound != runnerId) return Results.Forbid();
+            var hosts = await store.ListRunnerCapabilitySnapshotsAsync(ct);
+            var held = hosts.Any(host => host.RunnerId == runnerId
+                && host.InstanceId == request.InstanceId
+                && HostQuotaCapabilityPolicy.Holds(host, request.Provider));
+            return quota.Report(runnerId, request, clock.GetUtcNow().UtcDateTime, held)
+                ? Results.Ok(new { recorded = true })
+                : Results.Conflict(new ApiError("quota-report-rejected", "Quota probe lease or provider capability is invalid."));
+        });
+        api.MapGet("/quota/readings", (HttpContext context, HostQuotaCoordinator quota) =>
+            context.TaskServerPrincipal() is { Kind: TaskServerPrincipalKinds.Studio }
+                ? Results.Ok(quota.Readings())
+                : Results.Forbid());
         runners.MapPost("/{runnerId}/provider-canary/{provider}", async (
             HttpContext context, string runnerId, string provider, string instanceId,
             TaskServerStore store, CancellationToken ct) =>
