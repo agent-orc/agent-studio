@@ -29,7 +29,8 @@ public sealed record BatchGatePilotSnapshot(
     int ReviewVerificationRuns = 0,
     double ReviewVerificationHostMinutes = 0,
     double ReviewVerificationBaselineMinutes = 0,
-    double TotalVerificationHostMinutes = 0);
+    double TotalVerificationHostMinutes = 0,
+    int PreChecksRun = 0, int PreChecksRed = 0, double PreCheckMinutesSaved = 0);
 
 public static class BatchGatePilotSnapshotReader
 {
@@ -104,6 +105,7 @@ public static class BatchGatePilotSnapshotReader
         var reviewVerifications = store.ListReviewVerifications(project);
         var reviewMinutes = reviewVerifications.Sum(item =>
             item.CandidateMinutes + item.BaselineMinutes);
+        var preChecks = store.ListPreChecks(project);
         return new BatchGatePilotSnapshot(
             project, primary.Length, eligible, executions.Count,
             Ratio(executions.Count, eligible), Ratio(attempted, primary.Length),
@@ -120,7 +122,10 @@ public static class BatchGatePilotSnapshotReader
             ReviewVerificationRuns: reviewVerifications.Count(item => item.CountedCommands > 0),
             ReviewVerificationHostMinutes: reviewMinutes,
             ReviewVerificationBaselineMinutes: reviewVerifications.Sum(item => item.BaselineMinutes),
-            TotalVerificationHostMinutes: hostMinutes + reviewMinutes);
+            TotalVerificationHostMinutes: hostMinutes + reviewMinutes,
+            PreChecksRun: preChecks.Count,
+            PreChecksRed: preChecks.Count(item => item.Outcome == "red"),
+            PreCheckMinutesSaved: preChecks.Sum(item => item.MinutesSaved));
     }
 
     private static double? Ratio(double numerator, double denominator)

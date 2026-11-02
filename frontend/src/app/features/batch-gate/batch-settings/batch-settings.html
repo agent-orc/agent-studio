@@ -36,6 +36,7 @@
       </fieldset>
       <fieldset><legend>Review test level</legend>
         <label>Before batch <select name="reviewTestLevel" [ngModel]="form.reviewTestLevel" (ngModelChange)="update('reviewTestLevel', $event)" [attr.aria-invalid]="invalid('reviewTestLevel')"><option value="work-package">Work package</option><option value="build-only">Build only</option></select></label>
+        <label><input type="checkbox" name="preCheckEnabled" [ngModel]="form.preCheckEnabled" (ngModelChange)="update('preCheckEnabled', $event)"> Pre-check reviewed deliveries in spare gate slots</label>
         @if (invalid('reviewTestLevel')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
       </fieldset>
       <fieldset><legend>Gate timeout</legend>

@@ -1122,6 +1122,7 @@ public record BuildProfile
 /// <summary>Stable test levels used in settings, evidence, and gate logs.</summary>
 public static class TestExecutionLevels
 {
+    public const string BatchPreCheck = "batch-pre-check";
     /// <summary>
     /// Compile evidence only: the derived build / lint commands run, every test
     /// command (including the continuous baseline) is deliberately left out.
@@ -1146,6 +1147,7 @@ public static class TestExecutionLevels
     public static string Normalize(string? value, string fallback = WorkPackage)
         => value?.Trim().ToLowerInvariant() switch
         {
+            BatchPreCheck => BatchPreCheck,
             BuildOnly => BuildOnly,
             CompileOnly => CompileOnly,
             Continuous => Continuous,

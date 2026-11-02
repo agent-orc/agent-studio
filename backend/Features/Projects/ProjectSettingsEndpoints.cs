@@ -1195,7 +1195,7 @@ public static class ProjectSettingsEndpoints
         app.MapGet("/api/projects/{projectName}/batch-gate", (string projectName,
             ProjectSettingsService settings, TaskScannerService scanner, IConfiguration configuration) =>
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
-                ? Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate, configuration))
+                ? Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate, configuration, projectName))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
         app.MapPut("/api/projects/{projectName}/batch-gate", async (string projectName,
             HttpContext context, ProjectSettingsService settings, TaskScannerService scanner,
@@ -1237,7 +1237,7 @@ public static class ProjectSettingsEndpoints
                     logger.LogError(ex, "batch-gate-replan-failed project={Project}", projectName);
                 }
             });
-            return Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate, configuration));
+            return Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate, configuration, projectName));
         });
         app.MapGet("/api/projects/{projectName}/batch-gate/report", (string projectName, BatchGatePilotService pilot, TaskScannerService scanner) =>
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
@@ -1583,7 +1583,7 @@ public static class ProjectSettingsEndpoints
             : null;
 
     internal static object BatchGateSettingsResponse(BatchGateFormationOptions value,
-        IConfiguration? configuration) => new
+        IConfiguration? configuration, string project = "Agent Studio") => new
     {
         settings = new
         {
@@ -1599,6 +1599,7 @@ public static class ProjectSettingsEndpoints
             value.Overlap,
             value.ReviewTestLevel,
             value.GateTimeoutMinutes,
+            preCheckEnabled = value.PreCheckFor(project),
             advisor = value.Advisor ?? new BatchGateAdvisorOptions(),
         },
         // The mode that actually applies on this host: a configured advisor the

@@ -3493,11 +3493,14 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             = request => Green(request.ExpectedSha);
         public Func<BuildTestGateRequest, BuildTestGateResult> Fallback { get; set; }
             = _ => throw new InvalidOperationException("No per-task gate result is scripted.");
+        public Func<BuildTestGateRequest, BuildTestGateResult> PreCheck { get; set; }
+            = request => Green(request.ExpectedSha);
         public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? BatchAsync { get; set; }
         public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? FallbackAsync { get; set; }
         private int _batchRuns;
         private int _baseRuns;
         private int _fallbackRuns;
+        private int _preCheckRuns;
         private readonly TaskCompletionSource _batchStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _fallbackStarted =
@@ -3505,6 +3508,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         public int BatchRuns => Volatile.Read(ref _batchRuns);
         public int BaseRuns => Volatile.Read(ref _baseRuns);
         public int FallbackRuns => Volatile.Read(ref _fallbackRuns);
+        public int PreCheckRuns => Volatile.Read(ref _preCheckRuns);
         /// <summary>Completes when the first batch suite starts.</summary>
         public Task FirstBatchStarted => _batchStarted.Task.WaitAsync(HangGuard);
         /// <summary>Completes when the first per-task gate starts.</summary>
@@ -3528,6 +3532,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             {
                 Interlocked.Increment(ref _baseRuns);
                 return Task.FromResult(Base(request));
+            }
+            if (request.GateId == "batch-pre-check")
+            {
+                Interlocked.Increment(ref _preCheckRuns);
+                return Task.FromResult(PreCheck(request));
             }
             Interlocked.Increment(ref _fallbackRuns);
             _fallbackStarted.TrySetResult();

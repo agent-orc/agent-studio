@@ -184,7 +184,7 @@ export function batchSettingsPayload(enabled: boolean) {
     settings: {
       enabled, scope: 'code', planner: 'look-ahead', minimumSize: 2, maximumSize: 8,
       deadlineMinutes: 30, lookAheadMinutes: 45, urgentTags: [], riskPolicy: 'balanced',
-      overlap: 'adjacent', reviewTestLevel: 'work-package', gateTimeoutMinutes: 90,
+      overlap: 'adjacent', reviewTestLevel: 'work-package', gateTimeoutMinutes: 90, preCheckEnabled: true,
       advisor: { mode: 'off', cliType: 'claude', model: null, timeoutSeconds: 60 },
     },
     limits: { hardMaximumSize: 12 },

@@ -20,3 +20,4 @@
 .batch-panel button:hover { background: var(--studio-bg-hover); }
 .batch-panel button:disabled { cursor: default; opacity: .6; }
 .batch-panel button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+.batch-panel__pre-check-counters { font-variant-numeric: tabular-nums; }

@@ -10,14 +10,16 @@ const key = `${path}::AGT-2`;
 const settings = {
   enabled: true, scope: 'code', planner: 'look-ahead', minimumSize: 2, maximumSize: 4,
   deadlineMinutes: 30, lookAheadMinutes: 15, urgentTags: ['urgent'], riskPolicy: 'balanced',
-  overlap: 'separate', reviewTestLevel: 'work-package', gateTimeoutMinutes: 90,
+  overlap: 'separate', reviewTestLevel: 'work-package', gateTimeoutMinutes: 90, preCheckEnabled: true,
   advisor: { mode: 'enforce', cliType: 'codex', model: 'test-model', timeoutSeconds: 45 },
 };
 const state = {
   gateSlots: { busy: 2, total: 3 },
+  preChecksRun: 3, preChecksRed: 1, preCheckMinutesSaved: 42,
   plan: { decision: 'wait', reason: 'Advisor veto', targetSize: 2, closeAtUtc: '2026-10-11T14:05:00Z',
     proposedMembers: [key], upcoming: [], advisor: { mode: 'enforce', verdict: 'veto', reasons: ['Risk too high'], model: 'test-model', atUtc: '2026-10-11T13:00:00Z' } },
-  pending: [{ taskKey: key, reviewAttemptId: 'review-1', resultSha: 'a'.repeat(40), waitMinutes: 12, risk: 'high' }],
+  pending: [{ taskKey: key, reviewAttemptId: 'review-1', resultSha: 'a'.repeat(40), waitMinutes: 12, risk: 'high',
+    preCheck: { outcome: 'green', resultSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), gateProfileDigest: 'profile', reason: 'passed', failedTests: [], completedAtUtc: '2026-10-11T13:00:00Z' } }],
   batches: [{ batchId: 'batch-7', phase: 'red', baseSha: 'b'.repeat(40), candidateSha: 'c'.repeat(40),
     members: [{ taskKey: 'AGT-2', replay: 'applied', released: false }],
     runs: [{ batchRunId: 'run-7', host: 'agent-runner-01', outcome: 'failed', classification: 'test-failure', startedAtUtc: '2026-10-11T13:00:00Z', finishedAtUtc: '2026-10-11T13:05:00Z' }] },
@@ -92,6 +94,8 @@ test('board badge, batch panel and project settings save use batch contract', as
   await expect.poll(async () => (await page.getByTestId('batch-panel').boundingBox())?.x ?? 0).toBeGreaterThan(700);
   await expect(page.getByTestId('batch-panel')).toContainText('Advisor veto');
   await expect(page.getByTestId('batch-gate-slot-usage')).toHaveText('Gate slots: 2/3 busy');
+  await expect(page.getByTestId('batch-pre-check-counters')).toContainText('3 run · 1 red · 42 estimated gate minutes saved');
+  await expect(page.getByTestId('batch-panel')).toContainText('pre-check green');
   await expect(page.getByTestId('batch-panel')).toContainText('from batch-7');
   await expect(page.getByTestId('batch-panel')).toContainText('test-failure');
   await captureThemes(page, evidence, 'batch-panel');
@@ -104,6 +108,7 @@ test('board badge, batch panel and project settings save use batch contract', as
   await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
   await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
   await expect(page.getByTestId('batch-settings')).toBeVisible();
+  await expect(page.locator('[name="preCheckEnabled"]')).toBeChecked();
   await page.getByTestId('batch-settings-save').click();
   await expect.poll(() => saved).toBe(true);
   await expect(page.getByTestId('batch-settings')).toContainText('Saved');

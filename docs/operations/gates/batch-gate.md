@@ -7,6 +7,16 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
 
 ## Delivered
 
+- A reviewed, batch-deferred delivery gets an opportunistic pre-check on its
+  result SHA: project build commands, `.NET` guards, and touched frontend lint
+  and format scripts. Regular batches retain the first gate slot; the pre-check
+  uses only spare slots. A green verdict admits the card; a red verdict returns
+  it to Ready with failed tests and route lines in the agent follow-up. An
+  unchecked card may enter a batch at its deadline. `preCheckEnabled` is a
+  per-project switch, on by default for Agent Studio. State and report expose
+  pre-check run count, red count, and estimated gate minutes saved. The estimate
+  uses recent batch gate durations and expected base plus bisection runs.
+
 - Pending continuation intents and cards already queued in Progress exclude the
   old delivery from batch planning. A review is eligible only while its subject
   SHA matches the current run's immutable delivery. The same checks apply to
