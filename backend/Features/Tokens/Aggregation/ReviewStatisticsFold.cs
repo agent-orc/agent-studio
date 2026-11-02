@@ -14,7 +14,11 @@ public sealed record ReviewStatistics(
     IReadOnlyDictionary<string, ReviewMetric> ByStepUsd,
     IReadOnlyDictionary<string, ReviewMetric> ByModelLevelTokens,
     IReadOnlyDictionary<string, ReviewMetric> ByModelLevelUsd,
-    IReadOnlyList<string> AcceptedCards, IReadOnlyList<ReviewUsageRow> Reviews, string? Warning);
+    IReadOnlyList<string> AcceptedCards, IReadOnlyList<ReviewUsageRow> Reviews, string? Warning)
+{
+    /// <summary>The S2 review baseline; present only for <c>detail=baseline</c>.</summary>
+    public AgentStudio.Review.ReviewBaselineReport? Baseline { get; init; }
+}
 
 /// <summary>Pure review economics fold over the canonical, already de-duplicated ledger.</summary>
 public static class ReviewStatisticsFold

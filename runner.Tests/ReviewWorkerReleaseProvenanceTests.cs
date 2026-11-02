@@ -31,6 +31,9 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
     {
         try { Directory.Delete(_root, recursive: true); }
         catch { /* best effort */ }
+        // The adopted worker uses the production temp base; its attempt is gone now.
+        ReviewAttemptTemp.SweepOrphans(
+            ReviewAttemptTemp.DefaultBase(), _root, new HashSet<string>(), _ => { });
     }
 
     [Fact]

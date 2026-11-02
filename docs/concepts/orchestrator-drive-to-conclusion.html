@@ -394,6 +394,13 @@
         </tr>
         <tr>
           <td>2026-11-02</td>
+          <td><code>TE-72</code>, <code>TE-74</code>, <code>TE-76</code>, <code>TE-77</code><br><span class="small">release-source-needs-rebase-loop (fix <code>AGT-3435</code>)</span></td>
+          <td>No CLI crashed. On Token Economy, which integrates straight into <code>main</code>, reviewed deliveries failed <code>merge-into-develop ... strategy=direct-merge outcome=Error failureCode=source-needs-rebase</code> and escalated. A fix round took 20 minutes or more, another card moved <code>main</code> meanwhile, and the next attempt failed the same way; TE-77 hit it three times. Terminal at discovery: <span class="lane">5e-escalated</span>, each round sent again by an operator.</td>
+          <td>The release path required the delivery to descend from <code>main</code>, so the full suite could test the delivery SHA and <code>main</code> could fast-forward to it. Nothing about the deliveries was wrong; they merged without conflict.</td>
+          <td>A delivery behind <code>main</code> is merged with the develop path's <code>--no-ff</code> merge, the full suite runs on the exact merge SHA, and only that merge is published. A red suite rolls the lane back. When <code>main</code> moves during the suite, the delivery is merged and gated again, at most three times, then stops as <code>release-line-moving</code> with the reason in the log. Only a real conflict goes back to the agent, as the one bounded automatic round with the conflicted files named.</td>
+        </tr>
+        <tr>
+          <td>2026-11-02</td>
           <td><code>AOW-15</code><br><span class="small">review-model-cli-mismatch (fix <code>AGT-3420</code>)</span></td>
           <td>Every review aspect exited after about 2.5 seconds and was reported as <code>ToolUnavailable</code>. After three infrastructure retries the card escalated. Terminal at discovery: escalated, with the host's semantic-review capability drained for a fault the host did not have.</td>
           <td>The project had no review step setting, so <code>RemoteReviewPlanBuilder</code> fell back to <code>ReviewDecisionOrchestrator:AspectModel</code> and <code>ReviewDecisionOrchestrator:Cli</code>. They resolved independently, so the plan was sealed with the Claude CLI and a GPT model.</td>

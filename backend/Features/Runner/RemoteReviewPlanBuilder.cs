@@ -803,7 +803,7 @@ public sealed class RemoteReviewPlanBuilder
         var briefPath = Path.Combine(task.FolderPath, "prompt.md");
         var taskBody = Read(briefPath, 64_000, task.Id);
         var recentLog = Read(Path.Combine(task.FolderPath, "cli-output.log"), 16_000, string.Empty);
-        var status = Read(Path.Combine(task.FolderPath, "status.md"), 16_000, string.Empty);
+        var status = ReadStatus(task.FolderPath);
         var baseline = string.IsNullOrWhiteSpace(integrationRef) ? "the configured integration ref" : integrationRef;
         var diff =
             $"This aspect runs on a remote Review Executor at the immutable Result-SHA. " +
@@ -826,6 +826,20 @@ public sealed class RemoteReviewPlanBuilder
                 task.AcceptanceScope,
                 taskBody),
         };
+    }
+
+    /// <summary>
+    /// A remote agent writes its report to <c>results/status.md</c>. The card's
+    /// <c>status.md</c> is the generated summary, or a scaffold that says nothing
+    /// about the work until a summary exists, so a scaffold never hides the report.
+    /// </summary>
+    private static string ReadStatus(string folderPath)
+    {
+        var summary = Read(Path.Combine(folderPath, "status.md"), 16_000, string.Empty);
+        if (summary.Length > 0
+            && !summary.Contains(AgentStudio.Tasks.TaskTransitionService.ResultScaffoldMarker, StringComparison.Ordinal))
+            return summary;
+        return Read(Path.Combine(folderPath, "results", "status.md"), 16_000, summary);
     }
 
     private static string Read(string path, int maximumCharacters, string fallback)

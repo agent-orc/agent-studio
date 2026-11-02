@@ -27,6 +27,11 @@ public sealed class GateShardRunChecksTests
     [InlineData(null, "Test Run Aborted.", "console reports \"Test Run Aborted\"")]
     [InlineData(null, "The active test run was aborted. Reason: Test host process crashed", "console reports \"The active test run was aborted\"")]
     [InlineData(null, "  Failed Ns.AlphaTests.Red [3 ms]\nTotal tests: 4", null)]
+    // A test printed the words, and VSTest then closed a finished run.
+    [InlineData(null, "      Test Run Aborted.\n  Passed Ns.AlphaTests.Green [3 ms]\nTest Run Successful.\nTotal tests: 4", null)]
+    [InlineData(null, "      Test host process crashed\n  Failed Ns.AlphaTests.Red [3 ms]\nTest Run Failed.\nTotal tests: 4", null)]
+    // The real end of an aborted run, also when a test printed a verdict before it.
+    [InlineData(null, "Test Run Successful.\nThe active test run was aborted. Reason: Test host process crashed\nTest Run Aborted.", "console reports \"Test Run Aborted\"")]
     public void An_aborted_run_is_read_from_the_report_or_the_console(string? trxOutcome, string output, string? expected)
         => Assert.Equal(expected, GateShardRunChecks.Abort(Report(GateTestCounts.None, aborted: trxOutcome), output));
 

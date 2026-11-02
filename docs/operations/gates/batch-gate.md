@@ -126,6 +126,13 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   for `codex`, each with a `_FILE` variant. Without that credential, the engine
   records an advisor fallback with the requested model and keeps the
   deterministic plan. It never substitutes another model.
+- The networked profile never starts the advisor CLI on the server
+  (AGT-3411). With Engine ownership of `BatchPlan` the engine carries the
+  advisor as above. Otherwise the configured advisor does not run: the batch
+  tick decides deterministically, logs `batch-plan-advisor-off` once, and
+  `GET /api/projects/{name}/batch-gate` reports `advisorEffective` with
+  `effectiveMode: off`, `carrier: none`, and the reason, which Batch settings
+  shows beside the advisor fields.
 
 ## Open
 

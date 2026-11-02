@@ -114,6 +114,53 @@ public sealed class RemoteConceptReviewTests : IDisposable
         }).RequireDifferentHostFailureDomain);
     }
 
+    // The results inventory excerpts the head of each report, so only text past
+    // that excerpt shows whether the status section carries the whole report.
+    private static readonly string AgentReportBeyondTheExcerpt =
+        new string('x', 1_000) + "\nTimings beyond the excerpt.";
+
+    [Fact]
+    public void Aspect_reads_the_agent_report_while_the_card_status_is_a_scaffold()
+    {
+        Directory.CreateDirectory(Path.Combine(_folder, "results"));
+        File.WriteAllText(Path.Combine(_folder, "prompt.md"), "Brief.");
+        File.WriteAllText(Path.Combine(_folder, "status.md"),
+            AgentStudio.Tasks.TaskTransitionService.ResultScaffoldMarker + "\n# Status\nScaffold text.");
+        File.WriteAllText(Path.Combine(_folder, "results", "status.md"), AgentReportBeyondTheExcerpt);
+
+        var aspect = Assert.Single(BuildPlan().Commands, command => command.Aspect == "concept-fit");
+
+        Assert.Contains("Timings beyond the excerpt.", aspect.Prompt);
+        Assert.DoesNotContain("Scaffold text.", aspect.Prompt);
+    }
+
+    [Fact]
+    public void Aspect_prefers_the_generated_summary_over_the_agent_report()
+    {
+        Directory.CreateDirectory(Path.Combine(_folder, "results"));
+        File.WriteAllText(Path.Combine(_folder, "prompt.md"), "Brief.");
+        File.WriteAllText(Path.Combine(_folder, "status.md"), "# Status\nGenerated summary.");
+        File.WriteAllText(Path.Combine(_folder, "results", "status.md"), AgentReportBeyondTheExcerpt);
+
+        var aspect = Assert.Single(BuildPlan().Commands, command => command.Aspect == "concept-fit");
+
+        Assert.Contains("Generated summary.", aspect.Prompt);
+        Assert.DoesNotContain("Timings beyond the excerpt.", aspect.Prompt);
+    }
+
+    [Fact]
+    public void Aspect_keeps_the_scaffold_when_the_agent_wrote_no_report()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path.Combine(_folder, "prompt.md"), "Brief.");
+        File.WriteAllText(Path.Combine(_folder, "status.md"),
+            AgentStudio.Tasks.TaskTransitionService.ResultScaffoldMarker + "\n# Status\nScaffold text.");
+
+        var aspect = Assert.Single(BuildPlan().Commands, command => command.Aspect == "concept-fit");
+
+        Assert.Contains("Scaffold text.", aspect.Prompt);
+    }
+
     private ReviewPlanDto BuildPlan(ProjectSettings? settings = null)
     {
         var config = new ConfigurationBuilder().Build();

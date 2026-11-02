@@ -500,8 +500,14 @@ public class TaskRunnerService : BackgroundService
             _logger.LogInformation("Initialized runner for project '{Name}' (Root: {RootPath})", entry.Name, entry.RootPath);
         }
 
-        // Check CLI availability (default backend = Claude)
-        if (!_router.Get(CliTypes.Claude).IsAvailable())
+        // Check CLI availability (default backend = Claude). The networked
+        // profile never runs host CLIs, so a missing one there is expected.
+        if (!HostCliDiscovery.Allowed(_config))
+        {
+            _logger.LogInformation("Host CLI runs are disabled in the {Profile} profile; the Claude CLI check is skipped",
+                SecurityProfiles.ActiveProfile(_config));
+        }
+        else if (!_router.Get(CliTypes.Claude).IsAvailable())
         {
             _logger.LogWarning("Claude CLI not available - runners will be in manual/board-only mode");
         }

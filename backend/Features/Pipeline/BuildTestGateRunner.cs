@@ -1405,8 +1405,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                                 scope.Lockfiles)));
                 })
                 .ToArray();
-            var installNeeded = decisions.Length == 0
-                || decisions.Any(item => item.Decision.State != "hit");
+            var installNeeded = !DependencyPreparationSkipPolicy.MaySkip(
+                command.CoveredByDependencyScopes,
+                decisions.Select(item => item.Decision).ToArray());
             if (!installNeeded)
             {
                 foreach (var item in decisions)

@@ -67,6 +67,8 @@ exact absent load-bearing document or contract section. A block with
 `evidence_checked=none` or `missing=none` is downgraded to `concerns` and marked
 `block-without-citation`. Then emit exactly one verdict sentinel on its own line:
 
+`concerns` needs a concrete gap too: `missing` names it in one sentence. Without a gap the status is `pass`.
+
 ```
 [[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence>; evidence_checked=<files or diff sections checked>; missing=<exact gap, or none>]]
 ```
