@@ -31,7 +31,7 @@ var builder = WebApplication.CreateBuilder(command.HostArguments);
 if (string.Equals(Environment.GetEnvironmentVariable("TASK_SERVER_PROFILE"), "local-compatibility", StringComparison.OrdinalIgnoreCase))
     builder.Configuration.AddJsonFile("appsettings.LocalCompatibility.json", optional: false, reloadOnChange: false);
 var taskServerRequestBodyLimit = builder.Configuration.GetValue<long?>(
-    $"{TaskServerOptions.SectionName}:MaxRequestBodyBytes") ?? 25L * 1024 * 1024;
+    $"{TaskServerOptions.SectionName}:MaxRequestBodyBytes") ?? ReviewReportLimits.MaxRequestBodyBytes;
 builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = taskServerRequestBodyLimit);
 builder.Services.AddSingleton(serviceProvider =>

@@ -1,7 +1,21 @@
 # Review Domain Map
 
-Version: 2026-10-21
+Version: 2026-11-02
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Review report transport budget
+
+The review host caps embedded evidence at 8 MiB per artifact and the serialized
+report at 24 MiB, below the report route's explicit 25 MiB body limit. An
+oversized log is represented by its full byte count and SHA-256 plus a separate
+head-and-tail excerpt with an elision marker and its own digest. The original
+artifact remains on the review host. `artifactsReduced` marks this wire shape so
+preparation failures retain their classification when full log bytes are omitted.
+A 413 response or three consecutive 502
+responses triggers one reduced resend with embedded artifact bytes omitted;
+the outcome, failure classification, and aspect verdicts are unchanged. The
+host persists this choice in the review slot so reattachment cannot restart
+the same oversized submission cycle.
 
 Remote Review materializes exact result SHAs through the runner host's bounded
 source object cache (D8 A, AGT-3319). A canonical remote fetch populates a

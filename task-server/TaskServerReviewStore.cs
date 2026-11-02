@@ -1518,8 +1518,17 @@ public sealed partial class TaskServerStore
             || failed.Budget.LimitMs <= 0
             || failed.Budget.ConsumedMs < 0)
             return ("ReviewInfra", "CommandBudgetEvidenceInvalid");
-        if (!HasUnabridgedArtifact(request.Artifacts, failed.StdoutSha256)
-            || !HasUnabridgedArtifact(request.Artifacts, failed.StderrSha256))
+        if ((!HasUnabridgedArtifact(request.Artifacts, failed.StdoutSha256)
+             || !HasUnabridgedArtifact(request.Artifacts, failed.StderrSha256))
+            && (!request.ArtifactsReduced
+                || !ValidDigest(failed.StdoutSha256, 64)
+                || !ValidDigest(failed.StderrSha256, 64)
+                || !request.Artifacts.Any(artifact =>
+                    ValidArtifact(artifact)
+                    && string.Equals(artifact.Sha256, failed.StdoutSha256, StringComparison.OrdinalIgnoreCase))
+                || !request.Artifacts.Any(artifact =>
+                    ValidArtifact(artifact)
+                    && string.Equals(artifact.Sha256, failed.StderrSha256, StringComparison.OrdinalIgnoreCase))))
             return ("ReviewInfra", "ArtifactEvidenceIncomplete");
         return ("ReviewInfra", "PreparationFailed");
     }
