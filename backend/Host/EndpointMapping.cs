@@ -143,6 +143,7 @@ public static class EndpointMapping
         app.MapBranchSweepEndpoints();
         app.MapSupervisorEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapDiagnosticsEndpoints();
+        app.MapApiStallEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapInternalProbeEndpoints();
         app.MapTitleGenerationEndpoints();
         app.MapPromptEnhancementEndpoints();

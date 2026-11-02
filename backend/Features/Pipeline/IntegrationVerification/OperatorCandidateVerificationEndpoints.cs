@@ -65,7 +65,7 @@ public static class OperatorCandidateVerificationEndpoints
             var now = clock.GetUtcNow().UtcDateTime;
             var results = new List<OperatorCandidateCardResult>();
             using var lane = lanes.Acquire(registered.StorageLocation, Timeout.InfiniteTimeSpan);
-            var cards = scanner.ScanAllJobsRaw();
+            var cards = scanner.ScanWatchPathRaw(registered.StorageLocation);
             foreach (var address in request.Cards.Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 // Legacy lane folders move under this project mutex. Keep the

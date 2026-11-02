@@ -23,6 +23,8 @@ namespace AgentStudio.Tasks;
 /// </summary>
 public class TaskScannerService : ITaskScanner
 {
+    private readonly object _fullScanGate = new();
+    private const int ScanParallelism = 4;
     private readonly IConfiguration _config;
     private readonly ILogger<TaskScannerService> _logger;
     private readonly SummaryGenerationService _summaryService;
@@ -626,6 +628,18 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public List<TaskInfo> ScanAllJobsRaw()
     {
+        // A full walk is expensive on a busy shared filesystem. Serialize it so
+        // concurrent cache refreshes and background sweeps cannot each occupy
+        // their own group of worker threads.
+        lock (_fullScanGate) return ScanJobsRaw(watchPath: null);
+    }
+
+    /// <summary>Read one project's task folder for repository indexing.</summary>
+    public List<TaskInfo> ScanWatchPathRaw(string watchPath)
+        => ScanJobsRaw(watchPath);
+
+    private List<TaskInfo> ScanJobsRaw(string? watchPath)
+    {
         TaskSwitchTrace.WorkspaceScan();
         var sw = Stopwatch.StartNew();
 
@@ -637,6 +651,7 @@ public class TaskScannerService : ITaskScanner
         var candidates = new List<(string jobDir, WatchPathEntry entry, string state)>();
         foreach (var entry in GetWatchPaths())
         {
+            if (watchPath != null && !WatchPathComparison.PathsEqual(entry.Path, watchPath)) continue;
             if (!Directory.Exists(entry.Path))
             {
                 // Log-once per path: this runs on every cache refresh, so an
@@ -682,9 +697,10 @@ public class TaskScannerService : ITaskScanner
         // every cache miss (a reorder that dirtied the index, or the
         // click-into-card FindJob right after a sort) paid the whole walk.
         // Result order is irrelevant; every consumer sorts by State/Order.
+        var dop = Math.Min(ScanParallelism, Math.Max(1, Environment.ProcessorCount));
         var jobs = candidates
             .AsParallel()
-            .WithDegreeOfParallelism(Math.Max(2, Environment.ProcessorCount))
+            .WithDegreeOfParallelism(dop)
             .Select(c => ScanJobFolder(c.jobDir, c.entry, c.state))
             .Where(j => j != null)
             .Select(j => j!)
@@ -698,14 +714,14 @@ public class TaskScannerService : ITaskScanner
             .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         foreach (var archivedPath in _archivedFolders.Keys)
         {
-            if (!candidatePaths.Contains(archivedPath))
+            if (watchPath == null && !candidatePaths.Contains(archivedPath))
                 _archivedFolders.TryRemove(archivedPath, out _);
         }
         // Same bound for the live memo: drop entries whose folder disappeared
         // (lane move to archive, or a delete) so it cannot grow with history.
         foreach (var livePath in _liveFolders.Keys)
         {
-            if (!candidatePaths.Contains(livePath))
+            if (watchPath == null && !candidatePaths.Contains(livePath))
                 _liveFolders.TryRemove(livePath, out _);
         }
 
@@ -717,12 +733,12 @@ public class TaskScannerService : ITaskScanner
             var archived = jobs.Count(j => string.Equals(j.State, TaskStates.Archive, StringComparison.Ordinal));
             _logger.LogInformation(
                 "ScanAllJobsRaw scanned {Count} task folders ({Archived} archived slim-hydrated) in {ElapsedMs}ms (parallel x{Dop})",
-                jobs.Count, archived, sw.ElapsedMilliseconds, Math.Max(2, Environment.ProcessorCount));
+                jobs.Count, archived, sw.ElapsedMilliseconds, dop);
         }
         return jobs;
     }
 
-    public TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
+    public virtual TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
         bool bypassMemo = false)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");

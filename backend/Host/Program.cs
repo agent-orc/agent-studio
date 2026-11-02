@@ -31,6 +31,12 @@ if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
     return;
 }
 
+// Twelve processors were also the pool minimum during the live stall. A scan
+// and synchronous filesystem work can occupy that many workers at once; keep
+// 64 ready so health checks and reads can still run while the pool is blocked.
+ThreadPool.GetMinThreads(out var workerMinimum, out var completionPortMinimum);
+ThreadPool.SetMinThreads(Math.Max(64, workerMinimum), completionPortMinimum);
+
 // Host timeline (AGT-3107): read the clock before anything else so the
 // opt-in timeline can report the time from entry to Build().
 var hostEntryTimestamp = TimeProvider.System.GetTimestamp();
@@ -213,6 +219,10 @@ var fileLogSink = new BackendFileLogSink(fileLoggerOptions);
 var crashRecorder = new CrashRecorder(fileLoggerOptions, fileLogSink);
 builder.Services.AddSingleton(fileLogSink);
 builder.Services.AddSingleton(crashRecorder);
+// AGT-3369: a timer tick that runs late is the API's own view of a GC pause
+// or a starved thread pool; Operations reads the stalls it records.
+builder.Services.AddSingleton<ApiStallDetector>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiStallDetector>());
 // Drop the default MEL providers (Console/Debug/EventSource) so the operator
 // sees a single Serilog-formatted console stream rather than two. The rolling
 // backend file logger is re-added explicitly and kept alive via Serilog's
@@ -373,6 +383,7 @@ if (!underTestHost)
 
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
+builder.Services.AddHostedService<AgentStudio.Diagnostics.LastSeenPersistenceService>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
 builder.Services.AddHttpClient("secret-external", client => client.Timeout = TimeSpan.FromSeconds(10))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
