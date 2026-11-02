@@ -796,25 +796,42 @@ public sealed class TaskIndexCache
     private void PublishCoreFacts(Dictionary<string, TaskInfo> facts,
         Dictionary<string, TaskCoreRecord> records, TaskReferenceIndex references)
     {
-        var identities = new Dictionary<string, List<TaskInfo>>(StringComparer.OrdinalIgnoreCase);
+        // Every publication of one card rebuilds these maps for the whole
+        // workspace, so the loops below avoid per-card LINQ and presize the
+        // maps (AGT-3369). The result is the same as the grouped, ordered form.
+        var identities = new Dictionary<string, List<TaskInfo>>(facts.Count * 2, StringComparer.OrdinalIgnoreCase);
         foreach (var task in facts.Values)
-            foreach (var identity in new[] { task.Id, task.Key, task.TaskKey, TaskCoreRecord.Limit(task.Id, 128) }
-                .Where(identity => !string.IsNullOrWhiteSpace(identity))
-                .Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                if (!identities.TryGetValue(identity!, out var matches))
-                    identities[identity!] = matches = [];
-                matches.Add(task);
-            }
-        var byIdentity = identities.ToDictionary(pair => pair.Key,
-            pair => pair.Value.OrderBy(task => Array.IndexOf(TaskStates.All, task.State))
-                .ThenBy(task => task.FolderPath, StringComparer.Ordinal).ToArray(),
-            StringComparer.OrdinalIgnoreCase);
-        var byFolder = new Dictionary<string, TaskCoreRecord>(records.Comparer);
-        var aliases = new Dictionary<string, TaskCoreRecord>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (folder, task) in facts
-            .OrderByDescending(pair => Array.IndexOf(TaskStates.All, pair.Value.State))
-            .ThenByDescending(pair => pair.Key, StringComparer.Ordinal))
+        {
+            var limitedId = TaskCoreRecord.Limit(task.Id, 128);
+            AddIdentity(identities, task, task.Id);
+            if (!SameIdentity(task.Key, task.Id))
+                AddIdentity(identities, task, task.Key);
+            if (!SameIdentity(task.TaskKey, task.Id) && !SameIdentity(task.TaskKey, task.Key))
+                AddIdentity(identities, task, task.TaskKey);
+            if (!SameIdentity(limitedId, task.Id) && !SameIdentity(limitedId, task.Key)
+                && !SameIdentity(limitedId, task.TaskKey))
+                AddIdentity(identities, task, limitedId);
+        }
+        var byIdentity = new Dictionary<string, TaskInfo[]>(identities.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var (identity, matches) in identities)
+            byIdentity[identity] = matches.Count == 1
+                ? [matches[0]]
+                : matches.OrderBy(task => Array.IndexOf(TaskStates.All, task.State))
+                    .ThenBy(task => task.FolderPath, StringComparer.Ordinal).ToArray();
+        var byFolder = new Dictionary<string, TaskCoreRecord>(facts.Count, records.Comparer);
+        var aliases = new Dictionary<string, TaskCoreRecord>(facts.Count * 3, StringComparer.OrdinalIgnoreCase);
+        var ordered = new (int StateIndex, string Folder, TaskInfo Task)[facts.Count];
+        var position = 0;
+        foreach (var (folder, task) in facts)
+            ordered[position++] = (Array.IndexOf(TaskStates.All, task.State), folder, task);
+        // Later entries win an alias: descending lane index, then descending
+        // folder. Folders are unique, so the order is total.
+        Array.Sort(ordered, static (left, right) =>
+        {
+            var byState = right.StateIndex.CompareTo(left.StateIndex);
+            return byState != 0 ? byState : string.CompareOrdinal(right.Folder, left.Folder);
+        });
+        foreach (var (_, folder, task) in ordered)
         {
             if (!records.TryGetValue(folder, out var record)) continue;
             var waitsOn = task.References.DependsOn.Count > 0 ? references.EvaluateWaitsOn(task) : null;
@@ -835,6 +852,18 @@ public sealed class TaskIndexCache
             _coreWriteGeneration++;
         }
     }
+
+    private static void AddIdentity(Dictionary<string, List<TaskInfo>> identities, TaskInfo task, string? identity)
+    {
+        if (string.IsNullOrWhiteSpace(identity)) return;
+        if (!identities.TryGetValue(identity, out var matches))
+            identities[identity] = matches = [];
+        matches.Add(task);
+    }
+
+    private static bool SameIdentity(string? candidate, string? earlier)
+        => !string.IsNullOrWhiteSpace(candidate) && !string.IsNullOrWhiteSpace(earlier)
+           && string.Equals(candidate, earlier, StringComparison.OrdinalIgnoreCase);
 
     private static bool DependencyFactsChanged(
         Dictionary<string, TaskInfo> previous, Dictionary<string, TaskInfo> current)
@@ -923,14 +952,21 @@ public sealed class TaskIndexCache
             ? Path.GetDirectoryName(Path.GetDirectoryName(path))
             : Path.GetDirectoryName(path);
         if (folder is null) return;
-        var observedTaskStamp = name == "task.json" ? TaskCoreSourceStamp.Read(path) : default;
+        var observedStamp = TaskCoreSourceStamp.Read(path);
         TaskCoreRecord? known;
         var startWorker = false;
         lock (_lock)
         {
             _coreByFolder.TryGetValue(folder, out known);
             if (name == "task.json" && known is not null
-                && _coreTaskStamps.GetValueOrDefault(folder) == observedTaskStamp)
+                && _coreTaskStamps.GetValueOrDefault(folder) == observedStamp)
+                return;
+            // The watcher echoes every sidecar write the API already published
+            // with the card. Republishing it rebuilt the whole core index once
+            // more per timeline append, the largest allocator under load
+            // (AGT-3369). A sidecar whose stamp the published record already
+            // carries changes nothing.
+            if (known is not null && SidecarAlreadyPublished(known, name, observedStamp))
                 return;
             _staleCoreFolders.Add(folder);
             _coreFolderVersions[folder] = ++_coreWriteGeneration;
@@ -970,6 +1006,15 @@ public sealed class TaskIndexCache
         });
     }
 
+    internal static bool SidecarAlreadyPublished(TaskCoreRecord record, string fileName, TaskCoreSourceStamp observed)
+        => fileName switch
+        {
+            "status.md" => record.Status.State != "stale" && record.StatusStamp == observed,
+            "prompt.md" => record.Prompt.State != "stale" && record.PromptStamp == observed,
+            "timeline.jsonl" => record.Timeline.State != "stale" && record.TimelineStamp == observed,
+            _ => false,
+        };
+
     private (string WatchPath, string ProjectName, string State)? ResolveUnknownCoreFolder(string folder)
     {
         foreach (var entry in _scanner.GetWatchPaths())
@@ -984,11 +1029,18 @@ public sealed class TaskIndexCache
         return null;
     }
 
+    // Alias keys of a record. A record is immutable and an unchanged card keeps
+    // its record instance across publications, so its keys are built once
+    // instead of three strings per card per publication (AGT-3369). The table
+    // holds its keys weakly: it is bounded by the records still alive.
+    private static readonly ConditionalWeakTable<TaskCoreRecord, string[]> CoreAliasKeys = new();
+
     private static void AddCoreAliases(Dictionary<string, TaskCoreRecord> core, TaskCoreRecord record)
     {
-        core[CoreKey(record.WatchPath, record.Id)] = record;
-        core[CoreKey(record.WatchPath, record.TaskKey)] = record;
-        if (!string.IsNullOrWhiteSpace(record.Key)) core[CoreKey(record.WatchPath, record.Key)] = record;
+        foreach (var key in CoreAliasKeys.GetValue(record, static r => string.IsNullOrWhiteSpace(r.Key)
+                     ? [CoreKey(r.WatchPath, r.Id), CoreKey(r.WatchPath, r.TaskKey)]
+                     : [CoreKey(r.WatchPath, r.Id), CoreKey(r.WatchPath, r.TaskKey), CoreKey(r.WatchPath, r.Key)]))
+            core[key] = record;
     }
 
     private static void AddLegacyCoreAliases(Dictionary<string, TaskCoreRecord> core,

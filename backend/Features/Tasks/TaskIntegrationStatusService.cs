@@ -171,6 +171,17 @@ public sealed class TaskIntegrationStatusService
         // otherwise. Git itself interprets includes, conditional includes and
         // worktree config, so there is no partial filesystem parser or TTL.
         var origins = new Dictionary<string, string?>(FileSystemPathComparer.Instance);
+        // One repository-root resolution per watch path, not per card: each
+        // resolution re-binds the WatchPaths configuration, which made this
+        // loop a top allocator on a board with thousands of cards (AGT-3369).
+        var roots = new Dictionary<string, string?>(FileSystemPathComparer.Instance);
+        string? RootFor(TaskInfo job)
+        {
+            var watchPath = job.WatchPath ?? string.Empty;
+            if (!roots.TryGetValue(watchPath, out var root))
+                roots[watchPath] = root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
+            return root;
+        }
         foreach (var job in jobs.Where(job => !deliveredOnly || DeliveredLanes.Contains(job.State)))
         {
             if (TestStatusOverride?.Invoke(job) is { } testStatus)
@@ -178,14 +189,15 @@ public sealed class TaskIntegrationStatusService
                 result[job.TaskKey] = testStatus;
                 continue;
             }
-            var groups = BuildRepositoryGroups(job, origins);
+            var primaryRoot = RootFor(job);
+            var groups = BuildRepositoryGroups(job, origins, primaryRoot);
             // AGT-2856: a card without an attributed commit is answered from its
             // project's primary repository, so that repository must be resolved
             // here too. Deriving the key only from the groups made the verdict
             // depend on the rest of the batch: the board (many cards) saw the
             // ancestor set a neighbouring card had seeded and read "integrated",
             // while acceptance (one card) found none and read "pending".
-            var primaryKey = ResolvePrimaryRepoKey(job);
+            var primaryKey = PrimaryRepoKey(job, primaryRoot);
             work[job] = new CardIntegrationWork(groups, primaryKey);
             foreach (var group in groups)
                 if (group.Key is not null) repoKeys.Add(group.Key);
@@ -538,7 +550,7 @@ public sealed class TaskIntegrationStatusService
         if (subject is not null && ReviewSubjectStore.IsValidResultSha(subject.ResultSha)
             && groups.Count <= 1)
         {
-            var subjectKey = ResolvePrimaryRepoKey(job);
+            var subjectKey = PrimaryRepoKey(job, _git.ResolveRepoRootForWatchPath(job.WatchPath));
             if (subjectKey is not null && reaches.TryGetValue(subjectKey, out var subjectReach))
             {
                 // AGT-3097: released is answered for the commit the verdict
@@ -817,9 +829,8 @@ public sealed class TaskIntegrationStatusService
     /// integration branch. Null when the checkout cannot be resolved, which
     /// leaves the card on the conservative not-integrated reading.
     /// </summary>
-    private RepoBranchKey? ResolvePrimaryRepoKey(TaskInfo job)
+    private RepoBranchKey? PrimaryRepoKey(TaskInfo job, string? root)
     {
-        var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
         return string.IsNullOrWhiteSpace(root)
             ? null
             : new RepoBranchKey(root, ConfiguredIntegrationBranch(job));
@@ -844,7 +855,7 @@ public sealed class TaskIntegrationStatusService
     }
 
     private List<RepositoryCommitGroup> BuildRepositoryGroups(
-        TaskInfo job, Dictionary<string, string?> origins)
+        TaskInfo job, Dictionary<string, string?> origins, string? primaryRoot)
     {
         var commits = AttributedCommitRecords(job, includeSuperseded: true);
         var subject = CurrentReviewSubject(job);
@@ -858,7 +869,6 @@ public sealed class TaskIntegrationStatusService
         }
         if (commits.Count == 0) return [];
 
-        var primaryRoot = _git.ResolveRepoRootForWatchPath(job.WatchPath);
         string? primaryOrigin = null;
         if (!string.IsNullOrWhiteSpace(primaryRoot)
             && !origins.TryGetValue(primaryRoot, out primaryOrigin))

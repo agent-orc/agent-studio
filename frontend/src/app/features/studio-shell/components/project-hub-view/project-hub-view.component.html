@@ -13,6 +13,7 @@
       <app-project-environment-overview [projectName]="projectName()" (openDeploy)="setRail('deploy')"
         (openRelease)="openOperationsRelease($event)"
         (openTask)="openTask.emit($event)" />
+      <app-api-stall-panel />
       <app-project-product-runtime-panel [projectName]="projectName()" />
     }
   </div>

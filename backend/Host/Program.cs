@@ -212,6 +212,10 @@ var fileLogSink = new BackendFileLogSink(fileLoggerOptions);
 var crashRecorder = new CrashRecorder(fileLoggerOptions, fileLogSink);
 builder.Services.AddSingleton(fileLogSink);
 builder.Services.AddSingleton(crashRecorder);
+// AGT-3369: a timer tick that runs late is the API's own view of a GC pause
+// or a starved thread pool; Operations reads the stalls it records.
+builder.Services.AddSingleton<ApiStallDetector>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiStallDetector>());
 // Drop the default MEL providers (Console/Debug/EventSource) so the operator
 // sees a single Serilog-formatted console stream rather than two. The rolling
 // backend file logger is re-added explicitly and kept alive via Serilog's

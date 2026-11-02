@@ -67,6 +67,7 @@
 /api/devtools/e2e-jobs	free	-	-	-
 /api/devtools/fixtures/scan	free	-	-	-
 /api/devtools/update-stable/stream	free	-	-	-
+/api/diagnostics/api-stalls	free	-	-	-
 /api/diagnostics/last-crash	free	-	-	-
 /api/diagnostics/last-silent-kill	free	-	-	-
 /api/diagnostics/log-location	free	-	-	-
