@@ -2110,7 +2110,8 @@
 }
 .studio-projected-content:has(+ app-studio-welcome) { flex: 0 0 auto; min-height: auto; }
 .studio-projected-content + app-studio-welcome { margin-top: var(--studio-spacing-4); }
-.studio-projected-content:has(+ app-workspace-deployment-dashboard) { display: none; }
+.studio-projected-content:has(+ app-workspace-deployment-dashboard),
+.studio-projected-content--hidden { display: none; }
 app-workspace-deployment-dashboard { flex: 1; min-height: 0; }
 .studio-deployment-entry {
   width: 100%;

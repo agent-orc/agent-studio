@@ -2,6 +2,9 @@ using AgentStudio.Deploy;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Management;
+using AgentStudio.Registry;
+using AgentStudio.Git;
 
 namespace AgentStudio.Projects;
 
@@ -9,6 +12,32 @@ public static class ProjectOperatorDashboardEndpoints
 {
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/v1/operations/structure", (string? scope, string? environment,
+            IConfiguration configuration, ProjectRegistry projects, ProjectEnvironmentService environments,
+            GitService git) =>
+        {
+            if (scope is not null && scope != "workspace" && !scope.StartsWith("project:", StringComparison.Ordinal))
+                return Results.BadRequest(new { error = "scope must be workspace or project:{id}." });
+            var projectId = scope?.StartsWith("project:", StringComparison.Ordinal) == true ? scope[8..] : null;
+            if (projectId is not null)
+            {
+                var project = projects.FindByIdOrDisplayName(projectId);
+                if (project is null) return Results.NotFound();
+                projectId = project.Id;
+            }
+            InstallationConnectivityManifest? manifest = null;
+            var path = configuration[ConnectivityManifestLoader.ManifestPathKey];
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                try { manifest = InstallationConnectivityManifest.Parse(File.ReadAllText(Path.GetFullPath(path))); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                { return Results.Problem("Connectivity manifest is unavailable.", statusCode: 503); }
+            }
+            return Results.Ok(StructureProjection.Build(manifest, projects.List(),
+                environments.DeclarationFiles, projectId, environment,
+                project => git.ResolveRepoRootForProject(project.DisplayName)));
+        });
+
         app.MapGet("/api/environment/flow", (EnvironmentFlowService flow) =>
             Results.Ok(flow.Build()));
 

@@ -25,7 +25,8 @@ export type StudioRoute =
   | { kind: 'workbench'; projectSlug: string; workbenchId: string }
   | { kind: 'task'; reference: string; tab: TaskDetailRouteTab; inspector: TaskInspectorRouteTab }
   | { kind: 'workspace-settings'; section: string; detail: string | null }
-  | { kind: 'deployment-dashboard' };
+  | { kind: 'deployment-dashboard' }
+  | { kind: 'structure' };
 
 /**
  * Parse the single canonical Studio route from the shared hash segment model.
@@ -60,6 +61,7 @@ export function parseStudioRoute(hash: string): StudioRoute | null {
   if (segments.length === 2 && segments[0] === 'workspace' && segments[1] === 'deployments') {
     return { kind: 'deployment-dashboard' };
   }
+  if (segments.join('/') === 'workspace/operations/structure') return { kind: 'structure' };
   if (segments.length === 2 && segments[0] === 'tasks' && segments[1]) {
     const [viewTab, viewInspector] = (query.get('view') ?? '').split(':', 2);
     return {
@@ -136,6 +138,8 @@ export function studioRouteForTab(
       return null;
     case 'deployment-dashboard':
       return '/workspace/deployments';
+    case 'structure':
+      return '/workspace/operations/structure';
     default:
       return null;
   }
