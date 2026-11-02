@@ -462,6 +462,26 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         Assert.NotNull(ledger.LastAttemptAt);
     }
 
+    [Fact]
+    public void Receipts_of_a_resume_after_a_service_stop_spend_no_rung()
+    {
+        var stack = Build();
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, "ledger-shutdown");
+        Directory.CreateDirectory(folder);
+        var delivery = new string('a', 40);
+        GateEnvironmentRetryReceipts.RecordRetry(
+            stack.Timeline, folder, delivery, GateEnvironmentRetrySources.Shutdown, 0, "first restart");
+        GateEnvironmentRetryReceipts.RecordRetry(
+            stack.Timeline, folder, delivery, GateEnvironmentRetrySources.Shutdown, 0, "second restart");
+        GateEnvironmentRetryReceipts.RecordRetry(
+            stack.Timeline, folder, delivery, GateEnvironmentRetrySources.Sweep, 1, "real environment fault");
+
+        var ledger = GateEnvironmentRetryReceipts.Read(stack.Timeline, folder, delivery);
+
+        Assert.Equal(1, ledger.AttemptsSpent);
+        Assert.NotNull(ledger.LastAttemptAt);
+    }
+
     private IReadOnlyList<TimelineEvent> Receipts(Stack stack, string id)
     {
         var job = stack.Scanner.FindJob(id, _watchPath);

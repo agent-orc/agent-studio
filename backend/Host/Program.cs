@@ -390,6 +390,9 @@ builder.Services.AddSingleton(sp => new AgentStudio.TaskServer.Contracts.GitHubA
     sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.GitHubAppHostKeys(
     sp.GetRequiredService<AccessSecurityStore>().SecurityFolder));
+// Registered before every Git-using hosted service: its StartAsync writes the
+// first App tokens before they start. Integration waits on the readiness.
+builder.Services.AddSingleton<AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness>();
 builder.Services.AddHostedService<AgentStudio.GitHubApp.GitHubAppHostCredentialService>();
 builder.Services.AddSingleton<ProjectSecretBindings>();
 builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();

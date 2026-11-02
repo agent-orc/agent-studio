@@ -129,6 +129,9 @@ public static class GateFailureRoutingPolicy
                 : $"Waiting on {causeKey}, the shared cause of this fingerprint.",
             GateFailureRouteAction.ParkUndecidable =>
                 $"Missing evidence: {triage.MissingEvidence ?? "unknown"}. Decide whether the delivery or the environment caused the red gate.",
+            _ when route.Reason == "environment-replay-budget-spent"
+                   && triage.Kind == GateEnvironmentKinds.Credential =>
+                "The bounded replay ladder is spent and origin still refuses this host's Git credential; reconnect the GitHub App or repair the host credential, then use Retry integration.",
             _ when route.Reason == "environment-replay-budget-spent" =>
                 "The bounded environment replay ladder is spent or disabled for this project; repair the gate host, then use Retry integration.",
             _ when route.Reason == "transport-gate-retry-spent" =>

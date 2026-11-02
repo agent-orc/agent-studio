@@ -2183,10 +2183,26 @@ public sealed partial class BatchGatePilotService
                 SupersedeFallbackResult(task, pending, recordInStore);
                 return true;
             }
-            // Keep the durable active marker. The next host tick spends the
-            // second and final start in the existing interrupted-gate budget.
-            if (gate.CancellationReason == GateCancellationReasons.Shutdown && starts + 1 < FallbackGateStartBudget)
-                return false;
+            // Keep the durable active marker so the next host tick resumes the
+            // gate. The service's own stop refunds the start it charged; a crash
+            // never reaches this line, so its start stays charged. A remote gate
+            // host's shutdown spends the start as before.
+            if (gate.CancellationReason == GateCancellationReasons.Shutdown)
+            {
+                var charged = AgentStudio.Runner.MonolithTransitionAdapter.GateStartsAfterCancellation(
+                    starts, gate.CancellationReason, serviceStopping: ct.IsCancellationRequested);
+                if (charged < FallbackGateStartBudget)
+                {
+                    var current = BatchGateOwnershipStore.Read(task.FolderPath);
+                    if (current?.ReviewAttemptId == pending.ReviewAttemptId && current.FallbackGateStarts != charged)
+                        BatchGateOwnershipStore.Write(task.FolderPath,
+                            current with { FallbackGateActive = true, FallbackGateStarts = charged });
+                    _logger.LogInformation(
+                        "batch-fallback-gate-interrupted-by-shutdown task={TaskKey} attempt={AttemptId} chargedStarts={Starts}",
+                        pending.Subject.TaskKey, pending.ReviewAttemptId, charged);
+                    return false;
+                }
+            }
             if (gate.Verdict != BuildTestGateVerdict.Ok
                 || !string.Equals(gate.TestedSha, pending.Subject.ResultSha,
                     StringComparison.OrdinalIgnoreCase))
@@ -2666,6 +2682,21 @@ public sealed class BatchGatePilotHostedService : BackgroundService
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception ex) { _logger.LogError(ex, "Batch gate pilot tick failed."); }
             if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false)) break;
+        }
+    }
+
+    /// <summary>
+    /// A cancelled tick stops waiting, but its per-task gate flights still
+    /// record the shutdown that refunds their start. Give them the host's
+    /// shutdown window to do so.
+    /// </summary>
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        try { await _pilot.WaitForFlightsAsync(includeFallbacks: true, cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("Batch gate pilot stopped before its gate flights recorded the shutdown.");
         }
     }
 }

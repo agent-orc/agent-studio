@@ -35,6 +35,9 @@ public static class GateEnvironmentKinds
     /// <summary>The gate process died before it reached a verdict (AGT-2849).</summary>
     public const string Interrupted = "interrupted";
 
+    /// <summary>Origin refused the integration fetch for a missing or refused credential (2 November 2026).</summary>
+    public const string Credential = "credential";
+
     /// <summary>A clean repeat of the same item on the same tree passed (AGT-2916 <c>intermittent</c>).</summary>
     public const string ProvenIntermittent = "proven-intermittent";
 }
@@ -108,6 +111,12 @@ public static partial class GateFailureTriagePolicy
         GateEnvironmentKinds.Interrupted,
         "The merge gate was interrupted before it reached a verdict.",
         ["gate-interrupted"]);
+
+    /// <summary>The verdict for a card whose integration fetch had no usable Git credential.</summary>
+    public static GateFailureTriage CredentialUnavailable() => Environment(
+        GateEnvironmentKinds.Credential,
+        "The integration branch could not be fetched because the Git credential for origin was missing or refused.",
+        [AcceptedIntegrationFailureCodes.GitCredentialUnavailable]);
 
     /// <summary>The verdict when no gate evidence log exists.</summary>
     public static GateFailureTriage NoLog() => Undecidable(
