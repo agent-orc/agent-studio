@@ -21,6 +21,8 @@ describe('Studio route contract', () => {
     });
     expect(parseStudioRoute('#/feed')).toEqual({ kind: 'feed' });
     expect(parseStudioRoute('#/workspace/operations/structure')).toEqual({ kind: 'structure' });
+    expect(parseStudioRoute('#/projects/website/operations/structure'))
+      .toEqual({ kind: 'structure', projectSlug: 'website' });
     expect(parseStudioRoute('#/chat-history')).toEqual({ kind: 'chat-history' });
     expect(parseStudioRoute('#/projects/agent-studio/board')).toEqual({
       kind: 'board',

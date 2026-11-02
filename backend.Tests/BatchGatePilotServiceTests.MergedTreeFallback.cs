@@ -109,7 +109,7 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     [Fact]
-    public async Task Conflict_without_an_automatic_merge_round_escalates_with_the_files_and_no_gate()
+    public async Task Conflict_without_a_fenced_result_ref_starts_agent_round_without_a_gate()
     {
         using var factory = BuildFactory();
         _ = factory.CreateClient();
@@ -120,15 +120,9 @@ public sealed partial class BatchGatePilotServiceTests
         await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
 
         Assert.Equal(0, _gate.FallbackRuns);
-        AssertLane(member.Key, TaskStates.Escalated);
-        // The escalation verdict names the conflict and its files.
-        Assert.Contains(Directory.GetFiles(_workspace, "*", SearchOption.AllDirectories)
-                .Where(file => !file.StartsWith(_repo, StringComparison.Ordinal)
-                    && !file.StartsWith(_origin, StringComparison.Ordinal)
-                    && !file.EndsWith(".lock", StringComparison.Ordinal))
-                .Select(File.ReadAllText),
-            text => text.Contains("Merge conflict with develop", StringComparison.Ordinal)
-                && text.Contains("README.md", StringComparison.Ordinal));
+        AssertLane(member.Key, TaskStates.Ready);
+        var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob(member.Key, _watchPath)!;
+        Assert.Contains("README.md", card.PendingIntent?.Prompt);
     }
 
     [Fact]
