@@ -792,6 +792,12 @@ as before.
   gate measurement on the gate hosts shows a gain. A gate worker older than
   AGT-3232 rejects the field as `unknown-field`, so add it only after every
   gate host runs the new worker.
+  On the gate host (24 vCPU) on 2 November 2026 the whole backend suite, 13,288
+  tests, took 20 minutes in four parallel processes with 6 processors each and a
+  hash partition, next to a running batch gate, without a failure. One process
+  with 12 processors took 33 minutes. Most of the time is spent waiting, so the
+  host load stayed between 10 and 21. `backend-routine` declares `shards: 4` since
+  then, with `RemoteGate:ProcessorCount` 6 so that four lanes fit on the host.
 - **Count.** `shards: N` (1 to 16; 1 keeps the suite in one process) sets the
   count. `shards: auto` derives it from the measured serial duration of the
   last complete sharded run, or else `expectedDurationSeconds`, at 360 seconds
