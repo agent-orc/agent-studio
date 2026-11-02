@@ -176,6 +176,9 @@ public static class RoutePermissionCatalog
             => rules.Add(new Rule(methods, Split(pattern), new RequiredPermissionMetadata(permission, EnvironmentBodyField: field)));
 
         // --- Anonymous, own session, and access administration -------------
+        // The move tool reads this health probe from inside the API container;
+        // the endpoint itself rejects non-loopback callers before returning host facts.
+        Add("GET", IamPermissions.Anonymous, "/healthz/readiness");
         Add("*", IamPermissions.Anonymous, "/healthz/**");
         Add("R", IamPermissions.Anonymous, "/api/auth/status", "/recovery");
         Add("POST", IamPermissions.Anonymous,
@@ -346,7 +349,8 @@ public static class RoutePermissionCatalog
             "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
             "/api/workspace/summary", "/api/workspaces/{}/quota/**",
             "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",
-            "/api/system/execution-infrastructure", "/api/system/gate-slots", "/api/agent-rules", "/api/adhoc-usage/**");
+            "/api/system/execution-infrastructure", "/api/system/gate-slots", "/api/system/readiness", "/api/agent-rules", "/api/adhoc-usage/**");
+        Add("POST", IamPermissions.WorkspaceOperate, "/api/system/readiness/refresh");
         Add("W", IamPermissions.WorkspaceOperate,
             "/api/cli/quota/refresh/**", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",
