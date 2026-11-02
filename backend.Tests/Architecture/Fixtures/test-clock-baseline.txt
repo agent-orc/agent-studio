@@ -70,7 +70,6 @@ wall-clock backend.Tests/CycleTimeBackfillTests.cs 2
 wall-clock backend.Tests/DecisionCardPolicyTests.cs 1
 wall-clock backend.Tests/DeliveryRefResolverTests.cs 2
 wall-clock backend.Tests/LeasePlacementEndpointsTests.cs 3
-wall-clock backend.Tests/DemoReplayScopeCompromiseTests.cs 1
 wall-clock backend.Tests/DescribeContextSourcesTests.cs 1
 wall-clock backend.Tests/DocsMarketingDriftAnalysisServiceTests.cs 3
 wall-clock backend.Tests/DriftPostStepRunnerTests.cs 4
@@ -324,7 +323,6 @@ fixed-date backend.Tests/CompletedLaneAuditServiceTests.cs
 fixed-date backend.Tests/CompletionClaimPersistenceTests.cs
 fixed-date backend.Tests/CycleTimeBackfillTests.cs
 fixed-date backend.Tests/DecisionCardPolicyTests.cs
-fixed-date backend.Tests/DemoReplayScopeCompromiseTests.cs
 fixed-date backend.Tests/DesignEvidenceParserTests.cs
 fixed-date backend.Tests/DossierImplementationContractTests.cs
 fixed-date backend.Tests/DossierMaintenanceServiceTests.cs
