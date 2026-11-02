@@ -10,10 +10,12 @@ import {
   input,
   output,
   signal,
+  Type,
   untracked,
   viewChildren,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { NgComponentOutlet } from '@angular/common';
 import { StudioHeaderCockpit, UsageCockpitHeaderComponent } from './studio-shell.header-cockpit';
 import type { TaskInfo, RegistryWorkspaceListItem, RegistryProjectSummary, WatchPathEntry, RegistryProjectUrl } from '../../models/task.model';
 import type { WorkbenchListItem } from '../../models/project-docs.model';
@@ -105,7 +107,7 @@ function cliColorFor(cli: string): string {
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent],
+  imports: [FormsModule, NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -159,6 +161,13 @@ export class StudioShellComponent {
   readonly tabs = this.tabState.tabs;
   readonly activeKey = this.tabState.activeKey;
   readonly activeTab = this.tabState.activeTab;
+  readonly structureComponent = signal<Type<unknown> | null>(null);
+  private readonly structureLoader = effect(() => {
+    if (this.activeTab()?.kind === 'structure' && !this.structureComponent()) {
+      void import('../structure/structure-view/structure-view.component').then(module =>
+        this.structureComponent.set(module.StructureViewComponent));
+    }
+  });
   readonly tabKey = studioTabKey;
   private readonly tabElements = viewChildren<ElementRef<HTMLElement>>('studioTab');
 
@@ -654,6 +663,7 @@ export class StudioShellComponent {
   }
 
   openDeploymentDashboard(): void { this.tabState.open({ kind: 'deployment-dashboard' }); }
+  openStructure(): void { this.tabState.open({ kind: 'structure' }); }
 
   openProjectDeployment(projectName: string): void {
     this.tabState.open({ kind: 'hub', projectName, section: 'deployment' });
@@ -1163,6 +1173,8 @@ export class StudioShellComponent {
         return 'Workspace settings';
       case 'deployment-dashboard':
         return 'Deployment dashboard';
+      case 'structure':
+        return 'Structure';
       case 'welcome':
         return 'Welcome';
       default:

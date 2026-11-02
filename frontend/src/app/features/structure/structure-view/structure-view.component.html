@@ -1,0 +1,66 @@
+<section class="structure-view" data-testid="structure-view" aria-label="Declared structure">
+  <header class="structure-header">
+    <div><p class="structure-eyebrow">Operations</p><h1>Structure</h1>
+      <p>Declared placement and units</p></div>
+    <div class="structure-controls" aria-label="Structure controls">
+      <app-segmented-control [options]="viewOptions" [value]="view()" ariaLabel="Projection"
+                             (valueChange)="setView($event)" />
+      <app-segmented-control [options]="levelOptions" [value]="level()" ariaLabel="Detail level"
+                             (valueChange)="setLevel($event)" />
+    </div>
+  </header>
+  @if (error()) { <p role="alert">{{ error() }}</p> }
+  <div class="structure-body">
+    <div class="structure-main" tabindex="0" role="region" aria-label="Structure diagram"
+         (keydown)="onCanvasKeydown($event)">
+      <div class="structure-canvas" data-testid="structure-canvas">
+        @for (box of roots(); track box.id) {
+          <ng-container [ngTemplateOutlet]="boxTemplate" [ngTemplateOutletContext]="{ $implicit: box }" />
+        }
+        <svg class="structure-links" aria-hidden="true">
+          @for (link of drawnLinks(); track link.index) {
+            <path [attr.d]="link.path" [attr.data-kind]="link.kind" />
+            <circle [attr.cx]="link.x" [attr.cy]="link.y" r="10" />
+            <text [attr.x]="link.x" [attr.y]="link.y + 4" text-anchor="middle">{{ link.index }}</text>
+          }
+        </svg>
+      </div>
+      <div class="structure-link-key" aria-label="Connection key">
+        @for (link of data().links; track $index) {
+          <div><span class="structure-link-number">{{ $index + 1 }}</span>
+            <span>{{ link.label }} · {{ link.kind }}</span></div>
+        }
+      </div>
+    </div>
+    <aside class="structure-outline" aria-label="Structure outline">
+      <h2>Outline</h2>
+      @for (box of visible(); track box.id) {
+        <button type="button" [attr.data-outline-id]="box.id" (click)="focus(box.id)">
+          <span>{{ box.label }}</span><small>{{ box.kind }}</small>
+        </button>
+      }
+    </aside>
+  </div>
+  <p class="structure-shortcuts">Keys 1–3 change detail · H host · C container · Escape clears selection</p>
+</section>
+
+<ng-template #boxTemplate let-box>
+  <div class="structure-box" [attr.data-kind]="box.kind" [attr.data-selected]="selected() === box.id">
+    <button type="button" class="structure-node" [attr.data-node-id]="box.id"
+            [attr.aria-label]="box.label + ', ' + box.kind + (box.collapsed ? ', ' + summaryText(box) : '')"
+            [attr.aria-expanded]="box.children.length ? !box.collapsed : null"
+            (click)="toggle(box)">
+      @if (box.children.length) { <app-disclosure-marker [open]="!box.collapsed" /> }
+      <strong>{{ box.label }}</strong><small>{{ box.kind }}</small>
+      @if (box.replicas > 1) { <span class="structure-replicas">×{{ box.replicas }}</span> }
+      @if (box.collapsed) { <span class="structure-summary">{{ summaryText(box) }}</span> }
+    </button>
+    @if (!box.collapsed && box.children.length) {
+      <div class="structure-children">
+        @for (child of box.children; track child.id) {
+          <ng-container [ngTemplateOutlet]="boxTemplate" [ngTemplateOutletContext]="{ $implicit: child }" />
+        }
+      </div>
+    }
+  </div>
+</ng-template>
