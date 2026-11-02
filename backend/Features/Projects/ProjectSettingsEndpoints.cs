@@ -586,6 +586,11 @@ public static class ProjectSettingsEndpoints
                     return Results.BadRequest(new { error = $"Condition '{when}' requires a value" });
             }
 
+            // AGT-3420: a model never belongs to another CLI than the step's
+            // own, so the pair is refused here before any plan can seal it.
+            if (ReviewAspectModelPolicy.SettingsRefusal(stepId, req.CliType, req.Model) is { } pairRefusal)
+                return Results.BadRequest(new { error = pairRefusal });
+
             var existing = PipelineTypeSettings.ForType(settings.Get(projectName), pipelineType)?.PipelineSteps?
                 .GetValueOrDefault(stepId);
             var normalizedPrompt = string.IsNullOrWhiteSpace(req.Prompt)

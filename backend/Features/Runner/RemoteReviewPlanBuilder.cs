@@ -279,13 +279,15 @@ public sealed class RemoteReviewPlanBuilder
             Tags = task.Tags,
         };
         var inputs = Inputs(task, integrationRef);
-        var defaultModel = _configuration.GetValue(
-            "ReviewDecisionOrchestrator:AspectModel",
-            PipelineStepModelDefaults.SupportModel);
-        var defaultCli = ReviewDecisionOrchestrator.NormalizeReviewCliType(
-            _configuration.GetValue(
-                "ReviewDecisionOrchestrator:Cli",
-                PipelineStepModelDefaults.DefaultCli));
+        // AGT-3420: the default aspect model belongs to the review CLI in use.
+        var hostDefault = ReviewAspectModelPolicy.ResolveDefault(
+            _configuration[ReviewAspectModelPolicy.CliSetting] ?? PipelineStepModelDefaults.DefaultCli,
+            _configuration[ReviewAspectModelPolicy.ModelSetting]);
+        if (hostDefault.Fault is not null)
+            _logger?.LogError(
+                "remote-review-plan-model-pair-rejected task={TaskKey} setting={Setting} cli={Cli} model={Model}: {Fault}",
+                string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey,
+                ReviewAspectModelPolicy.ModelSetting, hostDefault.CliType, hostDefault.Model, hostDefault.Fault);
 
         var commands = toolPlan.Commands.ToList();
         var skipped = new List<Contract.ReviewSkippedAspectDto>();
@@ -330,8 +332,16 @@ public sealed class RemoteReviewPlanBuilder
                 ? ConceptFitDefinition
                 : AspectRunnerService.Catalogue[aspectId];
 
-            var model = PipelineStepConfigResolver.ResolveModel(settings, step, defaultModel);
-            var cliType = PipelineStepConfigResolver.ResolveCliType(settings, step) ?? defaultCli;
+            var choice = ReviewAspectModelPolicy.ResolveStep(hostDefault, step.Id,
+                PipelineStepConfigResolver.ResolveCliType(settings, step),
+                PipelineStepConfigResolver.ResolveModelWithSource(settings, step, hostDefault.Model));
+            if (choice.Fault is not null)
+                _logger?.LogWarning(
+                    "remote-review-plan-model-pair-fallback task={TaskKey} step={StepId} cli={Cli} model={Model}: {Fault}",
+                    string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey,
+                    step.Id, choice.CliType, choice.Model, choice.Fault);
+            var model = choice.Model;
+            var cliType = choice.CliType;
             var thinking = PipelineStepConfigResolver.ResolveThinkingLevel(
                 settings,
                 step,

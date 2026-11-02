@@ -3500,13 +3500,12 @@ public static class V1ReviewPlaneEndpoints
         IEnumerable<ReviewAttemptDto> pending, IConfiguration configuration,
         IEnumerable<CliModelRouteProfile>? profiles = null)
     {
-        var defaultModel = configuration.GetValue(
-            "ReviewDecisionOrchestrator:AspectModel", PipelineStepModelDefaults.SupportModel);
-        var defaultCli = ReviewDecisionOrchestrator.NormalizeReviewCliType(
-            configuration.GetValue("ReviewDecisionOrchestrator:Cli", PipelineStepModelDefaults.DefaultCli));
+        var hostDefault = ReviewAspectModelPolicy.ResolveDefault(
+            configuration[ReviewAspectModelPolicy.CliSetting] ?? PipelineStepModelDefaults.DefaultCli,
+            configuration[ReviewAspectModelPolicy.ModelSetting]);
         var routes = new List<Contract.ConfiguredModelRouteDto>
         {
-            new(defaultCli, defaultModel),
+            new(hostDefault.CliType, hostDefault.Model),
         };
         if (configuration["DeepReview:Mode"] == DeepReviewPolicy.Active)
             routes.Add(new Contract.ConfiguredModelRouteDto("codex", DeepReviewPolicy.Model));
