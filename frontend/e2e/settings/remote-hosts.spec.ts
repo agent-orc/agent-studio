@@ -394,74 +394,37 @@ test.describe('Execution Hosts settings section', () => {
     }
   });
 
-  test('Environment map shows configured machines, connections, details, and narrow fallback', async ({ page }) => {
+  test('Environment Map embeds the installation structure and List retains host controls', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.route('**/api/auth/status', route => route.fulfill({
-      contentType: 'application/json', body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true }),
-    }));
-    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
-      contentType: 'application/json', body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [
-        { id: 'write', category: 'repository', hostId: 'agent-runner-01', kind: 'github_deploy_key',
-          label: 'Coding key', scopes: ['coding:execution'], repository: 'github.com/team/repo', permission: 'write',
-          expiresAt: null, lastUseAt: null, state: 'ok', required: true, detail: '', affectedCards: [] },
-      ] }),
-    }));
-    await page.route('**/api/v1/management/environment', route => route.fulfill({
-      contentType: 'application/json', body: JSON.stringify({
-        controlHost: 'TUFI2', installationId: 'studio', mode: 'reverse-ssh-transition',
-        routes: [{ runnerId: 'agent-runner-01', route: 'reverse-ssh' }],
-        machines: [
-          { id: 'control', name: 'TUFI2', components: [
-            { id: 'studio', name: 'Studio', role: 'control', kind: 'service' },
-          ] },
-          { id: 'agent-runner-01', name: 'agent-runner-01', components: [
-            { id: 'integrator', name: 'Integrator', role: 'integration', kind: 'service' },
-            { id: 'engine', name: 'Engine', role: 'control', kind: 'container' },
-            { id: 'link', name: 'Tunnel service', role: 'link', kind: 'service' },
-          ] },
-          { id: 'kori', name: 'KORI', components: [1, 2, 3].map(index => ({
-            id: `review-${index}`, name: `Review container ${index}`, role: 'review', kind: 'container',
-          })) },
-          { id: 'website-vm', name: 'website-vm', components: [
-            { id: 'website', name: 'Website service', role: 'control', kind: 'service' },
-          ] },
-        ],
-        gateHost: 'KORI', gateSlots: { busy: 1, total: 3 },
-        taskServer: { version: '0.3.0', commit: null },
-        engine: { state: 'ready', lastContact: new Date().toISOString(), engineId: 'engine-1' },
-      }),
-    }));
-    // The shared setup already loaded a local session. Reload after changing
-    // the auth route so this networked inventory fixture is actually fetched.
-    await page.reload();
+    await page.route('**/api/v1/operations/structure**', route => route.fulfill({ json: {
+      nodes: [
+        { id: 'installation', kind: 'boundary', label: 'Installation', parentId: null, unitId: null, environmentId: null, project: null, provenance: 'declared', sourceRef: 'role fixture' },
+        { id: 'machine:runner', kind: 'physical', label: 'Runner host', parentId: 'installation', unitId: null, environmentId: null, project: null, provenance: 'declared', sourceRef: 'role fixture' },
+        { id: 'component:runner:engine', kind: 'container', label: 'Engine', parentId: 'machine:runner', unitId: null, environmentId: null, project: null, provenance: 'declared', sourceRef: 'role fixture' },
+      ],
+      links: [{ from: 'machine:runner', to: 'component:runner:engine', kind: 'tunnel', label: 'Runner route', sourceRef: 'role fixture' }],
+    } }));
     await page.goto('/#/workspace/settings/environment');
     await dismissDevErrorDialog(page);
     await page.getByTestId('environment-map-toggle').click();
-    const map = page.getByTestId('environment-map');
+    const map = page.getByTestId('structure-view');
     await expect(map).toBeVisible();
-    await expect(map.getByTestId('environment-machine').filter({ hasText: 'TUFI2' })).toBeVisible();
-    await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('1/3 slots');
-    await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('Review container 3');
-    await expect(map.getByTestId('environment-machine').filter({ hasText: 'website-vm' })).toBeVisible();
-    await expect(map.getByTestId('environment-repository-access').filter({ hasText: 'writes' })).toBeVisible();
-    await expect(map.getByTestId('environment-connection').filter({ hasText: 'reverse tunnel' })).toBeVisible();
-    await expect(map.getByTestId('environment-connection').filter({ hasText: 'SSH gate transport' })).toBeVisible();
+    await expect(page.locator('app-environment-map')).toHaveCount(0);
+    await expect(map.locator('[data-node-id="machine:runner"]')).toBeVisible();
+    await map.locator('[data-node-id="machine:runner"]').click();
+    await expect(map.getByRole('link', { name: 'Host row' })).toBeVisible();
+    await expect(map.getByTestId('structure-link-0')).toHaveAttribute('href', /host=runner&link=tunnel/);
     for (const width of [1280, 1920]) {
       await page.setViewportSize({ width, height: 950 });
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
         await expect(map).toBeVisible();
-        await page.screenshot({ path: join(SHOT_DIR, `environment-map-${width}-${theme}--mocked.png`), animations: 'disabled' });
       }
     }
     await page.reload();
-    await expect(page.getByTestId('environment-map')).toBeVisible();
-    await map.getByRole('button', { name: 'Open agent-runner-01 details' }).click();
-    await expect(page.getByTestId('remote-host-detail-row')).toBeVisible();
-    await page.setViewportSize({ width: 900, height: 800 });
-    await page.getByTestId('environment-map-toggle').evaluate((button: HTMLElement) => button.click());
-    await expect(map).toBeHidden();
+    await expect(page.getByTestId('structure-view')).toBeVisible();
+    await page.getByTestId('environment-list-toggle').click();
     await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
     expect(errors).toEqual([]);
   });

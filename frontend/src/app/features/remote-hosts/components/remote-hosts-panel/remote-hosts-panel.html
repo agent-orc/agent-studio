@@ -3,7 +3,7 @@
                           (viewChange)="setView($event)" (add)="openWizard()"
                           (purge)="openPurgeRetired()" (reload)="reload()" />
   @if (view() === 'map') {
-    <app-environment-map [map]="environmentMap()" (selectHost)="selectMapHost($event)" />
+    <app-structure-view [embedded]="true" [hostOnly]="true" />
   }
   @if (view() === 'list') {
   <app-deployment-checkpoints [hosts]="hosts()" [stableRelease]="stableRelease()" [now]="now()" />
@@ -190,6 +190,7 @@
             [boardActiveSlots]="groupSlots(group)" [projectSlots]="projectSlots(group.machine)"
             [allChatUsage]="interactiveUsage()"
             [stableRelease]="stableRelease()" [expanded]="isExpanded(group.id)"
+            [linkedSection]="linkedHostId() === group.id ? linkedSection() : null"
             (expandedChange)="setExpanded(group.id, $event)"
             (action)="onAction($event)"
             (capacityChange)="onCapacityChange($event)"

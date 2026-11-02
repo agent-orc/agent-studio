@@ -9,6 +9,8 @@
   </div>
 } @else if (activeRail() === 'operations') {
   <div class="project-area" data-testid="project-operations-area">
+    <app-structure-view [projectName]="projectName()" [embedded]="true" />
+    <a [href]="'#/projects/' + projectSlug(projectName()) + '/operations/structure'">Open structure view</a>
     @defer (on immediate) {
       <app-project-environment-overview [projectName]="projectName()" (openDeploy)="setRail('deploy')"
         (openRelease)="openOperationsRelease($event)"

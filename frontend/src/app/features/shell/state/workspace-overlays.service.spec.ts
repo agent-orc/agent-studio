@@ -112,6 +112,14 @@ describe('WorkspaceOverlaysService canonical settings routes', () => {
     expect(window.location.hash).toBe('#ta=card%253DStudio%252Fjob-1');
   });
 
+  it('keeps host and link targets on an Environment deep link', () => {
+    history.replaceState(null, '', '/#/workspace/settings/environment?host=runner&link=tunnel');
+    const service = new WorkspaceOverlaysService();
+    service.syncFromHash();
+    expect(service.section()).toBe('remote-hosts');
+    expect(window.location.hash).toBe('#/workspace/settings/environment?host=runner&link=tunnel');
+  });
+
   it('migrates the former remote-hosts route to Environment', () => {
     history.replaceState(null, '', '/#/workspace/settings/remote-hosts');
     const service = new WorkspaceOverlaysService();

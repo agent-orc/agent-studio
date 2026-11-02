@@ -1,3 +1,4 @@
+import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { catchError, of } from 'rxjs';
@@ -24,6 +25,7 @@ interface DashboardRow {
   styleUrl: './workspace-deployment-dashboard.scss',
 })
 export class WorkspaceDeploymentDashboardComponent {
+  readonly projectSlug = studioProjectSlug;
   private readonly service = inject(DeploymentStatusService);
   private readonly now = inject(DEPLOYMENT_CLOCK);
   private readonly matrix = toSignal(this.service.matrix().pipe(catchError(() => of<DeployMatrixResponse>({ environmentKinds: [], projects: [] }))),

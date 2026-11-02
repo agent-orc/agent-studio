@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, effect, inject, input, output, signal } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import { RemoteHostsService } from '../../services/remote-hosts.service';
 import { ReviewQueueService } from '../../services/review-queue.service';
@@ -32,12 +32,9 @@ import { BetterCandidateLinesComponent } from '../../../../components/better-can
 import { RunnerInfrastructureFailuresComponent } from '../runner-infrastructure-failures/runner-infrastructure-failures';
 import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
 import { ExecutionInfrastructureComponent } from '../execution-infrastructure/execution-infrastructure';
-import { HttpClient } from '@angular/common/http';
 import { AuthSessionState } from '../../../../services/auth.service';
-import { EnvironmentMapComponent } from '../environment-map/environment-map';
+import { StructureViewComponent } from '../../../structure/structure-view/structure-view.component';
 import { EnvironmentHeaderComponent } from '../environment-header/environment-header';
-import { buildEnvironmentMap, type EnvironmentSnapshot } from '../../models/environment-map';
-import { CredentialInventoryService } from '../../../credentials/credential-inventory.service';
 import { OperationalStallsComponent } from '../operational-stalls/operational-stalls';
 
 /**
@@ -61,7 +58,7 @@ import { OperationalStallsComponent } from '../operational-stalls/operational-st
     RunnerInfrastructureFailuresComponent,
     DeploymentCheckpointsComponent,
     ExecutionInfrastructureComponent,
-    EnvironmentMapComponent,
+    StructureViewComponent,
     EnvironmentHeaderComponent,
     OperationalStallsComponent,
   ],
@@ -73,11 +70,8 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   private readonly service = inject(RemoteHostsService);
   private readonly tasks = inject(TaskService);
   private readonly reviewQueue = inject(ReviewQueueService);
-  private readonly http = inject(HttpClient);
   private readonly auth = inject(AuthSessionState);
-  private readonly credentials = inject(CredentialInventoryService);
   private readonly tableState = new RemoteHostTableState();
-
   readonly hosts = this.service.hosts;
   readonly infrastructureReload = signal(0);
   readonly loading = this.service.loading;
@@ -89,9 +83,6 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly purgeRetiredOpen = signal(false);
   readonly showRetired = signal(false);
   readonly view = signal<'list' | 'map'>('list');
-  readonly environment = signal<EnvironmentSnapshot | null>(null);
-  readonly environmentMap = computed(() => buildEnvironmentMap(
-    this.hostGroups(), this.environment(), host => this.boardSlots(host), this.credentials.inventory()));
   readonly setupHost = signal<RemoteHost | null>(null);
   readonly pendingConfirmation = signal<{ kind: 'retire' | 'delete'; host: RemoteHost } | null>(null);
   readonly confirmationTitle = computed(() => {
@@ -115,6 +106,24 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   private usageHandle: ReturnType<typeof setInterval> | null = null;
   /** Header tallies reconcile to visible physical machines and role sub-rows. */
   readonly hostGroups = computed(() => groupPhysicalHosts(this.hosts(), this.showRetired()));
+  private handledHostLink = '';
+  readonly linkedHostId = signal<string | null>(null);
+  readonly linkedSection = signal<'load' | 'connection' | null>(null);
+  private readonly hostLink = effect(() => {
+    const groups = this.hostGroups();
+    const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '');
+    const raw = params.get('host');
+    if (!raw || raw === this.handledHostLink || !groups.length) return;
+    const id = raw.replace(/^machine:/, '');
+    const group = groups.find(item => item.id === id || item.roles.some(role => role.id === id));
+    if (!group) return;
+    this.handledHostLink = raw;
+    this.linkedHostId.set(group.id);
+    this.linkedSection.set(params.get('view') === 'telemetry' ? 'load' : params.has('link') ? 'connection' : null);
+    this.view.set('list');
+    this.setExpanded(group.id, true);
+  });
+
   readonly retiredCount = computed(() => this.hosts().filter(host => host.status === 'retired').length);
   readonly total = computed(() => this.hostGroups().length);
   readonly roleCount = computed(() => this.hostGroups()
@@ -152,8 +161,6 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     try { this.view.set(localStorage.getItem(this.viewStorageKey()) === 'map' ? 'map' : 'list'); }
     catch { this.view.set('list'); }
     this.service.ensureLoaded();
-    this.credentials.ensureLoaded();
-    this.loadEnvironment();
     this.service.refreshInteractiveUsage();
     this.reviewQueue.refresh();
     this.tickHandle = setInterval(() => this.now.set(Date.now()), 30_000);
@@ -167,14 +174,6 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   reload(): void {
     this.service.reload();
     this.infrastructureReload.update(value => value + 1);
-    this.loadEnvironment();
-    this.credentials.load();
-  }
-  private loadEnvironment(): void {
-    this.http.get<EnvironmentSnapshot>('/api/v1/management/environment').subscribe({
-      next: snapshot => this.environment.set(snapshot),
-      error: () => this.environment.set(null),
-    });
   }
   private viewStorageKey(): string {
     return `atp.environment.view.v1.${this.auth.status()?.user?.id ?? 'local'}`;
@@ -183,11 +182,6 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.view.set(view);
     try { localStorage.setItem(this.viewStorageKey(), view); }
     catch { return; }
-  }
-  selectMapHost(id: string): void {
-    const group = this.hostGroups().find(item => item.roles.some(role => role.id === id));
-    this.setView('list');
-    if (group) this.setExpanded(group.id, true);
   }
   reconnect(id: string): void { this.service.reconnect(id); }
   linkFailureMessage(host: RemoteHost): string { return host.runnerLink?.lastError ?? 'The runner heartbeat is late and recovery is active.'; }

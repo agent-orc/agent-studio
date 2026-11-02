@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import type { CliType } from '../../../../models/task.model';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
@@ -51,7 +51,6 @@ import {
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
 import { HostCredentialBadgeComponent } from '../../../credentials/host-credential-badge/host-credential-badge.component';
-/** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {
   key: string;
   label: string;
@@ -122,6 +121,7 @@ export class RemoteHostCardComponent {
     return this.allChatUsage().filter(row => names.has(row.hostName.toLowerCase()));
   });
   readonly expanded = input(false);
+  readonly linkedSection = input<DetailSection | null>(null);
   /** The release every row is measured against; null until it is loaded. */
   readonly stableRelease = input<StableReleaseIdentity | null>(null);
   /** Injected clock so the relative heartbeat label ticks without a per-card timer. */
@@ -132,6 +132,8 @@ export class RemoteHostCardComponent {
   readonly setup = output<RemoteHost>();
   readonly expandedChange = output<boolean>();
   readonly expandedSections = signal<readonly DetailSection[]>([]);
+  private readonly openLinkedSection = effect(() => this.linkedSection() &&
+    this.expandedSections.update(current => [...new Set([...current, this.linkedSection()!])]));
   readonly relativeHeartbeat = relativeHeartbeat;
   readonly liveLoading = computed(() => this.host().liveDataState === 'loading');
   readonly liveError = computed(() => this.host().liveDataState === 'error');
@@ -354,9 +356,7 @@ export class RemoteHostCardComponent {
     if (host.role !== 'remote' || host.status === 'retired' || host.busyAction) return;
     this.setup.emit(host);
   }
-
 }
-
 export type DetailSection =
   | 'identity'
   | 'connection'

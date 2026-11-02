@@ -21,6 +21,7 @@ describe('Studio route contract', () => {
     });
     expect(parseStudioRoute('#/feed')).toEqual({ kind: 'feed' });
     expect(parseStudioRoute('#/workspace/operations/structure')).toEqual({ kind: 'structure' });
+    expect(parseStudioRoute('#/projects/fixture-project/operations/structure?view=container&level=3&overlay=drift&env=Production&focus=unit')).toEqual({ kind: 'structure', projectSlug: 'fixture-project' });
     expect(parseStudioRoute('#/chat-history')).toEqual({ kind: 'chat-history' });
     expect(parseStudioRoute('#/projects/agent-studio/board')).toEqual({
       kind: 'board',
@@ -111,6 +112,14 @@ describe('Studio route contract', () => {
     replaceStudioRouteQuery({ page: 'README.md', folder: null });
     expect(replace).toHaveBeenCalledTimes(1);
     expect(location.hash).toBe('#/projects/agent-studio/wiki?page=README.md&filters=x');
+  });
+
+  it('round-trips the full structure query and removes old focus', () => {
+    history.replaceState(null, '', '/#/workspace/operations/structure?view=host&level=1&overlay=health&env=staging&focus=old&filters=x');
+    replaceStudioRouteQuery({ view: 'container', level: '3', overlay: 'drift', env: 'production', focus: 'new' });
+    expect(location.hash).toBe('#/workspace/operations/structure?view=container&level=3&overlay=drift&env=production&focus=new&filters=x');
+    replaceStudioRouteQuery({ focus: null });
+    expect(location.hash).toBe('#/workspace/operations/structure?view=container&level=3&overlay=drift&env=production&filters=x');
   });
 
   it('adds history entries between project and All Projects boards', () => {

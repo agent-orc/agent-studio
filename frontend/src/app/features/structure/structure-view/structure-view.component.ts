@@ -1,7 +1,10 @@
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, afterNextRender, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, HostListener, afterNextRender, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
+import { AuthSessionState } from '../../../services/auth.service';
+import { studioProjectSlug } from '../../../services/studio-project-slug.util';
+import { replaceStudioRouteQuery } from '../../studio-shell/services/studio-route';
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
 import { SegmentedControlComponent } from '../../../components/segmented-control/segmented-control.component';
 import { nearestVisible, projectStructure, summaryText, visibleBoxes,
@@ -19,7 +22,12 @@ interface DrawnLink { index: number; path: string; x: number; y: number; kind: s
 })
 export class StructureViewComponent {
   private readonly http = inject(HttpClient);
+  private readonly auth = inject(AuthSessionState);
   private readonly element = inject(ElementRef) as ElementRef<HTMLElement>;
+  readonly projectName = input<string | null>(null);
+  readonly projectSlug = studioProjectSlug;
+  readonly embedded = input(false);
+  readonly hostOnly = input(false);
   readonly data = signal<StructureData>({ nodes: [], links: [] });
   readonly viewOptions = [{ value: 'host', label: 'Host' }, { value: 'container', label: 'Container' }] as const;
   readonly levelOptions = [{ value: 1, label: '1' }, { value: 2, label: '2' }, { value: 3, label: '3' }] as const;
@@ -28,6 +36,11 @@ export class StructureViewComponent {
   readonly level = signal<1 | 2 | 3>(2);
   readonly toggles = signal<Record<string, boolean>>({});
   readonly selected = signal<string | null>(null);
+  readonly overlay = signal<'health' | 'version' | 'drift' | 'load'>('health');
+  readonly environment = signal('');
+  readonly environments = computed(() => this.data().nodes.filter(node => node.kind === 'environment'));
+  readonly selectedNode = computed(() => this.data().nodes.find(node => node.id === this.selected()) ?? null);
+  readonly selectedLinks = computed(() => this.data().links.filter(link => link.from === this.selected() || link.to === this.selected()));
   readonly roots = computed(() => projectStructure(this.data(), this.view(), this.level(), this.toggles()));
   readonly visible = computed(() => visibleBoxes(this.roots()));
   readonly drawnLinks = signal<DrawnLink[]>([]);
@@ -43,41 +56,72 @@ export class StructureViewComponent {
 
   constructor() {
     afterNextRender(() => this.element.nativeElement.querySelector<HTMLElement>('.structure-main')?.focus());
-    try {
-      const saved = JSON.parse(localStorage.getItem('studio.structure.workspace') || '{}') as
-        { view?: 'host' | 'container'; level?: 1 | 2 | 3 };
-      if (saved.view === 'host' || saved.view === 'container') this.view.set(saved.view);
-      if (saved.level === 1 || saved.level === 2 || saved.level === 3) this.level.set(saved.level);
-    } catch { /* Optional preference. */ }
-    void this.load();
+    effect(() => {
+      this.projectName();
+      this.auth.status();
+      this.embedded();
+      this.hostOnly();
+      untracked(() => {
+        const query = new URLSearchParams(this.embedded() ? '' : location.hash.split('?')[1] ?? '');
+        try {
+          const saved = JSON.parse(localStorage.getItem(this.preferenceKey()) || '{}') as
+            { view?: 'host' | 'container'; level?: 1 | 2 | 3; overlay?: 'health' | 'version' | 'drift' | 'load' };
+          if (saved.view === 'host' || saved.view === 'container') this.view.set(saved.view);
+          if (saved.level === 1 || saved.level === 2 || saved.level === 3) this.level.set(saved.level);
+          if (saved.overlay && ['health', 'version', 'drift', 'load'].includes(saved.overlay)) this.overlay.set(saved.overlay);
+        } catch { /* Optional preference. */ }
+        if (query.get('view') === 'host' || query.get('view') === 'container') this.view.set(query.get('view') as 'host' | 'container');
+        if (['1', '2', '3'].includes(query.get('level') ?? '')) this.level.set(Number(query.get('level')) as 1 | 2 | 3);
+        if (['health', 'version', 'drift', 'load'].includes(query.get('overlay') ?? '')) this.overlay.set(query.get('overlay') as 'health' | 'version' | 'drift' | 'load');
+        this.environment.set(query.get('env') ?? '');
+        this.selected.set(query.get('focus'));
+        if (this.hostOnly()) this.view.set('host');
+        void this.load();
+      });
+    });
   }
 
   private async load(): Promise<void> {
     try {
       this.data.set(await firstValueFrom(this.http.get<StructureData>('/api/v1/operations/structure',
-        { params: { scope: 'workspace' } })));
+        { params: { scope: this.projectName() ? `project:${this.projectName()}` : 'workspace', ...(this.environment() ? { environment: this.environment() } : {}) } })));
       this.error.set(null);
     } catch { this.error.set('Structure declarations could not be loaded.'); }
   }
 
   setView(view: 'host' | 'container'): void {
+    if (this.hostOnly()) return;
     this.view.set(view);
     this.remember();
   }
+  setOverlay(value: 'health' | 'version' | 'drift' | 'load'): void { this.overlay.set(value); this.remember(); }
+  setEnvironment(value: string): void { this.environment.set(value); this.remember(); void this.load(); }
   setLevel(level: 1 | 2 | 3): void {
     this.level.set(level);
     this.remember();
   }
   toggle(box: StructureBox): void {
     this.selected.set(box.id);
+    this.remember();
     if (box.children.length) this.toggles.update(current => ({ ...current, [box.id]: !box.collapsed }));
   }
   focus(id: string): void {
     this.selected.set(id);
+    this.remember();
     this.element.nativeElement.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
   }
+  linkHost(id: string): string {
+    const nodes = new Map(this.data().nodes.map(node => [node.id, node]));
+    let current = nodes.get(id);
+    while (current && !current.id.startsWith('machine:') &&
+      !['physical', 'cloud-server', 'vm', 'host', 'server'].includes(current.kind))
+      current = current.parentId ? nodes.get(current.parentId) : undefined;
+    return (current?.id ?? id).replace(/^machine:/, '');
+  }
+  private preferenceKey(): string { return `studio.structure.${this.auth.status()?.user?.id ?? 'local'}.${this.hostOnly() ? 'settings' : this.projectName() ?? 'workspace'}`; }
   private remember(): void {
-    try { localStorage.setItem('studio.structure.workspace', JSON.stringify({ view: this.view(), level: this.level() })); }
+    if (!this.embedded()) replaceStudioRouteQuery({ view: this.view(), level: String(this.level()), overlay: this.overlay(), env: this.environment(), focus: this.selected() });
+    try { localStorage.setItem(this.preferenceKey(), JSON.stringify({ view: this.view(), level: this.level(), overlay: this.overlay() })); }
     catch { /* Preference storage is optional. */ }
   }
 
@@ -89,7 +133,7 @@ export class StructureViewComponent {
     if (key === '1' || key === '2' || key === '3') this.setLevel(Number(key) as 1 | 2 | 3);
     else if (key === 'h') this.setView('host');
     else if (key === 'c') this.setView('container');
-    else if (key === 'escape') this.selected.set(null);
+    else if (key === 'escape') { this.selected.set(null); this.remember(); }
     else return;
     event.preventDefault();
   }

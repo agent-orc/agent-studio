@@ -1,3 +1,5 @@
+import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
+import { StructureViewComponent } from '../../../structure/structure-view/structure-view.component';
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
 import {
   ProjectShellComponent,
@@ -85,6 +87,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   selector: 'app-project-hub-view',
   standalone: true,
   imports: [
+    StructureViewComponent,
     ProjectShellComponent,
     ProjectEnvironmentOverviewComponent,
     ProjectDetailComponent,
@@ -117,6 +120,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   styleUrl: './project-hub-view.component.scss',
 })
 export class ProjectHubViewComponent {
+  readonly projectSlug = studioProjectSlug;
   private readonly overlays = inject(ProjectOverlaysService);
   private readonly tabState = inject(StudioTabStateService);
 
@@ -145,8 +149,11 @@ export class ProjectHubViewComponent {
   constructor() {
     effect(() => {
       const target = resolveProjectSection(this.initialSection());
-      // The route only records Run steps; other Deploy views stay local.
-      this.deployView.update(view => target.deployView === 'steps' ? 'steps' : (view === 'steps' ? 'overview' : view));
+      const requested = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('view');
+      const deepLinked = ['history', 'releases', 'operations', 'runbooks'].includes(requested ?? '')
+        ? requested as DeployView : null;
+      this.deployView.update(view => target.deployView === 'steps' ? 'steps' : deepLinked && target.rail === 'deploy'
+        ? deepLinked : (view === 'steps' ? 'overview' : view));
       this.activeRail.set(target.rail);
     });
   }
