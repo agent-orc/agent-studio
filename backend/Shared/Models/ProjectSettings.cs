@@ -342,6 +342,12 @@ public record ProjectSettings
     public ProjectTestingSettings? Testing { get; init; }
 
     /// <summary>
+    /// Review package mode (<c>review.package</c>, AGT-3400 S4). Null keeps
+    /// <c>off</c>, so no package forms and the per-card review is unchanged.
+    /// </summary>
+    public ProjectReviewSettings? Review { get; init; }
+
+    /// <summary>
     /// Per-CLI permission / sandbox mode override. Map of <see cref="CliTypes"/>
     /// id (<c>claude</c> / <c>codex</c> / <c>gemini</c> / <c>copilot</c>) to a
     /// mode id from <see cref="CliPermissionModes"/>. A missing CLI key means
@@ -1181,6 +1187,21 @@ public sealed record ProjectTestingSettings
     public string? PerCard { get; init; }
     /// <summary>Integration verification placement; absent means pre-merge.</summary>
     public string? Mode { get; init; }
+}
+
+/// <summary>Project-level review settings (review Dossier AGT-3400).</summary>
+public sealed record ProjectReviewSettings
+{
+    /// <summary><c>off</c> (default), <c>shadow</c> or <c>dossier</c>; see <see cref="ReviewPackageSetting"/>.</summary>
+    public string? Package { get; init; }
+}
+
+/// <summary>Resolves <c>review.package</c>; the values are <see cref="AgentStudio.TaskServer.Contracts.ReviewPackageModes"/>.</summary>
+public static class ReviewPackageSetting
+{
+    public static string Resolve(ProjectSettings? settings)
+        => AgentStudio.TaskServer.Contracts.ReviewPackageModes.Normalize(settings?.Review?.Package)
+            ?? AgentStudio.TaskServer.Contracts.ReviewPackageModes.Off;
 }
 
 public static class IntegrationTestModes

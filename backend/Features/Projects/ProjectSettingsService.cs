@@ -1672,6 +1672,31 @@ public class ProjectSettingsService
     }
 
     /// <summary>
+    /// AGT-3400 S4: stores <c>review.package</c>. <c>off</c> clears the section,
+    /// so a project that never set it keeps byte-identical settings. The caller
+    /// accepts only implemented modes.
+    /// </summary>
+    public void SetReviewPackage(string projectName, string mode)
+    {
+        var normalized = AgentStudio.TaskServer.Contracts.ReviewPackageModes.Normalize(mode)
+            ?? throw new ArgumentException($"Unknown review package mode '{mode}'.", nameof(mode));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var settings) ? settings : new ProjectSettings();
+            _cache[key] = current with
+            {
+                Review = normalized == AgentStudio.TaskServer.Contracts.ReviewPackageModes.Off
+                    ? null : new ProjectReviewSettings { Package = normalized },
+            };
+            Persist();
+            _logger.LogInformation("Review package mode set to {Mode} for project {Project}",
+                normalized, projectName);
+        }
+    }
+
+    /// <summary>
     /// AGT-2749/AGT-2843: per-project override of the build/test gate-run
     /// budget (<see cref="ProjectSettings.BuildTestGateTimeoutSeconds"/>). Null
     /// clears the override so <see cref="AgentStudio.Pipeline.GateRunBudgetPolicy"/>

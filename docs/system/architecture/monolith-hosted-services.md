@@ -125,6 +125,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | PostWorkSubjectReconcilerService | loop | apply-recover | Authority. Idle while `PostWork:Mode` is `off`; reports lane facts for DP-S8 post-work subjects and hands accepted host reports to the worker. |
 | RemoteReviewEvidenceProjectionWorker | loop | apply-recover | Authority |
 | RemoteReviewSettlementReconciler | loop | apply-recover | Authority |
+| ReviewPackageFormationHostedService | !PD | report | AGT-3400 S4. Forms shadow review packages for projects with `review.package: shadow` through `ReviewPackageFormationPolicy` (via `MonolithTransitionAdapter`) and logs each formation decision. No lane move, verdict or settlement; the per-card review is unchanged. |
 | BatchGatePilotHostedService | loop | decide, switched | `GateResult` profile for every batch gate outcome, releases and red per-task gates (`HoldForEngineBatchDecision`, AGT-3234). A per-task gate whose budget ran out in the machine gate queue is requeued through `GateQueueStallPolicy` (AGT-3219). Batch forming, closing and the advisor move with AGT-3055. |
 | IntakeHostedService | !PD, per project | decide, operator | AI Operator decider `intake-routing` (`IntakeRoutingPolicy`): an already-done card goes to a person in Human Review. Effect: `IntakeRoutingEffect`. |
 | GitInventoryRefreshHostedService | !PD | infra | Authority host |

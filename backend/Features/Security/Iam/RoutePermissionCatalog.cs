@@ -197,6 +197,7 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.RunnerService, "/api/quota/admission/{}");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/claim");
         Add("PUT", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/report");
+        Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/review-package-claims");
         Add("R", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/desired-state");
         Add("POST", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/observed-state");
         Add("*", IamPermissions.RunnerService,
@@ -204,6 +205,10 @@ public static class RoutePermissionCatalog
             "/api/runner/artifacts/**", "/api/runner/lease/**", "/api/pull-gates/**", "/api/gate-artifacts/**");
         Add("R", IamPermissions.ProjectRead, "/api/v1/reviews/attempts/{}");
         Add("W", IamPermissions.RunnerService, "/api/v1/reviews/attempts/**");
+        // Package claims and attempt writes are runner-host operations, like per-card review attempts.
+        Add("POST", IamPermissions.RunnerService,
+            "/api/v1/review-packages/attempts/{}/lease/renew",
+            "/api/v1/review-packages/attempts/{}/report");
         Add("R", IamPermissions.WorkspaceRead, "/api/v1/protocol");
         Add("POST", IamPermissions.WorkspaceRead, "/api/v1/protocol/compatibility");
         Add("POST", IamPermissions.RunnerService,
@@ -413,6 +418,8 @@ public static class RoutePermissionCatalog
             "wiki/**", "workbenches/**", "security/files/**", "security/meta");
 
         // --- Project settings ----------------------------------------------
+        // Only project settings writers may enable shadow package review.
+        Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/review-package");
         Add("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}");
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/*");
         Under("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}",
@@ -420,6 +427,10 @@ public static class RoutePermissionCatalog
             "publish/automation", "urls", "urls/**", "ownership-mappings/**", "pipeline-definition/**");
 
         // --- Project reads -------------------------------------------------
+        Add("GET", IamPermissions.ProjectRead,
+            "/api/projects/{}/review-packages",
+            "/api/projects/{}/review-packages/formation",
+            "/api/projects/{}/review-packages/shadow-report");
         Add("R", IamPermissions.ProjectRead,
             "/api/projects/**", "/api/tasks/**", "/api/runner/{}/**", "/api/runner/project:{}/**",
             "/api/runner/task:{}/**", "/api/runner/workbench:{}/**", "/api/runner/integration-lease/**",
