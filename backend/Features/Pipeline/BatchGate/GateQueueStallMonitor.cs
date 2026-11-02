@@ -176,6 +176,7 @@ public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider tim
     /// <summary>
     /// Median execution time of the project's recent gate runs that reached a
     /// slot, without their queue wait; 30 minutes before any run was recorded.
+    /// Narrow base checks repeat one step and are no sample of a gate run.
     /// </summary>
     public TimeSpan TypicalGateDuration(string project)
     {
@@ -183,6 +184,7 @@ public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider tim
         if (_durations.TryGetValue(project, out var cached) && now - cached.ReadAtUtc < DurationCacheLifetime)
             return cached.Value;
         var samples = store.ListExecutions(project)
+            .Where(fact => fact.NarrowCheck is null)
             .OrderByDescending(fact => fact.CompletedAtUtc)
             .Select(fact => fact.DurationMs is long ms && ms > 0
                 ? ms

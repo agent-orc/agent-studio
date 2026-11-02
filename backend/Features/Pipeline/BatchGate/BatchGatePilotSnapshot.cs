@@ -10,6 +10,9 @@ namespace AgentStudio.Pipeline;
 /// They are counted from the deploy that introduced them onward; reviews
 /// settled earlier have no fact and are not reconstructed from evidence.
 /// <c>TotalVerificationHostMinutes</c> is the sum of both sides.
+/// <c>BaseChecks</c> lists, per red candidate, what answered whether its base
+/// was red and what that cost (AGT-3433); <c>BaseCheckMinutes</c> sums it.
+/// A narrow base check counts in the host minutes, not as a full-suite run.
 /// </summary>
 public sealed record BatchGatePilotSnapshot(
     string Project, int ClosedBatches, int EligibleDeliveredMembers,
@@ -29,7 +32,14 @@ public sealed record BatchGatePilotSnapshot(
     int ReviewVerificationRuns = 0,
     double ReviewVerificationHostMinutes = 0,
     double ReviewVerificationBaselineMinutes = 0,
-    double TotalVerificationHostMinutes = 0);
+    double TotalVerificationHostMinutes = 0,
+    IReadOnlyList<BatchGateBaseCheckView>? BaseChecks = null,
+    double BaseCheckMinutes = 0);
+
+/// <summary>One red candidate's base answer: its classification, the source that answered, and the minutes it cost.</summary>
+public sealed record BatchGateBaseCheckView(
+    string BatchId, string BaseSha, string Classification, string AnsweredBy,
+    double Minutes, DateTimeOffset RecordedAtUtc);
 
 public static class BatchGatePilotSnapshotReader
 {
@@ -41,6 +51,8 @@ public static class BatchGatePilotSnapshotReader
             .ToArray();
         var primary = all.Where(item => item.ParentBatchId is null).ToArray();
         var executions = store.ListExecutions(project);
+        var fullSuiteRuns = executions.Count(item => item.NarrowCheck is null);
+        var baseChecks = new List<BatchGateBaseCheckView>();
         var eligible = primary.SelectMany(item => item.Members)
             .Select(item => item.TaskKey + "\n" + item.RunAttempt)
             .Distinct(StringComparer.Ordinal).Count();
@@ -51,6 +63,12 @@ public static class BatchGatePilotSnapshotReader
         var stale = 0;
         foreach (var manifest in all)
         {
+            foreach (var answered in store.ListRuns(manifest.BatchId)
+                         .Select(item => store.ReadVerdict(manifest.BatchId, item.BatchRunId))
+                         .Where(item => item?.BaseCheck is not null))
+                baseChecks.Add(new BatchGateBaseCheckView(manifest.BatchId, manifest.BaseSha,
+                    answered!.Classification, answered.BaseCheck!, answered.BaseCheckMinutes ?? 0,
+                    answered.CompletedAtUtc));
             var publication = store.ReadPublication(manifest.BatchId);
             if (publication is null) continue;
             var run = store.ListRuns(manifest.BatchId)
@@ -105,8 +123,8 @@ public static class BatchGatePilotSnapshotReader
         var reviewMinutes = reviewVerifications.Sum(item =>
             item.CandidateMinutes + item.BaselineMinutes);
         return new BatchGatePilotSnapshot(
-            project, primary.Length, eligible, executions.Count,
-            Ratio(executions.Count, eligible), Ratio(attempted, primary.Length),
+            project, primary.Length, eligible, fullSuiteRuns,
+            Ratio(fullSuiteRuns, eligible), Ratio(attempted, primary.Length),
             overload, null, null,
             queueDrain.Count > 0 ? queueDrain.Average() : null,
             null, null, Percentile(sortedLatency, .5),
@@ -120,7 +138,9 @@ public static class BatchGatePilotSnapshotReader
             ReviewVerificationRuns: reviewVerifications.Count(item => item.CountedCommands > 0),
             ReviewVerificationHostMinutes: reviewMinutes,
             ReviewVerificationBaselineMinutes: reviewVerifications.Sum(item => item.BaselineMinutes),
-            TotalVerificationHostMinutes: hostMinutes + reviewMinutes);
+            TotalVerificationHostMinutes: hostMinutes + reviewMinutes,
+            BaseChecks: baseChecks.OrderByDescending(item => item.RecordedAtUtc).ToArray(),
+            BaseCheckMinutes: baseChecks.Sum(item => item.Minutes));
     }
 
     private static double? Ratio(double numerator, double denominator)
