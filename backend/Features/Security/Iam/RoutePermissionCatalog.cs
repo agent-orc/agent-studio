@@ -341,7 +341,7 @@ public static class RoutePermissionCatalog
             "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
             "/api/workspace/summary", "/api/workspaces/{}/quota/**",
             "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",
-            "/api/system/execution-infrastructure", "/api/agent-rules", "/api/adhoc-usage/**");
+            "/api/system/execution-infrastructure", "/api/system/gate-slots", "/api/agent-rules", "/api/adhoc-usage/**");
         Add("W", IamPermissions.WorkspaceOperate,
             "/api/cli/quota/refresh/**", "/api/cli/{}/session", "/api/cli/{}/working-memory", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",

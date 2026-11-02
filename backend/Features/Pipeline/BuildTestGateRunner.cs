@@ -92,6 +92,13 @@ public sealed record BuildTestGateRequest(
     public int GateSlots { get; init; } = 1;
 
     /// <summary>
+    /// AGT-3423: the expected slot hold from the project's recent gate history,
+    /// set by the dispatcher. <see cref="GateSlotFairnessPolicy"/> reads it to
+    /// choose the slots this gate may take; Unknown keeps plain arrival order.
+    /// </summary>
+    public GateDurationClass DurationClass { get; init; }
+
+    /// <summary>
     /// AGT-3232: the host part and timing snapshot for sharded suites. Null
     /// runs the whole gate on this host and plans by class-name hashing.
     /// </summary>
@@ -513,7 +520,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                             fallbackCollision = true;
                             request.OnMachineGateWaiting?.Invoke();
                             request.OnMachineGateSlotWaiting?.Invoke(busy, total);
-                        }, ct).ConfigureAwait(false);
+                        }, ct, request.DurationClass).ConfigureAwait(false);
                     fallbackQueueWaitMs = queueWatch.ElapsedMilliseconds;
                     if (lease is null)
                     {

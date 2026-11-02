@@ -1,0 +1,72 @@
+@use '../../../../../styles/mixins' as m;
+
+:host { display: block; margin-top: var(--studio-spacing-2); }
+
+.gsb {
+  @include m.deck-panel(0);
+
+  overflow: clip;
+  font-size: var(--studio-card-meta-size);
+}
+
+.gsb__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-2) var(--studio-card-compact-padding-inline);
+  border-bottom: 1px solid var(--studio-card-muted-border);
+}
+
+.gsb__title {
+  margin: 0;
+  color: var(--studio-fg-strong);
+  font-size: var(--studio-card-meta-size);
+  font-weight: 650;
+}
+
+.gsb__count { color: var(--studio-fg-muted); font-variant-numeric: tabular-nums; }
+
+.gsb__rule,
+.gsb__subtitle {
+  margin: 0;
+  padding: var(--studio-spacing-2) var(--studio-card-compact-padding-inline) 0;
+  color: var(--studio-fg-muted);
+}
+
+.gsb__subtitle { color: var(--studio-fg-strong); font-size: var(--studio-card-meta-size); font-weight: 650; }
+
+.gsb__slots,
+.gsb__waiting {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: var(--studio-spacing-2) var(--studio-card-compact-padding-inline);
+  list-style: none;
+}
+
+.gsb__slot,
+.gsb__waiter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border-radius: var(--studio-radius-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* This project's gates are marked by a background tint, never a side stripe. */
+.gsb__slot--own { background: var(--studio-card-muted-bg); }
+
+.gsb__slot-name { min-width: 3.5rem; color: var(--studio-fg-strong); font-weight: 600; }
+.gsb__slot-idle,
+.gsb__reason { color: var(--studio-fg-muted); }
+.gsb__reason { flex-basis: 100%; }
+
+.gsb__badge {
+  padding: 0 var(--studio-spacing-1);
+  border: 1px solid var(--studio-card-muted-border);
+  border-radius: 999px;
+  color: var(--studio-fg-muted);
+}
