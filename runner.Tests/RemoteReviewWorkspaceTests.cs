@@ -716,6 +716,117 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Red_backend_comparison_keeps_frontend_dependencies_for_later_candidate_command()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["frontend/package-lock.json"] = "lock-v1",
+            [".gitignore"] = "frontend/node_modules/\nfrontend/.nm-state\n",
+        });
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var preparation = new ReviewPreparationCommandDto(
+            "prepare-frontend", PosixShell.RequirePath(),
+            ["-c", "mkdir -p node_modules/.bin && printf '#!/bin/sh\nexit 0\n' > node_modules/.bin/ng && chmod +x node_modules/.bin/ng"],
+            "frontend",
+            DependencyScopes: [new ReviewDependencyScopeDto("frontend", ["package-lock.json"])],
+            CoveredByDependencyScopes: true);
+        var commands = new[]
+        {
+            new ReviewCommandDto("verify-3", "build-tests", PosixShell.RequirePath(),
+                ["-c", "printf '  Failed Example.Tests.Sample.Fails [1 ms]\\n'; exit 1"],
+                CompareToBaseline: true),
+            new ReviewCommandDto("verify-6", "build-tests", PosixShell.RequirePath(),
+                ["-c", "frontend/node_modules/.bin/ng"], CompareToBaseline: true),
+        };
+        var logs = new List<string>();
+        var (workspace, _) = Workspace("attempt-red-backend-frontend", subjectSha, commands, 24007,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main",
+            preparation: [preparation], preserveGlobs: ["frontend/node_modules"], log: logs.Add);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal(0, Assert.Single(evidence.Commands, item =>
+            item.StepId == "verify-6" && item.WorkspaceRole == "candidate").ExitCode);
+        Assert.Contains(evidence.Commands, item => item.StepId == "prepare-frontend"
+            && item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
+        Assert.Contains(evidence.Commands, item => item.StepId == "prepare-frontend"
+            && item.WorkspaceRole == "candidate"
+            && item.DependencyCache?.Any(scope => scope.Reason == "marker-missing") == true);
+        Assert.Contains(logs, line => line.Contains("invalidated scope=frontend after step=verify-3", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line => line.Contains("state=workspace-removed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Lost_dependency_that_cannot_be_reprepared_names_scope_and_removing_step()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["frontend/package-lock.json"] = "lock-v1",
+            [".gitignore"] = "frontend/node_modules/\nfrontend/.nm-state\nfrontend/installed-once\n",
+        });
+        var preparation = new ReviewPreparationCommandDto("prepare-frontend", PosixShell.RequirePath(),
+            ["-c", "if test -f installed-once; then exit 9; fi; mkdir -p node_modules; touch installed-once"],
+            "frontend", DependencyScopes: [new ReviewDependencyScopeDto("frontend", ["package-lock.json"])],
+            CoveredByDependencyScopes: true);
+        var commands = new[]
+        {
+            new ReviewCommandDto("verify-removes", "build-tests", PosixShell.RequirePath(),
+                ["-c", "rm -rf frontend/node_modules"]),
+            new ReviewCommandDto("verify-needs-deps", "build-tests", PosixShell.RequirePath(),
+                ["-c", "test -d frontend/node_modules"]),
+        };
+        var (workspace, _) = Workspace("attempt-lost-deps", sha, commands, 24008,
+            preparation: [preparation], preserveGlobs: ["frontend/node_modules"]);
+        await workspace.PrepareAsync(null!, default);
+
+        var failure = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("DependencyDirectoryMissing", failure.Classification);
+        Assert.Contains("frontend", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("verify-removes", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("verify-needs-deps", failure.Message, StringComparison.Ordinal);
+        Assert.Equal("ReviewInfra", failure.Evidence?.Outcome);
+    }
+
+    [Fact]
+    public async Task Missing_directory_before_candidate_command_is_prepared_again_with_evidence()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["frontend/package-lock.json"] = "lock-v1",
+            [".gitignore"] = "frontend/node_modules/\nfrontend/.nm-state\n",
+        });
+        var preparation = new ReviewPreparationCommandDto("prepare-frontend", PosixShell.RequirePath(),
+            ["-c", "mkdir -p node_modules && touch node_modules/ready"], "frontend",
+            DependencyScopes: [new ReviewDependencyScopeDto("frontend", ["package-lock.json"])],
+            CoveredByDependencyScopes: true);
+        var commands = new[]
+        {
+            new ReviewCommandDto("verify-removes", "build-tests", PosixShell.RequirePath(),
+                ["-c", "rm -rf frontend/node_modules"]),
+            new ReviewCommandDto("verify-needs-deps", "build-tests", PosixShell.RequirePath(),
+                ["-c", "test -f frontend/node_modules/ready"]),
+        };
+        var (workspace, _) = Workspace("attempt-reprepare-deps", sha, commands, 24009,
+            preparation: [preparation], preserveGlobs: ["frontend/node_modules"]);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(0, Assert.Single(evidence.Commands, item =>
+            item.StepId == "verify-needs-deps").ExitCode);
+        Assert.Contains(evidence.Commands, item => item.StepId == "prepare-frontend"
+            && item.WorkspaceRole == "candidate"
+            && item.DependencyCache?.Any(scope => scope.Reason == "deps-dir-missing" && scope.InstallRan) == true);
+    }
+
+    [Fact]
     public async Task Dependency_cache_reuses_unchanged_lock_and_reinstalls_after_digest_change()
     {
         var counter = Path.Combine(_root, "install-counter.txt");

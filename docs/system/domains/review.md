@@ -427,6 +427,17 @@ either. Two paths are deliberately outside the attempt directory (AGT-3429):
   scratch folder holds NuGet's extraction locks. See
   [pipeline.md](pipeline.md) for what a dependency-cache hit may skip.
 
+Before each candidate tool command, the review workspace checks every prepared
+dependency scope for its directory and lockfile marker. A missing scope reruns
+preparation and records the miss in command evidence. An environment diagnosis
+evicts the candidate cache entry and invalidates its scope markers, then the
+next candidate command prepares those scopes again. It keeps the dependency
+directories in place while candidate commands remain. The baseline comparison
+only saves its own cache. If preparation cannot restore a vanished directory,
+the infrastructure result names the scope and the last step observed removing
+it. An exit 127 after a command removes its dependency directory uses the same
+classification rather than reporting a missing toolchain.
+
 **Build servers.** Path isolation does not cover them. On Linux, Roslyn's
 `VBCSCompiler` listens on `/tmp/<pipename>` derived from the compiler directory
 and the user name, and reusable MSBuild worker nodes listen on
