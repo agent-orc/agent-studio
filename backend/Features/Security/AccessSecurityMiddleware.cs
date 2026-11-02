@@ -933,6 +933,19 @@ public sealed class AccessSecurityMiddleware
         => HttpMethods.IsPost(method)
            && path.Equals("/api/tasks/reference-status", StringComparison.OrdinalIgnoreCase);
 
+    private bool RunnerOwnsTaskInput(string path, string runnerId)
+    {
+        if (_leases is null) return false;
+        var rest = path["/api/tasks/".Length..];
+        var fileMarker = rest.IndexOf("/files/", StringComparison.OrdinalIgnoreCase);
+        if (fileMarker <= 0) return false;
+        var taskKey = Uri.UnescapeDataString(rest[..fileMarker]);
+        var relativePath = Uri.UnescapeDataString(rest[(fileMarker + "/files/".Length)..]);
+        if (!relativePath.Equals("prompt.md", StringComparison.OrdinalIgnoreCase)) return false;
+        var lease = _leases.Peek(taskKey).Lease;
+        return lease is not null && string.Equals(lease.RunnerId, runnerId, StringComparison.Ordinal);
+    }
+
     /// <summary>The task key of a versioned card read, <c>GET /api/v1/projects/{project}/tasks/{task}</c>.</summary>
     internal static string? RunnerCardReadKey(string method, string path)
     {
@@ -946,19 +959,6 @@ public sealed class AccessSecurityMiddleware
 
     private bool RunnerHoldsLease(string taskKey, string runnerId)
         => _leases?.Peek(taskKey).Lease is { } lease && string.Equals(lease.RunnerId, runnerId, StringComparison.Ordinal);
-
-    private bool RunnerOwnsTaskInput(string path, string runnerId)
-    {
-        if (_leases is null) return false;
-        var rest = path["/api/tasks/".Length..];
-        var fileMarker = rest.IndexOf("/files/", StringComparison.OrdinalIgnoreCase);
-        if (fileMarker <= 0) return false;
-        var taskKey = Uri.UnescapeDataString(rest[..fileMarker]);
-        var relativePath = Uri.UnescapeDataString(rest[(fileMarker + "/files/".Length)..]);
-        if (!relativePath.Equals("prompt.md", StringComparison.OrdinalIgnoreCase)) return false;
-        var lease = _leases.Peek(taskKey).Lease;
-        return lease is not null && string.Equals(lease.RunnerId, runnerId, StringComparison.Ordinal);
-    }
 
     private static string NormalizePath(string? value)
     {
