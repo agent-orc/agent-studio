@@ -2835,6 +2835,68 @@ new fact even when its operator-facing summary is unchanged.
   operator requeue) plus the loop breaker
   `backend.Tests/Architecture/RunTimeoutContinuationBreakerTest.cs`.
 
+## Minimal repository execution definition (AOW-15)
+
+A repository without a build system still needs a valid
+`.agent-studio/project.yml` once it adds one. The smallest valid file is:
+
+```yaml
+schemaVersion: 1
+stack: [shell]
+commands:
+  prepare: .agent-studio/prepare
+  build: []
+  test: []
+  lint: []
+```
+
+with an executable prepare script next to it:
+
+```sh
+#!/bin/sh
+set -eu
+```
+
+Rules an agent must follow when it writes the file:
+
+- `commands.prepare` is required. It is a repository-relative path with
+  forward slashes and no `..`; anything else is `prepare-path-invalid`.
+- The script must exist in the same delivery (`prepare-script-missing`
+  otherwise) and must be committed executable
+  (`git update-index --chmod=+x .agent-studio/prepare`). POSIX hosts run it
+  through `/bin/sh`; Windows hosts use `prepare.ps1` beside it or Git Bash.
+- `stack` needs at least one entry. `shell` is a free label that binds no
+  dependency cache; `node`, `dotnet` and `playwright` bind the npm, NuGet and
+  Playwright caches.
+- Empty `build`, `test` and `lint` lists are valid. The gate then has no
+  verify command and records `NotApplicable` (`No build/test defined`).
+
+An invalid definition is a code failure of the delivery that carries it, in
+every gate path:
+
+- `ProjectPreparationExecutor.RunAsync` returns a reason that lists each issue
+  as `path (line N) [code] message`, bounded by
+  `ProjectDefinitionIssueText.MaxLength`. The structured issues stay on
+  `BuildTestGateResult.ProjectDefinitionIssues`.
+- `BuildTestGateRunner` maps `PreparationFailureKind.Definition` to
+  `BuildTestGateFailureKind.Code` and does not run the baseline / clean-repeat
+  diagnosis for it. Before AOW-15 that diagnosis returned
+  `unclassified-first-occurrence` and retyped the failure as `Environment`, so
+  the merge gate reported `gate-environment-failure`, spent the environment
+  replay ladder, and parked the card with "repair the gate host".
+- `GateFailureTriagePolicy` classifies a gate log whose reason carries the
+  invalid-definition text as `product` with kind `definition`, before any
+  environment marker. The failing items are the `path [code]` pairs. Routing
+  starts the one fix round with the issues and the rule above, never attaches
+  the card to a shared cause, and never spends the environment replay budget.
+- Review checks the file first. Right after the completion gate,
+  `ProjectDefinitionGate` reads `project.yml` at the exact subject SHA through
+  git and validates it, including the existence of every referenced file. An
+  invalid file reissues the card to its agent with one finding per issue,
+  within the shared reissue budget, before the build gate or any review aspect
+  runs. A delivery without the file, or a subject git cannot read, passes this
+  check; the build gate stays the backstop.
+
 ## Project deployment definition (P1)
 
 ### Card previews

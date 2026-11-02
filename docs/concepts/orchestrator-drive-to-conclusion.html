@@ -387,6 +387,13 @@
       <tbody>
         <tr>
           <td>2026-11-02</td>
+          <td><code>AOW-15</code><br><span class="small">invalid-definition-parked-as-environment (fix <code>AGT-3431</code>)</span></td>
+          <td>The delivery added <code>.agent-studio/project.yml</code> without <code>commands.prepare</code>. The merge gate reported <code>gate-environment-failure</code> with the fixed reason "Repository execution definition is invalid.", the triage routed it as <code>environment/toolchain</code>, and the spent replay ladder parked the card with "repair the gate host". Terminal at discovery: parked for an operator, for a fault in the delivery's own file. The agent needed three rounds to learn the file rules.</td>
+          <td>The preparation reader knew the issue (<code>commands.prepare</code>, <code>prepare-path-invalid</code>), but the reason was a fixed sentence. <code>BuildTestGateRunner</code> typed the failure as <code>Code</code>, then its baseline / clean-repeat diagnosis returned <code>unclassified-first-occurrence</code>, which does not charge the card, and overwrote the kind with <code>Environment</code>.</td>
+          <td>The reason lists every issue with path, code and message, bounded in length. The gate skips the diagnosis for an invalid definition, the triage classifies it as <code>product/definition</code> and starts the fix round with the issues and the file rule, and review validates the file at the subject SHA right after the completion gate, so the agent gets the issues in its own round. The minimal valid file is documented in <code>docs/system/domains/pipeline.md</code>.</td>
+        </tr>
+        <tr>
+          <td>2026-11-02</td>
           <td><code>TE-72</code>, <code>TE-74</code>, <code>TE-76</code>, <code>TE-77</code><br><span class="small">release-source-needs-rebase-loop (fix <code>AGT-3435</code>)</span></td>
           <td>No CLI crashed. On Token Economy, which integrates straight into <code>main</code>, reviewed deliveries failed <code>merge-into-develop ... strategy=direct-merge outcome=Error failureCode=source-needs-rebase</code> and escalated. A fix round took 20 minutes or more, another card moved <code>main</code> meanwhile, and the next attempt failed the same way; TE-77 hit it three times. Terminal at discovery: <span class="lane">5e-escalated</span>, each round sent again by an operator.</td>
           <td>The release path required the delivery to descend from <code>main</code>, so the full suite could test the delivery SHA and <code>main</code> could fast-forward to it. Nothing about the deliveries was wrong; they merged without conflict.</td>
