@@ -27,6 +27,22 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   deadline, urgent tags, operator close-now, and overlap policy. A separate
   overlap policy excludes cards touching a chosen member's files. Decisions
   are persisted for the state API. Pending reviews appear in the look-ahead.
+- AGT-3407: a lone card takes its own gate before its deadline only on an idle
+  gate host. The host counts as idle when the load gate is clear, no batch
+  and no per-task gate runs or waits for a slot, and a gate slot is free
+  (`BatchGateLookAheadPlanner.GateHostIdle`). Behind busy slots the card
+  waits for a batch partner until its deadline, and the plan reads
+  `waiting for target size or deadline`. After the deadline it takes its own
+  gate, unless a gate backlog holds it for a due partner. The age-out after
+  two deadlines still applies. Cards past their deadline that are waiting
+  together close as one batch when the overlap policy allows it. Each plan
+  records the waiting cards it `considered`. In Engine mode the tick refuses
+  a per-task intent when two or more cards are eligible and one of them is
+  missing from that list. The receipt reads `rejected` with `per-task
+  decision did not consider every eligible card`, and the tick plans again
+  on current facts. Before AGT-3407 only a running batch kept the host busy.
+  On 1 November 2026 six cards each took a per-task gate of about 50 minutes
+  behind three busy slots.
 - Each card's paths and changed lines come from its result SHA, measured
   from the merge base with `refs/remotes/origin/<branch>`, the ref the
   planning tick fetches. A card whose diff cannot be computed scores at the
@@ -110,6 +126,13 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   for `codex`, each with a `_FILE` variant. Without that credential, the engine
   records an advisor fallback with the requested model and keeps the
   deterministic plan. It never substitutes another model.
+- The networked profile never starts the advisor CLI on the server
+  (AGT-3411). With Engine ownership of `BatchPlan` the engine carries the
+  advisor as above. Otherwise the configured advisor does not run: the batch
+  tick decides deterministically, logs `batch-plan-advisor-off` once, and
+  `GET /api/projects/{name}/batch-gate` reports `advisorEffective` with
+  `effectiveMode: off`, `carrier: none`, and the reason, which Batch settings
+  shows beside the advisor fields.
 
 ## Open
 

@@ -246,12 +246,16 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
             Assert.Equal("no-store", Header(thumbnail, "Cache-Control"));
         }
 
-        // The networked boundary keeps task files Runner-only (prompt.md under
-        // a live lease), so the session gets no HTML at all from this route.
+        // A signed-in member reads card files through the route permission. Stored
+        // HTML keeps its media type under the sandboxed document policy, so a
+        // script in it cannot run. Without a session the route stays closed.
         using var taskFile = await SendAsync(client, HttpMethod.Get, $"/api/tasks/{TaskKey}/files/x.html", owner.SessionToken);
-        Assert.Equal(HttpStatusCode.Unauthorized, taskFile.StatusCode);
-        Assert.DoesNotContain("<script>", await taskFile.Content.ReadAsStringAsync());
-        Assert.Equal(StudioResponseHeaderPolicy.ApiContentSecurityPolicy, Header(taskFile, "Content-Security-Policy"));
+        Assert.Equal(HttpStatusCode.OK, taskFile.StatusCode);
+        AssertSandboxedDocument(taskFile);
+
+        using var anonymous = await client.GetAsync($"/api/tasks/{TaskKey}/files/x.html");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        Assert.DoesNotContain("<script>", await anonymous.Content.ReadAsStringAsync());
     }
 
     [Fact]

@@ -101,6 +101,10 @@ public static class MonolithTransitionAdapter
     public static bool BatchBacklogAgedOut(DateTimeOffset readyAtUtc, DateTimeOffset nowUtc, int deadlineMinutes)
         => BatchGateLookAheadPlanner.AgedOut(readyAtUtc, nowUtc, deadlineMinutes);
 
+    public static bool BatchGateHostIdle(bool loadClear, bool batchRunning, int perTaskGates,
+        int slotsBusy, int slotsTotal)
+        => BatchGateLookAheadPlanner.GateHostIdle(loadClear, batchRunning, perTaskGates, slotsBusy, slotsTotal);
+
     public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
 
     public static bool GateQueueStallRaisesEvent(bool episodeOpen) => GateQueueStallPolicy.RaisesStallEvent(episodeOpen);

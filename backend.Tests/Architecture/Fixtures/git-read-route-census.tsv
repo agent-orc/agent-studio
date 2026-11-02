@@ -49,8 +49,6 @@
 /api/cli/types	free	-	-	-
 /api/cli/usage	free	-	-	-
 /api/cli/{cliType}/models	free	-	-	-
-/api/cli/{cliType}/session-detail	free	-	-	-
-/api/cli/{cliType}/working-memory	free	-	-	-
 /api/cli/{name}/effective-mode	free	-	-	-
 /api/clients/	free	-	-	-
 /api/clients/{id}	free	-	-	-

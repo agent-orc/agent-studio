@@ -132,6 +132,7 @@ public sealed class AcceptedIntegrationFailurePolicyTests
     [InlineData(AcceptedIntegrationFailureCodes.RebaseAttributionFailed)]
     [InlineData(AcceptedIntegrationFailureCodes.IntegrationRefUnresolved)]
     [InlineData(AcceptedIntegrationFailureCodes.GateUnavailable)]
+    [InlineData(AcceptedIntegrationFailureCodes.ReleaseLineMoving)]
     public void Classify_PersistedErrorCode_IsKeptWithItsOwnLabelAndReason(string code)
     {
         const string reason = "The exact diagnostic the runner recorded.";

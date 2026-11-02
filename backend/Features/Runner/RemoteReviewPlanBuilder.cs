@@ -62,6 +62,7 @@ public sealed class RemoteReviewPlanBuilder
     private readonly ModelRoutingPolicyRegistry? _routing;
     private readonly ReviewObservationStore? _observations;
     private readonly PostMergeModeService? _postMergeMode;
+    private readonly AgentStudio.Projects.ProjectRepositoryVisibility? _visibility;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
@@ -74,7 +75,8 @@ public sealed class RemoteReviewPlanBuilder
         QuotaAdmissionService? quota = null,
         ModelRoutingPolicyRegistry? routing = null,
         ReviewObservationStore? observations = null,
-        PostMergeModeService? postMergeMode = null)
+        PostMergeModeService? postMergeMode = null,
+        AgentStudio.Projects.ProjectRepositoryVisibility? visibility = null)
     {
         _aspects = aspects;
         _configuration = configuration;
@@ -87,6 +89,7 @@ public sealed class RemoteReviewPlanBuilder
         _routing = routing;
         _observations = observations;
         _postMergeMode = postMergeMode;
+        _visibility = visibility;
     }
 
     /// <summary>
@@ -130,12 +133,14 @@ public sealed class RemoteReviewPlanBuilder
         string? immutableResultRef = null)
         // AGT-3077: every plan shape carries the repository visibility, so a
         // private repository is refused at claim time on any executor without
-        // a read credential for it.
+        // a read credential for it. AGT-3408: what GitHub reports through the
+        // App joins the project setting; GitHub's "private" always holds.
         => BuildPlan(task, repositoryPath, projectSettings, integrationRef,
                 expectedResultSha, changedFiles, immutableResultRef) with
             {
-                PrivateRepository = Contract.ReviewRepositoryAccessPolicy.IsPrivate(
-                    projectSettings?.RepositoryVisibility),
+                PrivateRepository = task is not null && _visibility is not null
+                    ? _visibility.IsPrivate(task, projectSettings)
+                    : Contract.ReviewRepositoryAccessPolicy.IsPrivate(projectSettings?.RepositoryVisibility),
             };
 
     private Contract.ReviewPlanDto BuildPlan(
@@ -279,13 +284,15 @@ public sealed class RemoteReviewPlanBuilder
             Tags = task.Tags,
         };
         var inputs = Inputs(task, integrationRef);
-        var defaultModel = _configuration.GetValue(
-            "ReviewDecisionOrchestrator:AspectModel",
-            PipelineStepModelDefaults.SupportModel);
-        var defaultCli = ReviewDecisionOrchestrator.NormalizeReviewCliType(
-            _configuration.GetValue(
-                "ReviewDecisionOrchestrator:Cli",
-                PipelineStepModelDefaults.DefaultCli));
+        // AGT-3420: the default aspect model belongs to the review CLI in use.
+        var hostDefault = ReviewAspectModelPolicy.ResolveDefault(
+            _configuration[ReviewAspectModelPolicy.CliSetting] ?? PipelineStepModelDefaults.DefaultCli,
+            _configuration[ReviewAspectModelPolicy.ModelSetting]);
+        if (hostDefault.Fault is not null)
+            _logger?.LogError(
+                "remote-review-plan-model-pair-rejected task={TaskKey} setting={Setting} cli={Cli} model={Model}: {Fault}",
+                string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey,
+                ReviewAspectModelPolicy.ModelSetting, hostDefault.CliType, hostDefault.Model, hostDefault.Fault);
 
         var commands = toolPlan.Commands.ToList();
         var skipped = new List<Contract.ReviewSkippedAspectDto>();
@@ -330,8 +337,16 @@ public sealed class RemoteReviewPlanBuilder
                 ? ConceptFitDefinition
                 : AspectRunnerService.Catalogue[aspectId];
 
-            var model = PipelineStepConfigResolver.ResolveModel(settings, step, defaultModel);
-            var cliType = PipelineStepConfigResolver.ResolveCliType(settings, step) ?? defaultCli;
+            var choice = ReviewAspectModelPolicy.ResolveStep(hostDefault, step.Id,
+                PipelineStepConfigResolver.ResolveCliType(settings, step),
+                PipelineStepConfigResolver.ResolveModelWithSource(settings, step, hostDefault.Model));
+            if (choice.Fault is not null)
+                _logger?.LogWarning(
+                    "remote-review-plan-model-pair-fallback task={TaskKey} step={StepId} cli={Cli} model={Model}: {Fault}",
+                    string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey,
+                    step.Id, choice.CliType, choice.Model, choice.Fault);
+            var model = choice.Model;
+            var cliType = choice.CliType;
             var thinking = PipelineStepConfigResolver.ResolveThinkingLevel(
                 settings,
                 step,
@@ -793,7 +808,7 @@ public sealed class RemoteReviewPlanBuilder
         var briefPath = Path.Combine(task.FolderPath, "prompt.md");
         var taskBody = Read(briefPath, 64_000, task.Id);
         var recentLog = Read(Path.Combine(task.FolderPath, "cli-output.log"), 16_000, string.Empty);
-        var status = Read(Path.Combine(task.FolderPath, "status.md"), 16_000, string.Empty);
+        var status = ReadStatus(task.FolderPath);
         var baseline = string.IsNullOrWhiteSpace(integrationRef) ? "the configured integration ref" : integrationRef;
         var diff =
             $"This aspect runs on a remote Review Executor at the immutable Result-SHA. " +
@@ -816,6 +831,20 @@ public sealed class RemoteReviewPlanBuilder
                 task.AcceptanceScope,
                 taskBody),
         };
+    }
+
+    /// <summary>
+    /// A remote agent writes its report to <c>results/status.md</c>. The card's
+    /// <c>status.md</c> is the generated summary, or a scaffold that says nothing
+    /// about the work until a summary exists, so a scaffold never hides the report.
+    /// </summary>
+    private static string ReadStatus(string folderPath)
+    {
+        var summary = Read(Path.Combine(folderPath, "status.md"), 16_000, string.Empty);
+        if (summary.Length > 0
+            && !summary.Contains(AgentStudio.Tasks.TaskTransitionService.ResultScaffoldMarker, StringComparison.Ordinal))
+            return summary;
+        return Read(Path.Combine(folderPath, "results", "status.md"), 16_000, summary);
     }
 
     private static string Read(string path, int maximumCharacters, string fallback)

@@ -524,7 +524,7 @@ public sealed class RemoteReviewExecutor
                         DeliveryFailureDiagnosis.Environment or
                         DeliveryFailureDiagnosis.Intermittent or
                         DeliveryFailureDiagnosis.FirstOccurrence)?.Classification;
-                var request = new ReviewReportRequest(
+                var request = ReviewReportArtifactBudget.Apply(new ReviewReportRequest(
                     lease.ExecutorId,
                     lease.InstanceId,
                     lease.LeaseId,
@@ -542,7 +542,9 @@ public sealed class RemoteReviewExecutor
                     evidence.Verdicts,
                     AuthorityEpoch: lease.AuthorityEpoch,
                     BriefSha256: slot.Claim.Subject?.Plan.BriefSha256,
-                    SkippedAspects: slot.Claim.Subject?.Plan.SkippedAspects);
+                    SkippedAspects: slot.Claim.Subject?.Plan.SkippedAspects));
+                if (slot.ReducedReportSubmitted)
+                    request = ReviewReportArtifactBudget.Reduce(request);
                 var submittedAt = DateTime.UtcNow;
                 slot = SaveSlot(slot with
                 {
@@ -582,12 +584,19 @@ public sealed class RemoteReviewExecutor
                             ct);
                         authorityAdvanced = !SameAuthority(lease, _authority.Lease);
                     }
-                    var action = authorityAdvanced || authorityRecovered
+                    var badGatewayCount = taskServer?.StatusCode == 502
+                        ? slot.ConsecutiveReportBadGateway + 1
+                        : 0;
+                    var reduce = !slot.ReducedReportSubmitted
+                                 && (taskServer?.StatusCode == 413 || badGatewayCount >= 3);
+                    var action = authorityAdvanced || authorityRecovered || reduce
                         ? ReviewReportSubmissionAction.Retry
                         : ReviewReportSubmissionPolicy.Decide(
                             taskServer?.StatusCode,
                             taskServer?.ErrorCode,
                             transportFailure);
+                    if (slot.ReducedReportSubmitted && taskServer?.StatusCode is 413 or 502)
+                        action = ReviewReportSubmissionAction.TerminalRejected;
                     var error = exception.Message.Length <= 500
                         ? exception.Message
                         : exception.Message[..500];
@@ -599,10 +608,17 @@ public sealed class RemoteReviewExecutor
                         LastReportStatusCode = taskServer?.StatusCode,
                         LastReportErrorCode = taskServer?.ErrorCode,
                         LastReportError = error,
+                        ReducedReportSubmitted = slot.ReducedReportSubmitted || reduce,
+                        ConsecutiveReportBadGateway = badGatewayCount,
                         TerminalClassification = action == ReviewReportSubmissionAction.Retry
                             ? null
                             : ReviewReportSubmissionPolicy.TerminalClassification(action),
                     });
+                    if (reduce)
+                        _log($"review-report-reduced attempt={attempt.AttemptId} " +
+                             $"status={taskServer?.StatusCode} " +
+                             $"originalBytes={ReviewReportArtifactBudget.WireBytes(request)} " +
+                             $"reducedBytes={ReviewReportArtifactBudget.WireBytes(ReviewReportArtifactBudget.Reduce(request))}");
 
                     if (action != ReviewReportSubmissionAction.Retry)
                     {
@@ -616,7 +632,7 @@ public sealed class RemoteReviewExecutor
                             taskServer);
                     }
 
-                    delay = authorityAdvanced || authorityRecovered
+                    delay = authorityAdvanced || authorityRecovered || reduce
                         ? TimeSpan.Zero
                         : ReportRetryDelayOverride?.Invoke(slot.ReportSubmissionAttempts)
                           ?? ReviewReportSubmissionPolicy.RetryDelay(

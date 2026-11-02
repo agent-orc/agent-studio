@@ -6,8 +6,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  acceptedTokenHits, buildInventory, classifyPath, classifyWorkspace, credentialChecklist, deriveRepositoryFromStorage, fileTokenPattern,
-  findTokenPattern, generateMapping, integrationBranches, inventoryExitCode, readProjectRegistry, runCli, setRepositoryPaths, tokenHitLines, scanFileContent, scanWorkspace, screenTokens, selectDelta, skippedFolders, stripUrlCredentials, taskRoots, tokenStateIssues,
+  acceptedTokenHits, anonymousProbeUrl, buildInventory, carriedVisibilities, carryVisibility, classifyAnonymousProbe,
+  classifyPath, classifyWorkspace, credentialChecklist, deriveRepositoryFromStorage, fileTokenPattern, findTokenPattern,
+  generateMapping, integrationBranches, inventoryExitCode, projectVisibilities, readProjectRegistry, runCli,
+  scanFileContent, scanWorkspace, screenTokens, selectDelta, setRepositoryPaths, skippedFolders, stripUrlCredentials,
+  taskRoots, tokenHitLines, tokenStateIssues,
 } from './move-studio-to-server.mjs';
 import { inventory as relocateInventory, relocate } from './relocate-workspace-paths.mjs';
 
@@ -793,5 +796,87 @@ test('a Windows path inside stored message text is history and does not stop the
   const written = JSON.parse(await readFile(path.join(workspace, '.metadata', 'attempts.json'), 'utf8'));
   assert.equal(written.root, '/data/projects/demo');
   assert.equal(written.summary, summary);
+  await rm(root, { recursive: true, force: true });
+});
+
+test('the anonymous probe URL never carries a credential and reaches GitHub ssh remotes over https', () => {
+  const password = 'fake-' + 'secret';
+  assert.equal(anonymousProbeUrl('git@github.com:Owner/Site.git'), 'https://github.com/Owner/Site.git');
+  assert.equal(anonymousProbeUrl('ssh://git@github.com/owner/site'), 'https://github.com/owner/site.git');
+  assert.equal(anonymousProbeUrl(`https://operator:${password}@github.com/owner/site.git`), 'https://github.com/owner/site.git');
+  assert.equal(anonymousProbeUrl('https://gitlab.example/owner/site.git'), 'https://gitlab.example/owner/site.git');
+  assert.equal(anonymousProbeUrl('git@gitlab.example:owner/site.git'), null);
+  assert.equal(anonymousProbeUrl(''), null);
+});
+
+test('an anonymous probe that asks for credentials marks the repository private', () => {
+  assert.equal(classifyAnonymousProbe({ exitCode: 0, stderr: '' }), 'public');
+  assert.equal(classifyAnonymousProbe({ exitCode: 128,
+    stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled" }), 'private');
+  assert.equal(classifyAnonymousProbe({ exitCode: 128, stderr: "remote: Repository not found." }), 'private');
+  assert.equal(classifyAnonymousProbe({ exitCode: 128, stderr: 'fatal: unable to access: Could not resolve host' }), null);
+  assert.equal(classifyAnonymousProbe({ exitCode: 124, stderr: '' }), null);
+});
+
+test('a project setting outranks the probe and an unprobed project stays unknown', () => {
+  const projects = [
+    { id: 'P1', displayName: 'Set' }, { id: 'P2', displayName: 'Probed' }, { id: 'P3', displayName: 'Silent' },
+  ];
+  const settings = { set: { repositoryVisibility: 'Private' }, Probed: { AutoCommit: true } };
+  const probes = {
+    P1: { exitCode: 0, stderr: '' },
+    P2: { exitCode: 128, stderr: 'fatal: Authentication failed' },
+    P3: { exitCode: 128, stderr: 'fatal: Could not resolve host' },
+  };
+
+  assert.deepEqual(projectVisibilities({ projects, settings, probes }), [
+    { id: 'P1', displayName: 'Set', visibility: 'private', source: 'setting' },
+    { id: 'P2', displayName: 'Probed', visibility: 'private', source: 'probe' },
+    { id: 'P3', displayName: 'Silent', visibility: null, source: 'unknown' },
+  ]);
+});
+
+test('the inventory reports each visibility and carries only probe results', () => {
+  const inventory = buildInventory({
+    workspace: '/w', files: [], tracked: [], dirty: [], remotes: {}, extra: {}, home: '/h', exists: () => false,
+    credentialHelper: '', now: fixedClock,
+    projects: [
+      { id: 'P1', displayName: 'Set', urls: [] }, { id: 'P2', displayName: 'Probed', urls: [] },
+      { id: 'P3', displayName: 'Silent', urls: [] },
+    ],
+    settings: { Set: { RepositoryVisibility: 'public' } },
+    probes: { P1: { exitCode: 128, stderr: 'Repository not found' }, P2: { exitCode: 128, stderr: 'Repository not found' } },
+  });
+
+  assert.deepEqual(inventory.projects.map(project => [project.repositoryVisibility, project.visibilitySource]),
+    [['public', 'setting'], ['private', 'probe'], [null, 'unknown']]);
+  assert.deepEqual(carriedVisibilities(inventory), { Probed: 'private' });
+});
+
+test('carrying a visibility never overwrites one the server copy already has', () => {
+  const { settings, changed } = carryVisibility(
+    { 'probed site': { AutoCommit: true }, Kept: { RepositoryVisibility: 'public' } },
+    { 'Probed site': 'private', Kept: 'private', New: 'public', Bad: 'secret' });
+
+  assert.deepEqual(changed, ['Probed site', 'New']);
+  assert.deepEqual(settings, {
+    'probed site': { AutoCommit: true, RepositoryVisibility: 'private' },
+    Kept: { RepositoryVisibility: 'public' },
+    New: { RepositoryVisibility: 'public' },
+  });
+});
+
+test('carry-visibility writes project-settings.json in the server copy', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-visibility-'));
+  await writeFile(path.join(root, 'project-settings.json'), JSON.stringify({ Site: { AutoCommit: true } }));
+  const carried = path.join(root, 'visibility.json');
+  await writeFile(carried, JSON.stringify({ Site: 'private' }));
+  let output = '';
+
+  assert.equal(runCli(['carry-visibility', '--workspace', root, '--visibility', carried], { write: text => { output += text; } }), 0);
+
+  assert.equal(output, 'Repository visibility carried for 1 project(s): Site\n');
+  const written = JSON.parse(await readFile(path.join(root, 'project-settings.json'), 'utf8'));
+  assert.deepEqual(written, { Site: { AutoCommit: true, RepositoryVisibility: 'private' } });
   await rm(root, { recursive: true, force: true });
 });

@@ -67,7 +67,7 @@ public static class BuildProfileValidationFingerprint
     public static string? Create(BuildProfile? profile)
     {
         if (profile is null) return null;
-        var payload = JsonSerializer.Serialize(new
+        var fields = new
         {
             stack = Normalize(profile.Stack),
             installCmd = Normalize(profile.InstallCmd),
@@ -76,7 +76,13 @@ public static class BuildProfileValidationFingerprint
             lockfiles = Normalize(profile.Lockfiles),
             preserveGlobs = Normalize(profile.PreserveGlobs),
             poolSize = profile.PoolSize is > 0 ? profile.PoolSize : null,
-        });
+        };
+        // AGT-3429: the opt-in changes which preparation a cache hit may skip.
+        // It enters the payload only when set, so every existing profile keeps
+        // its validated fingerprint.
+        var payload = profile.InstallCoveredByLockfiles
+            ? JsonSerializer.Serialize(new { fields, installCoveredByLockfiles = true })
+            : JsonSerializer.Serialize(fields);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)))
             .ToLowerInvariant();
     }

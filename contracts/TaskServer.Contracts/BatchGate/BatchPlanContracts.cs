@@ -19,11 +19,17 @@ public sealed record BatchPlanUpcomingView(
     string TaskKey, string Stage, DateTimeOffset? EtaUtc,
     double Risk, IReadOnlyList<string> OverlapsWith);
 
+/// <param name="Considered">
+/// Waiting cards of the snapshot the decision was computed from. The
+/// authority compares it with its current facts before it applies a decision
+/// it did not compute itself; null on decisions of an older decider.
+/// </param>
 public sealed record BatchPlanDecision(
     string Decision, string Reason, DateTimeOffset? CloseAtUtc,
     IReadOnlyList<string> ProposedMembers, int TargetSize,
     IReadOnlyList<BatchPlanUpcomingView> Upcoming,
-    BatchAdvisorView? Advisor = null);
+    BatchAdvisorView? Advisor = null,
+    IReadOnlyList<string>? Considered = null);
 
 public sealed record BatchAdvisorView(string Mode, string Verdict,
     IReadOnlyList<string> Reasons, string Model, DateTimeOffset AtUtc);

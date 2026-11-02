@@ -345,7 +345,10 @@ export function integrationBranches(settings, projects) {
 export function readProjectSettings(workspace) {
   const file = path.join(workspace, 'project-settings.json');
   if (!existsSync(file)) return {};
-  try { return JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); }
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  }
   catch { return {}; }
 }
 
@@ -354,6 +357,68 @@ export function registryRepositoryUrl(project) {
   const entry = project.urls.find(url => url.id.toLowerCase() === 'repo'
     || ['repo', 'repository'].includes(url.label.toLowerCase()));
   return isUsableRemote(entry?.url) ? entry.url.trim() : null;
+}
+
+/**
+ * The https form an anonymous `git ls-remote` can probe, without credentials:
+ * a GitHub ssh remote becomes its https URL; another ssh host cannot be probed
+ * without a key and yields null.
+ */
+export function anonymousProbeUrl(value) {
+  const url = stripUrlCredentials(value);
+  if (!url) return null;
+  const github = /^(?:ssh:\/\/)?(?:[^@/\s]+@)?github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(url);
+  if (github && !/^https?:/i.test(url)) return `https://github.com/${github[1]}/${github[2]}.git`;
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
+// What git prints when a repository needs credentials: GitHub answers an anonymous
+// request for a private repository with "Repository not found".
+const missingReadAccess = /could not read Username|Authentication failed|Repository not found|terminal prompts disabled|HTTP 40[13]/i;
+
+/** Visibility from one anonymous ls-remote: public when it succeeds, private when it asks for credentials, else unknown. */
+export function classifyAnonymousProbe({ exitCode, stderr = '' }) {
+  if (exitCode === 0) return 'public';
+  return missingReadAccess.test(stderr) ? 'private' : null;
+}
+
+const visibilityValue = value => {
+  const lower = String(value ?? '').trim().toLowerCase();
+  return lower === 'private' || lower === 'public' ? lower : null;
+};
+
+/**
+ * AGT-3408: the repository visibility of each project. An explicit setting
+ * travels inside project-settings.json; a project without one takes the result
+ * of the workstation's anonymous probe, which the move then writes into the
+ * server copy, so a private repository reaches the server marked private.
+ */
+export function projectVisibilities({ projects, settings, probes = {} }) {
+  return projects.map(project => {
+    const configured = visibilityValue(field(field(settings, project.displayName), 'RepositoryVisibility'));
+    if (configured) return { id: project.id, displayName: project.displayName, visibility: configured, source: 'setting' };
+    const probed = probes[project.id] ? classifyAnonymousProbe(probes[project.id]) : null;
+    return probed
+      ? { id: project.id, displayName: project.displayName, visibility: probed, source: 'probe' }
+      : { id: project.id, displayName: project.displayName, visibility: null, source: 'unknown' };
+  });
+}
+
+/** Writes each carried visibility into a settings map, never over a value the project already has. */
+export function carryVisibility(settings, carried) {
+  const result = { ...settings };
+  const changed = [];
+  for (const [displayName, value] of Object.entries(carried)) {
+    const visibility = visibilityValue(value);
+    if (!visibility) continue;
+    const key = Object.keys(result).find(candidate => candidate.toLowerCase() === displayName.toLowerCase()) ?? displayName;
+    const current = result[key] && typeof result[key] === 'object' ? result[key] : {};
+    if (visibilityValue(field(current, 'RepositoryVisibility'))) continue;
+    const existing = Object.keys(current).find(candidate => candidate.toLowerCase() === 'repositoryvisibility');
+    result[key] = { ...current, [existing ?? 'RepositoryVisibility']: visibility };
+    changed.push(displayName);
+  }
+  return { settings: result, changed };
 }
 
 const slug = value => normalized(value).split('/').pop().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|-+$/g, '') || 'project';
@@ -572,11 +637,12 @@ export function tokenStateIssues(entries, roots = []) {
  */
 export function buildInventory({
   workspace, files, tracked, dirty, projects, remotes, extra, home, exists, credentialHelper, now,
-  scanTokens = null, storageSnapshots = [], isRepository = () => false, settings = {},
+  scanTokens = null, storageSnapshots = [], isRepository = () => false, settings = {}, probes = {},
 }) {
   const classified = classifyWorkspace({ files, tracked, dirty });
   const entries = scanTokens ? screenTokens(classified, { scan: scanTokens, accepted: acceptedTokenHits() }) : classified;
   const plan = generateMapping({ workspace, projects, remotes, extra, isRepository, branches: integrationBranches(settings, projects) });
+  const visibilities = new Map(projectVisibilities({ projects, settings, probes }).map(item => [item.id, item]));
   return {
     generatedAt: now().toISOString(),
     workspace,
@@ -585,6 +651,7 @@ export function buildInventory({
     projects: projects.map(project => ({
       id: project.id, displayName: project.displayName, archived: project.archived,
       storageLocation: project.storageLocation, repositoryPath: project.repositoryPath, rootPath: project.rootPath,
+      repositoryVisibility: visibilities.get(project.id).visibility, visibilitySource: visibilities.get(project.id).source,
     })),
     mapping: plan.mapping,
     checkouts: plan.checkouts,
@@ -615,6 +682,9 @@ export function formatInventory(inventory) {
     for (const [label, value] of [['storage', project.storageLocation], ['repository', project.repositoryPath], ['root', project.rootPath]]) {
       if (value) lines.push(`    ${label}: ${value}`);
     }
+    if (project.visibilitySource === 'setting') lines.push(`    visibility: ${project.repositoryVisibility} (project setting)`);
+    else if (project.visibilitySource === 'probe') lines.push(`    visibility: ${project.repositoryVisibility} (anonymous probe; written to the server copy)`);
+    else if (project.visibilitySource === 'unknown') lines.push('    visibility: unknown (the server takes it from the GitHub App, otherwise public)');
   }
   lines.push('Path mapping:');
   for (const [from, to] of Object.entries(inventory.mapping)) lines.push(`  ${from} -> ${to}`);
@@ -657,6 +727,24 @@ function parseArgs(args) {
     options[args[index].slice(2)] = args[++index];
   }
   return options;
+}
+
+/** `<project-id>\t<exit code>\t<stderr line>` per anonymous probe the shell ran. */
+function readProbes(file) {
+  const probes = {};
+  if (!file || !existsSync(file)) return probes;
+  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const [id, exitCode, ...stderr] = line.split('\t');
+    if (id && exitCode !== undefined && exitCode !== '') probes[id] = { exitCode: Number(exitCode), stderr: stderr.join('\t') };
+  }
+  return probes;
+}
+
+/** The carried visibilities: only probe results, a setting already travels inside project-settings.json. */
+export function carriedVisibilities(inventory) {
+  return Object.fromEntries(inventory.projects
+    .filter(project => project.visibilitySource === 'probe')
+    .map(project => [project.displayName, project.repositoryVisibility]));
 }
 
 function readRemotes(file) {
@@ -710,6 +798,22 @@ export function runCli(argv, {
     write(`RepositoryPath written for ${changed.size ? [...changed].join(', ') : 'no project'}\n`);
     return 0;
   }
+  if (command === 'probe-targets') {
+    // The anonymous URL each project's repository is probed at: registry URL first, workstation origin second.
+    const remotes = readRemotes(options.remotes);
+    for (const project of readProjectRegistry(options.workspace)) {
+      const url = anonymousProbeUrl(registryRepositoryUrl(project) ?? remotes[project.id] ?? '');
+      if (url) write(`${project.id}\t${url}\n`);
+    }
+    return 0;
+  }
+  if (command === 'carry-visibility') {
+    const file = path.join(options.workspace, 'project-settings.json');
+    const { settings, changed } = carryVisibility(readProjectSettings(options.workspace), readJson(options.visibility, {}));
+    if (changed.length) writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+    write(`Repository visibility carried for ${changed.length} project(s)${changed.length ? ': ' + changed.join(', ') : ''}\n`);
+    return 0;
+  }
   if (command === 'inventory') {
     const out = options['out-dir'];
     const registry = readProjectRegistry(options.workspace);
@@ -753,12 +857,14 @@ export function runCli(argv, {
       storageSnapshots,
       isRepository: isGitCheckout,
       settings,
+      probes: readProbes(options['visibility-probes']),
     });
     writeFileSync(path.join(out, 'inventory.json'), JSON.stringify(inventory, null, 2) + '\n');
     writeFileSync(path.join(out, 'path-map.json'), JSON.stringify(inventory.mapping, null, 2) + '\n');
     // Empty fields would collapse under the shell's tab IFS: the branch uses '-' and the possibly empty URL comes last.
     writeFileSync(path.join(out, 'checkouts.tsv'), inventory.checkouts
       .map(item => `${item.name}\t${item.source}\t${item.integrationBranch ?? '-'}\t${item.repositoryUrl ?? ''}\n`).join(''));
+    writeFileSync(path.join(out, 'visibility.json'), JSON.stringify(carriedVisibilities(inventory), null, 2) + '\n');
     writeFileSync(path.join(out, 'storage.tsv'), inventory.storageRoots.map(item => `${item.id}\t${item.source}\n`).join(''));
     writeFileSync(path.join(out, 'repository-paths.json'), JSON.stringify(inventory.repositoryPaths, null, 2) + '\n');
     writeFileSync(path.join(out, 'token-hits.tsv'), tokenHitLines(inventory.issues).map(line => line + '\n').join(''));
@@ -777,7 +883,7 @@ export function runCli(argv, {
     write(`Delta: ${delta.copy.length} to copy, ${delta.remove.length} to remove, ${delta.unchanged} unchanged\n`);
     return 0;
   }
-  throw new Error('Usage: move-studio-to-server.mjs projects|inventory|delta|strip-url|repository-paths [--option value]...');
+  throw new Error('Usage: move-studio-to-server.mjs projects|repository-paths|probe-targets|inventory|delta|carry-visibility|strip-url [--option value]...');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

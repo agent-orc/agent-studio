@@ -73,7 +73,6 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/cli/usage', json({ entries: [] }));
   await page.route('**/api/cli/contracts', json([]));
   await page.route('**/api/cli/*/models*', json({ models: [], source: 'stubbed' }));
-  await page.route('**/api/cli/*/working-memory*', json({ entries: [] }));
   await page.route('**/api/admin/prompts', json({
     overrideDirectory: 'stubbed',
     items: [
@@ -128,7 +127,6 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/workspace/tokens/expensive-jobs*', json({ jobs: [] }));
   await page.route('**/api/workspace/screenshots*', json({ windowHours: 72, projectFilter: null, screenshots: [] }));
   await page.route('**/api/v1/workspaces*', json([]));
-  await page.route('**/api/cli/working-memory*', json({ available: false, root: null, capturedAt: new Date().toISOString(), entries: [] }));
   await page.route('**/api/cli/sessions*', json({ sessions: [] }));
   await page.route('**/api/cli/models*', json({ types: [] }));
   await page.route('**/api/v1/management/retention/policy', json({ scope: 'workspace', version: 0, updatedAt: '', updatedBy: 'platform', rules: [], fullBackups: { daily: 7, weekly: 4, monthly: 12 } }));
@@ -138,16 +136,13 @@ async function stubBackgroundApis(page: Page) {
 }
 
 // AGT-2035 — the consolidated Settings view. Summary was removed; Appearance,
-// Updates, Workspaces (Global) and Working memory (Workspace) were added. Each
+// Updates, Workspaces (Global) were added. Each
 // section keeps a stable outer overlay test id + an inner component test id.
 const SECTIONS: { key: string; overlayTestid: string; innerTestid: string }[] = [
   { key: 'appearance', overlayTestid: 'workspace-appearance-overlay', innerTestid: 'appearance-settings' },
   { key: 'updates', overlayTestid: 'workspace-updates-overlay', innerTestid: 'updates-settings' },
   { key: 'workspaces', overlayTestid: 'workspace-management-overlay', innerTestid: 'workspace-management' },
   { key: 'caps', overlayTestid: 'cli-admin-overlay', innerTestid: 'cli-admin-panel' },
-  { key: 'cli-sessions', overlayTestid: 'cli-sessions-overlay', innerTestid: 'cli-sessions-panel' },
-  { key: 'cli-paths', overlayTestid: 'cli-paths-overlay', innerTestid: 'cli-paths-panel' },
-  { key: 'working-memory', overlayTestid: 'workspace-working-memory-overlay', innerTestid: 'workspace-working-memory' },
   { key: 'prompts', overlayTestid: 'prompt-admin-overlay', innerTestid: 'prompt-admin-panel' },
   { key: 'retention', overlayTestid: 'workspace-retention-overlay', innerTestid: 'retention-admin' },
   { key: 'tokens', overlayTestid: 'workspace-tokens-overlay', innerTestid: 'token-usage-section' },

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AgentStudio.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -33,9 +34,9 @@ public sealed record GitLockGuardResult(
 /// <summary>
 /// Runs before a git write on a repository the Task Server owns (workspace
 /// repository, integration worktrees, gate worktrees). It removes a lock file
-/// that is older than the threshold and held by no git process, waits once for
-/// a young or owned lock, and then lets the write proceed so git fails exactly
-/// as before when the lock is still there (AGT-3000).
+/// that is older than the threshold (one minute by default) and held by no git
+/// process, waits once for a young or owned lock, and then lets the write
+/// proceed so git fails exactly as before when the lock is still there (AGT-3000).
 ///
 /// <para>Order: resolve the git directories from the filesystem (no git
 /// spawn: a git spawn is what the lock is blocking), observe each lock's age,
@@ -44,6 +45,26 @@ public sealed record GitLockGuardResult(
 /// </summary>
 public sealed class GitStaleLockGuard
 {
+    /// <summary>
+    /// Locks a killed git command left behind that could not be removed at the
+    /// kill because another git process might still hold them, keyed by path
+    /// and pinned to the file seen then. The next write's sweep treats such a
+    /// lock as not young, so it is cleared as soon as no git process holds it
+    /// instead of after the age threshold (AGT-3409). Process-wide because
+    /// <see cref="GitProcessBoundary"/> is static.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, LockIdentity> KilledCommandLocks =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static ILogger<GitStaleLockGuard>? _killedCommandLogger;
+
+    /// <summary>
+    /// The guard <see cref="GitProcessBoundary"/> uses after it killed a git
+    /// command, with the production probe and clock. It logs through the first
+    /// host-built guard's logger (set once, like <c>GitProcessTelemetry.Logger</c>).
+    /// </summary>
+    internal static GitStaleLockGuard ForKilledCommand() => new(configuration: null, _killedCommandLogger);
+
     private readonly ILogger<GitStaleLockGuard> _logger;
     private readonly IGitLockOwnerProbe _probe;
     private readonly TimeProvider _time;
@@ -82,6 +103,8 @@ public sealed class GitStaleLockGuard
                 ?? (int)GitStaleLockPolicy.DefaultWait.TotalMilliseconds,
             0,
             30_000));
+        if (logger is not null && probe is null && wait is null && threshold is null)
+            Interlocked.CompareExchange(ref _killedCommandLogger, logger, null);
     }
 
     public TimeSpan Threshold => _threshold;
@@ -151,6 +174,105 @@ public sealed class GitStaleLockGuard
         return new GitLockGuardResult(first.Cleared, remaining, Waited: true);
     }
 
+    /// <summary>
+    /// Runs after <see cref="GitProcessBoundary"/> killed (or otherwise lost) a
+    /// git command it started in <paramref name="workingDirectory"/>. Removes
+    /// every lock in that repository that was written while the command ran and
+    /// that no other git process can hold, so the next write finds a clean
+    /// repository (AGT-3409). A lock that a live git process may hold stays and
+    /// is remembered, so the next sweep clears it once that process is gone
+    /// without waiting for the age threshold. Never throws.
+    /// </summary>
+    internal GitLockGuardResult ReleaseKilledCommandLocks(
+        string? workingDirectory, DateTime commandStartedUtc, DateTime commandEndedUtc)
+    {
+        try
+        {
+            var scope = ResolveEnclosingScope(workingDirectory);
+            if (scope is null) return GitLockGuardResult.Clean;
+
+            var now = _time.GetUtcNow().UtcDateTime;
+            var candidates = new List<(string Path, LockIdentity Identity, TimeSpan Age)>();
+            foreach (var lockPath in LockFiles(scope))
+            {
+                try
+                {
+                    var identity = LockIdentity.Read(lockPath);
+                    if (GitStaleLockPolicy.WrittenDuringCommand(identity.LastWriteTimeUtc, commandStartedUtc, commandEndedUtc))
+                        candidates.Add((lockPath, identity, now - identity.LastWriteTimeUtc));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    SilentCatch.Note(ex, "GitStaleLockGuard: lock vanished during inspection");
+                }
+            }
+            if (candidates.Count == 0) return GitLockGuardResult.Clean;
+
+            // The killed command is already unregistered. Any other server
+            // child or OS git process that started before the lock was written
+            // (plus clock slack) may hold it.
+            var ownerships = _probe.ProbeMany(scope, candidates
+                .Select(item => GitStaleLockPolicy.OwnerStartedBefore(item.Identity.LastWriteTimeUtc))
+                .ToArray());
+            var cleared = new List<GitLockFinding>();
+            var remaining = new List<GitLockFinding>();
+            for (var index = 0; index < candidates.Count; index++)
+            {
+                var (lockPath, observed, age) = candidates[index];
+                var verdict = GitStaleLockPolicy.Decide(age, _threshold, ownerships[index], leftByKilledCommand: true);
+                var finding = new GitLockFinding(lockPath, age, verdict);
+                if (verdict == GitLockVerdict.Clear && TryDeleteUnchanged(lockPath, observed))
+                {
+                    KilledCommandLocks.TryRemove(lockPath, out _);
+                    cleared.Add(finding);
+                    _logger.LogWarning(
+                        "git-killed-command-lock-cleared repo={Repo} lock={Lock} age={Age}",
+                        scope.WorkTree, lockPath, GitStaleLockPolicy.FormatAge(age));
+                    continue;
+                }
+                KilledCommandLocks[lockPath] = observed;
+                remaining.Add(verdict == GitLockVerdict.Clear ? finding with { Verdict = GitLockVerdict.KeepOwnerUnknown } : finding);
+                _logger.LogWarning(
+                    "git-killed-command-lock-kept repo={Repo} lock={Lock} age={Age} reason={Reason}",
+                    scope.WorkTree, lockPath, GitStaleLockPolicy.FormatAge(age),
+                    GitStaleLockPolicy.Reason(remaining[^1].Verdict));
+            }
+            return new GitLockGuardResult(cleared, remaining, Waited: false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "git-killed-command-lock-release failed cwd={Cwd}", workingDirectory);
+            return GitLockGuardResult.Clean;
+        }
+    }
+
+    private bool TryDeleteUnchanged(string lockPath, LockIdentity observed)
+    {
+        try
+        {
+            // The ownership probe may take long enough for git to replace the
+            // lock. Never delete a different file at the same path.
+            if (LockIdentity.Read(lockPath) != observed) return false;
+            File.Delete(lockPath);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "GitStaleLockGuard: killed-command lock changed or could not be removed");
+            return false;
+        }
+    }
+
+    /// <summary>Whether a killed command left this exact lock file (same path and identity).</summary>
+    private static bool LeftByKilledCommand(string lockPath, LockIdentity identity)
+    {
+        if (!KilledCommandLocks.TryGetValue(lockPath, out var recorded)) return false;
+        if (recorded == identity) return true;
+        // Replaced by a new writer: the ordinary age rule applies again.
+        KilledCommandLocks.TryRemove(new KeyValuePair<string, LockIdentity>(lockPath, recorded));
+        return false;
+    }
+
     /// <summary>One pass: observe, decide, clear. No waiting.</summary>
     internal GitLockGuardResult Sweep(string? repositoryPath, GitLockSurface surface = GitLockSurface.All)
     {
@@ -163,29 +285,37 @@ public sealed class GitStaleLockGuard
             if (locks.Count == 0) return GitLockGuardResult.Clean;
 
             var now = _time.GetUtcNow().UtcDateTime;
-            var observedLocks = new List<(string Path, LockIdentity Identity, TimeSpan Age)>();
+            var observedLocks = new List<(string Path, LockIdentity Identity, TimeSpan Age, bool Killed)>();
             foreach (var lockPath in locks)
             {
                 try
                 {
                     var identity = LockIdentity.Read(lockPath);
-                    observedLocks.Add((lockPath, identity, now - identity.LastWriteTimeUtc));
+                    observedLocks.Add((lockPath, identity, now - identity.LastWriteTimeUtc,
+                        LeftByKilledCommand(lockPath, identity)));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     SilentCatch.Note(ex, "GitStaleLockGuard: lock vanished during inspection");
                 }
             }
-            var agedLocks = observedLocks.Where(item => GitStaleLockPolicy.NeedsOwnershipProbe(item.Age, _threshold)).ToList();
-            var ownerships = _probe.ProbeMany(scope, agedLocks.Select(item => item.Identity.LastWriteTimeUtc).ToArray());
+            var agedLocks = observedLocks
+                .Where(item => GitStaleLockPolicy.NeedsOwnershipProbe(item.Age, _threshold, item.Killed))
+                .ToList();
+            // With a short threshold the probe also runs for a lock written a
+            // minute ago, whose writer may have started within clock precision
+            // of that write; the slack keeps such a writer a possible holder.
+            var ownerships = _probe.ProbeMany(scope, agedLocks
+                .Select(item => GitStaleLockPolicy.OwnerStartedBefore(item.Identity.LastWriteTimeUtc))
+                .ToArray());
             var ownershipByPath = agedLocks.Select((item, index) => (item.Path, Ownership: ownerships[index]))
                 .ToDictionary(item => item.Path, item => item.Ownership);
             var cleared = new List<GitLockFinding>();
             var remaining = new List<GitLockFinding>();
-            foreach (var (lockPath, observed, age) in observedLocks)
+            foreach (var (lockPath, observed, age, killed) in observedLocks)
             {
                 var ownership = ownershipByPath.GetValueOrDefault(lockPath, GitLockOwnership.Unknown);
-                var verdict = GitStaleLockPolicy.Decide(age, _threshold, ownership);
+                var verdict = GitStaleLockPolicy.Decide(age, _threshold, ownership, killed);
                 var finding = new GitLockFinding(lockPath, age, verdict);
                 if (verdict != GitLockVerdict.Clear)
                 {
@@ -203,9 +333,12 @@ public sealed class GitStaleLockGuard
                         continue;
                     }
                     File.Delete(lockPath);
+                    KilledCommandLocks.TryRemove(lockPath, out _);
                     cleared.Add(finding);
                     _logger.LogWarning(
-                        "git-stale-lock-cleared repo={Repo} lock={Lock} age={Age}",
+                        killed
+                            ? "git-killed-command-lock-cleared repo={Repo} lock={Lock} age={Age}"
+                            : "git-stale-lock-cleared repo={Repo} lock={Lock} age={Age}",
                         scope.WorkTree, lockPath, GitStaleLockPolicy.FormatAge(age));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -234,6 +367,25 @@ public sealed class GitStaleLockGuard
             if (!file.Exists) throw new FileNotFoundException("Git lock disappeared during inspection", path);
             return new LockIdentity(file.CreationTimeUtc, file.LastWriteTimeUtc, file.Length);
         }
+    }
+
+    /// <summary>
+    /// The repository a git command ran in: the nearest directory at or above
+    /// <paramref name="path"/> that holds a <c>.git</c> entry. Null when there
+    /// is none.
+    /// </summary>
+    internal static GitLockScope? ResolveEnclosingScope(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        var directory = new DirectoryInfo(Path.GetFullPath(path));
+        for (; directory is not null; directory = directory.Parent)
+        {
+            if (!directory.Exists) continue;
+            var dotGit = Path.Combine(directory.FullName, ".git");
+            if (!Directory.Exists(dotGit) && !File.Exists(dotGit)) continue;
+            return ResolveScope(directory.FullName);
+        }
+        return null;
     }
 
     /// <summary>
