@@ -522,8 +522,10 @@ public sealed partial class TaskServerStoreTests
         Assert.True(receipt.ExplicitSelection);
     }
 
-    [Fact]
-    public async Task Model_only_continuation_without_a_studio_cli_snapshots_its_policy_provider()
+    [Theory]
+    [InlineData("gpt-6-sol")]
+    [InlineData(CodexCliRelease.Gpt61Terra)]
+    public async Task Model_only_continuation_without_a_studio_cli_snapshots_its_policy_provider(string model)
     {
         using var temp = new TempDirectory();
         var store = Store(temp.Path);
@@ -532,7 +534,7 @@ public sealed partial class TaskServerStoreTests
 
         var receipt = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
             new ContinuationIntentRequest(1, "model-only-provider", task.Version,
-                "Continue", "gpt-6-sol", null, null, "continue", "operator"),
+                "Continue", model, null, null, "continue", "operator"),
             "operator", default);
         var projection = await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId,
             receipt.CommandId, default);
@@ -2584,6 +2586,35 @@ public sealed partial class TaskServerStoreTests
         Assert.Equal("empty", refusal.Status);
         Assert.Contains("Host model unavailable on", refusal.Message);
         Assert.Contains("model-acceptance:codex:gpt-6-sol", refusal.Message);
+    }
+
+    [Theory]
+    [InlineData(CodexCliRelease.Gpt61Sol)]
+    [InlineData(CodexCliRelease.Gpt61Terra)]
+    public async Task Gpt61_claim_below_cli_floor_reports_version_instead_of_account(string model)
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest(model, 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
+            [
+                new(CapabilityProtocol.CliExecution("codex"), "cli-execution", Version: "0.155.0"),
+                new(CapabilityProtocol.ModelAcceptance("codex", model), "model-acceptance", "unavailable"),
+            ]), "runner-a", default);
+
+        var refusal = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("empty", refusal.Status);
+        Assert.Contains($"This CLI version does not offer {model}", refusal.Message);
+        Assert.Contains("codex-cli 0.155.0 requires 0.166.0", refusal.Message);
+        Assert.DoesNotContain("login", refusal.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

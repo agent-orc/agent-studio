@@ -541,7 +541,7 @@ Ubuntu LTS. Install the runtime the runner and the agent CLIs need:
 sudo apt-get update && sudo apt-get install -y git curl build-essential
 # dotnet 10 SDK (or runtime) and node 22 via the usual channels, then:
 sudo npm install --global --prefix /usr/local \
-  @anthropic-ai/claude-code@2.1.269 @openai/codex@0.154.0
+  @anthropic-ai/claude-code@2.1.305 @openai/codex@0.166.0
 npx playwright install --with-deps chromium
 ```
 
@@ -575,7 +575,7 @@ target after applying the file.
 ### CLI version policy and managed updates
 
 The Task Server release owns pinned targets for Codex CLI and Claude Code. The
-defaults for this release are Codex CLI `0.154.0` and Claude Code `2.1.269`.
+defaults for this release are Codex CLI `0.166.0` and Claude Code `2.1.305`.
 Each Coding and Review daemon reports the installed version, resolved path, and
 check timestamp through the same capability probe. Execution Hosts shows the
 age of that observation. A yellow **Update due** chip means the installed
@@ -600,7 +600,7 @@ Execution Hosts and verify that Coding and Review both show zero active slots.
 Then, from a root-owned SSH session, run exactly the release-pinned helper:
 
 ```bash
-sudo /usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269
+sudo /usr/local/sbin/agent-runner-deploy update-clis 0.166.0 2.1.305
 sudo systemctl status agent-runner.service agent-runner-review.service --no-pager
 sudo journalctl -t agent-runner-deploy -n 20 --no-pager
 ```
@@ -611,7 +611,7 @@ assets first. If that is impossible during an incident, the historical root-SSH
 fallback is the following pinned global install:
 
 ```bash
-sudo npm install --global @openai/codex@0.154.0 @anthropic-ai/claude-code@2.1.269
+sudo npm install --global @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.305
 sudo -u agent-runner codex --version
 sudo -u agent-runner claude --version
 sudo systemctl restart agent-runner.service agent-runner-review.service

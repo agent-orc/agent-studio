@@ -202,6 +202,7 @@ public static class ModelIds
     /// <see cref="Gpt56Sol"/> and the <see cref="Gpt55"/> baseline (AGT-2903).</summary>
     public const string Gpt6Sol = "gpt-6-sol";
     public const string Gpt61Sol = "gpt-6.1-sol";
+    public const string Gpt61Terra = "gpt-6.1-terra";
     public const string Gpt6Luna = "gpt-6-luna";
     public const string Gpt5Codex = "gpt-5-codex";
     public const string Gpt41 = "gpt-4.1";
@@ -355,12 +356,13 @@ public static class ModelMetadataRegistry
             ContextWindow: 272_000, MinimumCliVersion: "0.153.0"),
         new(ModelIds.Gpt6Sol, "GPT-6 Sol", "openai", IsDefault: false, Deprecated: false, Available: false,
             ContextWindow: 1_050_000, MinimumCliVersion: "0.155.0"),
-        // TokenEconomy 0.3.7 recorded a 0.155.0 probe that was rejected by the
-        // provider. This version is only an advisory marker; live discovery
-        // remains the availability gate for GPT-6.1 Sol.
+        // Operator probes on 0.166.0 accepted both GPT-6.1 models; 0.155.0
+        // rejected them. Live discovery remains the availability gate.
         new(ModelIds.Gpt61Sol, "GPT-6.1 Sol", "openai", IsDefault: false, Deprecated: false, Available: false,
             ContextWindow: 1_050_000, ThinkingLevels: ["minimal", "low", "medium", "high", "xhigh"],
-            DefaultThinkingLevel: "xhigh", MinimumCliVersion: "0.155.0"),
+            DefaultThinkingLevel: "xhigh", MinimumCliVersion: CodexCliRelease.Gpt61MinimumVersion),
+        new(ModelIds.Gpt61Terra, "GPT-6.1 Terra", "openai", IsDefault: false, Deprecated: false, Available: false,
+            ContextWindow: null, MinimumCliVersion: CodexCliRelease.Gpt61MinimumVersion),
         new(ModelIds.Gpt6Luna, "GPT-6 Luna", "openai", IsDefault: false, Deprecated: false, Available: false,
             ContextWindow: 1_050_000, MinimumCliVersion: "0.155.0"),
         // gpt-5.6-terra / gpt-5.6-luna are the lower cost tiers of the gpt-5.6
@@ -449,7 +451,7 @@ public static class ModelMetadataRegistry
     /// only when that decision is made.
     /// </summary>
     private static readonly HashSet<string> LiveDiscoveredLadderModelIds =
-        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra, ModelIds.Gpt6Sol, ModelIds.Gpt61Sol, ModelIds.Gpt6Luna };
+        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra, ModelIds.Gpt6Sol, ModelIds.Gpt61Sol, ModelIds.Gpt61Terra, ModelIds.Gpt6Luna };
 
     /// <summary>Whether <paramref name="model"/> is onboarded to take its reasoning
     /// ladder/default from live CLI discovery rather than the static table.</summary>
@@ -598,7 +600,7 @@ public static class ModelMetadataRegistry
         var canonical = trimmed is null ? null : NormalizeId(trimmed);
         // Preserve historic alias storage for existing models. New generation
         // spellings must become the exact ids accepted by their CLIs.
-        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.ClaudeSonnet55 or ModelIds.Gpt6Sol or ModelIds.Gpt61Sol or ModelIds.Gpt6Luna
+        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.ClaudeSonnet55 or ModelIds.Gpt6Sol or ModelIds.Gpt61Sol or ModelIds.Gpt61Terra or ModelIds.Gpt6Luna
             ? canonical
             : trimmed;
         if (string.IsNullOrWhiteSpace(cliType)) return normalized;

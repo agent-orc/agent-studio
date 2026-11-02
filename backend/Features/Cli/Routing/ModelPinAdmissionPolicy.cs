@@ -2,9 +2,10 @@ namespace AgentStudio.Cli;
 
 /// <summary>
 /// Pure pre-spawn guard for explicitly pinned models. Claude uses the
-/// registry's minimum CLI version while Codex uses the installed CLI's live
-/// catalogue. Unknown capability evidence fails open so a probe outage does
-/// not turn into a false model rejection; the post-run observed-model guard is
+/// registry's minimum CLI version while Codex uses both the verified floor
+/// and the installed CLI's live catalogue. Unknown capability evidence fails
+/// open so a probe outage does not turn into a false model rejection; the
+/// post-run observed-model guard is
 /// the second line of defence.
 /// </summary>
 public static class ModelPinAdmissionPolicy
@@ -47,6 +48,16 @@ public static class ModelPinAdmissionPolicy
             }
 
             return ModelPinAdmissionDecision.Allowed;
+        }
+
+        if (string.Equals(cli, CliTypes.Codex, StringComparison.OrdinalIgnoreCase)
+            && metadata is { Vendor: "openai", MinimumCliVersion: { } floor }
+            && SemanticCliVersion.TryCompare(installedVersion, floor, out var codexComparison)
+            && codexComparison < 0)
+        {
+            return ModelPinAdmissionDecision.Reject(
+                $"model '{requested}' is not offered by codex-cli {installedVersion} " +
+                $"(requires {floor} or newer)");
         }
 
         if (string.Equals(cli, CliTypes.Codex, StringComparison.OrdinalIgnoreCase)

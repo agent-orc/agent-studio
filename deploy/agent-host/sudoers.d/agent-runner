@@ -20,7 +20,7 @@ Cmnd_Alias AGENT_RUNNER_DEPLOY = \
     /usr/local/sbin/agent-runner-deploy drain, \
     /usr/local/sbin/agent-runner-deploy restart-review, \
     /usr/local/sbin/agent-runner-deploy verify-completions, \
-    /usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269
+    /usr/local/sbin/agent-runner-deploy update-clis 0.166.0 2.1.305
 
 Cmnd_Alias AGENT_RUNNER_RESULTS = /usr/local/sbin/agent-runner-deploy chown-results
 

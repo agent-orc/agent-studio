@@ -15,6 +15,28 @@ public class CliUsageParserTests
 {
     private static readonly CliModelRegistry Registry = new();
 
+    [Fact]
+    public void Codex_0166_real_jsonl_sample_parses_session_message_and_usage()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "cli", "codex", "0.166.0", "sol.jsonl");
+        var frames = File.ReadAllLines(path);
+        Assert.Equal(4, frames.Length);
+        Assert.Single(CodexEventAdapter.Map(frames[0], "sample").OfType<CliRunEvent.SessionStarted>());
+        Assert.Contains("OK", new CodexOutputRenderer().Render(new CliOutputLine
+        {
+            Stream = "stdout", Text = frames[2], Timestamp = DateTime.UnixEpoch
+        }).Select(line => line.Text));
+
+        using var completed = JsonDocument.Parse(frames[3]);
+        Assert.True(new CodexUsageParser().TryParse(completed.RootElement, ModelIds.Gpt61Sol, Registry, out var usage));
+        Assert.Equal(ModelIds.Gpt61Sol, usage.Model);
+        Assert.Equal(2_924, usage.Input);
+        Assert.Equal(12_288, usage.CacheRead);
+        Assert.Equal(5, usage.Output);
+        Assert.False(usage.ModelMismatch);
+        Assert.Single(CodexEventAdapter.Map(frames[3], "sample").OfType<CliRunEvent.TurnCompleted>());
+    }
+
     [Theory]
     [InlineData("claude-opus-5.5", "claude-opus-5-5")]
     [InlineData("claude-opus-5-5", "claude-opus-5-5-20260925")]

@@ -12,8 +12,8 @@ RUN dotnet publish backend/OrchestratorApi.csproj -c Release -o /app /p:UseAppHo
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
-ARG CODEX_CLI_VERSION=0.154.0
-ARG CLAUDE_CLI_VERSION=2.1.269
+ARG CODEX_CLI_VERSION=0.166.0
+ARG CLAUDE_CLI_VERSION=2.1.305
 ARG GEMINI_CLI_VERSION=0.39.1
 LABEL org.opencontainers.image.title="agent-studio-api" \
       org.opencontainers.image.version="$VERSION" \

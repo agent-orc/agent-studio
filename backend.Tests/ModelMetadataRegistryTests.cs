@@ -61,6 +61,7 @@ public class ModelMetadataRegistryTests
     [InlineData(CliTypes.Codex, "GPT-6 Sol", ModelIds.Gpt6Sol)]
     [InlineData(CliTypes.Codex, "GPT-6 Luna", ModelIds.Gpt6Luna)]
     [InlineData(CliTypes.Codex, "GPT-6.1 Sol", ModelIds.Gpt61Sol)]
+    [InlineData(CliTypes.Codex, "GPT-6.1 Terra", ModelIds.Gpt61Terra)]
     [InlineData(CliTypes.Claude, "claude-sonnet-5.5", ModelIds.ClaudeSonnet55)]
     public void NormalizeForCli_canonicalizes_new_model_aliases_and_labels(
         string cli, string value, string expected)

@@ -39,7 +39,7 @@ public sealed class ModelPinAdmissionPolicyTests
             CliTypes.Codex,
             "gpt-6-astra",
             explicitlyPinned: true,
-            installedCliVersion: "0.152.0",
+            installedCliVersion: "0.153.0",
             supportedModels: ["gpt-5.6-sol", "gpt-5.5"]);
 
         Assert.False(decision.IsAllowed);
@@ -58,4 +58,20 @@ public sealed class ModelPinAdmissionPolicyTests
 
         Assert.True(decision.IsAllowed);
     }
+
+    [Theory]
+    [InlineData(ModelIds.Gpt61Sol)]
+    [InlineData(ModelIds.Gpt61Terra)]
+    public void Codex_pin_below_verified_floor_names_cli_version_even_if_catalogue_lists_model(string model)
+    {
+        var decision = ModelPinAdmissionPolicy.Evaluate(
+            CliTypes.Codex, model, explicitlyPinned: true,
+            installedCliVersion: "codex-cli 0.155.0", supportedModels: [model]);
+
+        Assert.False(decision.IsAllowed);
+        Assert.Equal(ModelPinAdmissionPolicy.RejectionCode, decision.Code);
+        Assert.Contains("not offered by codex-cli 0.155.0", decision.Reason);
+        Assert.Contains("requires 0.166.0", decision.Reason);
+    }
+
 }
