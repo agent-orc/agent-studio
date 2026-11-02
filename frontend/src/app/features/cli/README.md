@@ -1,6 +1,6 @@
 # cli
 
-CLI catalog + per-CLI session/usage admin surfaces. Covers Copilot / Claude / Codex / Gemini.
+CLI catalog and usage models. Covers Copilot / Claude / Codex / Gemini.
 
 ## Public API
 
@@ -8,21 +8,8 @@ Imports via `from './features/cli'`. See [`index.ts`](./index.ts).
 
 **Components**:
 
-- `CliAdminPanelComponent`: the **"CLI Management"** hub, a section inside the global Workspace Settings home (rail key `caps`). It answers "what's available and how is it wired": the CLI catalog + per-CLI models and fallback routes (as compact rows), per-window usage caps, and the read-only completion contracts. The status-bar "Usage" button and legacy CLI-admin events open this section. Session inventory and on-disk paths were split into their own encapsulated rail pages (AGT-2101).
+- `CliAdminPanelComponent`: the **"CLI Management"** hub, a section inside the global Workspace Settings home (rail key `caps`). It answers "what's available and how is it wired": the CLI catalog + per-CLI models and fallback routes (as compact rows), per-window usage caps, and the read-only completion contracts. The status-bar "Usage" button and legacy CLI-admin events open this section.
 - `CliConsoleComponent` — read-only console viewer for raw CLI output.
-- `CliSessionsPanelComponent` — the CLI-session **tool** (AGT-2102): a
-  token-themed, **virtualised** (CDK `cdk-virtual-scroll-viewport`, AGT-1913)
-  inventory of every native CLI transcript on disk. Flattens `/api/cli/usage`
-  into one searchable/filterable row list (per-CLI chips, free-text, sort), shows
-  per-session metadata (CLI, size, age, path, token rollup, linked-task chip),
-  and a lazy detail aside fed by `GET /api/cli/{cliType}/session-detail`
-  (model / thinking / message count / first prompt / git branch). Actions: open
-  task (`openJobDetail`), copy id/path, and a confirm-gated **clean up** that
-  calls `DELETE /api/cli/{cliType}/session`. It has its own settings page
-  (`cli-sessions` rail key) since AGT-2101. Row transforms live in the sibling
-  `cli-session-row.util.ts` (unit-tested).
- - `CliPathsPanelComponent` — read-only per-CLI filesystem footprint (executable path + version + the project roots it holds session state for), the location projection of the same `/api/cli/usage` report. Its own settings page (`cli-paths` rail key), AGT-2101.
-
 **Types** (lifted from `models/job.model.ts` per ADR-0034):
 
 - `CliModelInfo`, `CliModelCatalog` — model catalogue from `/api/cli/{type}/models`.

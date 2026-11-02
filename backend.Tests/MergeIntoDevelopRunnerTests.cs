@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using AgentStudio.TestSupport;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -670,7 +671,8 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
     public async Task RunAsync_MainTarget_DocsOnlyClassification_FailsClosedForCodePaths()
     {
         // One code file in the diff keeps the delivery on the strict release
-        // path: not rebased onto main -> refused, nothing merged.
+        // path: the mandatory full suite runs, on the merge result because the
+        // delivery is behind main (AGT-3435).
         var repo = SeedRepo("runner-main-docs-and-code");
         RunGit(repo, "checkout -q -b task/mixed");
         Directory.CreateDirectory(Path.Combine(repo, "docs"));
@@ -704,8 +706,10 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
             "main",
             CancellationToken.None);
 
-        Assert.Equal(MergeIntoIntegrationOutcome.Error, outcome.Outcome);
-        Assert.Contains("must be rebased onto", outcome.Error, StringComparison.Ordinal);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.True(HasTag(repo, "pre-main-suite-ran"), "a delivery with code paths must run the full suite");
+        Assert.Equal(outcome.MergedSha, RunGit(repo, "rev-parse pre-main-suite-ran").Out.Trim());
+        Assert.Equal(mainSha, RunGit(repo, $"rev-parse {LaneRef("main")}^1").Out.Trim());
         Assert.Equal(mainSha, RunGit(repo, "rev-parse main").Out.Trim());
     }
 
@@ -3649,16 +3653,15 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
     {
         var repo = Path.Combine(_tempDir, name);
         var remote = Path.Combine(_tempDir, name + "-origin.git");
-        Directory.CreateDirectory(repo);
-        RunGit(_tempDir, $"init --bare -q --initial-branch=main \"{remote}\"");
-        RunGit(repo, "init -q -b main");
-        RunGit(repo, "config user.email test@example.com");
-        RunGit(repo, "config user.name test");
-        File.WriteAllText(Path.Combine(repo, "README.md"), "seed");
-        RunGit(repo, "add -A");
-        RunGit(repo, "commit -q -m seed");
-        RunGit(repo, $"remote add origin \"{remote}\"");
-        RunGit(repo, "push -q -u origin main");
+        GitRepositoryTemplate.CopyTo("merge-into-develop:seed-with-origin:v1", root =>
+        {
+            var seed = Path.Combine(root, "repo");
+            var origin = Path.Combine(root, "origin.git");
+            SeedInto(seed);
+            RunGit(root, $"init --bare -q --initial-branch=main \"{origin}\"");
+            RunGit(seed, $"remote add origin \"{origin}\"");
+            RunGit(seed, "push -q -u origin main");
+        }, ("repo", repo), ("origin.git", remote));
         return (repo, remote);
     }
 
@@ -3754,9 +3757,16 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         }
     }
 
+    // Built once per test process; each test starts from a copy (AGT-3419).
     private string SeedRepo(string name)
     {
         var repo = Path.Combine(_tempDir, name);
+        GitRepositoryTemplate.CopyTo("merge-into-develop:seed:v1", repo, SeedInto);
+        return repo;
+    }
+
+    private static void SeedInto(string repo)
+    {
         Directory.CreateDirectory(repo);
         RunGit(repo, "init -q -b main");
         RunGit(repo, "config user.email test@example.com");
@@ -3764,7 +3774,6 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         File.WriteAllText(Path.Combine(repo, "README.md"), "seed");
         RunGit(repo, "add -A");
         RunGit(repo, "commit -q -m seed");
-        return repo;
     }
 
     private static void Commit(string cwd, string message)

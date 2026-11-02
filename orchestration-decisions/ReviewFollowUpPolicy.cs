@@ -64,8 +64,9 @@ public static partial class ReviewFollowUpPolicy
         if (!ReviewGradingPolicy.IsConcernToken(item.Status) || IsAspectInfrastructureResult(item))
             return false;
         if (Meaningful(item.Finding) || Meaningful(ExtractFindingSection(item.ReportBody))) return true;
-        return (Meaningful(item.EvidenceChecked) && FileReferenceRegex().IsMatch(item.EvidenceChecked!))
-               || (Meaningful(item.Summary) && FileReferenceRegex().IsMatch(item.Summary!));
+        // The evidence lists what the aspect read, not what is wrong. A concern that
+        // names no gap gives a fix round nothing to do.
+        return Meaningful(item.Summary) && FileReferenceRegex().IsMatch(item.Summary!);
     }
 
     public static string? ExtractFindingSection(string? reportBody)

@@ -1,0 +1,77 @@
+<section class="fh" data-testid="flow-health" [attr.aria-busy]="loading()">
+  <header class="fh__head">
+    <div>
+      <h2>Flow health</h2>
+      <p>Grouping, gate and review against their targets over 7 and 30 days, and where cards wait right now.</p>
+    </div>
+    <button type="button" class="fh__refresh" data-testid="flow-health-refresh" [disabled]="loading()" (click)="refresh()">Refresh</button>
+  </header>
+
+  @if (view(); as v) {
+    <p class="fh__brake" role="status" data-testid="flow-health-brake" [attr.data-tone]="v.brake.tone"
+       [attr.data-stage]="v.brake.stage" [attr.data-figure]="v.brake.figure">
+      <span class="fh__dot" aria-hidden="true"></span>
+      <span class="fh__brake-label">Main brake</span>
+      <span class="fh__brake-text">{{ v.brake.sentence }}</span>
+    </p>
+
+    <section class="fh__block" data-testid="flow-health-now" aria-labelledby="fh-now">
+      <header class="fh__block-head">
+        <h3 id="fh-now">Now</h3>
+        <button type="button" class="fh__link" data-testid="flow-health-detail-now" (click)="openDetail.emit(detail.now.target)">{{ detail.now.label }}</button>
+      </header>
+      <div class="fh__scroll"><table>
+        <thead><tr>
+          <th scope="col">Stage</th><th scope="col">Waiting</th><th scope="col">Oldest</th>
+          <th scope="col">Wait target</th><th scope="col">Status</th><th scope="col" class="fh__text">Reason</th>
+        </tr></thead>
+        <tbody>
+          @for (stage of v.now; track stage.stage) {
+            <tr [attr.data-stage]="stage.stage" [attr.data-status]="stage.status" data-testid="flow-health-stage">
+              <th scope="row"><span class="fh__stage" [attr.data-lane-tone]="tone(stage.lane)"><i aria-hidden="true"></i>{{ stage.label }}</span></th>
+              <td>{{ stage.waiting }}</td>
+              <td>{{ age(stage.oldestMinutes) }}</td>
+              <td>{{ waitTarget(stage.targetMinutes) }}</td>
+              <td><span class="fh__badge" [attr.data-status]="stage.status">{{ status(stage.status) }}</span></td>
+              <td class="fh__text">{{ stage.reason }}</td>
+            </tr>
+          }
+        </tbody>
+      </table></div>
+    </section>
+
+    @for (block of v.blocks; track block.key) {
+      <section class="fh__block" [attr.data-testid]="'flow-health-' + block.key" [attr.aria-labelledby]="'fh-' + block.key">
+        <header class="fh__block-head">
+          <h3 [id]="'fh-' + block.key">{{ block.title }}</h3>
+          <button type="button" class="fh__link" [attr.data-testid]="'flow-health-detail-' + block.key"
+                  (click)="openDetail.emit(detail[block.key].target)">{{ detail[block.key].label }}</button>
+        </header>
+        <div class="fh__scroll"><table>
+          <thead><tr>
+            <th scope="col">Figure</th><th scope="col">Target</th><th scope="col">7 days</th><th scope="col">30 days</th>
+            <th scope="col">Trend</th><th scope="col">Status</th><th scope="col">All projects, 7 days</th>
+          </tr></thead>
+          <tbody>
+            @for (item of block.figures; track item.id) {
+              <tr [attr.data-figure]="item.id" [attr.data-status]="item.status" data-testid="flow-health-figure">
+                <th scope="row">{{ item.label }}@if (item.note) { <small>{{ item.note }}</small> }</th>
+                <td data-testid="flow-health-target">{{ target(item) }}</td>
+                <td data-testid="flow-health-value-7d">{{ value(item, 'value7d') }}</td>
+                <td>{{ value(item, 'value30d') }}</td>
+                <td><span class="fh__trend" [attr.data-trend]="item.trend">{{ trendLabel(item.trend) }}</span></td>
+                <td><span class="fh__badge" [attr.data-status]="item.status">{{ status(item.status) }}</span></td>
+                <td class="fh__all">{{ value(item, 'all7d') }}</td>
+              </tr>
+            }
+          </tbody>
+        </table></div>
+        @if (block.key === 'grouping' && v.batchLifetime) {
+          <p class="fh__foot" data-testid="flow-health-batch-lifetime">{{ v.batchLifetime }}</p>
+        }
+      </section>
+    }
+  } @else if (loading()) {
+    <p class="fh__empty" role="status">Loading flow health…</p>
+  }
+</section>

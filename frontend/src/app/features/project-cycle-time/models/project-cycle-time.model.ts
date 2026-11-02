@@ -115,6 +115,8 @@ export interface TaskCycleTimeRow {
   backwardTransitions: number;
   /** Present only with `detail=transitions` or on the per-task endpoint. */
   transitions?: TaskLaneTransition[] | null;
+  /** Seconds per review aspect step (`aspect-*`) in Post Processing; absent from an older backend. */
+  reviewAspectSeconds?: Record<string, number>;
 }
 
 export type TransitionDirection = 'forward' | 'backward' | 'lateral';

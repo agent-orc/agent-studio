@@ -63,6 +63,8 @@ public sealed class SecretProvider : ISecretProvider
         });
     }
 
+    public Task EnsureWritableAsync(SecretScope scope, CancellationToken ct = default) => _store.EnsureWritableAsync(scope, ct);
+
     public async Task<SecretListing> ListAsync(SecretScope? scope = null, CancellationToken ct = default)
     {
         var listing = await _store.ListAsync(ct);

@@ -7,6 +7,7 @@
     <button type="button" data-testid="deploy-tab-overview" [attr.aria-current]="view() === 'overview' ? 'page' : null" (click)="show('overview')">Overview</button>
     <button type="button" data-testid="deploy-tab-releases" [attr.aria-current]="view() === 'releases' ? 'page' : null" (click)="show('releases')">Releases</button>
     <button type="button" data-testid="deploy-tab-pipeline" [attr.aria-current]="view() === 'pipeline' ? 'page' : null" (click)="show('pipeline')">Pipeline</button>
+    <button type="button" data-testid="deploy-tab-flow" [attr.aria-current]="view() === 'flow' ? 'page' : null" (click)="show('flow')">Flow health</button>
     <button type="button" data-testid="deploy-tab-history" [attr.aria-current]="view() === 'history' ? 'page' : null" (click)="show('history')">History</button>
     <button type="button" data-testid="deploy-tab-steps" [attr.aria-current]="view() === 'steps' ? 'page' : null" (click)="show('steps')">Run steps</button>
     <button type="button" data-testid="deploy-tab-secrets" [attr.aria-current]="view() === 'secrets' ? 'page' : null" (click)="show('secrets')">Secrets</button>
@@ -35,7 +36,8 @@
         @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [environments]="cards()" [now]="now()" [highlightedReleaseId]="highlightedReleaseId()"
           [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" /> }
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading…</p> } }
-        @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" /> }
+        @case ('flow') { @defer { <app-flow-health-page [projectName]="projectName()" (openDetail)="openFlowDetail($event)" /> } @placeholder { <p>Loading flow health…</p> } }
+        @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" (openFlowHealth)="show('flow')" /> }
         @case ('runbooks') { @defer { <app-project-environment-overview [projectName]="projectName()" heading="Runbooks" (openDeploy)="show('overview')" /> } @placeholder { <p>Loading runbooks…</p> } }
         @case ('operations') {
           <app-environment-health-panel [projectName]="projectName()" />

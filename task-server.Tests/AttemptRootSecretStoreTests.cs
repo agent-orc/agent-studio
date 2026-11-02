@@ -62,11 +62,29 @@ public sealed class AttemptRootSecretStoreTests
             issuer.IssueReadAsync("repository-one", root.RepositoryUrl, default));
     }
 
+    [Fact]
+    public async Task Write_check_needs_the_wrapping_key_and_stores_nothing()
+    {
+        using var temp = new TempDirectory();
+        Directory.CreateDirectory(temp.Path);
+        var keyFile = Path.Combine(temp.Path, "wrapping-key");
+        var roots = Path.Combine(temp.Path, "roots");
+        var store = new EncryptedAttemptRootSecretStore(roots, keyFile);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.EnsureWritableAsync(default));
+
+        await File.WriteAllTextAsync(keyFile, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(keyFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        await store.EnsureWritableAsync(default);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(roots));
+    }
+
     private sealed class MemoryRoots(string content) : IAttemptRootSecretStore
     {
         public Task<string?> ReadAsync(string name, CancellationToken ct) => Task.FromResult<string?>(content);
         public Task WriteAsync(string name, string value, CancellationToken ct) => Task.CompletedTask;
         public Task DeleteAsync(string name, CancellationToken ct) => Task.CompletedTask;
+        public Task EnsureWritableAsync(CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class RecordingHandler(bool secondRepository = false, bool writeGrant = false) : HttpMessageHandler

@@ -54,7 +54,7 @@
                       [class.project-urls__pill--offline]="pillFor(u) === 'offline'"
                       [class.project-urls__pill--building]="pillFor(u) === 'building'"
                       [attr.data-testid]="'project-urls-pill-' + u.id"
-                      [attr.data-status]="pillFor(u)">{{ pillFor(u) }}</span>
+                      [attr.data-status]="pillFor(u)">{{ pillFor(u) | projectUrlStatusLabel }}</span>
               </div>
               <div class="project-urls__host">
                 {{ host(u.url) }}

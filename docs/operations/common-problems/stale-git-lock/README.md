@@ -3,7 +3,7 @@ id: stale-git-lock
 title: "Evidence flushes or integrations fail for hours on a git lock left by a dead git process"
 status: fixed
 first-seen: 2026-09-27T15:32:00Z
-last-seen: 2026-11-01T00:00:00Z
+last-seen: 2026-11-02T00:00:00Z
 severity: blocker
 category: runtime
 tags: [git, index-lock, workspace, evidence, integration-worktree, pipeline-health, windows]
@@ -60,10 +60,11 @@ Task Server runs `GitStaleLockGuard`:
 
 For each lock it decides (pure policy, `GitStaleLockPolicy`):
 
-1. **Younger than the threshold** (default 10 minutes): a live writer is
-   plausible. Keep it.
+1. **Younger than the threshold** (default 1 minute): git may be writing it
+   right now. Keep it without a process inventory.
 2. **Older, and a git process may hold the lock**: keep it. First exclude
-   processes started after the lock's last write time and
+   processes started more than 2 seconds after the lock's last write time
+   (the slack covers the different clocks of process and file times) and
    `git fsmonitor--daemon` processes, which do not take this lock. Start times come
    from `Win32_Process.CreationDate` on Windows and `/proc/<pid>/stat` on Linux.
    A missing start time cannot rule out a process. For the remaining processes,
@@ -116,7 +117,7 @@ The alarm is raised for every project whose watch path lives in the stalled
 repository, and clears on the next successful flush
 (`pipeline_health_alarm_cleared kind=evidence-flush-stalled`).
 
-**Configuration.** `GitStaleLocks:ThresholdMinutes` (default 10, 1 to 1440)
+**Configuration.** `GitStaleLocks:ThresholdMinutes` (default 1, 1 to 1440)
 and `GitStaleLocks:WaitMilliseconds` (default 1000, 0 to 30000). The 15-minute
 stall threshold is a code convention, not a setting.
 
@@ -242,3 +243,19 @@ Measured on a copy of the workspace repository (snapshot 2026-10-15, Git 2.43):
 41.6 MB and 25 MB `prompts.jsonl` files, and there are many 12-20 MB review
 settlement logs. A no-op `git add` over 13,042 files took 0.04 s. Adding 145 MB
 took 6.0 s and 323 MB took 12.9 s at host load 30-50.
+
+## Index lock from a git killed outside the server (2026-11-02)
+
+**Symptom.** On the moved Studio a git process in the workspace repository was
+killed by something other than `GitProcessBoundary`, so the AGT-3409 cleanup
+did not run. Its `.git/index.lock` stayed for at least 9 minutes
+(`git-lock-kept ... reason=young`), and every evidence flush failed meanwhile.
+
+**Cause.** The guard probed process ownership only after the 10-minute
+threshold, although the probe alone decides whether anyone holds the lock.
+
+**What the server does now.** The default threshold is 1 minute. A lock older
+than that is checked against the process inventory and removed when no git
+process holds it. The probe treats a git process that started up to 2 seconds
+after the lock's last write as a possible holder, so a long write that git
+started a moment before it took the lock is not cut off.
