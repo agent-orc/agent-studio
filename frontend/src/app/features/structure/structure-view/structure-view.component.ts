@@ -1,18 +1,23 @@
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, afterNextRender, computed, effect, inject, input, signal } from '@angular/core';
-import { NgTemplateOutlet } from '@angular/common';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, afterNextRender, computed, effect, inject, input, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
 import { SegmentedControlComponent } from '../../../components/segmented-control/segmented-control.component';
-import { nearestVisible, projectStructure, summaryText, visibleBoxes,
-  type StructureBox, type StructureData, type StructureLink } from '../structure.model';
+import { LAYOUT, layoutStructure, leafDetail, type LayoutBox } from '../structure-layout';
+import { isGroup, kindText, observationText, projectStructure, summaryText, visibleBoxes,
+  type StructureBox, type StructureData } from '../structure.model';
 
-interface DrawnLink { index: number; path: string; x: number; y: number; kind: string; label: string; }
+const STATUS: Record<string, { tone: 'ok' | 'warn' | 'down' | 'unknown'; word: string }> = {
+  up: { tone: 'ok', word: 'Healthy' }, degraded: { tone: 'warn', word: 'Degraded' },
+  down: { tone: 'down', word: 'Down' }, invalid: { tone: 'down', word: 'Check invalid' },
+  unknown: { tone: 'unknown', word: 'Not observed yet' },
+};
+let instances = 0;
 
 @Component({
   selector: 'app-structure-view',
   standalone: true,
-  imports: [NgTemplateOutlet, DisclosureMarkerComponent, SegmentedControlComponent],
+  imports: [DisclosureMarkerComponent, SegmentedControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './structure-view.component.html',
   styleUrl: './structure-view.component.scss',
@@ -29,35 +34,69 @@ export class StructureViewComponent {
   readonly level = signal<1 | 2 | 3>(2);
   readonly toggles = signal<Record<string, boolean>>({});
   readonly selected = signal<string | null>(null);
+  /** Content width of the drawing area; the layout wraps to it. */
+  readonly canvasWidth = signal(880);
   readonly roots = computed(() => projectStructure(this.data(), this.view(), this.level(), this.toggles()));
   readonly visible = computed(() => visibleBoxes(this.roots()));
-  readonly drawnLinks = signal<DrawnLink[]>([]);
+  readonly layout = computed(() => {
+    const start = performance.now();
+    const layout = layoutStructure(this.roots(), this.data(), this.view(), this.canvasWidth());
+    return { ...layout, ms: Math.round((performance.now() - start) * 10) / 10 };
+  });
+  readonly headerHeight = LAYOUT.header;
+  readonly arrowId = `structure-arrow-${++instances}`;
   readonly summaryText = summaryText;
+  readonly kindText = kindText;
   private readGeneration = 0;
+
   ownerDescription(box: StructureBox): string {
-    return box.otherProject ? `other project · ${box.ownerLabel ?? box.project}` : box.kind;
+    return box.otherProject ? `other project · ${box.ownerLabel ?? box.project}` : kindText(box);
+  }
+  /** Second line of a box: instances say how they are observed or placed, groups their kind. */
+  detail(item: LayoutBox): string {
+    return item.opaque && !isGroup(item.box) ? leafDetail(item.box, this.view()) : this.ownerDescription(item.box);
+  }
+  /** Calls and artifact flows carry an arrow; tunnels and transports are symmetric. */
+  arrowFor(kind: string): string | null {
+    return kind === 'call' || kind === 'artifact' || kind === 'publish' ? `url(#${this.arrowId})` : null;
+  }
+  status(box: StructureBox): { tone: string; word: string } | null {
+    return box.status ? STATUS[box.status] ?? STATUS['unknown'] : null;
   }
   accessibleLabel(box: StructureBox): string {
-    return `${box.label}, ${box.kind}` +
+    const observed = observationText(box);
+    return `${box.label}, ${kindText(box)}` +
+      (observed ? `, declared, ${observed}` : '') +
+      (this.status(box) ? `, ${this.status(box)!.word}` : '') +
+      (box.replicas > 1 ? `, ${box.replicas} replicas` : '') +
+      (box.placements > 1 ? `, ${box.placements} placements` : '') +
       (box.otherProject ? `, other project, ${box.ownerLabel ?? box.project}` : '') +
-      (box.collapsed ? `, ${summaryText(box)}` : '');
+      (box.collapsed && box.children.length ? `, ${summaryText(box)}` : '');
   }
-  private frame = 0;
-  private readonly linkRefresh = effect(() => {
-    this.roots();
-    if (typeof requestAnimationFrame !== 'undefined') {
-      cancelAnimationFrame(this.frame);
-      this.frame = requestAnimationFrame(() => this.measureLinks());
-    }
-  });
 
   constructor() {
-    afterNextRender(() => this.element.nativeElement.querySelector<HTMLElement>('.structure-main')?.focus());
+    const destroyRef = inject(DestroyRef);
+    afterNextRender(() => {
+      const main = this.element.nativeElement.querySelector<HTMLElement>('.structure-main');
+      main?.focus();
+      if (!main) return;
+      this.measureWidth(main);
+      if (typeof ResizeObserver === 'undefined') return;
+      const observer = new ResizeObserver(() => this.measureWidth(main));
+      observer.observe(main);
+      destroyRef.onDestroy(() => observer.disconnect());
+    });
     effect(() => {
       const projectName = this.projectName();
       this.readPreference(projectName);
       void this.load(projectName);
     });
+  }
+
+  private measureWidth(main: HTMLElement): void {
+    const style = getComputedStyle(main);
+    const width = main.clientWidth - parseFloat(style.paddingLeft || '0') - parseFloat(style.paddingRight || '0');
+    if (width > 0) this.canvasWidth.set(Math.max(480, Math.floor(width)));
   }
 
   private preferenceKey(projectName: string | null): string {
@@ -118,8 +157,6 @@ export class StructureViewComponent {
     event.preventDefault();
   }
 
-  @HostListener('window:resize') onResize(): void { this.measureLinks(); }
-
   onCanvasKeydown(event: KeyboardEvent): void {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
     const scroller = this.element.nativeElement.querySelector<HTMLElement>('.structure-main');
@@ -132,76 +169,5 @@ export class StructureViewComponent {
     else return;
     event.preventDefault();
     event.stopPropagation();
-  }
-
-  private measureLinks(): void {
-    const canvas = this.element.nativeElement.querySelector<HTMLElement>('.structure-canvas');
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const visible = new Set(this.visible().map(node => node.id));
-    const source = new Map(this.data().nodes.map(node => [node.id, node]));
-    const boxes = new Map<string, DOMRect>();
-    canvas.querySelectorAll<HTMLElement>('[data-node-id]').forEach(node =>
-      boxes.set(node.dataset['nodeId']!, (node.closest('.structure-box') ?? node).getBoundingClientRect()));
-    const endpoint = (id: string): DOMRect | undefined => {
-      if (this.view() === 'container') {
-        const node = source.get(id);
-        if (node?.role && boxes.has(`function:${node.role}`)) return boxes.get(`function:${node.role}`);
-        const descendant = this.data().nodes.find(candidate => {
-          let parent = candidate.parentId;
-          while (parent) {
-            if (parent === id) return candidate.role && boxes.has(`function:${candidate.role}`);
-            parent = source.get(parent)?.parentId ?? null;
-          }
-          return false;
-        });
-        if (descendant?.role) return boxes.get(`function:${descendant.role}`);
-      } else {
-        let node = source.get(id);
-        while (node) {
-          if (node.id.startsWith('machine:') ||
-              ['physical', 'cloud-server', 'vm', 'cluster', 'namespace', 'host', 'server'].includes(node.kind)) {
-            const box = boxes.get(node.id);
-            if (box) return box;
-          }
-          node = node.parentId ? source.get(node.parentId) : undefined;
-        }
-      }
-      const nearest = nearestVisible(id, visible, source);
-      if (nearest && boxes.has(nearest)) return boxes.get(nearest);
-      const child = this.data().nodes.find(node => node.parentId === id && boxes.has(node.id));
-      return child ? boxes.get(child.id) : undefined;
-    };
-    const drawn: DrawnLink[] = [];
-    this.data().links.forEach((link: StructureLink, index: number) => {
-      const from = endpoint(link.from), to = endpoint(link.to);
-      if (!from || !to || from === to) return;
-      const localX = (x: number) => x - rect.left + canvas.scrollLeft;
-      const localY = (y: number) => y - rect.top + canvas.scrollTop;
-      let path: string, x: number, y: number;
-      const horizontalGap = from.right <= to.left ? to.left - from.right :
-        to.right <= from.left ? from.left - to.right : Number.POSITIVE_INFINITY;
-      const verticalGap = from.bottom <= to.top ? to.top - from.bottom :
-        to.bottom <= from.top ? from.top - to.bottom : Number.POSITIVE_INFINITY;
-      if (horizontalGap <= verticalGap) {
-        const forward = from.right <= to.left;
-        const x1 = localX(forward ? from.right : from.left), x2 = localX(forward ? to.left : to.right);
-        const y1 = localY(from.top + from.height / 2), y2 = localY(to.top + to.height / 2);
-        const middle = (x1 + x2) / 2;
-        path = `M${x1} ${y1} H${middle} V${y2} H${x2}`;
-        x = middle; y = (y1 + y2) / 2;
-      } else {
-        const downward = from.bottom <= to.top;
-        const x1 = localX(from.left + from.width / 2), x2 = localX(to.left + to.width / 2);
-        const y1 = localY(downward ? from.bottom : from.top);
-        const y2 = localY(downward ? to.top : to.bottom);
-        const middle = (y1 + y2) / 2;
-        path = `M${x1} ${y1} V${middle} H${x2} V${y2}`;
-        x = (x1 + x2) / 2; y = middle;
-      }
-      drawn.push({ index: index + 1, kind: link.kind, label: link.label,
-        path, x, y });
-    });
-    this.drawnLinks.set(drawn);
   }
 }
