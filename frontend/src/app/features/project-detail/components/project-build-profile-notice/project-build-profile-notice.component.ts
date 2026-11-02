@@ -15,6 +15,15 @@ export interface BuildProfileGateSummary {
     commands: readonly unknown[];
   };
   contradictions?: readonly BuildProfileContradiction[];
+  /** AGT-3428: whether the repository defines its verify commands, with a minimal example when it does not. */
+  verifyDefinition?: {
+    state: 'derived' | 'declared-empty' | 'missing';
+    path: string;
+    message: string | null;
+    exampleStack: string | null;
+    exampleDefinition: string | null;
+    examplePrepareScript: string | null;
+  };
 }
 
 @Component({

@@ -131,12 +131,54 @@ public sealed class RemoteReviewPlanBuilder
         // AGT-3077: every plan shape carries the repository visibility, so a
         // private repository is refused at claim time on any executor without
         // a read credential for it.
-        => BuildPlan(task, repositoryPath, projectSettings, integrationRef,
+        => WithVerifyDefinition(task, BuildPlan(task, repositoryPath, projectSettings, integrationRef,
                 expectedResultSha, changedFiles, immutableResultRef) with
             {
                 PrivateRepository = Contract.ReviewRepositoryAccessPolicy.IsPrivate(
                     projectSettings?.RepositoryVisibility),
-            };
+            }, repositoryPath, projectSettings?.BuildProfile, integrationRef,
+            changedFiles, immutableResultRef ?? (task is null ? null : ReviewSubjectStore.Read(task.FolderPath)?.ImmutableResultRef));
+
+    /// <summary>
+    /// AGT-3428: the review states at its start that no check can verify this
+    /// delivery, instead of passing and leaving the merge to find out. A plan
+    /// that runs any build, test or lint command, a deferred batch gate, a
+    /// docs-only or no-change result, and a delivery that adds the definition
+    /// itself are left alone.
+    /// </summary>
+    private Contract.ReviewPlanDto WithVerifyDefinition(
+        TaskInfo? task,
+        Contract.ReviewPlanDto plan,
+        string? repositoryPath,
+        BuildProfile? profile,
+        string? integrationRef,
+        IReadOnlyList<string>? changedFiles,
+        string? resultRef)
+    {
+        if (task is null || TaskModes.IsReportOnly(task.Mode) || TaskModes.IsConcept(task.Mode)
+            || plan.BuildTestDeferredToBatch || string.IsNullOrWhiteSpace(repositoryPath)
+            || plan.Commands.Any(command => command.Aspect is "build-tests" or "lint" or "review-verification"))
+            return plan;
+        var report = VerifyDefinitionPolicy.Inspect(repositoryPath, profile);
+        if (!report.IsMissing) return plan;
+        var changedPaths = changedFiles ?? (_git is null || string.IsNullOrWhiteSpace(integrationRef)
+            || string.IsNullOrWhiteSpace(resultRef)
+            ? null
+            : _git.ChangedPathsAgainstMergeBase(repositoryPath, integrationRef, resultRef));
+        if (changedPaths is { Count: 0 } || DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths)
+            || changedPaths?.Any(path => string.Equals(path.Replace('\\', '/'),
+                Contract.ProjectPreparationPaths.Definition, StringComparison.Ordinal)) == true)
+            return plan;
+        _logger?.LogWarning(
+            "remote-review-plan-verify-definition-missing task={TaskKey} repository={Repository}",
+            string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey, repositoryPath);
+        return plan with
+        {
+            VerifyDefinitionMissing = report.Message,
+            SkippedAspects = [.. plan.SkippedAspects ?? [],
+                new Contract.ReviewSkippedAspectDto("build-tests", VerifyDefinitionPolicy.Summary)],
+        };
+    }
 
     private Contract.ReviewPlanDto BuildPlan(
         TaskInfo? task,

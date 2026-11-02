@@ -1,23 +1,52 @@
-<aside class="verify-notice"
-       data-testid="project-settings-no-verify-commands"
-       aria-labelledby="project-settings-no-verify-title">
-  <span class="verify-notice__dot" aria-hidden="true"></span>
-  <span class="verify-notice__copy">
-    <span class="verify-notice__title-row">
-      <strong id="project-settings-no-verify-title">No build/test commands</strong>
-      <span class="verify-notice__badge">Not applicable</span>
+@if (summary().verifyDefinition?.state === 'missing') {
+  <aside class="verify-notice verify-notice--missing"
+         data-testid="project-settings-no-verify-commands"
+         aria-labelledby="project-settings-no-verify-title">
+    <span class="verify-notice__dot" aria-hidden="true"></span>
+    <span class="verify-notice__copy">
+      <span class="verify-notice__title-row">
+        <strong id="project-settings-no-verify-title">No verify commands defined</strong>
+        <span class="verify-notice__badge">Merges refused</span>
+      </span>
+      <span>
+        <code>{{ summary().verifyDefinition?.path }}</code> is missing, and no build or test
+        command can be derived from the repository root. Agent Studio does not merge a delivery
+        that no check verified. Add the file and its prepare script, for example for this
+        {{ summary().verifyDefinition?.exampleStack }} repository:
+      </span>
+      <pre class="verify-notice__example" data-testid="project-settings-verify-example">{{ summary().verifyDefinition?.exampleDefinition }}</pre>
+      <span>
+        A repository without checks on purpose declares that with empty <code>build</code>,
+        <code>test</code> and <code>lint</code> lists.
+      </span>
     </span>
-    <span>
-      @if (summary().profile === null) {
-        No BuildProfile is declared and no verify commands can be derived.
-      } @else {
-        The declared BuildProfile and repository layout provide no verify commands.
-      }
-      The build/test gate runs no checks for this project.
-      <a class="verify-notice__link"
-         href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/contributor-setup.md#onboarding-checklist-registry--working-directory--build-profile-belong-together"
-         target="_blank"
-         rel="noreferrer">BuildProfile convention</a>
+  </aside>
+} @else {
+  <aside class="verify-notice"
+         data-testid="project-settings-no-verify-commands"
+         aria-labelledby="project-settings-no-verify-title">
+    <span class="verify-notice__dot" aria-hidden="true"></span>
+    <span class="verify-notice__copy">
+      <span class="verify-notice__title-row">
+        <strong id="project-settings-no-verify-title">No build/test commands</strong>
+        <span class="verify-notice__badge">Not applicable</span>
+      </span>
+      <span>
+        @if (summary().verifyDefinition?.state === 'declared-empty') {
+          The repository's <code>.agent-studio/project.yml</code> declares no verify commands.
+          Deliveries merge without a build/test check.
+        } @else if (summary().profile === null) {
+          No BuildProfile is declared and no verify commands can be derived.
+          The build/test gate runs no checks for this project.
+        } @else {
+          The declared BuildProfile and repository layout provide no verify commands.
+          The build/test gate runs no checks for this project.
+        }
+        <a class="verify-notice__link"
+           href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/contributor-setup.md#onboarding-checklist-registry--working-directory--build-profile-belong-together"
+           target="_blank"
+           rel="noreferrer">BuildProfile convention</a>
+      </span>
     </span>
-  </span>
-</aside>
+  </aside>
+}

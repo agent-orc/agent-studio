@@ -118,6 +118,7 @@ public sealed class ProjectDefinitionProposalService
         text.AppendLf("## Acceptance criteria");
         text.AppendLf();
         text.AppendLf("- The definition validates against `docs/app/schemas/project-execution.schema.json`.");
+        text.AppendLf("- The definition declares the repository's real build and test commands. Empty `build`, `test` and `lint` lists declare a repository without checks, whose deliveries then merge unverified; use them only when that is intended.");
         text.AppendLf("- The prepare script uses `npm ci`, `dotnet restore`, and Playwright only when the detected stack needs them.");
         text.AppendLf("- A preparation run writes `preparation-manifest.json`; a second unchanged run reports cache hits.");
         return text.ToString();
@@ -162,6 +163,16 @@ public static class ProjectDefinitionGenerator
                 suites.Add(($"{Id(packageRoot)}-unit", "unit", 300, command));
             }
             if (scripts.Contains("lint")) lint.Add($"npm{prefix} run lint");
+        }
+        // AGT-3428: empty build and test lists declare that the project has no
+        // checks, which lets deliveries merge unverified. Detection finding
+        // nothing is not that decision, so the proposal carries the stack
+        // example's commands for the reviewer to correct instead.
+        if (build.Count == 0 && test.Count == 0)
+        {
+            var example = AgentStudio.Pipeline.VerifyDefinitionPolicy.ExampleFor(root);
+            build.AddRange(example.Build);
+            test.AddRange(example.Test);
         }
         if (hasPlaywright)
         {

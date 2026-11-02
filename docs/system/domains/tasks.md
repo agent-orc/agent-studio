@@ -1153,7 +1153,9 @@ files. The corrected card copy names the source and SHA, for example
 or review grade is recorded. Only a matched planned or running project test
 run uses `Evidence pending`. A build/test gate log with verdict
 `NotApplicable` and reason `no verify commands derivable` projects the neutral
-`No build/test defined` state. A true `Skipped` gate remains `not-proven` and
+`No build/test defined` state. At the merge that reason is no pass: the
+integration is refused with `verify-definition-missing` (AGT-3428, see
+[contributor setup](../../operations/setup/contributor-setup.md)). A true `Skipped` gate remains `not-proven` and
 uses the red attention treatment, so the card cannot imply that an applicable
 gate passed without executing.
 

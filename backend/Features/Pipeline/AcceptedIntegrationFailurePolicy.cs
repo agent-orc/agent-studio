@@ -78,6 +78,13 @@ public static class AcceptedIntegrationFailureCodes
     public const string GateUnavailable = "gate-unavailable";
 
     /// <summary>
+    /// The repository defines no verify commands and nothing is derivable, so
+    /// no check ran (AGT-3428). A setup defect, not a red gate: the gate failure
+    /// router never classifies it, and the reason names the missing file.
+    /// </summary>
+    public const string VerifyDefinitionMissing = "verify-definition-missing";
+
+    /// <summary>
     /// Maps a non-successful merge result onto its typed code. An
     /// <see cref="MergeIntoIntegrationOutcome.Error"/> result carries its own
     /// <see cref="MergeIntoIntegrationResult.FailureCode"/>; a legacy Error
@@ -142,6 +149,13 @@ public static class AcceptedIntegrationFailurePolicy
 
         var code = NormalizePersistedCode(persistedCode)
             ?? InferCode(verdict, reason);
+        // AGT-3428: a not-applicable gate used to be recorded as a red build or
+        // delivery gate. Its text still identifies the missing definition.
+        if (code is AcceptedIntegrationFailureCodes.BuildGateFailed
+                or AcceptedIntegrationFailureCodes.DeliveryGateFailed
+            && (VerifyDefinitionPolicy.DescribesMissingDefinition(reason)
+                || VerifyDefinitionPolicy.DescribesMissingDefinition(verdictSummary)))
+            code = AcceptedIntegrationFailureCodes.VerifyDefinitionMissing;
 
         // AGT-2749: classify off the raw evidence (not the code-specific
         // fallback copy below) so a git network timeout or a gate-run budget
@@ -292,6 +306,16 @@ public static class AcceptedIntegrationFailurePolicy
                 "Gate unavailable",
                 FirstNonBlank(reason, verdictSummary, "The mandatory integration gate is not available."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.VerifyDefinitionMissing => new(
+                code,
+                "Verify commands missing",
+                // A legacy record carries only the bare gate reason; the generic
+                // message still names the file and shows an example.
+                FirstNonBlank(
+                    HasPrefix(reason) ? reason : null,
+                    HasPrefix(verdictSummary) ? verdictSummary : null,
+                    VerifyDefinitionPolicy.Message(VerifyDefinitionPolicy.ExampleFor(null))),
+                RebaseRecoveryAvailable: false),
             _ => new(
                 AcceptedIntegrationFailureCodes.IntegrationError,
                 "Integration failed",
@@ -392,9 +416,13 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.RebaseAttributionFailed => AcceptedIntegrationFailureCodes.RebaseAttributionFailed,
             AcceptedIntegrationFailureCodes.IntegrationRefUnresolved => AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
             AcceptedIntegrationFailureCodes.GateUnavailable => AcceptedIntegrationFailureCodes.GateUnavailable,
+            AcceptedIntegrationFailureCodes.VerifyDefinitionMissing => AcceptedIntegrationFailureCodes.VerifyDefinitionMissing,
             _ => null,
         };
     }
+
+    private static bool HasPrefix(string? text)
+        => text?.Contains(VerifyDefinitionPolicy.MessagePrefix, StringComparison.Ordinal) == true;
 
     private static string FirstNonBlank(params string?[] values)
         => values.First(value => !string.IsNullOrWhiteSpace(value))!.Trim();

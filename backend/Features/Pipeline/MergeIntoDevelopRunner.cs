@@ -1349,6 +1349,27 @@ public sealed partial class MergeIntoDevelopRunner
         // hold a newer attempt's journal, which must survive.
         IntegrationGateJournal.ClearOwned(gateEvidenceFolder, journalOwner);
 
+        // AGT-3428: the gate applied but found no verify command and no
+        // declaration. Roll the unverified merge back and refuse it with the
+        // typed code; it is not a red gate and is never triaged as one.
+        if (VerifyDefinitionPolicy.IsMissingDefinition(gate))
+        {
+            var rollback = _git.ResetIntegrationBranch(repoRoot, integrationBranch, preMergeTip!);
+            _logger.LogWarning(
+                "merge-into-develop refused for project={Project} job={JobId} integration={Integration}: verify definition missing rollback={Rollback}",
+                project, jobId, integrationBranch,
+                rollback.Success ? "reset-to-pre-merge-tip" : "FAILED: " + (rollback.Error ?? "unknown"));
+            var refused = MissingVerifyDefinition(repoRoot, profile, rollback.Success ? null : gatedSha);
+            return (rollback.Success
+                ? refused
+                : refused with
+                {
+                    Error = refused.Error + $"\n\nRolling {integrationBranch} back to {Short(preMergeTip!)} FAILED "
+                            + $"({rollback.Error ?? "unknown error"}); the unverified merge is still on the local "
+                            + "integration branch and needs manual repair.",
+                }, gate);
+        }
+
         if (PreDevelopBuildGate.IsGreen(gate))
         {
             _logger.LogInformation(
@@ -1603,7 +1624,9 @@ public sealed partial class MergeIntoDevelopRunner
                 ct).ConfigureAwait(false);
             if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
                 IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
-            if (gate.Verdict != BuildTestGateVerdict.Ok)
+            if (VerifyDefinitionPolicy.IsMissingDefinition(gate))
+                return (MissingVerifyDefinition(repoRoot, settings.BuildProfile), gate);
+            if (!VerifyDefinitionPolicy.AdmitsMerge(gate))
             {
                 return (
                     MergeIntoIntegrationResult.Failed(
@@ -1769,7 +1792,12 @@ public sealed partial class MergeIntoDevelopRunner
         if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
             IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
 
-        if (gate.Verdict != BuildTestGateVerdict.Ok)
+        // AGT-3428: no gate ran, so this is neither a red gate nor something the
+        // gate failure router can classify. Only a declared empty definition
+        // lets a not-applicable gate through.
+        if (VerifyDefinitionPolicy.IsMissingDefinition(gate))
+            return (MissingVerifyDefinition(repoRoot, settings.BuildProfile), gate);
+        if (!VerifyDefinitionPolicy.AdmitsMerge(gate))
         {
             return (
                 MergeIntoIntegrationResult.Failed(
@@ -1788,6 +1816,18 @@ public sealed partial class MergeIntoDevelopRunner
             targetSha);
         return (merge, gate);
     }
+
+    /// <summary>
+    /// The typed refusal of a delivery that no check could verify because the
+    /// repository defines no verify commands (AGT-3428).
+    /// </summary>
+    private static MergeIntoIntegrationResult MissingVerifyDefinition(
+        string repoRoot, BuildProfile? profile, string? mergedSha = null)
+        => MergeIntoIntegrationResult.Failed(
+            AcceptedIntegrationFailureCodes.VerifyDefinitionMissing,
+            VerifyDefinitionPolicy.Inspect(repoRoot, profile).Message
+            ?? VerifyDefinitionPolicy.Message(VerifyDefinitionPolicy.ExampleFor(repoRoot)),
+            mergedSha);
 
     private static bool IsReleaseBranch(string branch)
         => string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase);

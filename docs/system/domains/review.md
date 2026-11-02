@@ -877,6 +877,12 @@ the pure `GateFailureTriagePolicy` assigns one class:
 | `integration-branch` | AGT-2916 diagnosis `baseline=red` | Opens or joins the cause card for the fingerprint; the card waits on it |
 | `undecidable` | No gate log, a green newest log, conflicting markers (an environment marker and failing items), or a flake label without a re-run | Parks with `[gate-undecidable]`, stating the missing evidence |
 
+A merge whose gate ran no check because the repository defines no verify
+commands never reaches this table: it carries `verify-definition-missing`
+(AGT-3428), which the router does not handle, and parks with the message that
+names the missing `.agent-studio/project.yml`. Legacy `build-gate-failed`
+records whose reason is `no verify commands derivable` are re-typed the same way.
+
 The diagnosis suffix of AGT-2916 wins over text markers because it is an
 experiment. The router re-types the durable merge step to the decided class,
 so the replay ladder and the board agree with the triage.
