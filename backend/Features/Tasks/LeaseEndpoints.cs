@@ -1563,7 +1563,7 @@ public static class LeaseEndpoints
             if (targetState.Length == 0)
                 return Results.BadRequest(new RemoteRunCompletionResponse(
                     req.TaskKey, reportedOutcome, TaskStates.Progress,
-                    "Outcome must be Done, NoOp, Blocked, NeedsInput, Unknown, EnvironmentFailure, Stopped, or MechanicalFallback."));
+                    "Outcome must be Done, NoOp, Blocked, NeedsInput, Unknown, EnvironmentFailure, Stopped, MechanicalFallback, or TransientFailure."));
 
             if (targetState == TaskStates.AutoReview
                 && (!ReviewSubjectStore.IsValidResultSha(req.ResultSha)
@@ -1765,7 +1765,7 @@ public static class LeaseEndpoints
                     tokenReceipt.Warning);
             }
             var currentBriefVersion = BriefVersionStore.ReadOrCreate(task.FolderPath);
-            if (RunDispositionPolicy.DecideCompletion(
+            if (outcome != "transientfailure" && RunDispositionPolicy.DecideCompletion(
                     settledRun?.BriefVersion, currentBriefVersion)
                 == RemoteCompletionDisposition.OfferOlderBrief)
             {
@@ -2913,7 +2913,7 @@ public static class LeaseEndpoints
                     // one is requeued for another delivery round by the runner, and
                     // an operator stop returns the card without claiming either.
                     transitionCause: deliveryFailure is null && !operatorStopped
-                        && outcome != "mechanicalfallback"
+                        && outcome is not ("mechanicalfallback" or "transientfailure")
                         ? LaneChangeCauses.Delivered
                         : LaneChangeCauses.RunnerRequeue,
                     transitionDetail: operatorStopped
@@ -2952,19 +2952,21 @@ public static class LeaseEndpoints
                         position);
                 }
             }
-            if (outcome == "mechanicalfallback"
-                && !string.IsNullOrWhiteSpace(req.ImmutableResultRef)
-                && !string.IsNullOrWhiteSpace(req.ResultSha))
+            if (outcome is "mechanicalfallback" or "transientfailure"
+                && !string.IsNullOrWhiteSpace(req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch)
+                && ReviewSubjectStore.IsValidResultSha(req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha))
             {
                 var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
                 if (!AgentStudio.Runner.ContinuationBaseStore.Save(
                     ready.FolderPath,
                     new AgentStudio.Runner.ContinuationBaseRecord(
-                        req.ImmutableResultRef, req.ResultSha,
-                        req.SessionContinuation?.FallbackReason ?? "mechanical-fallback",
+                        req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch!,
+                        req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha!,
+                        outcome == "transientfailure" ? "transient-model-capacity" :
+                            req.SessionContinuation?.FallbackReason ?? "mechanical-fallback",
                         attemptId, DateTime.UtcNow)))
                     loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogWarning(
-                        "mechanical-fallback-continuation-base-save-failed task={TaskKey} attempt={AttemptId}",
+                        "transient-continuation-base-save-failed task={TaskKey} attempt={AttemptId}",
                         req.TaskKey, attemptId);
             }
             if (outcome == "mechanicalfallback")
