@@ -59,6 +59,24 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
 builder.Services.AddSingleton<AgentStudio.Review.ReviewObservationStore>();
 builder.Services.AddSingleton<AgentStudio.Review.ReviewBaselineService>();
+// AGT-3400 S4: shadow review packages. The package subjects live where review
+// claims land: the standalone Task Server when the v1 plane is proxied, else
+// the monolith's package store. The formation log stays on this instance.
+builder.Services.AddSingleton(sp => new AgentStudio.Review.ReviewPackageStore(
+    AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "review-packages"),
+    sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<AgentStudio.Review.IReviewPackageAuthority>(sp =>
+    TaskServerPlaneProxy.IsConfigured(sp.GetRequiredService<IConfiguration>())
+        ? new AgentStudio.Review.TaskServerReviewPackageAuthority(() => sp
+            .GetRequiredService<IHttpClientFactory>().CreateClient(TaskServerPlaneProxy.ClientName))
+        : new AgentStudio.Review.MonolithReviewPackageAuthority(
+            sp.GetRequiredService<AgentStudio.Review.ReviewPackageStore>()));
+builder.Services.AddSingleton<AgentStudio.Review.IReviewPackageDeliveryFacts,
+    AgentStudio.Review.ReviewPackageDeliveryFacts>();
+builder.Services.AddSingleton<AgentStudio.Review.ReviewPackagePlanBuilder>();
+builder.Services.AddSingleton<AgentStudio.Review.ReviewPackageFormationService>();
+builder.Services.AddSingleton<AgentStudio.Review.ReviewPackageShadowReportService>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();

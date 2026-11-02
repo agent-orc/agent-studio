@@ -86,6 +86,76 @@ contract form one fix item. A third consecutive block of the same cited deep
 finding escalates to a person rather than opening another automatic fix round. The existing card
 round and reissue budgets still govern every review result.
 
+## Package review in shadow (AGT-3400 S4)
+
+Dossier `docs/review-gate-packages/index.html` decides that the context-heavy
+review aspects run once per Dossier wave. Slice S4 implements that package
+review in shadow only. It uses the recommended options: PK3 A (cards of one
+`dossier.path`; cards without a Dossier stay per card), PK4 R-B (build, tests,
+deterministic checks and requirement fit stay per card) and PK5 A (60 minutes,
+at most 4 members, within the material budget, never waiting for coding).
+
+- **Setting.** `PUT /api/projects/{projectName}/review-package` with
+  `{"mode":"off"|"shadow"}` (Owner role) stores `review.package`. The default
+  is `off`, and `off` clears the section. `dossier`, the live mode of S5, is
+  rejected. `GET /api/projects/settings` reports `reviewPackage`.
+- **Subject kind `package`.** A package subject holds the Dossier path, the
+  members in stack order (task, run attempt, result SHA, card-check round,
+  material size, acceptance criteria), a membership digest and a frozen plan.
+  The standalone Task Server stores it in `review_package_subjects` and
+  `review_package_members`; the monolith stores it in its instance folder
+  `review-packages/`. The per-card `review_subjects` table, card subject
+  sidecar and attempt authority are unchanged. A member delivery joins at most
+  one package.
+- **Formation tick.** `ReviewPackageFormationHostedService` runs every 30
+  seconds beside review admission. A card's check passed when every card-check
+  step (tool commands, requirement fit) of one review round of its current
+  result SHA passed, as the S2 baseline defines it. The pure
+  `ReviewPackageFormationPolicy` groups such cards by `dossier.path`: members
+  whose check passed within 60 minutes of the first, at most 4, at most 200
+  files (union of paths) and 12,000 lines. It waits only for cards in Auto
+  Review whose check has not passed, never for a card in a coding lane, and a
+  lone member is a package of one. A card that alone exceeds the budget stays
+  per card. Each decision is appended once to
+  `review-packages/plans/<project>.jsonl` (`GET .../review-packages/formation`).
+- **Stacked candidate.** The review host fetches every member result and the
+  integration ref, then applies the members on the tip in stack order:
+  `references.dependsOn` first, then the Dossier implementation index. Each
+  member's own commits are cherry-picked; a range with a merge commit, or a
+  pick that conflicts, is merged as one merge commit instead. Each member's
+  diff runs from the candidate before it to the candidate after it, so every
+  hunk has one owner. A member that does not stack reports `stack-conflict`; a
+  union above the budget reports `over-budget` and is never truncated.
+- **Aspects.** Code quality, documentation impact, tests and evidence and the
+  new `aspect-cross-card-consistency` run once on the package. Each prompt is
+  `review-package-aspect.md` around the aspect's own rules, with the CLI, model
+  and thinking level of the members' per-card plan. Only the cross-card prompt
+  carries the Dossier excerpt, once. The grade is computed per member from the
+  package verdicts, as the remote per-card grade is.
+- **Structured output.** Every aspect ends with one `package-review` JSON block:
+  one verdict per member with its acceptance criteria, and findings with file
+  and line. A finding without both is discarded. The line's hunk owner owns the
+  finding; a line no member wrote is cross-card and goes to the later member in
+  stack order, naming the others as related. A member block that no finding of
+  that aspect cites is recorded as `concerns`.
+- **Shadow guarantees.** A package report is admitted under
+  `ReviewPackageReportPolicy` and projected into each member's
+  `results/package-review-observations.jsonl` as review observations with level
+  `package`. That journal is separate from `review-observations.jsonl`, so
+  miss-rate cohorts, review depth and the Token Economy export never read it.
+  No package path moves a lane, writes a verdict or settles an attempt; the
+  per-card review runs unchanged.
+- **Shadow report.** `GET /api/projects/{projectName}/review-packages/shadow-report?days=14`
+  compares, per member and aspect, the package verdict and findings with the
+  per-card verdict and findings of the same aspect in the round that passed the
+  card check, and the package token totals with the per-card tokens of the same
+  aspects. `cardBlocksMissed` counts per-card blocks the package did not block.
+- **Review host.** When its per-card claim is empty, the review daemon claims
+  at most one package at a time (`/api/v1/runners/{id}/review-package-claims`),
+  beside the per-card slots and without taking one of them.
+  `RUNNER_PACKAGE_REVIEW=0` turns this off. Shadow packages read public
+  repositories only.
+
 ## Review host placement (D19 A, AGT-3069)
 
 Remote Review subjects retain the source coding host, and each claimed attempt
@@ -1215,6 +1285,15 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
   [pipeline.md](./pipeline.md#acceptance-rail-one-integration-truth-one-refusal).
 - `orchestrator-engine/OrchestrationStageHandlers.cs`: Council records an
   uncited downgrade as a concern without turning it back into a reissue.
+- `contracts/TaskServer.Contracts/ReviewPackageContracts.cs`,
+  `orchestration-decisions/ReviewPackageFormationPolicy.cs`,
+  `backend/Features/Review/Packages/`, `task-server/TaskServerReviewPackageStore.cs`
+  and `runner/PackageReview*.cs`: shadow package review (AGT-3400 S4), covered by
+  `backend.Tests/ReviewPackageFormationPolicyTests.cs`,
+  `backend.Tests/ReviewPackageContractTests.cs`,
+  `backend.Tests/ReviewPackageFormationServiceTests.cs`,
+  `task-server.Tests/ReviewPackageStoreTests.cs` and
+  `runner.Tests/PackageReviewExecutorTests.cs`.
 - `runner.Tests/RemoteReviewWorkspaceTests.cs`: exact docs-diff visibility and
   explicit truncation coverage.
 - `runner.Tests/ReviewConcurrentWorkspaceIsolationTests.cs`: four concurrent

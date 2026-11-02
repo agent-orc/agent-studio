@@ -13,6 +13,9 @@ public static class OrchestrationLoopRegistration
         // only publishes batch-plan occurrences and applies the engine intent after
         // the authority floors. Without it nothing would advance queued batches.
         services.AddHostedService<AgentStudio.Pipeline.BatchGatePilotHostedService>();
+        // AGT-3400 S4: the review package formation tick beside review admission.
+        // It forms nothing unless a project sets review.package to shadow.
+        services.AddHostedService<AgentStudio.Review.ReviewPackageFormationHostedService>();
         // Keep the workers alive across operator switches. Each transition's
         // decision entry point reads its current profile; startup mode cannot
         // decide which workers will be needed after a runtime rollback.

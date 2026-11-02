@@ -4683,6 +4683,7 @@ public sealed partial class TaskServerStore
             ON CONFLICT(version) DO NOTHING;
             """, ct, ("$version", CurrentSchemaVersion), ("$now", Iso(UtcNow)));
         await ApplyReviewMigrationAsync(connection, ct);
+        await ApplyReviewPackageMigrationAsync(connection, ct);
         await ApplyGateMigrationAsync(connection, ct);
         await ApplyPostWorkMigrationAsync(connection, ct);
         await ApplyFailureFingerprintMigrationAsync(connection, ct);

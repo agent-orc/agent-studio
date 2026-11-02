@@ -551,6 +551,10 @@ internal static class PromptDescriptionCatalog
             "Review aspect that checks for adequate tests and verification evidence.", "Review"),
         ["review-aspect-documentation-impact.md"] = new("Aspect: documentation impact",
             "Review aspect that checks whether docs need updating for the change.", "Review"),
+        ["review-aspect-cross-card-consistency.md"] = new("Aspect: cross-card consistency",
+            "Package review aspect that checks the members of one Dossier wave implement its decisions consistently.", "Review"),
+        ["review-package-aspect.md"] = new("Package review frame",
+            "Frames one package-tier aspect over the stacked candidate of a Dossier wave, with one verdict per member.", "Review"),
         ["post-abort-review.md"] = new("Post-abort review",
             "Verdict step run after a non-clean run end (rerun / stronger-reissue / human-review / accept).", "Review"),
 

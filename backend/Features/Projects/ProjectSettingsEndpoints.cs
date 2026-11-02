@@ -88,6 +88,9 @@ public record SetRequireDifferentReviewHostRequest
     public bool Required { get; init; }
 }
 
+/// <summary><c>review.package</c> mode (AGT-3400 S4): <c>off</c> or <c>shadow</c>.</summary>
+public sealed record ReviewPackageSettingRequest(string? Mode);
+
 /// <summary>AGT-W57 cause breaker parameters for one project.</summary>
 public record SetCauseBreakerRequest
 {
@@ -329,6 +332,7 @@ public static class ProjectSettingsEndpoints
                     testExecution = kv.Value.TestExecution,
                     testingPerCard = PerCardTestModes.Resolve(kv.Value),
                     testingMode = IntegrationTestModes.Resolve(kv.Value),
+                    reviewPackage = ReviewPackageSetting.Resolve(kv.Value),
                     pipelineStepOrder = PipelineTypeSettings.ForType(kv.Value, PipelineTypes.Task)?.PipelineStepOrder
                         ?? Array.Empty<string>(),
                     pipelineStepsByType = kv.Value.PipelineStepsByType
@@ -1190,6 +1194,26 @@ public static class ProjectSettingsEndpoints
                 perCard = PerCardTestModes.Resolve(settings.Get(projectName)),
                 mode = IntegrationTestModes.Resolve(settings.Get(projectName)),
             });
+        }).RequireStudioRole(StudioRoles.Owner);
+
+        // AGT-3400 S4: review.package. Shadow forms Dossier wave packages beside
+        // the unchanged per-card review; dossier (live, S5) is not accepted yet.
+        app.MapPut("/api/projects/{projectName}/review-package", (
+            string projectName,
+            ReviewPackageSettingRequest req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            var mode = AgentStudio.TaskServer.Contracts.ReviewPackageModes.Normalize(req.Mode);
+            if (mode is null)
+                return Results.BadRequest(new { error = "mode must be 'off', 'shadow' or 'dossier'." });
+            if (!AgentStudio.TaskServer.Contracts.ReviewPackageModes.IsImplemented(mode))
+                return Results.BadRequest(new { error = "review.package 'dossier' needs per-member settlement (AGT-3400 S5); use 'off' or 'shadow'." });
+            settings.SetReviewPackage(projectName, mode);
+            return Results.Ok(new { mode = ReviewPackageSetting.Resolve(settings.Get(projectName)) });
         }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapGet("/api/projects/{projectName}/batch-gate", (string projectName,

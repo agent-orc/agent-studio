@@ -235,6 +235,14 @@ public sealed class RunnerOptions
     /// </summary>
     public bool ReviewReleaseDrain { get; init; }
 
+    /// <summary>
+    /// AGT-3400 S4: <c>RUNNER_PACKAGE_REVIEW</c> / <c>--package-review</c>. When
+    /// the per-card review claim is empty, the review daemon claims at most one
+    /// shadow review package at a time. On by default; <c>0</c> turns it off.
+    /// Packages form only for projects with <c>review.package: shadow</c>.
+    /// </summary>
+    public bool PackageReview { get; init; } = true;
+
     /// <summary>Hard cap on a single CLI run before the runner gives up and reports a blocked completion.</summary>
     public int RunTimeoutSeconds { get; init; }
 
@@ -637,6 +645,7 @@ public sealed class RunnerOptions
             AllowInsecureHttp = OptIn(Val("allow-insecure-http", "RUNNER_ALLOW_INSECURE_HTTP")),
             ReviewReleaseDrain = OptIn(
                 Val("review-release-drain", "RUNNER_REVIEW_RELEASE_DRAIN")),
+            PackageReview = OptOut(Val("package-review", "RUNNER_PACKAGE_REVIEW")),
             HealthCheckOnly = healthCheck,
             DrainOnly = drain,
             RestartGuardOnly = restartGuard,

@@ -84,6 +84,7 @@ public sealed class RemoteReviewDaemon
             RunnerActiveAttemptReporter.Review(state.LoadAll()));
         var active = new List<(Task<int> Run, string AttemptId, string ResourceNamespace)>();
         var reviewStartedAt = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+        var packageSlot = new PackageReviewSlot(_options, _client, () => _client.RunnerInstanceId, _log);
         // AGT-2863: adopted attempts whose worker binary is a superseded release.
         // Reported always; in release-drain mode they also hold claim admission
         // until they finish. The workers themselves are never touched.
@@ -720,6 +721,12 @@ public sealed class RemoteReviewDaemon
                                 }
                             }
                         }
+                        else
+                        {
+                            // AGT-3400 S4: an idle per-card queue may run one
+                            // shadow package beside the per-card slots.
+                            await packageSlot.PollAsync(DateTime.UtcNow, shutdown);
+                        }
                     }
 
                     consecutiveFaults = 0;
@@ -802,6 +809,7 @@ public sealed class RemoteReviewDaemon
         await quotaPoll;
         if (active.Count > 0)
             await Task.WhenAll(active.Select(slot => slot.Run));
+        await packageSlot.DrainAsync();
         _log(drainedToStop
             ? "review daemon stopped after the acknowledged drain"
             : "review daemon handoff complete; durable review workers are ready for replacement adoption");
