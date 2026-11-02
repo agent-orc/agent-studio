@@ -82,6 +82,82 @@ public sealed class PerCardReviewPlanTests : IDisposable
     }
 
     [Fact]
+    public void AgentStudioTestOnlyDiffRunsTheChangedClassAndBuild()
+    {
+        Write("backend.Tests/Delivery/FocusedTests.cs",
+            "namespace AgentStudio.Tests;\npublic sealed class FocusedTests { [Fact] public void Runs() { } }\n");
+        Git("add", ".");
+        Git("commit", "-qm", "focused test baseline");
+        var sha = Commit("backend.Tests/Delivery/FocusedTests.cs");
+
+        var plan = Build(Settings(PerCardTestModes.Affected), sha,
+            "backend.Tests/Delivery/FocusedTests.cs");
+
+        Assert.Contains(plan.Commands, command => command.Aspect == "build-tests"
+            && command.Arguments.Contains("echo build"));
+        Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("FullyQualifiedName~FocusedTests", StringComparison.Ordinal)));
+        Assert.False(plan.BuildTestDeferredToBatch);
+    }
+
+    [Fact]
+    public void AgentStudioSharedTestHelperRunsTheWholeTestProject()
+    {
+        Write("backend.Tests/SharedFixtureTests.cs", "namespace AgentStudio.Tests;\npublic sealed class SharedFixtureTests { }\n");
+        Git("add", ".");
+        Git("commit", "-qm", "shared test fixture");
+        var sha = Commit("backend.Tests/SharedFixtureTests.cs");
+
+        var plan = Build(Settings(PerCardTestModes.Affected), sha,
+            "backend.Tests/SharedFixtureTests.cs");
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains(BackendTest));
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains("echo build"));
+    }
+
+    [Theory]
+    [InlineData("tests/TokenEconomy.Tests/WebsiteCostFrontierDataTests.cs")]
+    [InlineData("tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj")]
+    public void TokenEconomyTestDiffRunsItsProjectAndSynthesizesBuild(string changed)
+    {
+        Write("src/TokenEconomy/TokenEconomy.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+        Write("tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup>"
+            + "<ItemGroup><ProjectReference Include=\"../../src/TokenEconomy/TokenEconomy.csproj\" /></ItemGroup></Project>\n");
+        Write("tests/TokenEconomy.Tests/WebsiteCostFrontierDataTests.cs",
+            "namespace TokenEconomy.Tests;\npublic sealed class WebsiteCostFrontierDataTests { [Fact] public void Runs() { } }\n");
+        Write(".agent-studio/project.yml",
+            "schemaVersion: 1\nstack: [dotnet]\ntoolVersions:\ncommands:\n"
+            + "  prepare: .agent-studio/prepare\n  build: []\n  test:\n"
+            + "    - dotnet test tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj --no-build --filter Category!=MachineBound\n"
+            + "  lint: []\ntestSuites: []\ncachePaths: []\ncapabilities: [git]\nenvironment: {}\n");
+        Git("add", ".");
+        Git("commit", "-qm", "token economy project definition");
+        var sha = Commit(changed);
+
+        var plan = Build(Settings(PerCardTestModes.Affected), sha, changed);
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("dotnet test tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj", StringComparison.Ordinal)));
+        Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("dotnet build", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void DocumentationOnlyDiffDoesNotSynthesizeACompiledBuild()
+    {
+        Write("docs/notes.md", "Notes.\n");
+        Git("add", ".");
+        Git("commit", "-qm", "documentation baseline");
+        var sha = Commit("docs/notes.md");
+
+        var plan = Build(Settings(PerCardTestModes.Affected), sha, "docs/notes.md");
+
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.StartsWith("dotnet build", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public void AffectedFrontendDiffAddsTheTypeCheckAndRunsFrontendUnitOnly()
     {
         var resultSha = Commit("frontend/src/app.ts");
@@ -190,7 +266,8 @@ public sealed class PerCardReviewPlanTests : IDisposable
     private string Commit(string path)
     {
         Git("switch", "-qc", "agent-studio/results/task");
-        File.AppendAllText(Path.Combine(_repo, path), path.EndsWith(".json", StringComparison.Ordinal) ? "\n" : "// changed\n");
+        File.AppendAllText(Path.Combine(_repo, path), path.EndsWith(".json", StringComparison.Ordinal)
+            ? "\n" : path.EndsWith(".csproj", StringComparison.Ordinal) ? "<!-- changed -->\n" : "// changed\n");
         Git("add", ".");
         Git("commit", "-qm", "delivery");
         var sha = Git("rev-parse", "HEAD").Trim();

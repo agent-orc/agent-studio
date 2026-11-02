@@ -2821,7 +2821,8 @@ public static class V1ReviewPlaneEndpoints
         IReadOnlyList<string>? changedFiles = null,
         VerifyPlan? verifyOverride = null)
     {
-        var verify = verifyOverride ?? VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
+        var verify = VerifyCommandPlanner.WithCompiledBuild(repositoryPath ?? string.Empty,
+            verifyOverride ?? VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile), changedFiles);
         var preparation = GatePreparationPlanner.Plan(
                 repositoryPath ?? string.Empty,
                 profile,

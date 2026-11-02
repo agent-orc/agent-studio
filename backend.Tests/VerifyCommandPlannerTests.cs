@@ -55,6 +55,23 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         return stdout;
     }
 
+    [Fact]
+    public void CompiledFrontendChangeAddsPackageBuildWhenOnlyTestsAreDeclared()
+    {
+        Write("frontend/package.json", "{\"scripts\":{\"test\":\"vitest run\"}}");
+        var declared = new VerifyPlan(
+            [new VerifyCommand(VerifyEcosystem.Node, VerifyCommandKind.Test, "frontend", "npm test")],
+            VerifyPlan.SourceProjectDefinition);
+
+        var compiled = VerifyCommandPlanner.WithCompiledBuild(_root, declared, ["frontend/src/app.ts"]);
+        var docs = VerifyCommandPlanner.WithCompiledBuild(_root, declared, ["docs/notes.md"]);
+
+        Assert.Equal("npm run build", compiled.Commands[0].Command);
+        Assert.Equal("frontend", compiled.Commands[0].WorkingSubdir);
+        Assert.Equal(VerifyCommandKind.Build, compiled.Commands[0].Kind);
+        Assert.Equal(declared.Commands, docs.Commands);
+    }
+
     // ---- Fixture: .NET only ------------------------------------------------
 
     [Fact]

@@ -147,15 +147,6 @@ public sealed class RemoteReviewPlanBuilder
         IReadOnlyList<string>? changedFiles,
         string? immutableResultRef)
     {
-        var toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(
-            repositoryPath,
-            projectSettings?.BuildProfile,
-            integrationRef,
-            changedFiles) with
-        {
-            RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
-        };
-        var ordinaryToolPlan = toolPlan;
         var subject = task is null ? null : ReviewSubjectStore.Read(task.FolderPath);
         var resultRef = immutableResultRef ?? subject?.ImmutableResultRef;
         var resultSha = expectedResultSha ?? subject?.ResultSha;
@@ -164,6 +155,15 @@ public sealed class RemoteReviewPlanBuilder
             ? null
             : _git.ChangedPathsAgainstMergeBase(
                 repositoryPath, integrationRef, resultRef));
+        var toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(
+            repositoryPath,
+            projectSettings?.BuildProfile,
+            integrationRef,
+            changedPaths) with
+        {
+            RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
+        };
+        var ordinaryToolPlan = toolPlan;
         var deferBuildTest = projectSettings?.BatchGate.Enabled == true
             && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
                 ?? IntegrationTestModes.Resolve(projectSettings)) != IntegrationTestModes.PostMerge

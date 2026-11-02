@@ -110,6 +110,89 @@ public sealed record VerifyPlan(IReadOnlyList<VerifyCommand> Commands, string So
 public static class VerifyCommandPlanner
 {
     /// <summary>
+    /// A compiled delivery always has a build gate, even when its project
+    /// definition declares tests but no build command. The result checkout runs
+    /// the command; the planning checkout only locates its project or package.
+    /// </summary>
+    public static VerifyPlan WithCompiledBuild(
+        string repositoryPath, VerifyPlan plan, IReadOnlyList<string>? changedFiles)
+    {
+        if (plan.Commands.Any(command => command.Kind == VerifyCommandKind.Build)) return plan;
+        var dotNetTouched = DotNetWorkPackagePlanner.TouchesDotNet(changedFiles);
+        var nodeFiles = (changedFiles ?? []).Where(IsNodeBuildInput).ToArray();
+        if (!dotNetTouched && nodeFiles.Length == 0) return plan;
+
+        var root = Directory.Exists(repositoryPath) ? repositoryPath : string.Empty;
+        var builds = new List<VerifyCommand>();
+        if (dotNetTouched)
+        {
+            var solution = root.Length == 0 ? null : Directory.EnumerateFiles(root)
+                .Where(path => Path.GetExtension(path) is ".sln" or ".slnx")
+                .Order(StringComparer.Ordinal).FirstOrDefault();
+            var targets = solution is not null
+                ? [Path.GetFileName(solution)]
+                : (changedFiles ?? []).Where(path => DotNetWorkPackagePlanner.TouchesDotNet([path]))
+                    .Select(path => FindProject(root, path))
+                    .Where(path => path is not null)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Cast<string>().ToArray();
+            var commands = targets.Length == 0 ? ["dotnet build"]
+                : targets.Select(path => $"dotnet build \"{path}\"").ToArray();
+            builds.AddRange(commands.Select(command => new VerifyCommand(
+                VerifyEcosystem.DotNet, VerifyCommandKind.Build, "", command)));
+        }
+        builds.AddRange(nodeFiles.Select(path => FindPackage(root, path) ?? "")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(subdir => new VerifyCommand(
+                VerifyEcosystem.Node, VerifyCommandKind.Build, subdir, "npm run build")));
+        return plan with
+        {
+            Commands = builds.Concat(plan.Commands).ToArray(),
+        };
+    }
+
+    private static bool IsNodeBuildInput(string path)
+        => Path.GetExtension(path).ToLowerInvariant() is ".ts" or ".tsx" or ".jsx"
+            or ".vue" or ".svelte" or ".scss" or ".sass" or ".less";
+
+    private static string? FindPackage(string root, string relativePath)
+    {
+        if (root.Length == 0) return null;
+        var directory = Path.GetDirectoryName(Path.Combine(root, relativePath))!;
+        while (directory.StartsWith(root + Path.DirectorySeparatorChar,
+                   StringComparison.OrdinalIgnoreCase) || directory == root)
+        {
+            if (File.Exists(Path.Combine(directory, "package.json")))
+            {
+                var relative = Path.GetRelativePath(root, directory).Replace('\\', '/');
+                return relative == "." ? "" : relative;
+            }
+            if (directory == root) break;
+            directory = Path.GetDirectoryName(directory)!;
+        }
+        return null;
+    }
+
+    private static string? FindProject(string root, string relativePath)
+    {
+        if (relativePath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+            return relativePath.Replace('\\', '/');
+        if (root.Length == 0) return null;
+        var directory = Path.GetDirectoryName(Path.Combine(root, relativePath))!;
+        while (directory.StartsWith(root + Path.DirectorySeparatorChar,
+                   StringComparison.OrdinalIgnoreCase) || directory == root)
+        {
+            var project = (Directory.Exists(directory)
+                    ? Directory.EnumerateFiles(directory, "*.csproj") : [])
+                .Order(StringComparer.Ordinal).FirstOrDefault();
+            if (project is not null) return Path.GetRelativePath(root, project).Replace('\\', '/');
+            if (directory == root) break;
+            directory = Path.GetDirectoryName(directory)!;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// The npm default "no test specified" placeholder. Treated as "no test
     /// script" so a scaffolded manifest does not turn the gate red spuriously.
     /// </summary>

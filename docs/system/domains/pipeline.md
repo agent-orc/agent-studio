@@ -412,7 +412,9 @@ in the background; an executor claim can proceed during selection.
 In that deferred plan only (AGT-3085), an impacted .NET test project runs the
 test classes that name a changed type instead of the whole project. Seeds are
 the top-level types of the changed `.cs` files in the referenced production
-projects and in the test project. A test file that names a seed is selected,
+projects and in the test project. A changed test class is selected directly;
+a changed shared test helper or test project file runs the whole test project.
+A test file that names a seed is selected,
 and its own top-level types become seeds until nothing new is found, so
 fixtures and base classes carry the selection. The checkout supplies unchanged
 files, and one bounded `git cat-file --batch` supplies the changed paths at the
@@ -1548,7 +1550,10 @@ comparison before Quality Studio's verdict contract can decide a review.
   reference (`DotNetReferenceSelection`) when the change is the project's own
   or in a directly referenced project; a change that reaches the project only
   transitively keeps it whole. A project whose classes name none of the changed
-  types gets no per-card command. A diff that edits a `.csproj` makes the
+  production types gets no per-card command. Changed test classes select
+  themselves, while shared test helpers and project files run the test
+  project's suite. A compiled .NET or frontend change retains a build command
+  even if the project definition declares only test commands. A diff that edits a `.csproj` makes the
   generated map stale. A stale map, a global input, an unmapped path or a
   missing diff keeps the full plan. Fast checks: the declared lint commands run
   as before; a touched Node package adds its `typecheck` and `format:check`

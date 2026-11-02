@@ -164,7 +164,7 @@ public sealed class DotNetReferenceSelectionTests : IDisposable
     }
 
     [Fact]
-    public void ChangedFixture_SelectsTheTestClassesThatUseIt()
+    public void ChangedFixture_RunsTheWholeTestProject()
     {
         BackendRepository();
         Write("backend.Tests/Fixtures/TempRepository.cs", """
@@ -183,11 +183,10 @@ public sealed class DotNetReferenceSelectionTests : IDisposable
 
         var result = Plan(["backend.Tests/Fixtures/TempRepository.cs"]);
 
-        Assert.Equal(["UsesRepositoryTests"], result.Audit.SelectedTestClasses);
-        Assert.Equal(
-            "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter "
-            + "\"(Category!=MachineBound)&(FullyQualifiedName~UsesRepositoryTests)\"",
-            DotNetTestCommand(result));
+        Assert.Empty(result.Audit.SelectedTestClasses);
+        Assert.Equal(WholeProjectCommand, DotNetTestCommand(result));
+        Assert.Contains(result.Audit.ReferenceSelections, audit =>
+            audit.FallbackReason?.Contains("shared test infrastructure changed", StringComparison.Ordinal) == true);
     }
 
     [Theory]
