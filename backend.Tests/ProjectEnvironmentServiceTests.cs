@@ -60,6 +60,42 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_projects_lost_host_without_changing_queue_across_restart()
+    {
+        var (service, repo, watch) = Build();
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", stage, _artifact, "operator", rollback: false));
+        var claimed = service.Claim("stage-host")!;
+        var statePath = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        var persisted = File.ReadAllText(statePath);
+
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter);
+        Assert.Equal("failed", Assert.Single(service.Read("demo")!.Jobs).Status);
+        Assert.Equal(persisted, File.ReadAllText(statePath));
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["WatchPaths:0:Name"] = "demo", ["WatchPaths:0:Path"] = watch,
+            ["WatchPaths:0:RootPath"] = repo, ["WatchPaths:0:RepositoryPath"] = repo,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var restarted = new ProjectEnvironmentService(config, scanner,
+            new GitService(NullLogger<GitService>.Instance, scanner, config),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config), _clock);
+        Assert.Equal("failed", Assert.Single(restarted.Read("demo")!.Jobs).Status);
+        Assert.Equal(persisted, File.ReadAllText(statePath));
+        Assert.Null(restarted.Claim("stage-host"));
+        var durable = JsonNode.Parse(File.ReadAllText(statePath))!;
+        Assert.Equal("failed", durable["jobs"]![0]!["status"]!.GetValue<string>());
+        Assert.Single(durable["history"]!.AsArray());
+        Assert.Equal("failed", Assert.Single(restarted.Read("demo")!.Jobs).Status);
+        Assert.Equal(claimed.Id, Assert.Single(restarted.Read("demo")!.Jobs).Id);
+        Assert.Single(restarted.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").History);
+    }
+
+    [Fact]
     public async Task ScheduledVolumeBackup_UsesInjectedClock_AndRestoreIsAudited()
     {
         var (environments, repo, _) = Build();

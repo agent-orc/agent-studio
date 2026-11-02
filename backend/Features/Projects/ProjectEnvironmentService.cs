@@ -586,7 +586,18 @@ public sealed partial class ProjectEnvironmentService
         {
             var declarations = Declarations(project);
             if (declarations is null) return null;
-            var state = Load(project);
+            var persisted = Load(project);
+            // Show expired claims immediately, but leave the durable queue untouched.
+            // Claim and other write paths advance and save it under the same gate.
+            var state = new State
+            {
+                Jobs = [.. persisted.Jobs],
+                Promotions = [.. persisted.Promotions],
+                History = [.. persisted.History],
+                Observed = persisted.Observed,
+                Placements = persisted.Placements,
+                RunTargetRemovals = persisted.RunTargetRemovals,
+            };
             AdvanceQueue(state);
             return new(project, declarations.Select(item =>
             {
