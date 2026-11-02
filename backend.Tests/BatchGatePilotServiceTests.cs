@@ -3516,12 +3516,15 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         /// a per-task gate as before.
         /// </summary>
         public Func<BuildTestGateRequest, BuildTestGateResult>? Merge { get; set; }
+        public Func<BuildTestGateRequest, BuildTestGateResult> PreCheck { get; set; }
+            = request => Green(request.ExpectedSha);
         public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? BatchAsync { get; set; }
         public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? FallbackAsync { get; set; }
         private int _batchRuns;
         private int _baseRuns;
         private int _fallbackRuns;
         private int _mergeRuns;
+        private int _preCheckRuns;
         private readonly TaskCompletionSource _batchStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _fallbackStarted =
@@ -3530,6 +3533,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         public int BaseRuns => Volatile.Read(ref _baseRuns);
         public int FallbackRuns => Volatile.Read(ref _fallbackRuns);
         public int MergeRuns => Volatile.Read(ref _mergeRuns);
+        public int PreCheckRuns => Volatile.Read(ref _preCheckRuns);
         /// <summary>Completes when the first batch suite starts.</summary>
         public Task FirstBatchStarted => _batchStarted.Task.WaitAsync(HangGuard);
         /// <summary>Completes when the first per-task gate starts.</summary>
@@ -3558,6 +3562,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             {
                 Interlocked.Increment(ref _mergeRuns);
                 return Task.FromResult(Merge(request));
+            }
+            if (request.GateId == "batch-pre-check")
+            {
+                Interlocked.Increment(ref _preCheckRuns);
+                return Task.FromResult(PreCheck(request));
             }
             Interlocked.Increment(ref _fallbackRuns);
             _fallbackStarted.TrySetResult();

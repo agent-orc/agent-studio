@@ -90,6 +90,8 @@ public sealed record BuildTestGateRequest(
     [System.Text.Json.Serialization.JsonIgnore]
     public Action<int, int>? OnMachineGateSlotAcquired { get; init; }
     public int GateSlots { get; init; } = 1;
+    /// <summary>Opportunistic work may use only slots after the first regular gate slot.</summary>
+    public bool ReserveBatchSlot { get; init; }
 
     /// <summary>
     /// AGT-3423: the expected slot hold from the project's recent gate history,
@@ -520,7 +522,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                             fallbackCollision = true;
                             request.OnMachineGateWaiting?.Invoke();
                             request.OnMachineGateSlotWaiting?.Invoke(busy, total);
-                        }, ct, request.DurationClass).ConfigureAwait(false);
+                        }, ct, request.DurationClass, request.ReserveBatchSlot).ConfigureAwait(false);
                     fallbackQueueWaitMs = queueWatch.ElapsedMilliseconds;
                     if (lease is null)
                     {

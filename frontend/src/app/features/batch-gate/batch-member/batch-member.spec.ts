@@ -45,4 +45,30 @@ describe('BatchMemberComponent', () => {
     expect(badge.dataset['reason']).toBe('unattributable');
     expect(badge.title).toBe('Immutable result ref does not resolve to the expected SHA.');
   });
+
+  it('shows a red pre-check and its reason on the card', async () => {
+    const state = signal({
+      ...redHalvingState,
+      members: {
+        ...redHalvingState.members,
+        'AGT-10': {
+          status: 'pre-check-red' as const,
+          preCheck: { outcome: 'red' as const, resultSha: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+            gateProfileDigest: 'digest', reason: 'RoutePermissionInventoryTests: POST /api/v1/routes',
+            failedTests: ['RoutePermissionInventoryTests'], completedAtUtc: '2026-11-02T18:00:00Z' },
+        },
+      },
+    });
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService,
+      useValue: { state: () => state.asReadonly(), watch: () => vi.fn() },
+    }] });
+    const fixture = TestBed.createComponent(BatchMemberComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('taskKey', 'AGT-10');
+    await fixture.whenStable();
+    const badge = fixture.nativeElement.querySelector('[data-testid="batch-member-badge"]') as HTMLElement;
+    expect(badge.textContent).toContain('Pre-check red');
+    expect(badge.title).toContain('/api/v1/routes');
+  });
 });

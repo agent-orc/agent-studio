@@ -35,7 +35,7 @@ public static partial class DeterministicTestScope
         DotNetReferenceSelection? referenceSelection = null)
     {
         var level = TestSelectionPlanner.ResolveLevel(policy, lane, requiredLevel);
-        if (level is TestExecutionLevels.BuildOnly or TestExecutionLevels.CompileOnly
+        if (level is TestExecutionLevels.BatchPreCheck or TestExecutionLevels.BuildOnly or TestExecutionLevels.CompileOnly
             or TestExecutionLevels.Continuous or TestExecutionLevels.Full)
             return WithDigest(TestSelectionPlanner.Plan(repositoryPath, verifyPlan, changedFiles,
                 policy, lane, requiredLevel), statuses);

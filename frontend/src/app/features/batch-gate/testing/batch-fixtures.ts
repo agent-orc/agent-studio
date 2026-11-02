@@ -4,7 +4,7 @@ export const batchSettings: BatchGateConfiguration = {
   settings: {
     enabled: true, scope: 'code', planner: 'look-ahead', minimumSize: 2, maximumSize: 4,
     deadlineMinutes: 30, lookAheadMinutes: 15, urgentTags: ['urgent'], riskPolicy: 'balanced',
-    overlap: 'separate', reviewTestLevel: 'work-package', gateTimeoutMinutes: 90,
+    overlap: 'separate', reviewTestLevel: 'work-package', gateTimeoutMinutes: 90, preCheckEnabled: true,
     advisor: { mode: 'enforce', cliType: 'codex', model: 'test-model', timeoutSeconds: 45 },
   },
   limits: { hardMaximumSize: 8 },
