@@ -1611,14 +1611,17 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", project);
-        Directory.CreateDirectory(repo);
         Directory.CreateDirectory(watch);
-        Git(repo, "init", "-b", "develop");
-        Git(repo, "config", "user.email", "test@example.com");
-        Git(repo, "config", "user.name", "Test User");
-        File.WriteAllText(Path.Combine(repo, "initial"), "initial");
-        Git(repo, "add", ".");
-        Git(repo, "commit", "-m", "initial");
+        // Built once per test process; each test starts from a copy (AGT-3419).
+        GitRepositoryTemplate.CopyTo("project-environment:initial:v1", repo, seed =>
+        {
+            Git(seed, "init", "-b", "develop");
+            Git(seed, "config", "user.email", "test@example.com");
+            Git(seed, "config", "user.name", "Test User");
+            File.WriteAllText(Path.Combine(seed, "initial"), "initial");
+            Git(seed, "add", ".");
+            Git(seed, "commit", "-m", "initial");
+        });
         var declarations = Path.Combine(repo, "docs", "deployments", "environments");
         Directory.CreateDirectory(declarations);
         File.WriteAllText(Path.Combine(declarations, "stage.json"), JsonSerializer.Serialize(new

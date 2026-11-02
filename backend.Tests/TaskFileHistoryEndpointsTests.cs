@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using AgentStudio.TestSupport;
 
 using Xunit;
 
@@ -1033,9 +1034,12 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         File.WriteAllText(full, content, Encoding.UTF8);
     }
 
+    // Built once per test process; each test starts from a copy (AGT-3419).
     private static void InitRepo(string root)
+        => GitRepositoryTemplate.CopyTo("task-file-history:seed:v1", root, SeedRepo);
+
+    private static void SeedRepo(string root)
     {
-        Directory.CreateDirectory(root);
         RunGit(root, "init", "-q", "-b", "main");
         RunGit(root, "config", "user.email", "test@example.com");
         RunGit(root, "config", "user.name", "test");

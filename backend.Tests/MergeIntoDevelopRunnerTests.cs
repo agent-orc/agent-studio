@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using AgentStudio.TestSupport;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -3649,16 +3650,15 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
     {
         var repo = Path.Combine(_tempDir, name);
         var remote = Path.Combine(_tempDir, name + "-origin.git");
-        Directory.CreateDirectory(repo);
-        RunGit(_tempDir, $"init --bare -q --initial-branch=main \"{remote}\"");
-        RunGit(repo, "init -q -b main");
-        RunGit(repo, "config user.email test@example.com");
-        RunGit(repo, "config user.name test");
-        File.WriteAllText(Path.Combine(repo, "README.md"), "seed");
-        RunGit(repo, "add -A");
-        RunGit(repo, "commit -q -m seed");
-        RunGit(repo, $"remote add origin \"{remote}\"");
-        RunGit(repo, "push -q -u origin main");
+        GitRepositoryTemplate.CopyTo("merge-into-develop:seed-with-origin:v1", root =>
+        {
+            var seed = Path.Combine(root, "repo");
+            var origin = Path.Combine(root, "origin.git");
+            SeedInto(seed);
+            RunGit(root, $"init --bare -q --initial-branch=main \"{origin}\"");
+            RunGit(seed, $"remote add origin \"{origin}\"");
+            RunGit(seed, "push -q -u origin main");
+        }, ("repo", repo), ("origin.git", remote));
         return (repo, remote);
     }
 
@@ -3754,9 +3754,16 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         }
     }
 
+    // Built once per test process; each test starts from a copy (AGT-3419).
     private string SeedRepo(string name)
     {
         var repo = Path.Combine(_tempDir, name);
+        GitRepositoryTemplate.CopyTo("merge-into-develop:seed:v1", repo, SeedInto);
+        return repo;
+    }
+
+    private static void SeedInto(string repo)
+    {
         Directory.CreateDirectory(repo);
         RunGit(repo, "init -q -b main");
         RunGit(repo, "config user.email test@example.com");
@@ -3764,7 +3771,6 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         File.WriteAllText(Path.Combine(repo, "README.md"), "seed");
         RunGit(repo, "add -A");
         RunGit(repo, "commit -q -m seed");
-        return repo;
     }
 
     private static void Commit(string cwd, string message)
