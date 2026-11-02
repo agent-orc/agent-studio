@@ -196,8 +196,10 @@ public sealed class GitFactsBudgetTests(GitFactsBoardFixture board)
     internal static async Task IndexedAsync(GitReadCensusHost host)
     {
         var indexer = host.Services.GetRequiredService<GitStateIndexService>();
+        var reader = host.Services.GetRequiredService<GitCardFactReader>();
         await Until(() => indexer.GetRepositoryStatuses()
-            .Any(status => status.ProjectName == GitFactsBoardFixture.ProjectName && status.GitStateAt is not null));
+            .Any(status => status.ProjectName == GitFactsBoardFixture.ProjectName && status.GitStateAt is not null)
+            && reader.Read(host.Board.WatchPath).Facts?.State == GitPublishedFacts.ReadyState);
     }
 
     /// <summary>Polls a background condition; the budget only turns a hang into a failure.</summary>

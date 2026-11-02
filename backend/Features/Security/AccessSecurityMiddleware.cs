@@ -967,7 +967,8 @@ public sealed class AccessSecurityMiddleware
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/container", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase)
+           || path.Equals(AgentStudio.Readiness.ServerReadinessEndpoints.ProbePath, StringComparison.OrdinalIgnoreCase);
     private static bool IsTelemetryIntake(string method, string path)
         => HttpMethods.IsPost(method)
            && (path.Equals("/api/telemetry/otlp/v1/metrics", StringComparison.OrdinalIgnoreCase)

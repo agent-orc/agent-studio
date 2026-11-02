@@ -13,7 +13,8 @@ public static class ProjectOperatorDashboardEndpoints
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
         app.MapGet("/api/v1/operations/structure", (string? scope, string? environment,
-            IConfiguration configuration, ProjectRegistry projects, ProjectEnvironmentService environments,
+            IConfiguration configuration, ProjectRegistry projects, WorkspaceRegistry workspaces,
+            ProjectEnvironmentService environments, EnvironmentHealthService health,
             GitService git) =>
         {
             if (scope is not null && scope != "workspace" && !scope.StartsWith("project:", StringComparison.Ordinal))
@@ -35,7 +36,11 @@ public static class ProjectOperatorDashboardEndpoints
             }
             return Results.Ok(StructureProjection.Build(manifest, projects.List(),
                 environments.DeclarationFiles, projectId, environment,
-                project => git.ResolveRepoRootForProject(project.DisplayName)));
+                project => git.ResolveRepoRootForProject(project.DisplayName),
+                workspaces.List().Where(workspace => projectId is null ||
+                    projects.FindById(projectId)?.WorkspaceId == workspace.Id)
+                    .SelectMany(workspace => workspace.Systems).ToArray(),
+                ManagedServiceProbes(health)));
         });
 
         app.MapGet("/api/environment/flow", (EnvironmentFlowService flow) =>
@@ -377,6 +382,24 @@ public static class ProjectOperatorDashboardEndpoints
             { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
                 statusCode: StatusCodes.Status403Forbidden),
             var refused => Results.Conflict(new { error = refused.Error }),
+        };
+    }
+
+    /// <summary>
+    /// A managed service is observed through the environment health check it
+    /// names; the control-plane worker already probes those checks. One health
+    /// read per project and request.
+    /// </summary>
+    private static Func<ProjectRecord, string, string, StructureProbe?> ManagedServiceProbes(EnvironmentHealthService health)
+    {
+        var read = new Dictionary<string, ProjectEnvironmentHealthResponse?>(StringComparer.OrdinalIgnoreCase);
+        return (project, environment, checkId) =>
+        {
+            if (!read.TryGetValue(project.DisplayName, out var response))
+                read[project.DisplayName] = response = health.Read(project.DisplayName);
+            var check = response?.Environments.FirstOrDefault(item => item.EnvironmentId == environment)?
+                .Checks.FirstOrDefault(item => item.Id == checkId);
+            return check is null ? null : new StructureProbe(check.Kind, check.Status);
         };
     }
 

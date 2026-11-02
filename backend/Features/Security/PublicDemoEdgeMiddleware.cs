@@ -162,7 +162,8 @@ public sealed class PublicDemoEdgeMiddleware(
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/container", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase)
+           || path.Equals(AgentStudio.Readiness.ServerReadinessEndpoints.ProbePath, StringComparison.OrdinalIgnoreCase);
 
     private static async Task Deny(HttpContext context, int status, string code, string message)
     {

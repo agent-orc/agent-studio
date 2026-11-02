@@ -12,10 +12,10 @@ const nodes = [
   makeNode('cloud', 'location', 'Cloud provider', 'b'),
   makeNode('site', 'location', 'Operator site', 'b'),
   makeNode('home', 'location', 'Home lab', 'b'),
-  makeNode('studio', 'physical', 'Studio machine', 'site'),
-  makeNode('runner', 'cloud-server', 'Linux runner host', 'cloud'),
-  makeNode('lab', 'physical', 'Home-lab physical machine', 'home'),
-  makeNode('vm', 'vm', 'Home-lab VM', 'lab'),
+  makeNode('studio', 'physical', 'Studio placement', 'site'),
+  makeNode('runner', 'cloud-server', 'Runner placement', 'cloud'),
+  makeNode('lab', 'physical', 'Gate placement', 'home'),
+  makeNode('vm', 'vm', 'Verification VM role', 'lab'),
   makeNode('api', 'process', 'Studio backend', 'studio', 'control'),
   makeNode('coding', 'process', 'Coding host', 'runner', 'execution'),
   makeNode('engine', 'container', 'Orchestrator Engine', 'runner', 'control'),
@@ -24,10 +24,30 @@ const nodes = [
   makeNode('github', 'external', 'GitHub', null),
   makeNode('registry', 'external', 'Container registry', null),
   makeNode('models', 'external', 'Model providers', null),
+  makeNode('product', 'system', 'Product', 'b'),
+  makeNode('web-placement', 'vm', 'Web placement', 'b'),
+  { ...makeNode('website', 'process', 'Website process', 'web-placement'), project: 'PROJ-002', ownerLabel: 'Website', systemBoundaryId: 'product' },
+  { ...makeNode('agent', 'process', 'Run-target agent', 'web-placement'), project: 'PROJ-001', ownerLabel: 'AGT', systemBoundaryId: 'product' },
+  { ...makeNode('channel', 'registry', 'npm channel', 'runner'), project: 'PROJ-003', ownerLabel: 'Library' },
 ];
 const links = [
   { from: 'api', to: 'coding', kind: 'tunnel', label: 'Runner route', sourceRef: 'role fixture' },
   { from: 'coding', to: 'github', kind: 'call', label: 'Git', sourceRef: 'role fixture' },
+  { from: 'website', to: 'channel', kind: 'artifact', label: 'Package', sourceRef: 'role fixture' },
+  { from: 'website', to: 'github', kind: 'call', label: 'Shared external', sourceRef: 'role fixture' },
+];
+const partialNodes = [
+  { ...makeNode('boundary', 'boundary', 'Product', null), environmentId: 'production' },
+  makeNode('web-placement', 'vm', 'Web placement', 'boundary'),
+  makeNode('runner-placement', 'physical', 'Runner placement', 'boundary'),
+  { ...makeNode('website', 'process', 'Website process', 'web-placement'), project: 'PROJ-002', ownerLabel: 'Website' },
+  { ...makeNode('agent', 'process', 'Run-target agent', 'web-placement'), project: 'PROJ-001', ownerLabel: 'AGT', otherProject: true },
+  { ...makeNode('channel', 'registry', 'npm channel', 'runner-placement'), project: 'PROJ-003', ownerLabel: 'Library', otherProject: true },
+  makeNode('external', 'external', 'Shared external', null),
+];
+const partialLinks = [
+  { from: 'website', to: 'channel', kind: 'artifact', label: 'Package', sourceRef: 'role fixture' },
+  { from: 'website', to: 'external', kind: 'call', label: 'Service', sourceRef: 'role fixture' },
 ];
 
 test('declared structure is accessible in both projections, widths and themes', async ({ page }) => {
@@ -40,13 +60,15 @@ test('declared structure is accessible in both projections, widths and themes', 
   await page.context().route('**/api/**', route => {
     const url = route.request().url();
     const json = (body: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
-    if (url.includes('/api/v1/operations/structure')) return json({ nodes, links });
+    if (url.includes('/api/v1/operations/structure')) return json(new URL(url).searchParams.get('scope') === 'project:Website'
+      ? { nodes: partialNodes, links: partialLinks } : { nodes, links });
     if (url.includes('/api/v1/studio/auth/status')) return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     if (url.includes('/api/v1/management/credential-inventory')) return json({ generatedAt: '2026-11-02T00:00:00Z', items: [] });
     if (url.includes('/api/usage/cockpit')) return json({ workspaceId: 'workspace', clis: [], cost: null });
     if (url.includes('/api/cli/usage')) return json({ at: '2026-11-02T00:00:00Z', sessions: [] });
     if (url.includes('/api/cli/quota')) return json({ at: '2026-11-02T00:00:00Z', ttlSeconds: 600, snapshots: [] });
-    if (url.includes('/api/watch-paths') || url.includes('/api/v1/projects') || url.includes('/api/v1/workspaces') || url.includes('/api/workspaces')) return json([]);
+    if (url.includes('/api/watch-paths')) return json([{ name: 'Website', path: 'role fixture', rootPath: 'role fixture' }]);
+    if (url.includes('/api/v1/projects') || url.includes('/api/v1/workspaces') || url.includes('/api/workspaces')) return json([]);
     if (url.includes('/api/v1/studio/board')) return json({ backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [], codeNotComplete: [], autoReview: [], review: [], humanReview: [], escalated: [], completed: [], archive: [] });
     if (url.includes('/api/tasks/archive')) return json({ items: [], total: 0, offset: 0, limit: 50 });
     if (url.includes('/api/v1/studio/runner/status')) return json({ projects: {} });
@@ -57,8 +79,8 @@ test('declared structure is accessible in both projections, widths and themes', 
   await page.goto('/#/workspace/operations/structure');
   const view = page.getByTestId('structure-view');
   await expect(view).toBeVisible();
-  await expect(view.locator('[data-node-id]')).toHaveCount(14);
-  await expect(view.locator('[data-outline-id]')).toHaveCount(14);
+  await expect(view.locator('[data-node-id]')).toHaveCount(17);
+  await expect(view.locator('[data-outline-id]')).toHaveCount(17);
   await view.locator('[data-node-id="vm"]').focus();
   await page.keyboard.press('Enter');
   await expect(view.locator('[data-node-id="gate"]')).toBeVisible();
@@ -89,5 +111,16 @@ test('declared structure is accessible in both projections, widths and themes', 
   }
   expect(visited).toEqual(new Set(ids));
   await expect(view.locator('[data-outline-id]')).toHaveCount(ids.length);
+  await page.goto('/#/projects/website/operations/structure');
+  await expect(view.getByText('Website partial picture')).toBeVisible();
+  await page.keyboard.press('3');
+  await expect(view.locator('[data-other-project="true"] [data-node-id]')).toHaveCount(2);
+  await expect(view.locator('[data-outline-id][data-other-project="true"]')).toHaveCount(2);
+  await expect(view.locator('[data-node-id="agent"]')).toHaveAttribute('aria-label', /other project, AGT/);
+  await expect(view.locator('[data-node-id="channel"]')).toHaveAttribute('aria-label', /other project, Library/);
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+    await view.screenshot({ path: path.join(results, `structure-website-partial-${theme}.png`) });
+  }
   expect(errors).toEqual([]);
 });
