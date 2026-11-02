@@ -79,6 +79,7 @@ public sealed class AttemptCredentialBrokerTests
             _values.Remove(name);
             return Task.CompletedTask;
         }
+        public Task EnsureWritableAsync(CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class FakeIssuer : IRepositoryTokenIssuer

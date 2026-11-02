@@ -20,6 +20,9 @@ public interface ISecretProvider
 
     Task DeleteAsync(SecretScope scope, string name, SecretActor actor, CancellationToken ct = default);
 
+    /// <summary>Throws when a put to <paramref name="scope"/> would fail now for want of a key, a writable store or a backend.</summary>
+    Task EnsureWritableAsync(SecretScope scope, CancellationToken ct = default);
+
     /// <summary>Metadata of every secret, or of one scope, plus the items that failed their checks. Never values.</summary>
     Task<SecretListing> ListAsync(SecretScope? scope = null, CancellationToken ct = default);
 
@@ -72,4 +75,7 @@ public interface ISecretStore
 
     /// <summary>Removes the metadata and every stored version.</summary>
     Task<bool> DeleteAsync(SecretScope scope, string name, CancellationToken ct);
+
+    /// <summary>Throws when a new secret in <paramref name="scope"/> could not be stored now. Stores no secret.</summary>
+    Task EnsureWritableAsync(SecretScope scope, CancellationToken ct);
 }

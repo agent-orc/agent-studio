@@ -95,6 +95,63 @@ public sealed class BuildTestGateDiagnosisWorkflowTests : IDisposable
             entry => Assert.False(Directory.Exists(entry.EntryPath)));
     }
 
+    [Fact]
+    public async Task Aow15_PreMainGate_InvalidDefinitionInDelivery_IsACodeFailureListingTheIssues()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        Write("seed.txt", "seed\n");
+        Git("init");
+        Git("config", "user.email", "gate-diagnosis@example.invalid");
+        Git("config", "user.name", "Gate Diagnosis Test");
+        Git("add", ".");
+        Git("commit", "-m", "baseline");
+        Git("branch", "integration-baseline");
+        // The AOW-15 delivery: a project.yml without commands.prepare.
+        Write(".agent-studio/project.yml", """
+            schemaVersion: 1
+            stack: [shell]
+            commands:
+              build: []
+              test: []
+              lint: []
+            """);
+        Git("add", ".");
+        Git("commit", "-m", "candidate");
+        var candidate = Git("rev-parse", "HEAD").Trim();
+        var reporter = new FingerprintReporter();
+        var gate = new PreMainTestGate(new BuildTestGateRunner(NullLogger<BuildTestGateRunner>.Instance,
+            BuildTestMachineGateMode.BypassForHermeticTest, CacheRoot, reporter));
+
+        var result = await gate.RunAsync(new BuildTestGateRequest(Repository, candidate, "merge-into-main")
+        {
+            JobId = "AOW-15",
+            IntegrationRef = "integration-baseline",
+        }, null, TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Code, result.FailureKind);
+        Assert.Null(result.Diagnosis);
+        Assert.Equal(0, reporter.Reads);
+        Assert.Contains(result.ProjectDefinitionIssues, issue =>
+            issue is { Path: "commands.prepare", Code: "prepare-path-invalid" });
+        Assert.Contains("commands.prepare", result.Reason);
+        Assert.Contains("[prepare-path-invalid] Prepare must be a repository-relative path", result.Reason);
+        Assert.DoesNotContain("diagnosis=", result.Reason);
+
+        // The merge runner records the gate, and the router classifies that log.
+        var job = Path.Combine(_root, "job");
+        IntegrationGateReceipts.Record(job, "pre-main-test-gate", result);
+        var triage = GateFailureTriagePolicy.Classify(
+            File.ReadAllText(Directory.GetFiles(Path.Combine(job, "post-steps"), "pre-main-test-gate-*.log").Single()));
+        Assert.Equal(GateFailureClasses.Product, triage.Class);
+        Assert.Equal(GateProductKinds.Definition, triage.Kind);
+        Assert.Contains("commands.prepare [prepare-path-invalid]", triage.FailingItems);
+        var route = GateFailureRoutingPolicy.Decide(triage, new GateFailureRoutingFacts(false, null, 0, true));
+        Assert.Equal(GateFailureRouteAction.FixRound, route.Action);
+        Assert.DoesNotContain("repair the gate host",
+            GateFailureRoutingPolicy.ParkReason(triage, route with { Action = GateFailureRouteAction.ParkExhausted }));
+    }
+
     private void Write(string relative, string value)
     {
         var path = Path.Combine(Repository, relative);

@@ -2993,15 +2993,24 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         if (Directory.Exists(_origin))
             return (await GitAsync(_origin, "rev-parse", "refs/heads/main")).StdOut.Trim();
         var seed = Path.Combine(_root, "seed");
-        await GitAsync(_root, "init", "--bare", _origin);
-        await GitAsync(_root, "init", "-b", "main", seed);
+        // Built once per test process; each test starts from a copy (AGT-3419).
+        GitRepositoryTemplate.CopyTo("remote-review-workspace:origin:v1", _root,
+            root => Task.Run(() => BuildSeededOriginAsync(root)).GetAwaiter().GetResult());
+        return (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
+    }
+
+    private static async Task BuildSeededOriginAsync(string root)
+    {
+        var origin = Path.Combine(root, "origin.git");
+        var seed = Path.Combine(root, "seed");
+        await GitAsync(root, "init", "--bare", origin);
+        await GitAsync(root, "init", "-b", "main", seed);
         await File.WriteAllTextAsync(Path.Combine(seed, "product.txt"), "immutable product");
         await GitAsync(seed, "add", "product.txt");
         await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
             "commit", "-m", "result");
-        await GitAsync(seed, "remote", "add", "origin", _origin);
+        await GitAsync(seed, "remote", "add", "origin", origin);
         await GitAsync(seed, "push", "origin", "main");
-        return (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
     }
 
     private async Task<string> SeedOriginWithFilesAsync(IReadOnlyDictionary<string, string> files)

@@ -272,7 +272,6 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `cli-icons-screenshots.spec.ts` | CLI icons - screenshots @screenshots |
 | `cli-icons.spec.ts` | CLI icons - distinct glyph per CLI |
 | `cli-management-restructure.spec.ts` | CLI Management restructure (AGT-2101) |
-| `cli-sessions-tool.spec.ts` | CLI-session tool - real data |
 | `cli-skills-pickup.spec.ts` | CLI skills - pickup @billable |
 | `cli-usage-project-clickthrough.spec.ts` | clicking a project usage row opens that project Settings rail |
 | `cli-usage.spec.ts` | CLI usage hub (status-bar → settings home) |

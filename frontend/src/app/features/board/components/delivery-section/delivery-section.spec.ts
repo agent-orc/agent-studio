@@ -5,6 +5,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideRouter } from '@angular/router';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DeliverySectionComponent } from './delivery-section';
+import { DeliveryColumnsService } from '../../../deployments/services/delivery-columns.service';
 import { TaskState, type TaskInfo } from '../../../../models/task.model';
 import type { DeliveryColumn, DeliveryColumnsResponse } from '../../../../models/delivery-column.model';
 
@@ -37,17 +38,20 @@ const response: DeliveryColumnsResponse = {
 };
 
 describe('DeliverySectionComponent', () => {
-  afterEach(() => localStorage.removeItem('deliveryFurthestOnly'));
+  afterEach(() => {
+    localStorage.removeItem('deliveryFurthestOnly');
+    localStorage.removeItem('collapsedLanes');
+  });
 
-  async function render() {
+  async function render(data: DeliveryColumnsResponse = response, cards: TaskInfo[] = ['AGT-1', 'AGT-4', 'AGT-5'].map(task)) {
     TestBed.configureTestingModule({
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
     });
     const fixture = TestBed.createComponent(DeliverySectionComponent);
     fixture.componentRef.setInput('projects', ['demo']);
-    fixture.componentRef.setInput('tasks', ['AGT-1', 'AGT-4', 'AGT-5'].map(task));
+    fixture.componentRef.setInput('tasks', cards);
     fixture.detectChanges();
-    TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/deploy/lanes').flush(response);
+    TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/deploy/lanes').flush(data);
     await fixture.whenStable();
     fixture.detectChanges();
     return { fixture, root: fixture.nativeElement as HTMLElement };
@@ -97,5 +101,63 @@ describe('DeliverySectionComponent', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(root.querySelector('[data-testid="delivery-column-stage"] .delivery-column__body')).toBeNull();
     toggle.click();
+  });
+
+  it('collapses the whole group into a counted rail and persists independently of columns', async () => {
+    const { fixture, root } = await render();
+    const expandedCounts = [...root.querySelectorAll('[data-testid^="delivery-column-count-"]')]
+      .map((el) => Number(el.textContent));
+    (root.querySelector('[data-testid="delivery-column-toggle-stage"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    (root.querySelector('[data-testid="delivery-group-toggle"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    const rail = root.querySelector('[data-testid="delivery-group-rail"]') as HTMLButtonElement;
+    expect(rail.getAttribute('aria-label')).toBe('Expand Delivery, 4 cards');
+    expect(Number(root.querySelector('[data-testid="delivery-rail-total"]')?.textContent)).toBe(4);
+    expect([...root.querySelectorAll('[data-testid^="delivery-rail-count-"]')].map((el) => Number(el.textContent))).toEqual(expandedCounts);
+    expect(root.querySelector('[data-testid="delivery-columns"]')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('collapsedLanes') ?? '[]')).toContain('delivery-group');
+    rail.click();
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="delivery-columns"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="delivery-column-stage"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="delivery-column-toggle-stage"]')?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it.each([false, true])('hides an empty group with furthest-only %s and reappears when a card lands', async (furthest) => {
+    if (furthest) localStorage.setItem('deliveryFurthestOnly', 'true');
+    const empty: DeliveryColumnsResponse = {
+      ...response,
+      columns: response.columns.map((item) => ({ ...item, landed: [], waiting: [], pendingApproval: null, lastRun: null })),
+    };
+    const { fixture, root } = await render(empty);
+    expect(root.style.display).toBe('none');
+    TestBed.inject(DeliveryColumnsService).responses.set([{
+      ...empty, columns: empty.columns.map((item) => item.id === 'integrated'
+        ? { ...item, landed: [{ key: 'AGT-5', releaseId: null, releaseVersion: null, rolledBack: false }] }
+        : item),
+    }]);
+    fixture.detectChanges();
+    expect(root.style.display).not.toBe('none');
+    expect(root.querySelector('[data-testid="delivery-group-count"]')?.textContent?.trim()).toBe('1');
+  });
+
+  it.each(['approval', 'failed'] as const)('keeps an empty group visible for %s attention', async (attention) => {
+    const empty: DeliveryColumnsResponse = {
+      ...response,
+      columns: response.columns.map((item) => ({ ...item, landed: [], waiting: [], pendingApproval: null, lastRun: null })),
+    };
+    const index = attention === 'approval' ? 2 : 1;
+    empty.columns[index] = {
+      ...empty.columns[index],
+      pendingApproval: attention === 'approval' ? response.columns[index].pendingApproval : null,
+      lastRun: attention === 'failed' ? { ...response.columns[index].lastRun!, state: 'failed' } : null,
+    };
+    const { fixture, root } = await render(empty, []);
+    expect(root.style.display).not.toBe('none');
+    (root.querySelector('[data-testid="delivery-group-toggle"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="delivery-rail-total"]')?.textContent?.trim()).toBe('0');
+    expect(root.querySelector('[title="' + (attention === 'approval' ? 'Approval pending' : 'Run failed') + '"]')).not.toBeNull();
   });
 });
