@@ -2,16 +2,49 @@ using System.Text.RegularExpressions;
 
 namespace AgentStudio.Security;
 
-public static partial class CredentialRedactor
+/// <summary>
+/// Masks credentials in text before Studio writes it to a log, a review
+/// report, or a workspace commit. Every pattern uses the non-backtracking
+/// engine, so the cost stays linear in the input length; registered literals
+/// add at most one ordinal scan each.
+/// </summary>
+public static class CredentialRedactor
 {
-    [GeneratedRegex(@"(?im)(\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*)[^\r\n]+")]
-    private static partial Regex SecretHeaderRegex();
+    private const string Masked = "[REDACTED_CREDENTIAL]";
+    private const RegexOptions Linear = RegexOptions.NonBacktracking | RegexOptions.CultureInvariant;
 
-    [GeneratedRegex("""(?ix)(["']?(?:authorization|proxy-authorization|password|currentpassword|newpassword|temporarypassword|cookie|set-cookie|x-csrf-token|csrftoken|enrollmentcode|secret|authtoken|access_token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;}&]+)""")]
-    private static partial Regex NamedSecretRegex();
+    private static readonly Regex PrivateKeyBlock = new(
+        @"-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----|\z)",
+        Linear);
 
-    [GeneratedRegex(@"\b(?:rnr|enr|ssn|otl)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")]
-    private static partial Regex ProductSecretRegex();
+    // Studio-issued tokens: <prefix>.<id>.<secret>. The newer prefixes also
+    // name ordinary words (an "api." host name), so they require the issued
+    // id and secret lengths.
+    private static readonly Regex ProductSecret = new(
+        @"\b(?:(?:rnr|enr|ssn|otl)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?:inv|sat|api)\.[0-9a-f]{32}\.[A-Za-z0-9_-]{20,})\b",
+        Linear);
+
+    // GitHub personal, OAuth, user-to-server, installation and refresh tokens,
+    // fine-grained personal tokens, Anthropic keys and OAuth tokens, OpenAI keys.
+    private static readonly Regex ProviderToken = new(
+        @"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,})",
+        Linear);
+
+    private static readonly Regex UrlCredentials = new(
+        @"(?i)\b((?:https?|git|ssh|ftp)://)[^\s/:@'""]+:[^\s/@'""]+@",
+        Linear);
+
+    private static readonly Regex AccessTokenUserInfo = new(
+        @"(?i)\b(x-access-token:)[^\s/@'""]+@",
+        Linear);
+
+    private static readonly Regex SecretHeader = new(
+        @"(?im)(\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*)[^\r\n]+",
+        Linear);
+
+    private static readonly Regex NamedSecret = new(
+        """(?ix)(["']?(?:authorization|proxy-authorization|password|currentpassword|newpassword|temporarypassword|cookie|set-cookie|x-csrf-token|csrftoken|enrollmentcode|secret|authtoken|access_token|refresh_token|claude_code_oauth_token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;}&]+)""",
+        Linear);
 
     /// <summary>Shortest literal worth registering; shorter text would mask ordinary words.</summary>
     public const int MinimumLiteralLength = 16;
@@ -56,9 +89,13 @@ public static partial class CredentialRedactor
         var redacted = value;
         foreach (var literal in Volatile.Read(ref _literals))
             if (redacted.Contains(literal, StringComparison.Ordinal))
-                redacted = redacted.Replace(literal, "[REDACTED_CREDENTIAL]", StringComparison.Ordinal);
-        redacted = ProductSecretRegex().Replace(redacted, "[REDACTED_CREDENTIAL]");
-        redacted = SecretHeaderRegex().Replace(redacted, "$1[REDACTED]");
-        return NamedSecretRegex().Replace(redacted, "$1[REDACTED]");
+                redacted = redacted.Replace(literal, Masked, StringComparison.Ordinal);
+        redacted = PrivateKeyBlock.Replace(redacted, Masked);
+        redacted = ProductSecret.Replace(redacted, Masked);
+        redacted = ProviderToken.Replace(redacted, Masked);
+        redacted = UrlCredentials.Replace(redacted, "$1[REDACTED]@");
+        redacted = AccessTokenUserInfo.Replace(redacted, "$1[REDACTED]@");
+        redacted = SecretHeader.Replace(redacted, "$1[REDACTED]");
+        return NamedSecret.Replace(redacted, "$1[REDACTED]");
     }
 }

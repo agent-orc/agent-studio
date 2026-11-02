@@ -937,6 +937,9 @@ public static class V1ReviewPlaneEndpoints
             }
 
             var submittedReportHash = RemoteReviewSettlementJournal.Hash(request);
+            // The idempotency hash above binds the payload as submitted; everything
+            // Studio stores or projects from here on carries the masked report.
+            request = ReviewReportRedaction.Redact(request);
             var reviewTask = FindTask(scanner, currentReview.TaskKey);
             var frozenPlan = currentReview.Subject.Plan;
             var acceptedReplay = currentReview.Reports.Any(report => report.AuthorityStatus == AttemptWriteStatus.Accepted

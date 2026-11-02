@@ -87,6 +87,26 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
     }
 
     [Fact]
+    public void JobCommits_LeaveTheLogsFolderOnDisk()
+    {
+        var job = JobFolder("ASS-LOGS");
+        Directory.CreateDirectory(Path.Combine(job, "logs", "nested"));
+        File.WriteAllText(Path.Combine(job, "status.md"), "status\n");
+        File.WriteAllText(Path.Combine(job, "logs", "cli-output.log"), "raw output\n");
+        File.WriteAllText(Path.Combine(job, "logs", "nested", "events.jsonl"), "{}\n");
+
+        var first = _service.TryCommitRunBoundary(_root, "ASS-LOGS", null, job, ReviewDecisionKind.Reissue);
+        File.AppendAllText(Path.Combine(job, "logs", "cli-output.log"), "more output\n");
+        var logsOnly = _service.TryCommitArtifactUpload(_root, "ASS-LOGS", job, ["logs/cli-output.log"]);
+
+        Assert.True(first.DidCommit, first.Error);
+        Assert.Equal((true, false, "nothing-to-commit"), (logsOnly.Success, logsOnly.DidCommit, logsOnly.Error));
+        Assert.Contains("status.md", RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD"));
+        Assert.Empty(RunGitCapture(_root, "ls-files", "--", Relative(Path.Combine(job, "logs"))));
+        Assert.True(File.Exists(Path.Combine(job, "logs", "nested", "events.jsonl")));
+    }
+
+    [Fact]
     public void RunBoundaryCommit_TwoRunsProduceTwoFollowHistoryEntries()
     {
         var job = JobFolder("ASS-7");
@@ -515,10 +535,10 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
             .Build();
         var service = new WorkspaceArtifactCommitService(config, logger);
         var job = JobFolder("ASS-SIZED");
-        Directory.CreateDirectory(Path.Combine(job, "logs"));
-        File.WriteAllBytes(Path.Combine(job, "logs", "session.jsonl"), new byte[8 * 1024 * 1024]);
+        Directory.CreateDirectory(Path.Combine(job, "evidence"));
+        File.WriteAllBytes(Path.Combine(job, "evidence", "session.jsonl"), new byte[8 * 1024 * 1024]);
 
-        var result = service.TryCommitArtifactUpload(_root, "ASS-SIZED", job, ["logs/session.jsonl"]);
+        var result = service.TryCommitArtifactUpload(_root, "ASS-SIZED", job, ["evidence/session.jsonl"]);
 
         Assert.True(result.DidCommit, result.Error);
         // 30 s base plus 8 MiB at the 2 MiB/s floor rate.
