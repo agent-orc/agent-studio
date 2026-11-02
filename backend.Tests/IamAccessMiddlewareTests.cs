@@ -90,6 +90,9 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         index.Invalidate(TaskIndexCache.InvalidationSource.External);
         index.GetMatchingCoreFacts(card.Id);
         Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
+        // Captured while held: once released, the finished refresh clears this property.
+        var refresh = index.RefreshInFlight;
+        Assert.NotNull(refresh);
         try
         {
             var trace = TaskSwitchTrace.Begin(null, null);
@@ -106,7 +109,7 @@ public sealed class IamAccessMiddlewareTests : IDisposable
             finally { trace.Restore(); }
         }
         finally { release.Set(); }
-        await index.RefreshInFlight!.WaitAsync(TimeSpan.FromSeconds(5));
+        await refresh.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Fact]
