@@ -1955,8 +1955,20 @@ move-error dialog.
   the full suite once on that exact source SHA, records
   `post-steps/pre-main-test-gate-*.log`, rechecks both branch tips after the
   suite, and only then fast-forwards `main`. A red or incomplete result leaves
-  `main` unchanged. The future manifest-based release workflow must use the
-  same boundary.
+  `main` unchanged. In a repository that integrates straight into `main`, a
+  delivery that already descends from `main` takes that fast-forward path. A
+  delivery behind `main` (AGT-3435) gets the same `--no-ff` merge as the
+  develop path, under the gate journal. The full suite then runs on the exact
+  merge SHA. A red verdict rolls the lane back and nothing is published. A green
+  verdict stands only while the merge base still contains the freshly fetched
+  `origin/main`. When `main` moved during the suite, the lane is rolled back and
+  the delivery is merged and gated again, at most
+  `ReleaseLineMergePolicy.MaxAttempts` (3) times; the last refusal is
+  `release-line-moving`. A real conflict returns `agent-round-required` with the
+  conflicted files, which starts the one bounded automatic round. A mechanical
+  rebase records its SHA mapping like the develop path. The old
+  `source-needs-rebase` refusal is no longer written for this case. The future
+  manifest-based release workflow must use the same boundary.
 - Framework-specific catalogue steps declare `appliesTo`; `any` remains the
   default. The project catalogue response includes derived `detectedStacks`, an
   `applicable` flag, and the effective resolved command list for every step.
