@@ -24,6 +24,7 @@ public static class ProjectUrlDiagnosisClasses
     public const string ContentNotRenderable = "content-not-renderable";
     public const string InvalidConfiguration = "invalid-configuration";
     public const string Running = "running";
+    public const string LocalOnly = ProjectUrlProbePolicy.LocalOnly;
 }
 
 public static class ProjectUrlStartupFailureReasons
@@ -107,6 +108,7 @@ public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProje
     private readonly IHttpClientFactory _httpFactory;
     private readonly IProjectUrlPortInspector _portInspector;
     private readonly bool _isHostIsolated;
+    private readonly bool _networked;
     private readonly ConcurrentDictionary<string, Session> _sessions = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ProjectUrlDiagnostic> _latest = new(StringComparer.Ordinal);
     private readonly object _lifecycleGate = new();
@@ -123,6 +125,7 @@ public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProje
         _httpFactory = httpFactory;
         _portInspector = portInspector ?? new ProjectUrlPortInspector();
         _isHostIsolated = configuration is null || !SecurityProfiles.IsLocal(configuration);
+        _networked = configuration is not null && !SecurityProfiles.IsLocal(configuration);
     }
 
     /// <summary>
@@ -297,6 +300,14 @@ public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProje
             seed = null;
         }
         var snapshot = Get(project.Id, url.Id);
+        if (ProjectUrlProbePolicy.Decide(url.StartRule?.HealthUrl ?? url.Url, _networked,
+                snapshot != null && ProjectUrlProcessStates.IsActive(snapshot.State)) == ProjectUrlProbeVerdict.LocalOnly)
+            return Save(project.Id, url.Id, Base(url.StartRule, url.Url, url.StartRule?.Cwd) with
+            {
+                Classification = ProjectUrlDiagnosisClasses.LocalOnly,
+                Summary = ProjectUrlProbePolicy.LocalOnlyDetail,
+                RecommendedAction = "Open the URL on the machine that serves it, or register an address this server can reach.",
+            });
         if (snapshot != null)
         {
             var (stdoutTail, stderrTail) = OutputTails(project.Id, url.Id);

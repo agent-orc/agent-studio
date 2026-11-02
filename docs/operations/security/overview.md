@@ -168,6 +168,14 @@ that is already allowed to edit that project's checkout.
   project registry write. Repository checkout and root path changes also require
   the owner. Login health fails when a resolved visitor address is an internal
   peer, indicating a broken trusted proxy chain.
+- In the networked profile, the readiness and diagnostic checks never request
+  a loopback or link-local project URL (`localhost`, `127.0.0.0/8`, `::1`,
+  `0.0.0.0`, `169.254.0.0/16`, `fe80::/10`), typically one carried over from a
+  laptop setup. The URL reports `local-only` and the UI shows `local only`
+  instead of offline. A process Studio itself runs for the URL on the server is
+  still checked. `ProjectUrlProbePolicy.Decide` owns this rule. The host also
+  skips CLI model discovery and answers from the registry catalogue
+  (`networked-registry`).
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
   Credentials carry explicit scopes, optional expiry, last-use time, and

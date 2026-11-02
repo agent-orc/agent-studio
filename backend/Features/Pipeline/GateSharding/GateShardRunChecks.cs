@@ -43,8 +43,21 @@ public static class GateShardRunChecks
     public static string? Abort(GateTestReport? report, string output)
     {
         if (report?.AbortedOutcome is { } outcome) return $"TRX run outcome {outcome}";
+        // Tests may print these words, and the gate's own tests do. VSTest closes a
+        // run with one verdict line, so a later verdict of a finished run overrules them.
+        if (ClosesAsFinishedRun(output)) return null;
         var signature = AbortSignatures.FirstOrDefault(item => output.Contains(item, StringComparison.OrdinalIgnoreCase));
         return signature is null ? null : $"console reports \"{signature}\"";
+    }
+
+    private static bool ClosesAsFinishedRun(string output)
+    {
+        var verdict = output.Split('\n')
+            .Select(line => line.Trim())
+            .LastOrDefault(line => line.StartsWith("Test Run ", StringComparison.OrdinalIgnoreCase));
+        return verdict is not null
+            && (verdict.StartsWith("Test Run Successful", StringComparison.OrdinalIgnoreCase)
+                || verdict.StartsWith("Test Run Failed", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

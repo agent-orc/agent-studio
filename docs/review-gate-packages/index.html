@@ -337,8 +337,8 @@
   <header class="page">
     <p class="kicker">Concept dossier &middot; AGT-3400</p>
     <h1>Review and gate on packages</h1>
-    <p class="lede">Most batches are pairs because the planner closes as soon as it can see two cards, and at the current arrival rate it rarely sees more. This Dossier decides the package for each check. The gate package becomes the post-merge window that D1 already decided. The review package becomes the cards of one Dossier wave, but only for the review aspects that gain from shared context. Build, tests and requirement fit stay per card.</p>
-    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-3400</span><span><b>Builds on</b> AGT-3276 (D1 to D10), AGT-W59, AGT-W77</span><span><b>As of</b> develop <code>984b4535</code>, 1 November 2026</span></div>
+    <p class="lede">Most batches were pairs because the look-ahead planner sent a lone card to a per-task gate whenever no batch was running, and closed a pair at once on an idle gate host. This Dossier decides the package for each check. The gate package becomes the post-merge window that D1 already decided. The review package becomes the cards of one Dossier wave, but only for the review aspects that gain from shared context. Build, tests and requirement fit stay per card.</p>
+    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-3400</span><span><b>Builds on</b> AGT-3276 (D1 to D10), AGT-W59, AGT-W77</span><span><b>As of</b> develop <code>984b4535</code>, 1 November 2026; batch gate census 2 November 2026</span></div>
   </header>
 
   <div class="callout">
@@ -352,7 +352,7 @@
 
   <section id="summary">
     <h2><span class="number">00</span> Summary</h2>
-    <p><b>Why so few batches form.</b> The look-ahead planner sets its target size to the number of cards it can see right now, waiting or due inside the look-ahead window. With two cards waiting and nothing due, the target is two, so it closes the pair at once as "target size reached". The 15-minute deadline never comes into play. A single card on an idle gate host skips the wait and goes straight to the per-card fallback. At about 2.6 gated merges per day, a second card arrives within 15 minutes about 5 % of the time. No deadline setting turns that into batches of four without hours of waiting. Deliveries that do not batch take the per-card fallback: a full suite on the card's SHA, then a second full suite in the integration lane, because the integration gate does not reuse the fallback verdict.</p>
+    <p><b>Why so few batches form.</b> The batch gate census of 2 November 2026 (section 01) confirms 186 batches with a mean of 2.18 cards from 13 to 29 October. That mean came from the look-ahead planner. Whenever no batch was running, it sent a lone card to a per-task gate at once: 999 such per-task decisions against 184 planner closes. It also closed a pair at once on an idle gate host (63 closes). Supply was not the only limit: closed batches left 319 eligible cards for a next batch. The 184 closes split almost evenly between idle gate host (63), deadline reached (63) and target size reached (55), so the deadline did apply, but the target-size cap (the planner sizes the batch to the cards it can see) and the idle-host shortcut kept batches small. Since 2 November about 01:00 UTC the operator runs the threshold planner (close at 6, at most 8, deadline 45 minutes) on the new store of the Linux host: 13 batches with a mean of 3.92 in the first hours. That store is only a few hours old and most likely drained a backlog, so it shows what the planner does with supply, not a steady state. In the last 7 days only 18 cards merged through a gate (about 2.6 per day); at that rate a second card arrives within 15 minutes about 5 % of the time. Deliveries that do not batch take the per-card fallback: a full suite on the card's SHA, then a second full suite in the integration lane, because the integration gate does not reuse the fallback verdict.</p>
     <p><b>Package for the gate.</b> The gate package is the post-merge window (T3) that D1 already decided. Cards merge after T1 and T2, and the window tests what merged together. In this design batch size no longer costs lead time, so small packages stop being a problem. The pre-merge batch gate stays as the fallback mode, with settings changes only.</p>
     <p><b>Package for review.</b> The review splits into two tiers. A card check runs per card and per round: build, affected tests (T1), deterministic checks and the requirement-fit aspect. A package review runs once per Dossier wave: code quality, documentation impact, tests and evidence, grade, plus a new cross-card consistency check against the Dossier. Every member keeps its own verdict and lane state, and a passing member never waits for a failing one. Cards without a Dossier stay on today's per-card review.</p>
     <p><b>Where the hours are.</b> On the measured figures, D1 saves about 31 to 42 runner-hours a week and 33 to 66 minutes of lead time per card. The 3.4 review hours per card come mostly from Remote Review running its aspects one after another. Running them in parallel saves more wall time than packaging, at no token cost. Packaging saves tokens and catches cross-card inconsistencies, which no step checks today.</p>
@@ -361,20 +361,67 @@
 
   <section id="baseline">
     <h2><span class="number">01</span> Starting point</h2>
-    <p>Operator measurements from the card (Agent Studio, 1 November 2026). The verification column states what this run could check.</p>
+    <p>Operator measurements from the card (Agent Studio, 1 November 2026). The verification column states what this run or the operator census of 2 November 2026 could check.</p>
     <table>
       <thead><tr><th>Figure</th><th>Value</th><th>Verified here</th></tr></thead>
       <tbody>
-        <tr><td>Batch gate settings</td><td>On, look-ahead planner, size 2 to 4, deadline 15 min, <code>overlap: separate</code></td><td>The values match the AGT-W77 rollout (<code>docs/operations/test-acceleration/</code>). The live settings were not readable from this host.</td></tr>
-        <tr><td>Batches closed 13 to 29 October</td><td>186: 160 with two cards, 18 with three, 8 with four; mean 2.2 (406 members)</td><td>No. See below.</td></tr>
-        <tr><td>Batches per day before the move</td><td>1, 5, 3, 3, 1, then none</td><td>No. See below.</td></tr>
+        <tr><td>Batch gate settings</td><td>On, look-ahead planner, size 2 to 4, deadline 15 min, <code>overlap: separate</code></td><td>The values match the AGT-W77 rollout (<code>docs/operations/test-acceleration/</code>). The live settings were not readable from this host. Since 2 November 2026 about 01:00 UTC the operator runs <code>planner: threshold</code>, <code>closeSize: 6</code>, <code>pressureSize: 6</code>, <code>maximumSize: 8</code>, deadline 45 min.</td></tr>
+        <tr><td>Batches closed 13 to 29 October</td><td>186: 160 with two cards, 18 with three, 8 with four; mean 2.2 (406 members)</td><td>Yes, by the operator census: 186 batches, {2: 160, 3: 18, 4: 8}, mean 2.18.</td></tr>
+        <tr><td>Batches per day before the move</td><td>1, 5, 3, 3, 1, then none</td><td>Largely: the old store has 12 batches from 25 October on (11 pairs, 1 of three), one fewer than the card's 13, most likely a day boundary. "Then none" is the move to a new store (section 02).</td></tr>
         <tr><td>Last 7 days</td><td>18 gated merges, 77 full-suite runs (4.3 per merge), median 33 gate minutes per card, reuse rate 0</td><td>No. The gate economics endpoint returns 401 without an operator credential.</td></tr>
         <tr><td>Per-card integration lane gate</td><td>Median 38 min, after the batch fallback step</td><td>The path is a code fact (section 02). The duration is not verified.</td></tr>
         <tr><td>Review aspects and decision</td><td>Median 3.4 h per card, against 1.8 h coding; 52 of 72 cards moved backwards at least once</td><td>The stage definitions are code facts (section 10). The values are not verified.</td></tr>
         <tr><td>D1 state</td><td><code>testing</code> unset, no post-merge worker</td><td>Yes. No post-merge unit is installed on <code>agent-runner-01</code>.</td></tr>
       </tbody>
     </table>
-    <div class="callout" data-tone="warn"><p><b>Why the batch figures are not re-counted here.</b> The batch store lives at <code>&lt;LocalApplicationData&gt;/agentstudio/instances/&lt;id&gt;/batch-gates</code> on the Studio host (<code>BatchGateStorageRoot.cs:9-16</code>). This run executes on the runner host <code>agent-runner-01</code>. Its 69,841 instance folders contain only <code>pull-gates</code>, <code>claimed-gate-canary</code> and <code>batch-push-reservations</code> test residue, and none has a <code>batch-gates</code> folder. The Studio API requires an operator credential, and this run did not borrow a runner credential to read it. The Dossier therefore ships a read-only census script, <a href="batch-gate-census.py"><code>batch-gate-census.py</code></a>. It prints the size distribution, batches per day, splits, verdicts, plan decisions with reasons, gate minutes and pending records from one instance folder. Slice S2 runs it on the Studio host and records the output beside this Dossier.</p></div>
+    <h3>Batch gate census</h3>
+    <p>This run executes on the runner host <code>agent-runner-01</code>, which has no batch store: the store lives at <code>&lt;LocalApplicationData&gt;/agentstudio/instances/&lt;id&gt;/batch-gates</code> on the Studio host (<code>BatchGateStorageRoot.cs:9-16</code>), and the Studio API needs an operator credential. The Dossier therefore ships a read-only census script, <a href="batch-gate-census.py"><code>batch-gate-census.py</code></a>. The operator ran it on 2 November 2026 at 04:50 UTC on two stores. The raw output is kept in <a href="measurements/batch-gate-census-2026-11-02.txt"><code>measurements/batch-gate-census-2026-11-02.txt</code></a>. The two stores are kept apart below: they belong to different hosts, different planners and very different time spans.</p>
+    <table>
+      <thead><tr><th>Figure</th><th>Store 1: before the move (13 to 29 October 2026, read in full)</th><th>Store 1 from 25 October on</th><th>Store 2: Linux host since the move</th></tr></thead>
+      <tbody>
+        <tr><td>Planner</td><td>look-ahead, 2 to 4 cards, deadline 15 min</td><td>look-ahead</td><td>look-ahead until 2 November about 01:00 UTC, then threshold (close 6, pressure 6, maximum 8, deadline 45 min)</td></tr>
+        <tr><td>Batches closed</td><td>186</td><td>12</td><td>13, all after the switch to threshold</td></tr>
+        <tr><td>Size distribution</td><td>{2: 160, 3: 18, 4: 8}</td><td>{2: 11, 3: 1}</td><td>{2: 2, 3: 5, 4: 3, 6: 2, 8: 1}</td></tr>
+        <tr><td>Mean size</td><td>2.18</td><td>2.08</td><td>3.92</td></tr>
+        <tr><td>Split batches (<code>parentBatchId</code> set)</td><td>2</td><td>&ndash;</td><td>1</td></tr>
+        <tr><td>Run verdicts (outcome, classification)</td><td>pass/pass 9; fail/infrastructure-red 3; pass/flaky-quarantined-pass 2; fail/deterministic-suite-red 1</td><td>&ndash;</td><td>fail/deterministic-suite-red 1; fail/pre-existing-base-red 1; pass/flaky-quarantined-pass 1</td></tr>
+        <tr><td>Gate executions by outcome</td><td>Ok 343, Fail 172, shutdown 10, superseded 2</td><td>Ok 71, Fail 21</td><td>Ok 5, Fail 7</td></tr>
+        <tr><td>Gate minutes</td><td>median 35.5 (n = 10)</td><td>&ndash;</td><td>median 31.3 (n = 3)</td></tr>
+        <tr><td>Queue wait minutes</td><td>median 27.3</td><td>median 0.0</td><td>median 0.0</td></tr>
+        <tr><td>Pending records</td><td>634 open, 620 resolved</td><td>&ndash;</td><td>34 open, 15 resolved</td></tr>
+      </tbody>
+    </table>
+    <p class="dim">A dash means the operator did not report the figure for that subset. Gate minutes and run verdicts exist only for executions that wrote a duration or a verdict file, so their n is small.</p>
+    <table>
+      <thead><tr><th>Plan decision</th><th>Store 1</th><th>Store 2</th></tr></thead>
+      <tbody>
+        <tr><td>idle: no eligible cards (look-ahead)</td><td>20,277</td><td>32</td></tr>
+        <tr><td>wait: waiting for target size or deadline (look-ahead)</td><td>1,858</td><td>&ndash;</td></tr>
+        <tr><td>per-task: close condition reached below minimum batch size (look-ahead, lone card)</td><td>999</td><td>6</td></tr>
+        <tr><td>wait: compatible card due inside look-ahead window (look-ahead)</td><td>641</td><td>4</td></tr>
+        <tr><td>close: idle gate host (look-ahead)</td><td>63</td><td>&ndash;</td></tr>
+        <tr><td>close: deadline reached (look-ahead)</td><td>63</td><td>&ndash;</td></tr>
+        <tr><td>close: target size reached (look-ahead)</td><td>55</td><td>&ndash;</td></tr>
+        <tr><td>per-task: oldest card exceeds batch risk limit (look-ahead)</td><td>12</td><td>&ndash;</td></tr>
+        <tr><td>close: urgent tag (look-ahead)</td><td>3</td><td>&ndash;</td></tr>
+        <tr><td>wait: waiting for threshold or deadline (threshold)</td><td>&ndash;</td><td>391</td></tr>
+        <tr><td>idle: waiting for threshold or deadline (threshold)</td><td>&ndash;</td><td>176</td></tr>
+        <tr><td>close: threshold reached (threshold)</td><td>&ndash;</td><td>12</td></tr>
+      </tbody>
+    </table>
+    <p class="dim">The reason strings come from <code>orchestration-decisions/BatchGateLookAheadPlanner.cs:51-108</code> (look-ahead) and <code>BatchGatePilotService.cs:530-537</code> (threshold, whose "threshold reached" also covers a close on deadline or pressure). In store 1 the planner closed 63 + 63 + 55 + 3 = 184 batches; with the 2 split batches, which isolation forms, that gives the 186. In store 2 the 12 threshold closes plus 1 split give the 13. Its look-ahead lines predate the switch and closed no batch. Plan decisions are ticks, not cards: one card can appear in several decisions.</p>
+    <table>
+      <thead><tr><th>Exclusion reason (enum number)</th><th>Meaning</th><th>Store 1</th><th>Store 2</th></tr></thead>
+      <tbody>
+        <tr><td><code>ActivePerTaskGate</code> (18)</td><td>The card is in its own per-task gate</td><td>1,118</td><td>36</td></tr>
+        <tr><td><code>SupersededGeneration</code> (11)</td><td>A newer generation of the card replaced this subject</td><td>807</td><td>&ndash;</td></tr>
+        <tr><td><code>ReviewSubjectMismatch</code> (7)</td><td>The reviewed SHA is not the result SHA</td><td>736</td><td>&ndash;</td></tr>
+        <tr><td><code>OtherBatchOwnsMember</code> (17)</td><td>Another formed batch already owns the card</td><td>667</td><td>85</td></tr>
+        <tr><td><code>NextBatch</code> (20)</td><td>Eligible, but not chosen for this batch</td><td>319</td><td>2</td></tr>
+      </tbody>
+    </table>
+    <p class="dim">The manifests store <code>BatchExclusionReason</code> as its number; the names follow the declaration order in <code>backend/Features/Pipeline/BatchGate/BatchGatePolicy.cs:22-44</code> (0 <code>MissingEnvelope</code> to 20 <code>NextBatch</code>), and the checks are in <code>:207-237</code>. A manifest lists every pending card it excluded when it closed, so one card counts once in every batch that closed while it waited. The counts are appearances, not cards.</p>
+    <div class="callout" data-tone="warn"><p><b>How far the census carries.</b> Store 1's mean of 2.18 came from the look-ahead planner, which sent a lone card to a per-task gate whenever no batch was running (999 per-task decisions against 184 closes, and 1,118 appearances of <code>ActivePerTaskGate</code>). It is not evidence that larger batches cannot form. Store 2 has only a few hours of threshold-planner data, and its 13 batches most likely drained cards that had built up since the move. Its mean of 3.92 shows what the threshold planner does when cards are waiting; it does not show a steady arrival rate or a steady red rate. Slice S2 repeats the census once store 2 is older.</p></div>
     <figure>
       <svg viewBox="0 0 1080 250" role="img" aria-labelledby="sz-title sz-desc">
         <title id="sz-title">Batch sizes, 13 to 29 October 2026</title>
@@ -391,7 +438,7 @@
         <text class="ch-value" x="200" y="193">8 (4 %)</text>
         <text class="ch-note" x="150" y="236">Maximum size is 4. The planner's own cost model prefers four at every risk below its limit (section 02).</text>
       </svg>
-      <figcaption>Batch sizes as reported by the operator for 13 to 29 October 2026 (card statement, not re-counted here). Hover a bar for its value.</figcaption>
+      <figcaption>Batch sizes in store 1, 13 to 29 October 2026, look-ahead planner. Card statement, confirmed by the operator census of 2 November 2026. Hover a bar for its value.</figcaption>
     </figure>
   </section>
 
@@ -439,42 +486,43 @@
         <text class="dg-text" x="36" y="392">green verdict is carried to integration</text>
         <path class="dg-arrow" d="M180 266 V315"/>
       </svg>
-      <figcaption>Planner paths for a reviewed card, from <code>orchestration-decisions/BatchGateLookAheadPlanner.cs:22-88</code> and <code>BatchGatePilotService.cs:488-508, 2026-2256</code>. The accented box is the cause of the pairs.</figcaption>
+      <figcaption>Planner paths for a reviewed card, from <code>orchestration-decisions/BatchGateLookAheadPlanner.cs:22-88</code> and <code>BatchGatePilotService.cs:488-508, 2026-2256</code>. The accented box caps the target size; in store 1 the idle-host path in the middle was the larger cause of small batches (999 per-task decisions and 63 idle-host closes against 55 target-size closes).</figcaption>
     </figure>
 
-    <h3>Causes, ranked</h3>
+    <h3>Causes</h3>
+    <p>The census of store 1 orders the causes. C3 is the largest path: 999 per-task decisions for a lone card and 63 pairs closed at once on an idle host. C1 follows, with 55 closes at "target size reached" and 319 eligible cards left for a next batch. The 15-minute deadline closed 63 batches, so it did apply, but only to cards the first two paths had not already taken.</p>
     <table>
       <thead><tr><th>#</th><th>Cause</th><th>Mechanism</th><th>Fix</th></tr></thead>
       <tbody>
-        <tr><td>C1</td><td>Target size capped by visible supply</td><td><code>TargetSize</code> searches sizes from the minimum up to <code>min(max, waiting + arriving)</code>. At every risk below the limit, its cost model <code>ExpectedRunsPerCard</code> falls as size grows, so the target equals the supply. Two waiting cards and nothing due give "target size reached" on the next tick (<code>BatchGateLookAheadPlanner.cs:49-51, 84-87, 97-112</code>).</td><td>Code. The threshold planner with <code>closeSize: 4</code> is a settings workaround, but <code>closeSize</code> is reachable only through the API, not the UI.</td></tr>
-        <tr><td>C2</td><td>Low arrival rate</td><td>18 gated merges in 7 days is about 2.6 per day. Spread over 12 active hours that is 0.22 per hour. The chance that a second card is ready within 15 minutes is 1 &minus; e<sup>&minus;0.055</sup> &asymp; 5 %. Within 60 minutes it is about 20 %. Three partners for a batch of four take about 14 active hours. During 13 to 29 October, 406 batched members over 17 days is about 24 per day. That was a different regime, which is why pairs formed at all.</td><td>Neither. A pre-merge batch is a throughput tool for high arrival rates.</td></tr>
-        <tr><td>C3</td><td>Idle-host bypass</td><td>A host is idle when load is not throttled and no batch is running (<code>BatchGatePilotService.cs:492-493</code>). An idle host skips the "waiting for target size or deadline" branch. A lone card then falls through to "close condition reached below minimum batch size" and goes per-task at once (<code>BatchGateLookAheadPlanner.cs:73-82</code>). At a low arrival rate the host is idle most of the time, so the deadline rarely applies.</td><td>Code.</td></tr>
+        <tr><td>C1</td><td>Target size capped by visible supply</td><td><code>TargetSize</code> searches sizes from the minimum up to <code>min(max, waiting + arriving)</code>. At every risk below the limit, its cost model <code>ExpectedRunsPerCard</code> falls as size grows, so the target equals the supply. Two waiting cards and nothing due give "target size reached" on the next tick (<code>BatchGateLookAheadPlanner.cs:49-51, 84-87, 97-112</code>). Store 1: 55 of 184 closes.</td><td>Code. The threshold planner is a settings workaround, but <code>closeSize</code> is reachable only through the API, not the UI. The operator applied it on 2 November 2026 (close 6, maximum 8); store 2 shows a mean of 3.92 in its first hours.</td></tr>
+        <tr><td>C2</td><td>Low arrival rate</td><td>18 gated merges in 7 days is about 2.6 per day. Spread over 12 active hours that is 0.22 per hour. The chance that a second card is ready within 15 minutes is 1 &minus; e<sup>&minus;0.055</sup> &asymp; 5 %. Within 60 minutes it is about 20 %. Three partners for a batch of four take about 14 active hours. During 13 to 29 October, 406 batched members over 17 days is about 24 per day, plus the lone cards sent per-task. That was a different regime: supply existed, and the planner, not supply, kept those batches small (C1, C3). The 2.6 per day of the last 7 days includes the move and days without completed reviews, so it is a floor, not a stable rate.</td><td>Neither. A pre-merge batch is a throughput tool for high arrival rates.</td></tr>
+        <tr><td>C3</td><td>Idle-host bypass</td><td>A host is idle when load is not throttled and no batch is running (<code>BatchGatePilotService.cs:492-493</code>). An idle host skips the "waiting for target size or deadline" branch. A lone card then falls through to "close condition reached below minimum batch size" and goes per-task at once (<code>BatchGateLookAheadPlanner.cs:73-82</code>). At a low arrival rate the host is idle most of the time, so the deadline rarely applies. Store 1: 999 per-task decisions for a lone card and 63 "idle gate host" closes, against 184 closes in total. Since AGT-3407 (develop, 2 November 2026, after store 1) the host counts as idle only when no per-task gate runs or waits and a gate slot is free (<code>BatchGateLookAheadPlanner.cs:29-31</code>).</td><td>Code. AGT-3407 covers part of it; the shortcut still applies before the deadline on a truly idle host.</td></tr>
         <tr><td>C4</td><td>Look-ahead sees almost nothing</td><td>A card in review is "arriving" only if review start plus the median review time falls inside the window. The median is taken from waiting cards and drops samples of 240 minutes or more, with 30 minutes as the default (<code>BatchGateSnapshotBuilder.cs:150-160</code>). With a measured 3.4 h median, most ETAs are already in the past, and an ETA in the past counts as overdue, not arriving. Cards still being coded get no ETA at all (<code>:95-101</code>).</td><td>Code.</td></tr>
         <tr><td>C5</td><td><code>overlap: separate</code></td><td>Overlap means one shared file path, case-insensitive, with no module logic (<code>:141-142</code>). With <code>separate</code>, a card that shares any file with a chosen card is dropped. That includes shared files such as <code>docs/start/README.md</code>, which <code>AGENTS.md</code> requires every new document to touch. Overlapping cards that are due also do not count toward the target (<code>:44-45</code>).</td><td>Setting: <code>adjacent</code> (the default). A module-level overlap needs code.</td></tr>
         <tr><td>C6</td><td>Risk limit and risk history without decay</td><td>A card at or above 0.55 (balanced) goes per-task. An unknown diff scores exactly 0.55. Any card that was ever in a red batch gets +0.2, and any card sharing an <code>area:</code> tag with one gets +0.1. These are read from every manifest ever written, with no time bound (<code>BatchGateSnapshotBuilder.cs:36-53</code>; <code>BatchGateRiskModel.cs:25-48</code>).</td><td>Setting: <code>aggressive</code> raises the limit to 0.75. Decay needs code.</td></tr>
         <tr><td>C7</td><td>Leaks before the queue</td><td>The review plan does not defer to the batch when the card touches a command-inventory file (<code>project.yml</code>, <code>package.json</code>, <code>angular.json</code>, the two main <code>.csproj</code> files), when the selection needs the full suite, or when no test is selected (<code>RemoteReviewPlanBuilder.cs:167-214</code>). Such a card never reaches the planner.</td><td>Mostly code. The project map of D1 P3 reduces full-suite selections.</td></tr>
-        <tr><td>C8</td><td>One batch at a time per project</td><td>While a batch runs, others wait (<code>BatchGatePilotService.cs:719-722, 1130-1134</code>). With 30 to 45 minute suites this caps throughput, not size.</td><td>Code.</td></tr>
+        <tr><td>C8</td><td>One batch at a time per project</td><td>While a batch runs, others wait (<code>BatchGatePilotService.cs:719-722, 1130-1134</code>). With 30 to 45 minute suites this caps throughput, not size. Store 2 formed 13 batches in a few hours with 85 appearances of <code>OtherBatchOwnsMember</code>: formed batches queue behind the running one.</td><td>Code.</td></tr>
       </tbody>
     </table>
     <h3>Why the count fell to none</h3>
-    <p>Three explanations fit "1, 5, 3, 3, 1 per day, then none". The census script separates them on the Studio host.</p>
+    <p>The card's "1, 5, 3, 3, 1 per day, then none" had three possible explanations. The census settles the main one.</p>
     <ul>
-      <li><b>Fewer arrivals.</b> 18 gated merges in the last 7 days is below the 13 to 29 October rate (C2).</li>
-      <li><b>A new instance folder.</b> The folder name hashes the content root and the task repository path (<code>BatchGateStorageRoot.cs:11-15</code>). A moved installation therefore writes to a fresh, empty <code>batch-gates</code> folder. Counting only the old folder shows "none" even if batches continued. The census must run on every instance folder that has a <code>batch-gates</code> directory.</li>
-      <li><b>No reviews completing.</b> Since 31 October, the review runner on <code>agent-runner-01</code> logged 11,193 "could not reach the task server" lines. Without completed reviews nothing enters the queue.</li>
+      <li><b>A new instance folder: confirmed.</b> The folder name hashes the content root and the task repository path (<code>BatchGateStorageRoot.cs:11-15</code>). After the move to the Linux host the application writes to a second store. Store 1 holds 12 batches from 25 October on and none after the move; store 2 holds the batches since.</li>
+      <li><b>No reviews completing: consistent.</b> Since 31 October the review runner on <code>agent-runner-01</code> logged 11,193 "could not reach the task server" lines. Store 2's look-ahead period, before the switch on 2 November about 01:00 UTC, has only 42 plan decisions (32 idle, 6 per-task, 4 wait) and no batch.</li>
+      <li><b>Fewer arrivals: not separable.</b> 18 gated merges in the last 7 days is below the mid-October rate (C2). The census cannot tell this apart from the two causes above.</li>
     </ul>
-    <h3>Why pairs do not pay at the measured green rate</h3>
-    <p>The planner's own cost model is <code>ExpectedRunsPerCard = (1 + (1 &minus; P(all green)) &middot; (&lceil;log2 n&rceil; + 1)) / n</code>. With the historical per-card green rate after review of 57.9 % (<code>docs/operations/gates/d10-measurement.md</code>) and independent outcomes, it gives:</p>
+    <h3>What pairs pay at the measured green rates</h3>
+    <p>The planner's own cost model is <code>ExpectedRunsPerCard = (1 + (1 &minus; P(all green)) &middot; (&lceil;log2 n&rceil; + 1)) / n</code>. Two green rates are measured: the historical per-card rate after review of 57.9 % (<code>docs/operations/gates/d10-measurement.md</code>), and the share of green gate executions in store 1, 343 of 515 = 66.6 %. The second counts executions, probes and retries included, not first attempts per card, so it is an upper reference. With independent outcomes the model gives:</p>
     <table>
-      <thead><tr><th>Route</th><th>Full suites per card, green path and isolation</th><th>Plus fallback of ejected members</th></tr></thead>
+      <thead><tr><th>Route</th><th>Full suites per card, 57.9 % green</th><th>Full suites per card, 66.6 % green</th></tr></thead>
       <tbody>
-        <tr><td>Per-card fallback</td><td>1 on the card SHA, plus 1 in the integration lane when green: 1 + 0.579 = 1.58</td><td>none</td></tr>
-        <tr><td>Batch of 2</td><td>1.16</td><td>+ 0.42 &rarr; about 1.58</td></tr>
-        <tr><td>Batch of 3</td><td>1.14</td><td>+ 0.42 &rarr; about 1.56</td></tr>
-        <tr><td>Batch of 4</td><td>0.92</td><td>+ 0.42 &rarr; about 1.34</td></tr>
+        <tr><td>Per-card fallback (1 on the card SHA, plus 1 in the integration lane when green)</td><td>1.58</td><td>1.67</td></tr>
+        <tr><td>Batch of 2, plus the fallback of ejected members</td><td>1.16 + 0.42 &rarr; about 1.58</td><td>1.06 + 0.33 &rarr; about 1.39</td></tr>
+        <tr><td>Batch of 3, plus the fallback of ejected members</td><td>1.14 + 0.42 &rarr; about 1.56</td><td>1.04 + 0.33 &rarr; about 1.37</td></tr>
+        <tr><td>Batch of 4, plus the fallback of ejected members</td><td>0.92 + 0.42 &rarr; about 1.34</td><td>0.85 + 0.33 &rarr; about 1.19</td></tr>
       </tbody>
     </table>
-    <p>A pair costs about as many full suites per card as the per-card route and adds a wait. Only batches of four save a fifth of the suite runs. The observed 4.3 full-suite runs per merge is far above either model. The rest comes from attempts that went red and did not merge in the window, infrastructure retries, full-suite reviews of non-deferred cards (C7) and promotion runs. Slice S2 attributes the 77 runs.</p>
+    <p>At 57.9 % a pair costs about as many full suites per card as the per-card route and adds a wait. At 66.6 % a pair saves about a sixth and a batch of four about 30 %. Either way the pre-merge batch saves a fraction of the suite runs, while D1 removes them from the card's path (section 06). Store 2's first hours show the other side: 7 of 12 gate executions failed with batches of up to eight. The observed 4.3 full-suite runs per merge is far above either model. The rest comes from attempts that went red and did not merge in the window, infrastructure retries, full-suite reviews of non-deferred cards (C7) and promotion runs. Slice S2 attributes the 77 runs.</p>
     <h3>Setting or code</h3>
     <table>
       <thead><tr><th>A setting can change</th><th>Needs code</th></tr></thead>
@@ -493,7 +541,7 @@
         <tr><td>Cards of one Dossier or wave (<code>task.json.dossier.path</code>)</td><td>Poor. Members finish coding hours apart, so the gate would wait. Test failures do not cluster by Dossier.</td><td><b>Best.</b> Shared intent, decisions and acceptance scopes, so the Dossier is read once. It also enables the one check nobody runs today: do the slices implement the same decision consistently? Waves exist: six slices of AGT-3276 were delivered on 27 October 2026.</td></tr>
         <tr><td>Cards that touch the same area</td><td>Mixed. A higher red rate makes isolation cost more. T2 and T3 already cover conflicts between them.</td><td>Fair. Shared code context, but unrelated intents. The reviewer still reads each card's context separately.</td></tr>
         <tr><td>Time window</td><td><b>Best after merge.</b> The T3 window of D1 tests what landed together and costs no lead time.</td><td>Poor. No shared context, only shared overhead. It adds wait for no reading saving.</td></tr>
-        <tr><td>Batch candidate as review subject</td><td>Today's pre-merge package; see section 02.</td><td>Poor. The batch forms after review, so this is circular. Its makeup is random and averages 2.2 cards. One ejection invalidates the combined review.</td></tr>
+        <tr><td>Batch candidate as review subject</td><td>Today's pre-merge package; see section 02.</td><td>Poor. The batch forms after review, so this is circular. Its makeup is random and averaged 2.18 cards under the look-ahead planner. One ejection invalidates the combined review.</td></tr>
       </tbody>
     </table>
     <h3>Two review tiers</h3>
@@ -560,6 +608,7 @@
       </tbody>
     </table>
     <p>Every member waits for the isolation, so a red member costs its partners hours.</p>
+    <p><b>Census.</b> In store 1, 2 of 186 batches were split, and of the 15 candidate runs with a verdict file 4 were red: 3 infrastructure, 1 deterministic. With pairs, isolation was rare and most reds needed a retry, not halving. Store 2 split 1 of 13 batches, and 7 of its 12 gate executions failed (verdict files: 1 deterministic, 1 pre-existing base red, 1 flaky pass). Larger pre-merge batches go red more often, so isolation and the partners' wait become the common case. A few hours of data do not give a rate; the S2 repeat does.</p>
     <h3>Gate after merge (D1 T3 window)</h3>
     <p>A red window costs no member any waiting. Merges continue outside the failing area (D2 A). Attribution runs in three cheap steps. First, it intersects each suspect merge's paths with the failing tests' project map. Second, it reruns only the failing tests at the merge points; a failed-class rerun took 7.3 s against 93 min for the suite (AGT-W77 P3). Third, it bisects only when more than one suspect remains. Then one repair card per failure fingerprint reverts the merge when that is clean, and fixes forward otherwise. The cost is seconds to minutes of targeted test runs and one repair card. It is not hours of full suites.</p>
     <h3>Review package</h3>
@@ -606,7 +655,7 @@
         <tr><td>Model tokens</td><td>Gates spend none (AGT-W28: gate 0 tokens)</td><td>None</td><td>0</td></tr>
       </tbody>
     </table>
-    <p class="dim">33 minutes is the measured median gate time per card; 43 minutes is the recorded AGT-3133 full run. Five release candidates a week assumes one per working day; each extra candidate adds one full run. Red-develop repairs cost coding rounds that do not exist today. D2 bounds them, and S1 reports them.</p>
+    <p class="dim">33 minutes is the measured median gate time per card; 43 minutes is the recorded AGT-3133 full run. The census agrees: median gate minutes 35.5 in store 1 (n = 10) and 31.3 in store 2 (n = 3). It also shows a median queue wait of 27.3 minutes in store 1 over 13 to 29 October, but 0.0 from 25 October on and in store 2; the lead-time saving above therefore leaves queue wait out. Five release candidates a week assumes one per working day; each extra candidate adds one full run. Red-develop repairs cost coding rounds that do not exist today. D2 bounds them, and S1 reports them.</p>
     <h3>Review: parallel aspects (slice S3) and packages (slice S5)</h3>
     <p>The base is 72 cards at a median of 3.4 h of review aspects and decision, which is about 245 review wall-hours. Remote Review runs every planned command, the four aspects included, in one sequential loop (<code>runner/RemoteReviewWorkspace.cs:284-357</code>). Local review already runs aspects in parallel, up to four (<code>AspectRunnerService.cs:163-165, 231-254</code>).</p>
     <table>
@@ -625,7 +674,7 @@
     <h2><span class="number">07</span> Alternatives</h2>
     <h3>Gate package</h3>
     <div class="variant-grid">
-      <article class="variant"><h3>G-A &middot; Tune the pre-merge batch</h3><p>Use <code>overlap: adjacent</code>, the threshold planner with <code>closeSize: 4</code> and a 60-minute deadline, and fix C1 to C6 in code. At 2.6 arrivals a day, batches of four cost hours of waiting. Pairs save no suite runs at a 57.9 % green rate (section 02). Develop stays green by construction.</p></article>
+      <article class="variant"><h3>G-A &middot; Tune the pre-merge batch</h3><p>Use <code>overlap: adjacent</code>, the threshold planner with <code>closeSize: 4</code> and a 60-minute deadline, and fix C1 to C6 in code. At 2.6 arrivals a day, batches of four cost hours of waiting. Pairs save no suite runs at a 57.9 % green rate and about a sixth at 66.6 % (section 02). With a backlog the threshold planner forms larger batches (mean 3.92 in store 2's first hours), but 7 of its first 12 gate executions failed. Develop stays green by construction.</p></article>
       <article class="variant"><h3>G-B &middot; Post-merge window as the gate package (recommended)</h3><p>Activate D1 T-B. Cards merge after T1 and T2, and the T3 window, sized by <code>maximumSize</code> and <code>lookAheadMinutes</code>, tests what landed together. Waiting no longer depends on package size. The pre-merge batch stays as the automatic fallback.</p></article>
       <article class="variant"><h3>G-C &middot; Dossier wave as gate package</h3><p>Gate a wave's members together before merge. Members finish hours apart, and test failures do not cluster by Dossier. This takes the worst of both: long waits, plus isolation when one member is red.</p></article>
     </div>
@@ -648,7 +697,7 @@
     <div class="callout" data-tone="accent">
       <h3>Recommended default</h3>
       <p><b>G-B, R-B and X-B, in the order S1, S2, S3, S4, S5.</b> The gate works on packages by testing after merge: the T3 window is the package. The review works on packages for the aspects that read shared context, with one package per Dossier wave, while per-card facts stay per card. Run aspects in parallel within every review. Keep the pre-merge batch gate as the fallback mode with <code>overlap: adjacent</code>, and change its planner code only if a project stays pre-merge for 30 days after S1.</p>
-      <p><b>The most important reason.</b> The largest measured cost is the full suite in every card's path: 77 runs a week, two per non-batched card. D1 removes it. That is decided, built and reversible by one setting. Bigger pre-merge batches cannot reach the same saving at today's arrival rate.</p>
+      <p><b>The most important reason.</b> The largest measured cost is the full suite in every card's path: 77 runs a week, two per non-batched card. D1 removes it. That is decided, built and reversible by one setting. Bigger pre-merge batches cannot reach the same saving: even at a mean of 3.92 cards, as in store 2's first hours, every batch runs a full suite before merge, and a red batch makes all members wait for isolation.</p>
     </div>
     <h3>First step</h3>
     <p><b>S1: activate D1 for Agent Studio.</b></p>
@@ -679,7 +728,7 @@
       <thead><tr><th>#</th><th>Slice</th><th>Depends on</th><th>Decision</th></tr></thead>
       <tbody>
         <tr><td>S1</td><td>Activate post-merge testing for Agent Studio</td><td>none</td><td>PK1, PK2</td></tr>
-        <tr><td>S2</td><td>Review and batch baseline: per-step review time and tokens, wave census, batch census, attribution of the full-suite runs</td><td>none</td><td>PK3, PK5</td></tr>
+        <tr><td>S2</td><td>Review and batch baseline: per-step review time and tokens, wave census, batch census (done for now: operator run of 2 November 2026; repeat once store 2 is older), attribution of the full-suite runs</td><td>none</td><td>PK3, PK5</td></tr>
         <tr><td>S3</td><td>Parallel review aspects in Remote Review</td><td>S2 baseline recorded</td><td>PK7</td></tr>
         <tr><td>S4</td><td>Package review subject in shadow</td><td>S2</td><td>PK3, PK4, PK5</td></tr>
         <tr><td>S5</td><td>Package review live with per-member settlement and sampling</td><td>S4 shadow report</td><td>PK4, PK6, PK9</td></tr>
@@ -690,7 +739,7 @@
 
   <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
     <h2><span class="number">10</span> Evidence</h2>
-    <p>Code facts are cited against develop <code>984b4535</code> (1 November 2026). Operator figures are marked as card statements. No claim here is about a visible product surface, so there is no screenshot. The settings UI labels are cited from source, not from a capture.</p>
+    <p>Code facts are cited against develop <code>984b4535</code> (1 November 2026). Operator figures are marked as card statements; the batch gate census of 2 November 2026 is marked as an operator run. No claim here is about a visible product surface, so there is no screenshot. The settings UI labels are cited from source, not from a capture.</p>
     <div class="evidence-list">
       <a class="evidence" href="#ev-target"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-target">Target size equals visible supply</b><small><code>orchestration-decisions/BatchGateLookAheadPlanner.cs:49-51</code> (target from candidates plus arriving, capped by maximum), <code>:84-87</code> (close as "target size reached"), <code>:90-112</code> (cost model and size search).</small></span></a>
       <a class="evidence" href="#ev-idle"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-idle">Idle host skips the deadline</b><small><code>BatchGatePilotService.cs:488-495</code> (idle = not throttled and no batch running); planner <code>:73-82</code>.</small></span></a>
@@ -708,7 +757,9 @@
       <a class="evidence" href="#ev-metrics"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-metrics">Stage and token data exist</b><small><code>CycleTimeStages.cs:25-26</code> (<code>reviewOther</code> = aspects, grade, decision, overhead); <code>TaskCycleTime.cs:62-63</code> (backward moves include lease recovery); <code>ReviewStatisticsEndpoints.cs:9</code>; <code>ReviewObservation.cs:9-16</code>; <code>PipelineModels.cs:241-300</code>.</small></span></a>
       <a class="evidence" href="#ev-green"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-green">Historical green rate</b><small><code>docs/operations/gates/d10-measurement.md</code>: 670 of 1,158 explicit gate outcomes after review green (57.9 %); four-card proxy 32.4 %.</small></span></a>
       <a class="evidence" href="#ev-wave"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-wave">Waves happen</b><small>The implementation log of <code>docs/operations/pipeline-delivery-target/index.html</code> records AGT-3308, AGT-3311, AGT-3313, AGT-3314, AGT-3316 and AGT-3319 as delivered on 27 October 2026.</small></span></a>
-      <a class="evidence" href="#ev-card"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-card">Operator figures (card statement)</b><small>186 batches (160/18/8), batches per day, 18 merges, 77 full-suite runs, 33 and 38 min medians, reuse 0, 3.4 h and 1.8 h, 52 of 72: from the AGT-3400 card, 1 November 2026, not re-counted here.</small></span></a>
+      <a class="evidence" href="#ev-card"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-card">Operator figures (card statement)</b><small>186 batches (160/18/8), batches per day, 18 merges, 77 full-suite runs, 33 and 38 min medians, reuse 0, 3.4 h and 1.8 h, 52 of 72: from the AGT-3400 card, 1 November 2026. The batch counts are confirmed by the census; the other figures are not re-counted here.</small></span></a>
+      <a class="evidence" href="#ev-census"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-census">Batch gate census (operator run)</b><small><code>batch-gate-census.py</code>, run by the operator on 2 November 2026 at 04:50 UTC on store 1 (before the move, 13 to 29 October 2026, read in full, and from 25 October on) and store 2 (Linux host since the move; threshold planner since 2 November about 01:00 UTC). Output in <code>measurements/batch-gate-census-2026-11-02.txt</code>; section 01.</small></span></a>
+      <a class="evidence" href="#ev-exclusion"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-exclusion">Exclusion reason names</b><small><code>BatchExclusionReason</code> in <code>backend/Features/Pipeline/BatchGate/BatchGatePolicy.cs:22-44</code>: 7 <code>ReviewSubjectMismatch</code>, 11 <code>SupersededGeneration</code>, 17 <code>OtherBatchOwnsMember</code>, 18 <code>ActivePerTaskGate</code>, 20 <code>NextBatch</code>; plan reasons in <code>BatchGateLookAheadPlanner.cs:51-108</code> and <code>BatchGatePilotService.cs:530-537</code>; idle host since AGT-3407 in <code>BatchGateLookAheadPlanner.cs:29-31</code> (develop <code>e00a4066</code>).</small></span></a>
       <a class="evidence" href="#ev-arrival"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-arrival">Arrival model</b><small>Poisson arrivals at 2.6 per day over 12 active hours; the batch-cost table uses the planner's formula with independent outcomes, which the 32.4 % proxy shows to be pessimistic for size four.</small></span></a>
       <a class="evidence" href="#ev-savings"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-savings">Savings ranges</b><small>Suite duration 33 to 43 min; five release candidates per week; aspect share <i>a</i>, fixed token share <i>f</i> and package size <i>k</i> as ranges until S2 measures them.</small></span></a>
       <a class="evidence" href="#ev-proposed"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-proposed">Package rules</b><small>Two tiers, 60-minute formation, cap of four members and the material budget, masking invalidation, the 1-in-5 sampling and its abort rule, and the 30 % wave-share threshold are proposals of this Dossier.</small></span></a>
@@ -791,7 +842,7 @@
       <label data-option-id="settings-now" data-option-label="A &middot; Settings now (overlap adjacent); code fixes only if a project stays pre-merge 30 days after S1 (recommended)"><input type="radio" name="pk8-planner" value="settings-now"><span><b>A &middot; Settings now (<code>overlap: adjacent</code>); code fixes only if a project stays pre-merge 30 days after S1 (recommended)</b><span class="d">No code for a mode that becomes the fallback.</span></span></label>
       <label data-option-id="code-now" data-option-label="B &middot; Fix C1, C3, C4, C5, C6 in code now"><input type="radio" name="pk8-planner" value="code-now"><span><b>B &middot; Fix C1, C3, C4, C5, C6 in code now</b><span class="d">Better batches for pre-merge projects; effort spent before need is shown.</span></span></label>
       <label data-option-id="retire" data-option-label="C &middot; Retire the pre-merge batch gate"><input type="radio" name="pk8-planner" value="retire"><span><b>C &middot; Retire the pre-merge batch gate</b><span class="d">Removes the fallback D1 relies on.</span></span></label>
-      <p class="consequence">Consequence of the recommendation: S6 stays conditional; S1 sets <code>overlap: adjacent</code> together with the window settings.</p>
+      <p class="consequence">Consequence of the recommendation: S6 stays conditional; S1 sets <code>overlap: adjacent</code> together with the window settings. Until S1, the threshold settings the operator applied on 2 November 2026 are the settings fix for C1; the census supports them.</p>
       <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
     </div>
     <div class="decision" id="pk9-sampling" data-decision-id="pk9-sampling" data-decision-kind="single" data-decision-status="open" data-recommended-option-id="sample-1-in-5" data-decision-label="PK9 Miss-rate control">

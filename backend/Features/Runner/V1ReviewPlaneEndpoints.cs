@@ -2841,7 +2841,8 @@ public static class V1ReviewPlaneEndpoints
                     .Select(scope => new Contract.ReviewDependencyScopeDto(
                         scope.WorkingSubdir,
                         scope.Lockfiles))
-                    .ToArray()))
+                    .ToArray(),
+                CoveredByDependencyScopes: command.CoveredByDependencyScopes))
             .ToArray();
         var commands = verify.Commands
             .Select((command, index) =>

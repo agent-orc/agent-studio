@@ -333,6 +333,8 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
             Role = "review",
             WorkDir = Path.Combine(_root, "coding"),
             ReviewWorkDir = Path.Combine(_root, "review"),
+            // Keeps the short attempt temp roots inside the test root (AGT-3429).
+            ReviewTempBase = Path.Combine(_root, "t"),
             ReviewGitCredentialsFile = credentialsFile,
             BaseBranch = "main",
             ClaudeCliBin = "unused",
