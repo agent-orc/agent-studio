@@ -1564,6 +1564,16 @@ public sealed partial class TaskServerStore
                     PlacementReason: "host-slots-unavailable");
                 return;
             }
+            if (hostProjectPolicy is null && RequiresHostProjectPolicy)
+            {
+                response = new ClaimResponse(
+                    "empty",
+                    Message: HostProjectPolicyMissingMessage(capabilityRunner.HostId),
+                    ReconciliationActions: reconciliationActions,
+                    RuntimeCapacity: runtimeCapacity,
+                    PlacementReason: HostProjectPolicyMissingReason);
+                return;
+            }
             var envelopeAdmission = await EvaluateHostEnvelopeAsync(
                 connection,
                 transaction,
@@ -1675,7 +1685,8 @@ public sealed partial class TaskServerStore
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
                 WhereModelAcceptedAsync(
                     ExceptHeldModelRoutesAsync(connection, transaction,
-                        ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                        ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId,
+                            RequiresHostProjectPolicy, ct),
                         request.RunnerId, UtcNow, ct),
                     connection, transaction, request.RunnerId,
                     reason => modelRefusal ??= reason, ct),
@@ -4768,6 +4779,7 @@ public sealed partial class TaskServerStore
                AND json_array_length(consumers_json) = 1;
             """, ct);
         await ApplyIdentityBootstrapMigrationAsync(connection, ct);
+        await ApplyRunnerBindingMigrationAsync(connection, ct);
         await ApplyCredentialReminderMigrationAsync(connection, ct);
         await ApplyStandaloneReviewLoopMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);

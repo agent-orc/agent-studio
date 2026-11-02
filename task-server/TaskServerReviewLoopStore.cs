@@ -540,6 +540,11 @@ public sealed partial class TaskServerStore
                 return;
             }
             var policy = await ReadHostProjectPolicyAsync(connection, transaction, hostId, ct);
+            if (policy is null && RequiresHostProjectPolicy)
+            {
+                response = new IntegrationClaimResponse("empty", Message: HostProjectPolicyMissingMessage(hostId));
+                return;
+            }
             IntegrationCommandDto? selected = null;
             await using (var command = Command(connection, IntegrationSelect + """
                  WHERE status = 'queued'

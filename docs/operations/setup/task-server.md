@@ -773,7 +773,17 @@ with `AUTH=bearer`. Setup exchanges its protected join credential for one bound
 Runner credential and writes that result to `RUNNER_AUTH_TOKEN_FILE`. The
 interim `TaskServer:RequireAuthentication`, `StudioBearerToken`, and
 `RunnerBearerToken` profile is deprecated and scheduled for removal after
-existing Phase B installations migrate. Do not configure both modes. Studio
+existing Phase B installations migrate. Do not configure both modes. Its shared
+runner credential names no runner, so it is bound to no host and claims or
+reads nothing (SM-9).
+
+With `AUTH=bearer` every runner credential is bound to its host, role and the
+host's project policy, and a new runner credential expires after 30 days
+(`TaskServer:RunnerCredentialLifetimeDays`). Set each host's policy under Hosts
+or with `PUT /api/v1/hosts/{hostId}/project-policy` before its first claim; a
+host without one holds no project. See
+[Runner credential binding](../security/overview.md#runner-credential-binding-sm-9)
+and [Remote Hosts](../remote-hosts.md). Studio
 BFF reads
 `TaskServer:AuthTokenFile`, `TaskServer:AuthToken`, or the compatibility
 `TaskServer:BearerToken`. Agent Runner reads its secret from
@@ -808,7 +818,12 @@ the consumer id must equal its bound Runner id. Choose an overlap that covers
 protected delivery, every consumer's reload or safe drain, a scoped request,
 acknowledgement, and old-bearer rejection. The server accepts 1 to the
 configured maximum overlap seconds; use explicit revocation for an emergency
-that may interrupt work.
+that may interrupt work. A runner credential lasts 30 days, so rotate each
+runner before that end; the new credential starts its own 30 days, the
+credential inventory marks one that ends within 14 days, and the host logs a
+warning once a day in its last 7 days. A runner proves the new bearer with a
+`tasks:read` request it may make, such as `GET /api/v1/artifact-limits`;
+Studio and workspace reads are refused for runner credentials.
 
 ```bash
 curl --fail --silent --show-error \

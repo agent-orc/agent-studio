@@ -1258,6 +1258,9 @@ public sealed partial class RemoteReviewAuthorityTests
         await using (var firstFactory = new ReviewApiFactory(temp.Path))
         {
             var firstStore = firstFactory.Services.GetRequiredService<TaskServerStore>();
+            // SM-9: an authenticated Task Server admits claims only on hosts with a project policy.
+            foreach (var host in new[] { "coding-host", "host-a" })
+                await firstStore.UpdateHostProjectPolicyAsync(host, new UpdateHostProjectPolicyRequest(true, [], 0), "owner", default);
             await SeedReviewSubjectAsync(firstStore);
             await RegisterReviewerAsync(firstStore, "review-http", "instance-a", "host-a");
             claim = await firstStore.ClaimReviewAsync(

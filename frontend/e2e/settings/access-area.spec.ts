@@ -175,3 +175,67 @@ test('a denied reload clears cached access data and the issued token', async ({ 
     await page.screenshot({ path: join(resultDir, `access-area-denied-1440-${theme}.png`) });
   }
 });
+
+test('owner binds runners to projects and sees credential expiry and pre-binding notices', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.clock.setFixedTime(new Date('2026-11-02T09:00:00Z'));
+  await stubNetworkedOwner(page);
+  const runners = [
+    { id: 'runner_web', name: 'web-host', createdAt: created, revokedAt: null, projects: ['PROJ-001'],
+      credentials: [{ id: 'cred_web', scopes: ['runner.claim'], expiresAt: '2026-11-30T09:00:00Z' }] },
+    { id: 'runner_soon', name: 'review-host', createdAt: created, revokedAt: null, projects: ['PROJ-002'],
+      credentials: [{ id: 'cred_soon', scopes: ['runner.claim'], expiresAt: '2026-11-06T09:00:00Z' }] },
+    { id: 'runner_old', name: 'old-host', createdAt: created, revokedAt: null, projects: ['*'],
+      projectsNotice: 'Enrolled before project binding: holds all projects until you choose its projects.',
+      credentials: [{ id: 'cred_old', scopes: ['runner.claim'], expiresAt: null,
+        expiryNotice: 'No expiry: issued before the 30-day default. Rotate it to adopt the default.' }] },
+  ];
+  const enrollmentBodies: unknown[] = [];
+  const projectUpdates: unknown[] = [];
+  await page.route('**/api/auth/runners', route => json(route, runners));
+  await page.route('**/api/auth/runners/runner_old/projects', async route => {
+    projectUpdates.push(route.request().postDataJSON());
+    runners[2] = { ...runners[2], projects: ['PROJ-002'], projectsNotice: undefined as never };
+    await json(route, runners[2]);
+  });
+  await page.route('**/api/auth/runner-enrollments', route => {
+    if (route.request().method() !== 'POST') return json(route, []);
+    enrollmentBodies.push(route.request().postDataJSON());
+    return json(route, { enrollmentCode, name: 'build-host', scopes: [], expiresAt: '2026-11-02T09:15:00Z', projects: ['PROJ-001'] });
+  });
+  const access = await openAccess(page);
+  const list = access.getByTestId('access-runners');
+
+  await expect(list.getByTestId('access-runner-projects-runner_web')).toContainText('Website');
+  await expect(list.getByTestId('access-runner-expiry-runner_web')).toContainText('Expires 30 Nov 2026');
+  await expect(list.getByTestId('access-runner-expiry-runner_soon')).toContainText('Expires in 4 days');
+  await expect(list.getByTestId('access-runner-projects-runner_old')).toContainText('Before binding');
+  await expect(list.getByTestId('access-runner-expiry-runner_old')).toContainText('No expiry');
+  await expect(list.getByTestId('access-enrollment-no-project')).toContainText('claims and reads nothing');
+
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await list.scrollIntoViewIfNeeded();
+    await list.screenshot({ path: join(resultDir, `access-runner-binding-1440-${theme}.png`) });
+  }
+
+  await list.getByTestId('access-enrollment-name').fill('build-host');
+  await list.getByTestId('access-enrollment-project-PROJ-001').check();
+  await list.getByTestId('access-enrollment-create').click();
+  await expect(list.getByTestId('access-enrollment-code')).toContainText('expires 30 days after enrollment');
+  expect(enrollmentBodies).toEqual([{ name: 'build-host', projects: ['PROJ-001'] }]);
+
+  await list.getByTestId('access-runner-edit-projects-runner_old').click();
+  await list.getByTestId('access-runner-project-runner_old-PROJ-002').check();
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await list.getByTestId('access-runner-project-editor-runner_old').scrollIntoViewIfNeeded();
+    await list.screenshot({ path: join(resultDir, `access-runner-project-editor-1440-${theme}.png`) });
+  }
+  await list.getByTestId('access-runner-save-projects-runner_old').click();
+  await expect(list.getByTestId('access-runner-project-editor-runner_old')).toHaveCount(0);
+  expect(projectUpdates).toEqual([{ projects: ['PROJ-002'] }]);
+  await expect(list.getByTestId('access-runner-projects-runner_old')).toContainText('Mobile App');
+  await expect(list.getByTestId('access-runner-projects-runner_old')).not.toContainText('Before binding');
+});

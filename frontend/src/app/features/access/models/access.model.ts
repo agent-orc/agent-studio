@@ -64,6 +64,9 @@ export interface ServiceAccount {
   createdBy?: string | null;
 }
 
+/** The project entry that binds a runner to every project. */
+export const ALL_RUNNER_PROJECTS = '*';
+
 export interface RunnerEnrollment {
   id: string;
   name: string;
@@ -71,6 +74,19 @@ export interface RunnerEnrollment {
   createdAt: string;
   expiresAt: string;
   usedAt?: string | null;
+  /** Projects the enrolled runner is bound to (SM-9); absent on a code from before project binding. */
+  projects?: readonly string[] | null;
+}
+
+export interface RunnerCredential {
+  id: string;
+  scopes: readonly string[];
+  createdAt?: string;
+  expiresAt?: string | null;
+  lastUsedAt?: string | null;
+  revokedAt?: string | null;
+  /** Set for a credential issued before the 30-day default: it keeps working without expiry. */
+  expiryNotice?: string | null;
 }
 
 export interface EnrolledRunner {
@@ -79,7 +95,11 @@ export interface EnrolledRunner {
   createdAt: string;
   revokedAt?: string | null;
   lastSeenAt?: string | null;
-  credentials: readonly { id: string; scopes: readonly string[]; revokedAt?: string | null }[];
+  /** Bound projects; `*` binds every project and an empty list binds none (SM-9). */
+  projects?: readonly string[] | null;
+  /** Set for a runner enrolled before project binding: it holds every project until the Owner chooses. */
+  projectsNotice?: string | null;
+  credentials: readonly RunnerCredential[];
 }
 
 export interface RoleBinding {
