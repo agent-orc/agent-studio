@@ -36,6 +36,8 @@ public static class BatchGateStateSnapshotReader
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseReason = phase.Reason,
                 manifest.BaseSha,
+                baseVerdict = store.ReadBaseVerdict(project, manifest.BaseSha,
+                    manifest.Scope.GateProfileDigest),
                 candidateSha = phase.CandidateSha,
                 members = manifest.Members.Select(member => new
                 {
