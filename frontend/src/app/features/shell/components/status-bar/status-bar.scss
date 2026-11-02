@@ -38,7 +38,7 @@ app-status-bar {
   line-height: 1;
   color: var(--studio-fg-dim, rgba(255, 255, 255, 0.70));
   letter-spacing: 0;
-  overflow: hidden;
+  overflow: visible;
   white-space: nowrap;
 }
 

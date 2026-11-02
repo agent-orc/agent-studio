@@ -41,6 +41,7 @@
               </td>
               <td><span class="access-badge" [attr.data-tone]="status(user) === 'Active' ? null : 'muted'">{{ status(user) }}</span></td>
               <td class="access-actions">
+                <app-session-manager [userId]="user.id" />
                 <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="resetPassword(user)">Reset password</button>
                 <button type="button" class="access-quiet" [attr.data-testid]="'access-user-toggle-' + user.username" [disabled]="access.busy()" (click)="toggleDisabled(user)">{{ user.disabled ? 'Enable' : 'Disable' }}</button>
               </td>

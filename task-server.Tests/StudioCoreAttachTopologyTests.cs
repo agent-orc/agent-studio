@@ -53,8 +53,10 @@ public sealed class StudioCoreAttachTopologyTests
         Assert.True(session.Status.Authenticated);
         client.DefaultRequestHeaders.Add("X-Studio-Session-Token", session.SessionToken);
 
+        var factorCode = await StudioFactorTestHelper.EnrollTotpAsync(client);
+
         var login = await client.PostAsJsonAsync(
-            "/api/v1/studio/auth/login", new StudioLoginRequest("remote-owner", "correct horse battery staple over the wire"));
+            "/api/v1/studio/auth/login", new StudioLoginRequest("remote-owner", "correct horse battery staple over the wire", factorCode));
         login.EnsureSuccessStatusCode();
 
         // 2. Board load, empty before any task exists.

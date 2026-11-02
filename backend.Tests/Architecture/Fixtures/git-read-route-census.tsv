@@ -26,8 +26,10 @@
 /api/auth/runner-enrollments	free	-	-	-
 /api/auth/runners	free	-	-	-
 /api/auth/session	free	-	-	-
+/api/auth/sessions	free	-	-	-
 /api/auth/status	free	-	-	-
 /api/auth/users	free	-	-	-
+/api/auth/users/{id}/sessions	free	-	-	-
 /api/auto-review/status	free	-	-	-
 /api/bus/{project}/messages	free	-	-	-
 /api/bus/{project}/messages/{id}	free	-	-	-

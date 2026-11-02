@@ -29,6 +29,10 @@
     "src/app/features/structure/structure-view/structure-view.component.html"
   ],
   "documented": {
+    "src/app/features/access/components/session-manager/session-manager.component.html": {
+      "kind": "popup-trigger",
+      "reason": "The Sessions button opens an anchored session popover over the page."
+    },
     "src/app/components/cli-model-selector/cli-model-selector.component.html": {
       "kind": "popup-trigger",
       "reason": "Model picker trigger. The list opens as an overlay popover anchored to the control; the value chip is the affordance."

@@ -296,10 +296,13 @@ public sealed partial class TaskServerStore
                 UPDATE studio_invitations SET consumed_at = $now WHERE id = $invite AND consumed_at IS NULL;
                 """, ct, transaction, ("$hash", HashStudioPassword(password)), ("$now", now),
                 ("$id", userId), ("$invite", id));
-            var (sessionToken, csrf) = await CreateStudioSessionAsync(connection, transaction, userId, ct);
+            var enrollFactor = user.Role is StudioUserRoles.Owner or StudioUserRoles.Operator;
+            var (sessionToken, csrf) = await CreateStudioSessionAsync(connection, transaction, userId, ct,
+                enrollmentOnly: enrollFactor);
             await AuditAsync(connection, transaction, userId, "studio-user.invitation-accepted", "studio-user", userId, "{}", ct);
             result = new StudioAuthSessionDto(sessionToken, csrf,
-                new StudioAuthStatusDto(false, true, ToStudioAuthUserDto(user with { MustChangePassword = false })));
+                new StudioAuthStatusDto(false, true, ToStudioAuthUserDto(user with { MustChangePassword = false }),
+                    SecondFactorEnrollmentRequired: enrollFactor));
         }, ct);
         return result!;
     }
