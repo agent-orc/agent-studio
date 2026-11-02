@@ -284,56 +284,12 @@ public sealed class ClaudeQuotaProbe : QuotaProbeBase
     }
 
     public static List<QuotaWindow> ParseUsageWindows(string snap, DateTime nowUtc)
-    {
-        var windows = new List<QuotaWindow>();
-
-        if (SessionRegex.Match(snap) is { Success: true } sm
-            && double.TryParse(sm.Groups["pct"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var sPct))
-        {
-            var time = sm.Groups["time"].Value.Trim();
-            var tz   = sm.Groups["tz"].Success ? sm.Groups["tz"].Value.Trim() : null;
-            windows.Add(new QuotaWindow
+        => AgentStudio.CliHosting.SubscriptionQuotaParser.ParseClaude(snap, nowUtc)
+            .Select(window => new QuotaWindow
             {
-                Label      = "Current session (5h)",
-                UsedPct    = Math.Min(100, sPct),
-                Unit       = "%",
-                ResetAt    = ParseResetTimeUtc(time, tz, nowUtc),
-                ResetLabel = tz != null ? $"{time} ({tz})" : time
-            });
-        }
-
-        if (WeekRegex.Match(snap) is { Success: true } wm
-            && double.TryParse(wm.Groups["pct"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var wPct))
-        {
-            var reset = wm.Groups["reset"].Value.Trim();
-            var tz    = wm.Groups["tz"].Success ? wm.Groups["tz"].Value.Trim() : null;
-            var hasDate = Regex.IsMatch(reset, @"[A-Za-z]+\s*\d+", RegexOptions.IgnoreCase);
-            windows.Add(new QuotaWindow
-            {
-                Label      = "Weekly (all models)",
-                UsedPct    = Math.Min(100, wPct),
-                Unit       = "%",
-                ResetAt    = hasDate ? ParseResetDateUtc(reset, tz, nowUtc) : ParseResetTimeUtc(reset, tz, nowUtc),
-                ResetLabel = tz != null ? $"{reset} ({tz})" : reset
-            });
-        }
-
-        // New tabbed /usage screen, but no subscription utilization block.
-        // One explicit null-valued window lets all consumers distinguish
-        // "recognized and unknown" from "probe has not produced anything".
-        // Admission already ignores windows without a usable UsedPct.
-        if (windows.Count == 0 && TabbedSessionUsageRegex.IsMatch(snap))
-        {
-            windows.Add(new QuotaWindow
-            {
-                Label = "Quota",
-                UsedPct = null,
-                Unit = "%"
-            });
-        }
-
-        return windows;
-    }
+                Label = window.Label, UsedPct = window.UsedPct, Unit = "%",
+                ResetAt = window.ResetAt, ResetLabel = window.ResetLabel
+            }).ToList();
 
     /// <summary>
     /// Parses "3:40am" / "15:30" with an optional IANA timezone in parens and

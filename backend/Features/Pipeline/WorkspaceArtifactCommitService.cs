@@ -26,6 +26,12 @@ public sealed class WorkspaceArtifactCommitService
     private readonly int _indexLockRetryAttempts;
     private readonly int _indexLockRetryBackoffMs;
     private readonly long _maximumFileBytes;
+    private readonly long _addBytesPerSecond;
+    private readonly TimeSpan _addMaximumTimeout;
+    private readonly int _lockRetryRounds;
+    private readonly TimeProvider _time;
+    private readonly ConcurrentDictionary<long, Task> _lockRetries = new();
+    private long _nextLockRetry;
 
     // Per-repo serialization gate. The punctual job-folder commits and the
     // debounced Transition-Committer's evidence batches both mutate the same
@@ -43,12 +49,14 @@ public sealed class WorkspaceArtifactCommitService
         IConfiguration configuration,
         ILogger<WorkspaceArtifactCommitService> logger,
         WorkspaceArtifactPushQueue? pushQueue = null,
-        AgentStudio.Git.GitStaleLockGuard? staleLocks = null)
+        AgentStudio.Git.GitStaleLockGuard? staleLocks = null,
+        TimeProvider? time = null)
     {
         _configuration = configuration;
         _logger = logger;
         _pushQueue = pushQueue;
         _staleLocks = staleLocks ?? new AgentStudio.Git.GitStaleLockGuard(configuration);
+        _time = time ?? TimeProvider.System;
         _indexLockRetryAttempts = Math.Clamp(
             configuration.GetValue<int?>("WorkspaceEvidence:IndexLockRetryAttempts") ?? 5, 1, 50);
         _indexLockRetryBackoffMs = Math.Clamp(
@@ -57,6 +65,20 @@ public sealed class WorkspaceArtifactCommitService
             configuration.GetValue<long?>("WorkspaceArtifacts:MaximumFileBytes") ?? 50L * 1024 * 1024,
             1L * 1024 * 1024,
             95L * 1024 * 1024);
+        _addBytesPerSecond = Math.Clamp(
+            configuration.GetValue<long?>("WorkspaceEvidence:GitAddBytesPerSecond")
+                ?? WorkspaceAddTimeoutPolicy.DefaultBytesPerSecond,
+            64L * 1024,
+            1024L * 1024 * 1024);
+        _addMaximumTimeout = TimeSpan.FromSeconds(Math.Clamp(
+            configuration.GetValue<int?>("WorkspaceEvidence:GitAddMaxTimeoutSeconds")
+                ?? (int)WorkspaceAddTimeoutPolicy.DefaultMaximum.TotalSeconds,
+            (int)WorkspaceAddTimeoutPolicy.DefaultBase.TotalSeconds,
+            30 * 60));
+        _lockRetryRounds = Math.Clamp(
+            configuration.GetValue<int?>("WorkspaceArtifacts:LockRetryRounds") ?? ArtifactCommitLockRetryPolicy.DefaultRounds,
+            0,
+            20);
     }
 
     public WorkspaceArtifactCommitResult TryCommitRunBoundary(
@@ -136,6 +158,81 @@ public sealed class WorkspaceArtifactCommitService
         string failLabel,
         Func<string, IReadOnlyList<string>, string, ArtifactCommitPlan> planMessage)
     {
+        WorkspaceArtifactCommitResult Attempt() => CommitJobFolderOnce(
+            workspaceRoot, jobId, beforeMoveFolderPath, afterMoveFolderPath, logLabel, failLabel, planMessage);
+
+        var result = Attempt();
+        if (!ArtifactCommitLockRetryPolicy.IsLockFailure(result) || _lockRetryRounds == 0) return result;
+        // A lock in the workspace repository is the repository's condition,
+        // not the card's: the caller gets a deferred success and the commit is
+        // tried again off its path (AGT-3409).
+        _logger.LogInformation(
+            "workspace-artifact-commit-deferred jobId={JobId} label={Label} error={Error}",
+            jobId, failLabel, result.Error);
+        ScheduleLockRetry(Attempt, jobId, failLabel, round: 1);
+        return WorkspaceArtifactCommitResult.DeferredOnLock(result.Error!);
+    }
+
+    private void ScheduleLockRetry(Func<WorkspaceArtifactCommitResult> attempt, string jobId, string label, int round)
+    {
+        var delay = ArtifactCommitLockRetryPolicy.DelayBefore(round, _lockRetryRounds);
+        if (delay is null)
+        {
+            _logger.LogWarning(
+                "workspace-artifact-commit-lock-retry-exhausted jobId={JobId} label={Label} rounds={Rounds}",
+                jobId, label, _lockRetryRounds);
+            return;
+        }
+        var id = Interlocked.Increment(ref _nextLockRetry);
+        var retry = RetryAfterAsync(attempt, jobId, label, round, delay.Value);
+        _lockRetries[id] = retry;
+        retry.ContinueWith(_ => _lockRetries.TryRemove(id, out Task? _), TaskScheduler.Default);
+    }
+
+    private async Task RetryAfterAsync(
+        Func<WorkspaceArtifactCommitResult> attempt, string jobId, string label, int round, TimeSpan delay)
+    {
+        try
+        {
+            await Task.Delay(delay, _time).ConfigureAwait(false);
+            var result = attempt();
+            if (ArtifactCommitLockRetryPolicy.IsLockFailure(result))
+            {
+                ScheduleLockRetry(attempt, jobId, label, round + 1);
+                return;
+            }
+            if (result.Success)
+                _logger.LogInformation(
+                    "workspace-artifact-commit-retried jobId={JobId} label={Label} round={Round} sha={Sha} reason={Reason}",
+                    jobId, label, round, result.Sha ?? "", result.DidCommit ? "committed" : result.Error);
+            else
+                _logger.LogWarning(
+                    "workspace-artifact-commit-retry-failed jobId={JobId} label={Label} round={Round} error={Error}",
+                    jobId, label, round, result.Error);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "workspace-artifact-commit-retry-failed jobId={JobId} label={Label} round={Round}",
+                jobId, label, round);
+        }
+    }
+
+    /// <summary>Completes when no deferred lock retry is pending or running. For tests.</summary>
+    internal async Task LockRetriesSettledAsync()
+    {
+        while (!_lockRetries.IsEmpty)
+            await Task.WhenAll(_lockRetries.Values.ToArray()).ConfigureAwait(false);
+    }
+
+    private WorkspaceArtifactCommitResult CommitJobFolderOnce(
+        string? workspaceRoot,
+        string jobId,
+        string? beforeMoveFolderPath,
+        string? afterMoveFolderPath,
+        string logLabel,
+        string failLabel,
+        Func<string, IReadOnlyList<string>, string, ArtifactCommitPlan> planMessage)
+    {
         try
         {
             workspaceRoot = string.IsNullOrWhiteSpace(workspaceRoot)
@@ -167,10 +264,11 @@ public sealed class WorkspaceArtifactCommitService
                 var oversized = FindOversizedFiles(gitRoot, pathspecs);
                 UnstageRefusedFiles(gitRoot, oversized);
                 var refusedSpecs = BuildLiteralExcludePathspecs(oversized);
+                var writeTimeout = AddTimeout(gitRoot, pathspecs, refusedSpecs);
                 var addArgs = new List<string> { "add", "-A", "--" };
                 addArgs.AddRange(pathspecs);
                 addArgs.AddRange(refusedSpecs);
-                var add = RunGitRetryingIndexLock(gitRoot, addArgs);
+                var add = RunGitRetryingIndexLock(gitRoot, addArgs, timeout: writeTimeout);
                 if (add.Code != 0)
                     return WorkspaceArtifactCommitResult.Failed("git-add", add.ErrorText);
 
@@ -193,7 +291,7 @@ public sealed class WorkspaceArtifactCommitService
                 };
                 commitArgs.AddRange(pathspecs);
                 commitArgs.AddRange(refusedSpecs);
-                var commit = RunGitRetryingIndexLock(gitRoot, commitArgs, plan.Message);
+                var commit = RunGitRetryingIndexLock(gitRoot, commitArgs, plan.Message, writeTimeout);
                 if (commit.Code != 0)
                 {
                     if (commit.ErrorText.Contains("nothing to commit", StringComparison.OrdinalIgnoreCase))
@@ -461,13 +559,14 @@ public sealed class WorkspaceArtifactCommitService
                 var oversized = FindOversizedFiles(gitRoot, pathspecs);
                 UnstageRefusedFiles(gitRoot, oversized);
                 var refusedSpecs = BuildLiteralExcludePathspecs(oversized);
+                var writeTimeout = AddTimeout(gitRoot, pathspecs, refusedSpecs);
                 // Stage the data paths (git add already honours the workspace
                 // repo's .gitignore), then unstage the exclude globs from the
                 // index.
                 var addArgs = new List<string> { "add", "-A", "--" };
                 addArgs.AddRange(pathspecs);
                 addArgs.AddRange(refusedSpecs);
-                var add = RunGitRetryingIndexLock(gitRoot, addArgs);
+                var add = RunGitRetryingIndexLock(gitRoot, addArgs, timeout: writeTimeout);
                 if (add.Code != 0)
                     return WorkspaceArtifactCommitResult.Failed("git-add", add.ErrorText);
 
@@ -498,7 +597,7 @@ public sealed class WorkspaceArtifactCommitService
                 commitArgs.AddRange(pathspecs);
                 commitArgs.AddRange(excludeCommitSpecs);
                 commitArgs.AddRange(refusedSpecs);
-                var commit = RunGitRetryingIndexLock(gitRoot, commitArgs, message);
+                var commit = RunGitRetryingIndexLock(gitRoot, commitArgs, message, writeTimeout);
                 if (commit.Code != 0)
                 {
                     if (commit.ErrorText.Contains("nothing to commit", StringComparison.OrdinalIgnoreCase))
@@ -553,13 +652,16 @@ public sealed class WorkspaceArtifactCommitService
                     .ToList();
                 var oversized = FindOversizedFiles(gitRoot, candidates);
                 UnstageRefusedFiles(gitRoot, oversized);
+                var writeTimeout = WorkspaceAddTimeoutPolicy.For(
+                    SumFileBytes(gitRoot, candidates.Except(oversized, StringComparer.OrdinalIgnoreCase)),
+                    WorkspaceAddTimeoutPolicy.DefaultBase, _addBytesPerSecond, _addMaximumTimeout);
 
                 if (candidates.Count > 0)
                 {
                     var addArgs = new List<string> { "add", "-u", "--" };
                     addArgs.AddRange(candidates);
                     addArgs.AddRange(BuildLiteralExcludePathspecs(oversized));
-                    var add = RunGitRetryingIndexLock(gitRoot, addArgs);
+                    var add = RunGitRetryingIndexLock(gitRoot, addArgs, timeout: writeTimeout);
                     if (add.Code != 0)
                         return WorkspaceArtifactCommitResult.Failed("git-add", add.ErrorText);
                 }
@@ -575,7 +677,7 @@ public sealed class WorkspaceArtifactCommitService
                         "-c", $"user.name={CommitterName}",
                         "-c", $"user.email={CommitterEmail}",
                         "commit", "-m", "chore(workspace): sweep tracked workspace drift"
-                    ]);
+                    ], timeout: writeTimeout);
                 if (commit.Code != 0)
                     return WorkspaceArtifactCommitResult.Failed("git-commit", commit.ErrorText);
 
@@ -685,11 +787,54 @@ public sealed class WorkspaceArtifactCommitService
         return specs;
     }
 
-    private GitProcessResult RunGitRetryingIndexLock(string gitRoot, IReadOnlyList<string> args, string? stdin = null)
+    private GitProcessResult RunGitRetryingIndexLock(
+        string gitRoot, IReadOnlyList<string> args, string? stdin = null, TimeSpan? timeout = null)
         => RunWithIndexLockRetry(
-            () => RunGit(gitRoot, args, stdin),
+            () => RunGit(gitRoot, args, stdin, timeout),
             _indexLockRetryAttempts,
             attempt => Thread.Sleep(_indexLockRetryBackoffMs * attempt));
+
+    /// <summary>
+    /// The time limit for adding and committing <paramref name="pathspecs"/>:
+    /// sized by the bytes of the files git has to hash, the modified and
+    /// untracked ones (<see cref="WorkspaceAddTimeoutPolicy"/>, AGT-3409).
+    /// <c>git ls-files</c> reads the index without taking its lock.
+    /// </summary>
+    private TimeSpan AddTimeout(string gitRoot, IReadOnlyList<string> pathspecs, IReadOnlyList<string> refusedSpecs)
+    {
+        long? bytes = null;
+        var list = RunGit(gitRoot,
+            ["ls-files", "-z", "--modified", "--others", "--exclude-standard", "--", .. pathspecs, .. refusedSpecs]);
+        if (list.Code == 0)
+            bytes = SumFileBytes(gitRoot, list.Out.Split('\0', StringSplitOptions.RemoveEmptyEntries));
+        else
+            _logger.LogDebug("workspace-artifact add-size listing failed root={Root} error={Error}", gitRoot, list.ErrorText);
+        var timeout = WorkspaceAddTimeoutPolicy.For(
+            bytes, WorkspaceAddTimeoutPolicy.DefaultBase, _addBytesPerSecond, _addMaximumTimeout);
+        if (timeout > WorkspaceAddTimeoutPolicy.DefaultBase)
+            _logger.LogInformation(
+                "workspace-artifact-add-timeout root={Root} bytes={Bytes} timeoutSeconds={Seconds}",
+                gitRoot, bytes?.ToString(CultureInfo.InvariantCulture) ?? "unknown", (int)timeout.TotalSeconds);
+        return timeout;
+    }
+
+    private static long SumFileBytes(string gitRoot, IEnumerable<string> relativePaths)
+    {
+        long total = 0;
+        foreach (var relative in relativePaths.Distinct(StringComparer.Ordinal))
+        {
+            try
+            {
+                var file = new FileInfo(Path.Combine(gitRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
+                if (file.Exists) total += file.Length;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                SilentCatch.Note(ex, "WorkspaceArtifactCommitService: add-size estimate skips an unreadable path");
+            }
+        }
+        return total;
+    }
 
     /// <summary>
     /// Retry a git invocation while it fails on <c>.git/index.lock</c>
@@ -807,7 +952,8 @@ public sealed class WorkspaceArtifactCommitService
             ? el.GetString()
             : null;
 
-    private static GitProcessResult RunGit(string cwd, IReadOnlyList<string> args, string? stdin = null)
+    private static GitProcessResult RunGit(
+        string cwd, IReadOnlyList<string> args, string? stdin = null, TimeSpan? timeout = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -823,7 +969,7 @@ public sealed class WorkspaceArtifactCommitService
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
-        var result = AgentStudio.Git.GitProcessBoundary.Run(psi, stdin, TimeSpan.FromSeconds(30));
+        var result = AgentStudio.Git.GitProcessBoundary.Run(psi, stdin, timeout ?? WorkspaceAddTimeoutPolicy.DefaultBase);
         return new GitProcessResult(result.StandardOutput, result.StandardError, result.ExitCode);
     }
 
@@ -833,14 +979,23 @@ public sealed class WorkspaceArtifactCommitService
     }
 }
 
+/// <summary>
+/// Outcome of one workspace commit. <see cref="Deferred"/> means git refused
+/// on a lock and the commit is retried in the background: a success for the
+/// caller, with the lock error kept in <see cref="Error"/> (AGT-3409).
+/// </summary>
 public sealed record WorkspaceArtifactCommitResult(
     bool Success,
     bool DidCommit,
     string? Sha,
     int? RunIndex,
     string? Steps,
-    string? Error)
+    string? Error,
+    bool Deferred = false)
 {
+    public static WorkspaceArtifactCommitResult DeferredOnLock(string error) =>
+        new(true, false, null, null, null, $"deferred: {error}", Deferred: true);
+
     public static WorkspaceArtifactCommitResult Committed(string? sha, int runIndex, string steps) =>
         new(true, true, sha, runIndex, steps, null);
 

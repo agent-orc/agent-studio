@@ -1,3 +1,5 @@
+import type { ConfirmDialogService } from './confirm-dialog.service';
+
 /**
  * `extraImgOrigin` lets the host's own origin serve `img-src` requests, so
  * artifact `<img>` references rewritten to the wiki assets API (see
@@ -417,6 +419,36 @@ export function resolveIsolatedHtmlNavigation(
   } catch {
     return null;
   }
+}
+
+/**
+ * Open an external link reported by a Dossier or Wiki frame after the operator
+ * confirms it in the shared dialog. The dialog names the target host as the
+ * URL parser reads it (internationalized names appear in their ASCII form), so
+ * the link text inside the frame never decides what the operator sees.
+ * Resolves `true` when the page was opened.
+ */
+export async function openIsolatedHtmlExternalLink(
+  dialog: Pick<ConfirmDialogService, 'confirm'>,
+  url: string,
+): Promise<boolean> {
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    return false;
+  }
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+  const confirmed = await dialog.confirm({
+    title: `Open ${target.host}?`,
+    message: `This link leaves Agent Studio and opens a page on ${target.host} in a new tab.`,
+    detail: target.href,
+    confirmLabel: 'Open page',
+    kind: 'primary',
+  });
+  if (!confirmed) return false;
+  window.open(target.href, '_blank', 'noopener,noreferrer');
+  return true;
 }
 
 /**

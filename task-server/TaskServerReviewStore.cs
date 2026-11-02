@@ -1303,7 +1303,7 @@ public sealed partial class TaskServerStore
         if (string.IsNullOrWhiteSpace(request.Workspace.TreeHash))
             return ("ReviewInfra", "TreeHashMissing");
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal)
-            && request.FailureClassification is "ToolUnavailable")
+            && request.FailureClassification is "ToolUnavailable" or ReviewModelConfigurationPolicy.Classification)
             return ("ReviewInfra", request.FailureClassification);
         if (request.Commands.Any(command =>
                 !string.Equals(command.ExpectedResultSha, subject.ExpectedResultSha, StringComparison.OrdinalIgnoreCase)

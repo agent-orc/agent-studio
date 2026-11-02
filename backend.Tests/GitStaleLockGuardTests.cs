@@ -60,6 +60,38 @@ public sealed class GitStaleLockGuardTests : IDisposable
     }
 
     [Theory]
+    [InlineData(0, GitLockOwnership.None, GitLockVerdict.Clear)]
+    [InlineData(0, GitLockOwnership.Owned, GitLockVerdict.KeepOwned)]
+    [InlineData(0, GitLockOwnership.Unknown, GitLockVerdict.KeepOwnerUnknown)]
+    [InlineData(-5, GitLockOwnership.None, GitLockVerdict.Clear)]
+    [InlineData(30, GitLockOwnership.None, GitLockVerdict.Clear)]
+    public void Policy_never_treats_a_lock_left_by_a_killed_command_as_young(
+        int ageMinutes, GitLockOwnership ownership, GitLockVerdict expected)
+    {
+        var verdict = GitStaleLockPolicy.Decide(
+            TimeSpan.FromMinutes(ageMinutes), GitStaleLockPolicy.DefaultThreshold, ownership, leftByKilledCommand: true);
+
+        Assert.Equal(expected, verdict);
+        Assert.True(GitStaleLockPolicy.NeedsOwnershipProbe(
+            TimeSpan.FromMinutes(ageMinutes), GitStaleLockPolicy.DefaultThreshold, leftByKilledCommand: true));
+    }
+
+    [Theory]
+    [InlineData(-10, false)]
+    [InlineData(-1, true)]
+    [InlineData(0, true)]
+    [InlineData(30, true)]
+    [InlineData(61, true)]
+    [InlineData(63, false)]
+    public void Policy_attributes_to_a_killed_command_only_locks_written_while_it_ran(int writtenAtSecond, bool expected)
+    {
+        var started = new DateTime(2026, 11, 1, 3, 0, 0, DateTimeKind.Utc);
+        var ended = started.AddSeconds(60);
+
+        Assert.Equal(expected, GitStaleLockPolicy.WrittenDuringCommand(started.AddSeconds(writtenAtSecond), started, ended));
+    }
+
+    [Theory]
     [InlineData(40, "40s")]
     [InlineData(12 * 60, "12m")]
     [InlineData(36 * 3600 + 43 * 60, "36h43m")]
@@ -370,6 +402,34 @@ public sealed class GitStaleLockGuardTests : IDisposable
         var probe = new GitProcessLockOwnerProbe(() => ["/srv/workspace/projects"], () => []);
 
         Assert.Equal(GitLockOwnership.Owned, probe.Probe(scope, DateTime.MaxValue));
+    }
+
+    [Fact]
+    public void Probe_rules_out_a_server_child_that_started_after_the_lock_was_written()
+    {
+        var scope = new GitLockScope("/srv/workspace", "/srv/workspace/.git", "/srv/workspace/.git");
+        var lockWritten = new DateTime(2026, 11, 1, 3, 0, 0, DateTimeKind.Utc);
+        GitProcessLockOwnerProbe Probe(DateTime? childStarted) => GitProcessLockOwnerProbe.WithServerChildren(
+            () => [new GitServerChild("/srv/workspace/projects", childStarted)], () => []);
+
+        Assert.Equal(GitLockOwnership.None, Probe(lockWritten.AddSeconds(1)).Probe(scope, lockWritten));
+        Assert.Equal(GitLockOwnership.Owned, Probe(lockWritten.AddSeconds(-1)).Probe(scope, lockWritten));
+        Assert.Equal(GitLockOwnership.Owned, Probe(null).Probe(scope, lockWritten));
+        Assert.Equal(
+            new[] { GitLockOwnership.Owned, GitLockOwnership.None },
+            Probe(lockWritten).ProbeMany(scope, [lockWritten.AddSeconds(5), lockWritten.AddSeconds(-5)]));
+    }
+
+    [Fact]
+    public void Server_child_registry_records_when_a_child_started()
+    {
+        var cwd = Path.Combine(_root, "timed-" + Guid.NewGuid().ToString("N"));
+        using (GitChildProcessRegistry.Track(cwd))
+        {
+            var child = Assert.Single(GitChildProcessRegistry.Children(), item => item.WorkingDirectory == cwd);
+            Assert.Equal(DateTimeKind.Utc, child.StartedAtUtc!.Value.Kind);
+        }
+        Assert.DoesNotContain(GitChildProcessRegistry.Children(), item => item.WorkingDirectory == cwd);
     }
 
     [Fact]
