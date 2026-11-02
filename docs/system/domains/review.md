@@ -132,6 +132,12 @@ still follows the ordinary escalation path until the aspect streak or lifetime
 round limit binds. One linked follow-up card carries all open findings;
 `references.raisedFollowUps` points to it from the delivery. The card has one
 review-budget follow-up; later degraded rounds append their findings to it.
+Engine review settlements reuse an open `engine-follow-up` card linked to the
+same source, including when a later settlement has a different run id. They
+append only findings absent from its brief and write a
+`review_follow_up_routed` event on the source timeline naming the receiving
+card. Once that follow-up reaches Completed, a later settlement may create a
+new one.
 The delivery then follows the ordinary acceptance
 and integration rules. A build/test failure or tests-and-evidence block is
 never degraded. When the per-card budget is spent, such a block moves to
