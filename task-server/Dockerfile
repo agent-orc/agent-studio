@@ -20,14 +20,17 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl jq \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system --gid 10001 agentstudio \
- && useradd --system --uid 10001 --gid agentstudio --home-dir /nonexistent --shell /usr/sbin/nologin agentstudio
+ && useradd --system --uid 10001 --gid agentstudio --home-dir /var/lib/agent-orchestrator/home --shell /usr/sbin/nologin agentstudio
 WORKDIR /app
 COPY --from=build /app ./
 # Same bootstrap variables as deploy/release/agent-orchestrator/config/server.env.template.
 ENV LISTEN_URL=http://0.0.0.0:5071 \
     STORE_PATH=/var/lib/agent-orchestrator/store \
     BACKUP_PATH=/var/lib/agent-orchestrator/backup
-RUN mkdir -p /var/lib/agent-orchestrator && chown -R agentstudio:agentstudio /app /var/lib/agent-orchestrator
+# The service account's HOME sits on the data volume, so local state below
+# ~/.local/share (LocalStateRoot) never lands in the container layer.
+RUN mkdir -p /var/lib/agent-orchestrator/home/.local/share \
+ && chown -R agentstudio:agentstudio /app /var/lib/agent-orchestrator
 VOLUME ["/var/lib/agent-orchestrator"]
 EXPOSE 5071
 USER agentstudio

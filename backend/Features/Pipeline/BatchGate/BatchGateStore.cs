@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts.BatchGate;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -92,8 +93,7 @@ public sealed partial class BatchGateStore
 
     public BatchGateStore(string? root = null)
     {
-        var data = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        _root = root ?? Path.Combine(data, "agentstudio", "batch-gates");
+        _root = root ?? LocalStateRoot.Combine("agentstudio", "batch-gates");
     }
 
     public string BatchDirectory(string batchId)

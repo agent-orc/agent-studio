@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -110,8 +111,7 @@ public sealed class CliQuotaWaitPolicyService
     {
         var taskRepo = _config["TaskRepository"];
         if (!string.IsNullOrWhiteSpace(taskRepo)) return Path.Combine(taskRepo, FileName);
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return string.IsNullOrEmpty(local) ? null : Path.Combine(local, "agent-taskboard", FileName);
+        return LocalStateRoot.Combine("agent-taskboard", FileName);
     }
 }
 

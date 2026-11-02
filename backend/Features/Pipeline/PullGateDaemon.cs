@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -90,8 +91,7 @@ public static class PullGateDaemon
                 await File.ReadAllTextAsync(requestPath, lifetime.Token), Json)
                 ?? throw new InvalidDataException("Pull gate request is empty.");
             RemoteGateWorker.Validate(invocation, claim.RunId);
-            var cacheRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "agentstudio", "source", "cache");
+            var cacheRoot = LocalStateRoot.Combine("agentstudio", "source", "cache");
             var cachePath = invocation.SourceCacheKey is { } key
                 ? Path.Combine(cacheRoot, key) : null;
             if (cachePath is not null)

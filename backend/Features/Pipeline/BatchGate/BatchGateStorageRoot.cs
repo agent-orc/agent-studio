@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -11,7 +12,6 @@ public static class BatchGateStorageRoot
         var identity = Path.GetFullPath(contentRoot) + "\n"
             + (string.IsNullOrWhiteSpace(taskRepository) ? "" : Path.GetFullPath(taskRepository));
         var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "agentstudio", "instances", digest[..20], kind);
+        return LocalStateRoot.Combine("agentstudio", "instances", digest[..20], kind);
     }
 }

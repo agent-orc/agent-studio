@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -408,7 +409,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         var configuredRoot = configuration["RemoteGate:InstallationRoot"];
         var installation = Path.GetFullPath(installationDirectory
             ?? (string.IsNullOrWhiteSpace(configuredRoot) ? Directory.GetCurrentDirectory() : configuredRoot));
-        var data = dataDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var data = dataDirectory ?? LocalStateRoot.Resolve();
         var root = string.IsNullOrWhiteSpace(data) ? installation : data;
         var scope = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(installation))).ToLowerInvariant();
         var installationId = configuration["RemoteGate:InstallationId"]?.Trim();

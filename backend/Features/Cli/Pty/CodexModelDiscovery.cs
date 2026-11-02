@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -35,9 +36,7 @@ public sealed class CodexModelDiscovery
     {
         get
         {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "agent-taskboard");
+            var dir = LocalStateRoot.Combine("agent-taskboard");
             Directory.CreateDirectory(dir);
             // v2: entries written by this version carry the CLI-reported
             // reasoning ladder. A v1 file cannot be told apart from one whose

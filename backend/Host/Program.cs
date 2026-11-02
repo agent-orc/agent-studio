@@ -49,6 +49,27 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+
+// AGT-3401: machine-local state (batch gates, gate cache, quota and routing
+// state) lives below an absolute local data directory. Resolve it before any
+// service touches it and stop here if it cannot be created; earlier versions
+// wrote it relative to the working directory, which a container recreate lost.
+try
+{
+    AgentStudio.State.LocalStateStartup.Prepare(
+        [Directory.GetCurrentDirectory(), AppContext.BaseDirectory, builder.Configuration["RemoteGate:InstallationRoot"]],
+        new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger)
+            .CreateLogger("AgentStudio.State.LocalStateStartup"));
+}
+catch (Exception exception) when (exception is AgentStudio.TaskServer.Contracts.LocalStateRootUnavailableException
+    or IOException or UnauthorizedAccessException)
+{
+    Log.Fatal("local-state-startup-failed {Reason}", exception.Message);
+    await Log.CloseAndFlushAsync();
+    Environment.ExitCode = 1;
+    return;
+}
+
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
 builder.Services.AddSingleton<AgentStudio.Review.ReviewObservationStore>();

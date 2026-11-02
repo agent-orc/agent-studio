@@ -48,7 +48,9 @@ case "$domain" in *[!0-9A-Za-z.-]*|'') echo 'Invalid hostname' >&2; exit 2;; esa
 case "$data_dir" in /*) ;; *) echo 'Data directory must be absolute' >&2; exit 2;; esac
 case "$data_dir" in *[!0-9A-Za-z._/-]*) echo 'Data directory contains unsupported characters' >&2; exit 2;; esac
 if [ -e .env ]; then echo '.env already exists; keep its owner code and edit the version for an update.' >&2; exit 2; fi
-mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/origin-pull"
+# home/.local/share holds the API's machine-local state (batch gates, gate
+# cache, quota and routing state); it must be on the data directory.
+mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home/.local/share" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/origin-pull"
 chmod 711 "$data_dir"
 chmod 700 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home"
 chmod 755 "$data_dir/caddy-data" "$data_dir/caddy-config"

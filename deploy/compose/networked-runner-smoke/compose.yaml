@@ -11,6 +11,8 @@ services:
       ASPNETCORE_ENVIRONMENT: Test
       ASPNETCORE_URLS: http://127.0.0.1:${SMOKE_API_PORT:?set SMOKE_API_PORT}
       TaskRepository: /workspace
+      # The smoke uid has no passwd entry; give it a writable HOME for local state.
+      HOME: /home/smoke
       Security__Profile: networked
       AllowedHosts: localhost;127.0.0.1
       WatchPaths__0__Name: networked-smoke
@@ -21,6 +23,7 @@ services:
     volumes:
       - ${SMOKE_APP_DIR:?set SMOKE_APP_DIR}:/app:ro
       - ${SMOKE_WORKSPACE:?set SMOKE_WORKSPACE}:/workspace
+      - ${SMOKE_HOME:?set SMOKE_HOME}:/home/smoke
 
   edge:
     image: caddy:2.10
