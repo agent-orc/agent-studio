@@ -7,6 +7,41 @@ namespace AgentStudio.Tests;
 
 public sealed partial class BatchGatePilotServiceTests
 {
+    [Fact]
+    public async Task Operator_cancelled_fallback_returns_to_batch_planning()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-OPERATOR-RETURN", "docs/operator-return.md");
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+        settings.SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+        _gate.Fallback = request =>
+        {
+            EnableBatchGate(factory, closeSize: 1);
+            return new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0, "",
+                "Gate cancelled: operator.", false, false)
+            {
+                FailureKind = BuildTestGateFailureKind.Cancellation,
+                CancellationReason = GateCancellationReasons.Operator,
+                ExpectedSha = request.ExpectedSha,
+            };
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.False(Ownership(member.Key)?.FallbackGateActive ?? false);
+        Assert.Equal(1, _gate.FallbackRuns);
+
+        _gate.Batch = request => Green(request.ExpectedSha);
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Single(factory.Services.GetRequiredService<BatchGateStore>().ListManifests());
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.Equal(1, _gate.FallbackRuns);
+    }
+
     [Theory]
     [Trait("Category", "MachineBound")]
     [InlineData("shutdown")]
@@ -38,10 +73,12 @@ public sealed partial class BatchGatePilotServiceTests
         await pilot.TickAsync(CancellationToken.None);
 
         Assert.Equal(1, _gate.FallbackRuns);
-        var lane = reason == "operator" ? TaskStates.Escalated : TaskStates.AutoReview;
+        var lane = TaskStates.AutoReview;
         AssertLane(member.Key, lane);
         var folder = Path.Combine(_watchPath, lane, member.Key);
         Assert.Equal(reason, Assert.Single(timeline.ReadAll(folder), e => e.Kind == "gate-cancelled").Details!["reason"]);
+        if (reason == "operator")
+            Assert.False(Ownership(member.Key)?.FallbackGateActive ?? false);
         if (reason != "operator")
             Assert.DoesNotContain(timeline.ReadAll(folder), e => e.Kind == "escalation-diagnostic");
         if (reason == "shutdown")
@@ -83,7 +120,7 @@ public sealed partial class BatchGatePilotServiceTests
         else
             await pilot.TickAsync(host.Token);
 
-        var lane = cancelHostToken ? TaskStates.AutoReview : TaskStates.Escalated;
+        var lane = TaskStates.AutoReview;
         var folder = Path.Combine(_watchPath, lane, member.Key);
         // The cancelled tick stops waiting; the fallback flight still records
         // its cancellation before it leaves the flight registry.

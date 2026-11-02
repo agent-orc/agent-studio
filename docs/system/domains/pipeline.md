@@ -221,7 +221,9 @@ it after startup. The batch fallback retains its durable active marker and uses
 its existing two-start budget. The merge gate restores unpublished anchors and
 records `gate-interrupted`; the integration retry ledger permits one replay for
 this shutdown reason. Exhaustion follows the existing infrastructure parking
-path. Explicit operator cancellation keeps the failed-gate parking behavior.
+path. Explicit operator cancellation of a batch fallback returns the card to
+Auto Review for batch planning. Other gate routes retain their own cancellation
+behavior.
 Each cancelled run adds one `gate-cancelled` timeline receipt naming
 `superseded`, `shutdown`, or `operator`.
 
@@ -380,16 +382,19 @@ other failure (fetch, worktree, or git read errors) is infrastructure and
 pauses the batch as before. An unattributable ejection does not count toward
 the conflict cascade guard and ends a run of consecutive conflicts; its replay
 record keeps the route it failed on (`merge` for a merge-parent mismatch).
-Every ejected member, conflict or unattributable, returns to per-task fallback
-after publication. Before scheduling a gate, the tick checks whether the
-integration branch already contains its result by ancestry or patch equivalence.
+Conflicted members start a bounded agent merge round with the conflicted files
+named in the steer prompt. Cascade-deferred members stay in Auto Review for the
+next batch plan; when no member was admitted, that plan is requested at once.
+Unattributable members return to per-task fallback after publication. Before
+scheduling a gate, the tick checks whether the integration branch already
+contains its result by ancestry or patch equivalence.
 Published members leave through a containment record without another gate or
 per-task integration. Publication recovery repeats this check on later ticks
 while the member's review is still pending, so a restart between the remote push
 and the fallback's first marker does not strand the card (the published batch's
 ownership marker keeps it out of later batches). Paused-batch recovery checks
 the same containment before releasing members to fallback. The batch state
-projection marks every conflict or unattributable ejection as `fallback` with
+projection marks unattributable ejections as `fallback` with
 `reason` and `reasonDetail`, and
 the card badge shows it, for example "Per-task fallback · unattributable
 history".

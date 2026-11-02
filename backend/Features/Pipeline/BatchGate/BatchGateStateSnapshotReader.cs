@@ -76,10 +76,16 @@ public static class BatchGateStateSnapshotReader
                 // An ejected member left its batch for the per-task gate; the
                 // card names why (AGT-3104).
                 var replay = store.TryReadReplay(manifest.BatchId, member.TaskKey);
-                var ejected = replay is { Outcome: "conflict" or "unattributable" };
+                if (replay is { Outcome: "conflict" })
+                {
+                    members.Remove(member.TaskKey);
+                    continue;
+                }
+                var ejected = replay is { Outcome: "unattributable" };
                 members[member.TaskKey] = new
                 {
-                    status = released ? "published"
+                    status = replay is { Outcome: "cascade-deferred" } ? "pending"
+                        : released ? "published"
                         : phase == BatchPhase.Abandoned || ejected ? "fallback" : "in-batch",
                     batchId = manifest.BatchId,
                     phase = phase.ToString().ToLowerInvariant(),

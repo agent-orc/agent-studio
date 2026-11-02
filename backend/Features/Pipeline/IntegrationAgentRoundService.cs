@@ -189,7 +189,8 @@ public sealed class IntegrationAgentRoundService
 
         var epoch = OperatorReviewRequeueService.ReadEpoch(job.FolderPath);
         var subject = ReviewSubjectStore.Read(job.FolderPath);
-        if (subject is null || string.IsNullOrWhiteSpace(subject.ResultRef))
+        if (subject is null || string.IsNullOrWhiteSpace(
+                subject.ImmutableResultRef ?? subject.ResultRef))
         {
             var reason = "The reviewed delivery has no fenced result ref for an automatic agent recovery round.";
             RecordFailure(job.FolderPath, request, result, reason, epoch);
@@ -270,7 +271,7 @@ public sealed class IntegrationAgentRoundService
                 ["automatic"] = "true",
                 ["attemptEpoch"] = Invariant(epoch),
                 [IntegrationRecoveryBudget.DeliveryChainIdKey] = budget.DeliveryChainId!,
-                ["deliveryRef"] = subject.ResultRef,
+                ["deliveryRef"] = subject.ImmutableResultRef ?? subject.ResultRef!,
                 ["resultSha"] = subject.ResultSha,
                 ["integrationBranch"] = request.IntegrationBranch,
                 ["mode"] = ContinueModes.Steer,
@@ -316,7 +317,7 @@ public sealed class IntegrationAgentRoundService
         {
             details[IntegrationRecoveryBudget.DeliveryChainIdKey] =
                 budget?.DeliveryChainId ?? IntegrationRecoveryBudget.DeliveryChainId(subject);
-            details["deliveryRef"] = subject.ResultRef ?? string.Empty;
+            details["deliveryRef"] = subject.ImmutableResultRef ?? subject.ResultRef ?? string.Empty;
             details["resultSha"] = subject.ResultSha;
         }
         if (budget is not null)
@@ -337,7 +338,7 @@ public sealed class IntegrationAgentRoundService
         MergeIntoIntegrationResult result)
     {
         return IntegrationContinuationPrompt.Build(
-            job.Key ?? job.Id, subject.ResultRef, subject.ResultSha,
+            job.Key ?? job.Id, subject.ImmutableResultRef ?? subject.ResultRef, subject.ResultSha,
             request.IntegrationBranch, "merge-into-develop",
             result.Error ?? "Delivery attribution needs a new agent round.", result.ConflictReport,
             conflictedFiles: result.ConflictedFiles);
