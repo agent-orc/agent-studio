@@ -215,7 +215,8 @@ test.describe('Status bar execution-host load companion signal', () => {
     await expect(page).toHaveURL(/#\/workspace\/settings\/execution-hosts(?:&|$)/);
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
     await expect(page.getByTestId('remote-hosts-panel').getByRole('heading', { level: 2 }))
-      .toHaveText('Execution Hosts');
+      .toHaveText('Environment');
+    await expect(page.getByTestId('remote-hosts-empty')).toBeVisible();
   });
 
   test('high load without runs becomes a quiet hint in both themes', async ({ page }) => {

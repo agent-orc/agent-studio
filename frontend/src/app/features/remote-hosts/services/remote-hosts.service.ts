@@ -105,7 +105,6 @@ export class RemoteHostsService {
   private readonly http = tryInjectHttpClient();
   private readonly providerAuth = tryInjectProviderAuthStatus();
   private readonly notifications = tryInjectNotificationService();
-  private readonly notifiedLinkFailures = new Set<string>();
 
   /** Every mount revalidates live state; cached cards are never authoritative. */
   ensureLoaded(): void {
@@ -416,30 +415,8 @@ export class RemoteHostsService {
                 : host.status === 'offline' ? 'online' : host.status;
           return { ...host, status, runnerLink: link, lastHeartbeatAt: link.lastHeartbeatAt ?? host.lastHeartbeatAt };
         }));
-        for (const link of links ?? []) this.notifyLinkFailure(link);
       },
       error: error => this.log('link-health-hydrate-failed', { message: error?.message ?? 'unknown' }),
-    });
-  }
-
-  private notifyLinkFailure(link: RemoteRunnerLinkHealth): void {
-    if (!link.notificationRaisedAt || link.state === 'paused') {
-      if (link.state === 'up') this.notifiedLinkFailures.delete(link.runnerId);
-      return;
-    }
-    if (this.notifiedLinkFailures.has(link.runnerId) || !this.notifications) return;
-    this.notifiedLinkFailures.add(link.runnerId);
-    this.notifications.notify({
-      kind: 'warning',
-      title: `${link.runnerId} link is down`,
-      message: 'Ready cards targeting this host cannot be claimed.',
-      details: [`Last runner heartbeat: ${link.lastHeartbeatAt ?? 'never'}`, link.lastError ?? 'No error reported.'],
-      actions: [{
-        label: 'Reconnect',
-        testId: 'remote-host-reconnect-notification',
-        primary: true,
-        callback: () => this.reconnect(link.runnerId),
-      }],
     });
   }
 

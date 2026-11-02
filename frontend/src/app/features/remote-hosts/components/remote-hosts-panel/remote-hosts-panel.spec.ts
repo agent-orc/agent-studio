@@ -48,6 +48,7 @@ describe('RemoteHostsPanelComponent', () => {
     }]);
 
     const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.componentInstance.setView('history');
     fixture.detectChanges();
     const summary = (fixture.nativeElement as HTMLElement).querySelector(
       '[data-testid="provider-refusal-summary"]',
@@ -59,7 +60,7 @@ describe('RemoteHostsPanelComponent', () => {
     fixture.destroy();
   });
 
-  it('mounts, seeds the registry, and renders a sortable row per host', async () => {
+  it('mounts a machine list and selected detail with setup and add actions', async () => {
     await TestBed.configureTestingModule({
       imports: [RemoteHostsPanelComponent],
       providers: [
@@ -76,30 +77,19 @@ describe('RemoteHostsPanelComponent', () => {
 
     expect(el.querySelector('[data-testid="remote-hosts-panel"]')).toBeTruthy();
     expect(el.querySelector('h2')?.textContent).toContain('Environment');
-    const cards = el.querySelectorAll('[data-testid="remote-host-card"]');
-    expect(cards.length).toBe(fixture.componentInstance.total());
-    expect(cards.length).toBeGreaterThanOrEqual(2);
-    const local = el.querySelector('[data-host="local"]');
-    expect(local?.querySelector('[data-testid="remote-host-name"]')?.textContent)
-      .toContain('Local machine');
+    const rows = el.querySelectorAll('[data-testid="remote-host-primary-row"]');
+    expect(rows.length).toBe(fixture.componentInstance.total());
+    expect(el.querySelector('[data-testid="remote-host-detail-row"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="remote-hosts-table"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="remote-hosts-summary"]')?.textContent)
+      .toContain(String(rows.length));
 
-    // Summary total equals the number of rendered cards (R3).
-    const summary = el.querySelector('[data-testid="remote-hosts-summary"]')?.textContent ?? '';
-    expect(summary).toContain(String(cards.length));
-
-    // The setup control now lives inside the disclosed "Connection" detail
-    // section: the reworked grouped table (AGT-2653/2681) opens a machine row to
-    // its compact section summaries (AGT-2629), then the connection section
-    // reveals the per-host actions. Expand the row, open its connection section,
-    // then reach the setup control.
-    const remote = el.querySelector('[data-host="agent-runner-01"]') as HTMLElement;
-    (remote.querySelector('[data-testid="remote-host-disclosure"]') as HTMLButtonElement).click();
+    fixture.componentInstance.selectHost('agent-runner-01');
     fixture.detectChanges();
-    (remote.querySelector('[data-testid="remote-host-detail-toggle-connection"]') as HTMLButtonElement).click();
+    const detail = el.querySelector('[data-testid="remote-host-card"]') as HTMLElement;
+    (detail.querySelector('[data-testid="remote-host-detail-toggle-connection"]') as HTMLButtonElement).click();
     fixture.detectChanges();
-    const setupButton = remote.querySelector('[data-testid="remote-host-action-setup"]') as HTMLButtonElement;
-    setupButton.click();
+    (detail.querySelector('[data-testid="remote-host-action-setup"]') as HTMLButtonElement).click();
     fixture.detectChanges();
     expect(fixture.componentInstance.setupHost()?.id).toBe('agent-runner-01');
     expect(el.querySelector('[data-testid="runner-setup-dialog"]')).toBeTruthy();
@@ -187,16 +177,11 @@ describe('RemoteHostsPanelComponent', () => {
     expect(el.querySelector('[data-testid="remote-hosts-release-behind"]')?.textContent)
       .toContain('1');
 
-    const roleRelease = el.querySelector('[data-testid="remote-host-role-release"]');
+    fixture.componentInstance.selectHost('agent-runner-01');
+    fixture.detectChanges();
+    const roleRelease = el.querySelector('[data-testid="remote-host-release"]');
     expect(roleRelease?.textContent).toContain('0.2.7');
-    const marker = roleRelease?.querySelector('[data-testid="remote-host-role-release-drift"]');
-    expect(marker?.textContent?.trim()).toBe('19d behind');
-    expect(marker?.getAttribute('data-tone')).toBe('warn');
-    expect(roleRelease?.getAttribute('title')).toContain('Stable runs 0.3.0');
-
-    // Differing role releases stay visible on their respective rows.
-    const machineRelease = el.querySelector('[data-testid="remote-host-release"]');
-    expect(machineRelease?.textContent).toContain('Per role');
+    expect(roleRelease?.textContent).toContain('19d behind');
 
     fixture.destroy();
   });
@@ -225,9 +210,12 @@ describe('RemoteHostsPanelComponent', () => {
     const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
     fixture.detectChanges();
     const diagnostic = (fixture.nativeElement as HTMLElement).querySelector(
-      '[data-testid="remote-hosts-identity-errors"]',
+      '[data-testid="environment-attention"]',
     );
 
+    const summary = diagnostic?.querySelector('button') as HTMLButtonElement;
+    summary.click();
+    fixture.detectChanges();
     expect(diagnostic?.textContent).toContain('identity file corrupt: agent-runner-01.json');
     expect(diagnostic?.textContent).toContain('POST /api/clients/register');
     fixture.destroy();
@@ -311,51 +299,32 @@ describe('RemoteHostsPanelComponent', () => {
       return fixture;
     }
 
-    it('renders the normal state (cards waiting, actively draining)', async () => {
+    it('shows a non-empty queue as a quiet Hosts value', async () => {
       const fixture = await mountWithReviewSnapshot(reviewSnapshot());
       const el: HTMLElement = fixture.nativeElement;
-      const summary = el.querySelector('[data-testid="auto-review-queue-summary"]') as HTMLElement;
-
-      expect(summary).toBeTruthy();
-      expect(summary.classList.contains('rh__review--attention')).toBe(false);
-      expect(el.querySelector('[data-testid="auto-review-queue-depth"]')?.textContent).toContain('3');
-      expect(el.querySelector('[data-testid="auto-review-queue-active"]')?.textContent).toContain('2');
-      expect(el.querySelector('[data-testid="auto-review-queue-drain-rate"]')?.textContent).toContain('1.4/min');
-      expect(el.querySelector('[data-testid="auto-review-queue-duration"]')?.textContent).toContain('3m 10s');
-      expect(el.querySelector('[data-testid="auto-review-queue-attention"]')).toBeFalsy();
+      expect(el.querySelector('[data-testid="auto-review-queue-summary"]')?.textContent).toContain('3 waiting');
       fixture.destroy();
     });
 
-    it('renders the idle state (empty queue)', async () => {
-      const fixture = await mountWithReviewSnapshot(reviewSnapshot({
-        queueDepth: 0,
-        activeJobs: 0,
-        drainRatePerMinute: 0,
-        medianReviewDurationMs: null,
-      }));
+    it('moves an idle queue to Installation', async () => {
+      const fixture = await mountWithReviewSnapshot(reviewSnapshot({ queueDepth: 0, activeJobs: 0 }));
+      fixture.componentInstance.setView('installation');
+      fixture.detectChanges();
       const el: HTMLElement = fixture.nativeElement;
-
-      expect(el.querySelector('[data-testid="auto-review-queue-depth"]')?.textContent).toContain('0');
-      expect(el.querySelector('[data-testid="auto-review-queue-active"]')?.textContent).toContain('0');
-      expect(el.querySelector('[data-testid="auto-review-queue-duration"]')?.textContent).toContain('-');
-      expect(el.querySelector('[data-testid="auto-review-queue-attention"]')).toBeFalsy();
+      expect(el.querySelector('[data-testid="auto-review-queue-summary"]')?.textContent).toContain('0 waiting');
       fixture.destroy();
     });
 
-    it('renders the stagnant ATTENTION state', async () => {
+    it('puts a stagnant queue in the open attention causes', async () => {
       const fixture = await mountWithReviewSnapshot(reviewSnapshot({
-        queueDepth: 12,
-        activeJobs: 0,
-        isStagnant: true,
-        stagnantSince: '2026-08-17T11:00:00Z',
-        stagnantThresholdMinutes: 20,
+        queueDepth: 12, activeJobs: 0, isStagnant: true,
+        stagnantSince: '2026-08-17T11:00:00Z', stagnantThresholdMinutes: 20,
       }));
       const el: HTMLElement = fixture.nativeElement;
-      const summary = el.querySelector('[data-testid="auto-review-queue-summary"]') as HTMLElement;
-
-      expect(summary.classList.contains('rh__review--attention')).toBe(true);
-      const attention = el.querySelector('[data-testid="auto-review-queue-attention"]');
-      expect(attention?.textContent).toContain('20 minutes');
+      const attention = el.querySelector('[data-testid="environment-attention"]') as HTMLElement;
+      (attention.querySelector('button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(attention.textContent).toContain('20 minutes');
       fixture.destroy();
     });
 

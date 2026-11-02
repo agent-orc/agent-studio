@@ -38,7 +38,7 @@
 
 .codex-auth__steps li {
   padding-left: var(--studio-spacing-2);
-  color: var(--studio-fg-muted);
+  color: var(--studio-fg-dim);
 }
 
 .codex-auth__steps li::marker {
@@ -70,7 +70,7 @@
 
 .codex-auth__code strong {
   font-family: var(--font-mono, monospace);
-  font-size: 28px;
+  font-size: var(--studio-font-size-2xl);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.08em;
 }
@@ -85,7 +85,7 @@
   background: var(--studio-bg-hover);
   color: var(--studio-fg-dim);
   padding: var(--studio-spacing-3);
-  font-size: 11px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .codex-auth__failure {
@@ -106,7 +106,7 @@
 
 @media (max-width: 560px) {
   .codex-auth__code { align-items: flex-start; flex-direction: column; }
-  .codex-auth__code strong { font-size: 22px; }
+  .codex-auth__code strong { font-size: var(--studio-font-size-2xl); }
 }
 
 @media (prefers-reduced-motion: reduce) {
