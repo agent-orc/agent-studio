@@ -23,6 +23,7 @@ export type ProjectRailKey =
   | 'drift'
   | 'uxui'
   | 'test-quality'
+  | 'quality-studio'
   | 'token-usage'
   | 'cycle-time'
   | 'agent-activity'
@@ -186,6 +187,16 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
     description: 'Backend tests, end-to-end tests, tuning runs, coverage, and source-code perspective',
     empty: 'Test Quality placeholder. Run history and coverage views land in a later slice.',
     icon: '✓',
+    railIcon: 'check',
+  },
+  {
+    key: 'quality-studio',
+    group: 'quality',
+    label: 'Quality Studio',
+    panelTitle: 'Quality Studio',
+    description: 'Repository quality dashboard and project jump',
+    empty: 'Quality Studio is not connected.',
+    icon: '◇',
     railIcon: 'check',
   },
   {

@@ -183,11 +183,21 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
     internal const string RulesAnalysisName = "quality-rules";
     private readonly HttpClient client;
     private readonly IConfiguration configuration;
+    private readonly AgentStudio.QualityStudio.QualityStudioConnectionStore? connectionStore;
+    private readonly AgentStudio.Secrets.ISecretProvider? secretProvider;
 
     public QualityStudioAnalysisCoreAdapter(HttpClient client, IConfiguration configuration)
     {
         this.client = client;
         this.configuration = configuration;
+    }
+
+    public QualityStudioAnalysisCoreAdapter(HttpClient client, IConfiguration configuration,
+        AgentStudio.QualityStudio.QualityStudioConnectionStore connectionStore,
+        AgentStudio.Secrets.ISecretProvider secretProvider) : this(client, configuration)
+    {
+        this.connectionStore = connectionStore;
+        this.secretProvider = secretProvider;
     }
 
     public async Task<QualityStudioCoreResult> RunAsync(
@@ -197,7 +207,7 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
         IReadOnlyList<string> relativePaths,
         CancellationToken cancellationToken)
     {
-        var baseUrl = this.configuration["QualityStudio:BaseUrl"];
+        var baseUrl = connectionStore?.Get()?.InternalBaseUrl ?? this.configuration["QualityStudio:BaseUrl"];
         if (string.IsNullOrWhiteSpace(baseUrl))
             return Unavailable("Quality Studio API URL is not configured.");
         if (!Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var origin)
@@ -260,10 +270,15 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
     private async Task<JsonDocument> SendAsync(Uri origin, HttpMethod method, string route, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, new Uri(origin, route));
-        var token = configuration["QualityStudio:ApiToken"];
-        if (!string.IsNullOrWhiteSpace(token))
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var clientId = configuration["QualityStudio:ClientId"];
+        var connection = connectionStore?.Get();
+        if (connection is not null && secretProvider is not null)
+        {
+            var token = await secretProvider.GetForPlatformAsync(
+                AgentStudio.Secrets.SecretReference.Parse(AgentStudio.QualityStudio.QualityStudioEndpoints.TokenReference),
+                "quality-studio-analysis", cancellationToken);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Value);
+        }
+        var clientId = connection?.ServiceClientId ?? configuration["QualityStudio:ClientId"];
         if (!string.IsNullOrWhiteSpace(clientId))
             request.Headers.Add("X-Client-Id", clientId);
         using var response = await client.SendAsync(request, cancellationToken);

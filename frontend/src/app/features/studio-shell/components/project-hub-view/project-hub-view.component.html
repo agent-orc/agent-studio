@@ -107,6 +107,9 @@
       <app-regression-radar scope="project" [projectName]="projectName()" />
     }
   }
+  @if (activeRail() === 'quality-studio') {
+    <app-quality-studio-panel [projectName]="projectName()" (openSettings)="setRail('settings')" />
+  }
   @defer (when activeRail() === 'token-usage') {
     @if (activeRail() === 'token-usage') {
       <app-project-token-usage-panel [projectName]="projectName()" />

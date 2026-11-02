@@ -9,6 +9,8 @@ Application lifecycle D15, option B (decided 17.10.2026): Studio leaves Stable o
 
 ## Modes
 
+The moved networked stack can opt into the Quality Studio compose profile after the move. See [Quality Studio profile](./studio-website.md#quality-studio-profile) for the sibling hostname, read-only runner checkout mount, secret-provider setup, and `docker compose --profile quality up -d`. The rehearsal stack remains Studio-only unless Quality Studio is deployed for an integration acceptance run; its loopback listener is `127.0.0.1:18443`.
+
 | Mode | Stable | What happens |
 |---|---|---|
 | `--dry-run` (default) | keeps running | Inventory, path mapping, credential checklist, and server preflight. Nothing is written on either host except the local state directory. |

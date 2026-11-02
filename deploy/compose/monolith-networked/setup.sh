@@ -86,6 +86,7 @@ umask 077
 cat > .env <<EOF
 STUDIO_VERSION=$version
 STUDIO_DOMAIN=$domain
+QUALITY_DOMAIN=quality-$domain
 STUDIO_DATA_DIR=$data_dir
 STUDIO_SECRETS_KEY_FILE=$key_file
 STUDIO_BOOTSTRAP_CODE=$code

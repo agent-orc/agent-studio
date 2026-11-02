@@ -1,0 +1,20 @@
+.quality-connection {
+  display: grid;
+  gap: var(--studio-spacing-3);
+  color: var(--studio-fg);
+  padding: var(--studio-spacing-4) 0;
+  border-top: 1px solid var(--studio-border);
+}
+.quality-connection h3, .quality-connection p { margin: 0; }
+.quality-connection label { display: grid; gap: var(--studio-spacing-1); }
+.quality-connection input {
+  width: min(100%, 42rem); color: var(--studio-fg); background: var(--studio-bg-elevated);
+  border: 1px solid var(--studio-border-strong); border-radius: 4px; padding: var(--studio-spacing-2);
+}
+.quality-connection button {
+  justify-self: start; color: var(--studio-fg); background: var(--studio-bg-elevated);
+  border: 1px solid var(--studio-border-strong); border-radius: 4px;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3); cursor: pointer;
+}
+.quality-connection button:disabled { opacity: .55; cursor: default; }
+.quality-connection button:focus-visible, .quality-connection input:focus-visible { outline: 2px solid var(--studio-accent-3-strong); }
