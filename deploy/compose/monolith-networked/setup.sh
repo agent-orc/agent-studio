@@ -47,6 +47,12 @@ case "$version" in *[!0-9A-Za-z._-]*|'') echo 'Invalid version' >&2; exit 2;; es
 case "$domain" in *[!0-9A-Za-z.-]*|'') echo 'Invalid hostname' >&2; exit 2;; esac
 case "$data_dir" in /*) ;; *) echo 'Data directory must be absolute' >&2; exit 2;; esac
 case "$data_dir" in *[!0-9A-Za-z._/-]*) echo 'Data directory contains unsupported characters' >&2; exit 2;; esac
+# The secret store's key-encryption key. It lives outside the data directory so
+# that a copy of the data never carries the key that opens its secrets.
+key_file="${STUDIO_SECRETS_KEY_FILE:-$PWD/keys/secrets.kek}"
+case "$key_file" in /*) ;; *) echo 'STUDIO_SECRETS_KEY_FILE must be absolute' >&2; exit 2;; esac
+case "$key_file" in *[!0-9A-Za-z._/-]*) echo 'STUDIO_SECRETS_KEY_FILE contains unsupported characters' >&2; exit 2;; esac
+case "${key_file%/}/" in "${data_dir%/}"/*) echo 'STUDIO_SECRETS_KEY_FILE must lie outside the data directory' >&2; exit 2;; esac
 if [ -e .env ]; then echo '.env already exists; keep its owner code and edit the version for an update.' >&2; exit 2; fi
 # home/.local/share holds the API's machine-local state (batch gates, gate
 # cache, quota and routing state); it must be on the data directory.
@@ -59,11 +65,23 @@ if [ ! -d "$data_dir/workspace/.git" ]; then
   git -C "$data_dir/workspace" init -q -b main
   git -C "$data_dir/workspace" -c user.name='Studio Installer' -c user.email='installer@studio.invalid' -c commit.gpgsign=false commit -qm 'Initialize Studio workspace' --allow-empty
 fi
-if [ "$(id -u)" -eq 0 ]; then
-  chown -R 10001:10001 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home"
+key_dir="$(dirname "$key_file")"
+if [ -e "$key_file" ]; then
+  echo "Keeping the existing secret store key $key_file." >&2
 else
-  docker run --rm --user 0 -v "$data_dir:/site" --entrypoint chown caddy:2-alpine \
-    -R 10001:10001 /site/workspace /site/projects /site/home
+  (umask 077 && mkdir -p "$key_dir" && openssl rand -base64 32 > "$key_file")
+fi
+chmod 600 "$key_file"
+# The API (UID 10001) reads the key; the edge runs as root without the right
+# to override file permissions, so root owns its state directories.
+if [ "$(id -u)" -eq 0 ]; then
+  chown -R 10001:10001 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$key_file"
+  chown -R 0:0 "$data_dir/caddy-data" "$data_dir/caddy-config"
+else
+  helper=caddy:2.11-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+  docker run --rm --user 0 -v "$data_dir:/site" -v "$key_dir:/keys" --entrypoint sh "$helper" -c \
+    'chown -R 10001:10001 /site/workspace /site/projects /site/home "/keys/$1" && chown -R 0:0 /site/caddy-data /site/caddy-config' \
+    sh "$(basename "$key_file")"
 fi
 code="$(openssl rand -hex 24)"
 umask 077
@@ -71,6 +89,7 @@ cat > .env <<EOF
 STUDIO_VERSION=$version
 STUDIO_DOMAIN=$domain
 STUDIO_DATA_DIR=$data_dir
+STUDIO_SECRETS_KEY_FILE=$key_file
 STUDIO_BOOTSTRAP_CODE=$code
 STUDIO_CADDYFILE=./Caddyfile.$edge
 STUDIO_CLOUDFLARE_ALLOW_DIRECT=$allow_direct
@@ -78,6 +97,7 @@ STUDIO_PUBLIC_CLOUDFLARE_EDGE=$public_edge
 STUDIO_RESTART_POLICY=$restart_policy
 EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
+printf 'Secret store key: %s\nCopy it to a safe place outside the data backups; a restore needs it.\n' "$key_file"
 if [ "$edge" = cloudflare ]; then
   echo 'Cloudflare mode: create an A record only (no AAAA) and set SSL/TLS mode Full (strict).'
   echo 'Install the account-specific origin-pull CA and Docker firewall before starting the stack.'

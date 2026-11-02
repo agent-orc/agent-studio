@@ -49,7 +49,10 @@ public sealed class PipelineStepEconomyAdvisor(
                 .ToList();
             if (sparkModels.Count == 0)
             {
-                logger.LogWarning(
+                // The registry catalogue of a networked host never lists the
+                // live-only spark ids; that is the expected answer, not a fault.
+                logger.Log(catalogue.Source == HostCliDiscovery.NetworkedRegistrySource
+                        ? LogLevel.Debug : LogLevel.Warning,
                     "pipeline_model_economy_unavailable step={StepId} cli={CliType} catalogue={CatalogueSource}",
                     stepId, CliTypes.Codex, catalogue.Source ?? "unknown");
                 return null;

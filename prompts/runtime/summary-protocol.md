@@ -64,6 +64,7 @@ Rules:
 - Keep text under 250 words. Images do not count.
 - Reply with the Markdown above, then the assessment block below. Do not wrap the Markdown in code fences.
 - The application may replace the `Result` line with its deterministic run outcome after you reply.
+- The LOG below may be shortened to fit the prompt limit. It then starts with a list of what was left out. Left-out output is not missing work: do not report it as a gap or an open item.
 - `What Was Done` and `Open Items` must agree with the EVIDENCE. When the log and the evidence disagree, the evidence about what happened after the run (integration records, operator merges, lane) wins, and the disagreement goes into the assessment block.
 
 Assessment block (after the Markdown, exactly one, JSON between the tags, no code fence):

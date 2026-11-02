@@ -466,6 +466,7 @@ public sealed partial class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    developerRoot,
                     repoRoot,
                     delivery,
                     branch,
@@ -1629,6 +1630,7 @@ public sealed partial class MergeIntoDevelopRunner
         string project,
         string jobId,
         string jobFolderPath,
+        string developerRoot,
         string repoRoot,
         DeliveryRefResolution delivery,
         string releaseBranch,
@@ -1740,13 +1742,14 @@ public sealed partial class MergeIntoDevelopRunner
             return (docsMerge, lightGate);
         }
 
+        // AGT-3435: a delivery behind the release line is merged, and the full
+        // suite runs on that merge result. Main still only advances to a SHA the
+        // full suite passed; only a real conflict goes back to the agent.
         if (!_git.IsAncestor(repoRoot, releaseLine, taskBranch))
         {
-            return (
-                MergeIntoIntegrationResult.Failed(
-                    AcceptedIntegrationFailureCodes.SourceNeedsRebase,
-                    $"Release source '{taskBranch}' must be rebased onto '{releaseBranch}' before the full-suite gate."),
-                null);
+            return await MergeBehindReleaseLineAsync(
+                project, jobId, jobFolderPath, developerRoot, repoRoot, delivery, releaseBranch, ct)
+                .ConfigureAwait(false);
         }
 
         var settings = _projectSettings.Get(project);
@@ -2372,9 +2375,11 @@ public sealed partial class MergeIntoDevelopRunner
                     (preDevelopResult ?? preMainResult)?.Reason);
             case MergeIntoIntegrationOutcome.MergedAfterRebase:
                 var replacementCount = result.RebasedCommits.Count;
-                var rebaseGate = preDevelopResult is null
-                    ? string.Empty
-                    : $" Build gate {preDevelopResult.Verdict} checked the rebased merge result.";
+                var rebaseGate = preDevelopResult is not null
+                    ? $" Build gate {preDevelopResult.Verdict} checked the rebased merge result."
+                    : preMainResult is not null
+                        ? $" Mandatory full suite {preMainResult.Verdict} checked the rebased merge result."
+                        : string.Empty;
                 return (
                     PipelineStepStatus.Passed,
                     "merged-after-rebase",

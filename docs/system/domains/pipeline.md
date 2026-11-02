@@ -29,6 +29,13 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+Each gate-economics row also carries the grouping figures of its window
+(AGT-3399): `batchesClosed` (distinct batches whose gate ran), `meanBatchSize`
+(largest membership per batch, averaged), and `soloGatedMerges` (merges
+integrated by a per-card gate). The project Flow health view reads them with the
+cycle-time rows, whose `reviewAspectSeconds` split review time per `aspect-*`
+step inside Post Processing.
+
 ### Per-project integration test placement (AGT-3314)
 
 `testing.mode` defaults to `pre-merge`. That path retains the existing
@@ -792,6 +799,12 @@ as before.
   gate measurement on the gate hosts shows a gain. A gate worker older than
   AGT-3232 rejects the field as `unknown-field`, so add it only after every
   gate host runs the new worker.
+  On the gate host (24 vCPU) on 2 November 2026 the whole backend suite, 13,288
+  tests, took 20 minutes in four parallel processes with 6 processors each and a
+  hash partition, next to a running batch gate, without a failure. One process
+  with 12 processors took 33 minutes. Most of the time is spent waiting, so the
+  host load stayed between 10 and 21. `backend-routine` declares `shards: 4` since
+  then, with `RemoteGate:ProcessorCount` 6 so that four lanes fit on the host.
 - **Count.** `shards: N` (1 to 16; 1 keeps the suite in one process) sets the
   count. `shards: auto` derives it from the measured serial duration of the
   last complete sharded run, or else `expectedDurationSeconds`, at 360 seconds
@@ -1812,6 +1825,26 @@ move-error dialog.
   complete stdout and stderr artifacts are retained in the Remote Review grade.
   A missing preparation directory is also copied into the grade Detail line so
   the path is visible without opening stderr.
+- What the dependency cache may skip (AGT-3429). A cache hit proves only that
+  each lockfile scope's `node_modules` and `.nm-state` marker match its
+  lockfiles. It skips a preparation command only when every scope of that
+  command hits and the plan marks the command as covered by its scopes
+  (`CoveredByDependencyScopes`, decided by `DependencyPreparationSkipPolicy`).
+  The planner marks a conventional `npm ci` for one lockfile root as covered. A
+  build-profile `installCmd` is opaque shell and runs on every attempt, unless
+  the profile sets `installCoveredByLockfiles: true` to state that its
+  `lockfiles` cover everything the command prepares; leave it false when the
+  command also runs `dotnet restore` or anything else outside the lockfile
+  scopes. `dotnet restore` has no scope and always runs. A plan without the
+  field runs the command. The opt-in is part of the profile fingerprint only
+  when set, so existing validations stay valid. Restored `**/obj` content stays
+  valid in a later Remote Review attempt because every attempt and role uses
+  the host-stable NuGet folder `<review-workdir>/.dependency-cache/nuget-packages`
+  with a shared `nuget-scratch` for NuGet's extraction locks, so a cached
+  `project.assets.json` never names a package folder deleted with an earlier
+  attempt (NETSDK1064). The review retention sweep removes package versions
+  extracted more than 30 days ago while no attempt is active; the next restore
+  extracts them again.
 - Compatibility dependency preparation and verification consume one shared `gate-run` budget.
   Machine-gate queue wait, exact workspace materialization, and exact workspace
   cleanup have separate named budgets. Local Git operations receive the remaining
@@ -1955,8 +1988,20 @@ move-error dialog.
   the full suite once on that exact source SHA, records
   `post-steps/pre-main-test-gate-*.log`, rechecks both branch tips after the
   suite, and only then fast-forwards `main`. A red or incomplete result leaves
-  `main` unchanged. The future manifest-based release workflow must use the
-  same boundary.
+  `main` unchanged. In a repository that integrates straight into `main`, a
+  delivery that already descends from `main` takes that fast-forward path. A
+  delivery behind `main` (AGT-3435) gets the same `--no-ff` merge as the
+  develop path, under the gate journal. The full suite then runs on the exact
+  merge SHA. A red verdict rolls the lane back and nothing is published. A green
+  verdict stands only while the merge base still contains the freshly fetched
+  `origin/main`. When `main` moved during the suite, the lane is rolled back and
+  the delivery is merged and gated again, at most
+  `ReleaseLineMergePolicy.MaxAttempts` (3) times; the last refusal is
+  `release-line-moving`. A real conflict returns `agent-round-required` with the
+  conflicted files, which starts the one bounded automatic round. A mechanical
+  rebase records its SHA mapping like the develop path. The old
+  `source-needs-rebase` refusal is no longer written for this case. The future
+  manifest-based release workflow must use the same boundary.
 - Framework-specific catalogue steps declare `appliesTo`; `any` remains the
   default. The project catalogue response includes derived `detectedStacks`, an
   `applicable` flag, and the effective resolved command list for every step.
@@ -2455,8 +2500,22 @@ operator changes cause the step to fail before its writer runs.
   `claude-opus-5-5` / `low`. The Haiku fallback and the shared
   `ClaudeCli:SummaryModel` key no longer apply to it. An inherited model the
   chosen CLI cannot run falls back to the catalogue default.
-  The prompt receives the log tail and an evidence bundle
-  (`SummaryEvidenceAssembler`). The bundle holds the lane and lane history,
+  The prompt receives the run evidence and an evidence bundle
+  (`SummaryEvidenceAssembler`). The step is an orchestrator step, so the
+  whole prompt must stay under the 32 KB `OrchestratorPromptBoundary` limit
+  (AGT-3410). `SummaryPromptFit` fills the `{{log}}` slot with the bytes the
+  rest of the prompt leaves: the task prompt head (`prompt.md`), the run
+  status lines and last terminal sentinel, the `results/` deliverables and the
+  latest agent messages keep bounded sections; the run log before them gets
+  the remainder, newest lines first, without `runner-log-delivery` markers and
+  with long tool-call lines cut to 400 bytes. An `OMITTED TO FIT THE PROMPT
+  LIMIT` list at the top of the slot names everything left out, and raw
+  session paths and credentials are replaced before the boundary sees them.
+  Each shortened prompt logs `Summary prompt shortened` with its size and a
+  running count. A boundary refusal (`decision-input-incomplete:*`) is not
+  retried: finalization stops after the first attempt, logs
+  `Result finalization degraded` with `promptBytes` and `degradedTotal`, and
+  queues no remote retry. The bundle holds the lane and lane history,
   pipeline step statuses, reasons and failure codes, the commit chain and
   `codeActivityDetected`, integration records and verification, salvage refs
   from `agent_run_finished`, the completion claim, review and sight-review
@@ -2796,6 +2855,68 @@ new fact even when its operator-facing summary is unchanged.
   its intent / prompt note / timeline receipt, and the fresh budget after an
   operator requeue) plus the loop breaker
   `backend.Tests/Architecture/RunTimeoutContinuationBreakerTest.cs`.
+
+## Minimal repository execution definition (AOW-15)
+
+A repository without a build system still needs a valid
+`.agent-studio/project.yml` once it adds one. The smallest valid file is:
+
+```yaml
+schemaVersion: 1
+stack: [shell]
+commands:
+  prepare: .agent-studio/prepare
+  build: []
+  test: []
+  lint: []
+```
+
+with an executable prepare script next to it:
+
+```sh
+#!/bin/sh
+set -eu
+```
+
+Rules an agent must follow when it writes the file:
+
+- `commands.prepare` is required. It is a repository-relative path with
+  forward slashes and no `..`; anything else is `prepare-path-invalid`.
+- The script must exist in the same delivery (`prepare-script-missing`
+  otherwise) and must be committed executable
+  (`git update-index --chmod=+x .agent-studio/prepare`). POSIX hosts run it
+  through `/bin/sh`; Windows hosts use `prepare.ps1` beside it or Git Bash.
+- `stack` needs at least one entry. `shell` is a free label that binds no
+  dependency cache; `node`, `dotnet` and `playwright` bind the npm, NuGet and
+  Playwright caches.
+- Empty `build`, `test` and `lint` lists are valid. The gate then has no
+  verify command and records `NotApplicable` (`No build/test defined`).
+
+An invalid definition is a code failure of the delivery that carries it, in
+every gate path:
+
+- `ProjectPreparationExecutor.RunAsync` returns a reason that lists each issue
+  as `path (line N) [code] message`, bounded by
+  `ProjectDefinitionIssueText.MaxLength`. The structured issues stay on
+  `BuildTestGateResult.ProjectDefinitionIssues`.
+- `BuildTestGateRunner` maps `PreparationFailureKind.Definition` to
+  `BuildTestGateFailureKind.Code` and does not run the baseline / clean-repeat
+  diagnosis for it. Before AOW-15 that diagnosis returned
+  `unclassified-first-occurrence` and retyped the failure as `Environment`, so
+  the merge gate reported `gate-environment-failure`, spent the environment
+  replay ladder, and parked the card with "repair the gate host".
+- `GateFailureTriagePolicy` classifies a gate log whose reason carries the
+  invalid-definition text as `product` with kind `definition`, before any
+  environment marker. The failing items are the `path [code]` pairs. Routing
+  starts the one fix round with the issues and the rule above, never attaches
+  the card to a shared cause, and never spends the environment replay budget.
+- Review checks the file first. Right after the completion gate,
+  `ProjectDefinitionGate` reads `project.yml` at the exact subject SHA through
+  git and validates it, including the existence of every referenced file. An
+  invalid file reissues the card to its agent with one finding per issue,
+  within the shared reissue budget, before the build gate or any review aspect
+  runs. A delivery without the file, or a subject git cannot read, passes this
+  check; the build gate stays the backstop.
 
 ## Project deployment definition (P1)
 

@@ -73,6 +73,7 @@ catch (Exception exception) when (exception is AgentStudio.TaskServer.Contracts.
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
 builder.Services.AddSingleton<AgentStudio.Review.ReviewObservationStore>();
+builder.Services.AddSingleton<AgentStudio.Review.ReviewBaselineService>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
@@ -744,7 +745,6 @@ builder.Services.AddKeyedSingleton<GenericCliExecutionService>(CliTypes.Gemini, 
         sp.GetRequiredService<ILoggerFactory>().CreateLogger("AgentStudio.Cli.AntigravityCliService"),
         sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<ClaudeSessionInspector>();
-builder.Services.AddSingleton<CliWorkingMemoryService>();
 builder.Services.AddSingleton<CliRouter>(sp => new CliRouter(
     sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Claude),
     sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Codex),
@@ -1159,6 +1159,7 @@ builder.Services.AddSingleton<ProjectIntegrationViewService>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchIndexes>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
 builder.Services.AddSingleton<ProjectSettingsService>();
+builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
 builder.Services.AddSingleton<AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService>();

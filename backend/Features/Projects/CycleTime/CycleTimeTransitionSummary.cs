@@ -34,6 +34,14 @@ public sealed record CycleTimeLoopTask(
     /// <summary>Backward causes of this task, most frequent first.</summary>
     IReadOnlyList<CycleTimeOutcomeCount> Causes);
 
+/// <summary>Backward moves of one <see cref="BackwardCauseGroups"/> group, with the fine causes inside it.</summary>
+public sealed record CycleTimeBackwardCauseGroup(
+    string Group,
+    string Label,
+    int Count,
+    int Tasks,
+    IReadOnlyList<CycleTimeOutcomeCount> Causes);
+
 public sealed record CycleTimeTransitionSummary(
     int TotalTransitions,
     int BackwardTransitions,
@@ -43,7 +51,49 @@ public sealed record CycleTimeTransitionSummary(
     IReadOnlyList<CycleTimeTransitionCell> Cells,
     IReadOnlyList<CycleTimeLaneDwell> LaneDwell,
     IReadOnlyList<CycleTimeBounceCause> BounceCauses,
-    IReadOnlyList<CycleTimeLoopTask> TopLoops);
+    IReadOnlyList<CycleTimeLoopTask> TopLoops)
+{
+    /// <summary>Backward moves by cause group (review, gate, lease recovery, other), in that order.</summary>
+    public IReadOnlyList<CycleTimeBackwardCauseGroup> BackwardCauseGroups { get; init; } = [];
+
+    /// <summary>Tasks that moved backwards at least once, but never for a review cause.</summary>
+    public int TasksWithoutReviewCause { get; init; }
+}
+
+/// <summary>
+/// Coarse grouping of the backward causes for the review baseline (Dossier
+/// AGT-3400 S2): a review finding reopened the card, a build/test or
+/// integration gate sent it back, runner lease recovery returned it, or
+/// anything else (infrastructure, operator, runner requeue, unclassified).
+/// <c>BackwardTransitions</c> counts every level drop, so only the review
+/// group answers "how many cards did review send back".
+/// </summary>
+public static class BackwardCauseGroups
+{
+    public const string Review = "review";
+    public const string Gate = "gate";
+    public const string LeaseRecovery = "lease-recovery";
+    public const string Other = "other";
+
+    public static readonly IReadOnlyList<string> Ordered = [Review, Gate, LeaseRecovery, Other];
+
+    public static string Of(string cause) => cause switch
+    {
+        TransitionCauses.QualityLoop => Review,
+        TransitionCauses.GateFailure or TransitionCauses.IntegrationRecovery
+            or TransitionCauses.AcceptanceIntegrationFailed => Gate,
+        TransitionCauses.LeaseRecovery => LeaseRecovery,
+        _ => Other,
+    };
+
+    public static string Label(string group) => group switch
+    {
+        Review => "Review",
+        Gate => "Gate",
+        LeaseRecovery => "Lease recovery",
+        _ => "Other",
+    };
+}
 
 /// <summary>Pure aggregation of per-task transitions into the project matrix, dwell, cause, and loop views.</summary>
 public static class CycleTimeTransitionAggregation
@@ -140,6 +190,23 @@ public static class CycleTimeTransitionAggregation
                     .ToList()))
             .ToList();
 
+        var groups = BackwardCauseGroups.Ordered
+            .Select(group => (Group: group, Moves: backward
+                .Where(x => BackwardCauseGroups.Of(x.Transition.Cause) == group).ToList()))
+            .Select(g => new CycleTimeBackwardCauseGroup(
+                g.Group,
+                BackwardCauseGroups.Label(g.Group),
+                g.Moves.Count,
+                g.Moves.Select(x => x.Row.TaskId).Distinct(StringComparer.Ordinal).Count(),
+                g.Moves.GroupBy(x => x.Transition.Cause, StringComparer.Ordinal)
+                    .Select(c => new CycleTimeOutcomeCount(c.Key, c.Count()))
+                    .OrderByDescending(c => c.Count)
+                    .ThenBy(c => c.Outcome, StringComparer.Ordinal)
+                    .ToList()))
+            .ToList();
+        var reviewed = backward.Where(x => BackwardCauseGroups.Of(x.Transition.Cause) == BackwardCauseGroups.Review)
+            .Select(x => x.Row.TaskId).ToHashSet(StringComparer.Ordinal);
+
         return new CycleTimeTransitionSummary(
             all.Count,
             backward.Count,
@@ -148,7 +215,12 @@ public static class CycleTimeTransitionAggregation
             cells,
             dwell,
             causes,
-            loops);
+            loops)
+        {
+            BackwardCauseGroups = groups,
+            TasksWithoutReviewCause = backward.Select(x => x.Row.TaskId).Distinct(StringComparer.Ordinal)
+                .Count(task => !reviewed.Contains(task)),
+        };
     }
 
     private static double Round(double value) => Math.Round(value, 1);

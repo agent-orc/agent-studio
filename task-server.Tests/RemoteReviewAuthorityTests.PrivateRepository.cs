@@ -105,6 +105,98 @@ public sealed partial class RemoteReviewAuthorityTests
         Assert.Equal("host-private", claim.Attempt!.HostId);
     }
 
+    [Fact]
+    public async Task A_retry_takes_the_visibility_corrected_after_the_failure()
+    {
+        // AGT-3408: every attempt shares its subject's sealed plan, so a retry
+        // kept the "public" of the failed attempt after the operator fixed it.
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store, plan: PrivatePlan() with { PrivateRepository = false });
+        await RegisterProductRepositoryAsync(store);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var first = await store.ClaimReviewAsync(new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        Assert.Equal("claimed", first.Status);
+        Assert.True(await store.SetProjectRepositoryVisibilityAsync(new(RepositoryUrl, "private"), "owner", default));
+
+        var report = await store.ReportReviewAsync(first.Attempt!.AttemptId,
+            PassingReport(first) with { Outcome = "ReviewInfra", FailureClassification = "SnapshotUnavailable" },
+            "review-a", default);
+
+        Assert.True(report.RetryScheduled);
+        await RegisterReviewerAsync(store, "review-b", "instance-b", "host-b");
+        var keyless = await store.ClaimReviewAsync(new ReviewClaimRequest("review-b", "instance-b"), "review-b", default);
+        Assert.Equal("empty", keyless.Status);
+        Assert.Equal([PrivateReadKey], keyless.MissingCapabilities);
+    }
+
+    [Fact]
+    public async Task A_retry_of_a_repository_GitHub_reports_private_is_never_planned_public()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store, plan: PrivatePlan() with { PrivateRepository = false });
+        await RegisterProductRepositoryAsync(store);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var first = await store.ClaimReviewAsync(new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        Assert.Equal("claimed", first.Status);
+        store.ReportedRepositoryPrivate = url => url == RepositoryUrl;
+
+        await store.ReportReviewAsync(first.Attempt!.AttemptId,
+            PassingReport(first) with { Outcome = "ReviewInfra", FailureClassification = "SnapshotUnavailable" },
+            "review-a", default);
+
+        await RegisterReviewerAsync(store, "review-b", "instance-b", "host-b");
+        var keyless = await store.ClaimReviewAsync(new ReviewClaimRequest("review-b", "instance-b"), "review-b", default);
+        Assert.Equal([PrivateReadKey], keyless.MissingCapabilities);
+    }
+
+    [Fact]
+    public async Task A_new_subject_of_a_repository_GitHub_reports_private_is_planned_private()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        store.ReportedRepositoryPrivate = url => url == RepositoryUrl;
+
+        var subject = await SeedReviewSubjectAsync(store, plan: PrivatePlan() with { PrivateRepository = false });
+
+        Assert.True(subject.Plan.PrivateRepository);
+    }
+
+    [Fact]
+    public async Task A_retry_without_any_current_visibility_keeps_the_sealed_one()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 13, 9, 0, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store, plan: PrivatePlan());
+        await RegisterPrivateReviewerAsync(store, clock, readProofStatus: "ready");
+        var first = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-private", "instance-private"), "review-private", default);
+        Assert.Equal("claimed", first.Status);
+
+        await store.ReportReviewAsync(first.Attempt!.AttemptId,
+            PassingReport(first) with { Outcome = "ReviewInfra", FailureClassification = "SnapshotUnavailable" },
+            "review-private", default);
+
+        await RegisterReviewerAsync(store, "review-b", "instance-b", "host-b");
+        var keyless = await store.ClaimReviewAsync(new ReviewClaimRequest("review-b", "instance-b"), "review-b", default);
+        Assert.Equal([PrivateReadKey], keyless.MissingCapabilities);
+    }
+
+    /// <summary>Registers the seeded project's repository, without a visibility.</summary>
+    private static async Task RegisterProductRepositoryAsync(TaskServerStore store)
+    {
+        var project = Assert.Single(await store.ListProjectsAsync(null, default));
+        await store.RegisterProjectRepositoryAsync(new RegisterProjectRepositoryRequest(
+            project.ProjectId, project.WorkspaceId, project.Name, project.TaskKeyPrefix, RepositoryUrl, "main"),
+            "owner", default);
+    }
+
     private static async Task RegisterPrivateReviewerAsync(
         TaskServerStore store,
         ManualTimeProvider clock,

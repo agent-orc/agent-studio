@@ -11,8 +11,8 @@ namespace AgentStudio.Tests;
 /// AGT-3000: a git lock left by a dead git process made every workspace
 /// evidence flush fail for 36 hours, and a 92-hour-old worktree index lock
 /// blocked the Temp integration slot. The guard clears a lock that is older
-/// than the threshold and held by no git process, waits once for a young or
-/// owned lock, and otherwise leaves git to fail as before.
+/// than the threshold (one minute) and held by no git process, waits once for
+/// a young or owned lock, and otherwise leaves git to fail as before.
 /// </summary>
 public sealed class GitStaleLockGuardTests : IDisposable
 {
@@ -35,28 +35,71 @@ public sealed class GitStaleLockGuardTests : IDisposable
 
     [Theory]
     [InlineData(0, GitLockOwnership.None, GitLockVerdict.KeepYoung)]
-    [InlineData(9, GitLockOwnership.None, GitLockVerdict.KeepYoung)]
-    [InlineData(9, GitLockOwnership.Owned, GitLockVerdict.KeepYoung)]
-    [InlineData(9, GitLockOwnership.Unknown, GitLockVerdict.KeepYoung)]
-    [InlineData(10, GitLockOwnership.None, GitLockVerdict.Clear)]
-    [InlineData(2160, GitLockOwnership.None, GitLockVerdict.Clear)]
-    [InlineData(10, GitLockOwnership.Owned, GitLockVerdict.KeepOwned)]
-    [InlineData(5520, GitLockOwnership.Owned, GitLockVerdict.KeepOwned)]
-    [InlineData(10, GitLockOwnership.Unknown, GitLockVerdict.KeepOwnerUnknown)]
-    [InlineData(-5, GitLockOwnership.None, GitLockVerdict.KeepYoung)]
-    public void Policy_decides_by_age_first_then_ownership(int ageMinutes, GitLockOwnership ownership, GitLockVerdict expected)
+    [InlineData(59, GitLockOwnership.None, GitLockVerdict.KeepYoung)]
+    [InlineData(59, GitLockOwnership.Owned, GitLockVerdict.KeepYoung)]
+    [InlineData(59, GitLockOwnership.Unknown, GitLockVerdict.KeepYoung)]
+    [InlineData(60, GitLockOwnership.None, GitLockVerdict.Clear)]
+    [InlineData(9 * 60, GitLockOwnership.None, GitLockVerdict.Clear)]
+    [InlineData(36 * 3600, GitLockOwnership.None, GitLockVerdict.Clear)]
+    [InlineData(60, GitLockOwnership.Owned, GitLockVerdict.KeepOwned)]
+    [InlineData(92 * 3600, GitLockOwnership.Owned, GitLockVerdict.KeepOwned)]
+    [InlineData(60, GitLockOwnership.Unknown, GitLockVerdict.KeepOwnerUnknown)]
+    [InlineData(-300, GitLockOwnership.None, GitLockVerdict.KeepYoung)]
+    public void Policy_decides_by_age_first_then_ownership(int ageSeconds, GitLockOwnership ownership, GitLockVerdict expected)
     {
         var verdict = GitStaleLockPolicy.Decide(
-            TimeSpan.FromMinutes(ageMinutes), GitStaleLockPolicy.DefaultThreshold, ownership);
+            TimeSpan.FromSeconds(ageSeconds), GitStaleLockPolicy.DefaultThreshold, ownership);
 
         Assert.Equal(expected, verdict);
     }
 
     [Fact]
-    public void Policy_probes_ownership_only_for_aged_locks()
+    public void Policy_probes_ownership_once_a_lock_is_a_minute_old()
     {
-        Assert.False(GitStaleLockPolicy.NeedsOwnershipProbe(TimeSpan.FromMinutes(9), GitStaleLockPolicy.DefaultThreshold));
-        Assert.True(GitStaleLockPolicy.NeedsOwnershipProbe(TimeSpan.FromMinutes(10), GitStaleLockPolicy.DefaultThreshold));
+        Assert.Equal(TimeSpan.FromMinutes(1), GitStaleLockPolicy.DefaultThreshold);
+        Assert.False(GitStaleLockPolicy.NeedsOwnershipProbe(TimeSpan.FromSeconds(59), GitStaleLockPolicy.DefaultThreshold));
+        Assert.True(GitStaleLockPolicy.NeedsOwnershipProbe(TimeSpan.FromMinutes(1), GitStaleLockPolicy.DefaultThreshold));
+    }
+
+    [Fact]
+    public void Unowned_index_lock_from_a_killed_git_is_cleared_after_a_minute_not_ten()
+    {
+        // 2026-11 incident: an index.lock from a git process killed outside this
+        // server was kept as young for at least 9 minutes.
+        var repo = SeedRepo("external-kill");
+        var lockPath = Path.Combine(repo, ".git", "index.lock");
+        PlantLock(lockPath, TimeSpan.FromMinutes(2));
+        var probe = new FixedProbe(GitLockOwnership.None);
+        var logger = new CapturingLogger<GitStaleLockGuard>();
+
+        var result = Guard(probe, logger).EnsureWritable(repo);
+
+        Assert.Equal(1, probe.Calls);
+        Assert.False(File.Exists(lockPath));
+        Assert.Equal(lockPath, Assert.Single(result.Cleared).Path);
+        Assert.Empty(result.Remaining);
+        Assert.Contains(logger.Messages, message => message.StartsWith("git-stale-lock-cleared", StringComparison.Ordinal));
+        Assert.Equal(0, Git(repo, "add", "README.md").Code);
+    }
+
+    [Fact]
+    public void Minute_old_lock_held_by_a_writer_that_started_just_after_its_write_time_is_kept()
+    {
+        // Process start and file times come from different coarse clocks. A
+        // writer that seems to start a moment after its lock was written is
+        // still a possible holder, now that a one-minute-old lock is probed.
+        var repo = SeedRepo("writer-clock-skew");
+        var lockPath = Path.Combine(repo, ".git", "index.lock");
+        PlantLock(lockPath, TimeSpan.FromMinutes(2));
+        var writerStarted = File.GetLastWriteTimeUtc(lockPath) + TimeSpan.FromMilliseconds(500);
+        var probe = new GitProcessLockOwnerProbe(
+            () => [],
+            () => [new GitProcessObservation(4244, "git", repo, "git add -A", writerStarted)]);
+
+        var result = Guard(probe).Sweep(repo);
+
+        Assert.True(File.Exists(lockPath));
+        Assert.Equal(GitLockVerdict.KeepOwned, Assert.Single(result.Remaining).Verdict);
     }
 
     [Theory]
@@ -189,7 +232,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
     {
         var repo = SeedRepo("fresh");
         var lockPath = Path.Combine(repo, ".git", "index.lock");
-        PlantLock(lockPath, TimeSpan.FromMinutes(2));
+        PlantLock(lockPath, TimeSpan.FromSeconds(30));
         var probe = new FixedProbe(GitLockOwnership.None);
         var waits = new List<TimeSpan>();
         var logger = new CapturingLogger<GitStaleLockGuard>();
@@ -329,13 +372,19 @@ public sealed class GitStaleLockGuardTests : IDisposable
         var repo = SeedRepo("threshold");
         var lockPath = Path.Combine(repo, ".git", "index.lock");
         PlantLock(lockPath, TimeSpan.FromMinutes(3));
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["GitStaleLocks:ThresholdMinutes"] = "2" })
-            .Build();
-        var guard = new GitStaleLockGuard(config, null, new FixedProbe(GitLockOwnership.None), _time, _ => { });
+        GitStaleLockGuard Configured(string minutes) => new(
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { ["GitStaleLocks:ThresholdMinutes"] = minutes })
+                .Build(),
+            null, new FixedProbe(GitLockOwnership.None), _time, _ => { });
 
+        var patient = Configured("5");
+        patient.EnsureWritable(repo);
+        Assert.Equal(TimeSpan.FromMinutes(5), patient.Threshold);
+        Assert.True(File.Exists(lockPath));
+
+        var guard = Configured("2");
         guard.EnsureWritable(repo);
-
         Assert.Equal(TimeSpan.FromMinutes(2), guard.Threshold);
         Assert.False(File.Exists(lockPath));
     }
@@ -372,7 +421,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
         Directory.CreateDirectory(watchPath);
         File.WriteAllText(Path.Combine(watchPath, "run.md"), "evidence\n");
         var lockPath = Path.Combine(repo, ".git", "index.lock");
-        PlantLock(lockPath, TimeSpan.FromMinutes(1));
+        PlantLock(lockPath, TimeSpan.FromSeconds(30));
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {

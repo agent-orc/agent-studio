@@ -802,6 +802,7 @@ public class ProjectSettingsService
             BuildCmds = Clean(profile.BuildCmds),
             TestCmds = Clean(profile.TestCmds),
             Lockfiles = Clean(profile.Lockfiles),
+            InstallCoveredByLockfiles = profile.InstallCoveredByLockfiles,
             PreserveGlobs = Clean(profile.PreserveGlobs),
             PoolSize = profile.PoolSize is > 0 ? profile.PoolSize : null,
             Status = BuildProfileStatuses.Declared,

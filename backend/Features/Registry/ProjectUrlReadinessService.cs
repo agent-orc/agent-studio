@@ -12,13 +12,19 @@ public sealed class ProjectUrlReadinessService
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMilliseconds(2500);
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ProjectUrlReadinessService> _logger;
+    private readonly bool _networked;
+    private readonly ProjectUrlProcessService? _processes;
 
     public ProjectUrlReadinessService(
         IHttpClientFactory httpClientFactory,
-        ILogger<ProjectUrlReadinessService> logger)
+        ILogger<ProjectUrlReadinessService> logger,
+        IConfiguration? configuration = null,
+        ProjectUrlProcessService? processes = null)
     {
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _networked = configuration is not null && !SecurityProfiles.IsLocal(configuration);
+        _processes = processes;
     }
 
     public async Task<ProjectUrlReadinessResult> ProbeAsync(
@@ -33,6 +39,12 @@ public sealed class ProjectUrlReadinessService
         {
             return Finish(project, url, "offline", null, "unknown", "Project URL must use HTTP or HTTPS.", started);
         }
+
+        var ownsProcess = _processes?.Get(project.Id, url.Id) is { } process
+            && ProjectUrlProcessStates.IsActive(process.State);
+        if (ProjectUrlProbePolicy.Decide(url.Url, _networked, ownsProcess) == ProjectUrlProbeVerdict.LocalOnly)
+            return Finish(project, url, ProjectUrlProbePolicy.LocalOnly, null, "unknown",
+                ProjectUrlProbePolicy.LocalOnlyDetail, started);
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(ProbeTimeout);

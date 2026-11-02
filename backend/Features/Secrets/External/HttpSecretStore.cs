@@ -18,6 +18,9 @@ public abstract class HttpSecretStore(SecretBackendBinding binding, HttpClient h
 
     public abstract string StoreId { get; }
     public abstract Task HealthAsync(CancellationToken ct);
+
+    /// <summary>The backend decides on each write; this proves it answers with the configured credential.</summary>
+    public Task EnsureWritableAsync(SecretScope scope, CancellationToken ct) => HealthAsync(ct);
     public abstract Task<SecretListing> ListAsync(CancellationToken ct);
     public abstract Task<SecretRecord?> FindAsync(SecretScope scope, string name, CancellationToken ct);
     public abstract Task<SecretRecord> AppendVersionAsync(SecretScope scope, string name, ReadOnlyMemory<byte> value,

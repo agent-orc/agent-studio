@@ -1,3 +1,8 @@
+{
+    # The edge's root file system is read-only. Browsers trust the local root by hand (studio-website.md).
+    skip_install_trust
+}
+
 {$STUDIO_DOMAIN} {
     tls internal
     encode zstd gzip

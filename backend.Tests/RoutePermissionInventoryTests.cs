@@ -26,6 +26,30 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         { SecurityProfiles.Networked, "http://127.0.0.1:5071" },
     };
 
+    [Fact]
+    public async Task Retired_cli_host_routes_return_not_found_while_usage_remains_mapped()
+    {
+        using var factory = Factory(SecurityProfiles.Local, null);
+        var routes = Routes(factory.Services);
+        Assert.Contains(routes, route => route.RoutePattern.RawText == "/api/cli/usage");
+        Assert.DoesNotContain(routes, route => route.RoutePattern.RawText?.Contains("working-memory", StringComparison.Ordinal) == true
+            || route.RoutePattern.RawText?.Contains("session-detail", StringComparison.Ordinal) == true
+            || route.RoutePattern.RawText == "/api/cli/{cliType}/session");
+
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        foreach (var path in new[] { "/api/cli/claude/working-memory", "/api/cli/claude/session-detail?id=missing" })
+        {
+            using var response = await client.GetAsync(path);
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+        }
+        foreach (var path in new[] { "/api/cli/claude/working-memory?path=missing", "/api/cli/claude/session?id=missing" })
+        {
+            using var response = await client.DeleteAsync(path);
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+        }
+    }
+
     [Theory]
     [MemberData(nameof(Profiles))]
     public void Every_route_declares_a_known_permission(string profile, string? taskServer)
@@ -130,8 +154,6 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("GET", "/api/filesystem-layer/snapshot", IamPermissions.WorkspaceAdminister)]
     [InlineData("GET", "/api/cli/types", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/usage", IamPermissions.WorkspaceOperate)]
-    [InlineData("GET", "/api/cli/{cliType}/session-detail", IamPermissions.WorkspaceOperate)]
-    [InlineData("GET", "/api/cli/{cliType}/working-memory", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/cli/quota", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/{cliType}/models", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/maintenance-model", IamPermissions.WorkspaceRead)]

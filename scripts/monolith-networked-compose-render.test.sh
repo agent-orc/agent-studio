@@ -57,9 +57,20 @@ if [ -e "$work/invalid/stack/.env" ]; then
   echo 'setup.sh wrote .env after rejecting the public edge flag' >&2
   exit 1
 fi
+# A key inside the data directory would travel with every data backup.
+if STUDIO_SECRETS_KEY_FILE="$work/invalid/data/keys/secrets.kek" PATH="$work/bin:$PATH" \
+  bash "$work/invalid/stack/setup.sh" 0.0.0-test studio.example.test "$work/invalid/data" 2> "$work/invalid-key.log"; then
+  echo 'setup.sh accepted a secret store key inside the data directory' >&2
+  exit 1
+fi
+grep -q 'outside the data directory' "$work/invalid-key.log"
+if [ -e "$work/invalid/stack/.env" ] || [ -e "$work/invalid/data/keys" ]; then
+  echo 'setup.sh wrote state after rejecting the key location' >&2
+  exit 1
+fi
 
 python3 - "$work" <<'PY'
-import json, os, sys
+import base64, json, os, re, sys
 work = sys.argv[1]
 
 def model(name):
@@ -76,6 +87,11 @@ def env_file(name):
 
 def mounts(service):
     return {volume['target']: volume['source'] for volume in service['volumes']}
+
+def hardened(name, service):
+    assert service['cap_drop'] == ['ALL'], (name, service.get('cap_drop'))
+    assert 'no-new-privileges:true' in service['security_opt'], (name, service.get('security_opt'))
+    assert int(service['pids_limit']) > 0, (name, service.get('pids_limit'))
 
 expected = {
     'public': ('Caddyfile.public', 'false', 'true', 'on-failure'),
@@ -103,11 +119,45 @@ for name, (caddyfile, allow_direct, public_edge, restart_policy) in expected.ite
     assert mounts(frontend)['/etc/caddy/Caddyfile'].endswith('/Caddyfile.frontend'), frontend['volumes']
     assert frontend['networks']['website']['ipv4_address'] == '172.30.83.3', frontend['networks']
     api = rendered['services']['api']
+    key_file = os.path.join(work, name, 'stack', 'keys', 'secrets.kek')
+    assert env['STUDIO_SECRETS_KEY_FILE'] == key_file, (name, env)
+    assert os.stat(key_file).st_mode & 0o777 == 0o600, oct(os.stat(key_file).st_mode)
+    with open(key_file, encoding='ascii') as handle:
+        assert len(base64.b64decode(handle.read().strip(), validate=True)) == 32
+    key_mount = next(volume for volume in api['volumes'] if volume['target'] == '/run/secrets/studio-secrets.kek')
+    assert key_mount['source'] == key_file and key_mount.get('read_only') is True, key_mount
+    assert api['environment']['Secrets__KeyFile'] == '/run/secrets/studio-secrets.kek', api['environment']
+    data_dir = os.path.join(work, name, 'data')
+    assert not key_file.startswith(data_dir + os.sep), (key_file, data_dir)
+    assert int(api['mem_limit']) == 20 * 1024 ** 3, api.get('mem_limit')
+    for service_name, service in rendered['services'].items():
+        hardened(service_name, service)
+    assert frontend.get('read_only') is True and edge.get('read_only') is True, 'frontend and edge run read-only'
+    assert edge.get('cap_add') == ['NET_BIND_SERVICE'] and frontend.get('cap_add') == ['NET_BIND_SERVICE'], 'only NET_BIND_SERVICE comes back'
+    assert 'cap_add' not in api, api.get('cap_add')
+    assert re.fullmatch(r'caddy:[0-9.]+-alpine@sha256:[0-9a-f]{64}', edge['image']), edge['image']
     assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3,172.30.83.2', api['environment']
     assert api['environment']['Security__PublicCloudflareEdge'] == public_edge, api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
 print('Compose render passed for public, Cloudflare, direct-access and private modes.')
 PY
+
+# The API memory limit is one setting in .env.
+limit="$(STUDIO_API_MEMORY_LIMIT=24g docker compose --project-directory "$work/public/stack" -f "$work/public/stack/compose.yaml" \
+  --env-file "$work/public/stack/.env" config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["api"]["mem_limit"])')"
+if [ "$limit" != $((24 * 1024 * 1024 * 1024)) ]; then
+  echo "STUDIO_API_MEMORY_LIMIT did not set the API memory limit: $limit" >&2
+  exit 1
+fi
+
+# Compose must refuse an installation without a secret store key.
+grep -v '^STUDIO_SECRETS_KEY_FILE=' "$work/public/stack/.env" > "$work/missing-key.env"
+if env -u STUDIO_SECRETS_KEY_FILE docker compose \
+  --project-directory "$work/public/stack" -f "$work/public/stack/compose.yaml" \
+  --env-file "$work/missing-key.env" config > /dev/null 2>&1; then
+  echo 'Compose accepted a missing secret store key' >&2
+  exit 1
+fi
 
 # Compose must refuse an installation whose security mode was never selected.
 grep -v '^STUDIO_PUBLIC_CLOUDFLARE_EDGE=' "$work/public/stack/.env" > "$work/missing-edge.env"

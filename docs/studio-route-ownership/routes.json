@@ -28,12 +28,12 @@
     ]
   },
   "counts": {
-    "frontendOperations": 468,
-    "frontendApiOperations": 467,
+    "frontendOperations": 464,
+    "frontendApiOperations": 463,
     "frontendHubOperations": 1,
     "byClassification": {
       "task-server": 358,
-      "dev-seat": 110,
+      "dev-seat": 106,
       "retired": 0
     },
     "orchestratorApiMapGroups": 31,
@@ -1153,114 +1153,6 @@
       "targetRoute": "/api/cli/{cliType}/models",
       "frontendEvidence": [
         "frontend/src/app/services/task.service.ts:2046"
-      ],
-      "decisionEvidence": [
-        "docs/operations/remote-task-server-local-studio.md:99-106",
-        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
-      ],
-      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI capability, launcher, or developer tooling.",
-      "ownershipCaveat": null,
-      "d4bPriority": null,
-      "estimate": null
-    },
-    {
-      "id": "fe-026",
-      "method": "DELETE",
-      "path": "/api/cli/{cliType}/session",
-      "queryVariants": [
-        {
-          "kind": "none",
-          "query": ""
-        }
-      ],
-      "classification": "dev-seat",
-      "owningComponent": "Windows connector dev-seat module",
-      "frontendOwner": "Shared frontend services",
-      "v1Status": "not-applicable",
-      "targetRoute": "/api/cli/{cliType}/session",
-      "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2075"
-      ],
-      "decisionEvidence": [
-        "docs/operations/remote-task-server-local-studio.md:99-106",
-        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
-      ],
-      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI capability, launcher, or developer tooling.",
-      "ownershipCaveat": null,
-      "d4bPriority": null,
-      "estimate": null
-    },
-    {
-      "id": "fe-027",
-      "method": "GET",
-      "path": "/api/cli/{cliType}/session-detail",
-      "queryVariants": [
-        {
-          "kind": "none",
-          "query": ""
-        }
-      ],
-      "classification": "dev-seat",
-      "owningComponent": "Windows connector dev-seat module",
-      "frontendOwner": "Shared frontend services",
-      "v1Status": "not-applicable",
-      "targetRoute": "/api/cli/{cliType}/session-detail",
-      "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2067"
-      ],
-      "decisionEvidence": [
-        "docs/operations/remote-task-server-local-studio.md:99-106",
-        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
-      ],
-      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI capability, launcher, or developer tooling.",
-      "ownershipCaveat": null,
-      "d4bPriority": null,
-      "estimate": null
-    },
-    {
-      "id": "fe-028",
-      "method": "DELETE",
-      "path": "/api/cli/{cliType}/working-memory",
-      "queryVariants": [
-        {
-          "kind": "none",
-          "query": ""
-        }
-      ],
-      "classification": "dev-seat",
-      "owningComponent": "Windows connector dev-seat module",
-      "frontendOwner": "Shared frontend services",
-      "v1Status": "not-applicable",
-      "targetRoute": "/api/cli/{cliType}/working-memory",
-      "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2095"
-      ],
-      "decisionEvidence": [
-        "docs/operations/remote-task-server-local-studio.md:99-106",
-        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
-      ],
-      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI capability, launcher, or developer tooling.",
-      "ownershipCaveat": null,
-      "d4bPriority": null,
-      "estimate": null
-    },
-    {
-      "id": "fe-029",
-      "method": "GET",
-      "path": "/api/cli/{cliType}/working-memory",
-      "queryVariants": [
-        {
-          "kind": "none",
-          "query": ""
-        }
-      ],
-      "classification": "dev-seat",
-      "owningComponent": "Windows connector dev-seat module",
-      "frontendOwner": "Shared frontend services",
-      "v1Status": "not-applicable",
-      "targetRoute": "/api/cli/{cliType}/working-memory",
-      "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2088"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",

@@ -3,13 +3,19 @@ using System.Text.RegularExpressions;
 namespace AgentStudio.Pipeline;
 
 /// <summary>One dependency preparation command that precedes gate verification.</summary>
+/// <param name="CoveredByDependencyScopes">
+/// True only when <see cref="DependencyScopes"/> cover everything the command
+/// prepares, so a dependency-cache hit on every scope may skip it
+/// (<see cref="AgentStudio.TaskServer.Contracts.DependencyPreparationSkipPolicy"/>).
+/// </param>
 public sealed record GatePreparationCommand(
     VerifyEcosystem Ecosystem,
     string WorkingSubdir,
     string Command,
     VerifyCommandShell Shell,
     IReadOnlyList<GateDependencyScope> DependencyScopes,
-    IReadOnlyList<string>? PreserveGlobs = null);
+    IReadOnlyList<string>? PreserveGlobs = null,
+    bool CoveredByDependencyScopes = false);
 
 /// <summary>
 /// One install root and its root-relative lockfiles. The gate feeds this shape
@@ -25,6 +31,11 @@ public sealed record GateDependencyScope(
 /// build-profile install command is authoritative. Otherwise the same concrete
 /// repository and command conventions as <see cref="VerifyCommandPlanner"/>
 /// yield <c>dotnet restore</c> and one <c>npm ci</c> per selected package root.
+/// A conventional <c>npm ci</c> prepares exactly its lockfile root and is
+/// covered by that scope. A profile install command is opaque shell and is
+/// covered only when the profile says so
+/// (<see cref="BuildProfile.InstallCoveredByLockfiles"/>); <c>dotnet restore</c>
+/// has no scope and is never covered (AGT-3429).
 /// </summary>
 public static partial class GatePreparationPlanner
 {
@@ -38,6 +49,7 @@ public static partial class GatePreparationPlanner
     {
         if (!string.IsNullOrWhiteSpace(profile?.InstallCmd))
         {
+            var scopes = ProfileDependencyScopes(repositoryPath, profile.Lockfiles);
             return
             [
                 new GatePreparationCommand(
@@ -45,8 +57,9 @@ public static partial class GatePreparationPlanner
                     "",
                     profile.InstallCmd.Trim(),
                     VerifyCommandShell.Bash,
-                    ProfileDependencyScopes(repositoryPath, profile.Lockfiles),
-                    profile.PreserveGlobs),
+                    scopes,
+                    profile.PreserveGlobs,
+                    CoveredByDependencyScopes: profile.InstallCoveredByLockfiles && scopes.Count > 0),
             ];
         }
 
@@ -101,13 +114,15 @@ public static partial class GatePreparationPlanner
 
         foreach (var subdir in nodeDirs.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
         {
+            var scopes = ConventionalNodeDependencyScopes(repositoryPath, subdir);
             result.Add(new GatePreparationCommand(
                 VerifyEcosystem.Node,
                 subdir,
                 NpmCi,
                 customCommands.Length > 0 ? VerifyCommandShell.Bash : VerifyCommandShell.Platform,
-                ConventionalNodeDependencyScopes(repositoryPath, subdir),
-                profile?.PreserveGlobs));
+                scopes,
+                profile?.PreserveGlobs,
+                CoveredByDependencyScopes: scopes.Count > 0));
         }
 
         return result;

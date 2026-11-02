@@ -13,6 +13,7 @@ import { TaskCardComponent } from '../task-card/task-card.component';
 import { buildDeliveryGroup, type BoardDeliveryColumn } from '../board-lane-layout.util';
 
 const FURTHEST_ONLY_KEY = 'deliveryFurthestOnly';
+const GROUP_COLLAPSE_KEY = 'delivery-group';
 
 /**
  * The board's Delivery group after "Done & Decide" (AGT-3276 D5 L-B): one
@@ -32,8 +33,9 @@ const FURTHEST_ONLY_KEY = 'deliveryFurthestOnly';
   templateUrl: './delivery-section.html',
   styleUrl: './delivery-section.scss',
   host: {
-    '[style.display]': "group().columns.length ? null : 'none'",
-    '[class.delivery--empty]': '!group().columns.length',
+    '[style.display]': "visible() ? null : 'none'",
+    '[class.delivery--empty]': '!visible()',
+    '[class.delivery--collapsed]': 'groupCollapsed()',
     '[style.flex-grow]': 'expandedColumns()',
   },
 })
@@ -54,9 +56,24 @@ export class DeliverySectionComponent {
   readonly error = this.source.error;
   readonly furthestOnly = signal(readStoredFlag());
   readonly group = computed(() => buildDeliveryGroup(this.source.responses(), this.tasks(), this.furthestOnly()));
+  /** Count matches the header, including the active furthest-only display option. */
+  readonly visible = computed(() => {
+    const group = this.group();
+    return group.count > 0 || group.columns.some((column) =>
+      column.approvalPending || column.headers.some((head) => head.run?.state === 'failed'));
+  });
+  readonly groupCollapsed = computed(() => this.collapse.isLaneCollapsed(GROUP_COLLAPSE_KEY));
   readonly multiProject = computed(() => this.projects().length > 1);
   /** Grows the group like the lane groups: in proportion to its expanded columns. */
   readonly expandedColumns = computed(() => this.group().columns.filter((column) => !this.collapsed(column)).length);
+
+  toggleGroup(): void {
+    this.collapse.toggleLaneCollapse(GROUP_COLLAPSE_KEY);
+  }
+
+  failedRun(column: BoardDeliveryColumn): boolean {
+    return column.headers.some((head) => head.run?.state === 'failed');
+  }
 
   constructor() {
     effect(() => this.source.watch(this.projects()));
