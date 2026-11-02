@@ -3,6 +3,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom, map, type Observable } from 'rxjs';
 import type {
   BatchGateConfiguration,
+  BatchGateReport,
   BatchGateSettings,
   BatchGateState,
   GateQueueStallRelease,
@@ -125,6 +126,10 @@ export class BatchGateService {
   }
   eject(project: string, taskKey: string): Observable<unknown> {
     return this.http.post(`${this.url(project)}/members/${encodeURIComponent(taskKey)}/eject`, {});
+  }
+  /** Lifetime pilot figures; read-only and served from the batch store without Git. */
+  report(project: string): Observable<BatchGateReport> {
+    return this.http.get<BatchGateReport>(`${this.url(project)}/report`);
   }
   queueStalls(project: string): Observable<GateQueueStallReport> {
     return this.http.get<GateQueueStallReport>(`${this.url(project)}/queue-stalls`);

@@ -30,6 +30,7 @@ fi
 command -v docker >/dev/null || { echo 'docker compose is required for this contract test.' >&2; exit 1; }
 export STUDIO_VERSION=0.0.0 STUDIO_DOMAIN=studio.example.test
 export STUDIO_DATA_DIR=/tmp/studio-contract STUDIO_BOOTSTRAP_CODE=contract-test-code
+export STUDIO_SECRETS_KEY_FILE=/tmp/studio-contract-keys/secrets.kek STUDIO_PUBLIC_CLOUDFLARE_EDGE=false
 export ENGINE_VERSION=0.0.0 ENGINE_SERVER_URL=https://studio.example.test
 export ENGINE_CLIENT_ID=engine_contract ENGINE_CREDENTIAL_FILE=/tmp/engine-contract-token
 
@@ -42,7 +43,7 @@ services = json.load(sys.stdin)["services"]
 assert set(services) == {"api", "frontend", "edge"}, services.keys()
 assert all(service.get("cgroup_parent") == "studio.slice" for service in services.values()), services
 assert int(services["api"]["mem_reservation"]) == 1073741824, services["api"]
-assert int(services["api"]["mem_limit"]) == 4294967296, services["api"]
+assert int(services["api"]["mem_limit"]) == 21474836480, services["api"]
 assert all("cpus" not in service and "cpu_quota" not in service for service in services.values()), services'
 
 docker compose -f "$repo_dir/deploy/compose/monolith-engine/compose.yaml" config --format json |

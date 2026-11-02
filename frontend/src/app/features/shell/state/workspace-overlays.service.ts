@@ -14,10 +14,7 @@ import { ledgerScopeFromHash, type UsageLedgerScope } from '../../usage-cockpit'
  *     `orchestrator` (the platform-global supervisor / orchestrator lifecycle
  *     flags — AGT-1812 retired their standalone modal into this section).
  *   - Workspace defaults: `caps` (the "CLI Management" hub - CLI catalog,
- *     models/routes, usage caps and completion contracts), `cli-sessions`
- *     and `cli-paths` (the encapsulated CLI-session inventory and per-CLI
- *     filesystem-location pages split out of the CLI Management hub -
- *     AGT-2101), `working-memory` (extracted from caps), `prompts`,
+ *     models/routes, usage caps and completion contracts), `prompts`,
  *     `tokens` (now the single usage area), `screenshots`.
  * `overview` is the landing rail item that links into each section.
  *
@@ -38,9 +35,6 @@ export type WorkspaceSettingsSection =
   | 'remote-hosts'
   | 'orchestrator'
   | 'caps'
-  | 'cli-sessions'
-  | 'cli-paths'
-  | 'working-memory'
   | 'prompts'
   | 'retention'
   | 'tokens'
@@ -217,10 +211,12 @@ export class WorkspaceOverlaysService {
     switch (route) {
       case '/workspace/screenshots': return 'screenshots';
       case '/workspace/settings/screenshots': return 'screenshots';
+      // Retired CLI settings aliases resolve to CLI Management.
+      case '/workspace/settings/cli-sessions':
+      case '/workspace/settings/cli-paths':
+      case '/workspace/settings/working-memory':
       case '/workspace/settings/caps':
       case '/workspace/caps': return 'caps';
-      case '/workspace/settings/cli-sessions': return 'cli-sessions';
-      case '/workspace/settings/cli-paths': return 'cli-paths';
       case '/workspace/settings/prompts':
       case '/workspace/prompts': return 'prompts';
       case '/workspace/settings/retention': return 'retention';
@@ -239,7 +235,6 @@ export class WorkspaceOverlaysService {
       // Retired project-source catalogue: old bookmarks land safely on Overview.
       case '/workspace/settings/project-sources': return 'overview';
       case '/workspace/settings/orchestrator': return 'orchestrator';
-      case '/workspace/settings/working-memory': return 'working-memory';
       // Retired 'summary' aliases resolve to the overview (migration: no crash).
       case '/workspace/summary':
       case '/summary':
@@ -261,8 +256,6 @@ export class WorkspaceOverlaysService {
       case 'tokens': return '/workspace/settings/tokens';
       case 'screenshots': return '/workspace/settings/screenshots';
       case 'caps': return '/workspace/settings/caps';
-      case 'cli-sessions': return '/workspace/settings/cli-sessions';
-      case 'cli-paths': return '/workspace/settings/cli-paths';
       case 'prompts': return '/workspace/settings/prompts';
       case 'retention': return '/workspace/settings/retention';
       case 'access': return '/workspace/settings/access';
@@ -276,7 +269,6 @@ export class WorkspaceOverlaysService {
       case 'github': return '/workspace/settings/github';
       case 'remote-hosts': return '/workspace/settings/environment';
       case 'orchestrator': return '/workspace/settings/orchestrator';
-      case 'working-memory': return '/workspace/settings/working-memory';
       case 'overview': return '/workspace/settings';
     }
   }
@@ -284,8 +276,6 @@ export class WorkspaceOverlaysService {
   private readonly ownRoutes = new Set<string>([
     '/workspace/settings',
     '/workspace/settings/caps',
-    '/workspace/settings/cli-sessions',
-    '/workspace/settings/cli-paths',
     '/workspace/settings/prompts',
     '/workspace/settings/retention',
     '/workspace/settings/access',
@@ -302,7 +292,6 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/remote-hosts',
     '/workspace/settings/project-sources',
     '/workspace/settings/orchestrator',
-    '/workspace/settings/working-memory',
     '/workspace/settings/screenshots',
     '/workspace/caps',
     '/workspace/prompts',

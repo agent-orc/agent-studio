@@ -65,12 +65,17 @@ public sealed record GitHubAppInstallation(
     DateTime AdoptedAtUtc,
     string AdoptedBy);
 
+/// <param name="Visibility">
+/// <c>private</c> or <c>public</c> as GitHub reports it for a repository an
+/// adopted installation lists; null while GitHub has not said.
+/// </param>
 public sealed record GitHubAppRepositoryCoverage(
     string Project,
     string? RepositoryUrl,
     string State,
     long? InstallationId,
-    string? Detail);
+    string? Detail,
+    string? Visibility = null);
 
 public sealed record GitHubAppHostSync(
     string RunnerId,
@@ -150,6 +155,10 @@ public interface IGitHubAppVault
     Task<GitHubAppSecrets?> ReadSecretsAsync(CancellationToken ct);
     Task WriteSecretsAsync(GitHubAppSecrets secrets, string actor, CancellationToken ct);
     Task DeleteSecretsAsync(string actor, CancellationToken ct);
+
+    /// <summary>Throws when <see cref="WriteSecretsAsync"/> could not store the App's secrets now, for example without a key.</summary>
+    // A vault without a write check has nothing to prove.
+    Task EnsureWritableAsync(CancellationToken ct) => Task.CompletedTask;
 }
 
 /// <summary>

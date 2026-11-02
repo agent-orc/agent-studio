@@ -308,7 +308,8 @@ public sealed class GateQueueStallPolicyTests : IDisposable
     public void Threshold_policy_closes_at_pressure_size_and_holds_a_lone_card_behind_a_backlog()
     {
         var now = _clock.GetUtcNow();
-        var options = new BatchGateFormationOptions(Enabled: true, CloseSize: 4, PressureSize: 2);
+        // Code cards: a documentation-only set closes at once (AGT-3414).
+        var options = new BatchGateFormationOptions(Enabled: true, CloseSize: 4, PressureSize: 2, Scope: "code");
         var pair = new[] { Subject("a", now.AddMinutes(-1), 1), Subject("b", now, 2) };
 
         Assert.Null(BatchGatePolicy.Form(pair, Scope, Sha, options, now).Manifest);
@@ -334,7 +335,7 @@ public sealed class GateQueueStallPolicyTests : IDisposable
     private static BatchGateSubject Subject(string key, DateTimeOffset reviewed, long sequence) => new(
         key, "project", "repo", "develop", "full", "digest", "v1",
         "refs/heads/agent-studio/results/" + key, Sha, "run-1", 1, 1, Sha,
-        true, true, true, true, false, null, true, reviewed, sequence);
+        true, true, true, true, false, null, false, reviewed, sequence);
 
     private static BatchPlanCard Card(string key, double risk, DateTimeOffset now)
         => new(key, now.AddMinutes(-1), risk, [], []);

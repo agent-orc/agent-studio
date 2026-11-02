@@ -8,6 +8,7 @@ using AgentStudio.Pipeline;
 using AgentStudio.Registry;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
+using AgentStudio.TestSupport;
 
 using Xunit;
 
@@ -1948,10 +1949,16 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     private static IConfiguration EmptyConfig()
         => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
 
+    // Built once per test process; each test starts from a copy (AGT-3419).
     private string SeedDevelopMainRepo(string? directoryName = null)
     {
         var repo = Path.Combine(_tempDir, directoryName ?? "repo-" + Guid.NewGuid().ToString("N")[..8]);
-        Directory.CreateDirectory(repo);
+        GitRepositoryTemplate.CopyTo("task-integration-status:develop-main:v1", repo, SeedDevelopMainInto);
+        return repo;
+    }
+
+    private static void SeedDevelopMainInto(string repo)
+    {
         RunGit(repo, "init -q -b main");
         RunGit(repo, "config user.email test@example.com");
         RunGit(repo, "config user.name test");
@@ -1960,7 +1967,6 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         RunGit(repo, "commit -q -m seed");
         RunGit(repo, "checkout -q -b develop");
         RunGit(repo, "checkout -q main");
-        return repo;
     }
 
     /// <summary>
@@ -2047,12 +2053,19 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     /// <summary>A develop that exists on a real origin, exactly as a managed project has it.</summary>
     private string SeedPublishedDevelopRepo(out string origin)
     {
-        var repo = SeedDevelopMainRepo();
+        var repo = Path.Combine(_tempDir, "repo-" + Guid.NewGuid().ToString("N")[..8]);
         origin = repo + "-origin.git";
-        RunGit(_tempDir, $"init -q --bare -b develop \"{origin}\"");
-        RunGit(repo, $"remote add origin \"{origin}\"");
-        RunGit(repo, "push -q origin develop");
-        RunGit(repo, "fetch -q origin");
+        GitRepositoryTemplate.CopyTo("task-integration-status:published-develop:v1", root =>
+        {
+            var seed = Path.Combine(root, "repo");
+            var bare = Path.Combine(root, "origin.git");
+            Directory.CreateDirectory(seed);
+            SeedDevelopMainInto(seed);
+            RunGit(root, $"init -q --bare -b develop \"{bare}\"");
+            RunGit(seed, $"remote add origin \"{bare}\"");
+            RunGit(seed, "push -q origin develop");
+            RunGit(seed, "fetch -q origin");
+        }, ("repo", repo), ("origin.git", origin));
         return repo;
     }
 

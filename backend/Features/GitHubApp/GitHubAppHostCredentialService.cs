@@ -87,6 +87,12 @@ public sealed class GitHubAppHostCredentialService : BackgroundService
         if (credentials.Count != _lastCount)
             _logger.LogInformation("github-app-host-credentials repositories={Count}", credentials.Count);
         _lastCount = credentials.Count;
+        // Review plans read GitHub's own visibility from here (AGT-3408); a failed listing keeps the last one.
+        try { await _broker.RefreshRepositoryVisibilityAsync(ct); }
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning("github-app-repository-visibility refresh failed: {Reason}", exception.Message);
+        }
     }
 
     /// <summary>When refreshing keeps failing, an expired token must not answer before the host's older credential.</summary>

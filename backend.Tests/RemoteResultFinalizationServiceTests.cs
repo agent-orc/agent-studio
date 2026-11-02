@@ -129,6 +129,33 @@ public sealed class RemoteResultFinalizationServiceTests : IDisposable
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task A_refused_summary_input_is_neither_retried_nor_queued()
+    {
+        var refusal = OrchestratorPromptBoundary.FailurePrefix + "oversize-orchestrator-prompt";
+        var oneShot = new ScriptedSummaryOneShot(
+            SummaryAttempt.Throws(new InvalidOperationException(refusal)),
+            SummaryAttempt.Succeeds());
+        var scanner = new MutableScanner(Task(_progressFolder, TaskStates.Progress));
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var service = Service(oneShot, scanner, timeline, new StubLoadGate(throttled: false));
+
+        var plan = await service.FinalizeForAcknowledgementAsync(scanner.Single);
+
+        Assert.Equal(ResultSummaryDelivery.Degraded, plan.Delivery);
+        Assert.False(plan.ScheduleRetry);
+        Assert.Equal("degraded:" + refusal, plan.ResultDocumentStatus);
+        Assert.Equal(1, oneShot.SummaryCalls);
+        Assert.Empty(service.Pending);
+        Assert.Equal(
+            "Summary degraded (input refused: " + refusal + ")",
+            Assert.Single(
+                timeline.ReadAll(_progressFolder),
+                row => row.Kind == TimelineEventKinds.ResultSummaryPending).Summary);
+        Assert.Equal(0, await service.RunDueRetriesAsync(DateTime.MaxValue));
+        Assert.Equal(1, oneShot.SummaryCalls);
+    }
+
     private string MoveTo(string state)
     {
         var target = Path.Combine(_root, state, "AGT-2850");

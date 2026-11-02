@@ -832,8 +832,13 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 }, BuildTestGateFailureKind.Code);
             }
 
+            // An invalid definition is a fact of the delivery's own tree, not an
+            // experiment outcome. The diagnosis would compare it against a
+            // baseline and history and, on a first occurrence, retype it as an
+            // environment failure that asks for a host repair (AOW-15).
             if (completed is { Verdict: BuildTestGateVerdict.Fail }
-                && !string.IsNullOrWhiteSpace(request.JobId))
+                && !string.IsNullOrWhiteSpace(request.JobId)
+                && !IsDefinitionFailure(projectPreparation))
             {
                 completed = await DiagnoseGateFailureAsync(
                     request, repositoryPath, workspace, completed, profile, changedFiles,
@@ -968,6 +973,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             .ToLowerInvariant()[..24];
         return Path.Combine(cacheRoot, "manifests", key, "latest.json");
     }
+
+    private static bool IsDefinitionFailure(ProjectPreparationResult? preparation)
+        => preparation is { Configured: true, Succeeded: false, FailureKind: PreparationFailureKind.Definition };
 
     private static bool HasHealthContext(BuildTestGateRequest request)
         => !string.IsNullOrWhiteSpace(request.Project)
