@@ -3071,6 +3071,13 @@
           <td>No CLI crashed. An evidence flush's <code>git add</code> in the workspace repository hit the 30-second git limit and was killed. The killed add left <code>.git/index.lock</code>, so the workspace repository got no commit for 70 minutes: 232 <code>Unable to create index.lock</code> lines in three hours, <code>workspace-evidence-flush-failed</code>, and <code>HumanReviewEscalation: workspace artifact commit failed</code>. No git process was running.</td>
           <td>SIGKILL skips git's own lock cleanup. The stale-lock guard keeps a lock as young for 10 minutes, and one large log file made the add slower than the fixed limit. An artifact commit that hit the lock returned a failure to the card's run boundary.</td>
           <td>The observed terminal was Escalated; the escalation's own evidence commit failed on the lock. The process boundary now removes the locks a killed git command wrote when no other git process can hold them. A lock it must keep is cleared by the next write once its holder is gone, without the age wait. <code>git add</code> and its commit get 30 seconds plus the bytes to hash at 2 MiB/s, capped at 10 minutes. A run-boundary, completion or upload commit refused on a lock returns <code>deferred</code> and is retried for about 19 minutes. No code path fails or escalates a card on that result.</td>
+          </tr>
+        <tr id="case-private-repository-planned-public">
+          <td>2026-11-02</td>
+          <td><code>AGT-3408</code><br><span class="small">private-repository-planned-public</span></td>
+          <td>No CLI crashed. After the move to the server, six private projects had no repository visibility set. Their review plans said public, so the review host fetched without its credential and every review ended <code>ReviewInfra / SnapshotUnavailable</code>, although the host held a valid App token for each repository. Correcting the setting did not help the retries.</td>
+          <td>The visibility was only a hand-set project setting. The review host used its credential only for a plan sealed private. On the standalone Task Server every retry shares its subject's sealed plan, so a corrected setting never reached the successor attempt.</td>
+          <td>The observed terminal was Escalated after three infrastructure retries. A repository an adopted GitHub App installation lists now follows GitHub's own <code>private</code> flag (an explicit <code>private</code> setting still wins), a review host fetches with a credential it holds for exactly that repository whatever the plan says, and a Task Server retry takes the current visibility when its successor is queued. The move tool probes and carries each project's visibility.</td>
         </tr>
       </tbody>
     </table>

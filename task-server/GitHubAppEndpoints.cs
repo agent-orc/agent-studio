@@ -52,6 +52,30 @@ public sealed class TaskServerRepositoryCatalog(TaskServerStore store) : IRegist
     }
 }
 
+/// <summary>
+/// Keeps GitHub's own repository visibility current (AGT-3408), so review
+/// subjects and their retries never treat a repository GitHub reports as
+/// private as public. A failed listing keeps what GitHub reported before.
+/// </summary>
+public sealed class GitHubAppVisibilityRefreshService(
+    GitHubAppBroker broker, ILogger<GitHubAppVisibilityRefreshService> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try { await broker.RefreshRepositoryVisibilityAsync(stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+            catch (Exception exception)
+            {
+                logger.LogWarning("github-app-repository-visibility refresh failed: {Reason}", exception.Message);
+            }
+            try { await Task.Delay(TimeSpan.FromSeconds(GitHubAppBroker.HostRefreshSeconds), stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+        }
+    }
+}
+
 /// <summary>The same routes the monolith maps; Studio proxies them here when it uses this Task Server.</summary>
 public static class GitHubAppEndpoints
 {

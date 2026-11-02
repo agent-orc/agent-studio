@@ -2826,22 +2826,29 @@ public sealed class RemoteReviewWorkspace
         _log($"review_source_ready subject={_subject.SubjectId} bytes={bytes} ready_ms={ready.TotalMilliseconds:F0}");
     }
 
+    /// <summary>
+    /// The read credential this host holds for exactly the subject's repository.
+    /// AGT-3408: a held credential is used whatever the plan's visibility says,
+    /// so a project wrongly marked public costs nothing. This widens nothing:
+    /// <see cref="ReviewRepositoryCredentials.Find"/> matches one repository, and
+    /// only the clone and fetch processes ever receive it. A public plan does
+    /// not depend on the credentials file: a file that turns unreadable or
+    /// malformed later leaves it with the credential-free clone.
+    /// </summary>
     private ReviewRepositoryCredential? RepositoryCredential()
     {
-        // A public subject never reads the credentials file, so a file that
-        // turns unreadable or malformed later cannot fail public reviews.
         if (string.IsNullOrWhiteSpace(_subject.RepositoryUrl)) return null;
         try
         {
             if (RunnerFirstRunGitCredentials.Token(_options.StateDir, _subject.RepositoryUrl) is { } firstRun)
                 return firstRun;
-            if (!_subject.Plan.PrivateRepository) return null;
             return ReviewRepositoryCredentials.LoadForHost(_options.StateDir, _options.ReviewGitCredentialsFile)
                 .Find(_subject.RepositoryUrl);
         }
         catch (Exception exception) when (exception is ArgumentException or IOException
                                               or UnauthorizedAccessException)
         {
+            if (!_subject.Plan.PrivateRepository) return null;
             throw new ReviewInfrastructureException(
                 "SnapshotUnavailable",
                 $"Review repository credentials are unreadable: {exception.Message}");

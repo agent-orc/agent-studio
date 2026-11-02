@@ -88,6 +88,7 @@ builder.Services.AddSingleton(services => new AgentStudio.TaskServer.Contracts.G
     services.GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.IGitHubAppVault>(),
     services.GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.IRegisteredRepositoryCatalog>(),
     TimeProvider.System));
+builder.Services.AddHostedService<GitHubAppVisibilityRefreshService>();
 builder.Services.AddSingleton<RuntimeCapacitySettingsService>();
 builder.Services.AddSingleton<HostProjectPolicyService>();
 builder.Services.AddSingleton<LegacyMigrationService>();
@@ -117,6 +118,9 @@ if (!string.IsNullOrWhiteSpace(configuredUrl)
 
 var app = builder.Build();
 var store = app.Services.GetRequiredService<TaskServerStore>();
+// The broker lists the store's repositories, so the store reads GitHub's visibility through this hook.
+store.ReportedRepositoryPrivate = app.Services
+    .GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.GitHubAppBroker>().ReportedPrivate;
 var migration = app.Services.GetRequiredService<LegacyMigrationService>();
 var commandJson = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
 if (command.Kind == TaskServerCommandKind.Inventory)

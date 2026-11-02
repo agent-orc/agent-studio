@@ -210,7 +210,48 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Public_review_never_reads_the_private_credentials_file()
+    public async Task A_plan_that_says_public_still_fetches_with_the_held_credential()
+    {
+        // AGT-3408: six private projects were planned public after the move to
+        // the server. The host held a read credential for the repository, but
+        // the credential-free clone failed with SnapshotUnavailable every time.
+        var workspace = Workspace("attempt-wrong-setting", WriteCredentials(RepositoryUrl), privateRepository: false);
+
+        var prepared = await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+        var material = await workspace.BuildReviewMaterialAsync(10, 200, default);
+
+        Assert.Equal(_subjectSha, prepared.ActualHead);
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Contains("subject product", material, StringComparison.Ordinal);
+        Assert.True(_server.AuthorizedRequests > 0);
+        // The credential reaches only the clone and fetch processes, never a review command.
+        var commandEnvironment = await File.ReadAllTextAsync(CommandEnvironmentPath("attempt-wrong-setting"));
+        Assert.DoesNotContain(_token, commandEnvironment, StringComparison.Ordinal);
+        Assert.DoesNotContain("AGENT_REVIEW_GIT_", commandEnvironment, StringComparison.Ordinal);
+        Assert.DoesNotContain(workspace.ProcessEnvironment(), pair =>
+            (pair.Value ?? string.Empty).Contains(_token, StringComparison.Ordinal));
+        var origin = await GitAsync(workspace.RepositoryPath, "config", "--get", "remote.origin.url");
+        Assert.DoesNotContain(_token, origin.StdOut, StringComparison.Ordinal);
+        Assert.True(await workspace.CleanupAsync());
+    }
+
+    [Fact]
+    public async Task A_plan_that_says_public_does_not_use_a_credential_scoped_to_another_repository()
+    {
+        var workspace = Workspace("attempt-wrong-setting-other-scope",
+            WriteCredentials($"{_server.BaseUrl}owner/other-site.git"), privateRepository: false);
+
+        var failure = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.PrepareAsync(null!, default));
+
+        Assert.Equal("SnapshotUnavailable", failure.Classification);
+        Assert.Equal(0, _server.AuthorizedRequests);
+        await workspace.CleanupAsync();
+    }
+
+    [Fact]
+    public async Task Public_review_survives_an_unreadable_credentials_file()
     {
         // A credentials file that turned malformed after start-up used to fail
         // every review, public ones included, with SnapshotUnavailable.

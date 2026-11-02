@@ -62,6 +62,7 @@ public sealed class RemoteReviewPlanBuilder
     private readonly ModelRoutingPolicyRegistry? _routing;
     private readonly ReviewObservationStore? _observations;
     private readonly PostMergeModeService? _postMergeMode;
+    private readonly AgentStudio.Projects.ProjectRepositoryVisibility? _visibility;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
@@ -74,7 +75,8 @@ public sealed class RemoteReviewPlanBuilder
         QuotaAdmissionService? quota = null,
         ModelRoutingPolicyRegistry? routing = null,
         ReviewObservationStore? observations = null,
-        PostMergeModeService? postMergeMode = null)
+        PostMergeModeService? postMergeMode = null,
+        AgentStudio.Projects.ProjectRepositoryVisibility? visibility = null)
     {
         _aspects = aspects;
         _configuration = configuration;
@@ -87,6 +89,7 @@ public sealed class RemoteReviewPlanBuilder
         _routing = routing;
         _observations = observations;
         _postMergeMode = postMergeMode;
+        _visibility = visibility;
     }
 
     /// <summary>
@@ -130,12 +133,14 @@ public sealed class RemoteReviewPlanBuilder
         string? immutableResultRef = null)
         // AGT-3077: every plan shape carries the repository visibility, so a
         // private repository is refused at claim time on any executor without
-        // a read credential for it.
+        // a read credential for it. AGT-3408: what GitHub reports through the
+        // App joins the project setting; GitHub's "private" always holds.
         => BuildPlan(task, repositoryPath, projectSettings, integrationRef,
                 expectedResultSha, changedFiles, immutableResultRef) with
             {
-                PrivateRepository = Contract.ReviewRepositoryAccessPolicy.IsPrivate(
-                    projectSettings?.RepositoryVisibility),
+                PrivateRepository = task is not null && _visibility is not null
+                    ? _visibility.IsPrivate(task, projectSettings)
+                    : Contract.ReviewRepositoryAccessPolicy.IsPrivate(projectSettings?.RepositoryVisibility),
             };
 
     private Contract.ReviewPlanDto BuildPlan(
