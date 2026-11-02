@@ -298,47 +298,75 @@ public sealed partial class ProjectGitGraphService
         return result;
     }
 
+    private const string CollisionMarker = "-collision-";
+
+    /// <summary>
+    /// Cards per branch: a branch belongs to a card when it is the card's
+    /// recorded branch, its worktree branch or its review result ref, or when
+    /// a <c>runner/</c> branch ends in the card's key, id or display key
+    /// (optionally followed by a collision suffix). Each card's names are
+    /// indexed once; matching every branch against every card read each card's
+    /// review subject from disk once per branch (AGT-3369). Cards keep the
+    /// order of <paramref name="tasks"/>.
+    /// </summary>
     internal static Dictionary<string, List<GitTaskBadge>> BuildTaskByBranch(
         IReadOnlyList<TaskInfo> tasks,
         IReadOnlyList<GitBranchEntry> branches)
     {
+        var byName = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        var bySegment = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < tasks.Count; index++)
+        {
+            var task = tasks[index];
+            foreach (var name in new[]
+                     {
+                         task.Provenance?.Branch,
+                         WorktreeTaskLifecycle.BranchFor(task.Id),
+                         ReadReviewSubject(task)?.ResultRef,
+                     })
+            {
+                if (!string.IsNullOrWhiteSpace(name)) AddIndex(byName, NormalizeBranch(name), index);
+            }
+            foreach (var identity in new[] { task.Key, task.Id, DisplayKey(task) })
+            {
+                if (!string.IsNullOrWhiteSpace(identity)) AddIndex(bySegment, SafeBranchSegment(identity), index);
+            }
+        }
+
         var result = new Dictionary<string, List<GitTaskBadge>>(StringComparer.Ordinal);
+        var matches = new SortedSet<int>();
         foreach (var branch in branches)
         {
-            foreach (var task in tasks.Where(task => BranchBelongsToTask(branch.Name, task)))
+            matches.Clear();
+            var normalized = NormalizeBranch(branch.Name);
+            if (byName.TryGetValue(normalized, out var named)) matches.UnionWith(named);
+            if (normalized.StartsWith("runner/", StringComparison.Ordinal))
             {
-                if (!result.TryGetValue(branch.Name, out var cards))
+                var tail = normalized.Split('/').LastOrDefault() ?? "";
+                if (bySegment.TryGetValue(tail, out var exact)) matches.UnionWith(exact);
+                for (var at = tail.IndexOf(CollisionMarker, StringComparison.OrdinalIgnoreCase);
+                     at >= 0;
+                     at = tail.IndexOf(CollisionMarker, at + 1, StringComparison.OrdinalIgnoreCase))
                 {
-                    cards = [];
-                    result[branch.Name] = cards;
+                    if (bySegment.TryGetValue(tail[..at], out var collided)) matches.UnionWith(collided);
                 }
-                cards.Add(Card(task));
             }
+            if (matches.Count == 0) continue;
+            if (!result.TryGetValue(branch.Name, out var cards))
+            {
+                cards = [];
+                result[branch.Name] = cards;
+            }
+            foreach (var index in matches) cards.Add(Card(tasks[index]));
         }
         return result;
     }
 
-    private static bool BranchBelongsToTask(string branch, TaskInfo task)
+    private static void AddIndex(Dictionary<string, List<int>> index, string key, int value)
     {
-        var normalized = NormalizeBranch(branch);
-        var known = new[]
-        {
-            task.Provenance?.Branch,
-            WorktreeTaskLifecycle.BranchFor(task.Id),
-            ReadReviewSubject(task)?.ResultRef,
-        };
-        if (known.Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => NormalizeBranch(value!))
-            .Any(value => string.Equals(value, normalized, StringComparison.Ordinal)))
-            return true;
-        if (!normalized.StartsWith("runner/", StringComparison.Ordinal)) return false;
-        var tail = normalized.Split('/').LastOrDefault() ?? "";
-        var candidates = new[] { task.Key, task.Id, DisplayKey(task) }
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => SafeBranchSegment(value!));
-        return candidates.Any(candidate =>
-            string.Equals(tail, candidate, StringComparison.OrdinalIgnoreCase)
-            || tail.StartsWith(candidate + "-collision-", StringComparison.OrdinalIgnoreCase));
+        if (!index.TryGetValue(key, out var values))
+            index[key] = values = [];
+        if (values.Count == 0 || values[^1] != value) values.Add(value);
     }
 
     private static string NormalizeBranch(string branch)

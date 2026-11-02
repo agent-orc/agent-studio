@@ -1,0 +1,32 @@
+@if (snapshot(); as s) {
+  <section class="api-stalls" data-testid="api-stall-panel" [attr.data-status]="s.status" aria-label="Studio API responsiveness">
+    <header class="api-stalls__head">
+      <h2>Studio API responsiveness</h2>
+      <span class="api-stalls__state" data-testid="api-stall-status" [attr.data-status]="s.status">{{ statusLabel() }}</span>
+    </header>
+    @if (s.recent.length === 0) {
+      <p class="api-stalls__note">No stall since the API started. The API checks every {{ seconds(s.intervalMs) }} whether its own timer runs late.</p>
+    } @else {
+      <p class="api-stalls__note" data-testid="api-stall-summary">
+        Longest delay since start <strong class="api-stalls__num">{{ seconds(s.maxDelayMs) }}</strong>.
+        A delay of {{ seconds(s.alarmThresholdMs) }} or more within {{ s.alarmWindowMinutes }} minutes raises the alarm.
+      </p>
+      <table class="api-stalls__table" data-testid="api-stall-recent">
+        <thead>
+          <tr><th scope="col">Detected</th><th scope="col">Delay</th><th scope="col">GC pause</th><th scope="col">Pool threads</th><th scope="col">Queued work</th></tr>
+        </thead>
+        <tbody>
+          @for (stall of shown(); track stall.detectedAtUtc) {
+            <tr [attr.data-alarm]="stall.delayMs >= s.alarmThresholdMs">
+              <td>{{ time(stall.detectedAtUtc) }}</td>
+              <td class="api-stalls__num">{{ seconds(stall.delayMs) }}</td>
+              <td class="api-stalls__num">{{ seconds(stall.gcPauseMs) }}</td>
+              <td class="api-stalls__num">{{ stall.threadPoolThreads }}</td>
+              <td class="api-stalls__num">{{ stall.pendingWorkItems }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </section>
+}
