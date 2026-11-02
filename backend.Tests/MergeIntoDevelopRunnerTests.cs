@@ -670,7 +670,8 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
     public async Task RunAsync_MainTarget_DocsOnlyClassification_FailsClosedForCodePaths()
     {
         // One code file in the diff keeps the delivery on the strict release
-        // path: not rebased onto main -> refused, nothing merged.
+        // path: the mandatory full suite runs, on the merge result because the
+        // delivery is behind main (AGT-3435).
         var repo = SeedRepo("runner-main-docs-and-code");
         RunGit(repo, "checkout -q -b task/mixed");
         Directory.CreateDirectory(Path.Combine(repo, "docs"));
@@ -704,8 +705,10 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
             "main",
             CancellationToken.None);
 
-        Assert.Equal(MergeIntoIntegrationOutcome.Error, outcome.Outcome);
-        Assert.Contains("must be rebased onto", outcome.Error, StringComparison.Ordinal);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.True(HasTag(repo, "pre-main-suite-ran"), "a delivery with code paths must run the full suite");
+        Assert.Equal(outcome.MergedSha, RunGit(repo, "rev-parse pre-main-suite-ran").Out.Trim());
+        Assert.Equal(mainSha, RunGit(repo, $"rev-parse {LaneRef("main")}^1").Out.Trim());
         Assert.Equal(mainSha, RunGit(repo, "rev-parse main").Out.Trim());
     }
 
