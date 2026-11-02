@@ -1,3 +1,4 @@
+using AgentStudio.Docs;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using Microsoft.AspNetCore.Hosting;
@@ -11,11 +12,14 @@ namespace AgentStudio.Tests;
 /// workspace (AGT-3416), for classes that write task folders and read them
 /// back over HTTP.
 ///
-/// <para>A host built per test scanned folders the test had already written.
-/// This one is up before the test writes anything, so <see cref="CreateClient"/>
-/// rescans the task index first: the first read sees the same folders the
-/// per-test host's first scan saw. <see cref="Reset"/> empties every lane, so a
-/// test starts from the empty projects a fresh host started from.</para>
+/// <para>A host built per test started after the test wrote its folders: its
+/// boot scanned them, and its file watcher never saw them being written. This
+/// one is up before the test writes anything, so <see cref="CreateClient"/>
+/// first lets the watcher deliver those writes, then rescans the task index
+/// and refills the wiki cache, the two reads a boot makes. The first request
+/// then sees what the per-test host's first request saw, and no late watcher
+/// event republishes a card behind it. <see cref="Reset"/> empties every lane,
+/// so a test starts from the empty projects a fresh host started from.</para>
 /// </summary>
 public abstract class BoardTestHost : SharedTestHost
 {
@@ -85,9 +89,61 @@ public abstract class BoardTestHost : SharedTestHost
     /// <summary>A client for the host, after a rescan of what the test wrote.</summary>
     public HttpClient CreateClient()
     {
+        DrainWatcher();
         Index.ForceRefresh();
+        var wiki = Services.GetRequiredService<WikiContentCache>();
+        foreach (var (name, _) in _projects)
+            wiki.Invalidate(name);
         return Factory.CreateClient();
     }
+
+    /// <summary>
+    /// Returns once the file watcher has handled every change made so far and
+    /// passed each on to the index. A sentinel at the project root marks the
+    /// end of those changes: the watcher reports changes in order, and a file
+    /// outside the lanes is not a task, so the sentinel itself reaches no
+    /// index. A change reaches the index one debounce after it was reported.
+    /// </summary>
+    private void DrainWatcher()
+    {
+        var watcher = Services.GetRequiredService<TaskWatcherService>();
+        foreach (var (_, path) in _projects)
+        {
+            var name = ".watcher-drain-" + Guid.NewGuid().ToString("N");
+            var sentinel = System.IO.Path.Combine(path, name);
+            using var reported = new ManualResetEventSlim();
+            void Observe(string changed)
+            {
+                if (System.IO.Path.GetFileName(changed) == name) reported.Set();
+            }
+            watcher.OnPathChanged += Observe;
+            try
+            {
+                File.WriteAllText(sentinel, "");
+                if (!reported.Wait(WatcherTimeout))
+                    throw new TimeoutException("The file watcher did not report the drain sentinel in " + path);
+            }
+            finally
+            {
+                watcher.OnPathChanged -= Observe;
+                File.Delete(sentinel);
+            }
+        }
+
+        var debounce = TimeSpan.FromMilliseconds(Math.Max(50,
+            int.TryParse(Services.GetRequiredService<IConfiguration>()["TaskWatcher:DebounceMs"], out var ms) ? ms : 250));
+        // The watcher stamps its last event with the system time, which is
+        // the clock of every host this fixture starts.
+        var clock = Services.GetRequiredService<TimeProvider>();
+        Thread.Sleep(2 * debounce);
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (watcher.GetHealthSnapshot().LastEventAt is { } last
+               && clock.GetUtcNow().UtcDateTime - last < debounce
+               && waited.Elapsed < WatcherTimeout)
+            Thread.Sleep(debounce);
+    }
+
+    private static readonly TimeSpan WatcherTimeout = TimeSpan.FromSeconds(30);
 
     private static void CreateLanes(string path)
     {
