@@ -9,6 +9,8 @@ public static class CauseBreakerSettingsDefaults
 
 public record ProjectSettings
 {
+    [System.Text.Json.Serialization.JsonPropertyName("qualityStudio.repositoryId")]
+    public string? QualityStudioRepositoryId { get; init; }
     /// <summary>Documentation-only batch gate pilot. Disabled until a project opts in.</summary>
     public AgentStudio.Pipeline.BatchGateFormationOptions BatchGate { get; init; } = new();
     /// <summary>Optional project override for chat metadata visibility.</summary>

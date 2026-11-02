@@ -30,6 +30,7 @@ export { ProjectObservabilityPanelComponent } from './components/project-observa
 export { ProjectProductRuntimePanelComponent } from './components/project-product-runtime/project-product-runtime-panel.component';
 export { ProjectPipelinePanelComponent } from './components/project-pipeline-panel/project-pipeline-panel.component';
 export { ProjectTestRunsPanelComponent } from './components/project-test-runs-panel/project-test-runs-panel';
+export { QualityStudioPanelComponent } from './components/quality-studio-panel/quality-studio-panel.component';
 export { ProjectUrlsPanelComponent } from './components/project-urls-panel/project-urls-panel.component';
 export { ProjectUrlPreviewTabComponent } from './components/project-url-preview-tab/project-url-preview-tab.component';
 export { WorkbenchTabHostComponent } from './components/workbench-tab-host/workbench-tab-host.component';

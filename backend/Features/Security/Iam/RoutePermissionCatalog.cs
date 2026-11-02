@@ -176,6 +176,12 @@ public static class RoutePermissionCatalog
             => rules.Add(new Rule(methods, Split(pattern), new RequiredPermissionMetadata(permission, EnvironmentBodyField: field)));
 
         // --- Anonymous, own session, and access administration -------------
+        Add("R", IamPermissions.Anonymous, "/.well-known/agent-studio/jwks.json");
+        Add("R", IamPermissions.WorkspaceAdminister, "/api/integrations/quality-studio/connection");
+        Add("W", IamPermissions.WorkspaceAdminister, "/api/integrations/quality-studio/connection", "/api/integrations/quality-studio/token",
+            "/api/integrations/quality-studio/projects/{}/repository");
+        AddProjectChecked("R", IamPermissions.ProjectRead, "/api/integrations/quality-studio/status",
+            "/api/integrations/quality-studio/open");
         Add("*", IamPermissions.Anonymous, "/healthz/**");
         Add("R", IamPermissions.Anonymous, "/api/auth/status", "/recovery");
         Add("POST", IamPermissions.Anonymous,

@@ -111,6 +111,18 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetQualityStudioRepositoryId(string projectName, string? repositoryId)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { QualityStudioRepositoryId = repositoryId };
+            Persist();
+        }
+    }
+
     public void SetAutomaticFailureContinuationsEnabled(string projectName, bool enabled)
     {
         EnsureLoaded();
