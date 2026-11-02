@@ -3,13 +3,11 @@ import type { CliCompletionContract } from '../../src/app/features/cli';
 
 /**
  * Admin/CLI page (T7a): the model-catalog and completion-contract sections in
- * the workspace Settings "Usage caps" panel. AGT-2035 extracted Working memory
- * into its own settings section and added a completion-contracts explainer.
+ * the workspace Settings CLI Management panel, with its completion-contracts explainer.
  *
  * Verifies:
  *   1. GET /api/cli/contracts returns the real per-CLI completion contract
- *      registry (one entry per known CLI; Claude/Codex/Gemini typed, Copilot
- *      exit-based). The data is sourced from the live adapter mappings, not a
+ *      registry (one entry per known CLI; Claude, Codex, and Gemini use typed adapters). The data is sourced from the live adapter mappings, not a
  *      frontend constant.
  *   2. The page renders the new sections and captures a real-backend evidence
  *      screenshot under the job's results/ folder.
@@ -37,18 +35,15 @@ test.describe('Admin/CLI page — models & completion contracts', () => {
     expect(byType.has('claude')).toBe(true);
     expect(byType.has('codex')).toBe(true);
     expect(byType.has('gemini')).toBe(true);
-    expect(byType.has('copilot')).toBe(true);
 
     // Typed adapters expose their native completion frame.
     expect(byType.get('claude')!.typed).toBe(true);
     expect(byType.get('claude')!.completionSignal).toContain('result');
     expect(byType.get('codex')!.completionSignal).toContain('turn.completed');
 
-    // Copilot has no typed adapter — honestly reported as exit-based.
-    expect(byType.get('copilot')!.typed).toBe(false);
   });
 
-  test('Usage caps renders models + contracts (with explainer); Working memory is its own section', async ({ page }) => {
+  test('CLI Management renders models and contracts', async ({ page }) => {
     await page.goto('/');
     await page.getByTestId('status-bar-settings').click();
     await page.getByTestId('workspace-settings-rail-caps').click();
@@ -64,14 +59,8 @@ test.describe('Admin/CLI page — models & completion contracts', () => {
     // AGT-2035: the completion-contracts surface now carries a short explainer.
     await expect(contracts.getByTestId('cli-admin-contracts-explainer')).toBeVisible();
     await expect(contracts.getByTestId('cli-contract-card-claude')).toBeVisible();
-    await expect(contracts.getByTestId('cli-contract-typed-copilot')).toContainText('exit-based');
     await expect(contracts.getByTestId('cli-contracts-explainer')).toContainText('read-only registry');
     await expect(contracts.getByTestId('cli-contracts-explainer')).toContainText('not configuration');
-
-    // Working memory was extracted from Usage caps into its own section.
-    await expect(overlay.getByTestId('cli-admin-working-memory')).toHaveCount(0);
-    await page.getByTestId('workspace-settings-rail-working-memory').click();
-    await expect(page.getByTestId('workspace-working-memory')).toBeVisible();
 
     await page.getByTestId('workspace-settings-rail-caps').click();
     await overlay.screenshot({ path: '../results/cli-admin-types-models-contracts--real.png' });

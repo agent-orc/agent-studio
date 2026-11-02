@@ -791,6 +791,8 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPost(method) && path.EndsWith("/capability-failures", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.EndsWith("/cli-update/result", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.Contains("/provider-canary/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/quota/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+            if (HttpMethods.IsPut(method) && path.EndsWith("/quota/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsGet(method) && (path.EndsWith("/cli-update", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith("/provider-comparison", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
         }

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, computed, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, computed, effect, inject, input, output, signal } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import { laneName } from '../../../../models/lane-presentation';
 import type { PipelineHealthAlert, PipelineHealthSnapshot, PipelineLaneDrainHealth } from '../../../task-pipeline';
@@ -16,6 +16,7 @@ import type { GateEconomicsResponse } from '../../../task-pipeline/models/gate-e
 })
 export class PipelineHealthBlockComponent implements OnDestroy {
   readonly projectName = input.required<string>();
+  readonly openFlowHealth = output<void>();
   readonly health = signal<PipelineHealthSnapshot | null>(null);
   private readonly economicsResponse = signal<GateEconomicsResponse | null>(null);
   readonly economics = computed(() => this.economicsResponse()?.rows

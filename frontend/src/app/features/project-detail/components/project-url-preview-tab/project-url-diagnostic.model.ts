@@ -19,6 +19,7 @@ const PRESENTATION: Record<ProjectUrlDiagnosisClass, ProjectUrlDiagnosisPresenta
   'content-not-renderable': { status: 'Cannot preview', title: 'The response cannot be rendered here', primaryAction: 'external' },
   'invalid-configuration': { status: 'Setup needed', title: 'URL Preview is not configured correctly', primaryAction: 'settings' },
   running: { status: 'Running', title: 'Preview ready', primaryAction: 'retry' },
+  'local-only': { status: 'Local only', title: 'This URL is only reachable on the machine that serves it', primaryAction: 'external' },
 };
 
 export function presentProjectUrlDiagnosis(value: ProjectUrlDiagnostic | null): ProjectUrlDiagnosisPresentation {

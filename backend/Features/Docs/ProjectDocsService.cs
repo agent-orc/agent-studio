@@ -30,6 +30,7 @@ public class ProjectDocsService
     private const string SecurityRel = "docs/operations/security";
     private const string SecurityStateFile = "state.json";
     private const string AdrRel = "docs/system/architecture/decisions/adr-archive.md";
+    internal const long MaxAdrArchiveBytes = 8L * 1024 * 1024;
     internal const string WikiRel = "docs";
 
     // The code-contract area under docs/. Everything below docs/app/ is a
@@ -3330,7 +3331,8 @@ public class ProjectDocsService
         if (baseDir == null) return null;
 
         var adrPath = Path.Combine(baseDir, AdrRel);
-        if (!File.Exists(adrPath))
+        var md = ReadAdrArchive(baseDir, adrPath);
+        if (md == null)
         {
             return new ArchitectureOverview(
                 ProjectName: projectName,
@@ -3340,7 +3342,7 @@ public class ProjectDocsService
                 Decisions: []);
         }
 
-        var (preamble, decisions) = ParseAdrFile(File.ReadAllText(adrPath));
+        var (preamble, decisions) = ParseAdrFile(md);
         return new ArchitectureOverview(
             ProjectName: projectName,
             SourceFile: adrPath,
@@ -3358,7 +3360,10 @@ public class ProjectDocsService
 
         // Re-parse to retrieve the body content. The parser kept body
         // separately so we can return Markdown without the heading.
-        var (_, all) = ParseAdrFile(File.ReadAllText(overview.SourceFile));
+        var baseDir = ResolveBaseDir(projectName);
+        var md = baseDir == null ? null : ReadAdrArchive(baseDir, overview.SourceFile);
+        if (md == null) return null;
+        var (_, all) = ParseAdrFile(md);
         var body = all.FirstOrDefault(d => string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase))?.Body ?? "";
         return new ArchitectureDecisionDetail(
             Id: summary.Id,
@@ -3366,6 +3371,31 @@ public class ProjectDocsService
             Date: summary.Date,
             Status: summary.Status,
             Body: body);
+    }
+
+    /// <summary>
+    /// Text of the ADR archive when it is a regular checkout file of at most
+    /// <see cref="MaxAdrArchiveBytes"/>. A link, Git metadata or an oversize
+    /// file reads as absent.
+    /// </summary>
+    private string? ReadAdrArchive(string baseDir, string adrPath)
+    {
+        var status = FilesystemPathBoundary.CheckCheckoutFile(baseDir, adrPath, MaxAdrArchiveBytes);
+        if (status != CheckoutFileStatus.Readable)
+        {
+            if (status != CheckoutFileStatus.Missing)
+                _logger.LogWarning("ADR archive {Path} not served: {Status}", adrPath, status);
+            return null;
+        }
+        try
+        {
+            return File.ReadAllText(adrPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "ADR archive {Path} could not be read", adrPath);
+            return null;
+        }
     }
 
     /// <summary>

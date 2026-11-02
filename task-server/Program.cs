@@ -53,6 +53,8 @@ builder.Services
             options.RetentionArchivePath = configuration["ARCHIVE_PATH"];
     });
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSingleton(new HostQuotaCoordinator(
+    builder.Configuration.GetValue<int?>("Quota:TtlSeconds") ?? HostQuotaCoordinator.DefaultTtlSeconds));
 builder.Services.AddHttpClient(nameof(HttpWorkspaceQuotaAdmission), client =>
     client.Timeout = TimeSpan.FromSeconds(3));
 // Without a meter URL quota admission is off: no admission object, no per-claim event, one startup log line.

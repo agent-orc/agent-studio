@@ -1,0 +1,46 @@
+Batch gate census, Agent Studio
+Script: docs/review-gate-packages/batch-gate-census.py
+Run by: operator, 2 November 2026, 04:50 UTC (the concept runner has no access to the store)
+Output as reported by the operator. Exclusion reasons are BatchExclusionReason numbers
+(backend/Features/Pipeline/BatchGate/BatchGatePolicy.cs:22-44):
+  7 ReviewSubjectMismatch, 11 SupersededGeneration, 17 OtherBatchOwnsMember,
+  18 ActivePerTaskGate, 20 NextBatch.
+
+== Store 1: before the move to the Linux host (13 to 29 October 2026, read in full) ==
+Planner: look-ahead, 2 to 4 cards, deadline 15 minutes.
+
+batches closed: 186
+size distribution: {2: 160, 3: 18, 4: 8}
+mean size: 2.18
+split batches (parentBatchId set): 2
+exclusion reasons: {'18': 1118, '11': 807, '7': 736, '17': 667, '20': 319}
+run verdicts (outcome, classification): {('pass', 'pass'): 9, ('fail', 'infrastructure-red'): 3, ('pass', 'flaky-quarantined-pass'): 2, ('fail', 'deterministic-suite-red'): 1}
+plan decisions: 20277 idle no eligible cards; 1858 wait for target size or deadline; 999 per-task, close condition below minimum batch size; 641 wait, compatible card due inside look-ahead window; 63 close idle gate host; 63 close deadline reached; 55 close target size reached; 12 per-task, oldest card exceeds batch risk limit; 3 close urgent tag
+gate executions by outcome: {'Fail': 172, 'Ok': 343, 'superseded': 2, 'shutdown': 10}
+gate minutes: median 35.5, n=10
+queue wait minutes: median 27.3
+pending records: 634 open, 620 resolved
+
+== Store 1, from 25 October 2026 on ==
+
+batches closed: 12
+size distribution: {2: 11, 3: 1}
+mean size: 2.08
+gate executions by outcome: {'Ok': 71, 'Fail': 21}
+queue wait minutes: median 0.0
+
+== Store 2: Linux host since the move ==
+Planner: threshold (closeSize 6, pressureSize 6, maximumSize 8, deadline 45 minutes)
+since 2 November 2026 about 01:00 UTC; look-ahead before. Only a few hours of data.
+
+batches closed: 13
+size distribution: {2: 2, 3: 5, 4: 3, 6: 2, 8: 1}
+mean size: 3.92
+split batches (parentBatchId set): 1
+exclusion reasons: {'17': 85, '18': 36, '20': 2}
+run verdicts (outcome, classification): {('fail', 'deterministic-suite-red'): 1, ('fail', 'pre-existing-base-red'): 1, ('pass', 'flaky-quarantined-pass'): 1}
+plan decisions: 391 wait for threshold or deadline; 176 idle waiting for threshold or deadline; 32 idle no eligible cards; 12 close threshold reached; 6 per-task, close condition below minimum batch size; 4 wait, compatible card due inside look-ahead window
+gate executions by outcome: {'Ok': 5, 'Fail': 7}
+gate minutes: median 31.3, n=3
+queue wait minutes: median 0.0
+pending records: 34 open, 15 resolved

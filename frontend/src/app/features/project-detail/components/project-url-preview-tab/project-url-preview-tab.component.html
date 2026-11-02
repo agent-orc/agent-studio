@@ -15,7 +15,7 @@
         (navigate)="onNavigate($event)" />
       <span class="url-preview__pill"
             [attr.data-status]="statusPill()"
-            data-testid="url-preview-status">{{ statusPill() }}</span>
+            data-testid="url-preview-status">{{ statusPill() | projectUrlStatusLabel }}</span>
     </div>
     <button type="button" class="url-preview__nav"
             data-testid="url-preview-open-external"
@@ -145,7 +145,7 @@
                     } @else if (readiness().kind === 'timeout') {
                       Preview timed out
                     } @else {
-                      Preview is offline
+                      {{ readiness().kind === 'local-only' ? 'Preview is local only' : 'Preview is offline' }}
                     }
                   </h2>
                 </div>
@@ -162,7 +162,7 @@
                   } @else if (readiness().kind === 'http-error') {
                     HTTP {{ readiness().statusCode }}
                   } @else {
-                    Offline
+                    {{ readiness().kind === 'local-only' ? 'Local only' : 'Offline' }}
                   }
                 </span>
               </header>
@@ -178,7 +178,7 @@
                   } @else if (readiness().kind === 'timeout') {
                     The server did not return an HTTP response before the readiness timeout at
                     <code data-testid="url-preview-affected-url">{{ displayUrl() }}</code>.
-                  } @else {
+                  } @else if (readiness().kind === 'local-only') { {{ readiness().detail }} } @else {
                     No server is responding at <code data-testid="url-preview-affected-url">{{ displayUrl() }}</code>.
                   }
                 </p>

@@ -709,7 +709,6 @@ public class AspectRunnerTests : IDisposable
                 ? string.Empty // dead reviewer: no output
                 : "[[ASPECT_VERDICT: status=pass; summary=Recovered on retry.]]\n[[TASK_DONE]]";
         });
-        runner.VerdictRetryBackoff = _ => TimeSpan.Zero; // no real wait in the test
 
         var report = await runner.RunAsync(BuildInputs(),
             new[] { "code-quality" },
@@ -735,7 +734,6 @@ public class AspectRunnerTests : IDisposable
             calls.AddOrUpdate(aspect, 1, (_, c) => c + 1);
             return string.Empty; // dead every time
         });
-        runner.VerdictRetryBackoff = _ => TimeSpan.Zero;
 
         var report = await runner.RunAsync(BuildInputs(),
             new[] { "code-quality" },
@@ -789,7 +787,6 @@ public class AspectRunnerTests : IDisposable
             calls.AddOrUpdate(aspect, 1, (_, c) => c + 1);
             return "I have no opinion.";
         });
-        runner.VerdictRetryBackoff = _ => TimeSpan.Zero;
 
         var report = await runner.RunAsync(BuildInputs(),
             new[] { "code-quality" },
@@ -817,7 +814,12 @@ public class AspectRunnerTests : IDisposable
             .AddInMemoryCollection(new Dictionary<string, string?>())
             .Build();
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
-        var runner = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
+        // An unparseable or empty reply takes the environmental retry; the
+        // production backoff before it is 30 seconds (AGT-3419).
+        var runner = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance)
+        {
+            VerdictRetryBackoff = _ => TimeSpan.Zero
+        };
         runner.CliRunner = (aspectId, _, _, _, _, _) => Task.FromResult(stub(aspectId));
         return runner;
     }

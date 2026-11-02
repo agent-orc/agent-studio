@@ -17,7 +17,9 @@ namespace AgentStudio.Git;
 ///   links its deadline (a no-op outside an index run);</item>
 ///   <item>runs the process through <see cref="GitNetworkProcessRunner"/>,
 ///   which hardens the configuration and bounds time and cancellation;</item>
-///   <item>records the subcommand and duration in the telemetry scope.</item>
+///   <item>records the subcommand and duration in the telemetry scope;</item>
+///   <item>after a kill, removes the locks the command left that no other git
+///   process can hold (AGT-3409).</item>
 /// </list>
 /// A caller that must own the <see cref="Process"/> itself (line streaming)
 /// opens a <see cref="Begin"/> span around its own start instead.
@@ -38,11 +40,16 @@ internal static class GitProcessBoundary
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
-        using var span = Open(startInfo);
-        using var slot = GitProcessBudget.Acquire();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, GitProcessBudget.Token);
-        var result = GitNetworkProcessRunner.Run(startInfo, stdin, timeout, linked.Token);
-        span.Complete(result.ExitCode, result.FailureKind == GitProcessFailureKind.TimedOut);
+        var started = DateTime.UtcNow;
+        GitProcessResult result;
+        using (var span = Open(startInfo))
+        using (GitProcessBudget.Acquire())
+        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, GitProcessBudget.Token))
+        {
+            result = GitNetworkProcessRunner.Run(startInfo, stdin, timeout, linked.Token);
+            span.Complete(result.ExitCode, result.FailureKind == GitProcessFailureKind.TimedOut);
+        }
+        ReleaseLocksOfKilledCommand(startInfo, result.FailureKind, started);
         return result;
     }
 
@@ -53,11 +60,16 @@ internal static class GitProcessBoundary
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
-        using var span = Open(startInfo);
-        using var slot = GitProcessBudget.Acquire();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, GitProcessBudget.Token);
-        var result = GitNetworkProcessRunner.RunBinary(startInfo, stdin, maxOutputBytes, timeout, linked.Token);
-        span.Complete(result.ExitCode, result.FailureKind == GitProcessFailureKind.TimedOut);
+        var started = DateTime.UtcNow;
+        GitBinaryProcessResult result;
+        using (var span = Open(startInfo))
+        using (GitProcessBudget.Acquire())
+        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, GitProcessBudget.Token))
+        {
+            result = GitNetworkProcessRunner.RunBinary(startInfo, stdin, maxOutputBytes, timeout, linked.Token);
+            span.Complete(result.ExitCode, result.FailureKind == GitProcessFailureKind.TimedOut);
+        }
+        ReleaseLocksOfKilledCommand(startInfo, result.FailureKind, started);
         return result;
     }
 
@@ -68,13 +80,65 @@ internal static class GitProcessBoundary
         CancellationToken cancellationToken,
         Func<ProcessStartInfo, Process?>? startProcess = null)
     {
-        using var span = Open(startInfo);
-        using var slot = await GitProcessBudget.AcquireAsync().ConfigureAwait(false);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, GitProcessBudget.Token);
-        var result = await GitNetworkProcessRunner.RunAsync(startInfo, stdin, timeout, linked.Token, startProcess)
-            .ConfigureAwait(false);
-        span.Complete(result.ExitCode, result.FailureKind == GitProcessFailureKind.TimedOut);
+        var started = DateTime.UtcNow;
+        GitProcessResult result;
+        using (var span = Open(startInfo))
+        using (await GitProcessBudget.AcquireAsync().ConfigureAwait(false))
+        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, GitProcessBudget.Token))
+        {
+            result = await GitNetworkProcessRunner.RunAsync(startInfo, stdin, timeout, linked.Token, startProcess)
+                .ConfigureAwait(false);
+            span.Complete(result.ExitCode, result.FailureKind == GitProcessFailureKind.TimedOut);
+        }
+        ReleaseLocksOfKilledCommand(startInfo, result.FailureKind, started);
         return result;
+    }
+
+    /// <summary>
+    /// A git process the runner killed (timeout, cancellation) or lost (an
+    /// exception after start) cannot release its locks: SIGKILL skips git's
+    /// own lock cleanup. On 2026-11-01 a killed <c>git add</c> left
+    /// <c>index.lock</c> in the workspace repository and every following write
+    /// failed until the lock aged past the stale threshold (AGT-3409). This
+    /// runs after the child left <see cref="GitChildProcessRegistry"/>, so the
+    /// ownership probe only sees other git processes, and removes the locks the
+    /// command wrote that none of them can hold.
+    /// </summary>
+    private static void ReleaseLocksOfKilledCommand(
+        ProcessStartInfo startInfo, GitProcessFailureKind failure, DateTime startedUtc)
+    {
+        if (failure == GitProcessFailureKind.None) return;
+        var directory = CommandDirectory(startInfo);
+        if (directory is null) return;
+        GitStaleLockGuard.ForKilledCommand().ReleaseKilledCommandLocks(directory, startedUtc, DateTime.UtcNow);
+    }
+
+    /// <summary>
+    /// The directory git ran in: the working directory with every <c>-C</c>
+    /// applied. Null for an explicit <c>--git-dir</c> (a bare repository has no
+    /// index and its ref locks are the ref janitor's).
+    /// </summary>
+    internal static string? CommandDirectory(ProcessStartInfo startInfo)
+    {
+        var args = startInfo.ArgumentList;
+        if (args.Any(arg => arg == "--git-dir" || arg.StartsWith("--git-dir=", StringComparison.Ordinal)))
+            return null;
+        try
+        {
+            var directory = string.IsNullOrWhiteSpace(startInfo.WorkingDirectory)
+                ? Environment.CurrentDirectory : Path.GetFullPath(startInfo.WorkingDirectory);
+            for (var index = 0; index + 1 < args.Count; index++)
+            {
+                if (args[index] != "-C") continue;
+                directory = Path.GetFullPath(args[++index], directory);
+            }
+            return directory;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        {
+            AgentStudio.Diagnostics.SilentCatch.Note(ex, "GitProcessBoundary: killed command directory is unresolvable");
+            return null;
+        }
     }
 
     /// <summary>

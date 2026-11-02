@@ -85,6 +85,13 @@ public static class AcceptedIntegrationFailureCodes
     public const string VerifyDefinitionMissing = "verify-definition-missing";
 
     /// <summary>
+    /// The release line moved during every bounded full-suite run on the merge
+    /// result of a delivery that was behind it (AGT-3435). Nothing was published;
+    /// the delivery itself needs no change.
+    /// </summary>
+    public const string ReleaseLineMoving = "release-line-moving";
+
+    /// <summary>
     /// Maps a non-successful merge result onto its typed code. An
     /// <see cref="MergeIntoIntegrationOutcome.Error"/> result carries its own
     /// <see cref="MergeIntoIntegrationResult.FailureCode"/>; a legacy Error
@@ -316,6 +323,14 @@ public static class AcceptedIntegrationFailurePolicy
                     HasPrefix(verdictSummary) ? verdictSummary : null,
                     VerifyDefinitionPolicy.Message(VerifyDefinitionPolicy.ExampleFor(null))),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.ReleaseLineMoving => new(
+                code,
+                "Release line kept moving",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The release line moved during every full-suite run on the merge result; nothing was published."),
+                RebaseRecoveryAvailable: false),
             _ => new(
                 AcceptedIntegrationFailureCodes.IntegrationError,
                 "Integration failed",
@@ -417,6 +432,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.IntegrationRefUnresolved => AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
             AcceptedIntegrationFailureCodes.GateUnavailable => AcceptedIntegrationFailureCodes.GateUnavailable,
             AcceptedIntegrationFailureCodes.VerifyDefinitionMissing => AcceptedIntegrationFailureCodes.VerifyDefinitionMissing,
+            AcceptedIntegrationFailureCodes.ReleaseLineMoving => AcceptedIntegrationFailureCodes.ReleaseLineMoving,
             _ => null,
         };
     }

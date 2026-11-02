@@ -198,9 +198,11 @@ public static class TaskFilesEndpoints
 
         // Read-only task-artifact route for the job's `results/` folder. It
         // remains the image source used by protocol markdown, and also serves
-        // report HTML inline plus nested result artifacts linked from Activity,
-        // Task, Result, and Docs. Unknown types retain octet-stream/download
-        // behavior. ResolveResult confines every path to the current task.
+        // report HTML plus nested result artifacts linked from Activity, Task,
+        // Result, and Docs. HTML renders inline only inside a Studio frame
+        // (ResultHtmlDispositionPolicy) and is a download everywhere else.
+        // Unknown types retain octet-stream/download behavior. ResolveResult
+        // confines every path to the current task.
         group.MapGet("/{jobId}/results/{**path}", (string jobId, string path, string? project, string? watchPath, HttpContext ctx, HttpResponse response, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             var product = ContributorAccessPolicy.IsProductSession(ctx);
@@ -213,11 +215,17 @@ public static class TaskFilesEndpoints
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (contentType?.StartsWith("text/html", StringComparison.OrdinalIgnoreCase) == true)
             {
-                response.Headers.ContentDisposition = "inline";
                 response.Headers.ContentSecurityPolicy =
                     "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; " +
                     "style-src 'unsafe-inline'; img-src data: blob:; font-src data:; frame-ancestors 'self'";
                 response.Headers.XContentTypeOptions = "nosniff";
+                response.Headers.Vary = $"{ResultHtmlDispositionPolicy.FetchDestHeader}, {ResultHtmlDispositionPolicy.FetchSiteHeader}";
+                var request = ctx.Request.Headers;
+                if (!ResultHtmlDispositionPolicy.ServesInline(
+                        request[ResultHtmlDispositionPolicy.FetchDestHeader],
+                        request[ResultHtmlDispositionPolicy.FetchSiteHeader]))
+                    return Results.File(resolved, contentType, Path.GetFileName(resolved), enableRangeProcessing: true);
+                response.Headers.ContentDisposition = "inline";
             }
             return Results.File(resolved, contentType, enableRangeProcessing: true);
         });

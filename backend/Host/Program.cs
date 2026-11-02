@@ -52,6 +52,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
 builder.Services.AddSingleton<AgentStudio.Review.ReviewObservationStore>();
+builder.Services.AddSingleton<AgentStudio.Review.ReviewBaselineService>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
@@ -723,7 +724,6 @@ builder.Services.AddKeyedSingleton<GenericCliExecutionService>(CliTypes.Gemini, 
         sp.GetRequiredService<ILoggerFactory>().CreateLogger("AgentStudio.Cli.AntigravityCliService"),
         sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<ClaudeSessionInspector>();
-builder.Services.AddSingleton<CliWorkingMemoryService>();
 builder.Services.AddSingleton<CliRouter>(sp => new CliRouter(
     sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Claude),
     sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Codex),
@@ -1376,6 +1376,10 @@ builder.Services.AddSingleton<CliVersionTracker>();
 builder.Services.AddSingleton<NpmGlobalInstaller>();
 builder.Services.AddSingleton<LocalCliRepairService>();
 builder.Services.AddSingleton<QuotaService>();
+builder.Services.AddSingleton(new AgentStudio.TaskServer.Contracts.HostQuotaCoordinator(
+    builder.Configuration.GetValue<int?>("Quota:TtlSeconds")
+    ?? AgentStudio.TaskServer.Contracts.HostQuotaCoordinator.DefaultTtlSeconds));
+builder.Services.AddHostedService<HostQuotaSyncService>();
 if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
     builder.Services.AddHostedService<CliVersionMonitorHostedService>();
 builder.Services.AddSingleton<CliQuotaCapsService>();

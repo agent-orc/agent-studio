@@ -1,4 +1,5 @@
 using AgentStudio.Pipeline;
+using ProjectDefinitionIssueText = AgentStudio.TaskServer.Contracts.ProjectDefinitionIssueText;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -153,6 +154,53 @@ public sealed class GateFailureTriagePolicyTests
         Assert.Contains("verdict Ok", triage.MissingEvidence);
     }
 
+    /// <summary>The newest pre-main gate log of AOW-15, as written before the fix.</summary>
+    internal const string Aow15Log =
+        "verdict=Fail exit=n/a durationMs=812 failureKind=Environment\n" +
+        "expectedSha=4f1c2e9a0b7d3c5e8f6a1b2c3d4e5f6a7b8c9d0e testedSha=4f1c2e9a0b7d3c5e8f6a1b2c3d4e5f6a7b8c9d0e\n" +
+        "reason=Repository execution definition is invalid.; diagnosis=unclassified-first-occurrence confidence=0.20; " +
+        "fingerprint=unavailable; baseline=green; fingerprint=none; clean-repeat=unavailable; fingerprint=none; " +
+        "history-24h: other-cards=0; prior=0\n" +
+        "budget=none\n" +
+        "--- last-300-lines ---\n";
+
+    [Fact]
+    public void Aow15_InvalidDefinitionLoggedAsEnvironment_IsADefinitionProductFailure()
+    {
+        var triage = GateFailureTriagePolicy.Classify(Aow15Log);
+
+        Assert.Equal(GateFailureClasses.Product, triage.Class);
+        Assert.Equal(GateProductKinds.Definition, triage.Kind);
+        Assert.Equal(["definition-invalid"], triage.Markers);
+        Assert.DoesNotContain("diagnosis=", triage.ReasonLine);
+        Assert.DoesNotContain("toolchain", triage.ReasonLine);
+        Assert.Contains("commands.prepare is required", triage.ReasonLine);
+    }
+
+    [Fact]
+    public void InvalidDefinitionWithIssues_CarriesEachIssueAsAFailingItem()
+    {
+        var reason = ProjectDefinitionIssueText.InvalidReason(
+        [
+            new("commands.prepare", "prepare-path-invalid", "Prepare must be a repository-relative path without traversal."),
+            new("testSuites[0].id", "suite-id-invalid", "Test suite ids are required and unique."),
+        ]);
+        var log = Aow15Log
+            .Replace("failureKind=Environment", "failureKind=Code", StringComparison.Ordinal)
+            .Replace("reason=Repository execution definition is invalid.; diagnosis=", "reason=" + reason + " ignored=",
+                StringComparison.Ordinal);
+
+        var triage = GateFailureTriagePolicy.Classify(log);
+
+        Assert.Equal(GateFailureClasses.Product, triage.Class);
+        Assert.Equal(GateProductKinds.Definition, triage.Kind);
+        Assert.Equal(["commands.prepare [prepare-path-invalid]", "testSuites[0].id [suite-id-invalid]"],
+            triage.FailingItems);
+        Assert.StartsWith("gate-definition:", triage.Fingerprint);
+        Assert.Contains("commands.prepare [prepare-path-invalid] Prepare must be a repository-relative path",
+            triage.ReasonLine);
+    }
+
     private static string WithHeaderLine(string log, string line)
     {
         var lines = log.Split('\n').ToList();
@@ -207,6 +255,36 @@ public sealed class GateFailureRoutingPolicyTests
 
         Assert.Equal(expected, route.Action);
         Assert.Equal(category, route.Category);
+    }
+
+    [Fact]
+    public void Aow15_InvalidDefinition_StartsTheFixRound_WithoutReplayBudgetOrSharedCause()
+    {
+        var triage = GateFailureTriagePolicy.Classify(GateFailureTriagePolicyTests.Aow15Log);
+
+        // AOW-15 had spent its replay ladder; a definition failure never reads it.
+        var route = GateFailureRoutingPolicy.Decide(triage, new GateFailureRoutingFacts(false, 4, 0, true));
+
+        Assert.Equal(GateFailureRouteAction.FixRound, route.Action);
+        Assert.False(route.Parks);
+        var prompt = GateFailureFixRoundPrompt.Build(
+            "AOW-15", "refs/heads/aow-15", new string('a', 40), "develop", "pre-main-test-gate", triage, null);
+        Assert.Contains(ProjectDefinitionIssueText.InvalidPrefix, prompt);
+        Assert.Contains("commands.prepare is required", prompt);
+    }
+
+    [Fact]
+    public void InvalidDefinition_SpentFixRound_ParksAsProduct_WithoutAHostRepairHint()
+    {
+        var triage = GateFailureTriagePolicy.Classify(GateFailureTriagePolicyTests.Aow15Log);
+        var route = GateFailureRoutingPolicy.Decide(triage, new GateFailureRoutingFacts(false, 0, 1, true));
+
+        var reason = GateFailureRoutingPolicy.ParkReason(triage, route);
+
+        Assert.Equal(GateFailureParkCategories.Product, route.Category);
+        Assert.Contains("class product/definition", reason);
+        Assert.DoesNotContain("repair the gate host", reason);
+        Assert.DoesNotContain("toolchain", reason);
     }
 
     [Fact]
