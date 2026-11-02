@@ -140,6 +140,33 @@ public sealed class WorkspaceRegistry
         }
     }
 
+    public WorkspaceSystem UpsertSystem(string workspaceId, WorkspaceSystem system,
+        IReadOnlyList<ProjectRecord> projects)
+    {
+        if (string.IsNullOrWhiteSpace(system.Id) || string.IsNullOrWhiteSpace(system.Name))
+            throw new ArgumentException("System id and name are required.");
+        if (system.Units.Count == 0 || system.Units.Any(unit =>
+            string.IsNullOrWhiteSpace(unit.UnitId) ||
+            !projects.Any(project => project.Id == unit.ProjectId && project.WorkspaceId == workspaceId)))
+            throw new ArgumentException("Every system unit must name a unit in a project of this workspace.");
+        EnsureLoaded();
+        lock (_gate)
+        {
+            RefreshIfStaleLocked();
+            var index = _state.Workspaces.FindIndex(workspace => workspace.Id == workspaceId);
+            if (index < 0) throw new KeyNotFoundException($"Unknown workspaceId '{workspaceId}'");
+            var workspace = _state.Workspaces[index];
+            var normalized = system with { Id = system.Id.Trim(), Name = system.Name.Trim(),
+                Units = system.Units.Distinct().ToArray() };
+            var next = _state.Workspaces.ToList();
+            next[index] = workspace with { Systems = workspace.Systems
+                .Where(item => item.Id != normalized.Id).Append(normalized).OrderBy(item => item.Name).ToArray() };
+            _state = _state with { Workspaces = next };
+            PersistLocked();
+            return normalized;
+        }
+    }
+
     /// <summary>
     /// Inserts <see cref="DefaultWorkspace"/> if no workspace exists yet
     /// and a TaskRepository is configured. Writes the file. Returns the

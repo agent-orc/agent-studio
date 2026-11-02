@@ -139,6 +139,15 @@ public static class RegistryEndpoints
 
         // ----- F45b workspace mutations (ADR-0042) -----
 
+        app.MapPut("/api/workspaces/{id}/systems/{systemId}",
+            (string id, string systemId, WorkspaceSystem body, WorkspaceRegistry workspaces, ProjectRegistry projects) =>
+            {
+                if (body == null) return Results.BadRequest(new { error = "body required" });
+                try { return Results.Ok(workspaces.UpsertSystem(id, body with { Id = systemId }, projects.List())); }
+                catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+                catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            });
+
         app.MapPost("/api/workspaces", (RegistryCreateWorkspaceRequest body, WorkspaceRegistry workspaces) =>
         {
             if (body == null || string.IsNullOrWhiteSpace(body.DisplayName))

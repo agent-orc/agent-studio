@@ -75,7 +75,18 @@ public record WorkspaceRecord
     /// <summary>Optional accent colour (CSS hex string).</summary>
     public string? Color { get; init; }
     public DateTime CreatedAt { get; init; }
+    /// <summary>Systems span project-owned units while placement stays installation-owned.</summary>
+    public IReadOnlyList<WorkspaceSystem> Systems { get; init; } = [];
 }
+
+public record WorkspaceSystem
+{
+    public string Id { get; init; } = "";
+    public string Name { get; init; } = "";
+    public IReadOnlyList<WorkspaceSystemUnit> Units { get; init; } = [];
+}
+
+public record WorkspaceSystemUnit(string ProjectId, string UnitId);
 
 /// <summary>
 /// F45a — per-project registry entry. The project id is the stable identity
