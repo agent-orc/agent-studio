@@ -62,7 +62,9 @@ public static partial class ProviderAccessClassifier
                     || typeProperty.ValueKind != JsonValueKind.String)
                     continue;
                 var type = typeProperty.GetString();
-                var isProviderError = type is "error" or "turn.failed" or "response.failed";
+                // Quota telemetry is a provider frame. An allowed warning is
+                // counter-evidence for nearby limit prose on stderr.
+                var isProviderError = type is "error" or "turn.failed" or "response.failed" or "rate_limit_event";
                 if (type == "result")
                 {
                     isProviderError = root.TryGetProperty("is_error", out var isError)
