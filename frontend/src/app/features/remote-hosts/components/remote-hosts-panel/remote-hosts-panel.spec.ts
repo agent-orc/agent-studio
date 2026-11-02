@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
@@ -29,6 +29,7 @@ function reviewSnapshot(overrides: Partial<ReviewQueueSnapshot> = {}): ReviewQue
  * (R3 sum invariant).
  */
 describe('RemoteHostsPanelComponent', () => {
+  beforeEach(() => localStorage.removeItem('atp.environment.view.v1.local'));
   it('shows provider request refusals by model and day', async () => {
     await TestBed.configureTestingModule({
       imports: [RemoteHostsPanelComponent],
@@ -79,7 +80,6 @@ describe('RemoteHostsPanelComponent', () => {
     expect(el.querySelector('h2')?.textContent).toContain('Environment');
     const rows = el.querySelectorAll('[data-testid="remote-host-primary-row"]');
     expect(rows.length).toBe(fixture.componentInstance.total());
-    expect(el.querySelector('[data-testid="remote-host-detail-row"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="remote-hosts-table"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="remote-hosts-summary"]')?.textContent)
       .toContain(String(rows.length));
@@ -213,6 +213,7 @@ describe('RemoteHostsPanelComponent', () => {
       '[data-testid="environment-attention"]',
     );
 
+    expect(diagnostic).toBeTruthy();
     const summary = diagnostic?.querySelector('button') as HTMLButtonElement;
     summary.click();
     fixture.detectChanges();

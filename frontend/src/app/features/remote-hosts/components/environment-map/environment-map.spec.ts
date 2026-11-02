@@ -27,7 +27,7 @@ describe('EnvironmentMapComponent', () => {
     expect(element.querySelector('[data-testid="environment-topology-edge"]')?.textContent).toContain('healthy');
     const selected: string[] = [];
     fixture.componentInstance.selectHost.subscribe(id => selected.push(id));
-    (element.querySelector('[data-testid="environment-topology-point"][role="button"]') as HTMLElement).click();
+    element.querySelector('[data-testid="environment-topology-point"][role="button"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(selected).toEqual(['coding']);
     fixture.destroy();
   });
