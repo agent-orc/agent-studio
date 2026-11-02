@@ -13,24 +13,73 @@
   <div class="structure-body">
     <div class="structure-main" tabindex="0" role="region" aria-label="Structure diagram"
          (keydown)="onCanvasKeydown($event)">
-      <div class="structure-canvas" data-testid="structure-canvas">
-        @for (box of roots(); track box.id) {
-          <ng-container [ngTemplateOutlet]="boxTemplate" [ngTemplateOutletContext]="{ $implicit: box }" />
+      <div class="structure-canvas" data-testid="structure-canvas" [attr.data-layout-ms]="layout().ms"
+           [attr.data-view]="view()" [attr.data-level]="level()"
+           [style.width.px]="layout().width" [style.height.px]="layout().height">
+        @if (layout().outside; as outside) {
+          <p class="structure-outside-label" [style.left.px]="outside.x" [style.top.px]="outside.y">Outside the boundary</p>
         }
-        <svg class="structure-links" aria-hidden="true">
-          @for (link of drawnLinks(); track link.index) {
-            <path [attr.d]="link.path" [attr.data-kind]="link.kind" />
-            <circle [attr.cx]="link.x" [attr.cy]="link.y" r="10" />
-            <text [attr.x]="link.x" [attr.y]="link.y + 4" text-anchor="middle">{{ link.index }}</text>
+        @for (item of layout().boxes; track item.id) {
+          <div class="structure-box" [attr.data-kind]="item.box.kind" [attr.data-opaque]="item.opaque"
+               [attr.data-collapsed]="item.box.collapsed && item.box.children.length > 0"
+               [attr.data-selected]="selected() === item.id" [attr.data-other-project]="item.box.otherProject || null"
+               [attr.data-observation]="item.box.observation || null"
+               [style.left.px]="item.x" [style.top.px]="item.y" [style.width.px]="item.w" [style.height.px]="item.h">
+            <button type="button" class="structure-node" [attr.data-node-id]="item.id"
+                    [style.height.px]="item.opaque ? item.h : headerHeight"
+                    [attr.aria-label]="accessibleLabel(item.box)"
+                    [attr.aria-expanded]="item.box.children.length ? !item.box.collapsed : null"
+                    (click)="toggle(item.box)">
+              @if (item.box.children.length) { <app-disclosure-marker [open]="!item.box.collapsed" /> }
+              <strong>{{ item.box.label }}</strong>
+              @if (item.box.replicas > 1) { <span class="structure-replicas">×{{ item.box.replicas }}</span> }
+              @if (status(item.box); as status) {
+                <svg class="structure-status" [attr.data-status]="status.tone" viewBox="-7 -7 14 14" role="img"
+                     [attr.aria-label]="status.word"><title>{{ status.word }}</title>
+                  @switch (status.tone) {
+                    @case ('ok') { <circle r="6" /><path d="M-3 0 L-1 2.4 L3.2 -2.4" /> }
+                    @case ('warn') { <path d="M0 -6.5 L6.6 5.2 L-6.6 5.2 Z" /><path d="M0 -2.4 L0 1.2 M0 3 L0 3.3" /> }
+                    @case ('down') { <rect x="-5.6" y="-5.6" width="11.2" height="11.2" rx="1.5" /><path d="M-2.6 -2.6 L2.6 2.6 M2.6 -2.6 L-2.6 2.6" /> }
+                    @default { <circle r="5.6" /><path d="M-1.8 -1.8 Q0 -4 1.8 -1.8 Q1.8 0 0 0.8 L0 1.6 M0 3 L0 3.2" /> }
+                  }
+                </svg>
+              }
+              <small>{{ detail(item) }}</small>
+              @if (item.box.collapsed && item.box.children.length) {
+                <span class="structure-summary">{{ summaryText(item.box) }}</span>
+              }
+            </button>
+          </div>
+        }
+        <svg class="structure-links" aria-hidden="true" [attr.width]="layout().width" [attr.height]="layout().height">
+          <defs>
+            <marker [attr.id]="arrowId" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" />
+            </marker>
+          </defs>
+          @for (link of layout().links; track link.number) {
+            <path class="structure-link-halo" [attr.d]="link.path" />
+            <path class="structure-link" [attr.d]="link.path" [attr.data-kind]="link.kind"
+                  [attr.data-link-number]="link.number"
+                  [attr.marker-end]="arrowFor(link.kind)" />
+          }
+          @for (link of layout().links; track link.number) {
+            <g class="structure-link-key-marker" [attr.transform]="'translate(' + link.keyX + ' ' + link.keyY + ')'">
+              <circle r="9" /><text y="3.5" text-anchor="middle">{{ link.number }}</text>
+            </g>
           }
         </svg>
       </div>
-      <div class="structure-link-key" aria-label="Connection key">
-        @for (link of data().links; track $index) {
-          <div><span class="structure-link-number">{{ $index + 1 }}</span>
-            <span>{{ link.label }} · {{ link.kind }}</span></div>
+      <ol class="structure-link-key" aria-label="Connection key">
+        @for (link of layout().links; track link.number) {
+          <li [attr.data-link-key]="link.number"><span class="structure-link-number">{{ link.number }}</span>
+            <svg class="structure-link-sample" aria-hidden="true" width="24" height="8">
+              <path class="structure-link" [attr.data-kind]="link.kind" d="M0 4 H24" />
+            </svg>
+            <span>{{ link.label }}{{ link.count > 1 ? ' ×' + link.count : '' }} · {{ link.kind }} ·
+              {{ link.fromLabel }} → {{ link.toLabel }}</span></li>
         }
-      </div>
+      </ol>
     </div>
     <aside class="structure-outline" aria-label="Structure outline">
       <h2>Outline</h2>
@@ -45,25 +94,3 @@
   </div>
   <p class="structure-shortcuts">Keys 1–3 change detail · H host · C container · Escape clears selection</p>
 </section>
-
-<ng-template #boxTemplate let-box>
-  <div class="structure-box" [attr.data-kind]="box.kind" [attr.data-selected]="selected() === box.id"
-       [attr.data-other-project]="box.otherProject || null">
-    <button type="button" class="structure-node" [attr.data-node-id]="box.id"
-            [attr.aria-label]="accessibleLabel(box)"
-            [attr.aria-expanded]="box.children.length ? !box.collapsed : null"
-            (click)="toggle(box)">
-      @if (box.children.length) { <app-disclosure-marker [open]="!box.collapsed" /> }
-      <strong>{{ box.label }}</strong><small>{{ ownerDescription(box) }}</small>
-      @if (box.replicas > 1) { <span class="structure-replicas">×{{ box.replicas }}</span> }
-      @if (box.collapsed) { <span class="structure-summary">{{ summaryText(box) }}</span> }
-    </button>
-    @if (!box.collapsed && box.children.length) {
-      <div class="structure-children">
-        @for (child of box.children; track child.id) {
-          <ng-container [ngTemplateOutlet]="boxTemplate" [ngTemplateOutletContext]="{ $implicit: child }" />
-        }
-      </div>
-    }
-  </div>
-</ng-template>

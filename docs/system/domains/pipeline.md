@@ -2977,7 +2977,8 @@ green delivery can replace an expired preview; the same SHA cannot recreate it.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
-`environments`, `lifecycles.standard`, `deploy`, `tenants`, and `variables`. Existing
+`environments`, `lifecycles.standard`, `deploy`, `tenants`, `variables`, and
+`structure`. Existing
 `commands` and `testSuites` remain the execution source until the pipeline
 engine is extended.
 Each release hashes these sections at its commit into its process and
@@ -3053,6 +3054,24 @@ in
   parameter (`?token=`, `api_key=`, `password=`), a connection-string
   `Password=`, a PEM private key, a `Bearer` or `Basic` authorization value, a
   JWT, or a common provider key prefix.
+- `structure` (AGT-3349 S5) declares the deployment shape the Operations
+  structure view draws; it does not enter the release process or variables
+  versions. `regions` have a lower-case `name` and an optional `label`.
+  `placements` have a `name`, a `kind`, an optional `parent` placement, a
+  declared `region`, `environments`, the `artifacts` that run there, and
+  `replicas` (1 to 1000). A kind is `server`, `vm`, `cluster`, `namespace`, or a
+  runner deploy target kind, which maps to a placement kind
+  (`ProjectStructureVocabulary.PlacementKindFor`): `ssh-docker` is drawn as a
+  server, `kubernetes` as a cluster, `cloud-run` as a managed runtime. A
+  namespace needs a cluster or Kubernetes parent; a nested placement inherits
+  environments and stays in its parent's region; parents must not form a
+  cycle. `managedServices` have a `name`, a `kind` (`database`, `queue`,
+  `object-storage`, `cache`, `search`, `other`), a `region`, `environments`,
+  and an optional `healthCheck`: the id of a health check in that
+  environment's declaration. The control-plane health worker already probes
+  those checks, so `GET /api/v1/operations/structure` reports the service as
+  probed via that check's kind with its status; without one it is declared,
+  not observed. Addresses and credentials never appear in this section.
 
 Unknown keys are refused per section and per step kind. Every issue carries its
 definition path and, when the path resolves, the 1-based `line` in project.yml.
@@ -3060,7 +3079,8 @@ The editor contract is
 [`project-execution.schema.json`](../../app/schemas/project-execution.schema.json);
 `ProjectDefinitionSchemaTwoTests` keeps its step kinds, step keys, artifact types,
 variable keys, and its remote path, compose suffix, artifact path, identifier,
-and secret name patterns equal to `ProjectDeploymentVocabulary`.
+and secret name patterns equal to `ProjectDeploymentVocabulary`;
+`ProjectStructureDefinitionTests` does the same for `ProjectStructureVocabulary`.
 
 Release card attribution first matches archived integration-verification SHAs
 against the commits added since the previous release. A retained card key in

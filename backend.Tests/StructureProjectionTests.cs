@@ -144,4 +144,92 @@ public sealed class StructureProjectionTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public void StructureSectionProjectsRegionsTargetKindsAndManagedServiceObservation()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"structure-section-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, ".agent-studio"));
+        try
+        {
+            File.WriteAllText(Path.Combine(root, ".agent-studio", "project.yml"), ProjectStructureDefinitionTests.Shop);
+            var project = new ProjectRecord { Id = "PROJ-004", DisplayName = "Shop", RepositoryPath = root };
+            var probed = new List<(string Environment, string Check)>();
+            StructureProbe? Probe(ProjectRecord owner, string environment, string check)
+            {
+                probed.Add((environment, check));
+                return owner.Id == "PROJ-004" && environment == "production" && check == "postgres-tls"
+                    ? new StructureProbe("tls", "up") : null;
+            }
+
+            var result = StructureProjection.Build(null, [project],
+                _ => Array.Empty<EnvironmentDeclarationFile>(), null, null, probes: Probe);
+            StructureNode Node(string id) => Assert.Single(result.Nodes, node => node.Id == id);
+
+            Assert.Equal(("environment", "installation"), (Node("environment:PROJ-004:production").Kind,
+                Node("environment:PROJ-004:production").ParentId));
+            Assert.Equal(("region", "Region EU", "environment:PROJ-004:production"),
+                (Node("region:PROJ-004:production:eu").Kind, Node("region:PROJ-004:production:eu").Label,
+                 Node("region:PROJ-004:production:eu").ParentId));
+            var cluster = Node("placement:PROJ-004:production:prod-eu");
+            Assert.Equal(("cluster", "Kubernetes", "region:PROJ-004:production:eu"), (cluster.Kind, cluster.Detail, cluster.ParentId));
+            Assert.Equal(("namespace", cluster.Id), (Node("placement:PROJ-004:production:storefront-eu").Kind,
+                Node("placement:PROJ-004:production:storefront-eu").ParentId));
+            var web = Node("instance:PROJ-004:production:storefront-eu:web");
+            Assert.Equal(("container", 4, "storefront-eu", "web", "placement:PROJ-004:production:storefront-eu"),
+                (web.Kind, web.Replicas, web.Role, web.UnitId, web.ParentId));
+            Assert.Equal("web", Node("instance:PROJ-004:production:storefront-us:web").UnitId);
+            Assert.Equal(("server", "SSH Docker host", "environment:PROJ-004:staging"),
+                (Node("placement:PROJ-004:staging:stage-host").Kind, Node("placement:PROJ-004:staging:stage-host").Detail,
+                 Node("placement:PROJ-004:staging:stage-host").ParentId));
+            Assert.Equal(("managed-runtime", "Cloud Run"), (Node("placement:PROJ-004:staging:preview").Kind,
+                Node("placement:PROJ-004:staging:preview").Detail));
+            var database = Node("managed:PROJ-004:production:postgresql");
+            Assert.Equal(("managed", "database", "probed", "tls", "up", "region:PROJ-004:production:eu"),
+                (database.Kind, database.Detail, database.Observation, database.Probe, database.Status, database.ParentId));
+            var queue = Node("managed:PROJ-004:production:message-queue");
+            Assert.Equal(("not-observed", null, null), (queue.Observation, queue.Probe, queue.Status));
+            Assert.Equal([("production", "postgres-tls")], probed);
+            Assert.DoesNotContain(result.Nodes, node => node.Id.StartsWith("placement:PROJ-004:staging:prod-", StringComparison.Ordinal));
+            Assert.All(result.Nodes, node => Assert.Equal("declared", node.Provenance));
+
+            var staging = StructureProjection.Build(null, [project],
+                _ => Array.Empty<EnvironmentDeclarationFile>(), null, "staging", probes: Probe);
+            Assert.DoesNotContain(staging.Nodes, node => node.EnvironmentId == "production");
+            Assert.Contains(staging.Nodes, node => node.Id == "instance:PROJ-004:staging:stage-host:cart");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PlacedArtifactReplacesTheEnvironmentDeclarationInstance()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"structure-placed-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, ".agent-studio"));
+        try
+        {
+            File.WriteAllText(Path.Combine(root, ".agent-studio", "project.yml"), ProjectStructureDefinitionTests.Shop);
+            var project = new ProjectRecord { Id = "PROJ-004", DisplayName = "Shop", RepositoryPath = root };
+            var declaration = new EnvironmentDeclaration("staging", "Staging", "staging", "run-host",
+                "role address", "container", "role destination", null, "none", [], 8080)
+            {
+                Artifacts = [new ProjectArtifactDefinition("web", "container", null, "Dockerfile")]
+            };
+
+            var result = StructureProjection.Build(null, [project],
+                _ => [new EnvironmentDeclarationFile("staging", declaration, null)], null, null);
+
+            Assert.DoesNotContain(result.Nodes, node => node.Id == "instance:PROJ-004:staging:web");
+            Assert.Single(result.Nodes, node => node.Id == "environment:PROJ-004:staging");
+            Assert.Equal("Staging", result.Nodes.Single(node => node.Id == "environment:PROJ-004:staging").Label);
+            Assert.Contains(result.Nodes, node => node.Id == "instance:PROJ-004:staging:stage-host:web");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }
