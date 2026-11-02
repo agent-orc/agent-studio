@@ -482,6 +482,10 @@ public sealed partial class BatchGatePilotService
                     .Where(item => ProvenRed(item) is null)
                     .OrderByDescending(item => baseSha is not null && ProvenGreen(item, baseSha))
                     .ThenBy(item => item.Subject.EnqueueSequence).ToArray();
+                var provenGreenKeys = baseSha is null ? new HashSet<string>(StringComparer.Ordinal)
+                    : current.Where(item => ProvenGreen(item, baseSha))
+                        .Select(item => item.Subject.TaskKey)
+                        .ToHashSet(StringComparer.Ordinal);
                 var gateBacklog = GateBacklogged(first.Subject.Project, waiting);
                 if (options.EffectiveScope == "documentation")
                     foreach (var item in current.Where(item => !item.Subject.DocumentationOnly
@@ -507,7 +511,11 @@ public sealed partial class BatchGatePilotService
                     formed = decision.Decision switch
                     {
                         "close" => BatchGatePolicy.Close(current.Select(item => item.Subject),
-                            scope, baseSha, options, decision.ProposedMembers, _time.GetUtcNow()),
+                            scope, baseSha, options,
+                            current.Where(item => provenGreenKeys.Contains(item.Subject.TaskKey))
+                                .Select(item => item.Subject.TaskKey)
+                                .Concat(decision.ProposedMembers).Distinct(StringComparer.Ordinal).ToArray(),
+                            _time.GetUtcNow()),
                         "per-task" => new BatchGateFormation(null, [],
                             decision.ProposedMembers, true),
                         _ => new BatchGateFormation(null, [], [], false),
@@ -519,7 +527,6 @@ public sealed partial class BatchGatePilotService
                     {
                         var eligible = current.Where(item => BatchGatePolicy.Exclusion(
                                 item.Subject, scope, options) is null)
-                            .OrderBy(item => item.Subject.EnqueueSequence)
                             .Select(item => item.Subject.TaskKey).ToArray();
                         formed = BatchGatePolicy.Close(current.Select(item => item.Subject),
                             scope, baseSha, options, eligible, _time.GetUtcNow());
@@ -534,7 +541,8 @@ public sealed partial class BatchGatePilotService
                                     first.Subject.Project, StringComparison.OrdinalIgnoreCase)),
                             _load?.Current.Throttle == true, gateBacklog,
                             _store.ReadBaseVerdict(first.Subject.Project, baseSha,
-                                first.Subject.GateProfileDigest)?.Outcome == "fail");
+                                first.Subject.GateProfileDigest)?.Outcome == "fail",
+                            provenGreenKeys);
                     }
                     _store.AppendPlanDecision(first.Subject.Project,
                         new BatchPlanDecision(
@@ -1668,6 +1676,12 @@ public sealed partial class BatchGatePilotService
                     .ConfigureAwait(false);
                 return _store.LatestState(prepared.Manifest.BatchId).Phase == BatchPhase.Published;
             }).ConfigureAwait(false);
+        foreach (var member in ordered.Where(member =>
+                     !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+        {
+            RecordIsolationSuperseded(failedManifest, member);
+            ResolveSuperseded(pending[member.TaskKey], "superseded");
+        }
         DeriveIsolationFindings(failedManifest);
         await HandOffProvenRedsAsync(failedManifest.Scope.Project, ct).ConfigureAwait(false);
         if (isolated.SurvivorVerdict is not { Classification: BatchGateFailureClass.Pass } survivor

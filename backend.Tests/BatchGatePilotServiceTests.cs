@@ -1573,7 +1573,9 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(publication.TestedCandidateSha, RemoteTip());
         Assert.False(TreeHas(RemoteTip(), "docs/offender.md"));
         AssertMergedMember(store, survivor.BatchId, publication.BatchRunId, fixRound);
-        Assert.Equal(1, _gate.FallbackRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Contains(store.ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == offender.Key && finding.Status == "proven-red");
         AssertLane(offender.Key, TaskStates.Escalated);
     }
 
@@ -1660,6 +1662,50 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Contains(restarted.Services.GetRequiredService<BatchGateStore>()
             .ListIsolationFindings(ProjectName), finding =>
             finding.TaskKey == b.Key && finding.Status == "proven-red");
+    }
+
+    [Fact]
+    public async Task Interrupted_isolation_replans_from_child_findings()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 3);
+        var a = SeedMember(factory, "DOC-RECOVER-A", "docs/recover-a.md");
+        var b = SeedMember(factory, "DOC-RECOVER-B", "docs/recover-b.md");
+        var c = SeedMember(factory, "DOC-RECOVER-C", "docs/recover-c.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var parent = ClosePendingBatch(factory);
+        store.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest,
+            BatchPhase.Running, null, 1, _clock));
+        CloseChild([a.Key, b.Key], BatchPhase.Red);
+        CloseChild([a.Key], BatchPhase.Green);
+        CloseChild([b.Key, c.Key], BatchPhase.Running);
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        Assert.Contains(store.ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == b.Key && finding.Status == "proven-red");
+        Assert.Contains(store.ListManifests(), manifest =>
+            manifest.ParentBatchId is null && manifest.BatchId != parent.BatchId
+            && manifest.Members.Select(member => member.TaskKey).SequenceEqual([a.Key, c.Key]));
+        AssertLane(b.Key, TaskStates.Escalated);
+
+        void CloseChild(string[] keys, BatchPhase phase)
+        {
+            var members = parent.Members.Where(member => keys.Contains(member.TaskKey)).ToArray();
+            var digest = BatchGatePolicy.MembershipDigest(parent.BaseSha, parent.Scope, members);
+            var child = parent with
+            {
+                BatchId = Guid.NewGuid().ToString("N"),
+                MembershipDigest = digest,
+                Members = members,
+                ParentBatchId = parent.BatchId,
+            };
+            store.CloseManifest(child);
+            store.AppendState(new BatchGateState(child.BatchId, digest, phase, null, 1, _clock));
+        }
     }
 
     // A merged member keeps every delivery SHA: the candidate merge has the
