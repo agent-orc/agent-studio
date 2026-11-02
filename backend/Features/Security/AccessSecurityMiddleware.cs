@@ -787,6 +787,9 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPost(method) && (path.EndsWith("/claims", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith("/review-claims", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && path.EndsWith("/repository-credentials", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+            // Every host polls these; a monolith answers route-unavailable once (AGT-3432).
+            if (HttpMethods.IsPost(method) && (path.EndsWith("/device-login/claim", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith("/git-setups/claim", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && path.EndsWith("/reports", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.EndsWith("/capability-failures", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.EndsWith("/cli-update/result", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;

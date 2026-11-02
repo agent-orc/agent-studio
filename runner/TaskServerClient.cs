@@ -1145,8 +1145,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         using var response = await _http.PostAsJsonAsync(
             $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/git-setups/claim", new { }, ct);
         // A monolith has no setup queue: its first-run setup runs on the Studio host itself.
-        if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        if (response.StatusCode == HttpStatusCode.NoContent
+            || await IsEmptyClaimAsync(response, "git-setups/claim", ct)) return null;
         return await response.Content.ReadFromJsonAsync<Contract.RunnerGitSetupWork>(
             TaskServerContractJson, ct);
     }
@@ -1376,8 +1376,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         using var response = await _http.PostAsJsonAsync(
             $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/claim",
             new { }, Json, ct);
-        if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        if (await IsEmptyClaimAsync(response, "device-login/claim", ct)) return null;
         return await response.Content.ReadFromJsonAsync<Contract.DeviceLoginClaimDto>(Json, ct);
     }
 
@@ -2353,6 +2352,22 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         => RepositoryIdentityContract.FromUrl(repositoryUrl);
 
     private static string Trim(string s) => s.Length <= 300 ? s : s[..300] + "...";
+
+    /// <summary>
+    /// A poll claim reply. A plain 404 means no work for this host yet. A 404 with
+    /// <see cref="Contract.ApiErrorCodes.RouteUnavailable"/> and every other failure
+    /// throw a <see cref="TaskServerException"/> that carries the status and error code.
+    /// </summary>
+    private static async Task<bool> IsEmptyClaimAsync(HttpResponseMessage response, string route, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode) return false;
+        var text = await response.Content.ReadAsStringAsync(ct);
+        var errorCode = TryReadApiErrorCode(text);
+        if (response.StatusCode == HttpStatusCode.NotFound && errorCode != Contract.ApiErrorCodes.RouteUnavailable)
+            return true;
+        throw new TaskServerException((int)response.StatusCode,
+            $"POST {route} -> {(int)response.StatusCode}: {Trim(text)}", errorCode);
+    }
 
     private static string? TryReadApiErrorCode(string response)
     {

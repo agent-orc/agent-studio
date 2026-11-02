@@ -105,3 +105,12 @@ public static class ProtocolAttachCodes
 }
 
 public sealed record ApiError(string Code, string Message, object? Detail = null);
+
+public static class ApiErrorCodes
+{
+    /// <summary>
+    /// The server deliberately does not offer this route in its profile. A poller
+    /// stops polling it for the rest of the process.
+    /// </summary>
+    public const string RouteUnavailable = "route-unavailable";
+}

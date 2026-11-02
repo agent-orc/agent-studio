@@ -151,7 +151,15 @@ One device-login service serves the first-run checklist and the Access and
 Execution Hosts sign-in actions (AGT-3225 merged the AGT-3214 and AGT-3156
 paths). Both surfaces call `/api/v1/management/device-logins`; runners poll
 `/api/v1/runners/{runnerId}/device-login`. `DeviceLoginRouteTests` fails if a
-second device-login route appears. Only an Owner may start, read or cancel a
+second device-login route appears. The device-login and Git setup claim polls
+share `ClaimPollLoop` (AGT-3432): every 2 seconds while claims succeed or find no
+work, doubling to at most one minute while they fail, and back to 2 seconds
+after the next success. A repeating failure is logged once with its HTTP status
+and error code, and again with a repeat count when it changes or recovers. A
+monolith does not offer either flow: it answers 404 `route-unavailable` on the
+Runner routes it does not map, and the poll stops for the rest of the process.
+Before AGT-3432 the networked monolith refused both claims with 401 because
+`AccessSecurityMiddleware` declared no Runner scope for them. Only an Owner may start, read or cancel a
 sign-in, because it authorizes the host's provider credentials. A start creates
 a 15-minute Codex or Claude login session for a registered host, one at a time
 per host and provider. The optional `targetRunnerId` pins it to one active

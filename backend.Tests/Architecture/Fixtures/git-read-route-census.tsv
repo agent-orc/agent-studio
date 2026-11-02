@@ -395,6 +395,7 @@
 /api/v1/orchestration/runs/{runId}/grounds-input	free	-	-	-
 /api/v1/protocol	free	-	-	-
 /api/v1/reviews/attempts/{attemptId}	free	-	-	-
+/api/v1/runners/{runnerId}/{**rest}	free	-	-	-
 /api/v1/runs/{runId}/result-handoff	free	-	-	-
 /api/v1/{**path}	free	-	-	-
 /api/watch-paths	free	-	-	-

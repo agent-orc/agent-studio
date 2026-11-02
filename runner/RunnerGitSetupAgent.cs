@@ -3,25 +3,20 @@ using AgentStudio.TaskServer.Contracts;
 namespace AgentRunner;
 
 /// <summary>Creates host-local credentials and proves repository access without returning secrets.</summary>
-public sealed class RunnerGitSetupAgent(RunnerOptions options, TaskServerClient client, Action<string> log)
+public sealed class RunnerGitSetupAgent(RunnerOptions options, TaskServerClient client, Action<string> log,
+    TimeProvider? clock = null)
 {
     public async Task PollAsync(CancellationToken shutdown)
     {
-        while (!shutdown.IsCancellationRequested)
+        try
         {
-            try
+            await ClaimPollLoop.RunAsync("git setup", async ct =>
             {
-                if (await client.ClaimGitSetupAsync(options.RunnerId, shutdown) is { } work)
-                    await ExecuteAsync(work, shutdown);
-            }
-            catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
-            catch (Exception exception)
-            {
-                log($"git setup deferred type={exception.GetType().Name}");
-            }
-            try { await Task.Delay(TimeSpan.FromSeconds(2), shutdown); }
-            catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
+                if (await client.ClaimGitSetupAsync(options.RunnerId, ct) is { } work)
+                    await ExecuteAsync(work, ct);
+            }, log, clock ?? TimeProvider.System, shutdown);
         }
+        catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
     }
 
     private async Task ExecuteAsync(RunnerGitSetupWork work, CancellationToken ct)

@@ -76,6 +76,7 @@ public static class EndpointMapping
             app.MapMonolithOrchestrationEndpoints();
             app.MapMonolithGateEndpoints();
             app.MapGitHubAppEndpoints();
+            app.MapMonolithRunnerRouteFallback();
         }
         // Studio keeps the decision receipt plane in both profiles. With a
         // standalone Task Server, rule and host-occurrence routes refuse with 409.

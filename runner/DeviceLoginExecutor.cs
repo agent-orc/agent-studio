@@ -291,7 +291,7 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
     string stateDir, string codexBinary = "codex", string claudeBinary = "claude", TimeProvider? clock = null,
     ProviderAuthProbe? authProbe = null)
 {
-    /// <summary>Claim poll and running-session state poll interval.</summary>
+    /// <summary>Running-session state poll interval. Claims back off through <see cref="ClaimPollBackoff"/>.</summary>
     internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
 
     /// <summary>Bounds the completion report on its own, so it still goes out during shutdown.</summary>
@@ -302,17 +302,11 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
     public async Task RunAsync(CancellationToken ct)
     {
         RestoreClaudeToken();
-        while (!ct.IsCancellationRequested)
+        await ClaimPollLoop.RunAsync("device-login", async token =>
         {
-            try
-            {
-                var claim = await client.ClaimDeviceLoginAsync(ct);
-                if (claim is not null) await ServeAsync(claim, ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
-            catch (Exception ex) { log($"device-login poll failed: {ex.GetType().Name}"); }
-            await Task.Delay(PollInterval, _clock, ct);
-        }
+            var claim = await client.ClaimDeviceLoginAsync(token);
+            if (claim is not null) await ServeAsync(claim, token);
+        }, log, _clock, ct);
     }
 
     private async Task ServeAsync(DeviceLoginClaimDto claim, CancellationToken ct)
