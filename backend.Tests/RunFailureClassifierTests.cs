@@ -211,4 +211,29 @@ public sealed class RunFailureClassifierTests
         Assert.False(RunFailureClassifier.IsUnparsedFailurePlaceholder("AgentStudio.Tests.RealRegression"));
         Assert.False(RunFailureClassifier.IsUnparsedFailurePlaceholder(null));
     }
+
+    [Theory]
+    [InlineData("Integration branch 'main' could not be fetched from origin: fatal: could not read Username for 'https://github.com': terminal prompts disabled")]
+    [InlineData("Integration branch 'develop' could not be fetched from origin: remote: Invalid username or password.\nfatal: Authentication failed for 'https://github.com/owner/private.git/'")]
+    [InlineData("Integration branch 'develop' could not be fetched from origin: fatal: unable to access 'https://github.com/owner/private.git/': The requested URL returned error: 403")]
+    [InlineData("Integration branch 'develop' could not be fetched from origin: git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.")]
+    public void A_missing_or_refused_git_credential_is_a_transient_infrastructure_fault(string text)
+    {
+        var verdict = RunFailureClassifier.Classify(new RunFailureEvidence { Text = text });
+
+        Assert.Equal(RunFailureClass.Infrastructure, verdict.Class);
+        Assert.Equal(RunFailureSignatures.GitCredentialRefused, verdict.Signature);
+        Assert.True(verdict.Requeueable);
+        Assert.True(RunFailureClassifier.IsGitCredentialRefusal(text));
+    }
+
+    [Fact]
+    public void A_git_network_timeout_is_not_a_credential_refusal()
+    {
+        const string text = "Integration branch 'develop' could not be fetched from origin: git operation timed out after 30 seconds";
+
+        Assert.False(RunFailureClassifier.IsGitCredentialRefusal(text));
+        Assert.Equal(RunFailureSignatures.GitNetworkTimeout,
+            RunFailureClassifier.Classify(new RunFailureEvidence { Text = text }).Signature);
+    }
 }

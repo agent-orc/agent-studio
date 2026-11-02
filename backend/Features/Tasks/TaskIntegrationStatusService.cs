@@ -1069,12 +1069,18 @@ public sealed class TaskIntegrationStatusService
             // is eligible to be accepted again instead of needing a steer round.
             // AGT-2849 joins the same family: a gate that was killed before it
             // could answer is a host fault, not a verdict on the delivery.
+            // 2 November 2026: a fetch refused for a missing credential is the
+            // same kind of host fault and waits on the same bounded replay.
             if (failure.Code is AcceptedIntegrationFailureCodes.GateEnvironmentFailure
-                or AcceptedIntegrationFailureCodes.GateInterrupted)
+                or AcceptedIntegrationFailureCodes.GateInterrupted
+                or AcceptedIntegrationFailureCodes.GitCredentialUnavailable)
             {
-                var prefix = failure.Code == AcceptedIntegrationFailureCodes.GateInterrupted
-                    ? "gate interrupted"
-                    : "gate environment";
+                var prefix = failure.Code switch
+                {
+                    AcceptedIntegrationFailureCodes.GateInterrupted => "gate interrupted",
+                    AcceptedIntegrationFailureCodes.GitCredentialUnavailable => "git credential unavailable",
+                    _ => "gate environment",
+                };
                 return new TaskIntegrationStatus
                 {
                     Status = IntegrationStatuses.Pending,

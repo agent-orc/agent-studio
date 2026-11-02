@@ -282,13 +282,23 @@ public sealed class GitHubAppBroker
     /// </summary>
     public async Task<IReadOnlyList<RepositoryCredential>> IssueAllAsync(
         string access, string? runnerId, CancellationToken ct, bool includeStudioOnly = false)
+        => (await IssueAllWithFailuresAsync(access, runnerId, ct, includeStudioOnly)).Credentials;
+
+    /// <summary>
+    /// <see cref="IssueAllAsync"/>, plus the repositories whose token GitHub did not
+    /// issue this round (an error or the round's budget). A repository no
+    /// installation reaches is not a failure. The host's own Git uses it to know
+    /// whether a private repository is still without its token.
+    /// </summary>
+    public async Task<GitHubAppIssueRound> IssueAllWithFailuresAsync(
+        string access, string? runnerId, CancellationToken ct, bool includeStudioOnly = false)
     {
         var level = RepositoryAccess.Normalize(access)
             ?? throw new GitHubAppException("invalid-access", "Access must be 'read' or 'write'.");
         // Before anything is read: what this call learns belongs to this connection.
         var generation = CurrentGeneration();
         var connection = await _vault.LoadConnectionAsync(ct);
-        if (connection is null) return [];
+        if (connection is null) return GitHubAppIssueRound.Empty;
         var repositories = (await _catalog.ListAsync(ct))
             .Where(item => includeStudioOnly || !item.StudioOnly)
             .Select(item => GitHubRepositoryName.TryParse(item.RepositoryUrl))
@@ -296,9 +306,10 @@ public sealed class GitHubAppBroker
             .DistinctBy(name => name.Canonical, StringComparer.Ordinal)
             .ToArray();
         var secrets = await ReadSecretsAsync(ct);
-        if (secrets is null) return [];
+        if (secrets is null) return GitHubAppIssueRound.Empty;
 
         var slots = new RepositoryCredential?[repositories.Length];
+        var answered = new bool[repositories.Length];
         var missing = new List<int>();
         for (var index = 0; index < repositories.Length; index++)
         {
@@ -319,6 +330,7 @@ public sealed class GitHubAppBroker
                         {
                             if (await IssueAsync(connection, secrets, repositories[index], level, generation, token) is { } issued)
                                 slots[index] = Credential(repositories[index], issued, level);
+                            answered[index] = true;
                         }
                         catch (Exception exception) when (exception is GitHubAppException or HttpRequestException
                                                               or TaskCanceledException && !token.IsCancellationRequested)
@@ -334,11 +346,12 @@ public sealed class GitHubAppBroker
             }
         }
         // A disconnect during this round revoked what it minted, and the host list starts over.
-        if (CurrentGeneration() != generation) return [];
+        if (CurrentGeneration() != generation) return GitHubAppIssueRound.Empty;
         var credentials = slots.OfType<RepositoryCredential>().ToArray();
         if (runnerId is not null)
             _hosts[runnerId + "|" + level] = new GitHubAppHostSync(runnerId, level, credentials.Length, Now);
-        return credentials;
+        var failed = missing.Where(index => !answered[index]).Select(index => repositories[index].Canonical).ToArray();
+        return new GitHubAppIssueRound(credentials, failed);
     }
 
     /// <summary>
@@ -698,4 +711,12 @@ public sealed class GitHubAppBroker
     private enum FlowKind { Registration, Installation, Authorization }
 
     private sealed record Flow(FlowKind Kind, string Origin, long? InstallationId, string? CodeVerifier, DateTime ExpiresAtUtc);
+}
+
+/// <summary>One issuing round: the credentials, and the repositories GitHub left without one.</summary>
+public sealed record GitHubAppIssueRound(
+    IReadOnlyList<RepositoryCredential> Credentials,
+    IReadOnlyList<string> Failed)
+{
+    public static GitHubAppIssueRound Empty { get; } = new([], []);
 }

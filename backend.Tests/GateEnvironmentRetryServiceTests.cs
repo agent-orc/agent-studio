@@ -349,10 +349,9 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RetryNow_WhenReviewHistoryCannotBeRead_ExplainsTheLookupFailure()
+    public async Task RetryNow_WhenReviewHistoryCannotBeRead_RefusesReplayWithoutAPassedReview()
     {
-        var logger = new RecordingLogger<GateEnvironmentRetryService>();
-        var stack = Build(logger: logger);
+        var stack = Build();
         var delivery = SeedGateEnvironmentFailure(stack, "bad-archive", failedMinutesAgo: 600, passedReview: false);
         var archivePath = Path.Combine(_root, ".metadata", "attempt-authority.archive-2026-09-25.json");
         Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
@@ -364,9 +363,9 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         Assert.Equal(GateEnvironmentRetryStatus.NoPassedReview, result.Status);
         Assert.Equal(delivery, result.ComparedDeliverySha);
         Assert.Null(result.LatestAttempt);
-        Assert.Contains("Review lookup failed: InvalidDataException", result.Reason, StringComparison.Ordinal);
-        Assert.Contains(logger.Events, entry => entry.Level == LogLevel.Warning &&
-            entry.Message.Contains("passed-review lookup failed", StringComparison.Ordinal));
+        // The authority archive index isolates damaged shards and returns no
+        // review for this card. The replay must still fail closed.
+        Assert.Contains("no settled passed review", result.Reason, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -459,6 +458,26 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         // A new delivery is a new review and therefore a new ladder.
         Assert.Equal(1, ledger.AttemptsSpent);
         Assert.False(ledger.Parked);
+        Assert.NotNull(ledger.LastAttemptAt);
+    }
+
+    [Fact]
+    public void Receipts_of_a_resume_after_a_service_stop_spend_no_rung()
+    {
+        var stack = Build();
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, "ledger-shutdown");
+        Directory.CreateDirectory(folder);
+        var delivery = new string('a', 40);
+        GateEnvironmentRetryReceipts.RecordRetry(
+            stack.Timeline, folder, delivery, GateEnvironmentRetrySources.Shutdown, 0, "first restart");
+        GateEnvironmentRetryReceipts.RecordRetry(
+            stack.Timeline, folder, delivery, GateEnvironmentRetrySources.Shutdown, 0, "second restart");
+        GateEnvironmentRetryReceipts.RecordRetry(
+            stack.Timeline, folder, delivery, GateEnvironmentRetrySources.Sweep, 1, "real environment fault");
+
+        var ledger = GateEnvironmentRetryReceipts.Read(stack.Timeline, folder, delivery);
+
+        Assert.Equal(1, ledger.AttemptsSpent);
         Assert.NotNull(ledger.LastAttemptAt);
     }
 

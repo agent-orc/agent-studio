@@ -5036,7 +5036,7 @@ public partial class GitService
         var synchronized = SynchronizeIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!synchronized.Success)
             return MergeIntoIntegrationResult.Failed(
-                AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                 synchronized.Error);
         return MergeRefIntoIntegration(repoRoot, taskBranch, integrationBranch);
     }
@@ -5318,7 +5318,7 @@ public partial class GitService
         var synchronized = SynchronizeIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!synchronized.Success)
             return MergeIntoIntegrationResult.Failed(
-                AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                 synchronized.Error);
 
         var remoteRef = $"refs/remotes/origin/{deliveryBranch}";
