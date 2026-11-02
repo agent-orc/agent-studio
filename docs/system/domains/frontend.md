@@ -89,6 +89,17 @@ secret masking before stored log lines are returned.
 
 ## Workspace deployment dashboard
 
+The read-only Structure view opens at `#/workspace/operations/structure` from
+the Explorer's workspace Operations entries. Its standalone component is
+loaded with a dynamic import and `@defer`. It reads
+`GET /api/v1/operations/structure?scope=workspace` and projects the same
+declared nodes as a placement-focused host view or a function-grouped container
+view. Detail levels 1 to 3 and node overrides control collapse; the outline
+mirrors visible boxes. This first slice has declared provenance only; observed
+health, version and drift overlays belong to later slices of the deployment
+structure Dossier. Its role-named manifest example is in
+`deploy/connectivity/one-box.json`.
+
 The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.
 It lists projects against Staging and Production, with release version, deploy
 age and state, health, pending approval, and newer release. Project group and
@@ -560,6 +571,17 @@ occur. It is not a claim about tunnel transfer time.
   `GET .../cycle-time/tasks/{taskKey}`. The stage model, the transition
   taxonomy, and their data sources are documented in
   [concepts/cycle-time-stage-model.md](../../concepts/cycle-time-stage-model.md).
+- `frontend/src/app/features/flow-health/`: the Flow health view of the project
+  Deploy area (tab next to Pipeline, also linked from Pipeline health on Run
+  steps). It joins existing read models only: `GET /api/gate-economics` (7 and
+  30 days, including the all-projects row), `GET .../cycle-time` (7 and 30
+  days), `GET .../pipeline-health`, `GET .../batch-gate/report` and settings,
+  `GET /api/system/execution-infrastructure`, and the host registry signal for
+  review and coding slots. None of these reads starts a Git process; the
+  Git-backed `GET .../batch-gate/state` is deliberately not read. The pure
+  derivation in `state/flow-health.derive.ts` produces the grouping, gate and
+  review figures, the waits per stage, and the main-brake sentence. Every target
+  is named once in `models/flow-health-targets.ts` and printed beside its figure.
 - `frontend/src/app/features/project-detail/`: project shell and project-level
   quality, settings, architecture, runtime, drift, and supervisor panels. The
   left rail (`project-shell`) is a collapsible-segment tree

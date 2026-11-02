@@ -44,6 +44,7 @@ public sealed partial class AccessSecurityStore
     private readonly Func<string, string, bool> _verifyPassword;
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
+    private bool _lastSeenDirty;
 
     public AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger, TimeProvider? clock = null)
         : this(configuration, logger, clock, PasswordSecretHasher.VerifyPassword)
@@ -266,17 +267,29 @@ public sealed partial class AccessSecurityStore
     public HumanPrincipal? AuthenticateSession(string? token, bool touch = true)
     {
         if (!TryTokenParts(token, "ssn", out var id)) return null;
+        string tokenHash;
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var session = state.Sessions.FirstOrDefault(x => x.Id == id);
+            if (session is null) return null;
+            if (session.ExpiresAt <= Now || session.AbsoluteExpiresAt <= Now)
+            {
+                state.Sessions.Remove(session);
+                _lastSeenDirty = true;
+                return null;
+            }
+            tokenHash = session.TokenHash;
+        }
+        // Secret verification is CPU intensive and must not hold the global gate.
+        if (!PasswordSecretHasher.VerifySecret(token!, tokenHash)) return null;
         lock (_gate)
         {
             var state = StateLocked();
             var now = Now;
             var session = state.Sessions.FirstOrDefault(x => x.Id == id);
-            if (session is null || session.ExpiresAt <= now || session.AbsoluteExpiresAt <= now
-                || !PasswordSecretHasher.VerifySecret(token!, session.TokenHash))
-            {
-                if (session is not null) { state.Sessions.Remove(session); SaveLocked(state); }
-                return null;
-            }
+            if (session is null || session.TokenHash != tokenHash
+                || session.ExpiresAt <= now || session.AbsoluteExpiresAt <= now) return null;
             var user = state.Users.FirstOrDefault(x => x.Id == session.UserId && !x.Disabled);
             if (user is null) return null;
             if (touch && now - session.LastSeenAt >= TimeSpan.FromMinutes(1))
@@ -285,7 +298,7 @@ public sealed partial class AccessSecurityStore
                 var updated = session with { LastSeenAt = now, ExpiresAt = Min(now + sliding, session.AbsoluteExpiresAt) };
                 state.Sessions[state.Sessions.IndexOf(session)] = updated;
                 session = updated;
-                SaveLocked(state);
+                _lastSeenDirty = true;
             }
             return new HumanPrincipal(user, session);
         }
@@ -569,27 +582,50 @@ public sealed partial class AccessSecurityStore
     public RunnerPrincipal? AuthenticateRunner(string? bearer)
     {
         if (!TryTokenParts(bearer, "rnr", out var credentialId)) return null;
+        string secretHash;
         lock (_gate)
         {
             var state = StateLocked();
+            var runner = state.Runners.FirstOrDefault(r => r.Credentials.Any(c => c.Id == credentialId));
+            var credential = runner?.Credentials.FirstOrDefault(c => c.Id == credentialId);
+            if (runner is null || credential is null || runner.RevokedAt is not null || runner.RetiredAt is not null
+                || credential.RevokedAt is not null || credential.ExpiresAt <= Now) return null;
+            secretHash = credential.SecretHash;
+        }
+        // PBKDF2 is deliberately outside the store gate: concurrent requests
+        // must not queue behind a credential hash or a filesystem save.
+        if (!PasswordSecretHasher.VerifySecret(bearer!, secretHash)) return null;
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var runner = state.Runners.FirstOrDefault(r => r.Credentials.Any(c => c.Id == credentialId));
+            var credential = runner?.Credentials.FirstOrDefault(c => c.Id == credentialId);
             var now = Now;
-            foreach (var runner in state.Runners)
+            if (runner is null || credential is null || runner.RevokedAt is not null || runner.RetiredAt is not null
+                || credential.RevokedAt is not null || credential.ExpiresAt <= now
+                || credential.SecretHash != secretHash) return null;
+            if (credential.LastUsedAt is null || now - credential.LastUsedAt >= TimeSpan.FromMinutes(1))
             {
-                var credential = runner.Credentials.FirstOrDefault(x => x.Id == credentialId);
-                if (credential is null) continue;
-                if (runner.RevokedAt is not null || runner.RetiredAt is not null
-                    || credential.RevokedAt is not null || credential.ExpiresAt <= now
-                    || !PasswordSecretHasher.VerifySecret(bearer!, credential.SecretHash)) return null;
-                if (credential.LastUsedAt is null || now - credential.LastUsedAt >= TimeSpan.FromMinutes(1))
+                var updatedCredential = credential with { LastUsedAt = now };
+                state.Runners[state.Runners.IndexOf(runner)] = runner with
                 {
-                    var updatedCredential = credential with { LastUsedAt = now };
-                    var updatedRunner = runner with { Credentials = runner.Credentials.Select(x => x.Id == credential.Id ? updatedCredential : x).ToList() };
-                    state.Runners[state.Runners.IndexOf(runner)] = updatedRunner;
-                    SaveLocked(state);
-                }
-                return new RunnerPrincipal(runner.Id, runner.Name, credential.Id, new HashSet<string>(credential.Scopes, StringComparer.Ordinal));
+                    Credentials = runner.Credentials.Select(c => c.Id == credentialId ? updatedCredential : c).ToList()
+                };
+                _lastSeenDirty = true;
             }
-            return null;
+            return new RunnerPrincipal(runner.Id, runner.Name, credential.Id,
+                new HashSet<string>(credential.Scopes, StringComparer.Ordinal));
+        }
+    }
+
+    /// <summary>Persist authentication timestamps on the background flush tick.</summary>
+    public void FlushLastSeen()
+    {
+        lock (_gate)
+        {
+            if (!_lastSeenDirty) return;
+            try { SaveLocked(StateLocked()); _lastSeenDirty = false; }
+            catch (Exception ex) { _logger.LogError(ex, "Failed to persist access last-seen timestamps"); }
         }
     }
 

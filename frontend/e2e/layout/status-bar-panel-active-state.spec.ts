@@ -83,9 +83,7 @@ async function installBootMocks(page: Page): Promise<void> {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ cells: [], projects: [] }) }));
   await page.route('**/api/workspace/tokens/expensive-jobs**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ jobs: [] }) }));
-  // Per-CLI working-memory panel iterates `report.entries`.
-  await page.route('**/api/cli/*/working-memory**', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [] }) }));
+
 }
 
 /**

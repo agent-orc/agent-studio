@@ -9,6 +9,7 @@ using AgentStudio.Deploy;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Security;
+using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -34,6 +35,16 @@ public sealed class DeployServiceTests : IDisposable
     private TaskScannerService? _scanner;
     private GitService? _git;
     private ProjectSettingsService? _settings;
+
+    [Fact]
+    public void Delivery_columns_read_does_not_write_environment_state()
+    {
+        var (deploy, _, _) = Build();
+        var path = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        Assert.False(File.Exists(path));
+        Assert.NotNull(deploy.DeliveryColumns("demo"));
+        Assert.False(File.Exists(path));
+    }
 
     [Fact]
     public void QueuedJobAfterRestart_BindsItsRunAndRefusesAnUnlinkedDigest()
@@ -2488,22 +2499,12 @@ public sealed class DeployServiceTests : IDisposable
     {
         _repo = Path.Combine(_root, "repo");
         _watch = Path.Combine(_root, "workspace", "projects", "demo");
-        Directory.CreateDirectory(_repo);
         Directory.CreateDirectory(_watch);
-        Git("init", "-b", "develop");
-        Git("config", "user.email", "test@example.com");
-        Git("config", "user.name", "Test User");
-        var declarations = Path.Combine(_repo, "docs", "deployments", "environments");
-        Directory.CreateDirectory(declarations);
-        File.WriteAllText(Path.Combine(declarations, "stage.json"), JsonSerializer.Serialize(new
-        {
-            id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
-            address = "https://stage.example", template = "container", destination = "8081",
-            healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
-            guidedFailure = guidedStage,
-        }));
-        WriteProduction(host: "prod-host", destination: "8082", guidedFailure: guidedProduction);
-        Commit("initial");
+        // Built once per test process and clock reading; each test starts from
+        // a copy (AGT-3419).
+        var now = _clock.GetUtcNow();
+        GitRepositoryTemplate.CopyTo($"deploy-service:{guidedStage}:{guidedProduction}:{now:O}", _repo,
+            repo => SeedRepository(repo, now, guidedStage, guidedProduction));
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = Path.Combine(_root, "workspace"),
@@ -2553,8 +2554,29 @@ public sealed class DeployServiceTests : IDisposable
             NullLogger<DeployService>.Instance, null);
     }
 
+    private static void SeedRepository(string repo, DateTimeOffset now, bool guidedStage, bool guidedProduction)
+    {
+        Git(repo, now, "init", "-b", "develop");
+        Git(repo, now, "config", "user.email", "test@example.com");
+        Git(repo, now, "config", "user.name", "Test User");
+        var declarations = Path.Combine(repo, "docs", "deployments", "environments");
+        Directory.CreateDirectory(declarations);
+        File.WriteAllText(Path.Combine(declarations, "stage.json"), JsonSerializer.Serialize(new
+        {
+            id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
+            address = "https://stage.example", template = "container", destination = "8081",
+            healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+            guidedFailure = guidedStage,
+        }));
+        WriteProduction(repo, host: "prod-host", destination: "8082", guidedFailure: guidedProduction);
+        Commit(repo, now, "initial");
+    }
+
     private void WriteProduction(string host, string destination, bool guidedFailure = false)
-        => File.WriteAllText(Path.Combine(_repo, "docs", "deployments", "environments", "production.json"),
+        => WriteProduction(_repo, host, destination, guidedFailure);
+
+    private static void WriteProduction(string repo, string host, string destination, bool guidedFailure)
+        => File.WriteAllText(Path.Combine(repo, "docs", "deployments", "environments", "production.json"),
             JsonSerializer.Serialize(new
             {
                 id = "production", name = "Production", kind = "production", targetHostId = host,
@@ -2650,19 +2672,26 @@ public sealed class DeployServiceTests : IDisposable
 
     private string Commit(string name)
     {
-        File.WriteAllText(Path.Combine(_repo, name), name);
-        Git("add", ".");
-        Git("commit", "-m", name);
+        Commit(_repo, _clock.GetUtcNow(), name);
         return Head();
     }
 
-    private string Git(params string[] arguments)
+    private static void Commit(string repo, DateTimeOffset now, string name)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = _repo,
+        File.WriteAllText(Path.Combine(repo, name), name);
+        Git(repo, now, "add", ".");
+        Git(repo, now, "commit", "-m", name);
+    }
+
+    private string Git(params string[] arguments) => Git(_repo, _clock.GetUtcNow(), arguments);
+
+    private static string Git(string repo, DateTimeOffset now, params string[] arguments)
+    {
+        var start = new ProcessStartInfo("git") { WorkingDirectory = repo,
             RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
         if (arguments.Length > 0 && arguments[0] == "commit")
         {
-            var when = _clock.GetUtcNow().ToString("yyyy-MM-ddTHH:mm:sszzz",
+            var when = now.ToString("yyyy-MM-ddTHH:mm:sszzz",
                 System.Globalization.CultureInfo.InvariantCulture);
             start.Environment["GIT_AUTHOR_DATE"] = when;
             start.Environment["GIT_COMMITTER_DATE"] = when;

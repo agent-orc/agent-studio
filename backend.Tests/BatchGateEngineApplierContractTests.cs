@@ -122,6 +122,63 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal(occurrence.Run.CompletedAt, check.CompletedAt);
     }
 
+    [Fact]
+    public void Engine_review_settlements_reuse_open_follow_up_and_create_another_after_completion()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        var mutations = factory.Services.GetRequiredService<TaskMutationService>();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var applier = Assert.IsType<MonolithOrchestrationApplier>(
+            factory.Services.GetRequiredService<IMonolithOrchestrationApplier>());
+        var sourceId = Assert.IsType<string>(mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Source review", WatchPath = _watchPath, TargetState = TaskStates.Ready,
+            NoBranchExpected = true,
+        }));
+        var source = scanner.FindJob(sourceId, _watchPath)!;
+        var store = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        var firstFinding = new Contract.ReviewFollowUpFinding("requirement-fit", "block", "Fix the source boundary.");
+        var laterFinding = new Contract.ReviewFollowUpFinding("documentation-impact", "block", "Update the contract docs.");
+
+        void Settle(int number, params Contract.ReviewFollowUpFinding[] findings)
+        {
+            var run = store.Create(ProjectName, sourceId, Contract.OrchestrationStage.ReviewDecision,
+                "{}", $"review-follow-up:{number}", TaskStates.Ready, $"attempt-{number}",
+                1, 0, profile: "ReviewReport");
+            var decision = TransitionDecisionPolicy.Create(TransitionAction.DegradeWithFollowUp,
+                "Budget spent.", source.Key ?? source.Id, $"attempt-{number}", 4, 4, findings);
+            applier.EnsureLinkedFollowUp(source, store.GetOccurrence(run.RunId)!, decision);
+            var routed = factory.Services.GetRequiredService<TimelineLog>().ReadAll(source.FolderPath)
+                .Where(entry => entry.Kind == TimelineEventKinds.ReviewFollowUpRouted
+                    && entry.Details?.GetValueOrDefault("orchestrationRunId") == run.RunId).ToArray();
+            Assert.Single(routed);
+            Assert.False(string.IsNullOrWhiteSpace(routed[0].Details!["followUpTaskKey"]));
+        }
+
+        Settle(1, firstFinding);
+        var first = Assert.Single(scanner.ScanAllJobs(), card =>
+            card.CreationSource?.StartsWith("engine-follow-up:", StringComparison.Ordinal) == true);
+        Settle(2, firstFinding, laterFinding);
+        Settle(2, firstFinding, laterFinding);
+        var open = Assert.Single(scanner.ScanAllJobs(), card =>
+            card.CreationSource?.StartsWith("engine-follow-up:", StringComparison.Ordinal) == true);
+        Assert.Equal(first.Id, open.Id);
+        var prompt = File.ReadAllText(Path.Combine(open.FolderPath, "prompt.md"));
+        Assert.Equal(1, prompt.Split("- requirement-fit: Fix the source boundary.").Length - 1);
+        Assert.Equal(1, prompt.Split("- documentation-impact: Update the contract docs.").Length - 1);
+        Assert.Equal([open.Key ?? open.Id], scanner.FindJob(sourceId, _watchPath)!.References.RaisedFollowUps);
+
+        Assert.True(mutations.SetJobRequiresIntegration(open.Id, false, _watchPath));
+        Assert.Equal(MoveJobStatus.Success, factory.Services.GetRequiredService<TaskStateMachine>()
+            .MoveJob(open.Id, TaskStates.Completed, _watchPath).Status);
+        Settle(3, laterFinding);
+        var followUps = scanner.ScanAllJobs().Where(card =>
+            card.CreationSource?.StartsWith("engine-follow-up:", StringComparison.Ordinal) == true).ToArray();
+        Assert.Equal(2, followUps.Length);
+        Assert.Contains(followUps, card => card.Id != open.Id && card.State == TaskStates.Ready);
+    }
+
     /// <summary>
     /// The review of 20.10.2026: an applier that ran before the fix let the
     /// integration start the agent round, settled the journal, then tried to

@@ -62,6 +62,18 @@ public static class AcceptedIntegrationFailureCodes
     public const string BranchSyncFailed = "branch-sync-failed";
 
     /// <summary>
+    /// The integration fetch failed because Git's credential for origin was
+    /// missing or refused. A transient host fault, not a fact about the delivery:
+    /// the bounded gate-environment ladder replays the integration and parks the
+    /// card only when the ladder is spent.
+    /// </summary>
+    public const string GitCredentialUnavailable = "git-credential-unavailable";
+
+    /// <summary>The typed code of a failed integration-branch sync.</summary>
+    public static string ForBranchSync(string? error)
+        => RunFailureClassifier.IsGitCredentialRefusal(error) ? GitCredentialUnavailable : BranchSyncFailed;
+
+    /// <summary>
     /// The main/develop lineage forbids advancing the release line (main is not
     /// an ancestor of develop). Distinct from <see cref="IntegrationPushBlocked"/>,
     /// which is the push step's lineage block after a successful merge.
@@ -270,6 +282,14 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The integration branch could not be synchronized with origin."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.GitCredentialUnavailable => new(
+                code,
+                "Git credential unavailable",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The integration branch could not be fetched because the Git credential for origin was missing or refused."),
+                RebaseRecoveryAvailable: false),
             AcceptedIntegrationFailureCodes.LineageBlocked => new(
                 code,
                 "Lineage blocked",
@@ -403,6 +423,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.StaleAttempt => AcceptedIntegrationFailureCodes.StaleAttempt,
             AcceptedIntegrationFailureCodes.WorktreeUnavailable => AcceptedIntegrationFailureCodes.WorktreeUnavailable,
             AcceptedIntegrationFailureCodes.BranchSyncFailed => AcceptedIntegrationFailureCodes.BranchSyncFailed,
+            AcceptedIntegrationFailureCodes.GitCredentialUnavailable => AcceptedIntegrationFailureCodes.GitCredentialUnavailable,
             AcceptedIntegrationFailureCodes.LineageBlocked => AcceptedIntegrationFailureCodes.LineageBlocked,
             AcceptedIntegrationFailureCodes.RebaseAttributionFailed => AcceptedIntegrationFailureCodes.RebaseAttributionFailed,
             AcceptedIntegrationFailureCodes.IntegrationRefUnresolved => AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,

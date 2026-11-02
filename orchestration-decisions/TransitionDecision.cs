@@ -180,7 +180,7 @@ public static class TransitionDecisionPolicy
         {
             CompletionOutcomeKinds.Done or CompletionOutcomeKinds.NoOp => TaskStates.AutoReview,
             CompletionOutcomeKinds.Blocked or CompletionOutcomeKinds.NeedsInput or CompletionOutcomeKinds.Unknown => TaskStates.Escalated,
-            CompletionOutcomeKinds.EnvironmentFailure or CompletionOutcomeKinds.Stopped or CompletionOutcomeKinds.MechanicalFallback => TaskStates.Ready,
+            CompletionOutcomeKinds.EnvironmentFailure or CompletionOutcomeKinds.Stopped or CompletionOutcomeKinds.MechanicalFallback or CompletionOutcomeKinds.TransientFailure => TaskStates.Ready,
             _ => string.Empty,
         };
 

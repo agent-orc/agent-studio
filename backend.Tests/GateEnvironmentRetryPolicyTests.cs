@@ -261,11 +261,13 @@ public sealed class GateEnvironmentRetryPolicyTests
     }
 
     [Theory]
-    [InlineData(0, GateEnvironmentRetryAction.Retry)]
-    [InlineData(1, GateEnvironmentRetryAction.Park)]
-    public void Shutdown_cancellation_spends_only_one_existing_infrastructure_rung(
-        int spent, GateEnvironmentRetryAction expected)
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void A_gate_the_services_own_stop_interrupted_resumes_without_spending_a_rung(int spent)
     {
+        // 2 November 2026: two planned restarts parked cards whose gates they had
+        // interrupted. A stop says nothing about the gate host.
         var status = Status(AcceptedIntegrationFailureCodes.GateInterrupted) with
         {
             Failure = new TaskIntegrationFailure
@@ -277,8 +279,53 @@ public sealed class GateEnvironmentRetryPolicyTests
         var result = DecideFacts(Task(TaskStates.AutoReview), status,
             reviewPassed: true, attemptsSpent: spent, lastAttemptAt: null, failedAt: Failed,
             GateEnvironmentRetryOptions.Default, now: Failed.AddHours(1));
-        Assert.Equal(expected, result.Action);
+        Assert.Equal(GateEnvironmentRetryAction.Retry, result.Action);
+        Assert.Equal(0, result.AttemptsSpent);
         Assert.Equal(1, result.MaxAttempts);
+    }
+
+    [Fact]
+    public void A_crashed_gate_keeps_spending_the_ladder()
+    {
+        // Startup recovery words a gate whose process vanished without the
+        // shutdown cancellation; that is a crash and stays charged.
+        var status = Status(AcceptedIntegrationFailureCodes.GateInterrupted) with
+        {
+            Failure = new TaskIntegrationFailure
+            {
+                Code = AcceptedIntegrationFailureCodes.GateInterrupted,
+                Reason = "Integration gate interrupted on develop.",
+            },
+        };
+        var result = DecideFacts(Task(TaskStates.AutoReview), status,
+            reviewPassed: true, attemptsSpent: 3, lastAttemptAt: null, failedAt: Failed,
+            GateEnvironmentRetryOptions.Default, now: Failed.AddDays(1));
+        Assert.Equal(GateEnvironmentRetryAction.Park, result.Action);
+    }
+
+    [Theory]
+    [InlineData("Integration branch 'main' could not be fetched from origin: fatal: could not read Username for 'https://github.com': terminal prompts disabled")]
+    [InlineData("Integration branch 'main' could not be fetched from origin: fatal: unable to access 'https://github.com/owner/private.git/': The requested URL returned error: 403")]
+    public void A_refused_git_credential_takes_the_bounded_ladder_and_parks_only_when_it_is_spent(string reason)
+    {
+        var status = new TaskIntegrationStatus
+        {
+            Status = IntegrationStatuses.Pending,
+            IntegrationBranch = "main",
+            Failure = new TaskIntegrationFailure
+            {
+                Code = AcceptedIntegrationFailureCodes.GitCredentialUnavailable,
+                Reason = reason,
+            },
+        };
+        Assert.True(GateEnvironmentRetryFactsReader.IsGateEnvironmentFailure(status));
+
+        Assert.Equal(GateEnvironmentRetryAction.Wait, DecideFacts(Task(TaskStates.AutoReview), status,
+            true, 0, null, Failed, GateEnvironmentRetryOptions.Default, Failed).Action);
+        Assert.Equal(GateEnvironmentRetryAction.Retry, DecideFacts(Task(TaskStates.AutoReview), status,
+            true, 0, null, Failed, GateEnvironmentRetryOptions.Default, Failed.AddMinutes(5)).Action);
+        Assert.Equal(GateEnvironmentRetryAction.Park, DecideFacts(Task(TaskStates.AutoReview), status,
+            true, 3, null, Failed, GateEnvironmentRetryOptions.Default, Failed.AddDays(1)).Action);
     }
 
     private static GateEnvironmentRetryDecision Decide(

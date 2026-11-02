@@ -231,6 +231,9 @@ public sealed partial class TaskServerStore
         var subjectId = $"rsub_{Guid.NewGuid():N}";
         var attemptId = $"rat_{Guid.NewGuid():N}";
         var now = UtcNow;
+        // AGT-3408: a repository GitHub reports as private is never planned as public.
+        if (!request.Plan.PrivateRepository && ReportedRepositoryPrivate?.Invoke(request.RepositoryUrl) == true)
+            request = request with { Plan = request.Plan with { PrivateRepository = true } };
         var planJson = JsonSerializer.Serialize(request.Plan, ReviewJson);
         await ExecuteAsync(connection, """
             INSERT INTO review_subjects(
@@ -1515,8 +1518,17 @@ public sealed partial class TaskServerStore
             || failed.Budget.LimitMs <= 0
             || failed.Budget.ConsumedMs < 0)
             return ("ReviewInfra", "CommandBudgetEvidenceInvalid");
-        if (!HasUnabridgedArtifact(request.Artifacts, failed.StdoutSha256)
-            || !HasUnabridgedArtifact(request.Artifacts, failed.StderrSha256))
+        if ((!HasUnabridgedArtifact(request.Artifacts, failed.StdoutSha256)
+             || !HasUnabridgedArtifact(request.Artifacts, failed.StderrSha256))
+            && (!request.ArtifactsReduced
+                || !ValidDigest(failed.StdoutSha256, 64)
+                || !ValidDigest(failed.StderrSha256, 64)
+                || !request.Artifacts.Any(artifact =>
+                    ValidArtifact(artifact)
+                    && string.Equals(artifact.Sha256, failed.StdoutSha256, StringComparison.OrdinalIgnoreCase))
+                || !request.Artifacts.Any(artifact =>
+                    ValidArtifact(artifact)
+                    && string.Equals(artifact.Sha256, failed.StderrSha256, StringComparison.OrdinalIgnoreCase))))
             return ("ReviewInfra", "ArtifactEvidenceIncomplete");
         return ("ReviewInfra", "PreparationFailed");
     }
@@ -1631,6 +1643,54 @@ public sealed partial class TaskServerStore
             """, ct, transaction,
             ("$id", $"rat_{Guid.NewGuid():N}"), ("$subject", attempt.SubjectId),
             ("$task", attempt.TaskId), ("$number", attempt.AttemptNumber + 1), ("$now", Iso(now)));
+        await RenewReviewRepositoryVisibilityAsync(connection, transaction, attempt.SubjectId, ct);
+    }
+
+    /// <summary>
+    /// AGT-3408: GitHub's private flag for a repository URL, as the connected
+    /// App's installations report it; null when no adopted installation lists it.
+    /// </summary>
+    public Func<string?, bool?>? ReportedRepositoryPrivate { get; set; }
+
+    /// <summary>
+    /// AGT-3408: every attempt of a subject shares its sealed plan, so a retry
+    /// would keep the visibility of the failed attempt after the setting was
+    /// corrected. The successor takes the current visibility instead: the
+    /// registration's setting combined with what GitHub reports.
+    /// </summary>
+    private async Task RenewReviewRepositoryVisibilityAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string subjectId,
+        CancellationToken ct)
+    {
+        string planJson;
+        string? repositoryUrl;
+        string? registered;
+        await using (var command = Command(connection, """
+            SELECT s.plan_json, s.repository_url, r.repository_visibility
+              FROM review_subjects s
+              JOIN tasks t ON t.id = s.task_id
+              LEFT JOIN project_repositories r ON r.project_id = t.project_id
+             WHERE s.id = $subject;
+            """, transaction, ("$subject", subjectId)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            if (!await reader.ReadAsync(ct)) return;
+            planJson = reader.GetString(0);
+            repositoryUrl = reader.IsDBNull(1) ? null : reader.GetString(1);
+            registered = reader.IsDBNull(2) ? null : reader.GetString(2);
+        }
+        var plan = JsonSerializer.Deserialize<ReviewPlanDto>(planJson, ReviewJson)
+                   ?? throw new InvalidOperationException("Stored review plan is invalid.");
+        var current = ReviewRepositoryAccessPolicy.CurrentPrivateRepository(
+            plan.PrivateRepository, registered, ReportedRepositoryPrivate?.Invoke(repositoryUrl));
+        if (current == plan.PrivateRepository) return;
+        await ExecuteAsync(connection, "UPDATE review_subjects SET plan_json = $plan WHERE id = $subject;", ct,
+            transaction, ("$plan", JsonSerializer.Serialize(plan with { PrivateRepository = current }, ReviewJson)),
+            ("$subject", subjectId));
+        await AuditAsync(connection, transaction, "task-server", "review.subject-visibility-renewed", "review-subject",
+            subjectId, JsonSerializer.Serialize(new { privateRepository = current }), ct);
     }
 
     private static async Task EnsureReviewSubjectCurrentAsync(

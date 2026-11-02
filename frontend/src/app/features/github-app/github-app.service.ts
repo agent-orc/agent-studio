@@ -24,6 +24,8 @@ export interface GitHubAppRepositoryCoverage {
   state: GitHubAppCoverageState;
   installationId: number | null;
   detail: string | null;
+  /** What GitHub reports for a repository the App lists; null until GitHub has said. Older servers omit it. */
+  visibility?: 'private' | 'public' | null;
 }
 
 export interface GitHubAppHostSync {

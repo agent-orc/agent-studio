@@ -1522,7 +1522,8 @@ public sealed class RemoteTaskRunner
                             processResult,
                             result.LaunchFailed,
                             sameSessionResumeAttempts,
-                            invocation);
+                            invocation,
+                            slot.ModelCapacityRetryAttempts);
                     var providerAccess = ProviderAccessClassifier.Classify(
                         processResult.ExitCode,
                         processResult.StdOut,
@@ -1587,18 +1588,30 @@ public sealed class RemoteTaskRunner
                             && RunnerModelAcceptanceProbe.IsModelRejection(processResult, invocation.Model))
                             RunnerModelAcceptanceProbe.Shared.RecordRejection(invocation.CliType, invocation.Model);
                     }
+                    var capacityRetry = classified.Decision.Outcome == ExecutionOutcomeKind.TransientModelCapacity
+                        && classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession;
                     if (classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession
-                        && slot.InputSessionId is null
-                        && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)
+                        && (capacityRetry || (slot.InputSessionId is null
+                            && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)))
                     {
                         var sessionId = classified.Decision.RawFacts.SessionId!;
+                        var nextCapacityRetry = slot.ModelCapacityRetryAttempts + (capacityRetry ? 1 : 0);
+                        if (capacityRetry)
+                        {
+                            var backoff = ModelCapacityRetryPolicy.DelayForRetry(nextCapacityRetry);
+                            shipper.Add("system",
+                                $"[runner] transient model capacity; same-session retry {nextCapacityRetry}/{ExecutionOutcomeAdapter.MaxModelCapacityRetryAttempts} after {backoff.TotalSeconds:0}s");
+                            slot = _state.Save(slot with { ModelCapacityRetryAttempts = nextCapacityRetry });
+                            await Task.Delay(backoff, waitStop.Token);
+                        }
                         // CAR resumes through the typed ResumeSessionId field.
                         shipper.Add(
                             "system",
-                            $"[runner] bounded same-session resume 1/{ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts}; session={sessionId}");
+                            $"[runner] bounded same-session resume; session={sessionId}");
                         var resumeSlot = _state.Save(slot with
                         {
-                            WorkerDirectory = Path.Combine(slot.WorkerDirectory, "resume-1"),
+                            WorkerDirectory = Path.Combine(slot.WorkerDirectory,
+                                capacityRetry ? $"capacity-retry-{nextCapacityRetry}" : "resume-1"),
                             ProcessId = null,
                             ProcessStartedAtUtc = null,
                             LastOutputSequence = 0,
@@ -1636,7 +1649,7 @@ public sealed class RemoteTaskRunner
                             outbox,
                             stopRun,
                             daemonShutdown,
-                            sameSessionResumeAttempts + 1,
+                            sameSessionResumeAttempts + (capacityRetry ? 0 : 1),
                             operatorStopRequested);
                     }
 
@@ -1795,7 +1808,8 @@ public sealed class RemoteTaskRunner
         ProcessResult result,
         bool launchFailed,
         int sameSessionResumeAttempts,
-        CliSelection.Selection? invocation = null)
+        CliSelection.Selection? invocation = null,
+        int modelCapacityRetryAttempts = 0)
     {
         var provider = ProviderOutputEvidenceExtractor.Extract(result.StdOut);
         var sessionState = !string.IsNullOrWhiteSpace(provider.SessionId)
@@ -1811,6 +1825,7 @@ public sealed class RemoteTaskRunner
             SessionState: sessionState,
             SessionId: provider.SessionId,
             SameSessionResumeAttempts: sameSessionResumeAttempts,
+            ModelCapacityRetryAttempts: modelCapacityRetryAttempts,
             EffectiveCliType: invocation?.CliType,
             EffectiveModel: invocation?.Model,
             EffectiveThinkingLevel: invocation?.ThinkingLevel,
@@ -1844,6 +1859,9 @@ public sealed class RemoteTaskRunner
                 => new RunOutcome(
                     RunOutcomeKind.EnvironmentFailure,
                     DescribePreparationFailure(stdErr ?? string.Empty)),
+            ExecutionOutcomeKind.TransientModelCapacity
+                => new RunOutcome(RunOutcomeKind.TransientFailure,
+                    provider.FailureMessage ?? "Selected model remained at capacity after same-session retries."),
             _ => new RunOutcome(
                 RunOutcomeKind.Unknown,
                 provider.FailureMessage ?? typed.Detail ?? typed.Outcome.ToString()),
@@ -2864,6 +2882,7 @@ public sealed class RemoteTaskRunner
         ExecutionSessionState SessionState = ExecutionSessionState.Unsupported,
         string? SessionId = null,
         int SameSessionResumeAttempts = 0,
+        int ModelCapacityRetryAttempts = 0,
         string? EffectiveCliType = null,
         string? EffectiveModel = null,
         string? EffectiveThinkingLevel = null,
@@ -2881,6 +2900,7 @@ public sealed class RemoteTaskRunner
             SessionState: SessionState,
             SessionId: SessionId,
             SameSessionResumeAttempts: SameSessionResumeAttempts,
+            ModelCapacityRetryAttempts: ModelCapacityRetryAttempts,
             EffectiveCliType: EffectiveCliType,
             EffectiveModel: EffectiveModel,
             EffectiveThinkingLevel: EffectiveThinkingLevel,
@@ -2909,7 +2929,8 @@ public sealed class RemoteTaskRunner
         string? EffectiveCliType = null,
         string? EffectiveModel = null,
         string? EffectiveThinkingLevel = null,
-        IReadOnlyList<string>? ObservedModels = null)
+        IReadOnlyList<string>? ObservedModels = null,
+        int ModelCapacityRetryAttempts = 0)
         => new(
             lease.AttemptId ?? lease.LeaseId,
             ExecutionAttemptKind.Coding,
@@ -2936,7 +2957,8 @@ public sealed class RemoteTaskRunner
             EffectiveCliType,
             EffectiveModel,
             EffectiveThinkingLevel,
-            ObservedModels);
+            ObservedModels,
+            ModelCapacityRetryAttempts);
 
     internal static async Task<T> RetryEnvironmentPreparationAsync<T>(
         Func<CancellationToken, Task<T>> prepare,

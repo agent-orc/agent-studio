@@ -5,6 +5,9 @@ using System.Text.Json;
 
 namespace AgentStudio.Pipeline;
 
+/// <param name="BatchesClosed">Distinct batches whose gate ran in the window.</param>
+/// <param name="MeanBatchSize">Mean members per closed batch; null without a batch.</param>
+/// <param name="SoloGatedMerges">Gated merges integrated by a per-card gate, not a batch.</param>
 public sealed record GateEconomicsRow(
     string Project, int GatedMerges, int GateGreen, int GateRed, int GateCancelled,
     double? GateMinutesMedian, double? GateMinutesP90,
@@ -20,7 +23,8 @@ public sealed record GateEconomicsRow(
     int EjectedConflict, int EjectedAgentRound, int EjectedRed, int EjectedError,
     double ArrivalsPerHour, double MergesPerHour,
     string? ProjectShortCode = null, string? ProjectColor = null, PipelineBaseline? Baseline = null,
-    string? DevelopState = null, string? LastGreenSha = null);
+    string? DevelopState = null, string? LastGreenSha = null,
+    int BatchesClosed = 0, double? MeanBatchSize = null, int SoloGatedMerges = 0);
 
 /// <param name="BoardRead">
 /// Installation-wide board handler latency and git spawns over the last
@@ -227,6 +231,9 @@ public static class GateEconomicsEndpoints
         // the coordinator under a second sequence.
         var arrivals = enqueued.Select(e => (e.Project, e.JobId, e.DeliveredAtUtc ?? e.AtUtc))
             .Distinct().Count();
+        // A batch counts once, at the largest membership any of its runs carried.
+        var closedBatches = batches.GroupBy(sample => sample.Fact.BatchId, StringComparer.Ordinal)
+            .Select(batch => batch.Max(sample => sample.Members)).ToArray();
         return new GateEconomicsRow(name, gatedMerges,
             outcomes.Count(sample => sample.Verdict is "Ok" or "Warn"),
             outcomes.Count(sample => sample.Verdict == "Fail"),
@@ -258,7 +265,10 @@ public static class GateEconomicsEndpoints
             ejections.Count(e => e.Outcome == "GateFailed"),
             ejections.Count(e => e.Outcome is not ("Conflict" or "AgentRoundRequired" or "GateFailed")),
             arrivals / (double)LaneWindowHours, published.Length / (double)LaneWindowHours,
-            shortCode, color, baseline);
+            shortCode, color, baseline,
+            BatchesClosed: closedBatches.Length,
+            MeanBatchSize: closedBatches.Length == 0 ? null : closedBatches.Average(),
+            SoloGatedMerges: integratedReceipts.Count);
     }
 
     // A batch delivery handed to the per-task fallback continues under the

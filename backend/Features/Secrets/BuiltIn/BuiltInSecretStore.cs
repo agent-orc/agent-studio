@@ -176,6 +176,25 @@ public sealed class BuiltInSecretStore : ISecretStore
         finally { _gate.Release(); }
     }
 
+    /// <summary>
+    /// Runs the checks of a first put without sealing anything: the key loads
+    /// (an empty store creates it, as its first write would), it may seal a new
+    /// name, and the items directory takes a file.
+    /// </summary>
+    public async Task EnsureWritableAsync(SecretScope scope, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var existing = ItemIds().ToList();
+            RequireKeyOfExistingItems(_keys.Load(createIfMissing: existing.Count == 0), existing);
+            var probe = Path.Combine(EnsureDirectory(ItemsRoot), ".write-check-" + Guid.NewGuid().ToString("N") + ".tmp");
+            WriteAtomically(probe, []);
+            File.Delete(probe);
+        }
+        finally { _gate.Release(); }
+    }
+
     private IEnumerable<string> ItemIds()
         => Directory.Exists(ItemsRoot)
             ? Directory.EnumerateDirectories(ItemsRoot).Select(Path.GetFileName).OfType<string>()

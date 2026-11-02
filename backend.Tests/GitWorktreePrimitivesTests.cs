@@ -499,6 +499,68 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
     }
 
     [Fact]
+    public void MergeBranchIntoIntegration_MergeRound_ReplaysNetChangeWithResultMapping()
+    {
+        var repo = SeedRepo("merge-round-net-change");
+        var git = BuildGitService(("Fixture", repo));
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/net");
+        File.WriteAllText(Path.Combine(repo, "delivery.txt"), "delivery work");
+        Commit(repo, "feat: delivery work");
+        var firstDeliverySha = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "earlier.txt"), "earlier integration");
+        Commit(repo, "feat: earlier integration");
+        RunGit(repo, "checkout -q task/net");
+        Assert.Equal(0, RunGit(repo, "merge -q --no-ff develop -m \"Merge develop into delivery\"").Code);
+        var resultSha = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "later.txt"), "later integration");
+        Commit(repo, "feat: later integration");
+        var before = RunGit(repo, "rev-parse HEAD").Out.Trim();
+
+        var result = git.MergeBranchIntoIntegration(repo, "task/net", "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.MergedAfterRebase, result.Outcome);
+        Assert.Equal(before, result.PreviousIntegrationSha);
+        Assert.Equal(result.MergedSha, RunGit(repo, "rev-parse develop").Out.Trim());
+        Assert.Equal(before, RunGit(repo, $"rev-parse {result.MergedSha}^1").Out.Trim());
+        Assert.NotEqual(0, RunGit(repo, $"merge-base --is-ancestor {resultSha} develop").Code);
+        Assert.Equal(resultSha, RunGit(repo, "rev-parse task/net").Out.Trim());
+        Assert.Contains(result.RebasedCommits, item => item.OriginalSha == resultSha && item.RebasedSha == result.MergedSha);
+        Assert.Contains(result.RebasedCommits, item => item.OriginalSha == firstDeliverySha && item.RebasedSha == result.MergedSha);
+        Assert.Equal("delivery work", File.ReadAllText(Path.Combine(repo, "delivery.txt")));
+        Assert.Equal("later integration", File.ReadAllText(Path.Combine(repo, "later.txt")));
+    }
+
+    [Fact]
+    public void MergeBranchIntoIntegration_MergeRoundConflict_ReturnsNamedAgentRound()
+    {
+        var repo = SeedRepo("merge-round-conflict");
+        var git = BuildGitService(("Fixture", repo));
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/net-conflict");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "delivery change");
+        Commit(repo, "feat: delivery edits shared file");
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "earlier.txt"), "earlier integration");
+        Commit(repo, "feat: earlier integration");
+        RunGit(repo, "checkout -q task/net-conflict");
+        Assert.Equal(0, RunGit(repo, "merge -q --no-ff develop -m \"Merge develop into delivery\"").Code);
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "later integration change");
+        Commit(repo, "feat: conflicting integration edit");
+        var before = RunGit(repo, "rev-parse HEAD").Out.Trim();
+
+        var result = git.MergeBranchIntoIntegration(repo, "task/net-conflict", "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AgentRoundRequired, result.Outcome);
+        Assert.Contains("README.md", result.ConflictedFiles);
+        Assert.Equal(before, RunGit(repo, "rev-parse develop").Out.Trim());
+        Assert.Empty(git.GetStatusForRepoRoot(repo).Files);
+    }
+
+    [Fact]
     public void MergeBranchIntoIntegration_ManyConflicts_CapsReportedFilesButRetainsTotal()
     {
         var repo = SeedRepo("merge-many-conflicts");

@@ -100,6 +100,32 @@ public sealed class ReviewProjectionTests : IDisposable
         Assert.False(projection.DecisionRequired.Required);
     }
 
+    /// <summary>
+    /// AGT-3369: the service keeps parsed timelines against the file's length
+    /// and write time. A timeline that grew after the first read must be read
+    /// again, an unchanged one must give the same answer.
+    /// </summary>
+    [Fact]
+    public void Read_SeesATimelineEventAppendedAfterAnEarlierRead()
+    {
+        var folder = CreateJobFolder("timeline-memo");
+        var timelineLog = new AgentStudio.Tasks.TimelineLog(NullLogger<AgentStudio.Tasks.TimelineLog>.Instance);
+        timelineLog.Append(folder, AgentStudio.Shared.TimelineEventKinds.LaneChanged, actor: "system",
+            summary: "Lane changed from 4-auto-review to 5-human-review.");
+        var task = Job("AGT-3369", folder);
+        var service = new ReviewProjectionService(timelineLog);
+
+        Assert.Equal(ReviewDeliveryStates.NotAttempted, service.Read(task).Delivery.Status);
+        Assert.Equal(ReviewDeliveryStates.NotAttempted, service.Read(task).Delivery.Status);
+
+        timelineLog.Append(folder, AgentStudio.Shared.TimelineEventKinds.IntegrationFailed, actor: "system",
+            summary: "Remote delivery gate failed before integration.");
+
+        var projection = service.Read(task);
+        Assert.Equal(ReviewDeliveryStates.GateFailed, projection.Delivery.Status);
+        Assert.Equal("Remote delivery gate failed before integration.", projection.Delivery.Reason);
+    }
+
     [Fact]
     public void Read_CountsALocalCodeReviewGradeAttempt()
     {

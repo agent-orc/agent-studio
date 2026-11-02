@@ -1849,6 +1849,9 @@ export class App implements OnInit, OnDestroy {
       case 'deployment-dashboard':
         this.studioTabState.open({ kind: 'deployment-dashboard' });
         break;
+      case 'structure':
+        this.studioTabState.open({ kind: 'structure' });
+        break;
       case 'task':
         this.routeDetailTab.set(route.tab);
         this.routeInspectorTab.set(route.inspector);
@@ -1996,8 +1999,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
-   * Session task-link chip clicked inside the CLI-Management "CLI sessions"
-   * list: close the global workspace-settings home, then open the owning
+   * Task link clicked in the remote hosts panel: close the global workspace-settings home, then open the owning
    * task's detail panel. Mirrors `onOpenTaskFromReel`; routing through the
    * shell keeps `selectedJob` + the URL query the single owner of detail
    * navigation rather than letting a leaf component drive it.

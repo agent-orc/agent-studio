@@ -225,6 +225,9 @@ public static class RoutePermissionCatalog
         Add("*", IamPermissions.WorkspaceAdminister, "/api/v1/management/github-app", "/api/v1/management/github-app/**");
         Add("GET", IamPermissions.WorkspaceAdminister, "/api/v1/management/credential-inventory");
         Add("*", IamPermissions.WorkspaceOperate, "/api/v1/management/**");
+        // Studio's browser reads installation-wide declared topology, even when
+        // a project scope is requested. Runner credentials do not call it.
+        Add("GET", IamPermissions.WorkspaceOperate, "/api/v1/operations/structure");
 
         // --- Environments and production approval --------------------------
         // Environment keys are canonical kinds (IamEnvironments): a release
@@ -343,9 +346,9 @@ public static class RoutePermissionCatalog
             "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
             "/api/workspace/summary", "/api/workspaces/{}/quota/**",
             "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",
-            "/api/system/execution-infrastructure", "/api/agent-rules", "/api/adhoc-usage/**");
+            "/api/system/execution-infrastructure", "/api/system/gate-slots", "/api/agent-rules", "/api/adhoc-usage/**");
         Add("W", IamPermissions.WorkspaceOperate,
-            "/api/cli/quota/refresh/**", "/api/cli/{}/session", "/api/cli/{}/working-memory", "/api/clients/**",
+            "/api/cli/quota/refresh/**", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",
             "/api/maintenance/**", "/api/attempts/**", "/api/cause-breakers/**", "/api/watcher/**",
             "/api/devtools/**", "/api/_internal/**", "/api/tasks/orphan-folder");

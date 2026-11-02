@@ -4,7 +4,7 @@
       <app-project-deploy-area [projectName]="projectName()" [initialView]="deployView()"
         [releaseTarget]="selectedRelease()"
         [focusStepId]="pipelineStepId()" (openPrompts)="setRail('prompts')" (openTask)="openTask.emit($event)"
-        (viewChange)="onDeployView($event)" />
+        (viewChange)="onDeployView($event)" (openRail)="setRail($event)" />
     }
   </div>
 } @else if (activeRail() === 'operations') {
@@ -13,6 +13,7 @@
       <app-project-environment-overview [projectName]="projectName()" (openDeploy)="setRail('deploy')"
         (openRelease)="openOperationsRelease($event)"
         (openTask)="openTask.emit($event)" />
+      <app-api-stall-panel />
       <app-project-product-runtime-panel [projectName]="projectName()" />
     }
   </div>

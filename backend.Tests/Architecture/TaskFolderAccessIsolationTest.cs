@@ -50,6 +50,7 @@ namespace AgentStudio.Tests;
 /// </list>
 /// </para>
 /// </remarks>
+[Trait("Category", "Guard")]
 public class TaskFolderAccessIsolationTest
 {
     /// <summary>
@@ -177,8 +178,6 @@ public class TaskFolderAccessIsolationTest
                 "Deletes CAR's temporary mirror under TaskRepository/.runtime/car-cli-output, never a lane or task folder.",
             ["backend/Features/Cli/Execution/CleanContextPreparation.cs"] =
                 "Adapts the external task clean-home store; failed-start cleanup never targets the job-folder tree.",
-            ["backend/Features/Cli/Execution/CliWorkingMemoryService.cs"] =
-                "Deletes a CLI's own working-memory state under its config home (guarded by a known-state whitelist), not lane folders.",
             ["backend/Features/Cli/Execution/DurableLocalCliProcess.cs"] =
                 "AGT-2780 worker spool directory is outside the task folder tree and owned by the durable worker lifecycle.",
             ["backend/Features/Cli/Routing/OneShot/CodexOneShot.cs"] =

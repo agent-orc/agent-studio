@@ -2514,28 +2514,28 @@ public partial class GitService
 
         if (!string.IsNullOrWhiteSpace(path))
         {
-            var abs = Path.Combine(root, path);
-            if (File.Exists(abs))
-            {
-                try { return new GitDiffLookupResult(true, File.ReadAllText(abs), null); } catch (Exception __ex) { SilentCatch.Note(__ex, "GitService: best-effort"); /* best-effort */ }
-            }
+            var (status, bytes) = ReadWorkingTreeFile(root, path);
+            if (status == CheckoutFileStatus.Readable)
+                return new GitDiffLookupResult(true, Encoding.UTF8.GetString(bytes), null);
         }
         return new GitDiffLookupResult(true, output, null);
     }
 
+    /// <summary>Largest working-tree file the Git pane reads for a preview or an untracked diff.</summary>
+    internal const long MaxWorkingTreeFileReadBytes = 4L * 1024 * 1024;
+
     /// <summary>
-    /// Full text of a single tracked file, for the git-pane's rendered
-    /// md/html preview (AGT-2008). With a non-empty <paramref name="sha"/> the
-    /// content is read from that commit (<c>git show &lt;sha&gt;:&lt;path&gt;</c>)
-    /// so a historical / commit-mode preview matches the diff; otherwise the
-    /// live working-tree copy is read. <paramref name="preferRunLocation"/>
+    /// Full working-tree text of a single file, for the git-pane's rendered
+    /// md/html preview (AGT-2008). <paramref name="preferRunLocation"/>
     /// mirrors <see cref="GetDiffResult"/> so a per-task worktree run previews
-    /// its own file, never a sibling checkout's. A NUL-containing blob is
-    /// reported as binary (Success=true, IsBinary=true) so the caller can show
-    /// a "not previewable" note rather than raw bytes.
+    /// its own file, never a sibling checkout's. Only a regular file inside the
+    /// checkout is read: a link, Git metadata and a file above
+    /// <see cref="MaxWorkingTreeFileReadBytes"/> are refused. A NUL-containing
+    /// file is reported as binary (Success=true, IsBinary=true) so the caller
+    /// can show a "not previewable" note rather than raw bytes.
     /// </summary>
     public GitFileContentResult GetFileContentResult(
-        string jobId, string? watchPath, string? path, string? sha, bool preferRunLocation = false)
+        string jobId, string? watchPath, string? path, bool preferRunLocation = false)
     {
         if (string.IsNullOrWhiteSpace(path))
             return new GitFileContentResult(false, "", false, "No file path given.");
@@ -2544,22 +2544,6 @@ public partial class GitService
         if (normalizedPath.Length == 0 || normalizedPath.Split('/').Contains(".."))
             return new GitFileContentResult(false, "", false, "Invalid file path.");
 
-        // Historical preview: read the blob at a specific commit. Validated the
-        // same way as the diff endpoints so an arbitrary ref can't be shown.
-        if (!string.IsNullOrWhiteSpace(sha))
-        {
-            if (!IsLikelyShaOrRef(sha))
-                return new GitFileContentResult(false, "", false, "Invalid commit SHA.");
-            var commitRoot = ResolveRepoRoot(jobId, watchPath);
-            if (commitRoot == null) return new GitFileContentResult(false, "", false, "Could not resolve repo root.");
-            var (blob, blobErr, blobCode) = RunGitArgs(commitRoot, "show", $"{sha}:{normalizedPath}");
-            if (blobCode != 0)
-                return new GitFileContentResult(false, "", false,
-                    string.IsNullOrWhiteSpace(blobErr) ? "File not found in that commit." : blobErr.Trim());
-            return ClassifyContent(blob);
-        }
-
-        // Live preview: read the working-tree file at the run location.
         string? root;
         if (preferRunLocation)
         {
@@ -2574,23 +2558,44 @@ public partial class GitService
             if (root == null) return new GitFileContentResult(false, "", false, "Could not resolve repo root.");
         }
 
-        var full = Path.GetFullPath(Path.Combine(root, normalizedPath));
-        var rootFull = Path.GetFullPath(root);
-        // Containment guard: never read outside the repo root even if the
-        // normalized path somehow re-escapes (belt-and-braces with the `..`
-        // reject above).
-        if (!full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
-            return new GitFileContentResult(false, "", false, "Invalid file path.");
-        if (!File.Exists(full))
-            return new GitFileContentResult(false, "", false, "File is not present in the working tree.");
+        var (status, bytes) = ReadWorkingTreeFile(root, normalizedPath);
+        return status switch
+        {
+            CheckoutFileStatus.Readable => ClassifyContent(Encoding.UTF8.GetString(bytes), bytes),
+            CheckoutFileStatus.Missing => new GitFileContentResult(false, "", false, "File is not present in the working tree."),
+            CheckoutFileStatus.TooLarge => new GitFileContentResult(false, "", false, "File is too large to preview."),
+            _ => new GitFileContentResult(false, "", false, "Invalid file path."),
+        };
+    }
+
+    /// <summary>
+    /// Reads one working-tree file through the checkout boundary shared by every
+    /// route that serves checkout content.
+    /// </summary>
+    private static (CheckoutFileStatus Status, byte[] Bytes) ReadWorkingTreeFile(string root, string relativePath)
+    {
+        string full;
+        try
+        {
+            if (Path.IsPathRooted(relativePath)) return (CheckoutFileStatus.Refused, []);
+            full = Path.GetFullPath(Path.Combine(root, relativePath));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return (CheckoutFileStatus.Refused, []);
+        }
+        var status = FilesystemPathBoundary.CheckCheckoutFile(root, full, MaxWorkingTreeFileReadBytes);
+        if (status != CheckoutFileStatus.Readable) return (status, []);
         try
         {
             var bytes = File.ReadAllBytes(full);
-            return ClassifyContent(Encoding.UTF8.GetString(bytes), bytes);
+            return bytes.LongLength > MaxWorkingTreeFileReadBytes
+                ? (CheckoutFileStatus.TooLarge, [])
+                : (CheckoutFileStatus.Readable, bytes);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return new GitFileContentResult(false, "", false, ex.Message);
+            return (CheckoutFileStatus.Missing, []);
         }
     }
 
@@ -5036,7 +5041,7 @@ public partial class GitService
         var synchronized = SynchronizeIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!synchronized.Success)
             return MergeIntoIntegrationResult.Failed(
-                AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                 synchronized.Error);
         return MergeRefIntoIntegration(repoRoot, taskBranch, integrationBranch);
     }
@@ -5318,7 +5323,7 @@ public partial class GitService
         var synchronized = SynchronizeIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!synchronized.Success)
             return MergeIntoIntegrationResult.Failed(
-                AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                 synchronized.Error);
 
         var remoteRef = $"refs/remotes/origin/{deliveryBranch}";
@@ -5982,6 +5987,41 @@ public partial class GitService
                 error: $"Could not resolve the exact delivery tip of '{sourceRef}'.");
         }
 
+        // Merge rounds can put integration commits inside the delivery range.
+        // Replay its final tree as one change while the current tip is pinned;
+        // commit-by-commit rebase cannot attribute those merge commits.
+        var (mergeBaseRaw, _, mergeBaseCode) = RunGitArgs(
+            repoRoot, "merge-base", sourceRef, integrationTip);
+        var mergeBase = mergeBaseCode == 0 ? mergeBaseRaw.Trim() : null;
+        if (mergeBase is not null)
+        {
+            var (merges, mergeCountError, mergeCountCode) = RunGitArgs(repoRoot,
+                "rev-list", "--count", "--merges", $"{mergeBase}..{sourceRef}", RevisionsOnly);
+            if (mergeCountCode != 0 || !int.TryParse(merges.Trim(), out var mergeCount))
+                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                    error: $"Could not inspect delivery history: {mergeCountError.Trim()}");
+            if (mergeCount > 0 && !IsAncestor(repoRoot, integrationTip, sourceRef))
+            {
+                var net = TryMechanicalNetChange(repoRoot, sourceRef, integrationTip, mergeBase);
+                if (!net.Success)
+                    return net.FailureKind == MechanicalRebaseFailureKind.Conflict
+                        ? MergeIntoIntegrationResult.RequiresAgentRound(net.ConflictedFiles,
+                            $"Net-change replay conflicted: {string.Join(", ", net.ConflictedFiles)}.")
+                        : MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: net.Error);
+                if (!string.Equals(GetBranchTip(repoRoot, integrationLine), integrationTip,
+                        StringComparison.OrdinalIgnoreCase))
+                    return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                        error: $"Integration branch '{integrationBranch}' moved during net-change replay.");
+                var (_, fastForwardError, fastForwardCode) = RunGitArgs(
+                    repoRoot, "merge", "--ff-only", net.RebasedTip!);
+                if (fastForwardCode != 0)
+                    return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                        error: $"Net-change candidate could not advance the integration tip: {fastForwardError.Trim()}");
+                return MergeIntoIntegrationResult.MergedAfterRebase(
+                    net.RebasedTip!, integrationTip, net.Replacements);
+            }
+        }
+
         var (_, directMergeError, directMergeCode) = RunGitArgs(
             repoRoot,
             "-c",
@@ -6088,14 +6128,10 @@ public partial class GitService
                 error: $"Integration branch '{integrationBranch}' moved during the isolated mechanical rebase; retry against its current tip.");
         }
 
-        var (_, mergeErr, mergeCode) = RunGitArgs(
-            repoRoot,
-            "-c",
-            "rerere.enabled=false",
-            "merge",
-            "--no-ff",
-            "--no-edit",
-            recovery.RebasedTip!);
+        var netChange = recovery.Outcome == "net-change";
+        var (_, mergeErr, mergeCode) = netChange
+            ? RunGitArgs(repoRoot, "merge", "--ff-only", recovery.RebasedTip!)
+            : RunGitArgs(repoRoot, "-c", "rerere.enabled=false", "merge", "--no-ff", "--no-edit", recovery.RebasedTip!);
         if (mergeCode != 0)
         {
             var conflicted = ListUnmergedFiles(repoRoot);
@@ -6477,8 +6513,7 @@ public partial class GitService
         }
         if (mergeCommitCount > 0)
         {
-            return MechanicalRebaseAttempt.AttributionAmbiguous(
-                "Mechanical rebase found a non-linear delivery history; refusing ambiguous SHA attribution.");
+            return TryMechanicalNetChange(repoRoot, sourceRef, integrationTip, mergeBase);
         }
 
         var originalCommits = ReadFirstParentRange(
@@ -6594,6 +6629,60 @@ public partial class GitService
             _logger.LogWarning("Mechanical rebase cleanup deferred at {Path}: {Error}", worktreePath, cleanupError);
 
         return attempt;
+    }
+
+    /// <summary>
+    /// Fold a delivery containing merge commits into one commit on the current
+    /// integration tip. The explicit merge base makes the candidate tree the
+    /// delivery's net change, without replaying either side of a merge round.
+    /// Every delivery commit absent from the tip maps to the one published SHA.
+    /// </summary>
+    private MechanicalRebaseAttempt TryMechanicalNetChange(
+        string repoRoot, string sourceRef, string integrationTip, string mergeBase)
+    {
+        var (range, rangeError, rangeCode) = RunGitArgs(
+            repoRoot, "rev-list", "--reverse", $"{integrationTip}..{sourceRef}", RevisionsOnly);
+        if (rangeCode != 0)
+            return MechanicalRebaseAttempt.Failed($"Net-change replay could not enumerate delivery commits: {rangeError.Trim()}");
+        var originals = range.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (originals.Length == 0)
+            return MechanicalRebaseAttempt.Failed("Net-change replay found no delivery commits to attribute.");
+
+        var (merged, mergeError, mergeCode) = RunGitArgs(repoRoot,
+            "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z",
+            "--merge-base=" + mergeBase, integrationTip, sourceRef);
+        if (mergeCode == 1)
+        {
+            var files = merged.Split('\0', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+            return files.Length > 0
+                ? MechanicalRebaseAttempt.Conflict(files, "Net-change replay conflicted.",
+                    sourceRef, originals.Length, originals.Length)
+                : MechanicalRebaseAttempt.Failed($"Net-change replay failed: {mergeError.Trim()}");
+        }
+        if (mergeCode != 0)
+            return MechanicalRebaseAttempt.Failed($"Net-change replay failed: {mergeError.Trim()}");
+
+        var tree = merged.Split('\0', 2)[0].Trim();
+        var (metadata, metadataError, metadataCode) = RunGitArgs(repoRoot,
+            "show", "-s", "--format=%an%x00%ae%x00%aI", sourceRef);
+        var author = metadata.TrimEnd('\r', '\n').Split('\0');
+        if (metadataCode != 0 || author.Length != 3)
+            return MechanicalRebaseAttempt.Failed($"Net-change replay could not read delivery author: {metadataError.Trim()}");
+        var environment = new Dictionary<string, string?>
+        {
+            ["GIT_AUTHOR_NAME"] = author[0],
+            ["GIT_AUTHOR_EMAIL"] = author[1],
+            ["GIT_AUTHOR_DATE"] = author[2],
+        };
+        var (candidate, commitError, commitCode) = RunGitArgs(repoRoot,
+            ["commit-tree", tree, "-p", integrationTip, "-F", "-"],
+            $"Integrate net change from {AbbreviateSha(sourceRef)}", environment);
+        if (commitCode != 0)
+            return MechanicalRebaseAttempt.Failed($"Net-change replay could not write a commit: {commitError.Trim()}");
+        var sha = candidate.Trim();
+        return MechanicalRebaseAttempt.Applied(sha,
+            originals.Select(original => new RebasedCommitReplacement(original, sha)).ToArray(),
+            originals.Length) with { Outcome = "net-change" };
     }
 
     private static IntegrationConflictReport BuildIntegrationConflictReport(
@@ -8273,6 +8362,22 @@ public partial class GitService
 
         var (output, _, code) = RunGitArgs(root, "show", $"{sha}:{repoRelPath.Replace('\\', '/')}");
         return code == 0 ? output : null;
+    }
+
+    /// <summary>
+    /// True when <paramref name="repoRelPath"/> names a tracked file at
+    /// <paramref name="sha"/>; false when it does not or cannot be read. Uses
+    /// <c>git cat-file -e</c>, so a large file is never loaded.
+    /// </summary>
+    public bool FileExistsAtCommit(string repoRoot, string sha, string repoRelPath)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(repoRelPath)) return false;
+        if (string.IsNullOrWhiteSpace(sha) || !IsLikelyShaOrRef(sha) || sha.StartsWith('-')) return false;
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return false;
+
+        var (_, _, code) = RunGitArgs(root, "cat-file", "-e", $"{sha}:{repoRelPath.Replace('\\', '/')}");
+        return code == 0;
     }
 
     /// <summary>

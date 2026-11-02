@@ -84,8 +84,8 @@ public enum SecretActorKind
 /// <summary>
 /// The run-time identity a value is issued to, already bound by the caller to
 /// a verified lease: a deploy job for one project environment, or a task run
-/// for one project. <see cref="DeclaredNames"/> narrows a deploy job to the
-/// secret names its environment declaration lists.
+/// for one project. <see cref="DeclaredNames"/> lists the secret names the
+/// workload may read; a workload without it reads none.
 /// </summary>
 public sealed record SecretWorkload(
     string Kind,

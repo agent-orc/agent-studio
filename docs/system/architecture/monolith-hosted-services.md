@@ -88,6 +88,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | DeliveryChainReconciler | always | decide, operator | AI Operator decider `delivery-chain` (`DeliveryChainPolicy`). Effect: `DeliveryChainReconciler` moves the card; a red merge gate is still routed by `GateFailureRouter` before it may park (gate triage, a host rule in the baseline). |
 | BatchMoveJobCoordinator | !PD | apply-recover | Authority (applies an operator command) |
 | TaskIndexCacheDiagnosticsService | always | infra | Authority host |
+| LastSeenPersistenceService | always | infra | Authority host. Flushes coalesced client and runner last-seen updates outside request paths. |
 | BoardSummaryPersister | always | infra | Authority host. Single writer of the persisted slim board (`board-summaries.db`, Git facts S5): after each task index publication it writes the changed projects' board cards, which a cold board read serves as `restored`. Makes no transition decision. |
 | BoardShadowWorker | always | infra | Authority host. Idle unless `Board:Source` is `task-server-shadow` or `task-server`; then it mirrors the published task index generation into the Task Server board read model and records shadow differences by card and field (AGT-3317). Makes no transition decision. |
 | TaskFileMirrorWorker | always | infra | Authority host. Idle unless `TaskArtifacts:Source` is `task-server-shadow` or `task-server`; then it copies task folder files into the Task Server's `task_files` by content hash, off the request path, until the write cutover (AGT-3320). Makes no transition decision. |
@@ -114,6 +115,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | OrchestratorPrepHostedService | !PD, off by default | decide, local | Monolith until an engine occurrence can apply its prep verdict. |
 | ChatNoteHostedService | !PD | report | Authority host |
 | PipelineHealthService | always | report | Authority host |
+| ApiStallDetector | always | report | Every API host. Logs an `api-stall` warning when its own timer tick runs late (GC pause or starved thread pool); no lane transition (AGT-3369). |
 | PublishEnvironmentReconciliationService | always | infra | Authority host. Polls website deployment state and releases stopped hosting reservations; no lane transition. |
 | RemoteGateOrphanSweepService | always | infra | Authority host. Cancels unowned SSH gate runs from prior Studio process instances and clears their durable records once the remote run directory is gone. |
 | WorkspaceArtifactPushWorker | !PD | infra | Authority host. Pushes nothing into the TaskRepository while `TaskArtifacts:Source = task-server` (AGT-3320). |
