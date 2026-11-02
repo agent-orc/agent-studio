@@ -139,6 +139,7 @@ for name, (caddyfile, allow_direct, public_edge, restart_policy) in expected.ite
     assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3,172.30.83.2', api['environment']
     assert api['environment']['Security__PublicCloudflareEdge'] == public_edge, api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
+    assert env['STUDIO_BACKUP_DESTINATION'] == '', (name, env)
 print('Compose render passed for public, Cloudflare, direct-access and private modes.')
 PY
 

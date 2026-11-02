@@ -75,3 +75,8 @@ jobs:
           bash scripts/npm-frontend.sh ci
           bash scripts/npm-frontend.sh exec -- playwright install --with-deps chromium
           WEBSITE_REUSE_MONOLITH_IMAGE=1 bash scripts/monolith-networked-compose-smoke.sh
+      - name: Back up the website and restore it into an empty stack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends age
+          WEBSITE_REUSE_WEBSITE_IMAGES=1 bash scripts/monolith-networked-backup-restore.test.sh
