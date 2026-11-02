@@ -1062,6 +1062,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     public async Task<long> GetHostAllocationVersionAsync(string hostId, CancellationToken ct)
     {
         using var response = await _http.GetAsync($"/api/v1/hosts/{Uri.EscapeDataString(hostId)}/runtime-capacity", ct);
+        await ThrowIfRouteAbsentAsync(response, ct);
         if (response.StatusCode == HttpStatusCode.NotFound) return 0;
         var detail = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
@@ -1117,8 +1118,17 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         using var response = await _http.GetAsync("/api/v1/projects", ct);
         var detail = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
-            throw new TaskServerException((int)response.StatusCode, $"Project list failed: {Trim(detail)}");
-        return JsonSerializer.Deserialize<Contract.ProjectDto[]>(detail, TaskServerContractJson) ?? [];
+            throw new TaskServerException((int)response.StatusCode, $"Project list failed: {Trim(detail)}",
+                TryReadApiErrorCode(detail));
+        var projects = JsonSerializer.Deserialize<Contract.ProjectDto[]>(detail, TaskServerContractJson) ?? [];
+        // A monolith aliases this path to the Studio project summary, which has
+        // no projectId. It has no Task Server project list, so say that instead
+        // of handing callers projects without an id.
+        if (projects.Any(project => string.IsNullOrWhiteSpace(project?.ProjectId)))
+            throw new TaskServerException(404,
+                "This server answers /api/v1/projects with the Studio project summary, not the Task Server project list.",
+                RouteAbsenceContract.ErrorCode);
+        return projects;
     }
 
     public async Task<Contract.ProjectRepositoryStatusDto?> GetProjectRepositoryAsync(
@@ -1126,6 +1136,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     {
         using var response = await _http.GetAsync(
             $"/api/v1/projects/{Uri.EscapeDataString(projectId)}/repository", ct);
+        await ThrowIfRouteAbsentAsync(response, ct);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<Contract.ProjectRepositoryStatusDto>(
@@ -1145,6 +1156,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         using var response = await _http.PostAsJsonAsync(
             $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/git-setups/claim", new { }, ct);
         // A monolith has no setup queue: its first-run setup runs on the Studio host itself.
+        await ThrowIfRouteAbsentAsync(response, ct);
         if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<Contract.RunnerGitSetupWork>(
@@ -1376,6 +1388,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         using var response = await _http.PostAsJsonAsync(
             $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/claim",
             new { }, Json, ct);
+        await ThrowIfRouteAbsentAsync(response, ct);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<Contract.DeviceLoginClaimDto>(Json, ct);
@@ -2355,6 +2368,21 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         => RepositoryIdentityContract.FromUrl(repositoryUrl);
 
     private static string Trim(string s) => s.Length <= 300 ? s : s[..300] + "...";
+
+    /// <summary>
+    /// Throws when the server answered that it does not map the called route,
+    /// so a caller that reads a 404 as "nothing there" does not poll an absent
+    /// feature as if it were idle (<see cref="FeatureRouteAbsence"/>).
+    /// </summary>
+    private static async Task ThrowIfRouteAbsentAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.StatusCode != HttpStatusCode.NotFound) return;
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (TryReadApiErrorCode(detail) == RouteAbsenceContract.ErrorCode)
+            throw new TaskServerException(404,
+                $"{response.RequestMessage?.Method} {response.RequestMessage?.RequestUri?.AbsolutePath} is not mapped on this server.",
+                RouteAbsenceContract.ErrorCode);
+    }
 
     private static string? TryReadApiErrorCode(string response)
     {

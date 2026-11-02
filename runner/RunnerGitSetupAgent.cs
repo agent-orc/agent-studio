@@ -5,21 +5,28 @@ namespace AgentRunner;
 /// <summary>Creates host-local credentials and proves repository access without returning secrets.</summary>
 public sealed class RunnerGitSetupAgent(RunnerOptions options, TaskServerClient client, Action<string> log)
 {
+    internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+
     public async Task PollAsync(CancellationToken shutdown)
     {
+        // A monolith has no setup queue: its first-run setup runs on the Studio host itself.
+        var absence = new FeatureRouteAbsence("git setup", log);
         while (!shutdown.IsCancellationRequested)
         {
             try
             {
-                if (await client.ClaimGitSetupAsync(options.RunnerId, shutdown) is { } work)
+                var work = await client.ClaimGitSetupAsync(options.RunnerId, shutdown);
+                absence.RecordAnswered();
+                if (work is not null)
                     await ExecuteAsync(work, shutdown);
             }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
+            catch (Exception exception) when (absence.TryRecordAbsent(exception)) { }
             catch (Exception exception)
             {
                 log($"git setup deferred type={exception.GetType().Name}");
             }
-            try { await Task.Delay(TimeSpan.FromSeconds(2), shutdown); }
+            try { await Task.Delay(absence.NextDelay(PollInterval), shutdown); }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
         }
     }

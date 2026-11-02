@@ -628,6 +628,55 @@ public sealed class DeviceLoginExecutorTests
         return int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    [Fact]
+    public async Task Poller_pauses_for_the_recheck_interval_when_the_server_does_not_map_device_login()
+    {
+        // A monolith maps no device-login route (AGT-3366). The host logged a
+        // refusal every two seconds; it now logs once and re-checks hourly.
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 1, 8, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var claims = 0;
+            using var http = new HttpClient(new Handler(_ =>
+            {
+                Interlocked.Increment(ref claims);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+                {
+                    Content = JsonContent.Create(new { error = RouteAbsenceContract.ErrorCode, code = RouteAbsenceContract.ErrorCode }),
+                });
+            })) { BaseAddress = new Uri("https://studio.test") };
+            using var client = new TaskServerClient(http, "runner-a");
+            var logs = new List<string>();
+            using var stop = new CancellationTokenSource();
+            var run = new DeviceLoginPoller(client, line => { lock (logs) logs.Add(line); }, directory, clock: clock)
+                .RunAsync(stop.Token);
+
+            await WaitUntilAsync(() => Volatile.Read(ref claims) == 1);
+            for (var poll = 0; poll < 5; poll++)
+            {
+                clock.Advance(DeviceLoginPoller.PollInterval);
+                await Task.Delay(20);
+            }
+            Assert.Equal(1, Volatile.Read(ref claims));
+            for (var attempt = 0; attempt < 100 && Volatile.Read(ref claims) < 2; attempt++)
+            {
+                clock.Advance(FeatureRouteAbsence.RecheckInterval);
+                await Task.Delay(20);
+            }
+            Assert.True(Volatile.Read(ref claims) >= 2);
+            lock (logs)
+            {
+                Assert.Single(logs, line => line.Contains("device-login paused", StringComparison.Ordinal));
+                Assert.DoesNotContain(logs, line => line.Contains("poll failed", StringComparison.Ordinal));
+            }
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         for (var attempt = 0; attempt < 100 && !condition(); attempt++) await Task.Delay(50);
