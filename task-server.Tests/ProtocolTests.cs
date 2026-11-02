@@ -499,7 +499,7 @@ public sealed class ProtocolTests
     }
 
     [Fact]
-    public void Provider_capacity_uses_the_bounded_unknown_limit_retry()
+    public void Provider_capacity_is_not_a_rate_limit()
     {
         var observedAt = new DateTimeOffset(2026, 8, 31, 6, 45, 42, TimeSpan.Zero);
 
@@ -509,8 +509,8 @@ public sealed class ProtocolTests
             stderr: "Selected model is at capacity. Please try a different model.",
             observedAt: observedAt);
 
-        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, evidence.Kind);
-        Assert.Equal(observedAt.Add(ProviderAccessClassifier.UnknownLimitRetry), evidence.LimitedUntil);
+        Assert.Equal(ProviderAccessEvidenceKind.ModelCapacity, evidence.Kind);
+        Assert.Null(evidence.LimitedUntil);
         Assert.False(evidence.ResetTimeReported);
     }
 

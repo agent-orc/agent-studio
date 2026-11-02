@@ -57,6 +57,7 @@ public sealed class RemoteCompletionEnvelopePolicyTests
     [InlineData(false, "done")]
     [InlineData(true, "environmentfailure")]
     [InlineData(true, "mechanicalfallback")]
+    [InlineData(true, "transientfailure")]
     public void Non_coding_or_preparation_failure_completion_does_not_require_an_envelope(
         bool requiresEnvelope,
         string outcome)

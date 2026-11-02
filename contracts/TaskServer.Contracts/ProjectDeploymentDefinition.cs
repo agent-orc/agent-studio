@@ -77,6 +77,8 @@ public sealed record ProjectDeploymentDefinition(
     public IReadOnlyList<ProjectRunbookDefinition> Runbooks { get; init; } = [];
     public IReadOnlyList<ProjectTenantDefinition> Tenants { get; init; } = [];
     public IReadOnlyList<ProjectChannelDefinition> Channels { get; init; } = [];
+    /// <summary>Regions, placements and managed services for the structure view (AGT-3349 S5).</summary>
+    public ProjectStructureDefinition Structure { get; init; } = ProjectStructureDefinition.Empty;
     public IReadOnlyDictionary<string, IReadOnlyList<ProjectLifecyclePhase>> Lifecycles { get; init; }
         = new Dictionary<string, IReadOnlyList<ProjectLifecyclePhase>>(StringComparer.Ordinal);
     /// <summary>True when the file omits environments and the P1 default applies.</summary>
@@ -85,7 +87,8 @@ public sealed record ProjectDeploymentDefinition(
     public bool LifecycleDefaulted { get; init; }
 
     public bool IsConfigured => Artifacts.Count > 0 || Environments.Count > 0
-        || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0 || Tenants.Count > 0 || Channels.Count > 0 || Runbooks.Count > 0;
+        || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0 || Tenants.Count > 0 || Channels.Count > 0 || Runbooks.Count > 0
+        || Structure.IsConfigured;
 }
 
 /// <summary>
@@ -95,7 +98,7 @@ public sealed record ProjectDeploymentDefinition(
 public static class ProjectDeploymentVocabulary
 {
     public static readonly IReadOnlyList<string> Sections =
-        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables", "tenants", "channels", "runbooks"];
+        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables", "tenants", "channels", "runbooks", "structure"];
     public static readonly IReadOnlyList<string> ArtifactTypes = ["static", "container"];
     public static readonly IReadOnlyList<string> ArtifactKeys = ["name", "type", "path", "dockerfile", "image"];
     public static readonly IReadOnlyList<string> EnvironmentNames = ["staging", "production"];
@@ -274,10 +277,12 @@ public static partial class ProjectDefinitionReader
                     List(item, "environments"));
             }).ToArray();
 
+        var structure = ParseStructure(lines, issues);
+
         // Staging and Production with the standard lifecycle are the P1 default
         // once the file starts describing a deployment.
         var deploying = artifacts.Length > 0 || steps.Length > 0 || phases.Length > 0 || variables.Length > 0 || tenants.Length > 0 || channels.Length > 0 || runbooks.Length > 0
-            || Declared("environments");
+            || structure.IsConfigured || Declared("environments");
         var defaultEnvironments = deploying && !Declared("environments");
         var defaultLifecycle = deploying && !Declared("lifecycles");
         return new(NestedStringList(lines, "pipeline", "build"),
@@ -291,6 +296,7 @@ public static partial class ProjectDefinitionReader
             Tenants = tenants,
             Channels = channels,
             Lifecycles = lifecycles,
+            Structure = structure,
             EnvironmentsDefaulted = defaultEnvironments,
             LifecycleDefaulted = defaultLifecycle,
         };
@@ -351,11 +357,12 @@ public static partial class ProjectDefinitionReader
         List<ProjectDefinitionIssue> issues)
     {
         IReadOnlyList<YamlLine> content;
-        if (section.StartsWith("lifecycles.", StringComparison.Ordinal))
+        // A dotted section (lifecycles.standard, structure.placements) is a list under a second-level key.
+        if (section.IndexOf('.') is var dot and > 0)
         {
-            var lifecycle = section["lifecycles.".Length..];
-            var start = Section(lines, "lifecycles").FirstOrDefault(line =>
-                line.Indent == 2 && KeyValue(line.Text).Key == lifecycle);
+            var child = section[(dot + 1)..];
+            var start = Section(lines, section[..dot]).FirstOrDefault(line =>
+                line.Indent == 2 && KeyValue(line.Text).Key == child);
             content = start is null ? [] : lines.Skip(lines.IndexOf(start) + 1)
                 .TakeWhile(line => line.Indent > 2).ToArray();
         }
@@ -433,6 +440,7 @@ public static partial class ProjectDefinitionValidator
             ValidateStep(value, value.Deploy[i], $"deploy[{i}]", environments, names, hosts, issues);
         ValidateTenants(value.Tenants, environments, issues);
         ValidateVariables(value.Variables, value.Tenants, environments, value.Channels, issues);
+        ValidateStructure(value.Structure, environments, names, issues);
         var runbookNames = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < value.Runbooks.Count; i++)
         {

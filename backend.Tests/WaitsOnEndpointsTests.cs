@@ -1,9 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 using Xunit;
@@ -31,28 +28,28 @@ namespace AgentStudio.Tests;
 /// Cross-project is real here: the dependency target lives in a second watched
 /// project and keys are globally unique.
 /// </summary>
-public sealed class WaitsOnEndpointsTests : IDisposable
+public sealed class WaitsOnEndpointsTests : IClassFixture<WaitsOnEndpointsTests.Host>
 {
     private const string App = "waitson-app";   // the consumer's project
     private const string Lib = "waitson-lib";   // a second project holding the dependency
 
-    private readonly string _workspace;
+    private readonly Host _host;
     private readonly string _appWatch;
     private readonly string _libWatch;
 
-    public WaitsOnEndpointsTests()
+    public WaitsOnEndpointsTests(Host host)
     {
-        _workspace = Path.Combine(Path.GetTempPath(), "atp-waitson-http-" + Guid.NewGuid().ToString("N"));
-        _appWatch = Path.Combine(_workspace, "projects", App);
-        _libWatch = Path.Combine(_workspace, "projects", Lib);
-        foreach (var wp in new[] { _appWatch, _libWatch })
-            foreach (var state in TaskStates.All)
-                Directory.CreateDirectory(Path.Combine(wp, state));
+        _host = host;
+        _host.Reset();
+        _appWatch = host.WatchPath(App);
+        _libWatch = host.WatchPath(Lib);
     }
 
-    public void Dispose()
+    /// <summary>Both projects every test of this class reads, with local coding allowed.</summary>
+    public sealed class Host() : BoardTestHost("atp-waitson-http-", App, Lib)
     {
-        try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
+        protected override void ConfigureServices(IServiceCollection services)
+            => services.AddSingleton<ILocalCodingAdmissionPolicy>(AllowLocalCodingForTests.Instance);
     }
 
     // ---- READ overlay: card / grouped / detail wire shape ----------------
@@ -64,8 +61,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_libWatch, TaskStates.Ready, "dep", "LIB-1");
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", dependsOn: new[] { "LIB-1" });
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
 
         using var resp = await client.GetAsync("/api/tasks/grouped");
         resp.EnsureSuccessStatusCode();
@@ -93,8 +89,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_libWatch, TaskStates.Completed, "dep", "LIB-1");
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", dependsOn: new[] { "LIB-1" });
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
 
         // The flat list endpoint returns a bare array of cards.
         using var resp = await client.GetAsync("/api/tasks");
@@ -130,8 +125,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
             dependsOn: new[] { "LIB-1" }, releaseGate: true);
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         using var doc = JsonDocument.Parse(await client.GetStringAsync("/api/tasks"));
 
         var waitsOn = FindCard(doc.RootElement, "consumer").GetProperty("waitsOn");
@@ -155,8 +149,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_libWatch, TaskStates.Archive, "dep", "LIB-1");
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", dependsOn: new[] { "LIB-1" });
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         var watchPath = Uri.EscapeDataString(_appWatch);
 
         using var resp = await client.GetAsync($"/api/tasks/consumer?watchPath={watchPath}");
@@ -177,8 +170,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_libWatch, TaskStates.HumanReview, "dep", "LIB-1");
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
             dependsOn: new[] { "LIB-1" });
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var libWatchPath = Uri.EscapeDataString(_libWatch);
         var appWatchPath = Uri.EscapeDataString(_appWatch);
@@ -211,8 +203,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "a", "APP-1", dependsOn: new[] { "APP-2" });
         WriteJob(_appWatch, TaskStates.Ready, "b", "APP-2", dependsOn: new[] { "APP-1" });
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         var watchPath = Uri.EscapeDataString(_appWatch);
 
         using var resp = await client.GetAsync($"/api/tasks/a?watchPath={watchPath}");
@@ -230,8 +221,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         // overlay is null (or absent) so the FE renders nothing.
         WriteJob(_appWatch, TaskStates.Ready, "free", "APP-1");
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
 
         using var resp = await client.GetAsync("/api/tasks/grouped");
         resp.EnsureSuccessStatusCode();
@@ -250,8 +240,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "branch-a", "APP-2", dependsOn: new[] { "APP-1" });
         WriteJob(_appWatch, TaskStates.Ready, "branch-b", "APP-3", dependsOn: new[] { "APP-1" });
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
 
         using var resp = await client.GetAsync("/api/tasks/grouped");
         resp.EnsureSuccessStatusCode();
@@ -281,8 +270,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
     {
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1");
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var watchPath = Uri.EscapeDataString(_appWatch);
 
@@ -323,8 +311,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_libWatch, TaskStates.Completed, "dep", "LIB-1");
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1");
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var watchPath = Uri.EscapeDataString(_appWatch);
 
@@ -353,8 +340,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_libWatch, TaskStates.Ready, "successor", "LIB-2");
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", dependsOn: new[] { "LIB-1" });
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var watchPath = Uri.EscapeDataString(_appWatch);
 
@@ -385,8 +371,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
             dependsOn: new[] { "LIB-1" }, releaseGate: true);
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var watchPath = Uri.EscapeDataString(_appWatch);
 
@@ -418,8 +403,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "b", "APP-2", dependsOn: ["APP-3"]);
         WriteJob(_appWatch, TaskStates.Ready, "c", "APP-3", dependsOn: ["APP-1"]);
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var watchPath = Uri.EscapeDataString(_appWatch);
 
@@ -471,8 +455,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "b", "APP-2", dependsOn: ["APP-3"]);
         WriteJob(_appWatch, TaskStates.Ready, "c", "APP-3", dependsOn: ["APP-1"]);
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var watchPath = Uri.EscapeDataString(_appWatch);
 
@@ -512,8 +495,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
     {
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1");
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var watchPath = Uri.EscapeDataString(_appWatch);
 
@@ -536,8 +518,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1");
         WriteJob(_appWatch, TaskStates.Ready, "other", "APP-2", dependsOn: new[] { "APP-1" });
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var watchPath = Uri.EscapeDataString(_appWatch);
 
@@ -557,14 +538,13 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1");
         WriteWorkbench(_appWatch, "reference-source", relatedTaskKeys: new[] { "APP-LEGACY" });
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
 
-        var directCatalogue = factory.Services
+        var directCatalogue = _host.Services
             .GetRequiredService<WorkbenchCatalogueService>()
             .List(App, includeHistory: true);
-        var cachedCatalogue = factory.Services
+        var cachedCatalogue = _host.Services
             .GetRequiredService<ProjectDocsService>()
             .GetWikiWorkbenchCatalogue(App, includeHistory: true);
         Assert.NotNull(directCatalogue);
@@ -610,8 +590,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
             dependsOn: new[] { "LIB-1" }, releaseGate: true);
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var libWatchPath = Uri.EscapeDataString(_libWatch);
         var appWatchPath = Uri.EscapeDataString(_appWatch);
@@ -646,8 +625,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
             dependsOn: new[] { "LIB-1" }, releaseGate: true);
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         // A freshly registered identity, so the row proves the actor is taken
         // from the request rather than a hardcoded system attribution.
         using var registration = await client.PostAsJsonAsync(
@@ -691,8 +669,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
             dependsOn: new[] { "LIB-1" }, releaseGate: true);
         WriteJob(_appWatch, TaskStates.Ready, "plain", "APP-2", dependsOn: new[] { "LIB-1" });
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         using var doc = JsonDocument.Parse(await client.GetStringAsync(
             $"/api/tasks/dep/dependents?kind=dependsOn&watchPath={Uri.EscapeDataString(_libWatch)}"));
 
@@ -767,26 +744,4 @@ public sealed class WaitsOnEndpointsTests : IDisposable
             relatedTaskKeys,
         }));
     }
-
-    private WebApplicationFactory<Program> BuildFactory() =>
-        new TestHostFactory()
-            .WithWebHostBuilder(b =>
-            {
-                b.UseEnvironment("Test");
-                b.ConfigureServices(services =>
-                    services.AddSingleton<ILocalCodingAdmissionPolicy>(AllowLocalCodingForTests.Instance));
-                b.ConfigureAppConfiguration((_, cfg) =>
-                {
-                    cfg.AddInMemoryCollection(new Dictionary<string, string?>
-                    {
-                        ["TaskRepository"] = _workspace,
-                        ["WatchPaths:0:Name"] = App,
-                        ["WatchPaths:0:Path"] = _appWatch,
-                        ["WatchPaths:0:RootPath"] = _appWatch,
-                        ["WatchPaths:1:Name"] = Lib,
-                        ["WatchPaths:1:Path"] = _libWatch,
-                        ["WatchPaths:1:RootPath"] = _libWatch,
-                    });
-                });
-            });
 }

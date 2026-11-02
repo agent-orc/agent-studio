@@ -135,6 +135,7 @@ public static class EndpointMapping
         app.MapPublishEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapFilesystemLayerEndpoints();
         app.MapSystemEndpoints();
+        AgentStudio.Readiness.ServerReadinessEndpoints.MapServerReadinessEndpoints(app);
         app.MapCliEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapDevToolsEndpoints();
         app.MapAdminConfigEndpoints();
@@ -143,6 +144,7 @@ public static class EndpointMapping
         app.MapBranchSweepEndpoints();
         app.MapSupervisorEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapDiagnosticsEndpoints();
+        app.MapApiStallEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapInternalProbeEndpoints();
         app.MapTitleGenerationEndpoints();
         app.MapPromptEnhancementEndpoints();

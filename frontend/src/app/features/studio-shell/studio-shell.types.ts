@@ -9,7 +9,7 @@
  */
 
 /** Discrete tab kinds the editor area can host. */
-export type StudioTabKind = 'board' | 'feed' | 'task' | 'hub' | 'workbenches' | 'workbench' | 'diff' | 'activity' | 'url-preview' | 'workspace-settings' | 'deployment-dashboard' | 'welcome';
+export type StudioTabKind = 'board' | 'feed' | 'task' | 'hub' | 'workbenches' | 'workbench' | 'diff' | 'activity' | 'url-preview' | 'workspace-settings' | 'deployment-dashboard' | 'structure' | 'welcome';
 
 /** Sidebar panel kinds reachable from the ActivityBar. */
 export type StudioPanelKind = 'explorer' | 'filters' | 'cli' | 'activity' | 'settings' | 'chats';
@@ -126,11 +126,12 @@ export interface WorkspaceSettingsTab { kind: 'workspace-settings'; }
 
 /** Workspace deployment matrix, independent of the selected project. */
 export interface DeploymentDashboardTab { kind: 'deployment-dashboard'; }
+export interface StructureTab { kind: 'structure'; projectName?: string; }
 
 /** Welcome screen — no real tab, no key. */
 export interface WelcomeTab { kind: 'welcome'; }
 
-export type StudioTab = BoardTab | FeedTab | TaskTab | HubTab | WorkbenchesTab | WorkbenchTab | DiffTab | ActivityTab | UrlPreviewTab | WorkspaceSettingsTab | DeploymentDashboardTab | WelcomeTab;
+export type StudioTab = BoardTab | FeedTab | TaskTab | HubTab | WorkbenchesTab | WorkbenchTab | DiffTab | ActivityTab | UrlPreviewTab | WorkspaceSettingsTab | DeploymentDashboardTab | StructureTab | WelcomeTab;
 
 /**
  * Build the stable target identity for a tab. Replaceable substate is omitted:
@@ -159,6 +160,7 @@ export function studioTabKey(tab: StudioTab): string {
     case 'url-preview': return `url-preview:${tab.projectName}:${tab.urlId}`;
     case 'workspace-settings': return 'workspace-settings';
     case 'deployment-dashboard': return 'deployment-dashboard';
+    case 'structure': return `structure:${tab.projectName ?? 'workspace'}`;
     case 'welcome':  return 'welcome';
   }
 }

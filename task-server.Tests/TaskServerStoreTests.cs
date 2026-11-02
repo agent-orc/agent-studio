@@ -13,6 +13,41 @@ namespace TaskServer.Tests;
 public sealed partial class TaskServerStoreTests
 {
     [Fact]
+    public async Task Exhausted_model_capacity_requeues_from_salvage_without_a_capability_hold()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", claim.Status);
+        var salvageSha = new string('a', 40);
+        const string salvageRef = "refs/heads/agent-studio/salvage/capacity-test";
+        var decision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+            claim.Run!.RunId,
+            ExecutionAttemptKind.Coding,
+            StdErr: "Selected model is at capacity. Please try a different model.",
+            ExitCode: 1,
+            SessionState: ExecutionSessionState.Resumable,
+            SessionId: "thread-capacity",
+            ModelCapacityRetryAttempts: ExecutionOutcomeAdapter.MaxModelCapacityRetryAttempts));
+        Assert.Equal(ExecutionOutcomeKind.TransientModelCapacity, decision.Outcome);
+        await store.CompleteRunAsync(claim.Run.RunId, new CompleteRunRequest(
+            "runner-a", "instance-a", claim.Lease!.LeaseId, claim.Lease.Fence,
+            decision.Outcome.ToString(),
+            IdempotencyKey: "completion-capacity", Sequence: 1,
+            OutcomeDecision: decision,
+            SalvageBranch: salvageRef, SalvageCommitSha: salvageSha), "test", default);
+
+        Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskKey, default))!.State);
+        var next = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", next.Status);
+        Assert.Equal(salvageRef, next.ContinuationBaseRef);
+        Assert.Equal(salvageSha, next.ContinuationBaseSha);
+    }
+
+    [Fact]
     public async Task Quota_refusal_blocks_new_coding_claim_without_changing_ready_task()
     {
         using var temp = new TempDirectory();

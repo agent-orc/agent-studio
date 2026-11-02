@@ -1,4 +1,5 @@
 <section class="project-operations" data-testid="project-operations" aria-labelledby="project-operations-title">
+  <a [href]="'#/projects/' + projectSlug() + '/operations/structure'">Structure · project partial picture</a>
   <header class="project-operations__head">
     <div><p>Operations</p><h2 id="project-operations-title">Monitoring, usage and load</h2><p>Last 30 days by application environment.</p></div>
     <button type="button" (click)="load(projectName())">Refresh</button>

@@ -145,6 +145,64 @@ public sealed class GateFailureRouterTests : IDisposable
     }
 
     [Fact]
+    public async Task RefusedGitCredential_IsReplayedByTheLadder_AndParksWithACredentialReasonOnlyWhenSpent()
+    {
+        // 2 November 2026: merge-into-develop ran before the host's App tokens
+        // were written, and the delivery chain parked the card on its first try.
+        const string refusal = "Integration branch 'develop' could not be fetched from origin: "
+            + "fatal: could not read Username for 'https://github.com': terminal prompts disabled";
+        var stack = Build();
+        var id = SeedRedGate(stack, "private repository", "environment-worker-crash.AGT-2724.log",
+            TaskStates.AutoReview, AcceptedIntegrationFailureCodes.GitCredentialUnavailable,
+            reason: refusal, verdict: "error");
+
+        await stack.Reconciler.RunOnceAsync();
+
+        var card = Card(stack, id);
+        Assert.Equal(TaskStates.AutoReview, card.State);
+        Assert.Null(card.ParkedBlocker);
+        var step = stack.Integration.ReadLatestMergeStep(card)!;
+        Assert.Equal(AcceptedIntegrationFailureCodes.GitCredentialUnavailable, step.FailureCode);
+        Assert.Equal(refusal, step.Reason);
+        var status = stack.Integration.BuildLookup([card])[card.TaskKey];
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.True(GateEnvironmentRetryFactsReader.IsGateEnvironmentFailure(status));
+        Assert.Equal(GateFailureRouteAction.ReplayGate, GateFailureRouter.ReadReceipt(card.FolderPath)!.Route!.Action);
+        Assert.Empty(stack.Interventions.List(_watchPath));
+
+        GateEnvironmentRetryReceipts.RecordParked(stack.Timeline, card.FolderPath,
+            ReviewSubjectStore.Read(card.FolderPath)!.ResultSha, 3, "ladder spent");
+
+        await stack.Reconciler.RunOnceAsync();
+
+        card = Card(stack, id);
+        Assert.Equal(TaskStates.Escalated, card.State);
+        Assert.Equal(GateFailureParkCategories.EnvironmentExhausted, card.ParkedBlocker?.BlockerType);
+        Assert.Contains("refuses this host's Git credential", card.ParkedBlocker!.Reason);
+    }
+
+    [Theory]
+    [InlineData("Gate cancelled: shutdown.", TaskStates.AutoReview)]
+    [InlineData("Integration gate interrupted on develop.", TaskStates.Escalated)]
+    public async Task GateInterruptedByTheServicesOwnStop_IsResumedEvenWithTheLadderSpent(string reason, string lane)
+    {
+        // A stop says nothing about the gate host; a crash still spends the ladder.
+        var stack = Build();
+        var id = SeedRedGate(stack, "interrupted", "environment-worker-crash.AGT-2724.log",
+            TaskStates.AutoReview, AcceptedIntegrationFailureCodes.GateInterrupted,
+            reason: reason, verdict: "gate-interrupted");
+        var folder = Card(stack, id).FolderPath;
+        var delivery = ReviewSubjectStore.Read(folder)!.ResultSha;
+        for (var rung = 1; rung <= 3; rung++)
+            GateEnvironmentRetryReceipts.RecordRetry(stack.Timeline, folder, delivery,
+                GateEnvironmentRetrySources.Sweep, rung, $"rung {rung}");
+
+        await stack.Reconciler.RunOnceAsync();
+
+        Assert.Equal(lane, Card(stack, id).State);
+    }
+
+    [Fact]
     public async Task UndecidableClass_ParksForAPerson_StatingClassAndMissingEvidence()
     {
         var stack = Build();
@@ -364,7 +422,8 @@ public sealed class GateFailureRouterTests : IDisposable
 
     private string SeedRedGate(
         Stack stack, string label, string fixture, string lane,
-        string failureCode = AcceptedIntegrationFailureCodes.BuildGateFailed)
+        string failureCode = AcceptedIntegrationFailureCodes.BuildGateFailed,
+        string? reason = null, string? verdict = null)
     {
         var id = stack.Mutations.CreateJob(new CreateTaskRequest
         {
@@ -422,9 +481,9 @@ public sealed class GateFailureRouterTests : IDisposable
             Status = PipelineStepStatus.Failed,
             StartedAt = failedAt,
             CompletedAt = failedAt,
-            Verdict = failureCode == AcceptedIntegrationFailureCodes.BuildGateFailed
-                ? "gate-failed" : "gate-environment-failure",
-            Reason = "The build gate blocked the merge into develop: see post-steps/pre-develop-build-gate-1.log.",
+            Verdict = verdict ?? (failureCode == AcceptedIntegrationFailureCodes.BuildGateFailed
+                ? "gate-failed" : "gate-environment-failure"),
+            Reason = reason ?? "The build gate blocked the merge into develop: see post-steps/pre-develop-build-gate-1.log.",
             FailureCode = failureCode,
         });
         stack.Scanner.InvalidateCache();

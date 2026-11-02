@@ -51,6 +51,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     }
 
     [Theory]
+    [Trait("Category", "Guard")]
     [MemberData(nameof(Profiles))]
     public void Every_route_declares_a_known_permission(string profile, string? taskServer)
     {
@@ -71,6 +72,13 @@ public sealed class RoutePermissionInventoryTests : IDisposable
             + string.Join("\n  ", undeclared.Distinct().Order(StringComparer.Ordinal)));
         Assert.Empty(unknown);
     }
+
+    [Theory]
+    [InlineData("GET", "/api/system/readiness", IamPermissions.WorkspaceOperate)]
+    [InlineData("POST", "/api/system/readiness/refresh", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/healthz/readiness", IamPermissions.Anonymous)]
+    public void Readiness_routes_use_their_intended_permissions(string method, string path, string permission)
+        => Assert.Equal(permission, RoutePermissionCatalog.Resolve(method, path)?.Permission);
 
     [Theory]
     [InlineData("GET", "/api/tasks/{jobId}", IamPermissions.ProjectRead)]

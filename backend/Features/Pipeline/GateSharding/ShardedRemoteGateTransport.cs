@@ -90,10 +90,11 @@ public sealed class ShardedRemoteGateTransport : IRemoteGateTransport
         ILoggerFactory loggers,
         GateShardTimingStore timings,
         TimeProvider? clock = null,
-        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null)
+        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null,
+        GateDurationHistory? durations = null)
         : this(
             new GateShardHost(configuration["RemoteGate:SshHost"] ?? "primary", primary, primarySlots),
-            AdditionalHosts(configuration, loggers, clock, activity, scanner),
+            AdditionalHosts(configuration, loggers, clock, activity, scanner, durations),
             timings,
             loggers.CreateLogger<ShardedRemoteGateTransport>(),
             clock)
@@ -245,7 +246,8 @@ public sealed class ShardedRemoteGateTransport : IRemoteGateTransport
 
     private static IReadOnlyList<GateShardHost> AdditionalHosts(
         IConfiguration configuration, ILoggerFactory loggers, TimeProvider? clock,
-        OrchestratorLog? activity, AgentStudio.Tasks.TaskScannerService? scanner)
+        OrchestratorLog? activity, AgentStudio.Tasks.TaskScannerService? scanner,
+        GateDurationHistory? durations)
         => configuration.GetSection("RemoteGate:ShardHosts").GetChildren()
             .Where(section => !string.IsNullOrWhiteSpace(section["SshHost"]))
             .OrderBy(section => section.Key, StringComparer.Ordinal)
@@ -253,7 +255,7 @@ public sealed class ShardedRemoteGateTransport : IRemoteGateTransport
             {
                 var slots = new GateSlotUsageTracker(clock: clock);
                 var transport = new RemoteGateTransport(configuration, loggers.CreateLogger<RemoteGateTransport>(),
-                    section.Path, slots, clock, activity, scanner);
+                    section.Path, slots, clock, activity, scanner, durations);
                 return new GateShardHost(section["SshHost"]!.Trim(), transport, slots);
             })
             .ToArray();

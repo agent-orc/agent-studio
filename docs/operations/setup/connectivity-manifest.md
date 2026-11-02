@@ -38,8 +38,20 @@ only through `private-https`.
 | `enabledListeners` | Subset of the catalogue allowed for the mode. |
 | `portOverrides` | Explicit overrides; resolved ports must not collide. |
 | `runners[]` | One route per runner: `loopback`, `reverse-ssh` (with `sshTarget`, `knownHostsFile`) or `private-https`. |
+| `machines[]` | Optional placement inventory. Each machine has `id`, `name`, `components[]`, and optional `parentId`, open-vocabulary `kind` and `location`. A VM can name its physical parent; omitted fields keep older manifests valid. |
+| `externals[]` | Optional declared services outside the installation boundary, with `id`, `name`, and optional `kind`. |
+| `structureLinks[]` | Optional typed declared connections with `from`, `to`, `kind`, and `label`. References use `machine:<id>`, `component:<machine>:<id>` or `external:<id>`. |
 
 No credential is stored in the record or in generated configuration.
+
+The role-named `one-box.json` sample declares an AGT placement example: three
+locations, a Studio machine, Linux runner host, home-lab physical machine and
+nested VM with four containers, plus GitHub, a container registry and model
+providers. `GET /api/v1/operations/structure?scope=workspace` projects this
+inventory with project environment declarations and schema 2 artifacts as
+read-only declared facts. `scope=project:<id>` narrows project declarations;
+`environment=<id>` narrows environment instances. The view does not infer
+runtime health from declarations.
 
 ## Resolved ports
 

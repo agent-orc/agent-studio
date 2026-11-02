@@ -38,6 +38,7 @@ public static class RunFailureSignatures
     public const string CommandStalled = "command-stalled";
     public const string GitNetworkTimeout = "git-network-timeout";
     public const string GitRefLockRace = "git-ref-lock-race";
+    public const string GitCredentialRefused = "git-credential-refused";
     public const string UnparsedTestOutput = "unparsed-test-output";
     public const string MsBuildNodeUnavailable = "msbuild-node-unavailable";
     public const string PrivateTempUnmounted = "private-temp-unmounted";
@@ -163,6 +164,27 @@ public static class RunFailureClassifier
         "the remote end hung up unexpectedly",
         "failed to connect to github.com",
     ];
+
+    /// <summary>
+    /// Git says its credential is missing or was refused. On 2 November 2026 the
+    /// host fetched a private repository directly after a start, before its App
+    /// tokens were written. The next attempt with a written token succeeds.
+    /// </summary>
+    private static readonly string[] GitCredentialSignals =
+    [
+        "could not read username",
+        "could not read password",
+        "terminal prompts disabled",
+        "authentication failed for",
+        "invalid username or password",
+        "the requested url returned error: 401",
+        "the requested url returned error: 403",
+        "permission denied (publickey)",
+    ];
+
+    /// <summary>True when Git's own words say the credential was missing or refused.</summary>
+    public static bool IsGitCredentialRefusal(string? text)
+        => !string.IsNullOrEmpty(text) && Contains(text, GitCredentialSignals);
 
     private static readonly string[] BudgetSignals =
     [
@@ -402,6 +424,14 @@ public static class RunFailureClassifier
                 "The gate run was cut off by its budget before it could finish.",
                 text,
                 BudgetSignals);
+        }
+        if (Contains(text, GitCredentialSignals))
+        {
+            return Infrastructure(
+                RunFailureSignatures.GitCredentialRefused,
+                "Git had no credential for origin, or origin refused it.",
+                text,
+                GitCredentialSignals);
         }
         if (text.Contains("cannot lock ref", StringComparison.OrdinalIgnoreCase)
             && text.Contains("is at", StringComparison.OrdinalIgnoreCase)

@@ -325,6 +325,7 @@
         "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.scss",
         "src/app/features/test-evidence/components/test-evidence-status/test-evidence-status.component.scss",
         "src/app/features/deployments/components/card-environment-badges/card-environment-badges.scss",
+        "src/app/features/structure/structure-view/structure-view.component.scss",
         "src/app/components/task-preview/task-preview.component.scss",
         "src/app/features/flow-health/components/flow-health-page/flow-health-page.scss"
       ],

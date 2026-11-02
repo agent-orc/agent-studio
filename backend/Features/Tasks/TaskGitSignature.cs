@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 
 namespace AgentStudio.Tasks;
@@ -9,7 +8,10 @@ internal static class TaskGitSignature
 {
     internal static string For(TaskInfo task)
     {
-        var input = JsonSerializer.Serialize(new
+        // Hash the UTF-8 JSON directly: the same bytes as encoding the
+        // serialized string, without the intermediate string. This runs for
+        // every card on every Git index run (AGT-3369).
+        var input = JsonSerializer.SerializeToUtf8Bytes(new
         {
             task.Id,
             task.TaskKey,
@@ -23,6 +25,6 @@ internal static class TaskGitSignature
             task.IntegrationRecords,
             task.Provenance,
         });
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input)));
+        return Convert.ToHexString(SHA256.HashData(input));
     }
 }

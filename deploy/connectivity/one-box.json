@@ -10,5 +10,34 @@
   "enabledListeners": ["standalone-task-server", "studio-bff", "browser"],
   "runners": [
     { "runnerId": "agent-runner-01", "route": "loopback" }
+  ],
+  "machines": [
+    { "id": "studio", "name": "Studio machine", "kind": "physical", "location": "Operator site", "components": [
+      { "id": "backend", "name": "Studio backend", "role": "control", "kind": "process" },
+      { "id": "proxy", "name": "Frontend proxy", "role": "control", "kind": "process" }
+    ] },
+    { "id": "runner", "name": "Linux runner host", "kind": "cloud-server", "location": "Cloud provider", "components": [
+      { "id": "coding", "name": "Coding host", "role": "execution", "kind": "process" },
+      { "id": "review", "name": "Review host", "role": "execution", "kind": "process" },
+      { "id": "engine", "name": "Orchestrator Engine", "role": "control", "kind": "container" }
+    ] },
+    { "id": "lab", "name": "Home-lab physical machine", "kind": "physical", "location": "Home lab", "components": [] },
+    { "id": "lab-vm", "name": "Home-lab VM", "parentId": "lab", "kind": "vm", "location": "Home lab", "components": [
+      { "id": "review-1", "name": "Review host 1", "role": "execution", "kind": "container" },
+      { "id": "review-2", "name": "Review host 2", "role": "execution", "kind": "container" },
+      { "id": "review-3", "name": "Review host 3", "role": "execution", "kind": "container" },
+      { "id": "gate", "name": "Build and test gate", "role": "verification", "kind": "container" }
+    ] }
+  ],
+  "externals": [
+    { "id": "github", "name": "GitHub" },
+    { "id": "registry", "name": "Container registry" },
+    { "id": "models", "name": "Model providers" }
+  ],
+  "structureLinks": [
+    { "from": "machine:studio", "to": "machine:runner", "kind": "tunnel", "label": "runner route" },
+    { "from": "machine:runner", "to": "external:github", "kind": "call", "label": "Git" },
+    { "from": "external:registry", "to": "machine:runner", "kind": "artifact", "label": "image pull" },
+    { "from": "machine:runner", "to": "external:models", "kind": "call", "label": "model calls" }
   ]
 }

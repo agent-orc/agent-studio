@@ -34,6 +34,33 @@ public sealed class GateCancellationPolicyTests
         string lane, string currentLane, bool pending, bool shutdown, string? origin, string reason)
         => Assert.Equal(reason, GateCancellationPolicy.Decide(expected, current, lane, currentLane, pending, shutdown, origin));
 
+    [Theory]
+    // The service's own stop refunds the start the gate charged when it began.
+    [InlineData(0, "shutdown", true, 0)]
+    [InlineData(1, "shutdown", true, 1)]
+    // A shutdown reported by a remote gate host while this service runs is charged.
+    [InlineData(0, "shutdown", false, 1)]
+    [InlineData(1, "shutdown", false, 2)]
+    // An operator cancellation is charged even while the service stops.
+    [InlineData(0, "operator", true, 1)]
+    [InlineData(1, "operator", false, 2)]
+    [InlineData(0, null, false, 1)]
+    public void Only_the_services_own_stop_leaves_the_gate_start_budget_untouched(
+        int startsBefore, string? reason, bool serviceStopping, int charged)
+        => Assert.Equal(charged, GateCancellationPolicy.ChargedStartsAfterCancellation(
+            startsBefore, reason, serviceStopping));
+
+    [Fact]
+    public void Repeated_service_stops_never_reach_the_start_budget()
+    {
+        var starts = 0;
+        for (var restart = 0; restart < 10; restart++)
+            starts = GateCancellationPolicy.ChargedStartsAfterCancellation(
+                starts, GateCancellationReasons.Shutdown, serviceStopping: true);
+
+        Assert.Equal(0, starts);
+    }
+
     [Fact]
     public void Shutdown_retry_uses_one_post_step_budget_and_preserves_subject_identity()
     {

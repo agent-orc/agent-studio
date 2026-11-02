@@ -513,6 +513,21 @@ public sealed class DeployTargetAdapterTests
         Assert.False(Directory.Exists(commands.Calls[0].Environment!["CLOUDSDK_CONFIG"]));
     }
 
+    [Fact]
+    public void Every_adapter_kind_maps_to_its_own_structure_placement_kind()
+    {
+        IDeployTargetAdapter[] adapters = [
+            new SshDockerDeployAdapter(new FakeSecrets(), new FakeCommands()),
+            new KubernetesDeployAdapter(new FakeSecrets(), new FakeCommands()),
+            new CloudRunDeployAdapter(new FakeSecrets(), new FakeCommands()),
+        ];
+
+        Assert.Equal(ProjectStructureVocabulary.DeployTargetKinds, adapters.Select(adapter => adapter.Kind));
+        Assert.Equal(["server", "cluster", "managed-runtime"],
+            adapters.Select(adapter => ProjectStructureVocabulary.PlacementKindFor(adapter.Kind)));
+        Assert.All(adapters, adapter => Assert.NotNull(ProjectStructureVocabulary.PlacementDetail(adapter.Kind)));
+    }
+
     private static DeployTargetExecutor Executor(FakeSecrets secrets, FakeCommands commands)
         => new([
             new SshDockerDeployAdapter(secrets, commands),
