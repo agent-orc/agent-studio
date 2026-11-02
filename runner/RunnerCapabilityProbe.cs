@@ -386,7 +386,7 @@ internal static class RunnerCapabilityProbe
     public static bool IsProviderAuthenticationFailure(ProcessResult result)
     {
         if (result.ExitCode == 0) return false;
-        return ProviderAccessClassifier.Classify(
+        return ProviderAccessClassifier.ClassifyRun(
                 result.ExitCode,
                 result.StdOut,
                 result.StdErr)
@@ -1504,7 +1504,7 @@ public sealed class ProviderAuthProbe
         if (operatorStopped || signal is not null || hostShutdown)
             return Current(cliBinary);
 
-        var evidence = ProviderAccessClassifier.Classify(
+        var evidence = ProviderAccessClassifier.ClassifyRun(
             result.ExitCode,
             result.StdOut,
             result.StdErr,
@@ -1845,7 +1845,7 @@ public sealed class ProviderAuthProbe
 
     private static readonly Regex Whitespace = new(@"\s+", RegexOptions.Compiled);
 
-    private static string Excerpt(string? value, int maxChars = 200)
+    internal static string Excerpt(string? value, int maxChars = 200)
     {
         var single = Whitespace.Replace(value ?? string.Empty, " ").Trim();
         var redacted = SecretShaped.Replace(single, "[redacted]");

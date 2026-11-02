@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace AgentStudio.TaskServer.Contracts;
@@ -29,6 +30,59 @@ public sealed record ProviderAccessEvidence(
 public static partial class ProviderAccessClassifier
 {
     public static readonly TimeSpan UnknownLimitRetry = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Classifies a CLI run using only provider error frames and process stderr.
+    /// Other stdout frames carry agent and tool content, including arbitrary
+    /// source files and command output, so they cannot diagnose provider access.
+    /// Status commands continue to use <see cref="Classify"/> directly.
+    /// </summary>
+    public static ProviderAccessEvidence ClassifyRun(
+        int exitCode,
+        string? stdout,
+        string? stderr,
+        bool completedSuccessfully = false,
+        DateTimeOffset? observedAt = null,
+        TimeZoneInfo? localZone = null)
+    {
+        if (exitCode == 0 && completedSuccessfully)
+            return new ProviderAccessEvidence(
+                ProviderAccessEvidenceKind.Authenticated,
+                "The provider completed the turn successfully.");
+
+        var providerErrors = new List<string>();
+        foreach (var line in (stdout ?? string.Empty).Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("type", out var typeProperty)
+                    || typeProperty.ValueKind != JsonValueKind.String)
+                    continue;
+                var type = typeProperty.GetString();
+                var isProviderError = type is "error" or "turn.failed" or "response.failed";
+                if (type == "result")
+                {
+                    isProviderError = root.TryGetProperty("is_error", out var isError)
+                                      && isError.ValueKind == JsonValueKind.True;
+                    if (root.TryGetProperty("subtype", out var subtype)
+                        && subtype.ValueKind == JsonValueKind.String
+                        && subtype.GetString()?.StartsWith("error", StringComparison.OrdinalIgnoreCase) == true)
+                        isProviderError = true;
+                }
+                if (isProviderError) providerErrors.Add(line);
+            }
+            catch (JsonException)
+            {
+                // Unstructured stdout is agent content, not provider evidence.
+            }
+        }
+
+        return Classify(exitCode, string.Join('\n', providerErrors), stderr,
+            observedAt: observedAt, localZone: localZone);
+    }
 
     private static readonly string[] RateLimitSignals =
     [

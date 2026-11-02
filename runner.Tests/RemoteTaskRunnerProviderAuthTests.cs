@@ -12,6 +12,88 @@ public sealed class RemoteTaskRunnerProviderAuthTests
         "usage limit reached; resets at 2026-09-19T12:40:00Z";
 
     [Theory]
+    [InlineData("codex")]
+    [InlineData("claude")]
+    public async Task Completed_run_ignores_access_words_in_tool_output(string provider)
+    {
+        const string toolOutput = "HTTP 401; 401 Unauthorized; not logged in; usage limit";
+        var stdout = provider == "codex"
+            ? """
+              {"type":"item.completed","item":{"type":"command_execution","aggregated_output":"HTTP 401; 401 Unauthorized; not logged in; usage limit"}}
+              {"type":"item.completed","item":{"type":"agent_message","text":"Done [[TASK_DONE]]"}}
+              {"type":"turn.completed"}
+              """
+            : """
+              {"type":"user","message":{"content":[{"type":"tool_result","content":"HTTP 401; 401 Unauthorized; not logged in; usage limit"}]}}
+              {"type":"result","subtype":"success","is_error":false,"result":"Done [[TASK_DONE]]"}
+              """;
+        var evidence = ProviderAccessClassifier.ClassifyRun(0, stdout, null, completedSuccessfully: true);
+        var extracted = ProviderOutputEvidenceExtractor.Extract(stdout);
+        var outcome = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+            "attempt-tool-output",
+            ExecutionAttemptKind.Coding,
+            ProviderTerminalEvent: extracted.TerminalEvent,
+            FinalAssistantOutput: extracted.FinalAssistantOutput,
+            StdOut: stdout,
+            ExitCode: 0));
+        var probe = Probe();
+        await probe.RefreshAsync(provider, CancellationToken.None);
+        var status = RemoteTaskRunner.RecordProviderProcessResult(
+            probe,
+            provider,
+            new ProcessResult(0, stdout, string.Empty),
+            outcome.RawFacts);
+
+        Assert.Contains(toolOutput, stdout);
+        Assert.Equal(ProviderAccessEvidenceKind.Authenticated, evidence.Kind);
+        Assert.Equal(ExecutionOutcomeKind.SuccessfulCompletion, outcome.Outcome);
+        Assert.NotEqual(ProviderAccessEvidenceKind.AuthenticationFailure, evidence.Kind);
+        Assert.Equal(ProviderAuthProbe.Ready, status.Status);
+    }
+
+    [Theory]
+    [InlineData("codex")]
+    [InlineData("claude")]
+    public async Task Provider_error_event_reports_unauthorized_with_matched_redacted_line(string provider)
+    {
+        var credential = "sk-" + Guid.NewGuid().ToString("N");
+        var message = $"Provider returned 401 Unauthorized for {credential}";
+        var stdout = provider == "codex"
+            ? JsonSerializer.Serialize(new { type = "error", message }) + "\n"
+              + "{\"type\":\"turn.failed\"}"
+            : JsonSerializer.Serialize(new
+            {
+                type = "result",
+                subtype = "error_during_execution",
+                is_error = true,
+                result = message,
+            });
+        var evidence = ProviderAccessClassifier.ClassifyRun(1, stdout, null);
+        var reason = RemoteTaskRunner.ProviderAuthenticationFailureReason(evidence);
+        var extracted = ProviderOutputEvidenceExtractor.Extract(stdout);
+        var outcome = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+            "attempt-provider-error",
+            ExecutionAttemptKind.Coding,
+            ProviderTerminalEvent: extracted.TerminalEvent,
+            StdOut: stdout,
+            ExitCode: 1));
+        var probe = Probe();
+        await probe.RefreshAsync(provider, CancellationToken.None);
+        var status = RemoteTaskRunner.RecordProviderProcessResult(
+            probe,
+            provider,
+            new ProcessResult(1, stdout, string.Empty),
+            outcome.RawFacts);
+
+        Assert.Equal(ProviderAccessEvidenceKind.AuthenticationFailure, evidence.Kind);
+        Assert.Equal(ExecutionOutcomeKind.AuthenticationFailure, outcome.Outcome);
+        Assert.Contains("401 Unauthorized", reason);
+        Assert.Contains("[redacted]", reason);
+        Assert.DoesNotContain(credential, reason);
+        Assert.Equal(ProviderAuthProbe.Ready, status.Status);
+    }
+
+    [Theory]
     [InlineData(137, null, false, ProviderAuthProbe.Limited)]
     [InlineData(137, 9, false, ProviderAuthProbe.Ready)]
     [InlineData(137, null, true, ProviderAuthProbe.Ready)]

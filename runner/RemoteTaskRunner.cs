@@ -1524,10 +1524,11 @@ public sealed class RemoteTaskRunner
                             sameSessionResumeAttempts,
                             invocation,
                             slot.ModelCapacityRetryAttempts);
-                    var providerAccess = ProviderAccessClassifier.Classify(
+                    var providerAccess = ProviderAccessClassifier.ClassifyRun(
                         processResult.ExitCode,
                         processResult.StdOut,
-                        processResult.StdErr);
+                        processResult.StdErr,
+                        completedSuccessfully: classified.Decision.Outcome == ExecutionOutcomeKind.SuccessfulCompletion);
                     var providerAuth = RecordProviderProcessResult(
                         ProviderAuthProbe.Shared,
                         invocation.FileName,
@@ -1543,7 +1544,7 @@ public sealed class RemoteTaskRunner
                     {
                         var provider = invocation.CliType;
                         var claimId = outbox?.Authority.RunId;
-                        var diagnostic = "Unauthorized provider response; diagnosis pending.";
+                        var diagnostic = ProviderAuthenticationFailureReason(providerAccess);
                         // Diagnosis only: the run's own classification and fenced
                         // completion below must survive a server that rejects or
                         // does not mount the capability route.
@@ -1560,7 +1561,7 @@ public sealed class RemoteTaskRunner
                             stopRun);
                         shipper.Add(
                             "system",
-                            $"[runner] capability-failure capability={CapabilityProtocol.ProviderAuthentication(provider)} classification=ProviderUnauthorized");
+                            $"[runner] capability-failure capability={CapabilityProtocol.ProviderAuthentication(provider)} classification=ProviderUnauthorized reason={diagnostic}");
                     }
                     else if (providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited
                              && providerAuth.Status == ProviderAuthProbe.Limited)
@@ -2849,6 +2850,9 @@ public sealed class RemoteTaskRunner
             signal: facts.Signal,
             hostShutdown: facts.HostShutdown || daemonShutdownRecorded,
             credentialGeneration: credentialGeneration);
+
+    internal static string ProviderAuthenticationFailureReason(ProviderAccessEvidence evidence)
+        => $"Unauthorized provider response: {ProviderAuthProbe.Excerpt(evidence.Detail)}";
 
     private static string? SameGenerationForCompletedWork(string cliBinary, DateTime? processStartedAtUtc)
     {
