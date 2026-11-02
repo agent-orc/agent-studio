@@ -863,6 +863,14 @@ public static class LeaseEndpoints
                 string? capabilityMismatch = null;
                 foreach (var task in eligible)
                 {
+                    var readyKey = task.Key ?? task.TaskKey ?? task.Id;
+                    var earlierRun = leases.Inspect(readyKey);
+                    if (earlierRun is { State: "active", Lease: not null })
+                    {
+                        RecordRejection(task, "earlier-run-still-leased",
+                            $"Earlier run attempt {earlierRun.Lease.AttemptId} still holds a lease until {earlierRun.Lease.ExpiresAt:O}.");
+                        continue;
+                    }
                     var taskProjectSettings = settings.Get(task.ProjectName);
                     var projectSlot = ProjectExecutionPolicy.EvaluateProjectSlot(
                         occupiedByProject, task.ProjectName, taskProjectSettings);
@@ -1265,8 +1273,15 @@ public static class LeaseEndpoints
                     BriefVersion = briefVersion,
                 });
                 if (!acquire.Granted || acquire.Lease is null)
+                {
+                    logger.LogWarning(
+                        "remote-runner-lease-acquire-refused project={Project} task={TaskKey} runner={Runner} outcome={Outcome} message={Message}",
+                        candidate.ProjectName, taskKey, req.RunnerName, acquire.Outcome, acquire.Message);
+                    RecordRejection(candidate, "lease-acquire-refused",
+                        $"Lease acquire refused: {acquire.Outcome}: {acquire.Message ?? "no detail"}");
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
                         RunnerClaimStatus.Empty, Message: acquire.Message ?? acquire.Outcome)));
+                }
 
                 stops.RetireSuperseded(taskKey, acquire.Lease.AttemptId, acquire.Lease.FencingToken);
                 var stashedIntent = candidate.PendingIntent is null
@@ -2291,6 +2306,22 @@ public static class LeaseEndpoints
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
             if (task.State == TaskStates.Ready && task.PendingIntent is not null)
             {
+                // A fenced next run cannot infer its base from the old work
+                // branch. Preserve this delivery as its starting commit unless
+                // a newer queued continuation already selected another base.
+                if (outcome is ("done" or "noop")
+                    && !string.IsNullOrWhiteSpace(deliveryBranch)
+                    && ReviewSubjectStore.IsValidResultSha(resultSha)
+                    && ContinuationBaseStore.Read(task.FolderPath) is null
+                    && !ContinuationBaseStore.TrySaveWhen(task.FolderPath, null,
+                        new ContinuationBaseRecord(deliveryBranch!, resultSha!,
+                            "queued-follow-up-after-live-run", attemptId, DateTime.UtcNow),
+                        () => scanner.FindJob(task.Id, task.WatchPath) is
+                            { State: TaskStates.Ready, PendingIntent: not null })
+                    && ContinuationBaseStore.Read(task.FolderPath) is null)
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable,
+                        title: "Queued continuation base persistence failed",
+                        detail: $"Run {attemptId} settled, but its delivery base was not saved. Retry completion.");
                 if (!timeline.Append(task.FolderPath, "run-completion-superseded",
                     TimelineActors.System,
                     $"Run {attemptId} finished after a newer continuation was queued; the continuation remains ready.",
@@ -3083,7 +3114,7 @@ public static class LeaseEndpoints
     };
 
     /// <summary>
-    /// Server-side occupancy of one execution host: the tasks in Progress whose
+    /// Server-side occupancy of one execution host: tasks in Progress or Ready whose
     /// current run lease belongs to this host. This is the count host capacity
     /// admission spends, so a daemon that under-reports (or a second daemon
     /// process on the same machine) cannot exceed the central ceiling.
@@ -3098,7 +3129,7 @@ public static class LeaseEndpoints
         foreach (var task in snapshot)
         {
             if (task.Fixture) continue;
-            if (task.State != TaskStates.Progress) continue;
+            if (task.State is not (TaskStates.Progress or TaskStates.Ready)) continue;
             var key = task.Key ?? task.TaskKey ?? task.Id;
             if (string.IsNullOrWhiteSpace(key)) continue;
             var inspection = leases.Inspect(key);

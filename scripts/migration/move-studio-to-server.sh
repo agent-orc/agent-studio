@@ -167,6 +167,12 @@ server_relocate() {
   relocate_paths "$@" >"$root/move-bin/relocate-report.json" \
     || fail "path relocation has unresolved paths; see $root/move-bin/relocate-report.json and add them with --extra-mapping"
   relocate_paths "$@" --apply >/dev/null
+  # A project without a repository visibility setting takes what the
+  # workstation's anonymous probe found, so a private repository arrives private.
+  if [ -f "$root/move-bin/visibility.json" ]; then
+    node "$root/move-bin/move-studio-to-server.mjs" carry-visibility --workspace "$2" \
+      --visibility "$root/move-bin/visibility.json" || fail 'cannot carry the repository visibility into project-settings.json'
+  fi
 }
 
 server_disable_push() {
@@ -570,8 +576,24 @@ inventory() {
     url=$(git -C "$repository" remote get-url origin 2>/dev/null | strip_url)
     [ -z "$url" ] || printf '%s\t%s\n' "$project_id" "$url" >>"$state_dir/remotes.tsv"
   done <"$state_dir/projects.tsv"
+  # Anonymous probe per repository: one that asks for credentials is private.
+  # Every credential source is off, so a token on this workstation cannot make it look public.
+  : >"$state_dir/visibility-probes.tsv"
+  probe_timeout=
+  ! command -v timeout >/dev/null 2>&1 || probe_timeout='timeout 30'
+  node "$script_dir/move-studio-to-server.mjs" probe-targets --workspace "$(native_path "$workspace")" \
+    --remotes "$state_dir/remotes.tsv" >"$state_dir/probe-targets.tsv"
+  while IFS="$tab" read -r project_id url; do
+    probe_status=0
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true SSH_ASKPASS=true GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+      $probe_timeout git -c credential.helper= ls-remote --heads -- "$url" >/dev/null 2>"$state_dir/probe.err" </dev/null \
+      || probe_status=$?
+    printf '%s\t%s\t%s\n' "$project_id" "$probe_status" "$(tr '\t\r\n' '   ' <"$state_dir/probe.err" | cut -c1-300)" \
+      >>"$state_dir/visibility-probes.tsv"
+  done <"$state_dir/probe-targets.tsv"
+  rm -f "$state_dir/probe.err"
   set -- inventory --workspace "$(native_path "$workspace")" --tracked "$state_dir/tracked.z" --dirty "$state_dir/dirty.z" \
-    --remotes "$state_dir/remotes.tsv" --home "$(native_path "$HOME")" \
+    --remotes "$state_dir/remotes.tsv" --visibility-probes "$state_dir/visibility-probes.tsv" --home "$(native_path "$HOME")" \
     --credential-helper "$(git -C "$workspace" config --get credential.helper || true)" --out-dir "$state_dir"
   [ -z "$extra_mapping" ] || set -- "$@" --extra-mapping "$extra_mapping"
   inventory_status=0
@@ -587,6 +609,8 @@ transfer_pass() {
   upload "$self" move-studio-to-server.sh
   upload "$script_dir/relocate-workspace-paths.mjs" relocate-workspace-paths.mjs
   upload "$state_dir/path-map.json" path-map.json
+  upload "$script_dir/move-studio-to-server.mjs" move-studio-to-server.mjs
+  upload "$state_dir/visibility.json" visibility.json
   git -C "$workspace" remote get-url origin >/dev/null 2>&1 || fail 'the workspace has no origin remote to clone on the server'
   workspace_url=$(git -C "$workspace" remote get-url origin | strip_url)
   clone_state=$(server_side clone-workspace "$staging/workspace" "$workspace_url")

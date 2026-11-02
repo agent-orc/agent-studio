@@ -47,8 +47,8 @@ public sealed class TaskServerOptions
     public int InventoryGraceSeconds { get; set; } = 120;
     public int RunnerInfrastructureFailureBudget { get; set; } = 3;
     public int MaximumEventPayloadBytes { get; set; } = 256 * 1024;
-    public long MaxRequestBodyBytes { get; set; } = 25L * 1024 * 1024;
-    public long ResultArtifactMaxFileBytes { get; set; } = 8L * 1024 * 1024;
+    public long MaxRequestBodyBytes { get; set; } = AgentStudio.TaskServer.Contracts.ReviewReportLimits.MaxRequestBodyBytes;
+    public long ResultArtifactMaxFileBytes { get; set; } = AgentStudio.TaskServer.Contracts.ReviewReportLimits.MaxEmbeddedArtifactBytes;
     public long ResultArtifactMaxTotalBytes { get; set; } = 100L * 1024 * 1024;
     /// <summary>Size cap of the derived source data store (AGT-3318); least recently read objects are evicted above it.</summary>
     public long SourceFactsMaxStoredBytes { get; set; } = 512L * 1024 * 1024;

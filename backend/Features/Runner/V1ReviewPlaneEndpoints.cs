@@ -387,6 +387,7 @@ public static class V1ReviewPlaneEndpoints
             AgentStudio.Quota.WorkspaceQuotaService workspaceQuota,
             ReviewClaimUnclaimableLog unclaimableLog,
             CauseBreakerService causeBreakers,
+            AgentStudio.Projects.ProjectRepositoryVisibility repositoryVisibility,
             CancellationToken ct) =>
         {
             if (!RunnerMatches(context, runnerId)
@@ -460,7 +461,7 @@ public static class V1ReviewPlaneEndpoints
             // so a private attempt this host cannot clone is skipped, not
             // leased, even when its plan or URL is only built at hand-out.
             var openReviewTaskKeys = authority.ListOpenReviewTaskKeys();
-            var repositoryFacts = ClaimRepositoryFacts(openReviewTaskKeys, scanner, projects, settings);
+            var repositoryFacts = ClaimRepositoryFacts(openReviewTaskKeys, scanner, projects, settings, repositoryVisibility);
             // AGT-3177: workspace quota verdicts, one per project, before selection,
             // so a blocked project's attempt is skipped instead of leased and deferred
             // at the head of the queue in front of every other project's review.
@@ -2756,7 +2757,8 @@ public static class V1ReviewPlaneEndpoints
         IReadOnlyList<string> taskKeys,
         TaskScannerService scanner,
         AgentStudio.Registry.ProjectRegistry projects,
-        AgentStudio.Projects.ProjectSettingsService settings)
+        AgentStudio.Projects.ProjectSettingsService settings,
+        AgentStudio.Projects.ProjectRepositoryVisibility? repositoryVisibility = null)
     {
         var facts = new Dictionary<string, ReviewClaimRepositoryFact>(StringComparer.OrdinalIgnoreCase);
         if (taskKeys.Count == 0) return facts;
@@ -2769,8 +2771,11 @@ public static class V1ReviewPlaneEndpoints
             if (key is null) continue;
             var project = projects.FindByStorageLocation(task.WatchPath)
                           ?? projects.FindByIdOrDisplayName(task.ProjectName);
+            var projectSetting = settings.Get(task.ProjectName).RepositoryVisibility;
             facts[key] = new ReviewClaimRepositoryFact(
-                Contract.ReviewRepositoryAccessPolicy.IsPrivate(settings.Get(task.ProjectName).RepositoryVisibility),
+                Contract.ReviewRepositoryAccessPolicy.IsPrivate(repositoryVisibility is null
+                    ? projectSetting
+                    : repositoryVisibility.Effective(project, projectSetting)),
                 RemoteProjectRepositoryResolver.ResolveRepositoryUrl(project));
         }
         return facts;
