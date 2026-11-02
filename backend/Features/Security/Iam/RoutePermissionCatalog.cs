@@ -225,6 +225,9 @@ public static class RoutePermissionCatalog
         Add("*", IamPermissions.WorkspaceAdminister, "/api/v1/management/github-app", "/api/v1/management/github-app/**");
         Add("GET", IamPermissions.WorkspaceAdminister, "/api/v1/management/credential-inventory");
         Add("*", IamPermissions.WorkspaceOperate, "/api/v1/management/**");
+        // Studio's browser reads installation-wide declared topology, even when
+        // a project scope is requested. Runner credentials do not call it.
+        Add("GET", IamPermissions.WorkspaceOperate, "/api/v1/operations/structure");
 
         // --- Environments and production approval --------------------------
         // Environment keys are canonical kinds (IamEnvironments): a release
