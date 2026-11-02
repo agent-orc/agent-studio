@@ -954,6 +954,150 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         AssertLane(member.Key, TaskStates.AutoReview);
     }
 
+    // AGT-3414: a documentation-only delivery runs what a documentation batch
+    // runs, the build and lint commands without a test, on either path.
+    [Fact]
+    public async Task Documentation_card_closes_at_once_and_its_batch_runs_no_test()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        WithBuildStep();
+        var member = SeedMember(factory, "DOC-AT-ONCE", "docs/at-once.md");
+        string? level = null;
+        _gate.Batch = request => { level = request.RequiredTestLevel; return Green(request.ExpectedSha); };
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        Assert.Equal(member.Key, Assert.Single(manifest.Members).TaskKey);
+        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
+        Assert.Equal(TestExecutionLevels.BuildOnly, level);
+        Assert.Equal(0, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.HumanReview);
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_of_a_documentation_card_runs_no_test()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        WithBuildStep();
+        var member = SeedMember(factory, "DOC-FALLBACK-LEVEL", "README.md");
+        // A conflicting integration commit ejects the member to its per-task gate.
+        Git(_repo, "checkout", "-q", "--detach", RemoteTip());
+        File.WriteAllText(Path.Combine(_repo, "README.md"), "Integration changed this line.\n");
+        Git(_repo, "add", "README.md");
+        Git(_repo, "commit", "-qm", "integration conflict");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        _gate.Batch = _ => throw new InvalidOperationException("Ejected member reached the batch suite.");
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        Assert.Equal(TestExecutionLevels.BuildOnly, FallbackLevel());
+        Assert.Equal(member.ResultSha, Ownership(member.Key)?.FallbackTestedSha);
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_of_a_code_card_runs_the_complete_suite()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        WithBuildStep();
+        SeedMember(factory, "CODE-FALLBACK-LEVEL", "src/Fallback.cs");
+        DisableBatchGate(factory);
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        Assert.Equal(TestExecutionLevels.Full, FallbackLevel());
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_of_a_mixed_delivery_runs_the_complete_suite()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        WithBuildStep();
+        var member = SeedMember(factory, "MIXED-FALLBACK-LEVEL", "docs/mixed.md",
+            parentSha: CodeCommit("src/MixedFallback.cs"));
+        Assert.False(Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
+            .ListPending()).Subject.DocumentationOnly);
+        DisableBatchGate(factory);
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        Assert.Equal(TestExecutionLevels.Full, FallbackLevel());
+        Assert.Equal(member.ResultSha, Ownership(member.Key)?.FallbackTestedSha);
+    }
+
+    [Fact]
+    public async Task Mixed_candidate_runs_the_complete_suite_even_with_a_documentation_flag()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1, scope: "code");
+        WithBuildStep();
+        SeedMember(factory, "MIXED-FORGED-FLAG", "docs/forged.md",
+            parentSha: CodeCommit("src/Forged.cs"));
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        var path = Assert.Single(Directory.GetFiles(Path.Combine(
+            Path.GetDirectoryName(store.BatchDirectory("unused"))!, "pending"), "*.json"));
+        File.WriteAllText(path, JsonSerializer.Serialize(pending with
+        {
+            Subject = pending.Subject with { DocumentationOnly = true },
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        string? level = null;
+        _gate.Batch = request => { level = request.RequiredTestLevel; return Green(request.ExpectedSha); };
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.Equal(TestExecutionLevels.Full, level);
+    }
+
+    // The single per-task gate request's test level.
+    private string? FallbackLevel()
+        => Assert.Single(_gate.Requests, request => request.Executor == "batch-fallback").RequiredTestLevel;
+
+    // The build-only level needs a non-test command to run: the integration
+    // branch's project definition gains a build command.
+    private void WithBuildStep()
+    {
+        Git(_repo, "checkout", "-q", "--detach", "refs/remotes/origin/develop");
+        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "project.yml"),
+            "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
+            + "  prepare: .agent-studio/prepare\n  build: [echo build]\n  test: [echo test]\n"
+            + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
+        Git(_repo, "add", ".");
+        Git(_repo, "commit", "-qm", "build step");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        Git(_repo, "fetch", "-q", "origin");
+    }
+
+    // A disabled pilot hands every queued member to its per-task gate.
+    private static void DisableBatchGate(WebApplicationFactory<Program> factory)
+        => factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+
+    // A code commit on top of origin's develop that is not published there.
+    private string CodeCommit(string path)
+    {
+        Git(_repo, "checkout", "-q", "--detach", RemoteTip());
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(_repo, path))!);
+        File.WriteAllText(Path.Combine(_repo, path), "class Code {}\n");
+        Git(_repo, "add", ".");
+        Git(_repo, "commit", "-qm", "code " + path);
+        return Git(_repo, "rev-parse", "HEAD");
+    }
+
     [Fact]
     public async Task Member_already_on_the_integration_branch_leaves_as_integrated_without_a_gate()
     {
@@ -3366,10 +3510,14 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         /// <summary>Completes when the first per-task gate starts.</summary>
         public Task FirstFallbackStarted => _fallbackStarted.Task.WaitAsync(HangGuard);
 
+        /// <summary>Every request in arrival order.</summary>
+        public System.Collections.Concurrent.ConcurrentQueue<BuildTestGateRequest> Requests { get; } = new();
+
         public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
             IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode,
             TimeSpan timeout, CancellationToken ct)
         {
+            Requests.Enqueue(request);
             if (request.GateId == "batch-gate")
             {
                 Interlocked.Increment(ref _batchRuns);
