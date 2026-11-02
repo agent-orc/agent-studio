@@ -327,16 +327,11 @@ public sealed partial class BatchGatePilotService
         var options = _settings.Get(project).BatchGate;
         var pending = _store.ListPending().Where(item =>
             string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var risks = pending.Length == 0
-            ? new Dictionary<string, double>(StringComparer.Ordinal)
-            : _snapshots.Build(project, pending[0].Subject.IntegrationBranch,
-                pending, options, _time.GetUtcNow()).Waiting
-                .GroupBy(card => card.TaskKey, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.Last().Risk,
-                    StringComparer.Ordinal);
+        // A read route starts no Git: risk and paths come from the planner tick's cache.
         return BatchGateStateSnapshotReader.Read(_store, project, options, history,
-            risks, CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null,
-            _gateSlots?.Snapshot());
+            _snapshots.Cached(project, pending),
+            CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null,
+            _gateSlots?.Snapshot(), _time.GetUtcNow());
     }
 
     private bool CodeBatchEnabled(string project)
@@ -481,6 +476,8 @@ public sealed partial class BatchGatePilotService
                                  && BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId is null))
                         ScheduleFallback(item, ct);
                 if (baseSha is null || current.Length == 0) continue;
+                // The state route reads risk from this cache and starts no Git (AGT-3413).
+                _snapshots.Refresh(scope.IntegrationBranch, current, _time.GetUtcNow());
                 BatchGateFormation formed;
                 if (options.Planner == "look-ahead")
                 {
