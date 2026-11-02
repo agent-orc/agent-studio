@@ -9,8 +9,6 @@ using AgentStudio.Secrets;
 using AgentStudio.Security;
 
 using AgentStudio.TaskServer.Contracts.GitHubApp;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -20,34 +18,52 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// Who gets a repository token over HTTP. The local API has no sign-in, so the
 /// token route must fail closed on its own, in every profile.
+/// Every test shares one local and one tunnel host (<see cref="SharedHostFixture"/>):
+/// key files carry a fresh runner id, the vault keeps its connection file in the
+/// test's own folder, and the platform's fixed secret names are written before
+/// they are read.
 /// </summary>
-public sealed class GitHubAppEndpointTests : IDisposable
+[TestCaseOrderer(SharedHostTestOrder.TypeName, SharedHostTestOrder.AssemblyName)]
+public sealed class GitHubAppEndpointTests(GitHubAppEndpointTests.LocalHost local, GitHubAppEndpointTests.TunnelHost tunnel)
+    : IClassFixture<GitHubAppEndpointTests.LocalHost>, IClassFixture<GitHubAppEndpointTests.TunnelHost>, IDisposable
 {
-    private const string Route = "/api/v1/runners/runner-1/repository-credentials";
     private readonly string _root = Path.Combine(Path.GetTempPath(), "github-app-endpoints-" + Guid.NewGuid().ToString("N"));
-    private string Workspace => Path.Combine(_root, "workspace");
 
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 
-    private WebApplicationFactory<Program> Local()
-        => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["TaskRepository"] = Workspace,
-                ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek"),
-                ["Secrets:KeyEnvironmentVariable"] = "AGENT_STUDIO_TEST_UNSET_KEK_" + Guid.NewGuid().ToString("N"),
-            }));
-        });
-
-    private static HttpRequestMessage Ask(string access, string? bearer, string route = Route)
+    /// <summary>The local profile, with its own key-encryption key outside the workspace.</summary>
+    public class LocalHost : SharedHostFixture
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, route) { Content = JsonContent.Create(new { access }) };
-        request.Headers.TryAddWithoutValidation("X-Client-Id", "runner-1");
+        protected override IEnumerable<KeyValuePair<string, string?>> Settings() =>
+        [
+            new("Secrets:KeyFile", Path.Combine(Root, "keys", "secrets.kek")),
+            new("Secrets:KeyEnvironmentVariable", "AGENT_STUDIO_TEST_UNSET_KEK_" + Guid.NewGuid().ToString("N")),
+        ];
+    }
+
+    /// <summary>The local profile with a tunnel listener beside the operator's port.</summary>
+    public sealed class TunnelHost : LocalHost
+    {
+        protected override IEnumerable<KeyValuePair<string, string?>> Settings()
+            => [.. base.Settings(), new(OperatorListener.PortSetting, "5999")];
+    }
+
+    /// <summary>A runner id of this test alone: the host keeps its key files beside those of every other test.</summary>
+    private static string NewRunnerId() => "runner-" + Guid.NewGuid().ToString("N");
+
+    /// <summary>A security folder of this test alone, for a vault whose connection file would be the shared host's.</summary>
+    private string SecurityFolder => Path.Combine(_root, "security");
+
+    private static HttpRequestMessage Ask(string access, string? bearer, string runnerId, string? clientId = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/runners/{runnerId}/repository-credentials")
+        {
+            Content = JsonContent.Create(new { access }),
+        };
+        request.Headers.TryAddWithoutValidation("X-Client-Id", clientId ?? runnerId);
         if (bearer is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
         return request;
     }
@@ -55,7 +71,7 @@ public sealed class GitHubAppEndpointTests : IDisposable
     private string IssueKey(string runnerId, string access)
     {
         var key = "key-" + Guid.NewGuid().ToString("N");
-        var folder = Path.Combine(Workspace, ".security", "github-app", "host-keys");
+        var folder = Path.Combine(local.Workspace, ".security", "github-app", "host-keys");
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, $"{runnerId}.{access}.sha256"),
             Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key))));
@@ -65,10 +81,9 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task Without_a_key_the_open_local_api_hands_out_nothing()
     {
-        using var factory = Local();
-        using var client = factory.CreateClient();
+        using var client = local.CreateClient();
 
-        using var response = await client.SendAsync(Ask(RepositoryAccess.Read, null));
+        using var response = await client.SendAsync(Ask(RepositoryAccess.Read, null, NewRunnerId()));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -77,14 +92,12 @@ public sealed class GitHubAppEndpointTests : IDisposable
     public async Task A_runner_credential_means_nothing_in_the_local_profile()
     {
         // The open local API can mint one, so it must not open the token route.
-        using var factory = Local();
-        using var client = factory.CreateClient();
-        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        using var client = local.CreateClient();
+        var security = local.Services.GetRequiredService<AccessSecurityStore>();
         var created = security.CreateEnrollment(new RunnerEnrollmentRequest("runner-1", [RunnerScopes.RepositoryWrite], null, null));
         var enrolled = security.EnrollRunner(created.Code);
 
-        using var response = await client.SendAsync(Ask(RepositoryAccess.Write, enrolled.Secret,
-            $"/api/v1/runners/{enrolled.Runner.Id}/repository-credentials"));
+        using var response = await client.SendAsync(Ask(RepositoryAccess.Write, enrolled.Secret, enrolled.Runner.Id, "runner-1"));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -92,11 +105,11 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task A_wrong_key_gets_nothing()
     {
-        using var factory = Local();
-        using var client = factory.CreateClient();
-        IssueKey("runner-1", RepositoryAccess.Write);
+        using var client = local.CreateClient();
+        var runner = NewRunnerId();
+        IssueKey(runner, RepositoryAccess.Write);
 
-        using var response = await client.SendAsync(Ask(RepositoryAccess.Read, "key-" + Guid.NewGuid().ToString("N")));
+        using var response = await client.SendAsync(Ask(RepositoryAccess.Read, "key-" + Guid.NewGuid().ToString("N"), runner));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -104,11 +117,10 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task A_key_of_another_host_gets_nothing()
     {
-        using var factory = Local();
-        using var client = factory.CreateClient();
-        var key = IssueKey("runner-2", RepositoryAccess.Write);
+        using var client = local.CreateClient();
+        var key = IssueKey(NewRunnerId(), RepositoryAccess.Write);
 
-        using var response = await client.SendAsync(Ask(RepositoryAccess.Read, key));
+        using var response = await client.SendAsync(Ask(RepositoryAccess.Read, key, NewRunnerId()));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -116,12 +128,12 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task A_read_key_cannot_ask_for_write_access()
     {
-        using var factory = Local();
-        using var client = factory.CreateClient();
-        var key = IssueKey("runner-1", RepositoryAccess.Read);
+        using var client = local.CreateClient();
+        var runner = NewRunnerId();
+        var key = IssueKey(runner, RepositoryAccess.Read);
 
-        using var denied = await client.SendAsync(Ask(RepositoryAccess.Write, key));
-        using var allowed = await client.SendAsync(Ask(RepositoryAccess.Read, key));
+        using var denied = await client.SendAsync(Ask(RepositoryAccess.Write, key, runner));
+        using var allowed = await client.SendAsync(Ask(RepositoryAccess.Read, key, runner));
 
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, allowed.StatusCode);
@@ -130,12 +142,12 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task A_write_key_may_also_read_and_no_app_means_no_content()
     {
-        using var factory = Local();
-        using var client = factory.CreateClient();
-        var key = IssueKey("runner-1", RepositoryAccess.Write);
+        using var client = local.CreateClient();
+        var runner = NewRunnerId();
+        var key = IssueKey(runner, RepositoryAccess.Write);
 
-        using var read = await client.SendAsync(Ask(RepositoryAccess.Read, key));
-        using var write = await client.SendAsync(Ask(RepositoryAccess.Write, key));
+        using var read = await client.SendAsync(Ask(RepositoryAccess.Read, key, runner));
+        using var write = await client.SendAsync(Ask(RepositoryAccess.Write, key, runner));
 
         Assert.Equal(HttpStatusCode.NoContent, read.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, write.StatusCode);
@@ -144,11 +156,11 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task An_unknown_access_level_is_refused()
     {
-        using var factory = Local();
-        using var client = factory.CreateClient();
-        var key = IssueKey("runner-1", RepositoryAccess.Write);
+        using var client = local.CreateClient();
+        var runner = NewRunnerId();
+        var key = IssueKey(runner, RepositoryAccess.Write);
 
-        using var response = await client.SendAsync(Ask("admin", key));
+        using var response = await client.SendAsync(Ask("admin", key, runner));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -218,10 +230,6 @@ public sealed class GitHubAppEndpointTests : IDisposable
     public void This_studios_own_page_may_write(string origin)
         => Assert.Null(OperatorListener.Decide("PUT", "/api/v1/management/github-app/credentials", true, IamPermissions.WorkspaceAdminister, 5032, 5032, origin));
 
-    private WebApplicationFactory<Program> BehindATunnel() => Local().WithWebHostBuilder(builder =>
-        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
-            new Dictionary<string, string?> { [OperatorListener.PortSetting] = "5999" })));
-
     /// <summary>What a request through a tunnel gets from the real routes: never the listener's refusal.</summary>
     [Theory]
     [InlineData("POST", "/api/runner/claim")]
@@ -255,8 +263,7 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [InlineData("GET", "/api/runner/status")]
     public async Task A_host_keeps_every_route_it_uses_behind_the_listener(string method, string path)
     {
-        using var factory = BehindATunnel();
-        using var client = factory.CreateClient();
+        using var client = tunnel.CreateClient();
         client.DefaultRequestHeaders.TryAddWithoutValidation("X-Client-Id", "local-default");
         using var request = new HttpRequestMessage(new HttpMethod(method), path);
         if (method != "GET") request.Content = JsonContent.Create(new { });
@@ -284,8 +291,7 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [InlineData("POST", "/api/first-run/git-setups")]
     public async Task A_tunnel_reaches_none_of_the_operators_routes(string method, string path)
     {
-        using var factory = BehindATunnel();
-        using var client = factory.CreateClient();
+        using var client = tunnel.CreateClient();
         client.DefaultRequestHeaders.TryAddWithoutValidation("X-Client-Id", "local-default");
         using var request = new HttpRequestMessage(new HttpMethod(method), path);
         if (method != "GET") request.Content = JsonContent.Create(new { });
@@ -299,8 +305,7 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task A_platform_secret_cannot_become_a_backends_credential()
     {
-        using var factory = Local();
-        var backends = factory.Services.GetRequiredService<SecretBackendSettings>();
+        var backends = local.Services.GetRequiredService<SecretBackendSettings>();
 
         var refused = await Assert.ThrowsAsync<SecretValidationException>(() => backends.SaveAsync(new SecretBackendBinding(
             SecretScope.Workspace.Key, "vault", "https://attacker.example", "kv", null,
@@ -321,13 +326,12 @@ public sealed class GitHubAppEndpointTests : IDisposable
     public async Task An_expired_store_stops_answering_when_refreshing_keeps_failing()
     {
         var store = Path.Combine(_root, "studio-host", "git-credentials");
-        using var factory = Local();
         var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 1, 10, 0, 0, TimeSpan.Zero));
         var vault = new FixedConnectionVault();
         using var http = new HttpClient(new TokenOnlyGitHub(clock));
         var broker = new GitHubAppBroker(new GitHubAppClient(http, clock), vault,
             new FixedCatalog("https://github.com/owner/site.git"), clock);
-        var service = new GitHubAppHostCredentialService(broker, factory.Services.GetRequiredService<IConfiguration>(), clock,
+        var service = new GitHubAppHostCredentialService(broker, local.Services.GetRequiredService<IConfiguration>(), clock,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<GitHubAppHostCredentialService>.Instance, store);
 
         await service.RefreshAsync(default);
@@ -402,8 +406,7 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task The_status_route_answers_without_a_connection_and_stores_nothing_in_the_browser_cache()
     {
-        using var factory = Local();
-        using var client = factory.CreateClient();
+        using var client = local.CreateClient();
         client.DefaultRequestHeaders.TryAddWithoutValidation("X-Client-Id", "local-default");
 
         using var response = await client.GetAsync("/api/v1/management/github-app");
@@ -417,27 +420,26 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task The_app_key_lands_in_the_secret_provider_and_never_in_the_connection_file()
     {
-        using var factory = Local();
-        var secrets = factory.Services.GetRequiredService<ISecretProvider>();
-        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
-        var vault = new SecretProviderGitHubAppVault(secrets, security.SecurityFolder);
+        var secrets = local.Services.GetRequiredService<ISecretProvider>();
+        var vault = new SecretProviderGitHubAppVault(secrets, SecurityFolder);
         var material = new GitHubAppSecrets("pem-" + Guid.NewGuid().ToString("N"), "client-" + Guid.NewGuid().ToString("N"));
 
         await vault.WriteSecretsAsync(material, "owner", default);
         await vault.SaveConnectionAsync(new GitHubAppConnection(1, "slug", "name", "client-id", "owner", "https://github.com/apps/slug",
             DateTime.UnixEpoch, "owner", ["contents"], []), default);
 
+        var earlier = await secrets.ReadAuditAsync(SecretScope.Workspace, 50, default);
         var read = await vault.ReadSecretsAsync(default);
         Assert.Equal(material.PrivateKeyPem, read!.PrivateKeyPem);
         Assert.Equal(material.ClientSecret, read.ClientSecret);
-        var file = await File.ReadAllTextAsync(Path.Combine(security.SecurityFolder, "github-app", "connection.json"));
+        var file = await File.ReadAllTextAsync(Path.Combine(SecurityFolder, "github-app", "connection.json"));
         Assert.DoesNotContain(material.PrivateKeyPem, file, StringComparison.Ordinal);
         Assert.DoesNotContain(material.ClientSecret, file, StringComparison.Ordinal);
         Assert.Equal("slug", (await vault.LoadConnectionAsync(default))!.Slug);
 
         // Every read is audited, under the platform's own name.
         var audit = await secrets.ReadAuditAsync(SecretScope.Workspace, 50, default);
-        Assert.Contains(audit, entry => entry.Action == SecretAuditActions.Resolve
+        Assert.Contains(audit.Except(earlier), entry => entry.Action == SecretAuditActions.Resolve
                                         && entry.Reference.EndsWith(SecretProviderGitHubAppVault.PrivateKeyName, StringComparison.Ordinal)
                                         && entry.Purpose == "github-app-token-issue"
                                         && entry.Outcome == "ok");
@@ -451,9 +453,8 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task No_workload_ever_receives_the_app_key()
     {
-        using var factory = Local();
-        var secrets = factory.Services.GetRequiredService<ISecretProvider>();
-        await new SecretProviderGitHubAppVault(secrets, factory.Services.GetRequiredService<AccessSecurityStore>().SecurityFolder)
+        var secrets = local.Services.GetRequiredService<ISecretProvider>();
+        await new SecretProviderGitHubAppVault(secrets, SecurityFolder)
             .WriteSecretsAsync(new GitHubAppSecrets("pem", "client"), "owner", default);
         var workload = new SecretWorkload(SecretWorkload.TaskRun, "run-1", "some-project", null);
 
@@ -474,8 +475,7 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task The_platform_reads_nothing_but_its_own_secrets()
     {
-        using var factory = Local();
-        var secrets = factory.Services.GetRequiredService<ISecretProvider>();
+        var secrets = local.Services.GetRequiredService<ISecretProvider>();
 
         await Assert.ThrowsAsync<SecretAccessDeniedException>(() => secrets.GetForPlatformAsync(
             new SecretReference(SecretScope.Workspace, "SOME_APP_KEY"), "any", default));
@@ -484,9 +484,8 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task A_revoked_app_key_reads_as_gone()
     {
-        using var factory = Local();
-        var secrets = factory.Services.GetRequiredService<ISecretProvider>();
-        var vault = new SecretProviderGitHubAppVault(secrets, factory.Services.GetRequiredService<AccessSecurityStore>().SecurityFolder);
+        var secrets = local.Services.GetRequiredService<ISecretProvider>();
+        var vault = new SecretProviderGitHubAppVault(secrets, SecurityFolder);
         await vault.WriteSecretsAsync(new GitHubAppSecrets("pem", "client"), "owner", default);
 
         await secrets.RevokeAsync(SecretScope.Workspace, SecretProviderGitHubAppVault.PrivateKeyName, null, SecretActor.Human("owner"), default);
@@ -511,8 +510,7 @@ public sealed class GitHubAppEndpointTests : IDisposable
     [Fact]
     public async Task The_platform_reads_workspace_level_secrets_only()
     {
-        using var factory = Local();
-        var secrets = factory.Services.GetRequiredService<ISecretProvider>();
+        var secrets = local.Services.GetRequiredService<ISecretProvider>();
 
         await Assert.ThrowsAsync<SecretAccessDeniedException>(() => secrets.GetForPlatformAsync(
             new SecretReference(SecretScope.ForProject("some-project"), "NAME"), "any", default));
