@@ -46,7 +46,6 @@ public class ClientIdentityStore
     private ImmutableDictionary<string, ClientIdentity> _published =
         ImmutableDictionary.Create<string, ClientIdentity>(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ClientIdentityFileDiagnostic> _diagnostics = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, DateTime> _lastSeenPersistedAt = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
     private readonly HashSet<string> _dirtySeen = new(StringComparer.OrdinalIgnoreCase);
 
@@ -173,9 +172,6 @@ public class ClientIdentityStore
         if (!Volatile.Read(ref _loaded)) EnsureLoaded();
         return Volatile.Read(ref _published).Values;
     }
-
-    /// <summary>Board reads use the same in-memory stamp as every request.</summary>
-    public void RecordSeenDeferred(string id) => RecordSeen(id);
 
     private void SetRecordLocked(ClientIdentity record)
     {
@@ -369,7 +365,6 @@ public class ClientIdentityStore
             _byId.Remove(id);
             Volatile.Write(ref _published, _published.Remove(id));
             _diagnostics.Remove(id);
-            _lastSeenPersistedAt.Remove(id);
             return true;
         }
     }
@@ -691,8 +686,6 @@ public class ClientIdentityStore
         _fileWriter.Write(path, JsonSerializer.Serialize(record, WriteOpts));
         _dirtySeen.Remove(record.Id);
         _diagnostics.Remove(record.Id);
-        if (record.LastSeenAt is { } lastSeenAt)
-            _lastSeenPersistedAt[record.Id] = lastSeenAt;
     }
 
     private bool TryLoadFileLocked(string file)
@@ -713,8 +706,6 @@ public class ClientIdentityStore
             }
 
             SetRecordLocked(record);
-            if (record.LastSeenAt is { } lastSeenAt)
-                _lastSeenPersistedAt[record.Id] = lastSeenAt;
             if (_diagnostics.Remove(identityId))
             {
                 _logger.LogInformation(

@@ -587,7 +587,8 @@ public sealed partial class ProjectEnvironmentService
             var declarations = Declarations(project);
             if (declarations is null) return null;
             var state = Load(project);
-            AdvanceQueue(state);
+            // Read must reflect durable state. Claim and other mutation paths
+            // advance the queue and save it before exposing the new state.
             return new(project, declarations.Select(item =>
             {
                 var history = state.History.Where(row => row.EnvironmentId == item.Id)

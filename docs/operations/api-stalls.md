@@ -46,6 +46,11 @@ have not yet been measured on the live production workspace. The synthetic
 30-minute result below establishes the earlier implementation's result, not a
 post-follow-up live result.
 
+Deployment status reads now report the durable queue state. Claim, report and
+other mutation paths advance expired claims and persist that advance before
+returning it; a status read cannot show a transition that disappears after an
+API restart.
+
 ### Raw scan callers
 
 | Caller | Trigger | Scope after follow-up |

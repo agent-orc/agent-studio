@@ -60,6 +60,36 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_then_restart_preserves_expired_claim_until_queue_advance_is_saved_once()
+    {
+        var (service, _, _) = Build();
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        var queued = service.QueueDeployment("demo", stage, _artifact, "operator", rollback: false)!;
+        Assert.Equal(queued.Id, service.Claim("stage-host")!.Id);
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter + TimeSpan.FromSeconds(1));
+
+        var statePath = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        var durableState = File.ReadAllText(statePath);
+        Assert.Equal("claimed", service.Read("demo")!.Jobs.Single(job => job.Id == queued.Id).Status);
+        Assert.Equal(durableState, File.ReadAllText(statePath));
+
+        var (restarted, _, _) = Build(initializeRepository: false);
+        Assert.Equal("claimed", restarted.Read("demo")!.Jobs.Single(job => job.Id == queued.Id).Status);
+        Assert.Null(restarted.Claim("stage-host"));
+        var failed = restarted.Read("demo")!.Jobs.Single(job => job.Id == queued.Id);
+        Assert.Equal("failed", failed.Status);
+        Assert.Equal("host-lost", failed.Evidence);
+
+        var (restartedAgain, _, _) = Build(initializeRepository: false);
+        Assert.Null(restartedAgain.Claim("stage-host"));
+        var persisted = JsonSerializer.Deserialize<ProjectEnvironmentService.State>(File.ReadAllText(statePath),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.Single(persisted.Jobs, job => job.Id == queued.Id);
+        Assert.Single(persisted.History, row => row.Item.Artifact == queued.Artifact
+            && row.Item.Evidence == "host-lost");
+    }
+
+    [Fact]
     public async Task ScheduledVolumeBackup_UsesInjectedClock_AndRestoreIsAudited()
     {
         var (environments, repo, _) = Build();
@@ -1618,36 +1648,43 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,
-        string project = "demo", AgentStudio.Quota.WorkspaceQuotaService? quota = null)
+        string project = "demo", AgentStudio.Quota.WorkspaceQuotaService? quota = null,
+        bool initializeRepository = true)
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", project);
         Directory.CreateDirectory(watch);
         // Built once per test process; each test starts from a copy (AGT-3419).
-        GitRepositoryTemplate.CopyTo("project-environment:initial:v1", repo, seed =>
+        if (initializeRepository)
         {
-            Git(seed, "init", "-b", "develop");
-            Git(seed, "config", "user.email", "test@example.com");
-            Git(seed, "config", "user.name", "Test User");
-            File.WriteAllText(Path.Combine(seed, "initial"), "initial");
-            Git(seed, "add", ".");
-            Git(seed, "commit", "-m", "initial");
-        });
+            GitRepositoryTemplate.CopyTo("project-environment:initial:v1", repo, seed =>
+            {
+                Git(seed, "init", "-b", "develop");
+                Git(seed, "config", "user.email", "test@example.com");
+                Git(seed, "config", "user.name", "Test User");
+                File.WriteAllText(Path.Combine(seed, "initial"), "initial");
+                Git(seed, "add", ".");
+                Git(seed, "commit", "-m", "initial");
+            });
+        }
         var declarations = Path.Combine(repo, "docs", "deployments", "environments");
-        Directory.CreateDirectory(declarations);
-        File.WriteAllText(Path.Combine(declarations, "stage.json"), JsonSerializer.Serialize(new
+        if (initializeRepository)
         {
-            id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
-            address = "https://stage.example", template = "container", destination = "8081",
-            healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
-        }));
-        File.WriteAllText(Path.Combine(declarations, "production.json"), JsonSerializer.Serialize(new
-        {
-            id = "production", name = "Production", kind = "production", targetHostId = "prod-host",
-            address = "https://example", template = "container", destination = "8082",
-            healthUrl = "https://example/health", approval = timedApproval ? "stage-healthy-10m" : "person",
-            secretRefs = new[] { "DATABASE_URL" },
-        }));
+            Directory.CreateDirectory(declarations);
+            File.WriteAllText(Path.Combine(declarations, "stage.json"), JsonSerializer.Serialize(new
+            {
+                id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
+                address = "https://stage.example", template = "container", destination = "8081",
+                healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+            }));
+            File.WriteAllText(Path.Combine(declarations, "production.json"), JsonSerializer.Serialize(new
+            {
+                id = "production", name = "Production", kind = "production", targetHostId = "prod-host",
+                address = "https://example", template = "container", destination = "8082",
+                healthUrl = "https://example/health", approval = timedApproval ? "stage-healthy-10m" : "person",
+                secretRefs = new[] { "DATABASE_URL" },
+            }));
+        }
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = Path.Combine(_root, "workspace"),

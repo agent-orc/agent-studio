@@ -127,8 +127,7 @@ public class ClientIdentityMiddleware
         }
 
         // Known identity: stamp lastSeenAt so the GET listing has fresh data.
-        if (boardRead) _store.RecordSeenDeferred(clientId);
-        else _store.RecordSeen(clientId);
+        _store.RecordSeen(clientId);
         context.Items["ClientId"] = clientId;
         if (!isWrite)
         {
