@@ -114,6 +114,48 @@ public sealed class RemoteConceptReviewTests : IDisposable
         }).RequireDifferentHostFailureDomain);
     }
 
+    [Fact]
+    public void Aspect_reads_the_agent_report_while_the_card_status_is_a_scaffold()
+    {
+        Directory.CreateDirectory(Path.Combine(_folder, "results"));
+        File.WriteAllText(Path.Combine(_folder, "prompt.md"), "Brief.");
+        File.WriteAllText(Path.Combine(_folder, "status.md"),
+            AgentStudio.Tasks.TaskTransitionService.ResultScaffoldMarker + "\n# Status\nScaffold text.");
+        File.WriteAllText(Path.Combine(_folder, "results", "status.md"), "Agent report with the timings.");
+
+        var aspect = Assert.Single(BuildPlan().Commands, command => command.Aspect == "concept-fit");
+
+        Assert.Contains("Agent report with the timings.", aspect.Prompt);
+        Assert.DoesNotContain("Scaffold text.", aspect.Prompt);
+    }
+
+    [Fact]
+    public void Aspect_prefers_the_generated_summary_over_the_agent_report()
+    {
+        Directory.CreateDirectory(Path.Combine(_folder, "results"));
+        File.WriteAllText(Path.Combine(_folder, "prompt.md"), "Brief.");
+        File.WriteAllText(Path.Combine(_folder, "status.md"), "# Status\nGenerated summary.");
+        File.WriteAllText(Path.Combine(_folder, "results", "status.md"), "Agent report with the timings.");
+
+        var aspect = Assert.Single(BuildPlan().Commands, command => command.Aspect == "concept-fit");
+
+        Assert.Contains("Generated summary.", aspect.Prompt);
+        Assert.DoesNotContain("Agent report with the timings.", aspect.Prompt);
+    }
+
+    [Fact]
+    public void Aspect_keeps_the_scaffold_when_the_agent_wrote_no_report()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path.Combine(_folder, "prompt.md"), "Brief.");
+        File.WriteAllText(Path.Combine(_folder, "status.md"),
+            AgentStudio.Tasks.TaskTransitionService.ResultScaffoldMarker + "\n# Status\nScaffold text.");
+
+        var aspect = Assert.Single(BuildPlan().Commands, command => command.Aspect == "concept-fit");
+
+        Assert.Contains("Scaffold text.", aspect.Prompt);
+    }
+
     private ReviewPlanDto BuildPlan(ProjectSettings? settings = null)
     {
         var config = new ConfigurationBuilder().Build();
