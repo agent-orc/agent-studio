@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, OnDestroy, afterNextRender, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, HostListener, OnDestroy, afterNextRender, computed, effect, inject, input, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
@@ -19,6 +19,7 @@ interface DrawnLink { index: number; path: string; x: number; y: number; kind: s
   styleUrl: './structure-view.component.scss',
 })
 export class StructureViewComponent implements OnDestroy {
+  readonly projectName = input<string | null>(null);
   private readonly http = inject(HttpClient);
   private readonly auth = inject(AuthService);
   private readonly element = inject(ElementRef) as ElementRef<HTMLElement>;
@@ -41,9 +42,12 @@ export class StructureViewComponent implements OnDestroy {
   readonly summaryText = summaryText;
   readonly stateWord = observationWord;
   readonly stateGlyph = observationGlyph;
+  private readGeneration = 0;
+  ownerDescription(box: StructureBox): string {
+    return box.otherProject ? `other project · ${box.ownerLabel ?? box.project}` : box.kind;
+  }
   private frame = 0;
   private refreshTimer?: ReturnType<typeof setInterval>;
-  private loading = false;
   private readonly linkRefresh = effect(() => {
     this.roots();
     if (typeof requestAnimationFrame !== 'undefined') {
@@ -54,15 +58,11 @@ export class StructureViewComponent implements OnDestroy {
 
   constructor() {
     afterNextRender(() => this.element.nativeElement.querySelector<HTMLElement>('.structure-main')?.focus());
-    try {
-      const saved = JSON.parse(localStorage.getItem(this.preferenceKey()) || '{}') as
-        { view?: 'host' | 'container'; level?: 1 | 2 | 3; overlay?: 'health' | 'version' | 'drift' | 'load' };
-      if (saved.view === 'host' || saved.view === 'container') this.view.set(saved.view);
-      if (saved.level === 1 || saved.level === 2 || saved.level === 3) this.level.set(saved.level);
-      if (saved.overlay && this.overlayOptions.some(option => option.value === saved.overlay))
-        this.overlay.set(saved.overlay);
-    } catch { /* Optional preference. */ }
-    void this.load();
+    effect(() => {
+      const projectName = this.projectName();
+      this.readPreference(projectName);
+      void this.load(projectName);
+    });
     this.startRefresh();
   }
 
@@ -74,23 +74,37 @@ export class StructureViewComponent implements OnDestroy {
   private startRefresh(): void {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (document.visibilityState !== 'visible') return;
-    this.refreshTimer = setInterval(() => void this.load(), 15_000);
+    this.refreshTimer = setInterval(() => void this.load(this.projectName()), 15_000);
   }
 
   @HostListener('document:visibilitychange') onVisibilityChange(): void {
     this.startRefresh();
-    if (document.visibilityState === 'visible') void this.load();
+    if (document.visibilityState === 'visible') void this.load(this.projectName());
   }
 
-  private async load(): Promise<void> {
-    if (this.loading) return;
-    this.loading = true;
+  private preferenceKey(projectName: string | null): string {
+    return `studio.structure.${projectName ?? 'workspace'}.${this.auth.status()?.user?.id ?? 'local'}`;
+  }
+
+  private readPreference(projectName: string | null): void {
     try {
-      this.data.set(await firstValueFrom(this.http.get<StructureData>('/api/v1/operations/structure',
-        { params: { scope: 'workspace' } })));
+      const saved = JSON.parse(localStorage.getItem(this.preferenceKey(projectName)) || '{}') as
+        { view?: 'host' | 'container'; level?: 1 | 2 | 3; overlay?: 'health' | 'version' | 'drift' | 'load' };
+      this.view.set(saved.view === 'container' ? 'container' : 'host');
+      this.level.set(saved.level === 1 || saved.level === 3 ? saved.level : 2);
+      this.overlay.set(saved.overlay && this.overlayOptions.some(option => option.value === saved.overlay) ? saved.overlay : 'health');
+    } catch { /* Optional preference. */ }
+  }
+
+  private async load(projectName: string | null): Promise<void> {
+    const generation = ++this.readGeneration;
+    try {
+      const data = await firstValueFrom(this.http.get<StructureData>('/api/v1/operations/structure',
+        { params: { scope: projectName ? `project:${projectName}` : 'workspace' } }));
+      if (generation !== this.readGeneration) return;
+      this.data.set(data);
       this.error.set(null);
-    } catch { this.error.set('Structure observations could not be loaded.'); }
-    finally { this.loading = false; }
+    } catch { if (generation === this.readGeneration) this.error.set('Structure observations could not be loaded.'); }
   }
 
   setView(view: 'host' | 'container'): void {
@@ -121,7 +135,8 @@ export class StructureViewComponent implements OnDestroy {
     return observation?.detail ?? this.stateWord(observation);
   }
   nodeLabel(box: StructureBox): string {
-    return `${box.label}, ${box.kind}, ${this.stateWord(box.observation)}, ${this.detail(box.observation)}` +
+    const owner = box.otherProject ? `other project, ${box.ownerLabel ?? box.project}` : box.kind;
+    return `${box.label}, ${box.kind}, ${owner}, ${this.stateWord(box.observation)}, ${this.detail(box.observation)}` +
       (box.collapsed ? `, ${summaryText(box)}` : '');
   }
   lastObserved(observation?: StructureObservation | null): string {
@@ -136,10 +151,9 @@ export class StructureViewComponent implements OnDestroy {
     this.element.nativeElement.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
   }
   private remember(): void {
-    try { localStorage.setItem(this.preferenceKey(), JSON.stringify({ view: this.view(), level: this.level(), overlay: this.overlay() })); }
+    try { localStorage.setItem(this.preferenceKey(this.projectName()), JSON.stringify({ view: this.view(), level: this.level(), overlay: this.overlay() })); }
     catch { /* Preference storage is optional. */ }
   }
-  private preferenceKey(): string { return `studio.structure.workspace.${this.auth.status()?.user?.id ?? 'local'}`; }
 
   @HostListener('document:keydown', ['$event'])
   onKeydown(event: KeyboardEvent): void {

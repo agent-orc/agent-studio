@@ -16,7 +16,7 @@ public static class ProjectOperatorDashboardEndpoints
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
         app.MapGet("/api/v1/operations/structure", async Task<IResult> (HttpContext context, string? scope, string? environment,
-            IConfiguration configuration, ProjectRegistry projects, ProjectEnvironmentService environments,
+            IConfiguration configuration, ProjectRegistry projects, WorkspaceRegistry workspaces, ProjectEnvironmentService environments,
             GitService git, AgentStudio.Runner.V1ReviewExecutorRegistry hosts,
             LinkSupervisor links, EnvironmentHealthService health,
             AgentStudio.Runner.HostReleaseDriftWatchdog releases,
@@ -42,10 +42,13 @@ public static class ProjectOperatorDashboardEndpoints
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
                 { return Results.Problem("Connectivity manifest is unavailable.", statusCode: 503); }
             }
-            var selected = projects.List().Where(p => !p.Archived && (projectId is null || p.Id == projectId)).ToArray();
+            var selected = projects.List().Where(p => !p.Archived).ToArray();
             var declared = StructureProjection.Build(manifest, selected,
                 environments.DeclarationFiles, projectId, environment,
-                project => git.ResolveRepoRootForProject(project.DisplayName));
+                project => git.ResolveRepoRootForProject(project.DisplayName),
+                workspaces.List().Where(workspace => projectId is null ||
+                    projects.FindById(projectId)?.WorkspaceId == workspace.Id)
+                    .SelectMany(workspace => workspace.Systems).ToArray());
             var deploymentFacts = selected.SelectMany(project =>
                 environments.Read(project.DisplayName)?.Environments.Select(view =>
                     new StructureDeploymentFact(project.Id, view)) ?? []).ToArray();

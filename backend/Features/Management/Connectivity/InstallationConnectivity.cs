@@ -35,7 +35,8 @@ public sealed record ConnectivityPortOverride(string Listener, int Port);
 /// <summary>Optional placement inventory. It declares identity and roles, not runtime health.</summary>
 public sealed record ConnectivityMachine(string Id, string Name, IReadOnlyList<ConnectivityComponent> Components,
     string? ParentId = null, string? Kind = null, string? Location = null);
-public sealed record ConnectivityComponent(string Id, string Name, string Role, string Kind);
+public sealed record ConnectivityComponent(string Id, string Name, string Role, string Kind,
+    string? ProjectId = null, string? EnvironmentId = null);
 public sealed record ConnectivityExternal(string Id, string Name, string? Kind = null);
 public sealed record ConnectivityStructureLink(string From, string To, string Kind, string? Label = null);
 

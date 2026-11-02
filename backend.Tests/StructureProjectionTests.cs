@@ -8,6 +8,52 @@ namespace AgentStudio.Tests;
 public sealed class StructureProjectionTests
 {
     [Fact]
+    public void WorkspaceSystemsAndProjectPartialPictureKeepSharedPlacementStable()
+    {
+        var projects = new[] {
+            new ProjectRecord { Id = "PROJ-001", DisplayName = "AGT", WorkspaceId = "ws-default" },
+            new ProjectRecord { Id = "PROJ-002", DisplayName = "Website", WorkspaceId = "ws-default" },
+            new ProjectRecord { Id = "PROJ-003", DisplayName = "Library", WorkspaceId = "ws-default" },
+        };
+        var manifest = new InstallationConnectivityManifest(1, "installation", 1, "one-box",
+            "standalone-task-server", "server origin", "browser origin", null, "none", [], [], [],
+            [new("web", "Web placement", [
+                new("website", "Website process", "web", "process", "PROJ-002", "production"),
+                new("agent", "Run-target agent", "agent", "process", "PROJ-001", "production")], Kind: "vm"),
+             new("runner", "Runner placement", [
+                new("engine", "Engine", "engine", "container", "PROJ-001", "production"),
+                new("channel", "npm channel", "package", "registry", "PROJ-003", "production")])],
+            [new("shared", "Shared external")],
+            [new("component:web:website", "component:runner:channel", "artifact", "Package"),
+             new("component:web:website", "external:shared", "call", "Service"),
+             new("component:runner:engine", "external:shared", "call", "Service")]);
+        var systems = new[] { new WorkspaceSystem { Id = "product", Name = "Product", Units = [
+            new("PROJ-001", "agent"), new("PROJ-002", "website") ] } };
+        var workspace = StructureProjection.Build(manifest, projects,
+            _ => Array.Empty<EnvironmentDeclarationFile>(), null, null, systems: systems);
+        Assert.Contains(workspace.Nodes, node => node.Id == "system:product:production");
+        Assert.Equal("system:product:production", workspace.Nodes.Single(node =>
+            node.Id == "component:web:website").SystemBoundaryId);
+        Assert.Contains(workspace.Nodes, node => node.Id == "component:runner:channel");
+        var partial = StructureProjection.Build(manifest, projects,
+            _ => Array.Empty<EnvironmentDeclarationFile>(), "PROJ-002", null, systems: systems);
+        Assert.Equal(["component:runner:channel", "component:web:agent"],
+            partial.Nodes.Where(node => node.OtherProject).Select(node => node.Id).Order().ToArray());
+        Assert.Contains(partial.Nodes, node => node.Id == "external:shared");
+        Assert.DoesNotContain(partial.Nodes, node => node.Id == "component:runner:engine");
+        Assert.Equal(workspace.Nodes.Single(node => node.Id == "component:web:agent").ParentId,
+            partial.Nodes.Single(node => node.Id == "component:web:agent").ParentId);
+        var moved = manifest with { Machines = manifest.Machines!.Select(machine => machine.Id == "web"
+            ? machine with { Components = machine.Components.Select(component => component.Id == "agent"
+                ? component with { ProjectId = "PROJ-003" } : component).ToArray() } : machine).ToArray() };
+        var afterMove = StructureProjection.Build(moved, projects,
+            _ => Array.Empty<EnvironmentDeclarationFile>(), null, null, systems: systems);
+        Assert.Equal(workspace.Nodes.Single(node => node.Id == "component:web:agent").ParentId,
+            afterMove.Nodes.Single(node => node.Id == "component:web:agent").ParentId);
+        Assert.Equal(workspace.Links, afterMove.Links);
+        Assert.Equal("PROJ-003", afterMove.Nodes.Single(node => node.Id == "component:web:agent").Project);
+    }
+    [Fact]
     public void NestedManifestProjectsAsDeclaredPlacementAndTypedLinks()
     {
         var manifest = new InstallationConnectivityManifest(1, "installation", 1, "one-box",

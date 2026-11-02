@@ -2067,6 +2067,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         _v1CompletedLeases[req.TaskKey] = req.LeaseId;
         var targetState = string.Equals(typedOutcome,
             Contract.ExecutionOutcomeKind.MechanicalFallback.ToString(), StringComparison.Ordinal)
+            || string.Equals(typedOutcome,
+                Contract.ExecutionOutcomeKind.TransientModelCapacity.ToString(), StringComparison.Ordinal)
             ? "2-ready"
             : !string.IsNullOrWhiteSpace(req.NeedsInputMessage)
                 || req.OutcomeDecision?.Outcome == Contract.ExecutionOutcomeKind.ProviderRejectedRequest

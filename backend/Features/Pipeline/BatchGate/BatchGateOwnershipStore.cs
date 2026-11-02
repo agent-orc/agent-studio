@@ -8,7 +8,8 @@ public sealed record BatchGateOwnership(
     string? BatchId = null, string? BatchRunId = null,
     string? FallbackTestedSha = null, string? FallbackEvidencePath = null,
     bool FallbackIntegrated = false, bool FallbackGateActive = false,
-    int FallbackGateStarts = 0, string? ContainedInSha = null);
+    int FallbackGateStarts = 0, string? ContainedInSha = null,
+    bool CascadeDeferred = false);
 
 /// <summary>Card-local admission marker. Its presence makes lane release fail closed.</summary>
 public static class BatchGateOwnershipStore

@@ -1,7 +1,7 @@
 <section class="structure-view" data-testid="structure-view" aria-label="Deployment structure" [attr.data-overlay]="overlay()">
   <header class="structure-header">
     <div><p class="structure-eyebrow">Operations</p><h1>Structure</h1>
-      <p>Declared placement with observed state</p></div>
+      <p>{{ projectName() ? projectName() + ' partial picture' : 'Workspace whole picture' }}</p></div>
     <div class="structure-controls" aria-label="Structure controls">
       <app-segmented-control [options]="viewOptions" [value]="view()" ariaLabel="Projection"
                              (valueChange)="setView($event)" />
@@ -37,8 +37,10 @@
     <aside class="structure-outline" aria-label="Structure outline">
       <h2>Outline</h2>
       @for (box of visible(); track box.id) {
-        <button type="button" [attr.data-outline-id]="box.id" (click)="focus(box.id)">
-          <span>{{ box.label }}</span><small>{{ stateGlyph(box.observation) }} {{ stateWord(box.observation) }}</small>
+        <button type="button" [attr.data-outline-id]="box.id" [attr.data-other-project]="box.otherProject || null"
+                [attr.aria-label]="nodeLabel(box)"
+                (click)="focus(box.id)">
+          <span>{{ box.label }}</span><small>{{ ownerDescription(box) }} · {{ stateGlyph(box.observation) }} {{ stateWord(box.observation) }}</small>
         </button>
       }
     </aside>
@@ -48,13 +50,14 @@
 
 <ng-template #boxTemplate let-box>
   <div class="structure-box" [attr.data-kind]="box.kind" [attr.data-difference]="difference(box.observation)"
-       [attr.data-health]="box.observation?.health ?? 'not observed'" [attr.data-selected]="selected() === box.id">
+       [attr.data-health]="box.observation?.health ?? 'not observed'" [attr.data-selected]="selected() === box.id"
+       [attr.data-other-project]="box.otherProject || null">
     <button type="button" class="structure-node" [attr.data-node-id]="box.id"
             [attr.aria-label]="nodeLabel(box)"
             [attr.aria-expanded]="box.children.length ? !box.collapsed : null"
             (click)="toggle(box)">
       @if (box.children.length) { <app-disclosure-marker [open]="!box.collapsed" /> }
-      <strong>{{ box.label }}</strong><small>{{ box.kind }}</small>
+      <strong>{{ box.label }}</strong><small>{{ ownerDescription(box) }}</small>
       <span class="structure-status" [attr.data-state]="stateWord(box.observation)"><span aria-hidden="true">{{ stateGlyph(box.observation) }}</span> {{ stateWord(box.observation) }}</span>
       <span class="structure-chip" [hidden]="box.observation?.difference !== 'undeclared'">not declared</span>
       <span class="structure-detail" [hidden]="overlay() === 'health'">{{ detail(box.observation) }}</span>
