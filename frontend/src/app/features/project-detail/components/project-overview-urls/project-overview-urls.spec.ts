@@ -65,6 +65,29 @@ describe('ProjectOverviewUrlsComponent', () => {
     expect(host.querySelector('[data-testid="project-overview-url-status-preview"]')?.textContent).toContain('building');
   });
 
+  it('shows a loopback URL on a networked server as local only, without a Start action', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectOverviewUrlsComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        { provide: TaskService, useValue: { getRegistryWorkspaces: () => of(workspace('Demo', 'PROJ-1')), startProjectUrl: vi.fn() } },
+        { provide: ProjectLookupService, useValue: { setWorkspaces: vi.fn() } },
+        { provide: ProjectUrlProbeService, useValue: { statusFor: () => 'local-only', refresh: vi.fn() } },
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ProjectOverviewUrlsComponent);
+    fixture.componentRef.setInput('projectName', 'Demo');
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    const pill = host.querySelector('[data-testid="project-overview-url-status-preview"]');
+    expect(pill?.textContent?.trim()).toBe('local only');
+    expect(pill?.getAttribute('data-status')).toBe('local-only');
+    expect(pill?.classList.contains('overview-urls__pill--offline')).toBe(false);
+    expect(host.querySelector('[data-testid="project-overview-url-start-preview"]')).toBeNull();
+  });
+
   it('ignores a late registry response from the previous project', async () => {
     const responses = new Map<string, Subject<ReturnType<typeof workspace>>>();
     const getRegistryWorkspaces = vi.fn((name?: string) => {
