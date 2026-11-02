@@ -132,41 +132,6 @@ public sealed class TaskFileHistoryEndpointsTests : TaskFileHistoryTestBase, ICl
     }
 
     [Fact]
-    public async Task CodeFileHistory_UsesProjectRepositoryWhenScopedToCode()
-    {
-        WriteJob("ASS-900");
-        WriteFile(_codeRoot, "src/app.cs", "class App { }\n");
-        RunGit(_codeRoot, "add", "-A");
-        RunGit(_codeRoot, "commit", "-q", "-m", "feat: add app");
-        var firstSha = RunGitCapture(_codeRoot, "rev-parse", "HEAD").Trim();
-
-        WriteFile(_codeRoot, "src/app.cs", "class App { void Run() { } }\n");
-        RunGit(_codeRoot, "add", "-A");
-        RunGit(_codeRoot, "commit", "-q", "-m", "feat: update app");
-        var secondSha = RunGitCapture(_codeRoot, "rev-parse", "HEAD").Trim();
-        RunGit(_codeRoot, "pack-refs", "--all");
-
-        var factory = _host.Rescan();
-        using var client = CreateClient(factory);
-        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
-        using var historyResponse = await GetReadyHistoryAsync(client,
-            $"/api/tasks/ASS-900/files/src/app.cs/history?watchPath={watchPath}&scope=code");
-        historyResponse.EnsureSuccessStatusCode();
-
-        using var historyDoc = JsonDocument.Parse(await historyResponse.Content.ReadAsStringAsync());
-        var entries = historyDoc.RootElement.EnumerateArray().ToList();
-        Assert.Equal(2, entries.Count);
-        Assert.Equal(secondSha, entries[0].GetProperty("sha").GetString());
-        Assert.Equal("code", entries[0].GetProperty("provenance").GetProperty("source").GetString());
-        Assert.Equal("feat: update app", entries[0].GetProperty("message").GetString());
-        Assert.Equal(JsonValueKind.Null, entries[0].GetProperty("runIndex").ValueKind);
-
-        using var contentResponse = await client.GetAsync($"/api/tasks/ASS-900/files/src/app.cs?watchPath={watchPath}&scope=code&at={firstSha}");
-        contentResponse.EnsureSuccessStatusCode();
-        Assert.Equal("class App { }\n", await contentResponse.Content.ReadAsStringAsync());
-    }
-
-    [Fact]
     public async Task Live_workspace_file_refuses_symlink_outside_task_root()
     {
         if (OperatingSystem.IsWindows()) return;
@@ -482,6 +447,41 @@ public sealed class TaskFileHistoryOwnHostTests : TaskFileHistoryTestBase, IDisp
             Directory.Delete(_tempDir, recursive: true);
         }
         catch (Exception ex) { SilentCatch.Note(ex, "File history test cleanup is best-effort."); }
+    }
+
+    [Fact]
+    public async Task CodeFileHistory_UsesProjectRepositoryWhenScopedToCode()
+    {
+        WriteJob("ASS-900");
+        WriteFile(_codeRoot, "src/app.cs", "class App { }\n");
+        RunGit(_codeRoot, "add", "-A");
+        RunGit(_codeRoot, "commit", "-q", "-m", "feat: add app");
+        var firstSha = RunGitCapture(_codeRoot, "rev-parse", "HEAD").Trim();
+
+        WriteFile(_codeRoot, "src/app.cs", "class App { void Run() { } }\n");
+        RunGit(_codeRoot, "add", "-A");
+        RunGit(_codeRoot, "commit", "-q", "-m", "feat: update app");
+        var secondSha = RunGitCapture(_codeRoot, "rev-parse", "HEAD").Trim();
+        RunGit(_codeRoot, "pack-refs", "--all");
+
+        using var factory = CreateFactory();
+        using var client = CreateClient(factory);
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using var historyResponse = await GetReadyHistoryAsync(client,
+            $"/api/tasks/ASS-900/files/src/app.cs/history?watchPath={watchPath}&scope=code");
+        historyResponse.EnsureSuccessStatusCode();
+
+        using var historyDoc = JsonDocument.Parse(await historyResponse.Content.ReadAsStringAsync());
+        var entries = historyDoc.RootElement.EnumerateArray().ToList();
+        Assert.Equal(2, entries.Count);
+        Assert.Equal(secondSha, entries[0].GetProperty("sha").GetString());
+        Assert.Equal("code", entries[0].GetProperty("provenance").GetProperty("source").GetString());
+        Assert.Equal("feat: update app", entries[0].GetProperty("message").GetString());
+        Assert.Equal(JsonValueKind.Null, entries[0].GetProperty("runIndex").ValueKind);
+
+        using var contentResponse = await client.GetAsync($"/api/tasks/ASS-900/files/src/app.cs?watchPath={watchPath}&scope=code&at={firstSha}");
+        contentResponse.EnsureSuccessStatusCode();
+        Assert.Equal("class App { }\n", await contentResponse.Content.ReadAsStringAsync());
     }
 
     [Fact]
