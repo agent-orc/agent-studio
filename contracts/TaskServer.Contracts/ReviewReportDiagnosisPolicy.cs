@@ -113,6 +113,20 @@ public static class ReviewReportDiagnosisPolicy
                 unproven ??= "DiagnosisMissing";
                 continue;
             }
+            // AGT-3430: blaming a cache needs the clean proof on both sides:
+            // the candidate's clean repeat and the clean baseline repeat passed.
+            if (ReviewCachedBaselinePolicy.IsCacheDefect(command.Diagnosis.Classification)
+                && (clean.ExitCode != 0
+                    || command.BaselineExitCode != 0
+                    || !request.Commands.Any(baseline => baseline.StepId == command.StepId
+                        && baseline.Phase == ReviewCachedBaselinePolicy.Phase
+                        && baseline.WorkspaceRole == ReviewCachedBaselinePolicy.WorkspaceRole
+                        && baseline.BaselineSha == command.BaselineSha
+                        && baseline.ExitCode == 0)))
+            {
+                unproven ??= "DiagnosisEvidenceInvalid";
+                continue;
+            }
             if (command.Diagnosis.ChargesCard
                 && (command.BaselineExitCode != 0 || clean.ExitCode == 0))
             {

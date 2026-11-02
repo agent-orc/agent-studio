@@ -2544,6 +2544,159 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             { Aspect: "test", Status: "pass", Classification: "IntegrationBranchDefect" });
     }
 
+    /// <summary>
+    /// AGT-3430 (Quality Studio, 2026-11-02): the candidate build failed after a
+    /// dependency-cache hit, its clean repeat passed, and the baseline, also on
+    /// a cache hit, failed the same way. A clean baseline repeat that passes
+    /// blames the cache, evicts it, and does not charge the card.
+    /// </summary>
+    [Fact]
+    public async Task Green_clean_baseline_after_red_cached_baseline_blames_the_dependency_cache()
+    {
+        var (baselineSha, subjectSha) = await SeedCachedBaselineFixtureAsync("immutable product");
+        var preparation = CachePreparation();
+        var build = CachedStateBuild("verify-1", "");
+        var seed = Workspace("attempt-cache-seed", subjectSha, [build], 26300,
+            resultRef: "refs/heads/task/cache-state", integrationRef: "refs/heads/main",
+            preparation: [preparation], preserveGlobs: ["node_modules"]).Workspace;
+        await seed.PrepareAsync(null!, default);
+        Assert.Equal("Pass", (await seed.ExecutePlanAsync(default)).Outcome);
+        await seed.CleanupAsync();
+        PoisonDependencyCache(seed);
+
+        var (workspace, subject) = Workspace("attempt-cache-poisoned", subjectSha, [build], 26308,
+            resultRef: "refs/heads/task/cache-state", integrationRef: "refs/heads/main",
+            preparation: [preparation], preserveGlobs: ["node_modules"]);
+        await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan);
+
+        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal(ReviewCachedBaselinePolicy.DependencyCacheDefect, normalized.FailureClassification);
+        var candidate = CandidateVerification(evidence);
+        Assert.Equal(1, candidate.ExitCode);
+        Assert.Equal(0, candidate.BaselineExitCode);
+        Assert.Equal(ReviewCachedBaselinePolicy.DependencyCacheDefect, candidate.Diagnosis!.Classification);
+        Assert.False(candidate.Diagnosis.ChargesCard);
+        Assert.Contains(evidence.Commands, command => command is
+            { Phase: "verification", ExitCode: 1 }
+            && command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)
+            && command.WorkspaceRole != ReviewCachedBaselinePolicy.WorkspaceRole);
+        var cleanBaseline = Assert.Single(evidence.Commands, command => command is
+            { Phase: ReviewCachedBaselinePolicy.Phase, WorkspaceRole: ReviewCachedBaselinePolicy.WorkspaceRole,
+                StepId: "verify-1" });
+        Assert.Equal(0, cleanBaseline.ExitCode);
+        Assert.Equal(baselineSha, cleanBaseline.HeadBefore);
+        Assert.Contains(evidence.Commands, command => command is
+            { Phase: "preparation", WorkspaceRole: ReviewCachedBaselinePolicy.WorkspaceRole, DependencyCacheHit: false });
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("pass", verdict.Status);
+        Assert.Equal(ReviewCachedBaselinePolicy.DependencyCacheDefect, verdict.Classification);
+        Assert.Contains("dependency cache served a red baseline for verify-1", verdict.Summary, StringComparison.Ordinal);
+
+        // The disproved cache entries are gone; the next attempt starts clean.
+        Assert.False(Directory.Exists(DependencyCacheContent(workspace, "baseline")));
+        Assert.False(Directory.Exists(DependencyCacheContent(workspace, "candidate")));
+        Assert.Empty(Directory.EnumerateFiles(workspace.BaselineCacheRoot, "*.json", SearchOption.AllDirectories));
+
+        // The failed runs keep a bounded tail of their output in the report.
+        Assert.Contains("FATAL: cached dependency state", candidate.OutputTail!.Stdout, StringComparison.Ordinal);
+        Assert.False(candidate.OutputTail.StdoutTruncated);
+        Assert.Null(cleanBaseline.OutputTail);
+        Assert.Null(Assert.Single(evidence.Commands, command => command is
+            { Phase: "clean-repeat", WorkspaceRole: "clean-repeat" }).OutputTail);
+    }
+
+    /// <summary>
+    /// AGT-3430: when the clean baseline repeat is red as well, the integration
+    /// branch really is red. The attribution stays as before, the cache is kept,
+    /// and a second such command in the same attempt gets no further repeat.
+    /// </summary>
+    [Fact]
+    public async Task Red_clean_baseline_after_red_cached_baseline_keeps_integration_branch_attribution()
+    {
+        var (_, subjectSha) = await SeedCachedBaselineFixtureAsync("broken");
+        var preparation = CachePreparation();
+        IReadOnlyList<ReviewCommandDto> plan =
+        [
+            CachedStateBuild("verify-1", " || grep -q broken state.txt"),
+            CachedStateBuild("verify-3", " || grep -q broken ./state.txt"),
+        ];
+        var seed = Workspace("attempt-cache-red-seed", subjectSha, plan, 26316,
+            resultRef: "refs/heads/task/cache-state", integrationRef: "refs/heads/main",
+            preparation: [preparation], preserveGlobs: ["node_modules"]).Workspace;
+        await seed.PrepareAsync(null!, default);
+        Assert.Equal("Pass", (await seed.ExecutePlanAsync(default)).Outcome);
+        await seed.CleanupAsync();
+        PoisonDependencyCache(seed);
+
+        var (workspace, subject) = Workspace("attempt-cache-red", subjectSha, plan, 26324,
+            resultRef: "refs/heads/task/cache-state", integrationRef: "refs/heads/main",
+            preparation: [preparation], preserveGlobs: ["node_modules"]);
+        await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan);
+
+        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
+        Assert.Equal("IntegrationBranchDefect", normalized.Outcome);
+        var cleanBaseline = Assert.Single(evidence.Commands, command => command is
+            { Phase: ReviewCachedBaselinePolicy.Phase, WorkspaceRole: ReviewCachedBaselinePolicy.WorkspaceRole });
+        Assert.Equal("verify-1", cleanBaseline.StepId);
+        Assert.Equal(1, cleanBaseline.ExitCode);
+        Assert.NotNull(cleanBaseline.OutputTail);
+        Assert.All(evidence.Commands.Where(command => command is { Phase: "verification", WorkspaceRole: "candidate" }),
+            command => Assert.Equal(IntegrationBranchDefectClassification, command.Diagnosis!.Classification));
+        Assert.True(Directory.Exists(DependencyCacheContent(workspace, "baseline")));
+    }
+
+    private const string IntegrationBranchDefectClassification = "IntegrationBranchDefect";
+
+    private async Task<(string BaselineSha, string SubjectSha)> SeedCachedBaselineFixtureAsync(string baselineState)
+    {
+        await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["package-lock.json"] = "lock-v1",
+            [".gitignore"] = "node_modules/\n.nm-state\n",
+            ["state.txt"] = baselineState,
+        });
+        return await SeedSubjectBranchWithFileAsync("task/cache-state", "state.txt", "fixed");
+    }
+
+    private static ReviewPreparationCommandDto CachePreparation()
+        => new("prepare-1", PosixShell.RequirePath(), ["-c", "mkdir -p node_modules"],
+            DependencyScopes: [new ReviewDependencyScopeDto("", ["package-lock.json"])]);
+
+    /// <summary>
+    /// A build-like step (it names <c>dotnet build</c>, as the incident's
+    /// verify-1 did) that fails on a poisoned dependency directory.
+    /// </summary>
+    private static ReviewCommandDto CachedStateBuild(string stepId, string extraFailure)
+        => new(stepId, "build", PosixShell.RequirePath(),
+            ["-c", $"if [ -f node_modules/poison ]{extraFailure}; then " +
+                   "echo 'FATAL: cached dependency state is broken'; echo 'npm notice' >&2; exit 1; fi; " +
+                   ": 'dotnet build'"],
+            CompareToBaseline: true, BaselineMode: ReviewBaselineModes.ExitStatus);
+
+    private string DependencyCacheContent(RemoteReviewWorkspace workspace, string role)
+        => Path.Combine(DependencyCacheSession.CachePath(
+            workspace.DependencyCacheRoot, TaskServerClient.RepositoryIdentity(_origin)!, role), "content");
+
+    /// <summary>Poisons the saved candidate entry and copies it to the baseline role.</summary>
+    private void PoisonDependencyCache(RemoteReviewWorkspace workspace)
+    {
+        var candidate = DependencyCacheContent(workspace, "candidate");
+        Assert.True(Directory.Exists(Path.Combine(candidate, "node_modules")), "the seed attempt saved no cache entry");
+        File.WriteAllText(Path.Combine(candidate, "node_modules", "poison"), "torn");
+        var baseline = DependencyCacheContent(workspace, "baseline");
+        foreach (var file in Directory.EnumerateFiles(candidate, "*", SearchOption.AllDirectories))
+        {
+            var target = Path.Combine(baseline, Path.GetRelativePath(candidate, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(file, target, overwrite: true);
+        }
+    }
+
     private static IReadOnlyList<ReviewCommandDto> IsolatedBuildPlan()
         => [
             new("verify-build", "build", PosixShell.RequirePath(),

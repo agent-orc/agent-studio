@@ -747,21 +747,38 @@ public sealed class RemoteReviewWorkspace
                             repeatPassed: cleanRepeat.Process.Success && cleanRepeat.Signal is null);
                     }
                     var requiredComparison = RequireBaselineComparison(comparison, command);
+                    var cacheDefect = requiredComparison.BlockedByIsolatedBuild
+                        ? null
+                        : await RepeatCachedBaselineCleanAsync(
+                            command, requiredComparison, execution, cleanRepeat, commands, artifacts, ct);
                     comparison = requiredComparison.BlockedByIsolatedBuild
                         ? requiredComparison
-                        : requiredComparison with
-                        {
-                            Diagnosis = IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
-                                ? new DeliveryFailureDiagnosisResult(
-                                    IntegrationBranchDefectClassification, 1,
-                                    [$"build {command.StepId} was already red on the integration branch"])
-                                : await DiagnoseFailureAsync(
-                                    command, requiredComparison, execution, cleanRepeat, ct),
-                        };
+                        : cacheDefect is not null
+                            // The clean baseline repeat is the merge base's
+                            // real state; the cached red result was not.
+                            ? requiredComparison with { BaselineExitCode = 0, Diagnosis = cacheDefect }
+                            : requiredComparison with
+                            {
+                                Diagnosis = IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
+                                    ? new DeliveryFailureDiagnosisResult(
+                                        IntegrationBranchDefectClassification, 1,
+                                        [$"build {command.StepId} was already red on the integration branch"])
+                                    : await DiagnoseFailureAsync(
+                                        command, requiredComparison, execution, cleanRepeat, ct),
+                            };
                     if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
                         && candidateCache is not null)
                     {
                         foreach (var message in candidateCache.DiscardIncludingWorkspace("diagnosed-environment"))
+                            _log(message);
+                        candidateCache = null;
+                    }
+                    else if (cacheDefect is not null && candidateCache is not null)
+                    {
+                        // The candidate failed on the same cached state its clean
+                        // repeat did not have. Only the entry goes; this
+                        // workspace keeps its dependencies for the next steps.
+                        foreach (var message in candidateCache.Discard(cacheDefect.Classification))
                             _log(message);
                         candidateCache = null;
                     }
@@ -852,7 +869,8 @@ public sealed class RemoteReviewWorkspace
             : verdicts.Any(verdict => verdict.Classification is
                 DeliveryFailureDiagnosis.Environment or
                 DeliveryFailureDiagnosis.Intermittent or
-                DeliveryFailureDiagnosis.FirstOccurrence)
+                DeliveryFailureDiagnosis.FirstOccurrence
+                || ReviewCachedBaselinePolicy.IsCacheDefect(verdict.Classification))
                 ? "ReviewInfra"
             // AGT-2819: no verdict refuses the change, but at least one gate was
             // already red on the merge base. That is a defect of the integration
@@ -1491,7 +1509,10 @@ public sealed class RemoteReviewWorkspace
             repeatObservedTests,
             comparison?.InitialFailures,
             verifyReusedFromAttemptId,
-            (long)Math.Max(0, (verifyReusedAge ?? TimeSpan.Zero).TotalSeconds));
+            (long)Math.Max(0, (verifyReusedAge ?? TimeSpan.Zero).TotalSeconds),
+            !process.Success || signal is not null
+                ? ReviewCommandExitDiagnosis.OutputTail(process.StdOut, process.StdErr)
+                : null);
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -2014,6 +2035,169 @@ public sealed class RemoteReviewWorkspace
             try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
             catch (IOException exception) { _log($"clean repeat clone removal failed: {exception.Message}"); }
         }
+    }
+
+    /// <summary>
+    /// AGT-3430: the candidate's clean repeat passed but the baseline, run on
+    /// cached state, was red. Before the card or the integration branch is
+    /// blamed the baseline runs once more from a clean clone without the
+    /// dependency cache. Green returns the diagnosis that names the cache and
+    /// evicts its entries; red keeps today's integration-branch attribution
+    /// (null). At most one such repeat runs per attempt; the recorded
+    /// evidence, not process state, says whether it already ran, so a resumed
+    /// attempt keeps the bound.
+    /// </summary>
+    private async Task<DeliveryFailureDiagnosisResult?> RepeatCachedBaselineCleanAsync(
+        ReviewCommandDto command,
+        BaselineComparison comparison,
+        CommandExecution first,
+        CommandExecution? cleanRepeat,
+        ICollection<ReviewCommandEvidenceDto> commands,
+        ICollection<ReviewArtifactEvidenceDto> artifacts,
+        CancellationToken ct)
+    {
+        var baselineRole = $"baseline-{CommandHash(command)[..12]}";
+        var dependencyCacheHit = commands.Any(item => item.Phase == "preparation"
+            && item.WorkspaceRole == baselineRole
+            && item.DependencyCacheHit);
+        var facts = new CachedBaselineFacts(
+            cleanRepeat is { Signal: null, Process.Success: true },
+            comparison.BaselineExitCode,
+            comparison.CacheHit,
+            dependencyCacheHit,
+            commands.Any(item => item.WorkspaceRole == ReviewCachedBaselinePolicy.WorkspaceRole));
+        if (!ReviewCachedBaselinePolicy.ShouldRepeat(facts)) return null;
+
+        var classification = ReviewCachedBaselinePolicy.Classification(comparison.CacheHit);
+        var cache = comparison.CacheHit ? "baseline result cache" : "dependency cache";
+        _log($"review clean baseline repeat step={command.StepId} baseline={comparison.BaselineSha} " +
+             $"cachedExit={comparison.BaselineExitCode} cache={classification}");
+        var (clean, blockedByBuild) = await RunCleanBaselineAsync(command, comparison.BaselineSha, commands, artifacts, ct);
+        var outcome = ReviewCachedBaselinePolicy.Classify(
+            clean.Process.ExitCode,
+            clean.Signal,
+            testResultMissing: !blockedByBuild
+                && !ReviewBaselineModes.IsExitStatus(command.BaselineMode)
+                && clean.Process.ExitCode != 0
+                && BaselineFailures(command, clean.Process).Count == 0);
+        _log($"review clean baseline repeat step={command.StepId} exit={clean.Process.ExitCode} " +
+             $"signal={clean.Signal ?? "none"} outcome={outcome}");
+        if (outcome == CleanBaselineOutcome.IntegrationBranchRed) return null;
+        if (outcome == CleanBaselineOutcome.Inconclusive)
+        {
+            var failure = ReviewCommandExitDiagnosis.FailureText(clean.Process.StdOut, clean.Process.StdErr);
+            var unavailable = BaselineUnavailable(
+                $"Clean baseline repeat of '{command.StepId}' after a red {cache} baseline proved nothing: " +
+                $"exit={clean.Process.ExitCode}; signal={clean.Signal ?? "none"}" +
+                (failure is null ? "." : $"; {failure}"),
+                comparison.BaselineSha,
+                command);
+            throw await InfrastructureFailureAsync(
+                unavailable.Classification, unavailable.Message, commands, artifacts, ct);
+        }
+        var evicted = EvictCachedBaseline(command, comparison.BaselineSha, classification);
+        return new DeliveryFailureDiagnosisResult(
+            classification,
+            1,
+            [
+                $"{cache} served a red baseline for {command.StepId}: cached baseline exit={comparison.BaselineExitCode} " +
+                $"({comparison.Provenance}); clean baseline exit=0",
+                $"candidate exit={first.Process.ExitCode}; clean repeat exit=0; the card is not charged",
+                .. evicted,
+            ]);
+    }
+
+    /// <summary>
+    /// Runs the planned command at the baseline SHA in a fresh same-host clone,
+    /// with fresh home, temp and cache directories and without restoring the
+    /// dependency cache. Its evidence carries phase <c>clean-repeat</c> and
+    /// workspace role <see cref="ReviewCachedBaselinePolicy.WorkspaceRole"/>.
+    /// </summary>
+    private async Task<(CommandExecution Execution, bool BlockedByBuild)> RunCleanBaselineAsync(
+        ReviewCommandDto command,
+        string baselineSha,
+        ICollection<ReviewCommandEvidenceDto> commands,
+        ICollection<ReviewArtifactEvidenceDto> artifacts,
+        CancellationToken ct)
+    {
+        const string role = ReviewCachedBaselinePolicy.WorkspaceRole;
+        var hash = CommandHash(command);
+        var path = Path.Combine(AttemptRoot, $"baseline-clean-{hash[..12]}-{Guid.NewGuid():N}");
+        var cloned = await ProcessRunner.RunAsync(
+            "git", ["clone", "--shared", "--no-checkout", RepositoryPath, path],
+            RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+        if (!cloned.Success)
+            throw BaselineUnavailable(
+                $"Clean baseline clone could not be created: {cloned.StdErr.Trim()}", baselineSha, command);
+        try
+        {
+            var checkedOut = await ProcessRunner.RunAsync(
+                "git", ["checkout", "--detach", baselineSha],
+                path, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+            if (!checkedOut.Success)
+                throw BaselineUnavailable(
+                    $"Clean baseline could not be checked out: {checkedOut.StdErr.Trim()}", baselineSha, command);
+            var environment = BaselineProcessEnvironment("cbase-" + hash);
+            await ExecutePreparationAsync(
+                path, role, baselineSha, environment, commands, artifacts, ct, restoreCache: false);
+            var head = await GitValueAtAsync(path, ["rev-parse", "HEAD"], environment, ct);
+            var tree = await GitValueAtAsync(path, ["rev-parse", "HEAD^{tree}"], environment, ct);
+            var isolatedBuild = await BuildBeforeNoBuildAsync(
+                command, path, environment, "BaselineUnavailable", ct);
+            if (isolatedBuild is { Execution.Process.Success: false })
+            {
+                await AddIsolatedBuildEvidenceAsync(
+                    isolatedBuild, head, tree, role, baselineSha,
+                    ReviewCachedBaselinePolicy.Phase, commands, artifacts, ct);
+                return (isolatedBuild.Execution, true);
+            }
+            var execution = await RunCommandAsync(command, path, ct, environment);
+            commands.Add(await AddCommandEvidenceAsync(
+                command.StepId, command.Aspect, command.FileName, command.Arguments,
+                head, tree, execution.Process, execution.StartedAt, execution.FinishedAt,
+                execution.Signal, command.TimeoutSeconds, ReviewCachedBaselinePolicy.Phase, role,
+                baselineSha, comparison: null, retryPerformed: true,
+                dependencyCacheHit: false, dependencyCache: null, artifacts, ct, command));
+            return (execution, false);
+        }
+        finally
+        {
+            try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
+            catch (IOException exception) { _log($"clean baseline clone removal failed: {exception.Message}"); }
+        }
+    }
+
+    /// <summary>
+    /// Evicts the cached state a green clean baseline disproved: the stored
+    /// baseline result for this command, which a cache-hit run of this or an
+    /// earlier attempt wrote red, and the baseline dependency-cache entry.
+    /// The next attempt runs both from scratch.
+    /// </summary>
+    private IReadOnlyList<string> EvictCachedBaseline(
+        ReviewCommandDto command, string baselineSha, string reason)
+    {
+        var messages = new List<string>();
+        var entry = ReviewBaselineResultCache.EntryPath(
+            BaselineCacheRoot,
+            new ReviewBaselineCacheKey(
+                _subject.RepositoryId, baselineSha, CommandHash(command), ToolchainFingerprint(command)));
+        try
+        {
+            if (File.Exists(entry))
+            {
+                File.Delete(entry);
+                messages.Add($"baseline-result-cache evicted step={command.StepId} baseline={baselineSha} reason={reason}");
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            messages.Add($"baseline-result-cache evict step={command.StepId} state=failed reason={exception.GetType().Name}");
+        }
+        messages.AddRange(DependencyCacheSession.Create(
+                DependencyCacheRoot, _subject.RepositoryId, AttemptRoot, [], role: "baseline")
+            .Discard(reason));
+        foreach (var message in messages) _log(message);
+        return messages;
     }
 
     private async Task<IsolatedBuildResult?> BuildBeforeNoBuildAsync(
@@ -3219,21 +3403,17 @@ public sealed class RemoteReviewWorkspace
 
     /// <summary>
     /// One line for a test-failures baseline that exited non-zero without a
-    /// test result: the step, the exit code and the first non-empty stderr
-    /// line, or stdout when stderr is empty.
+    /// test result: the step, the exit code and the lines that explain the
+    /// failure, from stdout as well as stderr (AGT-3430). The first stderr line
+    /// used to be quoted, which was npm's version notice while the cause sat in
+    /// stdout.
     /// </summary>
     internal static string UnrunBaselineSummary(ReviewCommandDto command, ProcessResult result)
     {
-        var firstLine = FirstNonEmptyLine(result.StdErr) ?? FirstNonEmptyLine(result.StdOut);
+        var failure = ReviewCommandExitDiagnosis.FailureText(result.StdOut, result.StdErr);
         var summary = $"baseline {command.StepId} exited {result.ExitCode} without reporting a test result";
-        return firstLine is null ? summary : $"{summary}: {firstLine}";
+        return failure is null ? summary : $"{summary}: {failure}";
     }
-
-    private static string? FirstNonEmptyLine(string? text)
-        => text?
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => AnsiEscapeSequence.Replace(line, string.Empty).Trim())
-            .FirstOrDefault(line => line.Length > 0);
 
     internal static IReadOnlyList<string> ParsedTestFailures(ProcessResult result)
     {
