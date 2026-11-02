@@ -703,7 +703,8 @@ public sealed record ReviewReportRequest(
     IReadOnlyList<ReviewVerdictDto> Verdicts,
     long AuthorityEpoch = 0,
     string? BriefSha256 = null,
-    IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null);
+    IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null,
+    bool ArtifactsReduced = false);
 
 /// <summary>
 /// State of the task-folder evidence write (grade markdown, aspect files,

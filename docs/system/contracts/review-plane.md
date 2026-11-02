@@ -269,7 +269,8 @@ A plan sealed with `PrivateRepository = true` requires the executor
 registration key `review:repository-read:<host>/<owner>/<repo>` derived from
 the subject's repository URL by `ReviewRepositoryAccessPolicy`. An attempt
 without a sealed plan or URL (a lease-expiry successor, a settled-run recovery
-attempt) is judged from its project's visibility and repository URL, the same
+attempt) is judged from its project's effective visibility (the setting
+combined with the GitHub App's report, AGT-3408) and repository URL, the same
 facts the hand-out builds its subject from. The registered key counts only
 while the executor's current capability advertisement reports a fresh `ready`
 read proof for it. Both Task Server implementations apply this in the claim
