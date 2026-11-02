@@ -42,10 +42,7 @@ public static class ProjectPreparationPaths
         if (!OperatingSystem.IsWindows() && IsWritableDirectory(ServiceCacheRoot))
             return ServiceCacheRoot;
 
-        var localData = Environment.GetFolderPath(
-            Environment.SpecialFolder.LocalApplicationData,
-            Environment.SpecialFolderOption.Create);
-        return Path.Combine(localData, "agent-studio", "cache");
+        return LocalStateRoot.Combine("agent-studio", "cache");
     }
 
     /// <summary>

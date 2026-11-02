@@ -70,7 +70,39 @@ STUDIO_SMOKE_URL="$url" \
 STUDIO_SMOKE_USERNAME=website.owner \
 STUDIO_SMOKE_PASSWORD='correct horse battery staple!' \
   node "$repo_root/frontend/scripts/monolith-networked-browser-smoke.mjs"
+
+# Local state (batch gates, gate cache, quota and routing state) must sit on the
+# data directory, not in the container layer below /app (AGT-3401).
+wait_for_api() {
+  for attempt in $(seq 1 90); do
+    if curl "${curl_args[@]}" --fail "$url/api/auth/status" >/dev/null 2>&1; then return 0; fi
+    if [ "$attempt" -eq 90 ]; then echo "API did not become ready after $1" >&2; exit 1; fi
+    sleep 2
+  done
+}
+local_state="$smoke_root/data/home/.local/share"
+test -d "$local_state" || { echo "Local state is not on the data directory: $local_state" >&2; exit 1; }
+api_log="$(docker compose logs --no-color api)"
+grep -q 'local-state-root "\{0,1\}/data/home/.local/share' <<< "$api_log" \
+  || { echo 'API did not report /data/home/.local/share as its local state root' >&2; exit 1; }
+# State an older release wrote relative to /app moves once on the next start.
+docker compose exec -T api sh -ec 'mkdir -p /app/agentstudio/smoke-legacy && printf "legacy\n" > /app/agentstudio/smoke-legacy/marker'
+docker compose restart api >/dev/null
+wait_for_api 'the legacy state restart'
+docker compose exec -T api sh -ec 'test "$(cat /data/home/.local/share/agentstudio/smoke-legacy/marker)" = legacy && test ! -e /app/agentstudio' \
+  || { echo 'Legacy local state below /app was not moved to /data/home/.local/share' >&2; exit 1; }
+marker="recreate-$(openssl rand -hex 8)"
+docker compose exec -T api sh -ec "printf '%s\n' '$marker' > /data/home/.local/share/agentstudio/smoke-recreate-marker"
+before="$(docker compose ps -q api)"
+docker compose up -d --no-build --no-deps --force-recreate api >/dev/null
+after="$(docker compose ps -q api)"
+if [ -z "$after" ] || [ "$before" = "$after" ]; then echo 'The API container was not recreated' >&2; exit 1; fi
+wait_for_api 'the container recreate'
+docker compose exec -T api sh -ec "test \"\$(cat /data/home/.local/share/agentstudio/smoke-recreate-marker)\" = '$marker' && test \"\$(cat /data/home/.local/share/agentstudio/smoke-legacy/marker)\" = legacy" \
+  || { echo 'Local state did not survive the API container recreate' >&2; exit 1; }
+echo 'Local state smoke passed: legacy state moved once and a marker survived the container recreate.'
 echo 'Website smoke passed: TLS, owner bootstrap, writable secret store, browser login, and board.'
+
 if [ -n "${JOB_RESULTS_DIR:-}" ]; then
   mkdir -p "$JOB_RESULTS_DIR"
   rm -f "$JOB_RESULTS_DIR/website-smoke.log"

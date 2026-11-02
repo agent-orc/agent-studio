@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -86,8 +87,6 @@ public sealed class GateDurationHistory
     {
         var configured = configuration?["RemoteGate:DurationHistoryPath"];
         if (!string.IsNullOrWhiteSpace(configured)) return Path.GetFullPath(configured);
-        var data = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return string.IsNullOrWhiteSpace(data) ? null
-            : Path.Combine(data, "agentstudio", "gate-duration-history.json");
+        return LocalStateRoot.Combine("agentstudio", "gate-duration-history.json");
     }
 }

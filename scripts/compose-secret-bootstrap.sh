@@ -4,7 +4,7 @@ set -eu
 umask 077
 secret_dir=/run/agent-studio-secrets
 mkdir -p "$secret_dir"
-for data_dir in /var/lib/agent-orchestrator/store /var/lib/agent-orchestrator/backup /data/workspace /data/projects /var/lib/agent-host; do
+for data_dir in /var/lib/agent-orchestrator/store /var/lib/agent-orchestrator/backup /var/lib/agent-orchestrator/home /data/workspace /data/projects /data/home /var/lib/agent-host; do
     mkdir -p "$data_dir"
     chown 10001:10001 "$data_dir"
 done

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -51,9 +52,7 @@ public sealed class ClaudeModelDiscovery
     {
         get
         {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "agent-taskboard");
+            var dir = LocalStateRoot.Combine("agent-taskboard");
             Directory.CreateDirectory(dir);
             return Path.Combine(dir, "claude-model-catalog.json");
         }

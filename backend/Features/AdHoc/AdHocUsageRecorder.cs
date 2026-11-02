@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.AdHoc;
 
@@ -69,10 +70,7 @@ public sealed class AdHocUsageRecorder
             if (!string.IsNullOrWhiteSpace(taskRepo))
                 return Path.Combine(taskRepo, LogFileName);
 
-            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (string.IsNullOrEmpty(local))
-                local = Path.GetTempPath();
-            return Path.Combine(local, "agent-taskboard", LogFileName);
+            return LocalStateRoot.Combine("agent-taskboard", LogFileName);
         }
     }
 

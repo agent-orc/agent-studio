@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Secrets;
 
@@ -171,7 +172,7 @@ public sealed class ConfiguredKeyEncryptionKeySource : IKeyEncryptionKeySource
     private static string DefaultKeyFilePath()
     {
         if (OperatingSystem.IsWindows())
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentStudio", "keys", "secrets.kek");
+            return LocalStateRoot.Combine("AgentStudio", "keys", "secrets.kek");
         var config = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") is { Length: > 0 } xdg
             ? xdg
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");

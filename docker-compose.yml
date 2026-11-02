@@ -27,6 +27,8 @@ x-task-server: &task-server
   volumes:
     - store:/var/lib/agent-orchestrator/store
     - backup:/var/lib/agent-orchestrator/backup
+    # HOME of the service account; holds its local state (~/.local/share).
+    - task-server-home:/var/lib/agent-orchestrator/home
     - secrets:/run/agent-studio-secrets:ro
   networks: [control]
   mem_limit: 2g
@@ -101,6 +103,10 @@ x-api: &api
       target: /run/agent-studio-secrets
       read_only: true
       volume: {subpath: studio}
+    # HOME of the service account. Batch gates, the gate result cache, quota
+    # and routing state live below /data/home/.local/share and must survive
+    # a container recreate.
+    - api-home:/data/home
   networks: [control]
   mem_limit: 2g
   cpus: 2
@@ -190,6 +196,8 @@ services:
       - backup:/var/lib/agent-orchestrator/backup
       - workspace:/data/workspace
       - projects:/data/projects
+      - api-home:/data/home
+      - task-server-home:/var/lib/agent-orchestrator/home
       - runner-workspaces:/var/lib/agent-host
       - runner-claude-auth:/run/native-auth/coding/claude
       - runner-codex-auth:/run/native-auth/coding/codex
@@ -331,6 +339,8 @@ services:
       - backup:/var/lib/agent-orchestrator/backup
       - workspace:/data/workspace
       - projects:/data/projects
+      - api-home:/data/home
+      - task-server-home:/var/lib/agent-orchestrator/home
       - runner-workspaces:/var/lib/agent-host
       - ./scripts/compose-secret-bootstrap.sh:/opt/compose-secret-bootstrap.sh:ro
     networks: [control]
@@ -429,6 +439,8 @@ services:
 volumes:
   store:
   backup:
+  task-server-home:
+  api-home:
   workspace:
   projects:
   runner-workspaces:

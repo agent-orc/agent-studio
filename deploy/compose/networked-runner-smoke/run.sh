@@ -12,12 +12,13 @@ fi
 
 smoke_dir=$(mktemp -d)
 SMOKE_WORKSPACE="$smoke_dir/workspace"
+SMOKE_HOME="$smoke_dir/home"
 SMOKE_CADDY_DATA="$smoke_dir/caddy-data"
 SMOKE_CADDYFILE="$smoke_dir/Caddyfile"
 SMOKE_PROJECT="studio-smoke-$$"
 SMOKE_UID=$(id -u)
 SMOKE_GID=$(id -g)
-mkdir -p "$SMOKE_WORKSPACE/projects/networked-smoke/2-ready" "$SMOKE_CADDY_DATA"
+mkdir -p "$SMOKE_WORKSPACE/projects/networked-smoke/2-ready" "$SMOKE_CADDY_DATA" "$SMOKE_HOME"
 task_dir="$SMOKE_WORKSPACE/projects/networked-smoke/3-progress/AGT-NETWORKED-SMOKE"
 
 free_port() {
@@ -35,7 +36,7 @@ https://localhost:$SMOKE_HTTPS_PORT {
     reverse_proxy http://127.0.0.1:$SMOKE_API_PORT
 }
 EOF
-export SMOKE_APP_DIR SMOKE_WORKSPACE SMOKE_CADDY_DATA SMOKE_CADDYFILE SMOKE_PROJECT SMOKE_API_PORT SMOKE_HTTPS_PORT SMOKE_UID SMOKE_GID
+export SMOKE_APP_DIR SMOKE_WORKSPACE SMOKE_HOME SMOKE_CADDY_DATA SMOKE_CADDYFILE SMOKE_PROJECT SMOKE_API_PORT SMOKE_HTTPS_PORT SMOKE_UID SMOKE_GID
 cleanup() {
   docker compose -f "$compose_file" down --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$smoke_dir"

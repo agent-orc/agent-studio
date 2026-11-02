@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Docs;
 
@@ -124,9 +125,7 @@ public sealed class WikiMaintenanceModelService
         if (!string.IsNullOrWhiteSpace(taskRepo))
             return Path.Combine(taskRepo, FileName);
 
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrEmpty(local)) return null;
-        return Path.Combine(local, "agent-taskboard", FileName);
+        return LocalStateRoot.Combine("agent-taskboard", FileName);
     }
 }
 

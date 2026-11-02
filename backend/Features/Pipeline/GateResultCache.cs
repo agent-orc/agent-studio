@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -42,10 +43,7 @@ public sealed class GateResultCache
 
     public GateResultCache(string? root = null)
     {
-        var data = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        _root = root ?? Path.Combine(
-            string.IsNullOrWhiteSpace(data) ? AppContext.BaseDirectory : data,
-            "agentstudio", "gate-results");
+        _root = root ?? LocalStateRoot.Combine("agentstudio", "gate-results");
     }
 
     public async Task<IDisposable> AcquireAsync(string project, CancellationToken ct)
