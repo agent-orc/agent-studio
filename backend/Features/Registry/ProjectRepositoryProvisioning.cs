@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Registry;
 
@@ -173,8 +174,7 @@ public sealed class GitHubProjectRepositoryProvisioner(
     {
         var root = configuration["ProjectOnboarding:RepositoryRoot"];
         if (string.IsNullOrWhiteSpace(root))
-            root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "AgentStudio", "repositories");
+            root = LocalStateRoot.Combine("AgentStudio", "repositories");
         return Path.Combine(root, request.Owner, request.Name);
     }
 

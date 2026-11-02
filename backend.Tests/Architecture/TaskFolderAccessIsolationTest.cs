@@ -134,6 +134,12 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Registry/LocalFirstRunGitSetup.cs"] =
                 "Deletes only a failed fresh clone under the AgentStudio first-run-git checkouts root, never task storage.",
 
+            // The readiness commit-tree probe creates a GUID-named repository
+            // under OS temp and removes it after each cached probe. It cannot
+            // use task access because the directory is outside task storage.
+            ["backend/Features/Readiness/ReadinessGitFacts.cs"] =
+                "Deletes only its GUID-named OS-temp commit-tree probe repository, never task storage.",
+
             // Tier 2 (boot): the crash-recovery sweep walks 3-progress
             // before the in-memory store boots. Explicitly carved out in
             // the prompt for this task.
@@ -145,6 +151,9 @@ public class TaskFolderAccessIsolationTest
                 "Moves and replaces dependency caches under the OS review-workspace temp root, never task storage.",
             ["backend/Features/Pipeline/GateResultCache.cs"] =
                 "Deletes only the hashed per-project gate-result cache under local application data, never task storage.",
+            // AGT-3401 moves only the API's own legacy local state into its durable root.
+            ["backend/Features/State/LocalStateStartup.cs"] =
+                "Moves only API-owned legacy local state into the durable local state root, never task folders.",
             ["backend/Features/Pipeline/GateSourceCacheRetention.cs"] =
                 "Evicts only SHA-keyed host gate source caches under local application data, never task folders.",
             ["backend/Features/Pipeline/BuildTestGateRunner.cs"] =

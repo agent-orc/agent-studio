@@ -12,8 +12,7 @@ public sealed class PostMergeRunStore
 
     public PostMergeRunStore(string? root = null)
     {
-        _root = root ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "agentstudio", "post-merge");
+        _root = root ?? LocalStateRoot.Combine("agentstudio", "post-merge");
     }
 
     public PostMergeProjectState Read(string projectId)

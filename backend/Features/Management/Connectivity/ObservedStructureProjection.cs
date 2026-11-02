@@ -36,8 +36,10 @@ public static class ObservedStructureProjection
         var nodes = declared.Nodes.Select(node =>
         {
             StructureObservation observation = new("declared-only", "not observed");
-            if (node.Kind is "external" or "managed-service")
-                observation = new("unreachable-by-design", "not observed", Detail: "Outside the observed boundary");
+            if (node.Kind is "external" or "managed" or "managed-service")
+                observation = new("unreachable-by-design",
+                    node.Status is "up" or "healthy" ? "up" : node.Status is "down" or "degraded" ? node.Status : "not observed",
+                    Detail: node.ProbeObservation == "probed" ? $"Control-plane {node.Probe ?? "health"} check" : "No direct observation");
             else if (node.Id.StartsWith("machine:", StringComparison.Ordinal))
             {
                 var hostId = node.Id[8..];
@@ -151,7 +153,7 @@ public static class ObservedStructureProjection
                 if (nodes.Any(node => node.Id == $"observed-container:{host.HostId}:{container.Name}")) continue;
                 var stale = now - host.LastSeenAt > TimeSpan.FromSeconds(90);
                 nodes.Add(new($"observed-container:{host.HostId}:{container.Name}", "container", container.Name,
-                    parent, null, null, null, "observed", "host capability report", null,
+                    parent, null, null, null, "observed", "host capability report", Observation:
                     new(stale ? "stale" : "undeclared", stale ? "stale" : container.State == "running" ? "up" : "down",
                         host.LastSeenAt, container.ImageDigest, Detail: container.State)));
             }

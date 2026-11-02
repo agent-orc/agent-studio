@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
 
@@ -1794,8 +1795,6 @@ public class ProjectSettingsService
         if (!string.IsNullOrWhiteSpace(taskRepo))
             return Path.Combine(taskRepo, "project-settings.json");
 
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrEmpty(local)) return null;
-        return Path.Combine(local, "agent-taskboard", "project-settings.json");
+        return LocalStateRoot.Combine("agent-taskboard", "project-settings.json");
     }
 }
