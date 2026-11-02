@@ -386,6 +386,13 @@
       </thead>
       <tbody>
         <tr>
+          <td>2026-11-02</td>
+          <td><code>AOW-15</code><br><span class="small">review-model-cli-mismatch (fix <code>AGT-3420</code>)</span></td>
+          <td>Every review aspect exited after about 2.5 seconds and was reported as <code>ToolUnavailable</code>. After three infrastructure retries the card escalated. Terminal at discovery: escalated, with the host's semantic-review capability drained for a fault the host did not have.</td>
+          <td>The project had no review step setting, so <code>RemoteReviewPlanBuilder</code> fell back to <code>ReviewDecisionOrchestrator:AspectModel</code> and <code>ReviewDecisionOrchestrator:Cli</code>. They resolved independently, so the plan was sealed with the Claude CLI and a GPT model.</td>
+          <td><code>ReviewAspectModelPolicy</code> resolves the default aspect model from the review CLI through the model metadata registry. A rejected host pair is logged as a planning error naming the setting, a rejected project step pair falls back to the valid default, and the settings route refuses the pair. A CLI that refuses its model is reported as <code>ModelConfigurationFault</code>, which drains no host capability.</td>
+        </tr>
+        <tr>
           <td>2026-10-20</td>
           <td><code>AGT-3245</code>, <code>AGT-3246</code>, <code>AGT-3227</code><br><span class="small">salvage-base-delivery-refusal (fix <code>AGT-3257</code>)</span></td>
           <td>Codex attempts ended Unknown or were interrupted after publishing salvage. Their next deliveries were refused because the fenced base was the earlier salvage commit but the result did not contain it. Terminal at discovery: delivery refused, with the cards escalated and the good new work stranded.</td>

@@ -26,6 +26,7 @@ public sealed class FailureInterventionTests : IDisposable
 
     [Theory]
     [InlineData("ToolUnavailable", "ReviewInfra", "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.", "infrastructure", "ReviewInfra/ToolUnavailable")]
+    [InlineData("ModelConfigurationFault", "ReviewInfra", "Review aspect 'aspect-code-quality' named model 'gpt-5.5', which the review CLI 'claude' does not know.", "infrastructure", "ReviewConfig/ModelUnknownToCli")]
     [InlineData("build-gate-failed", null, "Tests failed: Expected 2, actual 3", "product", "gate/build-gate-failed")]
     [InlineData("build-gate-failed", null, "dotnet restore timeout", "infrastructure", "gate/build-gate-failed")]
     [InlineData("MissingSource", null, "source checkout missing", "infrastructure", "gate/MissingSource")]
