@@ -68,14 +68,19 @@ public sealed class GateEconomicsProjection
                 StringComparison.OrdinalIgnoreCase)).Select(job => job.FolderPath).ToArray();
             return (name, folders, cache.Report(name), record?.ShortCode, record?.Color);
         }).ToArray();
-        var batchSamples = _batches.ListAllExecutions()
+        var executions = _batches.ListAllExecutions()
             .Where(fact => fact.CompletedAtUtc >= since && fact.CompletedAtUtc <= now
-                && fact.BatchId is not null && fact.BatchRunId is not null
                 && names.Contains(fact.Project, StringComparer.OrdinalIgnoreCase))
-            .Select(fact => new BatchGateMetric(fact.Project, Members(fact), fact,
-                Published(fact.BatchId!, fact.BatchRunId!)))
             .ToArray();
-        var rows = GateEconomicsEndpoints.Rows(projects, batchSamples, since, now, allowed: null).ToArray();
+        var batchSamples = executions
+            .Where(fact => fact.BatchId is not null && fact.BatchRunId is not null)
+            .Select(fact => new BatchGateMetric(fact.Project, Members(fact), fact,
+                Published(fact.BatchId!, fact.BatchRunId!), HasParentBatch(fact.BatchId!)))
+            .ToArray();
+        // Per-task fallback gates and base verdicts cost a full suite each but
+        // gate no batch run; the baseline attributes them separately.
+        var gateFacts = executions.Where(fact => fact.BatchRunId is null).ToArray();
+        var rows = GateEconomicsEndpoints.Rows(projects, batchSamples, since, now, allowed: null, gateFacts).ToArray();
         var states = registered.Where(project => names.Contains(project.DisplayName,
                 StringComparer.OrdinalIgnoreCase)).ToDictionary(project => project.DisplayName,
             project => _postMerge.Read(project.Id), StringComparer.OrdinalIgnoreCase);
@@ -130,6 +135,19 @@ public sealed class GateEconomicsProjection
         {
             SilentCatch.Note(ex, "GateEconomics: batch manifest unavailable");
             return 0;
+        }
+    }
+
+    private bool HasParentBatch(string batchId)
+    {
+        try
+        {
+            return _batches.ReadManifest(batchId).ParentBatchId is not null;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException)
+        {
+            SilentCatch.Note(ex, "GateEconomics: batch manifest unavailable");
+            return false;
         }
     }
 
