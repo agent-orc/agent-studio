@@ -57,7 +57,10 @@ public sealed partial class TaskServerStore
                 null, null, expires, lastUse,
                 revoked ? "unused" : expires is { } date && date <= now.AddDays(14) ? "expiring"
                     : lastUse is null ? "unused" : "ok", false,
-                revoked ? "Revoked" : ExpiryDetail(expires, now, "Task Server principal"), []));
+                revoked ? "Revoked"
+                    : expires is null && reader.GetString(1) == TaskServerPrincipalKinds.Runner
+                        ? RunnerCredentialWithoutExpiryNotice
+                        : ExpiryDetail(expires, now, "Task Server principal"), []));
         }
         await using (var command = Command(connection, """
             SELECT e.enrolment_id, e.principal_id, e.kind, e.runner_id, e.expires_at,
@@ -176,6 +179,10 @@ public sealed partial class TaskServerStore
         }
         return new(now, derived);
     }
+
+    /// <summary>SM-9 migration notice: an existing runner credential keeps working without expiry.</summary>
+    internal const string RunnerCredentialWithoutExpiryNotice =
+        "No expiry: issued before the 30-day default. Rotate it to adopt the default.";
 
     private static string ExpiryDetail(DateTime? expires, DateTime now, string otherwise)
         => expires is { } date && CredentialReminderPolicy.Threshold(date - now) is { } threshold

@@ -378,8 +378,21 @@ claims and host-orchestrator work permits. The daemon does not resolve or cache
 this list because the server already owns task selection. Removing a project
 stops new admission but never interrupts an active fenced lease.
 
-An absent policy preserves migration compatibility and allows all projects. An
-explicit selected-project policy with an empty list blocks every new claim.
+With authentication on (`AUTH=bearer`), a host without a policy holds no
+project: it claims no card, review or publication, reads no project, and
+receives no repository token (SM-9). Set the policy before the host's first
+claim; an empty claim then names the reason `host-project-policy-missing`. An
+explicit selected-project policy with an empty list blocks every new claim, as
+before. When an existing installation upgrades, every host that had already
+registered receives an explicit all-projects policy, audited as
+`host-project-policy.migrated`, so its work continues until an Owner narrows
+it. The unauthenticated local compatibility store keeps the old rule, in which
+an absent policy admits all projects. `TaskServer:RequireHostProjectPolicy`
+overrides the choice explicitly.
+
+The runner credential is bound to this host on its first registration. A
+registration of the same credential from another host id is refused with
+`runner-host-mismatch`, and a host enrolment names the host outright.
 Creation uses expected version `0`; later writes use the version returned by
 the server:
 

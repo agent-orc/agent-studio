@@ -718,6 +718,7 @@ public static class LeaseEndpoints
                     .ToHashSet(StringComparer.OrdinalIgnoreCase));
                 foreach (var interrupted in progressTasks)
                 {
+                    if (!RunnerProjectBinding.Allows(runnerPrincipal, interrupted.ProjectName, projects)) continue;
                     var project = settings.Get(interrupted.ProjectName);
                     if (!ProjectExecutionPolicy.AllowsAutomaticPickup(project)
                         || !ProjectExecutionPolicy.IsAssignedRemote(project, req.RunnerId, req.RunnerName))
@@ -840,6 +841,8 @@ public static class LeaseEndpoints
                 var eligible = liveSnapshot
                     .Where(t => !t.Fixture && t.State == TaskStates.Ready
                         && !t.WaitingForEngineDecision)
+                    // SM-9: a runner credential claims only cards of its bound projects.
+                    .Where(t => RunnerProjectBinding.Allows(runnerPrincipal, t.ProjectName, projects))
                     .Where(t =>
                     {
                         var project = settings.Get(t.ProjectName);

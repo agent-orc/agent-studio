@@ -514,8 +514,13 @@ public static class V1ReviewPlaneEndpoints
                 };
                 return placement == Contract.ReviewHostPlacementDecision.Admit;
             }
+            var reviewer = RunnerProjectBinding.Runner(context);
             bool Admit(ReviewAttemptDto candidate)
             {
+                // SM-9: a review credential claims only reviews of its bound projects.
+                if (reviewer is not null
+                    && !RunnerProjectBinding.Allows(reviewer, ReviewAttemptProject(candidate.TaskKey, projects, scanner), projects))
+                    return false;
                 if (quotaBlocked.TryGetValue(candidate.TaskKey, out var refusal))
                 {
                     quotaWaitReason ??= refusal;
@@ -696,6 +701,11 @@ public static class V1ReviewPlaneEndpoints
             var review = authority.GetReview(attemptId);
             if (review is null)
                 return Results.NotFound(new Contract.ApiError("not-found", "ReviewAttempt was not found."));
+            // SM-9: a runner reads only the review attempt it claimed.
+            if (RunnerProjectBinding.Runner(context) is { } reader
+                && !string.Equals(review.Lease?.ExecutorId, reader.RunnerId, StringComparison.Ordinal))
+                return Results.Json(new Contract.ApiError("runner-not-claimant",
+                    "A runner may act on a review attempt only when it holds that claim."), statusCode: StatusCodes.Status403Forbidden);
             if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
                 && !access.Allows(IamPermissions.ProjectRead, PermissionTarget.WorkspaceWide))
             {

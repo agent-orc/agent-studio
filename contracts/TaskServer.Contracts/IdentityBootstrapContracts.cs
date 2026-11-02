@@ -43,13 +43,16 @@ public sealed record StudioProductionApprovalRequest(bool Approved);
 /// <summary>
 /// Owner request for a one-time enrolment code for a distinct service
 /// principal: one Studio edge, one engine, or one runner per host.
+/// <paramref name="Role"/> binds a runner credential to the coding or the
+/// review role (SM-9); null leaves the role to the credential's scopes.
 /// </summary>
 public sealed record CreateEnrolmentRequest(
     string PrincipalId,
     string Kind,
     string? RunnerId = null,
     int? TimeToLiveSeconds = null,
-    bool RepositoryWrite = false);
+    bool RepositoryWrite = false,
+    string? Role = null);
 
 /// <summary>
 /// The enrolment code is short-lived and single-use. Transfer it over the

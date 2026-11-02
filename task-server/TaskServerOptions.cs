@@ -60,6 +60,17 @@ public sealed class TaskServerOptions
     public string? RunnerBearerToken { get; set; }
     public int PrincipalRotationOverlapSeconds { get; set; } = 300;
     public int MaximumPrincipalRotationOverlapSeconds { get; set; } = 3600;
+    /// <summary>
+    /// Lifetime of a newly issued runner credential (SM-9, D7 A). Rotation with
+    /// overlap renews it; 0 issues credentials without expiry.
+    /// </summary>
+    public int RunnerCredentialLifetimeDays { get; set; } = 30;
+    /// <summary>
+    /// A host without an explicit project policy claims and reads nothing (SM-9).
+    /// Unset follows authentication: on with <c>AUTH=bearer</c>, off for the
+    /// unauthenticated local compatibility store, where a missing policy admits all.
+    /// </summary>
+    public bool? RequireHostProjectPolicy { get; set; }
     public string? RetentionArchivePath { get; set; }
     public bool RetentionSchedulerEnabled { get; set; } = true;
     public int RetentionScheduleHour { get; set; } = 3;

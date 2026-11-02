@@ -78,8 +78,8 @@ public sealed class ComposeCredentialRotationContractTests
             (await acknowledged.Content.ReadFromJsonAsync<PrincipalRotationReceipt>())!.State);
 
         using var previous = Client(factory, tokens[role], consumer: null);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await previous.GetAsync("/api/v1/workspaces")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await consumer.GetAsync("/api/v1/workspaces")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await previous.GetAsync(plan.Step("prove").Path)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await consumer.GetAsync(plan.Step("prove").Path)).StatusCode);
     }
 
     [SkippableFact]

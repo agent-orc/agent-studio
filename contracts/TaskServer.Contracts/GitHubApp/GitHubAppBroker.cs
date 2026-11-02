@@ -281,9 +281,12 @@ public sealed class GitHubAppBroker
     /// One token per registered repository the App reaches, reused until it nears
     /// expiry. A repository GitHub refuses is left out, so one bad entry cannot cost
     /// a host its other repositories, and cached tokens never wait for GitHub.
+    /// <paramref name="admits"/> narrows the set to the repositories a host's
+    /// credential is bound to (SM-9); a repository it refuses is never minted.
     /// </summary>
     public async Task<IReadOnlyList<RepositoryCredential>> IssueAllAsync(
-        string access, string? runnerId, CancellationToken ct, bool includeStudioOnly = false)
+        string access, string? runnerId, CancellationToken ct, bool includeStudioOnly = false,
+        Func<RegisteredRepository, bool>? admits = null)
     {
         var level = RepositoryAccess.Normalize(access)
             ?? throw new GitHubAppException("invalid-access", "Access must be 'read' or 'write'.");
@@ -293,6 +296,7 @@ public sealed class GitHubAppBroker
         if (connection is null) return [];
         var repositories = (await _catalog.ListAsync(ct))
             .Where(item => includeStudioOnly || !item.StudioOnly)
+            .Where(item => admits is null || admits(item))
             .Select(item => GitHubRepositoryName.TryParse(item.RepositoryUrl))
             .OfType<GitHubRepositoryName>()
             .DistinctBy(name => name.Canonical, StringComparer.Ordinal)

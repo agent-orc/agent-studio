@@ -46,6 +46,7 @@ builder.Services
         options.DataDirectory = bootstrap.StorePath;
         options.BackupDirectory = bootstrap.BackupPath;
         options.ListenUrl = bootstrap.ListenUrl;
+        options.RequireHostProjectPolicy ??= bootstrap.RequiresAuthentication;
     })
     .Configure<IConfiguration>((options, configuration) =>
     {
@@ -281,7 +282,8 @@ if (bootstrap.RequiresAuthentication)
             bootstrap.BootstrapRunnerAuthenticationToken,
             bootstrap.BootstrapRunnerId,
             app.Lifetime.ApplicationStopping,
-            repositoryWrite: true);
+            repositoryWrite: true,
+            role: RunnerCredentialRoles.Coding);
     if (bootstrap.BootstrapReviewRunnerAuthenticationToken is not null)
         await BootstrapPrincipalAsync(
             store,
@@ -289,7 +291,8 @@ if (bootstrap.RequiresAuthentication)
             TaskServerPrincipalKinds.Runner,
             bootstrap.BootstrapReviewRunnerAuthenticationToken,
             bootstrap.BootstrapReviewRunnerId,
-            app.Lifetime.ApplicationStopping);
+            app.Lifetime.ApplicationStopping,
+            role: RunnerCredentialRoles.Review);
     if (bootstrap.LegacyRunnerAuthenticationToken is not null)
         await BootstrapPrincipalAsync(
             store,
@@ -358,7 +361,8 @@ static async Task BootstrapPrincipalAsync(
     string? configuredCredential,
     string? runnerId,
     CancellationToken cancellationToken,
-    bool repositoryWrite = false)
+    bool repositoryWrite = false,
+    string? role = null)
 {
     var issued = await store.EnsureBootstrapPrincipalAsync(
         principalId,
@@ -366,7 +370,8 @@ static async Task BootstrapPrincipalAsync(
         configuredCredential,
         runnerId,
         cancellationToken,
-        repositoryWrite);
+        repositoryWrite,
+        role);
     if (issued is not null && configuredCredential is null)
         Console.WriteLine(
             $"INITIAL {kind.ToUpperInvariant()} CREDENTIAL (shown once): {issued.Credential}");

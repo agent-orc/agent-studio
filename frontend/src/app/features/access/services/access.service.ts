@@ -126,9 +126,16 @@ export class AccessService {
     return this.mutate(this.http.put(`/api/auth/users/${encodeURIComponent(userId)}`, { disabled }));
   }
 
-  createEnrollment(name: string, kind: 'runner' | 'orchestrator'): Promise<{ enrollmentCode: string } | null> {
+  /** A runner code names its projects; none named binds none. The engine is not project-bound. */
+  createEnrollment(name: string, kind: 'runner' | 'orchestrator', projects: readonly string[] = []): Promise<{ enrollmentCode: string } | null> {
     const scopes = kind === 'orchestrator' ? ['orchestration.write'] : undefined;
-    return this.mutate(this.http.post<{ enrollmentCode: string }>('/api/auth/runner-enrollments', { name, scopes }));
+    return this.mutate(this.http.post<{ enrollmentCode: string }>('/api/auth/runner-enrollments', {
+      name, scopes, projects: kind === 'orchestrator' ? undefined : projects,
+    }));
+  }
+
+  updateRunnerProjects(id: string, projects: readonly string[]): Promise<unknown> {
+    return this.mutate(this.http.put(`/api/auth/runners/${encodeURIComponent(id)}/projects`, { projects }));
   }
 
   revokeEnrollment(id: string): Promise<unknown> {
