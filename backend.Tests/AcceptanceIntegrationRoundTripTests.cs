@@ -14,6 +14,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using AgentStudio.TestSupport;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 using Xunit;
@@ -55,20 +56,29 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Directory.CreateDirectory(_tempDir);
         foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(_watchPath, state));
 
-        RunGit(_tempDir, "init", "--bare", "-q", "--initial-branch=main", _origin);
-        RunGit(_tempDir, "init", "-q", "-b", "main", _repo);
-        RunGit(_repo, "config", "user.email", "test@example.com");
-        RunGit(_repo, "config", "user.name", "test");
-        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "base\n");
-        RunGit(_repo, "add", "-A");
-        RunGit(_repo, "commit", "-q", "-m", "seed");
-        RunGit(_repo, "remote", "add", "origin", _origin);
-        RunGit(_repo, "push", "-q", "-u", "origin", "main");
-        RunGit(_repo, "remote", "set-head", "origin", "main");
-        RunGit(_repo, "checkout", "-q", "-b", "develop");
-        RunGit(_repo, "push", "-q", "-u", "origin", "develop");
-        RunGit(_repo, "checkout", "-q", "main");
-        RunGit(_repo, "branch", "-D", "develop");
+        // Built once per test process; each test starts from a copy (AGT-3419).
+        GitRepositoryTemplate.CopyTo("acceptance-integration:repo-and-origin:v1",
+            SeedRepositoryAndOrigin, ("repo", _repo), ("origin.git", _origin));
+    }
+
+    private static void SeedRepositoryAndOrigin(string root)
+    {
+        var repo = Path.Combine(root, "repo");
+        var origin = Path.Combine(root, "origin.git");
+        RunGit(root, "init", "--bare", "-q", "--initial-branch=main", origin);
+        RunGit(root, "init", "-q", "-b", "main", repo);
+        RunGit(repo, "config", "user.email", "test@example.com");
+        RunGit(repo, "config", "user.name", "test");
+        File.WriteAllText(Path.Combine(repo, "shared.txt"), "base\n");
+        RunGit(repo, "add", "-A");
+        RunGit(repo, "commit", "-q", "-m", "seed");
+        RunGit(repo, "remote", "add", "origin", origin);
+        RunGit(repo, "push", "-q", "-u", "origin", "main");
+        RunGit(repo, "remote", "set-head", "origin", "main");
+        RunGit(repo, "checkout", "-q", "-b", "develop");
+        RunGit(repo, "push", "-q", "-u", "origin", "develop");
+        RunGit(repo, "checkout", "-q", "main");
+        RunGit(repo, "branch", "-D", "develop");
     }
 
     [Fact]
