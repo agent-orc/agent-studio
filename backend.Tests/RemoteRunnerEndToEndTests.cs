@@ -281,6 +281,29 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
+    public async Task A_runner_credential_claims_no_card_outside_its_bound_projects()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Bound elsewhere", "Original prompt.");
+        // SM-9: the credential is bound to another project, so this ready card is not its work.
+        var runner = new AgentStudio.Security.RunnerPrincipal(RunnerId, ProjectName, "cred-coding",
+            new HashSet<string>([AgentStudio.Security.RunnerScopes.Claim], StringComparer.Ordinal))
+        {
+            Projects = ["another-project"],
+        };
+        using var factory = BuildFactory(claimingRunner: runner);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/bound-elsewhere.git");
+
+        var claim = await client.ClaimAsync(new RClaim(RunnerId, ProjectName, "host", 1, "remote-runner"), CancellationToken.None);
+
+        Assert.Equal(RClaimStatus.Empty, claim.Status);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, TaskKey)));
+    }
+
+    [Fact]
     public async Task Completed_run_in_ready_keeps_newer_queued_continuation_for_next_claim()
     {
         SeedTask(TaskStates.Ready, TaskKey, "Queued second continuation", "Original prompt.");
@@ -3922,11 +3945,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         ICauseWaitMarkerStore? causeWaitMarkers = null,
         TimeProvider? clock = null,
         IBuildTestGateRunner? gateRunner = null,
-        Func<DateTime>? leaseNow = null) =>
+        Func<DateTime>? leaseNow = null,
+        AgentStudio.Security.RunnerPrincipal? claimingRunner = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
                 b.UseEnvironment("Test");
+                if (claimingRunner is not null)
+                    b.ConfigureServices(services => services.AddSingleton<IStartupFilter>(
+                        new RunnerPrincipalInjection(claimingRunner, "/api/runner/claim")));
                 b.ConfigureAppConfiguration((_, cfg) =>
                 {
                     var values = new Dictionary<string, string?>

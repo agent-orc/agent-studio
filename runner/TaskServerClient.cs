@@ -104,7 +104,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         }
         if (!string.IsNullOrWhiteSpace(options.AuthTokenFile))
             handler = new ReloadingPrincipalCredentialHandler(options.AuthTokenFile, handler);
-        return handler;
+        return new CredentialExpiryWarningHandler(handler, message => Console.Error.WriteLine(message), TimeProvider.System);
     }
 
     /// <summary>

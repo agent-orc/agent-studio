@@ -740,6 +740,19 @@
 </tbody></table>
 <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+<li><b>2 November 2026, AGT-3380 (SM-9).</b> Runner credentials are bound to their host, role and
+an explicit project set, with D7 option A lifetimes. On the Task Server a runner credential is pinned
+to the host of its first registration (or of its host enrolment), enrolment codes record the coding
+or review role, and an authenticated installation treats a host without a project policy as holding
+no project; already registered hosts migrate to an explicit all-projects policy. Card reads need a
+live lease, run, review-attempt and gate routes need the caller's own claim, every other shared read
+is refused for runner credentials, review and publication claims stay inside the bound projects, and
+repository tokens cover only the repositories of bound projects. New runner credentials expire after
+30 days in both authorities and rotation keeps its overlap; responses name the end and hosts warn in
+the last week. Existing credentials keep working with a notice. Settings &gt; Access binds projects
+at enrollment and edits them per runner. Gate claim admission, per-attempt container tokens (SM-11)
+and a lifecycle-only card read in the monolith remain open. See
+<a href="../operations/security/overview.md#runner-credential-binding-sm-9">Security overview</a>.</li>
 <!-- agent-studio:implementation-log:end -->
 </ol>
 </section>

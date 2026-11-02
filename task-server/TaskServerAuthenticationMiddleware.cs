@@ -62,6 +62,18 @@ public sealed class TaskServerAuthenticationMiddleware(
         }
 
         context.Items[typeof(TaskServerPrincipal)] = principal;
+        if (principal.Kind == TaskServerPrincipalKinds.Runner)
+        {
+            // A host learns its credential's end on every answer and warns ahead of it.
+            if (principal.CredentialExpiresAt is { } expiresAt)
+                context.Response.Headers[RunnerRouteAuthorization.CredentialExpiresHeader] =
+                    expiresAt.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+            if (await RunnerRouteAuthorization.AuthorizeAsync(context, principal, requiredScope, store) is { } refusal)
+            {
+                await DenyAsync(context, refusal.Status, refusal.Code, refusal.Message);
+                return;
+            }
+        }
         await next(context);
         if (context.Response.StatusCode is >= 200 and < 300
             && !context.Request.Path.StartsWithSegments("/api/v1/principal-rotations")

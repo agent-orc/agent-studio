@@ -21,6 +21,8 @@ public sealed class PrincipalAuthenticationTests
 {
     private const string StudioToken = "studio-principal-token-000000000000000000000001";
     private const string EngineToken = "engine-principal-token-000000000000000000000001";
+    /// <summary>An authenticated read every principal may make; a runner reads no Studio data (SM-9).</summary>
+    private const string RunnerProbePath = "/api/v1/artifact-limits";
 
     [Theory]
     [InlineData(null)]
@@ -398,12 +400,12 @@ public sealed class PrincipalAuthenticationTests
             using var current = Client(factory, issued.Credential);
             (await current.PostAsync($"/api/v1/principal-rotations/{operationId}/delivered", null))
                 .EnsureSuccessStatusCode();
-            (await current.GetAsync("/api/v1/workspaces")).EnsureSuccessStatusCode();
+            (await current.GetAsync(RunnerProbePath)).EnsureSuccessStatusCode();
             (await current.PostAsJsonAsync($"/api/v1/principal-rotations/{operationId}/ack",
                 new PrincipalRotationAcknowledgement(id))).EnsureSuccessStatusCode();
             using var old = Client(factory, original.Credential);
             Assert.Equal(HttpStatusCode.Unauthorized,
-                (await old.GetAsync("/api/v1/workspaces")).StatusCode);
+                (await old.GetAsync(RunnerProbePath)).StatusCode);
         }
     }
 
@@ -537,7 +539,7 @@ public sealed class PrincipalAuthenticationTests
             "runner-revoked");
         using var runner = Client(factory, issued.Credential);
         Assert.Equal(HttpStatusCode.OK,
-            (await runner.GetAsync("/api/v1/workspaces")).StatusCode);
+            (await runner.GetAsync(RunnerProbePath)).StatusCode);
         var listed = await manager.GetFromJsonAsync<List<PrincipalDto>>(
             "/api/v1/management/principals");
         Assert.NotNull(Assert.Single(listed!, item => item.PrincipalId == "runner-revoked").LastSeenAt);
@@ -549,7 +551,7 @@ public sealed class PrincipalAuthenticationTests
         Assert.NotNull((await revocation.Content.ReadFromJsonAsync<PrincipalDto>())!.RevokedAt);
 
         Assert.Equal(HttpStatusCode.Unauthorized,
-            (await runner.GetAsync("/api/v1/workspaces")).StatusCode);
+            (await runner.GetAsync(RunnerProbePath)).StatusCode);
         var bytes = await File.ReadAllBytesAsync(Path.Combine(temp.Path, "task-server.db"));
         Assert.DoesNotContain(issued.Credential, Encoding.UTF8.GetString(bytes), StringComparison.Ordinal);
         await using var connection = new SqliteConnection(
@@ -651,7 +653,11 @@ public sealed class PrincipalAuthenticationTests
         var root = "/api/v1/source-facts/prj_scope";
         var sha = new string('a', 40);
 
-        var missing = await readClient.GetAsync($"{root}/diffs?base={sha}&head={new string('b', 40)}");
+        // SM-9: a runner reads source facts only of a repository of its bound projects.
+        var unbound = await readClient.GetAsync($"{root}/diffs?base={sha}&head={new string('b', 40)}");
+        Assert.Equal(HttpStatusCode.Forbidden, unbound.StatusCode);
+        Assert.Contains("runner-project-not-bound", await unbound.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        var missing = await studio.GetAsync($"{root}/diffs?base={sha}&head={new string('b', 40)}");
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
         Assert.Contains("source-object-missing", await missing.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         var demand = new SourceFactDemandRequest(SourceFactKinds.Diff, "scope-test", sha, new string('b', 40));
