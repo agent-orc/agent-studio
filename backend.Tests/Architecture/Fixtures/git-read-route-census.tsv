@@ -49,8 +49,6 @@
 /api/cli/types	free	-	-	-
 /api/cli/usage	free	-	-	-
 /api/cli/{cliType}/models	free	-	-	-
-/api/cli/{cliType}/session-detail	free	-	-	-
-/api/cli/{cliType}/working-memory	free	-	-	-
 /api/cli/{name}/effective-mode	free	-	-	-
 /api/clients/	free	-	-	-
 /api/clients/{id}	free	-	-	-
@@ -67,6 +65,7 @@
 /api/devtools/e2e-jobs	free	-	-	-
 /api/devtools/fixtures/scan	free	-	-	-
 /api/devtools/update-stable/stream	free	-	-	-
+/api/diagnostics/api-stalls	free	-	-	-
 /api/diagnostics/last-crash	free	-	-	-
 /api/diagnostics/last-silent-kill	free	-	-	-
 /api/diagnostics/log-location	free	-	-	-
@@ -305,6 +304,8 @@
 /api/supervisor/{project}/recent-events	free	-	-	-
 /api/system/about	free	-	-	-
 /api/system/execution-infrastructure	free	-	-	-
+/api/system/gate-slots	free	-	-	-
+/api/system/readiness	free	-	-	-
 /api/system/version	free	-	-	-
 /api/tags/	free	-	-	-
 /api/tasks/	free	-	-	-
@@ -388,6 +389,7 @@
 /api/v1/management/remote-hosts/{id}/codex-sign-in/{handle}	free	-	-	-
 /api/v1/management/runner-infrastructure-failures	free	-	-	-
 /api/v1/management/status	free	-	-	-
+/api/v1/operations/structure	reachable	gap	Structure projection	Resolve project repository roots without Git in the declared structure read path
 /api/v1/orchestration/decision-grounds/pending	free	-	-	-
 /api/v1/orchestration/decision-jobs/{jobId}	free	-	-	-
 /api/v1/orchestration/runs	free	-	-	-
@@ -423,4 +425,5 @@
 /healthz/container	free	-	-	-
 /healthz/drain	free	-	-	-
 /healthz/orchestration-engine	free	-	-	-
+/healthz/readiness	free	-	-	-
 /recovery	free	-	-	-

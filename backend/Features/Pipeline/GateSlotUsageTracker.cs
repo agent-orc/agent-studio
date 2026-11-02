@@ -5,6 +5,18 @@ namespace AgentStudio.Pipeline;
 
 public sealed record GateSlotUsage(int Busy, int Total);
 
+/// <summary>One slot of the gate host and the gate of this process that holds it, if any.</summary>
+public sealed record GateSlotBoardSlot(int Slot, bool ShortSlot, string? Project, string? GateId,
+    GateDurationClass? DurationClass, DateTimeOffset? Since);
+
+/// <summary>A gate of this process that waits for a slot, and why.</summary>
+public sealed record GateSlotBoardWaiter(string Project, string GateId, GateDurationClass DurationClass,
+    DateTimeOffset Since, string Reason);
+
+/// <summary>Which slot runs what and why a gate waits (AGT-3423).</summary>
+public sealed record GateSlotBoard(int Total, int? ShortSlot, string Rule,
+    IReadOnlyList<GateSlotBoardSlot> Slots, IReadOnlyList<GateSlotBoardWaiter> Waiting);
+
 /// <summary>Live slot use observed by this dispatching API process.</summary>
 public sealed class GateSlotUsageTracker
 {
@@ -19,6 +31,11 @@ public sealed class GateSlotUsageTracker
     private DateTimeOffset? _lastFailureAt;
     private bool? _lastSucceeded;
     private (GateSlotUsage Usage, DateTimeOffset At)? _remote;
+    private readonly ConcurrentDictionary<string, GateRun> _runs = new(StringComparer.Ordinal);
+
+    private sealed record GateRun(string Project, string GateId, GateDurationClass DurationClass,
+        DateTimeOffset QueuedAt, int? Slot = null, DateTimeOffset? AcquiredAt = null,
+        DateTimeOffset? WaitingSince = null);
 
     public GateSlotUsageTracker(IConfiguration? configuration = null, TimeProvider? clock = null)
     {
@@ -114,6 +131,15 @@ public sealed class GateSlotUsageTracker
         lock (_reachabilityLock) _remote = (new GateSlotUsage(busy, total), _clock.GetUtcNow());
     }
 
+    /// <summary>The gate host reports that <paramref name="runId"/> waits for a slot.</summary>
+    public void RemoteWaiting(string runId, int busy, int total)
+    {
+        RemoteWaiting(busy, total);
+        Configure(total);
+        if (_runs.TryGetValue(runId, out var run) && run.WaitingSince is null && run.AcquiredAt is null)
+            _runs.TryUpdate(runId, run with { WaitingSince = _clock.GetUtcNow() }, run);
+    }
+
     /// <summary>The last remote slot count, or null when none was reported within <paramref name="maxAge"/>.</summary>
     public GateSlotUsage? RemoteSnapshot(TimeSpan maxAge)
     {
@@ -123,11 +149,47 @@ public sealed class GateSlotUsageTracker
 
     public void Configure(int total) => Volatile.Write(ref _total, total);
 
-    public void Acquired(string runId, int total)
+    /// <summary>A dispatched gate starts to queue for a slot of this host.</summary>
+    public void Queued(string runId, string project, string gateId, GateDurationClass durationClass)
+        => _runs[runId] = new GateRun(project, gateId, durationClass, _clock.GetUtcNow());
+
+    public void Acquired(string runId, int total) => Acquired(runId, null, total);
+
+    public void Acquired(string runId, int? slot, int total)
     {
         Configure(total);
         _active[runId] = 0;
+        if (_runs.TryGetValue(runId, out var run))
+            _runs.TryUpdate(runId, run with { Slot = slot, AcquiredAt = _clock.GetUtcNow() }, run);
     }
 
-    public void Released(string runId) => _active.TryRemove(runId, out _);
+    public void Released(string runId)
+    {
+        _active.TryRemove(runId, out _);
+        _runs.TryRemove(runId, out _);
+    }
+
+    /// <summary>How long the run held its slot so far, or null when it never held one.</summary>
+    public TimeSpan? HeldFor(string runId)
+        => _runs.TryGetValue(runId, out var run) && run.AcquiredAt is { } at ? _clock.GetUtcNow() - at : null;
+
+    public GateSlotBoard Board()
+    {
+        var total = Volatile.Read(ref _total);
+        var now = _clock.GetUtcNow();
+        var runs = _runs.Values.ToArray();
+        var holders = runs.Where(run => run.Slot is { } slot && slot < total)
+            .GroupBy(run => run.Slot!.Value).ToDictionary(group => group.Key, group => group.First());
+        var shortSlot = GateSlotFairnessPolicy.ReservedSlot(total);
+        var slots = Enumerable.Range(0, total).Select(slot => holders.TryGetValue(slot, out var run)
+            ? new GateSlotBoardSlot(slot, slot == shortSlot, run.Project, run.GateId, run.DurationClass, run.AcquiredAt)
+            : new GateSlotBoardSlot(slot, slot == shortSlot, null, null, null, null)).ToArray();
+        var waiting = runs.Where(run => run.AcquiredAt is null).OrderBy(run => run.QueuedAt)
+            .Select(run => new GateSlotBoardWaiter(run.Project, run.GateId, run.DurationClass,
+                run.WaitingSince ?? run.QueuedAt,
+                run.WaitingSince is { } since
+                    ? GateSlotFairnessPolicy.WaitReason(total, run.DurationClass, now - since)
+                    : "Preparing the source on the gate host; no slot requested yet.")).ToArray();
+        return new GateSlotBoard(total, shortSlot, GateSlotFairnessPolicy.Describe(total), slots, waiting);
+    }
 }

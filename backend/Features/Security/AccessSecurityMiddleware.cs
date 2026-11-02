@@ -791,6 +791,8 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPost(method) && path.EndsWith("/capability-failures", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.EndsWith("/cli-update/result", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.Contains("/provider-canary/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/quota/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+            if (HttpMethods.IsPut(method) && path.EndsWith("/quota/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsGet(method) && (path.EndsWith("/cli-update", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith("/provider-comparison", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
         }
@@ -898,7 +900,8 @@ public sealed class AccessSecurityMiddleware
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/container", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase)
+           || path.Equals(AgentStudio.Readiness.ServerReadinessEndpoints.ProbePath, StringComparison.OrdinalIgnoreCase);
     private static bool IsTelemetryIntake(string method, string path)
         => HttpMethods.IsPost(method)
            && (path.Equals("/api/telemetry/otlp/v1/metrics", StringComparison.OrdinalIgnoreCase)

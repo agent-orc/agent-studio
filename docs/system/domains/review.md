@@ -1,7 +1,27 @@
 # Review Domain Map
 
-Version: 2026-10-21
+Version: 2026-11-02
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Review report transport budget
+
+The review host caps embedded evidence at 8 MiB per artifact and the serialized
+report at 24 MiB, below the report route's explicit 25 MiB body limit. An
+oversized log is represented by its full byte count and SHA-256 plus a separate
+head-and-tail excerpt with an elision marker and its own digest. The original
+artifact remains on the review host. `artifactsReduced` marks this wire shape so
+preparation failures retain their classification when full log bytes are omitted.
+A 413 response or three consecutive 502
+responses triggers one reduced resend with embedded artifact bytes omitted;
+the outcome, failure classification, and aspect verdicts are unchanged. The
+host persists this choice in the review slot so reattachment cannot restart
+the same oversized submission cycle. Transient failures of the reduced report
+(including 502, 503, and timeouts) retry the same payload up to five times;
+exhaustion is recorded as `ReportDeliveryExhausted`. Another 413 or a permanent
+refusal ends delivery immediately. In-process
+backend test hosts keep full file logs but omit routine information and known
+fixture warnings from verification stdout. Unexpected warnings and all errors
+remain visible there.
 
 Remote Review materializes exact result SHAs through the runner host's bounded
 source object cache (D8 A, AGT-3319). A canonical remote fetch populates a
@@ -112,6 +132,12 @@ still follows the ordinary escalation path until the aspect streak or lifetime
 round limit binds. One linked follow-up card carries all open findings;
 `references.raisedFollowUps` points to it from the delivery. The card has one
 review-budget follow-up; later degraded rounds append their findings to it.
+Engine review settlements reuse an open `engine-follow-up` card linked to the
+same source, including when a later settlement has a different run id. They
+append only findings absent from its brief and write a
+`review_follow_up_routed` event on the source timeline naming the receiving
+card. Once that follow-up reaches Completed, a later settlement may create a
+new one.
 The delivery then follows the ordinary acceptance
 and integration rules. A build/test failure or tests-and-evidence block is
 never degraded. When the per-card budget is spent, such a block moves to
@@ -377,12 +403,29 @@ One host runs several fenced ReviewAttempts at once. Isolation is what makes
 that safe, and it has three layers.
 
 **Filesystem and network.** `RemoteReviewWorkspace` roots every writable path
-under the attempt directory (`HOME`, `TMPDIR`, `XDG_CACHE_HOME`,
-`NUGET_PACKAGES`, `npm_config_cache`, `PIP_CACHE_DIR`, `CARGO_HOME`,
-`GRADLE_USER_HOME`, `DOTNET_CLI_HOME`). The lease supplies the attempt's
-`ResourceNamespace` for containers and databases and an eight-port window from
-`PortBase`. The baseline worktree gets its own sub-root inside the same attempt,
-so candidate and baseline never share a cache either.
+under the attempt directory (`HOME`, `XDG_CACHE_HOME`, `npm_config_cache`,
+`PIP_CACHE_DIR`, `CARGO_HOME`, `GRADLE_USER_HOME`, `DOTNET_CLI_HOME`). The lease
+supplies the attempt's `ResourceNamespace` for containers and databases and an
+eight-port window from `PortBase`. The baseline worktree gets its own sub-root
+inside the same attempt, so candidate and baseline never share these caches
+either. Two paths are deliberately outside the attempt directory (AGT-3429):
+
+- `TMPDIR` is a short, owner-only root `/tmp/rv-<12 hex>` named by a digest
+  of the attempt directory (`runner/ReviewAttemptTemp.cs`): `c` for the
+  candidate and one 12-character command segment per baseline or clean repeat.
+  Below the attempt directory a socket path such as Chrome's
+  `$TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket` exceeded the 107-byte
+  Unix socket limit and ChromeHeadless could not start. The root's `.owner`
+  file names its attempt; cleanup removes it with the attempt and the retention
+  sweep removes one whose attempt is gone.
+- `NUGET_PACKAGES` and `NUGET_SCRATCH` are the host-stable
+  `.dependency-cache/nuget-packages` and `nuget-scratch`, shared by every
+  attempt and role. The dependency cache preserves `**/obj`, and a cached
+  `project.assets.json` must name a package folder that still exists. The
+  folder is content addressed by package id and version, so candidate and
+  baseline resolve identical bits for identical versions, and the shared
+  scratch folder holds NuGet's extraction locks. See
+  [pipeline.md](pipeline.md) for what a dependency-cache hit may skip.
 
 **Build servers.** Path isolation does not cover them. On Linux, Roslyn's
 `VBCSCompiler` listens on `/tmp/<pipename>` derived from the compiler directory
@@ -450,9 +493,17 @@ unreviewable: WEB-26/27/28 failed their clone with `could not read Username`,
 classified `SnapshotUnavailable`, and escalated after the infrastructure retry
 budget.
 
-- **Plan.** The project setting `repositoryVisibility` (`public` by default,
-  `PUT /api/projects/{project}/repository-visibility`) is sealed into every
-  review plan as `ReviewPlanDto.PrivateRepository` by `RemoteReviewPlanBuilder`.
+- **Plan.** The effective repository visibility is sealed into every review
+  plan as `ReviewPlanDto.PrivateRepository` by `RemoteReviewPlanBuilder`. It
+  combines the project setting `repositoryVisibility` (`public` by default,
+  `PUT /api/projects/{project}/repository-visibility`) with what the connected
+  GitHub App reports (AGT-3408, `ReviewRepositoryAccessPolicy.EffectiveVisibility`,
+  read through `ProjectRepositoryVisibility`): a repository an adopted
+  installation lists follows GitHub's `private` flag, an explicit `private`
+  setting still wins, and a repository GitHub reports private is never planned
+  public. `GitHubAppBroker` caches the installations' repository lists, refreshed
+  by the host credential service (monolith) or `GitHubAppVisibilityRefreshService`
+  (standalone Task Server); a failed listing keeps the last answer.
   Task Server repository registrations may also declare `repositoryVisibility`.
   The existing project setting is copied to matching registrations when it
   changes and reconciled on startup and periodically, including registrations
@@ -462,6 +513,13 @@ budget.
   Changing it re-plans every ReviewAttempt still queued for the project, like a
   build-profile or pipeline-step edit, so an attempt queued before the flip
   carries the new visibility.
+- **Retry.** An infrastructure retry takes the current visibility, not the
+  failed attempt's. The backend builds every successor's plan afresh. The
+  standalone Task Server keeps one plan per subject, so `InsertReviewRetryAsync`
+  renews its `privateRepository` from the registration and the GitHub report
+  (`ReviewRepositoryAccessPolicy.CurrentPrivateRepository`) when it queues the
+  successor; with neither known, the sealed value stays. A new subject of a
+  repository GitHub reports private is stored private.
 - **Claim filter.** `ReviewRepositoryAccessPolicy` (shared contract) turns a
   private plan plus the subject's repository URL into the required key
   `review:repository-read:<host>/<owner>/<repo>` (lower case, no `.git`, same
@@ -517,16 +575,22 @@ budget.
   integration-ref fetch for baseline comparison runs in a fresh runner-owned
   repository and the workspace copies the objects over the local transport,
   so configuration written by review commands never meets the credential.
-- **Public repositories** keep the credential-free, blob-filtered clone
-  unchanged and never read the credentials file, so a file that turns
-  unreadable or malformed after start-up affects only private reviews. A
+- **Held credential wins.** A review host that holds a credential for exactly
+  the subject's repository (App token or credentials file) fetches with it
+  whatever the plan says (AGT-3408), so a repository wrongly planned public
+  costs nothing on such a host. This widens no access: the lookup matches one
+  canonical repository, and only the clone and fetch processes see it.
+- **Public repositories** without a held credential keep the credential-free
+  clone. A public plan does not depend on the credentials file: a file that
+  turns unreadable or malformed after start-up fails only private reviews. A
   credential-free clone that fails with an authentication signature names the
   missing read access in its `SnapshotUnavailable` detail.
 
 Operator setup: [linux-runner-host.md](../../operations/setup/linux-runner-host.md#private-repositories).
 Tests: `runner.Tests/ReviewPrivateRepositoryTests.cs` (clone through a local
 Basic-auth smart-HTTP server), `runner.Tests/ReviewRepositoryAccessPolicyTests.cs`,
-`backend.Tests/PrivateRepositoryReviewClaimTests.cs`, and
+`backend.Tests/PrivateRepositoryReviewClaimTests.cs`,
+`backend.Tests/GitHubAppBrokerTests.cs`, and
 `task-server.Tests/RemoteReviewAuthorityTests.PrivateRepository.cs`.
 
 ## Review-plane parallelism
@@ -568,6 +632,45 @@ saturation, without a backend restart. The
 operator-facing form of this is in
 [docs/operations/remote-hosts.md](../../operations/remote-hosts.md) and
 [docs/operations/setup/linux-runner-host.md](../../operations/setup/linux-runner-host.md#how-the-review-ceiling-is-derived).
+
+## Aspect execution within one attempt (AGT-3424)
+
+Remote Review runs one attempt's planned commands in two phases
+(`RemoteReviewWorkspace.ExecutePlanAsync`; AGT-3400 Dossier
+`docs/review-gate-packages/index.html`, decision PK7, option X-B):
+
+1. **Tool commands** (build, tests, lint and every other non-agent command) run
+   one after another, as before. An exception in this phase (for example
+   `ToolUnavailable`, `CommandStalled`, `NoCpuProgress`) ends the attempt before
+   any agent aspect starts. A product failure of a tool command still lets the
+   aspects run, as the serial loop did.
+2. **Agent aspects** then run concurrently, at most
+   `RUNNER_REVIEW_ASPECT_PARALLELISM` at a time (default `4`, capped at `4`;
+   `1` restores the serial loop). Aspects start in plan order. The review
+   material is built once before the phase and every aspect only reads it.
+   Each aspect keeps its own derived budget (see the aspect budget contract
+   above), counted from the moment it starts.
+
+Each aspect records into its own evidence lists. The attempt's lists change
+only under one gate, which also serialises the checkpoint writes, so every
+`review-progress.json` holds whole aspects. Resume semantics are unchanged:
+`CanResumeCommand` skips an aspect whose command evidence and verdict are both
+checkpointed, and a resumed attempt reruns only the aspects without a
+checkpoint. Command evidence and verdicts are reported in plan order whatever
+order the aspects finished in.
+
+An infrastructure failure of one aspect (`AspectTimeout`, `ToolUnavailable`,
+`CommandStalled`, a failed checkpoint write) stops the attempt where the serial
+loop would have stopped: it cancels the aspects still running, starts no further
+aspect, and is the one failure reported. Its evidence carries the tool commands
+and every aspect that ran. A result that arrives after the stop is evidence,
+not a checkpoint. A `block` or `concerns` verdict stops nothing.
+
+The aspects share the attempt's one review slot. Host admission
+(`RoleMaxParallelism`, the per-worker resource envelope, the load gate) is
+unchanged and counts attempts, not aspects, so the number of aspect calls and
+their tokens per review stay the same; only the provider's concurrent peak per
+attempt rises, bounded by the cap.
 
 ## Infrastructure retry scheduling
 
@@ -1070,14 +1173,20 @@ time, per-class totals, the slowest 50 tests, retry status, and host load and
 active test-process count sampled when the report is captured. A missing or
 malformed TRX is logged and does not change the test verdict.
 
-Both gates run for every review of this repository, not only for deliveries that
-touch `runner/` or `task-server/`. A review plan is frozen before the attempt is
-claimed and is immutable by contract, and the plan builder has no merge-base
-diff at that point, so the review plane has no path-scoped command selection.
-The diff-scoped selector (`TestSelectionPlanner` with its impact rules) belongs
-to the local build and test gate. Making the review plan path-scoped would mean
-resolving the delivery diff at plan-build time, which is a separate change to
-the plan contract rather than a configuration entry.
+For a delivery that changes `backend/`, the review plan inserts the declared
+.NET guard commands before its selected tests. These use
+`FullyQualifiedName~.Architecture.|Category=Guard` together with each command's
+existing filter. The guard commands come from the project inventory, so class
+selection cannot omit them, including when it selects no other test class.
+The route inventory's three-profile permission census and the
+`TaskFolderAccessIsolationTest` class carry the Guard category because their
+namespaces do not match the architecture filter.
+
+With full review testing, both suites run for every review of this repository,
+including deliveries outside `runner/` and `task-server/`. A review plan is
+frozen before the attempt is claimed and is immutable by contract. The later
+per-card and batch review selectors use the delivery diff to narrow the
+remaining test commands; the backend guard step above stays in the plan.
 
 When a .NET review test step is red, the clean repeat now keeps the original
 category filter and reruns only the classes that reported failures, up to five

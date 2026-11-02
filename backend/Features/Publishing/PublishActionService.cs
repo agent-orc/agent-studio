@@ -57,7 +57,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
             .FirstOrDefault(x => string.Equals(x.Id, targetId, StringComparison.OrdinalIgnoreCase));
         if (target is null) throw new InvalidOperationException($"Unknown publish target '{targetId}'.");
 
-        var jobs = _scanner.ScanAllJobsRaw();
+        var jobs = _scanner.ScanAllJobsWithArchive();
         var signals = _taskTargets.BuildLookup(jobs);
         var pending = jobs
             .Where(x => string.Equals(x.ProjectName, project, StringComparison.OrdinalIgnoreCase))

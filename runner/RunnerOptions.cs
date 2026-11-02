@@ -91,6 +91,13 @@ public sealed class RunnerOptions
     public string ReviewWorkDir { get; init; } = Path.Combine(Path.GetTempPath(), "agent-review-work");
 
     /// <summary>
+    /// Test seam for the parent of the short attempt temp roots. Production
+    /// leaves it null, so the daemon and its detached workers always agree on
+    /// <see cref="ReviewAttemptTemp.DefaultBase"/> (AGT-3429).
+    /// </summary>
+    internal string? ReviewTempBase { get; init; }
+
+    /// <summary>
     /// Comma-separated environment variable names admitted into review child
     /// processes. The review service account must provision them as read-only.
     /// </summary>
@@ -130,6 +137,15 @@ public sealed class RunnerOptions
     /// </para>
     /// </summary>
     public int ReviewNoCpuProgressSeconds { get; init; } = 900;
+
+    /// <summary>
+    /// How many agent review aspects one Remote Review attempt runs at the same
+    /// time (<c>RUNNER_REVIEW_ASPECT_PARALLELISM</c>, default 4). <c>1</c> keeps
+    /// the serial aspect loop; values above 4 are capped at 4 (AGT-3400 PK7).
+    /// The aspects share the attempt's one review slot, so this does not admit
+    /// more attempts on the host.
+    /// </summary>
+    public int ReviewAspectParallelism { get; init; } = ReviewAspectFanOut.MaximumParallelism;
 
     /// <summary>Durable daemon slot records and detached-worker logs.</summary>
     public string StateDir { get; init; } = "";
@@ -560,6 +576,12 @@ public sealed class RunnerOptions
                                          && noProgressValue >= 0
                 ? noProgressValue
                 : EnvIntAllowingZero("RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS", 900),
+            ReviewAspectParallelism = ReviewAspectFanOut.Normalize(
+                overrides.TryGetValue("review-aspect-parallelism", out var aspectParallelism)
+                && int.TryParse(aspectParallelism, out var aspectParallelismValue)
+                && aspectParallelismValue > 0
+                    ? aspectParallelismValue
+                    : EnvInt("RUNNER_REVIEW_ASPECT_PARALLELISM", ReviewAspectFanOut.MaximumParallelism)),
             StateDir = stateDir,
             RequiredCapabilities = Val(
                     "required-capabilities",

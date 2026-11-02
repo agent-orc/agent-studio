@@ -629,6 +629,7 @@ public record SetBuildProfileRequest
     public IReadOnlyList<string>? BuildCmds { get; init; }
     public IReadOnlyList<string>? TestCmds { get; init; }
     public IReadOnlyList<string>? Lockfiles { get; init; }
+    public bool InstallCoveredByLockfiles { get; init; }
     public IReadOnlyList<string>? PreserveGlobs { get; init; }
     public int? PoolSize { get; init; }
 }

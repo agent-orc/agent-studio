@@ -17,6 +17,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     private readonly string _origin;
     private readonly string _reviewRoot;
 
+    private string TestTempBase => Path.Combine(_root, "t");
+
     public RemoteReviewWorkspaceTests()
     {
         _origin = Path.Combine(_root, "origin.git");
@@ -405,6 +407,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal("needs work Detail: summary=again", verdict.Summary);
     }
 
+    // Serial aspects (parallelism 1): the run stops right after the second
+    // checkpoint, so no other aspect was started. The parallel crash path is in
+    // RemoteReviewAspectParallelismTests.
     [Fact]
     public async Task Restart_after_two_of_four_graded_aspects_resumes_without_rerunning_them()
     {
@@ -439,7 +444,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             commands,
             24120,
             integrationRef: "refs/heads/main",
-            codexCliBin: fakeCodex);
+            codexCliBin: fakeCodex,
+            reviewAspectParallelism: 1);
         await workspace.PrepareAsync(null!, default);
 
         ReviewExecutionCheckpoint? saved = null;
@@ -726,7 +732,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             DependencyScopes:
             [
                 new ReviewDependencyScopeDto("", ["package-lock.json"]),
-            ]);
+            ],
+            CoveredByDependencyScopes: true);
         var verify = new ReviewCommandDto(
             "verify",
             "build-tests",
@@ -762,6 +769,239 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.True(warm.Commands[0].DependencyCacheHit);
         Assert.Contains(changed.Commands[0].DependencyCache!, item => item.Reason == "lock-changed");
         Assert.Equal(2, (await File.ReadAllTextAsync(counter)).Length);
+    }
+
+    /// <summary>
+    /// AGT-3429 rule: a dependency-cache hit proves only that each lockfile
+    /// scope still matches. It may skip a preparation command only when the plan
+    /// marks that command as covered by its scopes; an opaque build-profile
+    /// install, which may also run <c>dotnet restore</c>, runs on every attempt.
+    /// </summary>
+    [Theory]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    public async Task Cache_hit_skips_only_a_preparation_command_its_lockfile_scopes_cover(
+        bool covered,
+        int expectedInstalls)
+    {
+        var counter = Path.Combine(_root, "install-counter.txt");
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["package-lock.json"] = "lock-v1",
+            [".gitignore"] = "node_modules/\n.nm-state\n",
+        });
+        var preparation = new ReviewPreparationCommandDto(
+            "prepare-1",
+            PosixShell.RequirePath(),
+            ["-c", $"mkdir -p node_modules && printf x >> '{counter}'"],
+            DependencyScopes:
+            [
+                new ReviewDependencyScopeDto("", ["package-lock.json"]),
+            ],
+            CoveredByDependencyScopes: covered);
+        var verify = new ReviewCommandDto(
+            "verify",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-c", "test -d node_modules"]);
+
+        async Task<ReviewExecutionEvidence> RunAsync(string attempt)
+        {
+            var (workspace, _) = Workspace(
+                attempt,
+                sha,
+                [verify],
+                24020,
+                preparation: [preparation],
+                preserveGlobs: ["node_modules"]);
+            await workspace.PrepareAsync(null!, default);
+            return await workspace.ExecutePlanAsync(default);
+        }
+
+        await RunAsync("cover-cold");
+        var warm = await RunAsync("cover-warm");
+
+        var install = Assert.Single(warm.Commands, item => item.Phase == "preparation");
+        Assert.Equal("Pass", warm.Outcome);
+        Assert.All(install.DependencyCache!, item => Assert.Equal("hit", item.State));
+        Assert.Equal(covered, install.DependencyCacheHit);
+        Assert.All(install.DependencyCache!, item => Assert.Equal(!covered, item.InstallRan));
+        Assert.Equal(expectedInstalls, (await File.ReadAllTextAsync(counter)).Length);
+    }
+
+    /// <summary>
+    /// AGT-3429 fault 1: <c>NUGET_PACKAGES</c> pointed into the attempt, the
+    /// dependency cache preserved <c>**/obj</c>, and the second attempt's cache
+    /// hit restored a <c>project.assets.json</c> naming a package folder that
+    /// was deleted with the first attempt (NETSDK1064 on
+    /// <c>dotnet build --no-restore</c>). The fixture restore writes the package
+    /// folder into the assets file exactly as NuGet does; the fixture build
+    /// fails the same way NuGet does when that folder is gone.
+    /// </summary>
+    [Fact]
+    public async Task Second_attempt_cache_hit_finds_the_package_folder_its_cached_assets_file_names()
+    {
+        var counter = Path.Combine(_root, "restore-counter.txt");
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["package-lock.json"] = "lock-v1",
+            ["src/App.csproj"] = "<Project />",
+            [".gitignore"] = "node_modules/\n.nm-state\nobj/\n",
+        });
+        var restore = """
+            mkdir -p node_modules src/obj "$NUGET_PACKAGES/humanizer.core/3.0.10" &&
+            touch "$NUGET_PACKAGES/humanizer.core/3.0.10/.nupkg.metadata" &&
+            printf '{"packageFolders":{"%s/":{}}}' "$NUGET_PACKAGES" > src/obj/project.assets.json &&
+            printf x >> 'COUNTER'
+            """.Replace("COUNTER", counter, StringComparison.Ordinal);
+        var build = """
+            folder=$(sed -e 's/.*"packageFolders":{"//' -e 's/\/":.*//' src/obj/project.assets.json)
+            if [ ! -f "$folder/humanizer.core/3.0.10/.nupkg.metadata" ]; then
+              echo 'error NETSDK1064: Package Humanizer.Core, version 3.0.10 was not found.' >&2
+              exit 1
+            fi
+            """;
+        var preparation = new ReviewPreparationCommandDto(
+            "prepare-1",
+            PosixShell.RequirePath(),
+            ["-c", restore],
+            DependencyScopes:
+            [
+                new ReviewDependencyScopeDto("", ["package-lock.json"]),
+            ],
+            CoveredByDependencyScopes: true);
+        var verify = new ReviewCommandDto(
+            "verify-build",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-c", build]);
+
+        async Task<(RemoteReviewWorkspace Workspace, ReviewExecutionEvidence Evidence)> RunAsync(string attempt)
+        {
+            var (workspace, _) = Workspace(
+                attempt,
+                sha,
+                [verify],
+                24022,
+                preparation: [preparation],
+                preserveGlobs: ["node_modules", "**/obj"]);
+            await workspace.PrepareAsync(null!, default);
+            var evidence = await workspace.ExecutePlanAsync(default);
+            Assert.True(await workspace.CleanupAsync(attempt));
+            return (workspace, evidence);
+        }
+
+        var (first, cold) = await RunAsync("nuget-cold");
+        var (second, warm) = await RunAsync("nuget-warm");
+
+        Assert.Equal("Pass", cold.Outcome);
+        Assert.Equal("Pass", warm.Outcome);
+        Assert.True(Assert.Single(warm.Commands, item => item.Phase == "preparation").DependencyCacheHit);
+        Assert.Equal(1, (await File.ReadAllTextAsync(counter)).Length);
+        Assert.Equal(first.NuGetPackagesPath, second.NuGetPackagesPath);
+        Assert.False(Directory.Exists(first.AttemptRoot));
+
+        var cachedAssets = Path.Combine(
+            DependencyCacheSession.CachePath(
+                second.DependencyCacheRoot,
+                TaskServerClient.RepositoryIdentity(_origin)!,
+                "candidate"),
+            "content", "src", "obj", "project.assets.json");
+        var packageFolder = (await File.ReadAllTextAsync(cachedAssets))
+            .Split("\"packageFolders\":{\"", 2)[1]
+            .Split("\"", 2)[0];
+        Assert.Equal(second.NuGetPackagesPath + "/", packageFolder);
+        Assert.True(Directory.Exists(Path.Combine(packageFolder, "humanizer.core", "3.0.10")));
+    }
+
+    /// <summary>
+    /// AGT-3429 fault 2: <c>TMPDIR</c> under the attempt directory left no room
+    /// for Chrome's <c>$TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket</c>
+    /// and Karma's ChromeHeadless could not start. Measured with the longest
+    /// namespace shape the Task Server issues (32-hex attempt id, largest fence)
+    /// and a full 64-hex command hash, on the production temp base.
+    /// </summary>
+    [Fact]
+    public void Longest_attempt_temp_paths_leave_room_for_a_chrome_singleton_socket()
+    {
+        var (workspace, _) = Workspace(
+            "review_" + new string('f', 32),
+            new string('a', 40),
+            [],
+            24024,
+            fence: long.MaxValue,
+            productionTempBase: true);
+        var commandHash = new string('e', 64);
+        var temps = new[]
+        {
+            workspace.TempPath,
+            workspace.BaselineTempPath(commandHash),
+            workspace.BaselineTempPath("clean-" + commandHash),
+        };
+
+        foreach (var temp in temps)
+        {
+            var socket = Path.Combine(temp, "org.chromium.Chromium.PJ3y8e", "SingletonSocket");
+            var bytes = System.Text.Encoding.UTF8.GetByteCount(socket);
+            Assert.True(
+                bytes < ReviewAttemptTemp.UnixSocketPathLimit,
+                $"{socket} uses {bytes} of {ReviewAttemptTemp.UnixSocketPathLimit} bytes");
+            Assert.True(ReviewTempResidue.IsInside(temp, workspace.TempRoot));
+        }
+        Assert.Equal(temps.Length, temps.Distinct(StringComparer.Ordinal).Count());
+        Assert.StartsWith(ReviewAttemptTemp.DefaultBase(), workspace.TempRoot, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Chrome_style_singleton_socket_binds_in_the_longest_baseline_temp()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (workspace, _) = Workspace(
+            "review_" + new string('f', 32),
+            new string('a', 40),
+            [],
+            24025,
+            fence: long.MaxValue,
+            productionTempBase: true);
+        ReviewAttemptTemp.Ensure(workspace.TempRoot, workspace.AttemptRoot, mustBeNew: true);
+        try
+        {
+            var singleton = Path.Combine(
+                workspace.BaselineTempPath(new string('e', 64)),
+                "org.chromium.Chromium.PJ3y8e");
+            Directory.CreateDirectory(singleton);
+            var socketPath = Path.Combine(singleton, "SingletonSocket");
+            using var socket = new System.Net.Sockets.Socket(
+                System.Net.Sockets.AddressFamily.Unix,
+                System.Net.Sockets.SocketType.Stream,
+                System.Net.Sockets.ProtocolType.Unspecified);
+
+            socket.Bind(new System.Net.Sockets.UnixDomainSocketEndPoint(socketPath));
+
+            Assert.True(File.Exists(socketPath));
+        }
+        finally
+        {
+            Assert.True(ReviewAttemptTemp.Remove(workspace.TempRoot));
+        }
+    }
+
+    [Fact]
+    public async Task Attempt_temp_root_lives_outside_the_attempt_and_is_removed_with_it()
+    {
+        var sha = await SeedOriginAsync();
+        var (workspace, _) = Workspace("attempt-temp-cleanup", sha, [], 24026);
+
+        await workspace.PrepareAsync(null!, default);
+
+        Assert.True(Directory.Exists(workspace.TempPath));
+        Assert.False(ReviewTempResidue.IsInside(workspace.TempPath, workspace.AttemptRoot));
+        Assert.Equal(workspace.TempPath, workspace.ProcessEnvironment()["TMPDIR"]);
+        Assert.Equal(workspace.NuGetPackagesPath, workspace.ProcessEnvironment()["NUGET_PACKAGES"]);
+        Assert.Equal(workspace.NuGetScratchPath, workspace.ProcessEnvironment()["NUGET_SCRATCH"]);
+        Assert.True(await workspace.CleanupAsync("attempt-temp-cleanup"));
+        Assert.False(Directory.Exists(workspace.TempRoot));
+        Assert.False(Directory.Exists(workspace.AttemptRoot));
     }
 
     [Fact]
@@ -990,6 +1230,66 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.True(Directory.Exists(boundary));
         Assert.Equal(0, result.Removed);
         Assert.Equal(1, result.YoungSkipped);
+    }
+
+    [Fact]
+    public void Retention_removes_attempt_temp_roots_whose_attempt_is_gone()
+    {
+        var now = new DateTime(2026, 11, 2, 18, 0, 0, DateTimeKind.Utc);
+        Directory.CreateDirectory(_reviewRoot);
+        string TempFor(string attemptRoot)
+        {
+            var temp = ReviewAttemptTemp.Root(TestTempBase, attemptRoot);
+            ReviewAttemptTemp.Ensure(temp, attemptRoot, mustBeNew: true);
+            return temp;
+        }
+        var gone = TempFor(Path.Combine(_reviewRoot, "review-gone-f1"));
+        var live = TempFor(CreateReviewDirectory("review-live-f1", now));
+        var expiredAttempt = CreateReviewDirectory("review-expired-f1", now.AddHours(-73));
+        var expired = TempFor(expiredAttempt);
+        var foreign = TempFor(Path.Combine(_root, "other-review-root", "review-gone-f1"));
+
+        var result = ReviewWorkspaceRetention.Sweep(_reviewRoot, [], now, _ => { }, TestTempBase);
+
+        Assert.False(Directory.Exists(gone));
+        Assert.False(Directory.Exists(expired));
+        Assert.False(Directory.Exists(expiredAttempt));
+        Assert.True(Directory.Exists(live));
+        Assert.True(Directory.Exists(foreign));
+        Assert.Equal(1, result.TempRemoved);
+    }
+
+    [Fact]
+    public void Retention_prunes_old_shared_nuget_packages_only_while_no_attempt_is_active()
+    {
+        var now = new DateTime(2026, 11, 2, 18, 0, 0, DateTimeKind.Utc);
+        var packages = Path.Combine(
+            _reviewRoot,
+            ".dependency-cache",
+            RemoteReviewWorkspace.NuGetPackagesDirectoryName);
+        string Package(string id, string version, DateTime extractedAt)
+        {
+            var path = Path.Combine(packages, id, version);
+            Directory.CreateDirectory(path);
+            var marker = Path.Combine(path, ".nupkg.metadata");
+            File.WriteAllText(marker, "{}");
+            File.SetLastWriteTimeUtc(marker, extractedAt);
+            return path;
+        }
+        var old = Package("humanizer.core", "3.0.9", now.AddDays(-31));
+        var current = Package("humanizer.core", "3.0.10", now.AddDays(-2));
+        var oldOnly = Package("legacy.package", "1.0.0", now.AddDays(-45));
+
+        var busy = ReviewWorkspaceRetention.Sweep(_reviewRoot, ["review-active-f1"], now, _ => { }, TestTempBase);
+        Assert.Equal(0, busy.PackagesRemoved);
+        Assert.True(Directory.Exists(old));
+
+        var idle = ReviewWorkspaceRetention.Sweep(_reviewRoot, [], now, _ => { }, TestTempBase);
+
+        Assert.Equal(2, idle.PackagesRemoved);
+        Assert.False(Directory.Exists(old));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(oldOnly)));
+        Assert.True(Directory.Exists(current));
     }
 
     [Fact]
@@ -2590,9 +2890,11 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         int commandSilenceWatchdogSeconds = 600,
         int reviewNoCpuProgressSeconds = 900,
         int composeScenarioMinFreePercent = ComposeScenarioDiskAdmission.DefaultMinFreePercent,
+        int reviewAspectParallelism = ReviewAspectFanOut.MaximumParallelism,
         Action<string>? log = null,
         Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null,
-        AgentRunner.SourceFacts.ISourceFactsClient? sourceFacts = null)
+        AgentRunner.SourceFacts.ISourceFactsClient? sourceFacts = null,
+        bool productionTempBase = false)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -2645,6 +2947,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             CommandSilenceWatchdogSeconds = commandSilenceWatchdogSeconds,
             ReviewNoCpuProgressSeconds = reviewNoCpuProgressSeconds,
             ComposeScenarioMinFreePercent = composeScenarioMinFreePercent,
+            ReviewAspectParallelism = reviewAspectParallelism,
+            // Keeps the short attempt temp roots inside the test root; the
+            // socket-length tests measure the production base.
+            ReviewTempBase = productionTempBase ? null : TestTempBase,
         };
         return (new RemoteReviewWorkspace(options, subject, lease, log ?? (_ => { }),
             historyReader ?? (_ => Task.FromResult<FailureFingerprintHistoryDto?>(null)),
@@ -2693,15 +2999,24 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         if (Directory.Exists(_origin))
             return (await GitAsync(_origin, "rev-parse", "refs/heads/main")).StdOut.Trim();
         var seed = Path.Combine(_root, "seed");
-        await GitAsync(_root, "init", "--bare", _origin);
-        await GitAsync(_root, "init", "-b", "main", seed);
+        // Built once per test process; each test starts from a copy (AGT-3419).
+        GitRepositoryTemplate.CopyTo("remote-review-workspace:origin:v1", _root,
+            root => Task.Run(() => BuildSeededOriginAsync(root)).GetAwaiter().GetResult());
+        return (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
+    }
+
+    private static async Task BuildSeededOriginAsync(string root)
+    {
+        var origin = Path.Combine(root, "origin.git");
+        var seed = Path.Combine(root, "seed");
+        await GitAsync(root, "init", "--bare", origin);
+        await GitAsync(root, "init", "-b", "main", seed);
         await File.WriteAllTextAsync(Path.Combine(seed, "product.txt"), "immutable product");
         await GitAsync(seed, "add", "product.txt");
         await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
             "commit", "-m", "result");
-        await GitAsync(seed, "remote", "add", "origin", _origin);
+        await GitAsync(seed, "remote", "add", "origin", origin);
         await GitAsync(seed, "push", "origin", "main");
-        return (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
     }
 
     private async Task<string> SeedOriginWithFilesAsync(IReadOnlyDictionary<string, string> files)

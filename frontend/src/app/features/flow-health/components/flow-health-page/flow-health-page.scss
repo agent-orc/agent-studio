@@ -1,0 +1,186 @@
+@use '../../../../../styles/lane-tone';
+
+:host { display: block; }
+
+.fh {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-4);
+  color: var(--studio-fg-strong);
+}
+
+.fh__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--studio-spacing-3);
+
+  h2 { margin: 0; font-size: var(--studio-card-title-size); }
+  p { margin: var(--studio-spacing-1) 0 0; color: var(--studio-fg-muted); font-size: var(--studio-card-meta-size); }
+}
+
+.fh__refresh,
+.fh__link {
+  font: inherit;
+  font-size: var(--studio-card-meta-size);
+  color: var(--studio-fg);
+  background: var(--studio-bg-surface);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-card-compact-radius);
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
+  cursor: pointer;
+
+  &:hover:not(:disabled) { background: var(--studio-bg-hover); }
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+  &:disabled { cursor: default; color: var(--studio-fg-muted); }
+}
+
+.fh__link {
+  background: transparent;
+  border-color: transparent;
+  color: var(--studio-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+// The brake reads as a full-surface tint with a dot, never as a side bar (R1).
+.fh__brake {
+  --fh-tone: var(--studio-fg-muted);
+
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+  margin: 0;
+  padding: var(--studio-spacing-3) var(--studio-spacing-4);
+  border: 1px solid color-mix(in srgb, var(--fh-tone) 40%, var(--studio-border));
+  border-radius: var(--studio-card-radius);
+  background: color-mix(in srgb, var(--fh-tone) 12%, var(--studio-bg-surface));
+  font-size: var(--studio-card-title-size);
+  font-variant-numeric: tabular-nums;
+
+  &[data-tone='brake'] { --fh-tone: var(--studio-error); }
+  &[data-tone='calm'] { --fh-tone: var(--studio-success); }
+}
+
+.fh__dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--fh-tone);
+  align-self: center;
+}
+
+.fh__brake-label {
+  color: var(--studio-fg-muted);
+  font-size: var(--studio-card-meta-size);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fh__brake-text { font-weight: 600; }
+
+.fh__block {
+  border: 1px solid var(--studio-card-border);
+  border-radius: var(--studio-card-radius);
+  background: var(--studio-card-bg);
+  overflow: hidden;
+}
+
+.fh__block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) var(--studio-card-compact-padding-inline);
+  border-bottom: 1px solid var(--studio-card-muted-border);
+
+  h3 { margin: 0; font-size: var(--studio-card-compact-title-size); }
+}
+
+.fh__scroll { overflow-x: auto; }
+
+table {
+  width: 100%;
+  min-width: 48rem;
+  border-collapse: collapse;
+  font-size: var(--studio-card-meta-size);
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  padding: var(--studio-spacing-2);
+  border-bottom: 1px solid var(--studio-card-muted-border);
+  text-align: right;
+  vertical-align: top;
+}
+
+tbody tr:last-child > * { border-bottom: 0; }
+
+thead th { color: var(--studio-fg-muted); font-weight: 600; }
+
+th:first-child {
+  padding-left: var(--studio-card-compact-padding-inline);
+  text-align: left;
+  width: 30%;
+}
+
+tbody th {
+  font-weight: 600;
+
+  small {
+    display: block;
+    margin-top: var(--studio-spacing-1);
+    color: var(--studio-fg-muted);
+    font-weight: 400;
+  }
+}
+
+.fh__text { text-align: left; }
+.fh__all { color: var(--studio-fg-muted); }
+
+.fh__stage {
+  @include lane-tone.vars;
+
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+
+  i {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: var(--lane-tone-fg);
+  }
+}
+
+.fh__badge {
+  --fh-tone: var(--studio-fg-muted);
+
+  display: inline-block;
+  padding: 0 var(--studio-spacing-2);
+  border: 1px solid color-mix(in srgb, var(--fh-tone) 45%, var(--studio-border));
+  border-radius: var(--studio-card-pill-radius);
+  background: color-mix(in srgb, var(--fh-tone) 14%, transparent);
+  color: var(--studio-fg-strong);
+  white-space: nowrap;
+
+  &[data-status='met'] { --fh-tone: var(--studio-success); }
+  &[data-status='missed'] { --fh-tone: var(--studio-error); }
+}
+
+.fh__trend {
+  color: var(--studio-fg-muted);
+
+  &[data-trend='worse'] { color: var(--studio-fg-strong); font-weight: 600; }
+}
+
+.fh__foot,
+.fh__empty {
+  margin: 0;
+  padding: var(--studio-spacing-2) var(--studio-card-compact-padding-inline);
+  color: var(--studio-fg-muted);
+  font-size: var(--studio-card-meta-size);
+}

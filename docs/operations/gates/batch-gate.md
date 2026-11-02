@@ -126,6 +126,13 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   for `codex`, each with a `_FILE` variant. Without that credential, the engine
   records an advisor fallback with the requested model and keeps the
   deterministic plan. It never substitutes another model.
+- The networked profile never starts the advisor CLI on the server
+  (AGT-3411). With Engine ownership of `BatchPlan` the engine carries the
+  advisor as above. Otherwise the configured advisor does not run: the batch
+  tick decides deterministically, logs `batch-plan-advisor-off` once, and
+  `GET /api/projects/{name}/batch-gate` reports `advisorEffective` with
+  `effectiveMode: off`, `carrier: none`, and the reason, which Batch settings
+  shows beside the advisor fields.
 
 ## Open
 
@@ -152,5 +159,5 @@ Enable one project with `scope: code`, `planner: look-ahead`,
 `lookAheadMinutes: 45`, `riskPolicy: balanced`, `overlap: adjacent`,
 `reviewTestLevel: work-package`, `gateTimeoutMinutes: 150`, and
 `advisor.mode: advise`. Roll back with `scope: documentation` or
-`enabled: false`; pending members use the per-task gate on their immutable
-result SHA. The setting does not authorize a project-wide rollout.
+`enabled: false`; pending members use the per-task gate, which tests their
+immutable result SHA merged onto the current integration tip (AGT-3434). The setting does not authorize a project-wide rollout.

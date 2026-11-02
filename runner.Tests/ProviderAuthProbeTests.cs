@@ -376,6 +376,24 @@ public sealed class ProviderAuthProbeTests
     }
 
     [Fact]
+    public async Task Model_capacity_keeps_provider_ready_while_real_usage_limit_holds_until_reset()
+    {
+        var now = new DateTimeOffset(2026, 11, 2, 15, 37, 0, TimeSpan.Zero);
+        var probe = Probe(Answers(0, "Logged in"), clock: () => now);
+        await probe.RefreshAsync("codex", CancellationToken.None);
+
+        var capacity = probe.RecordProcessResult("codex", new ProcessResult(1, "",
+            "Selected model is at capacity. Please try a different model."));
+        Assert.Equal(ProviderAuthProbe.Ready, capacity.Status);
+        Assert.Null(capacity.LimitedUntil);
+
+        var limited = probe.RecordProcessResult("codex", new ProcessResult(1, "",
+            "usage limit reached; resets at 2026-11-02T16:37:00Z"));
+        Assert.Equal(ProviderAuthProbe.Limited, limited.Status);
+        Assert.Equal(new DateTimeOffset(2026, 11, 2, 16, 37, 0, TimeSpan.Zero), limited.LimitedUntil);
+    }
+
+    [Fact]
     public async Task Successful_run_whose_output_mentions_rate_limits_keeps_the_capability_ready()
     {
         // 15.09.2026: an agent read runner docs containing "rate-limited" and a

@@ -21,7 +21,9 @@ public sealed record InstallationConnectivityManifest(
     IReadOnlyList<string> EnabledListeners,
     IReadOnlyList<ConnectivityPortOverride>? PortOverrides,
     IReadOnlyList<ConnectivityRunnerRoute> Runners,
-    IReadOnlyList<ConnectivityMachine>? Machines = null)
+    IReadOnlyList<ConnectivityMachine>? Machines = null,
+    IReadOnlyList<ConnectivityExternal>? Externals = null,
+    IReadOnlyList<ConnectivityStructureLink>? StructureLinks = null)
 {
     public static InstallationConnectivityManifest Parse(string json)
         => JsonSerializer.Deserialize<InstallationConnectivityManifest>(json, ConnectivityPolicy.Json)
@@ -31,8 +33,12 @@ public sealed record InstallationConnectivityManifest(
 public sealed record ConnectivityPortOverride(string Listener, int Port);
 
 /// <summary>Optional placement inventory. It declares identity and roles, not runtime health.</summary>
-public sealed record ConnectivityMachine(string Id, string Name, IReadOnlyList<ConnectivityComponent> Components);
-public sealed record ConnectivityComponent(string Id, string Name, string Role, string Kind);
+public sealed record ConnectivityMachine(string Id, string Name, IReadOnlyList<ConnectivityComponent> Components,
+    string? ParentId = null, string? Kind = null, string? Location = null);
+public sealed record ConnectivityComponent(string Id, string Name, string Role, string Kind,
+    string? ProjectId = null, string? EnvironmentId = null);
+public sealed record ConnectivityExternal(string Id, string Name, string? Kind = null);
+public sealed record ConnectivityStructureLink(string From, string To, string Kind, string? Label = null);
 
 /// <summary>One runner's selected route. ReverseSsh only exists for the bounded transition.</summary>
 public sealed record ConnectivityRunnerRoute(
@@ -211,6 +217,26 @@ public static class ConnectivityPolicy
                     || !componentIds.Add(component.Id))
                     add("component-identity", machine.Id ?? "machine", "Component id and name must be set and ids must be unique per machine.",
                         "Give each declared component a unique id and name.");
+        }
+        foreach (var machine in manifest.Machines)
+            if (machine.ParentId is { Length: > 0 } parent &&
+                (!ids.Contains(parent) || string.Equals(parent, machine.Id, StringComparison.OrdinalIgnoreCase)))
+                add("machine-parent", machine.Id, "Machine parentId must name another machine.",
+                    "Use a declared parent machine id.");
+        foreach (var machine in manifest.Machines)
+        {
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { machine.Id };
+            var parent = machine.ParentId;
+            while (parent is not null && manifest.Machines.FirstOrDefault(m =>
+                       string.Equals(m.Id, parent, StringComparison.OrdinalIgnoreCase)) is { } ancestor)
+            {
+                if (!visited.Add(parent))
+                {
+                    add("machine-cycle", machine.Id, "Machine placement contains a cycle.", "Remove the cyclic parentId.");
+                    break;
+                }
+                parent = ancestor.ParentId;
+            }
         }
     }
 

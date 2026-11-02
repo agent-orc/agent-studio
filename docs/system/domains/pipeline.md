@@ -29,6 +29,13 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+Each gate-economics row also carries the grouping figures of its window
+(AGT-3399): `batchesClosed` (distinct batches whose gate ran), `meanBatchSize`
+(largest membership per batch, averaged), and `soloGatedMerges` (merges
+integrated by a per-card gate). The project Flow health view reads them with the
+cycle-time rows, whose `reviewAspectSeconds` split review time per `aspect-*`
+step inside Post Processing.
+
 ### Per-project integration test placement (AGT-3314)
 
 `testing.mode` defaults to `pre-merge`. That path retains the existing
@@ -214,7 +221,9 @@ it after startup. The batch fallback retains its durable active marker and uses
 its existing two-start budget. The merge gate restores unpublished anchors and
 records `gate-interrupted`; the integration retry ledger permits one replay for
 this shutdown reason. Exhaustion follows the existing infrastructure parking
-path. Explicit operator cancellation keeps the failed-gate parking behavior.
+path. Explicit operator cancellation of a batch fallback returns the card to
+Auto Review for batch planning. Other gate routes retain their own cancellation
+behavior.
 Each cancelled run adds one `gate-cancelled` timeline receipt naming
 `superseded`, `shutdown`, or `operator`.
 
@@ -351,6 +360,12 @@ Member replay routes (AGT-3104, chosen by the pure `BatchReplayPolicy`):
 | Contains a merge commit (a fix round that merged the integration branch) | `git merge --no-ff` of the untouched result commit | the result SHA maps to that one merge commit |
 | Result already contained in the tip | none | unattributable, member ejected |
 
+Direct-merge projects use a different route when a delivery with merge commits
+is behind their current integration tip. They replay the final delivery tree's
+net change against the merge base as one commit on the tip. The gate and push
+use that exact commit, and the card maps each delivery commit absent from the
+tip to it. A tree conflict names its files and starts an agent round.
+
 The merge route is the documented strategy for non-linear deliveries. It is
 the same `--no-ff` merge the per-task integration uses, so every delivery SHA,
 the fix round's own merge included, stays an ancestor of the candidate and no
@@ -373,16 +388,19 @@ other failure (fetch, worktree, or git read errors) is infrastructure and
 pauses the batch as before. An unattributable ejection does not count toward
 the conflict cascade guard and ends a run of consecutive conflicts; its replay
 record keeps the route it failed on (`merge` for a merge-parent mismatch).
-Every ejected member, conflict or unattributable, returns to per-task fallback
-after publication. Before scheduling a gate, the tick checks whether the
-integration branch already contains its result by ancestry or patch equivalence.
+Conflicted members start a bounded agent merge round with the conflicted files
+named in the steer prompt. Cascade-deferred members stay in Auto Review for the
+next batch plan; when no member was admitted, that plan is requested at once.
+Unattributable members return to per-task fallback after publication. Before
+scheduling a gate, the tick checks whether the integration branch already
+contains its result by ancestry or patch equivalence.
 Published members leave through a containment record without another gate or
 per-task integration. Publication recovery repeats this check on later ticks
 while the member's review is still pending, so a restart between the remote push
 and the fallback's first marker does not strand the card (the published batch's
 ownership marker keeps it out of later batches). Paused-batch recovery checks
 the same containment before releasing members to fallback. The batch state
-projection marks every conflict or unattributable ejection as `fallback` with
+projection marks unattributable ejections as `fallback` with
 `reason` and `reasonDetail`, and
 the card badge shows it, for example "Per-task fallback · unattributable
 history".
@@ -538,8 +556,34 @@ gate the tree again. An uncontained delivery remains blocked. A failed acceptanc
 Verified members also
 receive an idempotent integration bookkeeping
 record with their mapped SHA set and tested remote tip. A disabled project and
-a lone aged member use the ordinary per-card
-gate on the same immutable result subject. Within one backend process that
+a lone aged member use the per-card gate on the same immutable delivery.
+Since AGT-3434 that gate tests the delivery merged onto the freshly fetched
+integration tip. AGT-3408 spent 56
+minutes there and escalated on tests develop had already fixed; the merge
+path then ran a second gate on the merged tree. The candidate is a `--no-ff`
+merge commit with the tip and the result SHA as parents, or the result SHA
+when it already descends from the tip. It is pinned under
+`refs/agent-studio/fallback-candidates/` only while its gate runs. The card
+marker keeps `fallbackTestedSha` as the delivery SHA that passed, so lane
+release and acceptance compare it with the result SHA as before. The marker
+also records the tip, candidate and tree it tested. A resumed gate keeps that
+candidate while the tip stands, so the exact-SHA verdict cache still applies.
+A merge conflict runs no gate: the card returns to its agent for one
+automatic merge round whose prompt names the conflicted files, or escalates
+with those files when that round cannot start. The old base protected one
+thing, which the change keeps: a red integration branch must not escalate a
+delivery that is green on its own. A deterministic red on a merged candidate
+therefore reads the durable base verdict of that tip, which it shares with
+batches and runs only once per tip. When the tip is red on its own, the same
+flight retests the delivery on its own base and records `fallbackOwnBase`.
+A tip that cannot be fetched or merged for a reason other than a conflict
+also keeps the own-base subject.
+The publish step stands on that verdict instead of running the merge gate
+when the merge lands on the recorded tip with the recorded tree
+(`PerTaskGateVerdictReusePolicy`). Its receipt reads `verdictSource=CacheHit`
+and the lane event level is `per-task-verdict`. A moved tip, another tree, or
+an own-base verdict keeps today's merge gate on the merged tree.
+Within one backend process that
 per-card gate runs at most once at a time per review generation: a retried
 review report or a tick that meets a running fallback waits for it instead of
 starting a second gate. The card marker records that per-card gate as active
@@ -600,7 +644,12 @@ until measured on the same window. `fullSuiteRuns` counts every full gate
 execution, including emergency per-task fallbacks run at review settlement;
 `fullSuiteHostMinutes` also includes narrow base checks. `baseChecks` lists
 per red candidate what answered the base question and its minutes, and
-`baseCheckMinutes` sums them. `reviewVerificationRuns`, `reviewVerificationHostMinutes`
+`baseCheckMinutes` sums them. `perTaskFallbackCards`, `perTaskFallbackSuiteRuns`,
+`perTaskFallbackSuitesPerCard` and `perTaskPublishVerdictReuses` (AGT-3434)
+count, once per review generation the per-task path settled, the suites that
+card ran: its per-task gates, the tip verdict it triggered, and the merge gate
+when the publish step ran it instead of reusing the per-task verdict.
+`reviewVerificationRuns` and `reviewVerificationHostMinutes`
 and `reviewVerificationBaselineMinutes` count the builds and selected tests a
 batch-deferred review ran itself (`review-verification` tool commands,
 candidate and clean-repeat plus non-cached baseline workspaces), recorded once
@@ -748,6 +797,21 @@ observed during a gate dispatch. Reachability becomes unverified five minutes
 after the last successful SSH check; this read endpoint never starts a probe.
 Size slots times processors below host online cores; see the
 [execution hosts runbook](../../operations/remote-hosts.md#remote-buildtest-gate-capacity).
+
+**Fair slot order (AGT-3423).** With more than one SSH gate slot, the last
+slot serves short gates. A gate is short when the median slot hold of its
+project's last ten remote gates is at most 10 minutes; fewer than three
+recorded gates count as long. The transport keeps that history in
+`gate-duration-history.json` under the local application data folder
+(`RemoteGate:DurationHistoryPath` overrides it) and sends the class in the
+invocation. A short gate tries the short slot first and may take any free
+slot. A long gate uses the other slots in arrival order and may also take
+the short slot once it has waited 45 minutes, so no gate starves. Borrowed
+shard lanes follow the same rule. With one slot, or for an unclassified
+request (local gates, pull workers), every gate shares the slots in arrival
+order as before. The rule lives only in `GateSlotFairnessPolicy`.
+`GET /api/system/gate-slots` returns which slot runs which gate of this
+process and why a gate waits; the project Pipeline page shows it.
 SSH must already have a trusted host
 key and noninteractive credentials. Host-key checking and batch mode are
 mandatory. The worker is invoked explicitly with
@@ -809,6 +873,12 @@ as before.
   gate measurement on the gate hosts shows a gain. A gate worker older than
   AGT-3232 rejects the field as `unknown-field`, so add it only after every
   gate host runs the new worker.
+  On the gate host (24 vCPU) on 2 November 2026 the whole backend suite, 13,288
+  tests, took 20 minutes in four parallel processes with 6 processors each and a
+  hash partition, next to a running batch gate, without a failure. One process
+  with 12 processors took 33 minutes. Most of the time is spent waiting, so the
+  host load stayed between 10 and 21. `backend-routine` declares `shards: 4` since
+  then, with `RemoteGate:ProcessorCount` 6 so that four lanes fit on the host.
 - **Count.** `shards: N` (1 to 16; 1 keeps the suite in one process) sets the
   count. `shards: auto` derives it from the measured serial duration of the
   last complete sharded run, or else `expectedDurationSeconds`, at 360 seconds
@@ -1829,6 +1899,26 @@ move-error dialog.
   complete stdout and stderr artifacts are retained in the Remote Review grade.
   A missing preparation directory is also copied into the grade Detail line so
   the path is visible without opening stderr.
+- What the dependency cache may skip (AGT-3429). A cache hit proves only that
+  each lockfile scope's `node_modules` and `.nm-state` marker match its
+  lockfiles. It skips a preparation command only when every scope of that
+  command hits and the plan marks the command as covered by its scopes
+  (`CoveredByDependencyScopes`, decided by `DependencyPreparationSkipPolicy`).
+  The planner marks a conventional `npm ci` for one lockfile root as covered. A
+  build-profile `installCmd` is opaque shell and runs on every attempt, unless
+  the profile sets `installCoveredByLockfiles: true` to state that its
+  `lockfiles` cover everything the command prepares; leave it false when the
+  command also runs `dotnet restore` or anything else outside the lockfile
+  scopes. `dotnet restore` has no scope and always runs. A plan without the
+  field runs the command. The opt-in is part of the profile fingerprint only
+  when set, so existing validations stay valid. Restored `**/obj` content stays
+  valid in a later Remote Review attempt because every attempt and role uses
+  the host-stable NuGet folder `<review-workdir>/.dependency-cache/nuget-packages`
+  with a shared `nuget-scratch` for NuGet's extraction locks, so a cached
+  `project.assets.json` never names a package folder deleted with an earlier
+  attempt (NETSDK1064). The review retention sweep removes package versions
+  extracted more than 30 days ago while no attempt is active; the next restore
+  extracts them again.
 - Compatibility dependency preparation and verification consume one shared `gate-run` budget.
   Machine-gate queue wait, exact workspace materialization, and exact workspace
   cleanup have separate named budgets. Local Git operations receive the remaining
@@ -1972,8 +2062,20 @@ move-error dialog.
   the full suite once on that exact source SHA, records
   `post-steps/pre-main-test-gate-*.log`, rechecks both branch tips after the
   suite, and only then fast-forwards `main`. A red or incomplete result leaves
-  `main` unchanged. The future manifest-based release workflow must use the
-  same boundary.
+  `main` unchanged. In a repository that integrates straight into `main`, a
+  delivery that already descends from `main` takes that fast-forward path. A
+  delivery behind `main` (AGT-3435) gets the same `--no-ff` merge as the
+  develop path, under the gate journal. The full suite then runs on the exact
+  merge SHA. A red verdict rolls the lane back and nothing is published. A green
+  verdict stands only while the merge base still contains the freshly fetched
+  `origin/main`. When `main` moved during the suite, the lane is rolled back and
+  the delivery is merged and gated again, at most
+  `ReleaseLineMergePolicy.MaxAttempts` (3) times; the last refusal is
+  `release-line-moving`. A real conflict returns `agent-round-required` with the
+  conflicted files, which starts the one bounded automatic round. A mechanical
+  rebase records its SHA mapping like the develop path. The old
+  `source-needs-rebase` refusal is no longer written for this case. The future
+  manifest-based release workflow must use the same boundary.
 - Framework-specific catalogue steps declare `appliesTo`; `any` remains the
   default. The project catalogue response includes derived `detectedStacks`, an
   `applicable` flag, and the effective resolved command list for every step.
@@ -2472,8 +2574,22 @@ operator changes cause the step to fail before its writer runs.
   `claude-opus-5-5` / `low`. The Haiku fallback and the shared
   `ClaudeCli:SummaryModel` key no longer apply to it. An inherited model the
   chosen CLI cannot run falls back to the catalogue default.
-  The prompt receives the log tail and an evidence bundle
-  (`SummaryEvidenceAssembler`). The bundle holds the lane and lane history,
+  The prompt receives the run evidence and an evidence bundle
+  (`SummaryEvidenceAssembler`). The step is an orchestrator step, so the
+  whole prompt must stay under the 32 KB `OrchestratorPromptBoundary` limit
+  (AGT-3410). `SummaryPromptFit` fills the `{{log}}` slot with the bytes the
+  rest of the prompt leaves: the task prompt head (`prompt.md`), the run
+  status lines and last terminal sentinel, the `results/` deliverables and the
+  latest agent messages keep bounded sections; the run log before them gets
+  the remainder, newest lines first, without `runner-log-delivery` markers and
+  with long tool-call lines cut to 400 bytes. An `OMITTED TO FIT THE PROMPT
+  LIMIT` list at the top of the slot names everything left out, and raw
+  session paths and credentials are replaced before the boundary sees them.
+  Each shortened prompt logs `Summary prompt shortened` with its size and a
+  running count. A boundary refusal (`decision-input-incomplete:*`) is not
+  retried: finalization stops after the first attempt, logs
+  `Result finalization degraded` with `promptBytes` and `degradedTotal`, and
+  queues no remote retry. The bundle holds the lane and lane history,
   pipeline step statuses, reasons and failure codes, the commit chain and
   `codeActivityDetected`, integration records and verification, salvage refs
   from `agent_run_finished`, the completion claim, review and sight-review
@@ -2814,6 +2930,68 @@ new fact even when its operator-facing summary is unchanged.
   operator requeue) plus the loop breaker
   `backend.Tests/Architecture/RunTimeoutContinuationBreakerTest.cs`.
 
+## Minimal repository execution definition (AOW-15)
+
+A repository without a build system still needs a valid
+`.agent-studio/project.yml` once it adds one. The smallest valid file is:
+
+```yaml
+schemaVersion: 1
+stack: [shell]
+commands:
+  prepare: .agent-studio/prepare
+  build: []
+  test: []
+  lint: []
+```
+
+with an executable prepare script next to it:
+
+```sh
+#!/bin/sh
+set -eu
+```
+
+Rules an agent must follow when it writes the file:
+
+- `commands.prepare` is required. It is a repository-relative path with
+  forward slashes and no `..`; anything else is `prepare-path-invalid`.
+- The script must exist in the same delivery (`prepare-script-missing`
+  otherwise) and must be committed executable
+  (`git update-index --chmod=+x .agent-studio/prepare`). POSIX hosts run it
+  through `/bin/sh`; Windows hosts use `prepare.ps1` beside it or Git Bash.
+- `stack` needs at least one entry. `shell` is a free label that binds no
+  dependency cache; `node`, `dotnet` and `playwright` bind the npm, NuGet and
+  Playwright caches.
+- Empty `build`, `test` and `lint` lists are valid. The gate then has no
+  verify command and records `NotApplicable` (`No build/test defined`).
+
+An invalid definition is a code failure of the delivery that carries it, in
+every gate path:
+
+- `ProjectPreparationExecutor.RunAsync` returns a reason that lists each issue
+  as `path (line N) [code] message`, bounded by
+  `ProjectDefinitionIssueText.MaxLength`. The structured issues stay on
+  `BuildTestGateResult.ProjectDefinitionIssues`.
+- `BuildTestGateRunner` maps `PreparationFailureKind.Definition` to
+  `BuildTestGateFailureKind.Code` and does not run the baseline / clean-repeat
+  diagnosis for it. Before AOW-15 that diagnosis returned
+  `unclassified-first-occurrence` and retyped the failure as `Environment`, so
+  the merge gate reported `gate-environment-failure`, spent the environment
+  replay ladder, and parked the card with "repair the gate host".
+- `GateFailureTriagePolicy` classifies a gate log whose reason carries the
+  invalid-definition text as `product` with kind `definition`, before any
+  environment marker. The failing items are the `path [code]` pairs. Routing
+  starts the one fix round with the issues and the rule above, never attaches
+  the card to a shared cause, and never spends the environment replay budget.
+- Review checks the file first. Right after the completion gate,
+  `ProjectDefinitionGate` reads `project.yml` at the exact subject SHA through
+  git and validates it, including the existence of every referenced file. An
+  invalid file reissues the card to its agent with one finding per issue,
+  within the shared reissue budget, before the build gate or any review aspect
+  runs. A delivery without the file, or a subject git cannot read, passes this
+  check; the build gate stays the backstop.
+
 ## Project deployment definition (P1)
 
 ### Card previews
@@ -2847,7 +3025,8 @@ green delivery can replace an expired preview; the same SHA cannot recreate it.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
-`environments`, `lifecycles.standard`, `deploy`, `tenants`, and `variables`. Existing
+`environments`, `lifecycles.standard`, `deploy`, `tenants`, `variables`, and
+`structure`. Existing
 `commands` and `testSuites` remain the execution source until the pipeline
 engine is extended.
 Each release hashes these sections at its commit into its process and
@@ -2923,6 +3102,24 @@ in
   parameter (`?token=`, `api_key=`, `password=`), a connection-string
   `Password=`, a PEM private key, a `Bearer` or `Basic` authorization value, a
   JWT, or a common provider key prefix.
+- `structure` (AGT-3349 S5) declares the deployment shape the Operations
+  structure view draws; it does not enter the release process or variables
+  versions. `regions` have a lower-case `name` and an optional `label`.
+  `placements` have a `name`, a `kind`, an optional `parent` placement, a
+  declared `region`, `environments`, the `artifacts` that run there, and
+  `replicas` (1 to 1000). A kind is `server`, `vm`, `cluster`, `namespace`, or a
+  runner deploy target kind, which maps to a placement kind
+  (`ProjectStructureVocabulary.PlacementKindFor`): `ssh-docker` is drawn as a
+  server, `kubernetes` as a cluster, `cloud-run` as a managed runtime. A
+  namespace needs a cluster or Kubernetes parent; a nested placement inherits
+  environments and stays in its parent's region; parents must not form a
+  cycle. `managedServices` have a `name`, a `kind` (`database`, `queue`,
+  `object-storage`, `cache`, `search`, `other`), a `region`, `environments`,
+  and an optional `healthCheck`: the id of a health check in that
+  environment's declaration. The control-plane health worker already probes
+  those checks, so `GET /api/v1/operations/structure` reports the service as
+  probed via that check's kind with its status; without one it is declared,
+  not observed. Addresses and credentials never appear in this section.
 
 Unknown keys are refused per section and per step kind. Every issue carries its
 definition path and, when the path resolves, the 1-based `line` in project.yml.
@@ -2930,7 +3127,8 @@ The editor contract is
 [`project-execution.schema.json`](../../app/schemas/project-execution.schema.json);
 `ProjectDefinitionSchemaTwoTests` keeps its step kinds, step keys, artifact types,
 variable keys, and its remote path, compose suffix, artifact path, identifier,
-and secret name patterns equal to `ProjectDeploymentVocabulary`.
+and secret name patterns equal to `ProjectDeploymentVocabulary`;
+`ProjectStructureDefinitionTests` does the same for `ProjectStructureVocabulary`.
 
 Release card attribution first matches archived integration-verification SHAs
 against the commits added since the previous release. A retained card key in

@@ -21,6 +21,35 @@ public sealed class AcceptedIntegrationFailurePolicyTests
         Assert.Equal(RunFailureSignatures.GitRefLockRace, failure.FailureSignature);
     }
 
+    [Theory]
+    [InlineData("Integration branch 'main' could not be fetched from origin: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+        AcceptedIntegrationFailureCodes.GitCredentialUnavailable)]
+    [InlineData("Integration branch 'develop' could not be fetched from origin: remote: Invalid username or password.",
+        AcceptedIntegrationFailureCodes.GitCredentialUnavailable)]
+    [InlineData("Integration branch 'develop' could not be fetched from origin: git operation timed out after 30 seconds",
+        AcceptedIntegrationFailureCodes.BranchSyncFailed)]
+    [InlineData(null, AcceptedIntegrationFailureCodes.BranchSyncFailed)]
+    public void A_branch_sync_refused_for_its_credential_gets_its_own_transient_code(string? error, string expected)
+        => Assert.Equal(expected, AcceptedIntegrationFailureCodes.ForBranchSync(error));
+
+    [Fact]
+    public void A_refused_git_credential_is_an_infrastructure_failure_and_never_a_rebase()
+    {
+        var failure = AcceptedIntegrationFailurePolicy.Classify(
+            PipelineStepStatus.Failed,
+            "error",
+            "Integration branch 'main' could not be fetched from origin: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+            null,
+            AcceptedIntegrationFailureCodes.GitCredentialUnavailable);
+
+        Assert.NotNull(failure);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GitCredentialUnavailable, failure.Code);
+        Assert.Equal("Git credential unavailable", failure.Label);
+        Assert.False(failure.RebaseRecoveryAvailable);
+        Assert.Equal(RunFailureClass.Infrastructure, failure.FailureClass);
+        Assert.Equal(RunFailureSignatures.GitCredentialRefused, failure.FailureSignature);
+    }
+
     public static TheoryData<string, string, string, bool> FailureMatrix => new()
     {
         {
@@ -132,6 +161,7 @@ public sealed class AcceptedIntegrationFailurePolicyTests
     [InlineData(AcceptedIntegrationFailureCodes.RebaseAttributionFailed)]
     [InlineData(AcceptedIntegrationFailureCodes.IntegrationRefUnresolved)]
     [InlineData(AcceptedIntegrationFailureCodes.GateUnavailable)]
+    [InlineData(AcceptedIntegrationFailureCodes.ReleaseLineMoving)]
     public void Classify_PersistedErrorCode_IsKeptWithItsOwnLabelAndReason(string code)
     {
         const string reason = "The exact diagnostic the runner recorded.";

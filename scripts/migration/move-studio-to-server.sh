@@ -167,6 +167,12 @@ server_relocate() {
   relocate_paths "$@" >"$root/move-bin/relocate-report.json" \
     || fail "path relocation has unresolved paths; see $root/move-bin/relocate-report.json and add them with --extra-mapping"
   relocate_paths "$@" --apply >/dev/null
+  # A project without a repository visibility setting takes what the
+  # workstation's anonymous probe found, so a private repository arrives private.
+  if [ -f "$root/move-bin/visibility.json" ]; then
+    node "$root/move-bin/move-studio-to-server.mjs" carry-visibility --workspace "$2" \
+      --visibility "$root/move-bin/visibility.json" || fail 'cannot carry the repository visibility into project-settings.json'
+  fi
 }
 
 server_disable_push() {
@@ -174,6 +180,27 @@ server_disable_push() {
   for remote in $(git -C "$repo" remote); do
     git -C "$repo" remote set-url --push "$remote" no-push://move-rehearsal
   done
+}
+
+# The readiness report the server computes about itself (AGT-3412), read from
+# inside the API container: its probe route answers loopback callers only.
+# Lists every check that is not ready with its remedy; never fails the move,
+# which already switched by the time it runs.
+server_readiness() {
+  report=$1; domain=$2; shift 2
+  attempt=0
+  until "$@" exec -T api curl --fail --silent --show-error --max-time 10 -H "Host: $domain" \
+      http://127.0.0.1:5031/healthz/readiness >"$report" 2>/dev/null \
+      && [ "$(json_field state <"$report" 2>/dev/null)" != pending ]; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 60 ]; then
+      echo 'readiness: the server computed no readiness report within two minutes; open the operations page and Recheck'
+      return 0
+    fi
+    sleep 2
+  done
+  node "$script_dir/readiness-report.mjs" "$report" || true
+  echo "readiness: report kept at $report"
 }
 
 server_smoke() {
@@ -241,6 +268,7 @@ server_smoke() {
   rm -f "$work/runner.curl"
   [ "$status" = 200 ] || fail "runner: claim with the test credential returned HTTP $status"
   echo "check: runner claim ok ($runner_name, status $(json_field status <"$work/claim.json"))"
+  server_readiness "$root/move-bin/rehearsal-readiness.json" "$host" compose
 }
 
 server_rehearse() {
@@ -418,6 +446,7 @@ server_apply() {
   rm -rf "$root/move-staging"
   echo 'staging: removed'
   live ps --format '{{.Service}} {{.State}}'
+  server_readiness "$root/move-bin/readiness.json" "$domain" live
 }
 
 if [ "${1:-}" = --server-side ]; then
@@ -570,8 +599,24 @@ inventory() {
     url=$(git -C "$repository" remote get-url origin 2>/dev/null | strip_url)
     [ -z "$url" ] || printf '%s\t%s\n' "$project_id" "$url" >>"$state_dir/remotes.tsv"
   done <"$state_dir/projects.tsv"
+  # Anonymous probe per repository: one that asks for credentials is private.
+  # Every credential source is off, so a token on this workstation cannot make it look public.
+  : >"$state_dir/visibility-probes.tsv"
+  probe_timeout=
+  ! command -v timeout >/dev/null 2>&1 || probe_timeout='timeout 30'
+  node "$script_dir/move-studio-to-server.mjs" probe-targets --workspace "$(native_path "$workspace")" \
+    --remotes "$state_dir/remotes.tsv" >"$state_dir/probe-targets.tsv"
+  while IFS="$tab" read -r project_id url; do
+    probe_status=0
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true SSH_ASKPASS=true GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+      $probe_timeout git -c credential.helper= ls-remote --heads -- "$url" >/dev/null 2>"$state_dir/probe.err" </dev/null \
+      || probe_status=$?
+    printf '%s\t%s\t%s\n' "$project_id" "$probe_status" "$(tr '\t\r\n' '   ' <"$state_dir/probe.err" | cut -c1-300)" \
+      >>"$state_dir/visibility-probes.tsv"
+  done <"$state_dir/probe-targets.tsv"
+  rm -f "$state_dir/probe.err"
   set -- inventory --workspace "$(native_path "$workspace")" --tracked "$state_dir/tracked.z" --dirty "$state_dir/dirty.z" \
-    --remotes "$state_dir/remotes.tsv" --home "$(native_path "$HOME")" \
+    --remotes "$state_dir/remotes.tsv" --visibility-probes "$state_dir/visibility-probes.tsv" --home "$(native_path "$HOME")" \
     --credential-helper "$(git -C "$workspace" config --get credential.helper || true)" --out-dir "$state_dir"
   [ -z "$extra_mapping" ] || set -- "$@" --extra-mapping "$extra_mapping"
   inventory_status=0
@@ -586,7 +631,10 @@ inventory() {
 transfer_pass() {
   upload "$self" move-studio-to-server.sh
   upload "$script_dir/relocate-workspace-paths.mjs" relocate-workspace-paths.mjs
+  upload "$script_dir/readiness-report.mjs" readiness-report.mjs
   upload "$state_dir/path-map.json" path-map.json
+  upload "$script_dir/move-studio-to-server.mjs" move-studio-to-server.mjs
+  upload "$state_dir/visibility.json" visibility.json
   git -C "$workspace" remote get-url origin >/dev/null 2>&1 || fail 'the workspace has no origin remote to clone on the server'
   workspace_url=$(git -C "$workspace" remote get-url origin | strip_url)
   clone_state=$(server_side clone-workspace "$staging/workspace" "$workspace_url")
@@ -816,5 +864,6 @@ case "$mode" in
     log 'Studio now runs on the server. Stable stays stopped: the watchdog is in maintenance and api.sh refuses to start past the guard.'
     rollback_hint
     log 'Then: sign in at the public URL, re-point remote runners, and complete the credential replacements listed above.'
+    log "Fix every FAIL line of the readiness report above before the first card runs; the operations page shows the same report ($server_root/move-bin/readiness.json)."
     ;;
 esac

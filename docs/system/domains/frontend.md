@@ -89,6 +89,37 @@ secret masking before stored log lines are returned.
 
 ## Workspace deployment dashboard
 
+The read-only Structure view opens at `#/workspace/operations/structure` from
+the Explorer's workspace Operations entries. Its standalone component is
+loaded with a dynamic import and `@defer`. It reads
+`GET /api/v1/operations/structure?scope=workspace` and projects the same
+declared nodes as a placement-focused host view or a function-grouped container
+view. Detail levels 1 to 3 and node overrides control collapse; the outline
+mirrors visible boxes. This first slice has declared provenance only; observed
+health, version and drift overlays belong to later slices of the deployment
+structure Dossier. Its role-named manifest example is in
+`deploy/connectivity/one-box.json`.
+
+Layout and link routing are a pure module, `features/structure/structure-layout.ts`
+(AGT-3349 S5, Dossier D2 option A). It computes a deterministic nested flow
+layout for the measured canvas width: boxes are absolutely positioned and
+externals sit in an "Outside the boundary" column, or a row on narrow
+canvases. Links attach to the nearest visible placement (host view) or function
+group (container view). They are routed through 10 px gutters, preferring
+gutter, around and approach-from-above candidates, with a gutter-grid
+Dijkstra search as the fallback. Merged links carry one number in the
+connection key. Level 1 closes placements and function groups. In the
+container view the same unit in one environment merges across placements
+("2 placements", replicas summed). Regions and managed runtimes come from the
+project.yml `structure` section. Managed services render dashed, labelled
+"declared · probed via TLS" or "declared · not observed". `linkCrossings()` is
+the geometry check: `structure-layout.spec.ts` and
+`e2e/workspace/structure-scale.spec.ts` require zero links across an
+instance or collapsed box at levels 1 and 2 for the complex (60 services,
+two regions, staging, development), AGT and workspace fixtures in
+`structure.fixtures.ts`. The same specs hold the complex level-1 layout under
+50 ms and inside one 1440 px screen. The ELK.js fallback router was not needed.
+
 The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.
 It lists projects against Staging and Production, with release version, deploy
 age and state, health, pending approval, and newer release. Project group and
@@ -560,6 +591,17 @@ occur. It is not a claim about tunnel transfer time.
   `GET .../cycle-time/tasks/{taskKey}`. The stage model, the transition
   taxonomy, and their data sources are documented in
   [concepts/cycle-time-stage-model.md](../../concepts/cycle-time-stage-model.md).
+- `frontend/src/app/features/flow-health/`: the Flow health view of the project
+  Deploy area (tab next to Pipeline, also linked from Pipeline health on Run
+  steps). It joins existing read models only: `GET /api/gate-economics` (7 and
+  30 days, including the all-projects row), `GET .../cycle-time` (7 and 30
+  days), `GET .../pipeline-health`, `GET .../batch-gate/report` and settings,
+  `GET /api/system/execution-infrastructure`, and the host registry signal for
+  review and coding slots. None of these reads starts a Git process; the
+  Git-backed `GET .../batch-gate/state` is deliberately not read. The pure
+  derivation in `state/flow-health.derive.ts` produces the grouping, gate and
+  review figures, the waits per stage, and the main-brake sentence. Every target
+  is named once in `models/flow-health-targets.ts` and printed beside its figure.
 - `frontend/src/app/features/project-detail/`: project shell and project-level
   quality, settings, architecture, runtime, drift, and supervisor panels. The
   left rail (`project-shell`) is a collapsible-segment tree

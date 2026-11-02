@@ -32,105 +32,65 @@ namespace AgentStudio.Tests;
 ///   <item>the list read (<c>GET /api/tasks/</c>) validates the same way.</item>
 /// </list>
 /// </summary>
-public sealed class BoardConditionalReadTests : IDisposable
+public sealed class BoardConditionalReadTests : IClassFixture<BoardConditionalReadTests.Host>
 {
-    private const string ProjectName = "board-etag-test";
+    internal const string ProjectName = "board-etag-test";
 
-    private readonly string _workspace;
+    private readonly Host _host;
     private readonly string _watchPath;
     private readonly ITestOutputHelper _output;
 
-    public BoardConditionalReadTests(ITestOutputHelper output)
+    public BoardConditionalReadTests(Host host, ITestOutputHelper output)
     {
+        _host = host;
+        _host.Reset();
+        _watchPath = host.WatchPath(ProjectName);
         _output = output;
-        _workspace = Path.Combine(Path.GetTempPath(), "atp-board-etag-tests-" + Guid.NewGuid().ToString("N"));
-        _watchPath = Path.Combine(_workspace, "projects", ProjectName);
-        foreach (var state in TaskStates.All)
-            Directory.CreateDirectory(Path.Combine(_watchPath, state));
-    }
-
-    public void Dispose()
-    {
-        try { Directory.Delete(_workspace, recursive: true); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Best-effort temp cleanup; a retained temp folder must not fail a run.
-        }
     }
 
     /// <summary>
-    /// Isolates both stores this class reads, not just the watch path.
-    /// <c>TaskRepository</c> matters as much as <c>WatchPaths</c> here: left
-    /// unset it resolves to the machine-wide LocalAppData
+    /// The one project this class reads, in the host's own workspace. The
+    /// workspace is the <c>TaskRepository</c> as much as the watch path's
+    /// parent: left unset it resolves to the machine-wide LocalAppData
     /// <c>project-settings.json</c>, which every other host in the run that
     /// does not isolate also reads and writes. The board ETag folds
     /// <c>ProjectSettingsService.Version</c> and the settings themselves reach
     /// the response through the lane sort and the live-status projection, so a
     /// shared settings file makes this class's results depend on what ran
-    /// beside it. Pointing it at the per-test temp workspace, the way
-    /// <c>MergeEndpointsIntegrationTests</c> does, removes that coupling.
+    /// beside it.
     /// </summary>
-    private WebApplicationFactory<Program> BuildFactory(
-        Func<Func<List<TaskInfo>>, Func<List<TaskInfo>>>? wrapIndexScan = null,
-        IAtomicJsonFileWriter? identityWriter = null) =>
-        new TestHostFactory().WithWebHostBuilder(b =>
-        {
-            if (identityWriter is not null)
-                b.ConfigureServices(services => services.AddSingleton(sp => new ClientIdentityStore(
-                    sp.GetRequiredService<IConfiguration>(),
-                    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<ClientIdentityStore>>(),
-                    identityWriter)));
-            if (wrapIndexScan is not null)
-            {
-                // The host's task index with its disk walk wrapped, so a test
-                // can hold a refresh open and see where it runs.
-                b.ConfigureServices(services => services.AddSingleton(sp =>
-                {
-                    var scanner = sp.GetRequiredService<TaskScannerService>();
-                    return new TaskIndexCache(
-                        scanner,
-                        sp.GetRequiredService<ILogger<TaskIndexCache>>(),
-                        sp.GetRequiredService<IConfiguration>(),
-                        wrapIndexScan(scanner.ScanAllJobsRaw));
-                }));
-            }
-            b.UseEnvironment("Test");
-            b.ConfigureAppConfiguration((_, cfg) =>
-            {
-                cfg.AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["TaskRepository"] = _workspace,
-                    ["WatchPaths:0:Name"] = ProjectName,
-                    ["WatchPaths:0:Path"] = _watchPath,
-                    ["WatchPaths:0:RootPath"] = _watchPath,
-                    // The two recurring background clocks, pushed past the
-                    // lifetime of a test. Both re-publish an input the
-                    // validator folds in even when the board did not move:
-                    // the task index bumps its generation on every safety
-                    // rescan, including one that found nothing changed, and
-                    // the Git-state sweep can start another index run. A
-                    // conditional pair whose two reads straddle either
-                    // boundary then answers 200 for a board that stood still -
-                    // measured directly: with the safety TTL at 1 s the second
-                    // read sees generation 3 where the first saw 2. These
-                    // tests run for tens of seconds under a loaded suite,
-                    // which is long enough to reach the 30 s default. What
-                    // this class pins is the validator, not those timers -
-                    // ChangedBoard_AnswersTwoHundredUnderANewTag drives the
-                    // index explicitly instead of waiting for one - so they
-                    // are moved out of the way rather than raced with.
-                    ["TaskIndexCache:SafetyTtlSeconds"] = "3600",
-                    ["GitStateIndex:SweepIntervalSeconds"] = "3600",
-                    // This fixture intentionally has no Git repository. Its
-                    // unavailable state is terminal for this validator test.
-                    ["GitStateIndex:MaxRetries"] = "0",
-                });
-            });
-        });
-
-    private static HttpClient CreateClient(WebApplicationFactory<Program> factory)
+    public sealed class Host() : BoardTestHost("atp-board-etag-tests-", ProjectName)
     {
-        var client = factory.CreateClient();
+        protected override IEnumerable<KeyValuePair<string, string?>> Settings() => ClockSettings;
+    }
+
+    /// <summary>
+    /// The two recurring background clocks, pushed past the lifetime of a
+    /// test. Both re-publish an input the validator folds in even when the
+    /// board did not move: the task index bumps its generation on every safety
+    /// rescan, including one that found nothing changed, and the Git-state
+    /// sweep can start another index run. A conditional pair whose two reads
+    /// straddle either boundary then answers 200 for a board that stood still -
+    /// measured directly: with the safety TTL at 1 s the second read sees
+    /// generation 3 where the first saw 2. These tests run for tens of seconds
+    /// under a loaded suite, which is long enough to reach the 30 s default.
+    /// What this class pins is the validator, not those timers -
+    /// ChangedBoard_AnswersTwoHundredUnderANewTag drives the index explicitly
+    /// instead of waiting for one - so they are moved out of the way rather
+    /// than raced with.
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<string, string?> ClockSettings = new Dictionary<string, string?>
+    {
+        ["TaskIndexCache:SafetyTtlSeconds"] = "3600",
+        ["GitStateIndex:SweepIntervalSeconds"] = "3600",
+        // This fixture intentionally has no Git repository. Its
+        // unavailable state is terminal for this validator test.
+        ["GitStateIndex:MaxRetries"] = "0",
+    };
+
+    private HttpClient CreateClient()
+    {
+        var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         return client;
     }
@@ -161,13 +121,13 @@ public sealed class BoardConditionalReadTests : IDisposable
     /// snapshot and none is refreshing, and no generation moved across a quiet
     /// window".</para>
     /// </summary>
-    private static async Task WaitForBoardQuiescenceAsync(WebApplicationFactory<Program> factory)
+    internal static async Task WaitForBoardQuiescenceAsync(IServiceProvider services)
     {
-        var indexer = factory.Services.GetRequiredService<GitStateIndexService>();
-        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
-        var gitProjection = factory.Services.GetRequiredService<TaskListGitProjectionCache>();
-        var sidecars = factory.Services.GetRequiredService<TaskSidecarGeneration>();
-        var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
+        var indexer = services.GetRequiredService<GitStateIndexService>();
+        var scanner = services.GetRequiredService<TaskScannerService>();
+        var gitProjection = services.GetRequiredService<TaskListGitProjectionCache>();
+        var sidecars = services.GetRequiredService<TaskSidecarGeneration>();
+        var settings = services.GetRequiredService<ProjectSettingsService>();
 
         (long Tasks, long Git, long Sidecars, long Settings) Generations()
             => (scanner.SnapshotGeneration, gitProjection.Generation, sidecars.Generation, settings.Version);
@@ -230,7 +190,7 @@ public sealed class BoardConditionalReadTests : IDisposable
     /// never produces two equal tags, so this wait times out and fails the test
     /// rather than papering over it.</para>
     /// </summary>
-    private static async Task WaitForSettledValidatorAsync(HttpClient client, string route)
+    internal static async Task WaitForSettledValidatorAsync(HttpClient client, string route)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(2);
         var previous = (await GetAsync(client, route)).ETag;
@@ -248,8 +208,11 @@ public sealed class BoardConditionalReadTests : IDisposable
     }
 
     private void Seed(string slug, string title, string state, string? key = null)
+        => Seed(_watchPath, slug, title, state, key);
+
+    internal static void Seed(string watchPath, string slug, string title, string state, string? key = null)
     {
-        var dir = Path.Combine(_watchPath, state, slug);
+        var dir = Path.Combine(watchPath, state, slug);
         Directory.CreateDirectory(dir);
         File.WriteAllText(
             Path.Combine(dir, "task.json"),
@@ -258,7 +221,7 @@ public sealed class BoardConditionalReadTests : IDisposable
                 : JsonSerializer.Serialize(new { id = slug, key, title, state, order = 1, agent = "claude" }));
     }
 
-    private static async Task<(HttpStatusCode Status, string? ETag, string Body)> GetAsync(
+    internal static async Task<(HttpStatusCode Status, string? ETag, string Body)> GetAsync(
         HttpClient client, string url, string? ifNoneMatch = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -271,9 +234,8 @@ public sealed class BoardConditionalReadTests : IDisposable
     public async Task UnchangedBoard_AnswersNotModifiedWithAnEmptyBody()
     {
         Seed("t-1", "First task", TaskStates.Ready);
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
+        using var client = CreateClient();
+        await WaitForBoardQuiescenceAsync(_host.Services);
         await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
 
         var first = await GetAsync(client, "/api/tasks/grouped");
@@ -322,9 +284,8 @@ public sealed class BoardConditionalReadTests : IDisposable
             id = "t-waiting", key = "BET-2", title = "Waits on the parked card", state = TaskStates.Ready,
             order = 1, agent = "claude", references = new { dependsOn = new[] { "BET-1" } },
         }));
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
+        using var client = CreateClient();
+        await WaitForBoardQuiescenceAsync(_host.Services);
         await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
 
         var first = await GetAsync(client, "/api/tasks/grouped");
@@ -334,7 +295,7 @@ public sealed class BoardConditionalReadTests : IDisposable
         // Let the old per-read counters tick over, then publish a new index
         // generation for a board that did not change.
         await Task.Delay(TimeSpan.FromMilliseconds(1100));
-        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        _host.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
 
         var validated = await GetAsync(client, "/api/tasks/grouped", first.ETag);
         var reread = await GetAsync(client, "/api/tasks/grouped");
@@ -350,9 +311,8 @@ public sealed class BoardConditionalReadTests : IDisposable
     public async Task ChangedBoard_AnswersTwoHundredUnderANewTag()
     {
         Seed("t-1", "First task", TaskStates.Ready);
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
+        using var client = CreateClient();
+        await WaitForBoardQuiescenceAsync(_host.Services);
         await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
 
         var before = await GetAsync(client, "/api/tasks/grouped");
@@ -360,7 +320,7 @@ public sealed class BoardConditionalReadTests : IDisposable
         Seed("t-2", "Second task", TaskStates.Ready);
         // Stand in for the watcher event the FileSystemWatcher would deliver, so
         // the assertion is about the validator rather than about debounce timing.
-        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        _host.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
 
         var after = await GetAsync(client, "/api/tasks/grouped", before.ETag);
 
@@ -379,13 +339,12 @@ public sealed class BoardConditionalReadTests : IDisposable
     public async Task RunLeaseOnAKeyedCard_AnswersTwoHundredUnderANewTag()
     {
         Seed("t-keyed", "Keyed task", TaskStates.Ready, key: "AGT-ETAG-RUN");
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
+        using var client = CreateClient();
+        await WaitForBoardQuiescenceAsync(_host.Services);
         await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
 
         var before = await GetAsync(client, "/api/tasks/grouped");
-        var acquired = factory.Services.GetRequiredService<RunLeaseService>().TryAcquire(
+        var acquired = _host.Services.GetRequiredService<RunLeaseService>().TryAcquire(
             new RunLeaseAcquireRequest(
                 "AGT-ETAG-RUN", "agent-runner-etag", "agent-runner-etag", "linux-host", 4321, "remote"));
         var after = await GetAsync(client, "/api/tasks/grouped", before.ETag);
@@ -406,9 +365,8 @@ public sealed class BoardConditionalReadTests : IDisposable
     {
         const string key = "AGT-ETAG-REVIEW";
         Seed("t-review-keyed", "Keyed review", TaskStates.AutoReview, key: key);
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        using var client = CreateClient();
+        var authority = _host.Services.GetRequiredService<AttemptAuthorityService>();
         var run = authority.AcquireRun(key, "PROJ-1", null, "runner", "host", 60, "etag-run-create").RunAttempt!;
         authority.SettleRun(new SettleRunAttemptRequest
         {
@@ -420,7 +378,7 @@ public sealed class BoardConditionalReadTests : IDisposable
             key, "PROJ-1", "sha-etag", run.AttemptId, "req", "policy", [], "etag-review-create")).ReviewAttempt!;
         var leased = authority.ClaimReview(
             review.AttemptId, "kori-review", "review-host", 600, "etag-review-claim").ReviewAttempt!;
-        await WaitForBoardQuiescenceAsync(factory);
+        await WaitForBoardQuiescenceAsync(_host.Services);
         await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
 
         var before = await GetAsync(client, "/api/tasks/grouped");
@@ -440,9 +398,8 @@ public sealed class BoardConditionalReadTests : IDisposable
     public async Task RequestVariantsDoNotShareATag()
     {
         Seed("t-1", "First task", TaskStates.AutoReview);
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
+        using var client = CreateClient();
+        await WaitForBoardQuiescenceAsync(_host.Services);
 
         var standard = await GetAsync(client, "/api/tasks/grouped");
         var withoutAlias = await GetAsync(client, "/api/tasks/grouped?includeLegacyReviewLane=false");
@@ -461,8 +418,7 @@ public sealed class BoardConditionalReadTests : IDisposable
     public async Task LegacyReviewAlias_IsServedByDefaultAndDroppedOnOptOut()
     {
         Seed("t-review", "Awaiting auto review", TaskStates.AutoReview);
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
+        using var client = CreateClient();
 
         using var standard = JsonDocument.Parse((await GetAsync(client, "/api/tasks/grouped")).Body);
         var standardRoot = standard.RootElement;
@@ -502,9 +458,8 @@ public sealed class BoardConditionalReadTests : IDisposable
         const int cards = 25;
         for (var i = 0; i < cards; i++)
             Seed($"t-review-{i}", $"Awaiting auto review {i}", TaskStates.AutoReview);
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
+        using var client = CreateClient();
+        await WaitForBoardQuiescenceAsync(_host.Services);
         await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
 
         var standard = await GetAsync(client, "/api/tasks/grouped");
@@ -556,9 +511,8 @@ public sealed class BoardConditionalReadTests : IDisposable
     public async Task ListRead_ValidatesTheSameWay()
     {
         Seed("t-1", "First task", TaskStates.Ready);
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
+        using var client = CreateClient();
+        await WaitForBoardQuiescenceAsync(_host.Services);
         await WaitForSettledValidatorAsync(client, "/api/tasks/");
 
         var first = await GetAsync(client, "/api/tasks/");
@@ -571,9 +525,201 @@ public sealed class BoardConditionalReadTests : IDisposable
         Assert.Equal(string.Empty, second.Body);
     }
 
-    private const string Grouped = "/api/tasks/grouped";
+    internal const string Grouped = "/api/tasks/grouped";
+
+    /// <summary>
+    /// The validator folds the request's pinned generation, so a publish that
+    /// lands after the read took its snapshot cannot label the older body with
+    /// the newer generation.
+    /// </summary>
+    [Fact]
+    public async Task GroupedTag_NamesThePinnedGeneration_WhenAPublishLandsMidRequest()
+    {
+        Seed("t-1", "First task", TaskStates.Ready);
+        using var client = CreateClient();
+        await WaitForBoardQuiescenceAsync(_host.Services);
+        _ = await GetAsync(client, Grouped);
+        var services = _host.Services;
+        var scanner = services.GetRequiredService<TaskScannerService>();
+        var cache = services.GetRequiredService<TaskIndexCache>();
+
+        var publication = await scanner.AcquireBoardReadAsync(DefaultClientIdentity.Id, CancellationToken.None);
+        Assert.NotNull(publication);
+        cache.ForceRefresh();
+        Assert.True(cache.Generation > publication.Generation);
+
+        string token;
+        using (scanner.PinBoardRead(publication))
+        {
+            var jobs = scanner.ScanAllJobs();
+            token = services.GetRequiredService<BoardReadSignatureSource>().Compose(
+                "tasks/grouped",
+                "variant",
+                jobs,
+                services.GetRequiredService<TaskListGitProjectionCache>().ReadFreshness(jobs),
+                services.GetRequiredService<CliRouter>(),
+                services.GetRequiredService<AgentStudio.Runner.TaskRunnerService>());
+        }
+
+        var tasksPart = Assert.Single(token.Split('\u001f'), part => part.StartsWith("tasks=", StringComparison.Ordinal));
+        Assert.Equal("tasks=" + publication.Generation.ToString(CultureInfo.InvariantCulture), tasksPart);
+    }
+
+    /// <summary>
+    /// A reorder is published in the background. The board stays responsive
+    /// while the index refresh runs and eventually returns the new order.
+    /// </summary>
+    [Fact]
+    public async Task WritersOwnReorder_EventuallyAppearsWithoutBlockingGroupedReads()
+    {
+        Seed("t-a", "Task A", TaskStates.Ready);
+        Seed("t-b", "Task B", TaskStates.Ready);
+        using var client = CreateClient();
+        await WaitForBoardQuiescenceAsync(_host.Services);
+
+        foreach (var order in new[] { new[] { "t-a", "t-b" }, ["t-b", "t-a"], ["t-a", "t-b"], ["t-b", "t-a"] })
+        {
+            var reorder = await client.PostAsJsonAsync("/api/tasks/reorder", new
+            {
+                jobs = order.Select(id => new { jobId = id, watchPath = _watchPath }),
+            });
+            Assert.Equal(HttpStatusCode.OK, reorder.StatusCode);
+
+            var deadline = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                var read = System.Diagnostics.Stopwatch.StartNew();
+                var board = await GetAsync(client, Grouped);
+                Assert.True(read.Elapsed < TimeSpan.FromSeconds(2), "Board read waited for the reorder refresh.");
+                using var document = JsonDocument.Parse(board.Body);
+                var ready = document.RootElement.GetProperty("ready").EnumerateArray()
+                    .Select(card => card.GetProperty("id").GetString())
+                    .ToArray();
+                if (order.SequenceEqual(ready)) break;
+                Assert.True(deadline.Elapsed < TimeSpan.FromSeconds(10), "The reordered board was not published.");
+                await Task.Delay(25);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task GitStateHeadersSurviveANotModifiedAnswer()
+    {
+        Seed("t-1", "First task", TaskStates.Ready);
+        using var client = CreateClient();
+        await WaitForBoardQuiescenceAsync(_host.Services);
+        await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
+
+        var first = await GetAsync(client, "/api/tasks/grouped");
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/tasks/grouped");
+        request.Headers.TryAddWithoutValidation("If-None-Match", first.ETag);
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotModified, response.StatusCode);
+        // The board reads freshness from headers, not from the body, so a
+        // validated response still has to carry it.
+        Assert.True(response.Headers.Contains("X-Git-State-Stale"));
+    }
+}
+
+/// <summary>
+/// The two <see cref="BoardConditionalReadTests"/> cases that replace a host
+/// service - the task index's disk walk, the identity writer - so each builds
+/// the host it needs. Both are machine-bound timing proofs.
+/// </summary>
+public sealed class BoardConditionalReadMachineBoundTests : IDisposable
+{
+    private const string ProjectName = BoardConditionalReadTests.ProjectName;
+
+    private readonly string _workspace;
+    private readonly string _watchPath;
+    private readonly ITestOutputHelper _output;
+
+    public BoardConditionalReadMachineBoundTests(ITestOutputHelper output)
+    {
+        _output = output;
+        _workspace = Path.Combine(Path.GetTempPath(), "atp-board-etag-tests-" + Guid.NewGuid().ToString("N"));
+        _watchPath = Path.Combine(_workspace, "projects", ProjectName);
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(_watchPath, state));
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_workspace, recursive: true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Best-effort temp cleanup; a retained temp folder must not fail a run.
+        }
+    }
+
+    /// <summary>
+    /// Isolates both stores this class reads, not just the watch path.
+    /// <c>TaskRepository</c> matters as much as <c>WatchPaths</c> here: left
+    /// unset it resolves to the machine-wide LocalAppData
+    /// <c>project-settings.json</c>, which every other host in the run that
+    /// does not isolate also reads and writes. The board ETag folds
+    /// <c>ProjectSettingsService.Version</c> and the settings themselves reach
+    /// the response through the lane sort and the live-status projection, so a
+    /// shared settings file makes this class's results depend on what ran
+    /// beside it. Pointing it at the per-test temp workspace, the way
+    /// <c>MergeEndpointsIntegrationTests</c> does, removes that coupling.
+    /// </summary>
+    private WebApplicationFactory<Program> BuildFactory(
+        Func<Func<List<TaskInfo>>, Func<List<TaskInfo>>>? wrapIndexScan = null,
+        IAtomicJsonFileWriter? identityWriter = null) =>
+        new TestHostFactory().WithWebHostBuilder(b =>
+        {
+            if (identityWriter is not null)
+                b.ConfigureServices(services => services.AddSingleton(sp => new ClientIdentityStore(
+                    sp.GetRequiredService<IConfiguration>(),
+                    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<ClientIdentityStore>>(),
+                    identityWriter)));
+            if (wrapIndexScan is not null)
+            {
+                // The host's task index with its disk walk wrapped, so a test
+                // can hold a refresh open and see where it runs.
+                b.ConfigureServices(services => services.AddSingleton(sp =>
+                {
+                    var scanner = sp.GetRequiredService<TaskScannerService>();
+                    return new TaskIndexCache(
+                        scanner,
+                        sp.GetRequiredService<ILogger<TaskIndexCache>>(),
+                        sp.GetRequiredService<IConfiguration>(),
+                        wrapIndexScan(scanner.ScanAllJobsRaw));
+                }));
+            }
+            b.UseEnvironment("Test");
+            b.ConfigureAppConfiguration((_, cfg) =>
+            {
+                cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = ProjectName,
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _watchPath,
+                });
+                cfg.AddInMemoryCollection(BoardConditionalReadTests.ClockSettings);
+            });
+        });
+
+    private static HttpClient CreateClient(WebApplicationFactory<Program> factory)
+    {
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        return client;
+    }
+
+    private void Seed(string slug, string title, string state, string? key = null)
+        => BoardConditionalReadTests.Seed(_watchPath, slug, title, state, key);
+
+    private const string Grouped = BoardConditionalReadTests.Grouped;
 
     private static readonly AsyncLocal<string?> RequestFlow = new();
+
+    private static Task<(HttpStatusCode Status, string? ETag, string Body)> GetAsync(HttpClient client, string url)
+        => BoardConditionalReadTests.GetAsync(client, url);
 
     /// <summary>
     /// AGT-3088: with the index dirtied by an in-process write and its refresh
@@ -604,8 +750,8 @@ public sealed class BoardConditionalReadTests : IDisposable
         // probes below see exactly what the request flow did.
         factory.Server.PreserveExecutionContext = true;
         using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
-        await WaitForSettledValidatorAsync(client, Grouped);
+        await BoardConditionalReadTests.WaitForBoardQuiescenceAsync(factory.Services);
+        await BoardConditionalReadTests.WaitForSettledValidatorAsync(client, Grouped);
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var scansBeforeBurst = Volatile.Read(ref totalScans);
         var identities = factory.Services.GetRequiredService<ClientIdentityStore>();
@@ -754,7 +900,7 @@ public sealed class BoardConditionalReadTests : IDisposable
         var writer = new ControllableAtomicJsonFileWriter();
         using var factory = BuildFactory(identityWriter: writer);
         using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
+        await BoardConditionalReadTests.WaitForBoardQuiescenceAsync(factory.Services);
         var identities = factory.Services.GetRequiredService<ClientIdentityStore>();
         var runner = identities.Register(new RegisterClientRequest
         {
@@ -796,103 +942,5 @@ public sealed class BoardConditionalReadTests : IDisposable
             release.Set();
             await write;
         }
-    }
-
-    /// <summary>
-    /// The validator folds the request's pinned generation, so a publish that
-    /// lands after the read took its snapshot cannot label the older body with
-    /// the newer generation.
-    /// </summary>
-    [Fact]
-    public async Task GroupedTag_NamesThePinnedGeneration_WhenAPublishLandsMidRequest()
-    {
-        Seed("t-1", "First task", TaskStates.Ready);
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
-        _ = await GetAsync(client, Grouped);
-        var services = factory.Services;
-        var scanner = services.GetRequiredService<TaskScannerService>();
-        var cache = services.GetRequiredService<TaskIndexCache>();
-
-        var publication = await scanner.AcquireBoardReadAsync(DefaultClientIdentity.Id, CancellationToken.None);
-        Assert.NotNull(publication);
-        cache.ForceRefresh();
-        Assert.True(cache.Generation > publication.Generation);
-
-        string token;
-        using (scanner.PinBoardRead(publication))
-        {
-            var jobs = scanner.ScanAllJobs();
-            token = services.GetRequiredService<BoardReadSignatureSource>().Compose(
-                "tasks/grouped",
-                "variant",
-                jobs,
-                services.GetRequiredService<TaskListGitProjectionCache>().ReadFreshness(jobs),
-                services.GetRequiredService<CliRouter>(),
-                services.GetRequiredService<AgentStudio.Runner.TaskRunnerService>());
-        }
-
-        var tasksPart = Assert.Single(token.Split('\u001f'), part => part.StartsWith("tasks=", StringComparison.Ordinal));
-        Assert.Equal("tasks=" + publication.Generation.ToString(CultureInfo.InvariantCulture), tasksPart);
-    }
-
-    /// <summary>
-    /// A reorder is published in the background. The board stays responsive
-    /// while the index refresh runs and eventually returns the new order.
-    /// </summary>
-    [Fact]
-    public async Task WritersOwnReorder_EventuallyAppearsWithoutBlockingGroupedReads()
-    {
-        Seed("t-a", "Task A", TaskStates.Ready);
-        Seed("t-b", "Task B", TaskStates.Ready);
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
-
-        foreach (var order in new[] { new[] { "t-a", "t-b" }, ["t-b", "t-a"], ["t-a", "t-b"], ["t-b", "t-a"] })
-        {
-            var reorder = await client.PostAsJsonAsync("/api/tasks/reorder", new
-            {
-                jobs = order.Select(id => new { jobId = id, watchPath = _watchPath }),
-            });
-            Assert.Equal(HttpStatusCode.OK, reorder.StatusCode);
-
-            var deadline = System.Diagnostics.Stopwatch.StartNew();
-            while (true)
-            {
-                var read = System.Diagnostics.Stopwatch.StartNew();
-                var board = await GetAsync(client, Grouped);
-                Assert.True(read.Elapsed < TimeSpan.FromSeconds(2), "Board read waited for the reorder refresh.");
-                using var document = JsonDocument.Parse(board.Body);
-                var ready = document.RootElement.GetProperty("ready").EnumerateArray()
-                    .Select(card => card.GetProperty("id").GetString())
-                    .ToArray();
-                if (order.SequenceEqual(ready)) break;
-                Assert.True(deadline.Elapsed < TimeSpan.FromSeconds(10), "The reordered board was not published.");
-                await Task.Delay(25);
-            }
-        }
-    }
-
-    [Fact]
-    public async Task GitStateHeadersSurviveANotModifiedAnswer()
-    {
-        Seed("t-1", "First task", TaskStates.Ready);
-        using var factory = BuildFactory();
-        using var client = CreateClient(factory);
-        await WaitForBoardQuiescenceAsync(factory);
-        await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
-
-        var first = await GetAsync(client, "/api/tasks/grouped");
-
-        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/tasks/grouped");
-        request.Headers.TryAddWithoutValidation("If-None-Match", first.ETag);
-        using var response = await client.SendAsync(request);
-
-        Assert.Equal(HttpStatusCode.NotModified, response.StatusCode);
-        // The board reads freshness from headers, not from the body, so a
-        // validated response still has to carry it.
-        Assert.True(response.Headers.Contains("X-Git-State-Stale"));
     }
 }

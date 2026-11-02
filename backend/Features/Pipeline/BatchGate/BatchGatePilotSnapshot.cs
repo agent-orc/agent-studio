@@ -13,6 +13,9 @@ namespace AgentStudio.Pipeline;
 /// <c>BaseChecks</c> lists, per red candidate, what answered whether its base
 /// was red and what that cost (AGT-3433); <c>BaseCheckMinutes</c> sums it.
 /// A narrow base check counts in the host minutes, not as a full-suite run.
+/// The per-task fallback fields (AGT-3434) count the cards that path settled,
+/// the suites they ran (per-task gates plus publish gates), the mean per card,
+/// and the publish steps that reused the per-task verdict instead of a suite.
 /// </summary>
 public sealed record BatchGatePilotSnapshot(
     string Project, int ClosedBatches, int EligibleDeliveredMembers,
@@ -34,7 +37,11 @@ public sealed record BatchGatePilotSnapshot(
     double ReviewVerificationBaselineMinutes = 0,
     double TotalVerificationHostMinutes = 0,
     IReadOnlyList<BatchGateBaseCheckView>? BaseChecks = null,
-    double BaseCheckMinutes = 0);
+    double BaseCheckMinutes = 0,
+    int PerTaskFallbackCards = 0,
+    int PerTaskFallbackSuiteRuns = 0,
+    double? PerTaskFallbackSuitesPerCard = null,
+    int PerTaskPublishVerdictReuses = 0);
 
 /// <summary>One red candidate's base answer: its classification, the source that answered, and the minutes it cost.</summary>
 public sealed record BatchGateBaseCheckView(
@@ -122,6 +129,8 @@ public static class BatchGatePilotSnapshotReader
         var reviewVerifications = store.ListReviewVerifications(project);
         var reviewMinutes = reviewVerifications.Sum(item =>
             item.CandidateMinutes + item.BaselineMinutes);
+        var fallbackCards = store.ListFallbackSuites(project);
+        var fallbackSuites = fallbackCards.Sum(item => item.Suites);
         return new BatchGatePilotSnapshot(
             project, primary.Length, eligible, fullSuiteRuns,
             Ratio(fullSuiteRuns, eligible), Ratio(attempted, primary.Length),
@@ -140,7 +149,11 @@ public static class BatchGatePilotSnapshotReader
             ReviewVerificationBaselineMinutes: reviewVerifications.Sum(item => item.BaselineMinutes),
             TotalVerificationHostMinutes: hostMinutes + reviewMinutes,
             BaseChecks: baseChecks.OrderByDescending(item => item.RecordedAtUtc).ToArray(),
-            BaseCheckMinutes: baseChecks.Sum(item => item.Minutes));
+            BaseCheckMinutes: baseChecks.Sum(item => item.Minutes),
+            PerTaskFallbackCards: fallbackCards.Count,
+            PerTaskFallbackSuiteRuns: fallbackSuites,
+            PerTaskFallbackSuitesPerCard: Ratio(fallbackSuites, fallbackCards.Count),
+            PerTaskPublishVerdictReuses: fallbackCards.Count(item => item.PublishVerdictReused));
     }
 
     private static double? Ratio(double numerator, double denominator)

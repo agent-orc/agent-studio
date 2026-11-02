@@ -21,8 +21,727 @@ using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tests;
 
-public sealed class ManagementApiTests : IDisposable
+/// <summary>
+/// The management API on one shared host (AGT-3416). The tests that need a
+/// host configured their own way are in <see cref="ManagementApiOwnHostTests"/>,
+/// the provider sign-in tests in <see cref="ManagementProviderAuthTests"/>.
+/// </summary>
+public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
 {
+    private readonly Host _host;
+    private readonly string _root;
+    private readonly string _backups;
+
+    public ManagementApiTests(Host host)
+    {
+        _host = host;
+        _host.Reset();
+        _root = host.Folders.Root;
+        _backups = host.Folders.Backups;
+    }
+
+    /// <summary>The management host with its default configuration.</summary>
+    public sealed class Host : ManagementTestHost
+    {
+        protected override void ConfigureHost(IWebHostBuilder builder) => Configure(builder, Folders);
+    }
+
+    [Fact]
+    public async Task StatusAndCommands_RequireActor_AndLeaveDurableAudit()
+    {
+        using var client = _host.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/management/status")).StatusCode);
+
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var status = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
+        Assert.Equal("healthy", status.GetProperty("health").GetProperty("state").GetString());
+        Assert.True(status.GetProperty("health").GetProperty("live").GetBoolean());
+        Assert.Contains(status.GetProperty("statistics").GetProperty("state").GetString(), new[] { "pending", "ready" });
+        Assert.Equal(JsonValueKind.Null, status.GetProperty("store").GetProperty("eventCount").ValueKind);
+
+        const string key = "maintenance-test-key";
+        var request = new { kind = "maintenance-enter", dryRun = false, confirmation = "maintenance-enter", idempotencyKey = key, reason = "test rehearsal" };
+        var first = await client.PostAsJsonAsync("/api/v1/management/commands", request);
+        first.EnsureSuccessStatusCode();
+        var firstBody = await first.Content.ReadFromJsonAsync<JsonElement>();
+        var second = await client.PostAsJsonAsync("/api/v1/management/commands", request);
+        second.EnsureSuccessStatusCode();
+        var secondBody = await second.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(firstBody.GetProperty("commandId").GetString(), secondBody.GetProperty("commandId").GetString());
+        Assert.True(File.Exists(Path.Combine(_root, ".audit", "management.jsonl")));
+        var audit = File.ReadLines(Path.Combine(_root, ".audit", "management.jsonl")).ToArray();
+        Assert.Equal(2, audit.Length);
+        Assert.Contains("\"outcome\":\"started\"", audit[0]);
+        Assert.Contains("\"outcome\":\"completed\"", audit[1]);
+    }
+
+    [Fact]
+    public async Task RemoteHosts_ReturnsTheLatestRunnerCapabilitySnapshot()
+    {
+        using var client = _host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var registry = _host.Services.GetRequiredService<V1ReviewExecutorRegistry>();
+        const string runnerId = "agent-runner-capability-snapshot";
+        const string instanceId = "agent-runner-host:2498";
+        registry.Register(
+            runnerId,
+            new Contract.RegisterRunnerRequest(
+                "Agent Runner Snapshot",
+                "agent-runner-host",
+                instanceId,
+                "1.2.3",
+                Contract.TaskServerProtocol.Current,
+                [Contract.ReviewCapabilities.CodingExecutor],
+                BootstrapMaxParallelism: 6));
+        registry.AdvertiseCapabilities(
+            runnerId,
+            new Contract.CapabilityAdvertisementRequest(
+                runnerId,
+                instanceId,
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                DateTime.UtcNow,
+                180,
+                1,
+                [
+                    new Contract.AdvertisedCapabilityDto(
+                        Contract.CapabilityProtocol.CliExecution("claude"),
+                        "cli-execution",
+                        "ready",
+                        "available",
+                        "/usr/bin/claude"),
+                    new Contract.AdvertisedCapabilityDto(
+                        Contract.CapabilityProtocol.ProviderAuthentication("claude"),
+                        "provider-auth",
+                        "ready",
+                        Identity: "claude"),
+                ]));
+        registry.ReportCapabilityFailure(
+            runnerId,
+            new Contract.CapabilityFailureRequest(
+                runnerId,
+                instanceId,
+                Contract.CapabilityProtocol.ProviderAuthentication("claude"),
+                "ProviderUnauthorized",
+                "Claude login is unavailable for the coding service user.",
+                DateTime.UtcNow,
+                "snapshot-provider-auth-failure"));
+
+        using var response = await client.GetAsync("/api/v1/management/remote-hosts");
+
+        response.EnsureSuccessStatusCode();
+        Assert.Contains("no-store", response.Headers.CacheControl?.ToString() ?? string.Empty);
+        var snapshots = await response.Content.ReadFromJsonAsync<
+            IReadOnlyList<Contract.RunnerCapabilitySnapshotDto>>();
+        var snapshot = Assert.Single(snapshots!);
+        Assert.Equal(runnerId, snapshot.RunnerId);
+        Assert.Equal(instanceId, snapshot.InstanceId);
+        Assert.Equal(6, snapshot.RoleMaxParallelism);
+        Assert.Contains(
+            snapshot.Capabilities,
+            capability => capability.Key == "cli-execution:claude"
+                          && capability.AdvertisedStatus == "ready"
+                          && capability.IsFresh
+                          && capability.Identity == "/usr/bin/claude");
+        Assert.Contains(
+            snapshot.Capabilities,
+            capability => capability.Key == "provider-auth:claude"
+                          && capability.AdvertisedStatus == "ready"
+                          && capability.HealthState == Contract.CapabilityHealthStates.Suspect
+                          && capability.ConsecutiveFailures == 1
+                          && capability.FirstFailureAt is not null);
+
+        var expiresAt = DateTime.UtcNow.AddDays(10);
+        registry.AdvertiseCapabilities(
+            runnerId,
+            new Contract.CapabilityAdvertisementRequest(
+                runnerId,
+                instanceId,
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                DateTime.UtcNow,
+                180,
+                2,
+                [
+                    new Contract.AdvertisedCapabilityDto(
+                        Contract.CapabilityProtocol.CliExecution("claude"),
+                        "cli-execution"),
+                    new Contract.AdvertisedCapabilityDto(
+                        Contract.CapabilityProtocol.ProviderAuthentication("claude"),
+                        "provider-auth",
+                        "ready",
+                        Signal: "credentials-expiring",
+                        ExpiresAt: expiresAt),
+                ]));
+
+        var recovered = Assert.Single(registry.ListCapabilitySnapshots());
+        var recoveredAuth = Assert.Single(
+            recovered.Capabilities,
+            capability => capability.Key == "provider-auth:claude");
+        Assert.Equal(Contract.CapabilityHealthStates.Healthy, recoveredAuth.HealthState);
+        Assert.Equal(0, recoveredAuth.ConsecutiveFailures);
+        Assert.Equal("credentials-expiring", recoveredAuth.Signal);
+        Assert.Equal(expiresAt, recoveredAuth.ExpiresAt);
+        Assert.Contains(
+            recoveredAuth.RecoveryHistory,
+            item => item.FromState == Contract.CapabilityHealthStates.Suspect
+                    && item.ToState == Contract.CapabilityHealthStates.Healthy);
+    }
+
+    [Fact]
+    public void RunnerLinkPolicy_CoversHeartbeatLateExitPauseAndBackoff()
+    {
+        Assert.Equal(RunnerLinkStates.Up, RunnerLinkPolicy.Decide("connecting", false, true, true, false, false).State);
+        Assert.True(RunnerLinkPolicy.Decide("up", false, true, false, true, false).Probe);
+        Assert.True(RunnerLinkPolicy.Decide("connecting", false, true, false, true, false).Probe);
+        Assert.True(RunnerLinkPolicy.Decide("connecting", false, false, false, true, false).Recover);
+        Assert.True(RunnerLinkPolicy.Decide("reconnecting", false, false, false, true, true).Start);
+        Assert.Equal(RunnerLinkStates.Paused, RunnerLinkPolicy.Decide("up", true, true, true, false, false).State);
+    }
+
+    [Fact]
+    public void RunnerLinkCleanupCommand_IsBoundedAndRestrictsOwner()
+    {
+        var options = new RunnerLinkOptions("host", "ssh-reverse", "runner", 15031, 5031, [], 90,
+            [5, 10, 30, 60, 120], "ssh", _root);
+        var arguments = LinkSupervisor.CleanupCommand(options);
+        Assert.Contains("BatchMode=yes", arguments);
+        Assert.Contains("ConnectTimeout=5", arguments);
+        var remote = arguments[^1];
+        Assert.StartsWith("timeout 4s sh -c ", remote);
+        Assert.Contains("ss -H -ltnp", remote);
+        Assert.Contains("endpoint=127.0.0.1:$port", remote);
+        Assert.Contains("[ \"$owner_uid\" = \"$self_uid\" ]", remote);
+        Assert.Contains("[ \"$command\" = sshd ]", remote);
+        Assert.Contains("kill -KILL", remote);
+    }
+
+    [Theory]
+    [InlineData(0, "Remote listener cleanup succeeded.")]
+    [InlineData(1, "Remote listener remains held.")]
+    [InlineData(124, "Cleanup command timed out: timeout 4s")]
+    [InlineData(255, "Cleanup SSH transport failed (exit 255)")]
+    public void RunnerLinkCleanup_ClassifiesExitCodes(int exit, string expected)
+    {
+        var detail = RunnerLinkPolicy.ProbeDetail(exit, "listener-cleanup", "timeout 4s sh -c 'inspect'", "", "");
+        Assert.Contains(expected, detail);
+        Assert.Equal("no-route", RunnerLinkPolicy.Transport(255, "ssh: No route to host"));
+    }
+
+    [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    public async Task RunnerLinkChild_IsSilentRedirectedAndTerminatedWithItsOwner()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "The portable fake executable fixture uses the Linux sleep binary.");
+        if (!OperatingSystem.IsLinux()) return;
+        var directory = Path.Combine(_root, "fake-ssh");
+        Directory.CreateDirectory(directory);
+        var executable = Path.Combine(directory, "ssh");
+        File.Copy("/bin/sleep", executable);
+        File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var command = new SshCommand(executable, ["30"], Path.Combine(directory, "link.log"));
+        var start = RunnerLinkProcessLauncher.BuildStartInfo(command);
+        Assert.True(start.CreateNoWindow);
+        Assert.False(start.UseShellExecute);
+        Assert.True(start.RedirectStandardOutput);
+        Assert.True(start.RedirectStandardError);
+
+        using var launcher = new RunnerLinkProcessLauncher();
+        var child = launcher.Start(command);
+        Assert.False(child.HasExited);
+        await child.TerminateAsync(CancellationToken.None);
+        Assert.True(child.HasExited);
+        await child.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task RestoreVerification_RejectsValidArchiveWhoseCreationChecksumChanged()
+    {
+        using var client = _host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        await EnterMaintenance(client, "tamper-maintenance-key");
+        (await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "backup-create", dryRun = false, confirmation = "backup-create", idempotencyKey = "tamper-backup-key"
+        })).EnsureSuccessStatusCode();
+
+        var archivePath = Assert.Single(Directory.GetFiles(_backups, "backup-*.zip"));
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Update))
+        {
+            using var writer = new StreamWriter(archive.CreateEntry("tampered-after-creation.txt").Open());
+            writer.Write("changed");
+        }
+
+        var verify = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "restore-verify", dryRun = false, confirmation = "restore-verify", idempotencyKey = "tamper-restore-key"
+        });
+        verify.EnsureSuccessStatusCode();
+        var body = await verify.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, body.GetProperty("affected").GetInt32());
+        Assert.Contains("failed before extraction", body.GetProperty("summary").GetString());
+    }
+
+    [Fact]
+    public async Task MigrationProjection_IsDurableAndControlsReadiness()
+    {
+        using var client = _host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var migrations = _host.Services.GetRequiredService<MigrationStateStore>();
+
+        migrations.Begin("schema-regression", "Applying schema regression fixture.");
+        var running = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
+        Assert.False(running.GetProperty("health").GetProperty("ready").GetBoolean());
+        Assert.Equal("maintenance", running.GetProperty("health").GetProperty("state").GetString());
+        Assert.Contains("migration-running", running.GetProperty("health").GetProperty("reasons").EnumerateArray().Select(x => x.GetString()));
+
+        migrations.Fail("schema-regression", "fixture failed");
+        var failed = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
+        Assert.Equal("degraded", failed.GetProperty("health").GetProperty("state").GetString());
+        Assert.Equal("failed", failed.GetProperty("migrations")[0].GetProperty("state").GetString());
+
+        migrations.Complete("schema-regression");
+        var recovered = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
+        Assert.True(recovered.GetProperty("health").GetProperty("ready").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ConflictingHeaderAndBodyIdempotencyKeys_AreRejectedBeforeAudit()
+    {
+        using var client = _host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/management/commands")
+        {
+            Content = JsonContent.Create(new
+            {
+                kind = "archive-sweep", dryRun = true, idempotencyKey = "body-key",
+            }),
+        };
+        request.Headers.Add("Idempotency-Key", "header-key");
+        var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.False(File.Exists(Path.Combine(_root, ".audit", "management.jsonl")));
+    }
+
+    [Fact]
+    public async Task ArchiveSweep_SkipsAndReportsEveryUnintegratedCompletedCard()
+    {
+        foreach (var id in new[] { "blocked-one", "blocked-two" })
+        {
+            var folder = Path.Combine(_root, TaskStates.Completed, id);
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+            {
+                id, title = id, state = TaskStates.Completed,
+                projectName = "Management Test", requiresIntegration = true,
+            }));
+            File.WriteAllText(Path.Combine(folder, "status.md"), "Result: delivered.\n");
+        }
+        using var client = _host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "archive-sweep", dryRun = false, confirmation = "archive-sweep",
+            idempotencyKey = "blocked-archive-sweep",
+        });
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, result.GetProperty("affected").GetInt32());
+        var blocked = result.GetProperty("detail").GetProperty("blocked")
+            .EnumerateArray().Select(item => item.GetProperty("taskKey").GetString()).ToArray();
+        Assert.Equal(2, blocked.Length);
+        Assert.Contains(blocked, key => key?.EndsWith("blocked-one", StringComparison.Ordinal) == true);
+        Assert.Contains(blocked, key => key?.EndsWith("blocked-two", StringComparison.Ordinal) == true);
+        Assert.All(new[] { "blocked-one", "blocked-two" }, id =>
+            Assert.True(Directory.Exists(Path.Combine(_root, TaskStates.Completed, id))));
+    }
+
+    [Fact]
+    public async Task WhitespacePaddedOwnerCommand_IsRejectedForOperatorBeforeAudit()
+    {
+        using var client = _host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+
+        var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = " runner-credential-rotate ",
+            dryRun = true,
+            idempotencyKey = "padded-owner-command-key",
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("owner-required", body.GetProperty("error").GetString());
+        Assert.False(File.Exists(Path.Combine(_root, ".audit", "management.jsonl")));
+    }
+
+    [Fact]
+    public async Task ReusedIdempotencyKey_WithDifferentPayload_IsRejected()
+    {
+        using var client = _host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        const string key = "retention-payload-key";
+
+        var first = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "backup-retention", dryRun = true, idempotencyKey = key, retentionCount = 2,
+        });
+        first.EnsureSuccessStatusCode();
+
+        var conflicting = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "backup-retention", dryRun = true, idempotencyKey = key, retentionCount = 3,
+        });
+        Assert.Equal(HttpStatusCode.Conflict, conflicting.StatusCode);
+        var body = await conflicting.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("idempotency-key-conflict", body.GetProperty("error").GetString());
+
+        var audit = File.ReadLines(Path.Combine(_root, ".audit", "management.jsonl")).ToArray();
+        Assert.Equal(2, audit.Length);
+        Assert.All(audit, row => Assert.Contains("requestFingerprint", row));
+    }
+
+    [Fact]
+    public async Task MaintenanceMode_RefusesOrdinaryMutations_ButManagementRemainsAvailable()
+    {
+        using var client = _host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        await EnterMaintenance(client, "maintenance-admission-key");
+
+        var blocked = await client.PostAsJsonAsync("/api/tasks", new { id = "blocked-in-maintenance" });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, blocked.StatusCode);
+        var status = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
+        Assert.Equal("maintenance", status.GetProperty("maintenance").GetProperty("mode").GetString());
+    }
+
+    [Fact]
+    public async Task RecoveryConsole_IsServerHosted_AndNamesServiceManagerBoundary()
+    {
+        using var client = _host.CreateClient();
+        var html = await client.GetStringAsync("/recovery");
+        Assert.Contains("Task Server bootstrap and recovery", html);
+        Assert.Contains("service manager owns process start and restart", html);
+        Assert.Contains("/api/v1/management/status", html);
+    }
+
+    /// <summary>
+    /// The management host of every class in this file: the workspace is the
+    /// only watch path, the backups and backend logs sit beside it, and no
+    /// hosted service runs. The optional arguments are the configurations the
+    /// tests of <see cref="ManagementApiOwnHostTests"/> each need.
+    /// </summary>
+    internal static void Configure(
+        IWebHostBuilder builder,
+        ManagementTestFolders folders,
+        string environment = "Test",
+        IProviderAuthProvisioner? provisioner = null,
+        bool runnerLinks = false,
+        IRunnerLinkProcessLauncher? launcher = null,
+        StableReleaseIdentity? stableRelease = null,
+        TimeProvider? timeProvider = null,
+        string? connectivityManifest = null,
+        ManagementStatisticsCache? statisticsCache = null)
+    {
+        builder.UseEnvironment(environment);
+        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = folders.Root,
+            ["Management:BackupDirectory"] = folders.Backups,
+            ["Logging:BackendFile:LogDirectory"] = folders.Logs,
+            ["WatchPaths:0:Name"] = "Management Test",
+            ["WatchPaths:0:Path"] = folders.Root,
+            ["WatchPaths:0:RootPath"] = folders.Root,
+            ["Supervisor:StuckResumeWindowMinutes"] = "0",
+            ["CodexModels:WarmupOnBoot"] = "false",
+            ["RunnerLinks:0:Enabled"] = runnerLinks ? "true" : "false",
+            ["RunnerLinks:0:RunnerId"] = "agent-runner-01",
+            ["RunnerLinks:0:Kind"] = "ssh-reverse",
+            ["RunnerLinks:0:SshTarget"] = "agent-runner",
+            ["RunnerLinks:0:RemotePort"] = "15031",
+            ["RunnerLinks:0:LocalPort"] = "5031",
+            ["RunnerLinks:0:HeartbeatTimeoutSeconds"] = "90",
+            ["RunnerLinks:0:ExtraForwards:0"] = "5031:127.0.0.1:5031",
+            ["RunnerLinks:0:ExtraForwards:1"] = "4011:localhost:4011",
+            ["RunnerLinks:0:BackoffSeconds:0"] = "5",
+            ["RunnerLinks:0:BackoffSeconds:1"] = "10",
+            ["RunnerLinks:0:BackoffSeconds:2"] = "30",
+            ["RunnerLinks:0:BackoffSeconds:3"] = "60",
+            ["RunnerLinks:0:BackoffSeconds:4"] = "120",
+            [ConnectivityManifestLoader.ManifestPathKey] = connectivityManifest,
+        }));
+        builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IHostedService>();
+            if (statisticsCache is not null) services.AddSingleton(statisticsCache);
+            if (stableRelease is not null)
+            {
+                services.RemoveAll<BuildIdentity>();
+                services.AddSingleton(BuildIdentityFixture(stableRelease));
+                services.RemoveAll<StableReleaseIdentity>();
+                services.AddSingleton(stableRelease);
+            }
+            if (timeProvider is not null)
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton(timeProvider);
+            }
+            if (provisioner is not null)
+            {
+                services.RemoveAll<IProviderAuthProvisioner>();
+                services.AddSingleton(provisioner);
+            }
+            if (runnerLinks || launcher is not null || connectivityManifest is not null)
+            {
+                services.RemoveAll<IRunnerLinkProcessLauncher>();
+                services.AddSingleton<IRunnerLinkProcessLauncher>(launcher ?? new FakeLinkProcessLauncher());
+            }
+        });
+    }
+
+    private static BuildIdentity BuildIdentityFixture(StableReleaseIdentity stable) => new(
+        1,
+        "Agent Studio",
+        stable.BuiltAt is null ? "untagged" : $"v{stable.Version}",
+        stable.Version,
+        stable.Commit ?? "unknown",
+        stable.BuiltAt is null,
+        stable.BuiltAt,
+        stable.BuiltAt is null ? "unverified" : "sha256-stable",
+        new ReleaseArtifactIdentity(
+            "CodingAgentRunner", stable.Version, stable.BuiltAt is null ? "untagged" : $"v{stable.Version}",
+            stable.Commit ?? "unknown", stable.BuiltAt is null ? "unverified" : "sha256-runner"),
+        new ReleaseArtifactIdentity(
+            "coding-agent-chat", stable.Version, stable.BuiltAt is null ? "untagged" : $"v{stable.Version}",
+            stable.Commit ?? "unknown", stable.BuiltAt is null ? "unverified" : "sha256-chat"),
+        Legacy: stable.BuiltAt is null);
+
+    internal static async Task EnterMaintenance(HttpClient client, string key)
+    {
+        var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "maintenance-enter", dryRun = false,
+            confirmation = "maintenance-enter", idempotencyKey = key,
+        });
+        response.EnsureSuccessStatusCode();
+    }
+}
+
+/// <summary>
+/// A management host for the classes of this file (AGT-3416). Between tests
+/// it removes what the management commands of a test leave in the workspace,
+/// so the next test sees the workspace a fresh host saw.
+/// </summary>
+public abstract class ManagementTestHost : SharedTestHost
+{
+    protected ManagementTestHost() : base("agent-studio-server-data-") => Folders = ManagementTestFolders.Create(Root);
+
+    internal ManagementTestFolders Folders { get; }
+
+    public virtual void Reset() => Folders.ResetManagementState();
+
+    /// <summary>
+    /// A client for the host. No watcher runs here, so the task index is
+    /// rescanned first and the first request sees the cards the test wrote,
+    /// as the boot scan of a per-test host did.
+    /// </summary>
+    public HttpClient CreateClient()
+    {
+        Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        return Factory.CreateClient();
+    }
+
+    public override async Task DisposeAsync()
+    {
+        await base.DisposeAsync();
+        Folders.Delete();
+    }
+}
+
+/// <summary>The workspace, backup and log folders one management host is configured with.</summary>
+internal sealed class ManagementTestFolders
+{
+    private ManagementTestFolders(string root)
+    {
+        Root = root;
+        Backups = root + "-backups";
+        Logs = root + "-logs";
+    }
+
+    public string Root { get; }
+    public string Backups { get; }
+    public string Logs { get; }
+
+    public static ManagementTestFolders Create(string root)
+    {
+        foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(root, state));
+        Directory.CreateDirectory(Path.Combine(root, ".metadata"));
+        File.WriteAllText(Path.Combine(root, ".metadata", "server-evidence.jsonl"), "{}\n");
+        return new ManagementTestFolders(root);
+    }
+
+    /// <summary>
+    /// Empties the lanes and removes the management audit, the maintenance
+    /// and migration state, the last backup failure and the backups. The
+    /// management service reads each of them from disk on every request.
+    /// </summary>
+    public void ResetManagementState()
+    {
+        foreach (var state in TaskStates.All)
+            foreach (var entry in Directory.EnumerateFileSystemEntries(Path.Combine(Root, state)))
+                DeleteEntry(entry);
+        DeleteEntry(Path.Combine(Root, ".audit"));
+        foreach (var file in new[] { "management-state.json", "migrations.json", "last-backup-failure.txt" })
+            DeleteEntry(Path.Combine(Root, ".metadata", file));
+        DeleteEntry(Backups);
+    }
+
+    public void Delete()
+    {
+        try { Directory.Delete(Root, true); } catch (Exception ex) { SilentCatch.Note(ex, "Management test root cleanup"); }
+        try { Directory.Delete(Backups, true); } catch (Exception ex) { SilentCatch.Note(ex, "Management test backup cleanup"); }
+        try { Directory.Delete(Logs, true); } catch (Exception ex) { SilentCatch.Note(ex, "Management test log cleanup"); }
+    }
+
+    private static void DeleteEntry(string path)
+    {
+        if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+        else if (File.Exists(path)) File.Delete(path);
+    }
+}
+
+/// <summary>
+/// Provider sign-in provisioning on a shared management host whose
+/// provisioner records the request it was handed. The recording is cleared
+/// before each test.
+/// </summary>
+public sealed class ManagementProviderAuthTests : IClassFixture<ManagementProviderAuthTests.Host>
+{
+    private readonly Host _host;
+
+    public ManagementProviderAuthTests(Host host)
+    {
+        _host = host;
+        _host.Reset();
+    }
+
+    /// <summary>The management host with a recording provider sign-in provisioner.</summary>
+    public sealed class Host : ManagementTestHost
+    {
+        internal RecordingProviderAuthProvisioner Provisioner { get; } = new();
+
+        protected override void ConfigureHost(IWebHostBuilder builder)
+            => ManagementApiTests.Configure(builder, Folders, provisioner: Provisioner);
+
+        public override void Reset()
+        {
+            base.Reset();
+            Provisioner.Clear();
+        }
+    }
+
+    [Fact]
+    public async Task ProviderAuthProvisioning_RequiresOperator_AndDoesNotEchoTheSecret()
+    {
+        const string secret = "sk-ant-oat01-provider-secret-fixture";
+        var provisioner = _host.Provisioner;
+        using var client = _host.CreateClient();
+        var request = new ProviderAuthProvisioningRequest(
+            "agent@runner-01",
+            "agent-runner-01",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            secret);
+
+        var denied = await client.PostAsJsonAsync(
+            "/api/v1/management/remote-hosts/provider-auth",
+            request);
+        Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
+        Assert.Null(provisioner.LastRequest);
+
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var accepted = await client.PostAsJsonAsync(
+            "/api/v1/management/remote-hosts/provider-auth",
+            request);
+
+        accepted.EnsureSuccessStatusCode();
+        Assert.Equal(secret, provisioner.LastRequest?.Secret);
+        var body = await accepted.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(secret, body, StringComparison.Ordinal);
+        Assert.Contains("awaiting-probe", body, StringComparison.Ordinal);
+        Assert.Contains("no-store", accepted.Headers.CacheControl?.ToString() ?? "");
+    }
+
+    [Theory]
+    [InlineData("runner;touch /tmp/x", "CLAUDE_CODE_OAUTH_TOKEN", "valid-provider-secret-fixture")]
+    [InlineData("agent@runner", "UNSUPPORTED_TOKEN", "valid-provider-secret-fixture")]
+    [InlineData("agent@runner", "ANTHROPIC_API_KEY", "secret with whitespace")]
+    public async Task ProviderAuthProvisioning_RejectsUnsafeInputBeforeTransport(
+        string sshTarget,
+        string environmentVariable,
+        string secret)
+    {
+        var provisioner = _host.Provisioner;
+        using var client = _host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+
+        var response = await client.PostAsJsonAsync(
+            "/api/v1/management/remote-hosts/provider-auth",
+            new ProviderAuthProvisioningRequest(
+                sshTarget,
+                "agent-runner-01",
+                environmentVariable,
+                secret));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Null(provisioner.LastRequest);
+    }
+
+    internal sealed class RecordingProviderAuthProvisioner : IProviderAuthProvisioner
+    {
+        public ProviderAuthProvisioningRequest? LastRequest { get; private set; }
+
+        public void Clear() => LastRequest = null;
+
+        public Task<ProviderAuthProvisioningResponse> ProvisionAsync(
+            ProviderAuthProvisioningRequest request,
+            AgentStudio.Management.ProviderAuthRenewalFence? fence,
+            CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            return Task.FromResult(new ProviderAuthProvisioningResponse(
+                "claude",
+                request.EnvironmentVariable,
+                request.SshTarget,
+                "awaiting-probe",
+                "Credential installed and daemon environment verified.",
+                DateTime.UtcNow,
+                ["agent-runner.service"],
+                true));
+        }
+    }
+}
+
+/// <summary>
+/// The management API tests that each build the host they need: a blocked
+/// statistics cache, a pinned Stable release and clock, runner links with
+/// their own launcher, the Production environment, or a workspace that holds
+/// a Git repository or a runner identity before the host starts.
+/// </summary>
+public sealed class ManagementApiOwnHostTests : IDisposable
+{
+    // The delivery-bounce repair compares no timestamps with now; the fixture
+    // only needs a stable instant for its commit and pipeline records.
+    private static readonly DateTime RepairFixtureTime = new(2026, 10, 12, 8, 0, 0, DateTimeKind.Utc);
+
+    private static readonly DateTimeOffset HostReleaseNow = new(2026, 9, 15, 12, 0, 0, TimeSpan.Zero);
+
+    private readonly ManagementTestFolders _folders = ManagementTestFolders.Create(CreateServerDataDirectory());
+    private readonly string _root;
+    private readonly string _backups;
+
+    public ManagementApiOwnHostTests()
+    {
+        _root = _folders.Root;
+        _backups = _folders.Backups;
+    }
+
     [Fact]
     public async Task StatusAndDiagnostics_ReturnLiveHealthWhileStatisticsRefreshIsBlocked()
     {
@@ -56,54 +775,6 @@ public sealed class ManagementApiTests : IDisposable
             Assert.Equal(1, Volatile.Read(ref scans));
         }
         finally { release.Set(); }
-    }
-
-    // The delivery-bounce repair compares no timestamps with now; the fixture
-    // only needs a stable instant for its commit and pipeline records.
-    private static readonly DateTime RepairFixtureTime = new(2026, 10, 12, 8, 0, 0, DateTimeKind.Utc);
-
-    private static readonly DateTimeOffset HostReleaseNow = new(2026, 9, 15, 12, 0, 0, TimeSpan.Zero);
-    private readonly string _root = CreateServerDataDirectory();
-    private readonly string _backups;
-    private readonly string _logs;
-
-    public ManagementApiTests()
-    {
-        _backups = _root + "-backups";
-        _logs = _root + "-logs";
-        foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(_root, state));
-        Directory.CreateDirectory(Path.Combine(_root, ".metadata"));
-        File.WriteAllText(Path.Combine(_root, ".metadata", "server-evidence.jsonl"), "{}\n");
-    }
-
-    [Fact]
-    public async Task StatusAndCommands_RequireActor_AndLeaveDurableAudit()
-    {
-        await using var factory = BuildFactory();
-        using var client = factory.CreateClient();
-        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/management/status")).StatusCode);
-
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        var status = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
-        Assert.Equal("healthy", status.GetProperty("health").GetProperty("state").GetString());
-        Assert.True(status.GetProperty("health").GetProperty("live").GetBoolean());
-        Assert.Contains(status.GetProperty("statistics").GetProperty("state").GetString(), new[] { "pending", "ready" });
-        Assert.Equal(JsonValueKind.Null, status.GetProperty("store").GetProperty("eventCount").ValueKind);
-
-        const string key = "maintenance-test-key";
-        var request = new { kind = "maintenance-enter", dryRun = false, confirmation = "maintenance-enter", idempotencyKey = key, reason = "test rehearsal" };
-        var first = await client.PostAsJsonAsync("/api/v1/management/commands", request);
-        first.EnsureSuccessStatusCode();
-        var firstBody = await first.Content.ReadFromJsonAsync<JsonElement>();
-        var second = await client.PostAsJsonAsync("/api/v1/management/commands", request);
-        second.EnsureSuccessStatusCode();
-        var secondBody = await second.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(firstBody.GetProperty("commandId").GetString(), secondBody.GetProperty("commandId").GetString());
-        Assert.True(File.Exists(Path.Combine(_root, ".audit", "management.jsonl")));
-        var audit = File.ReadLines(Path.Combine(_root, ".audit", "management.jsonl")).ToArray();
-        Assert.Equal(2, audit.Length);
-        Assert.Contains("\"outcome\":\"started\"", audit[0]);
-        Assert.Contains("\"outcome\":\"completed\"", audit[1]);
     }
 
     /// <summary>
@@ -211,118 +882,6 @@ public sealed class ManagementApiTests : IDisposable
     }
 
     [Fact]
-    public async Task RemoteHosts_ReturnsTheLatestRunnerCapabilitySnapshot()
-    {
-        await using var factory = BuildFactory();
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        var registry = factory.Services.GetRequiredService<V1ReviewExecutorRegistry>();
-        const string runnerId = "agent-runner-capability-snapshot";
-        const string instanceId = "agent-runner-host:2498";
-        registry.Register(
-            runnerId,
-            new Contract.RegisterRunnerRequest(
-                "Agent Runner Snapshot",
-                "agent-runner-host",
-                instanceId,
-                "1.2.3",
-                Contract.TaskServerProtocol.Current,
-                [Contract.ReviewCapabilities.CodingExecutor],
-                BootstrapMaxParallelism: 6));
-        registry.AdvertiseCapabilities(
-            runnerId,
-            new Contract.CapabilityAdvertisementRequest(
-                runnerId,
-                instanceId,
-                Contract.CapabilityProtocol.CurrentSchemaVersion,
-                DateTime.UtcNow,
-                180,
-                1,
-                [
-                    new Contract.AdvertisedCapabilityDto(
-                        Contract.CapabilityProtocol.CliExecution("claude"),
-                        "cli-execution",
-                        "ready",
-                        "available",
-                        "/usr/bin/claude"),
-                    new Contract.AdvertisedCapabilityDto(
-                        Contract.CapabilityProtocol.ProviderAuthentication("claude"),
-                        "provider-auth",
-                        "ready",
-                        Identity: "claude"),
-                ]));
-        registry.ReportCapabilityFailure(
-            runnerId,
-            new Contract.CapabilityFailureRequest(
-                runnerId,
-                instanceId,
-                Contract.CapabilityProtocol.ProviderAuthentication("claude"),
-                "ProviderUnauthorized",
-                "Claude login is unavailable for the coding service user.",
-                DateTime.UtcNow,
-                "snapshot-provider-auth-failure"));
-
-        using var response = await client.GetAsync("/api/v1/management/remote-hosts");
-
-        response.EnsureSuccessStatusCode();
-        Assert.Contains("no-store", response.Headers.CacheControl?.ToString() ?? string.Empty);
-        var snapshots = await response.Content.ReadFromJsonAsync<
-            IReadOnlyList<Contract.RunnerCapabilitySnapshotDto>>();
-        var snapshot = Assert.Single(snapshots!);
-        Assert.Equal(runnerId, snapshot.RunnerId);
-        Assert.Equal(instanceId, snapshot.InstanceId);
-        Assert.Equal(6, snapshot.RoleMaxParallelism);
-        Assert.Contains(
-            snapshot.Capabilities,
-            capability => capability.Key == "cli-execution:claude"
-                          && capability.AdvertisedStatus == "ready"
-                          && capability.IsFresh
-                          && capability.Identity == "/usr/bin/claude");
-        Assert.Contains(
-            snapshot.Capabilities,
-            capability => capability.Key == "provider-auth:claude"
-                          && capability.AdvertisedStatus == "ready"
-                          && capability.HealthState == Contract.CapabilityHealthStates.Suspect
-                          && capability.ConsecutiveFailures == 1
-                          && capability.FirstFailureAt is not null);
-
-        var expiresAt = DateTime.UtcNow.AddDays(10);
-        registry.AdvertiseCapabilities(
-            runnerId,
-            new Contract.CapabilityAdvertisementRequest(
-                runnerId,
-                instanceId,
-                Contract.CapabilityProtocol.CurrentSchemaVersion,
-                DateTime.UtcNow,
-                180,
-                2,
-                [
-                    new Contract.AdvertisedCapabilityDto(
-                        Contract.CapabilityProtocol.CliExecution("claude"),
-                        "cli-execution"),
-                    new Contract.AdvertisedCapabilityDto(
-                        Contract.CapabilityProtocol.ProviderAuthentication("claude"),
-                        "provider-auth",
-                        "ready",
-                        Signal: "credentials-expiring",
-                        ExpiresAt: expiresAt),
-                ]));
-
-        var recovered = Assert.Single(registry.ListCapabilitySnapshots());
-        var recoveredAuth = Assert.Single(
-            recovered.Capabilities,
-            capability => capability.Key == "provider-auth:claude");
-        Assert.Equal(Contract.CapabilityHealthStates.Healthy, recoveredAuth.HealthState);
-        Assert.Equal(0, recoveredAuth.ConsecutiveFailures);
-        Assert.Equal("credentials-expiring", recoveredAuth.Signal);
-        Assert.Equal(expiresAt, recoveredAuth.ExpiresAt);
-        Assert.Contains(
-            recoveredAuth.RecoveryHistory,
-            item => item.FromState == Contract.CapabilityHealthStates.Suspect
-                    && item.ToState == Contract.CapabilityHealthStates.Healthy);
-    }
-
-    [Fact]
     public async Task RunnerLinks_AreAuthorizedAuditedAndOperable()
     {
         await using var factory = BuildFactory(runnerLinks: true);
@@ -356,46 +915,6 @@ public sealed class ManagementApiTests : IDisposable
         Assert.Contains("\"action\":\"reconnect\"", audit);
         Assert.Contains("\"action\":\"pause\"", audit);
         Assert.Contains("\"action\":\"resume\"", audit);
-    }
-
-    [Fact]
-    public void RunnerLinkPolicy_CoversHeartbeatLateExitPauseAndBackoff()
-    {
-        Assert.Equal(RunnerLinkStates.Up, RunnerLinkPolicy.Decide("connecting", false, true, true, false, false).State);
-        Assert.True(RunnerLinkPolicy.Decide("up", false, true, false, true, false).Probe);
-        Assert.True(RunnerLinkPolicy.Decide("connecting", false, true, false, true, false).Probe);
-        Assert.True(RunnerLinkPolicy.Decide("connecting", false, false, false, true, false).Recover);
-        Assert.True(RunnerLinkPolicy.Decide("reconnecting", false, false, false, true, true).Start);
-        Assert.Equal(RunnerLinkStates.Paused, RunnerLinkPolicy.Decide("up", true, true, true, false, false).State);
-    }
-
-    [Fact]
-    public void RunnerLinkCleanupCommand_IsBoundedAndRestrictsOwner()
-    {
-        var options = new RunnerLinkOptions("host", "ssh-reverse", "runner", 15031, 5031, [], 90,
-            [5, 10, 30, 60, 120], "ssh", _root);
-        var arguments = LinkSupervisor.CleanupCommand(options);
-        Assert.Contains("BatchMode=yes", arguments);
-        Assert.Contains("ConnectTimeout=5", arguments);
-        var remote = arguments[^1];
-        Assert.StartsWith("timeout 4s sh -c ", remote);
-        Assert.Contains("ss -H -ltnp", remote);
-        Assert.Contains("endpoint=127.0.0.1:$port", remote);
-        Assert.Contains("[ \"$owner_uid\" = \"$self_uid\" ]", remote);
-        Assert.Contains("[ \"$command\" = sshd ]", remote);
-        Assert.Contains("kill -KILL", remote);
-    }
-
-    [Theory]
-    [InlineData(0, "Remote listener cleanup succeeded.")]
-    [InlineData(1, "Remote listener remains held.")]
-    [InlineData(124, "Cleanup command timed out: timeout 4s")]
-    [InlineData(255, "Cleanup SSH transport failed (exit 255)")]
-    public void RunnerLinkCleanup_ClassifiesExitCodes(int exit, string expected)
-    {
-        var detail = RunnerLinkPolicy.ProbeDetail(exit, "listener-cleanup", "timeout 4s sh -c 'inspect'", "", "");
-        Assert.Contains(expected, detail);
-        Assert.Equal("no-route", RunnerLinkPolicy.Transport(255, "ssh: No route to host"));
     }
 
     [Fact]
@@ -588,121 +1107,6 @@ public sealed class ManagementApiTests : IDisposable
         Assert.Contains("single owner", error.ToString());
     }
 
-    [SkippableFact]
-    [Trait("Category", "MachineBound")]
-    public async Task RunnerLinkChild_IsSilentRedirectedAndTerminatedWithItsOwner()
-    {
-        Skip.IfNot(OperatingSystem.IsLinux(), "The portable fake executable fixture uses the Linux sleep binary.");
-        if (!OperatingSystem.IsLinux()) return;
-        var directory = Path.Combine(_root, "fake-ssh");
-        Directory.CreateDirectory(directory);
-        var executable = Path.Combine(directory, "ssh");
-        File.Copy("/bin/sleep", executable);
-        File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        var command = new SshCommand(executable, ["30"], Path.Combine(directory, "link.log"));
-        var start = RunnerLinkProcessLauncher.BuildStartInfo(command);
-        Assert.True(start.CreateNoWindow);
-        Assert.False(start.UseShellExecute);
-        Assert.True(start.RedirectStandardOutput);
-        Assert.True(start.RedirectStandardError);
-
-        using var launcher = new RunnerLinkProcessLauncher();
-        var child = launcher.Start(command);
-        Assert.False(child.HasExited);
-        await child.TerminateAsync(CancellationToken.None);
-        Assert.True(child.HasExited);
-        await child.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task RunnerRegistration_ProjectsItsHeartbeatIntoClients()
-    {
-        var identities = Path.Combine(_root, "identities");
-        Directory.CreateDirectory(identities);
-        await File.WriteAllTextAsync(Path.Combine(identities, "agent-runner-heartbeat.json"), """
-            {
-              "id": "agent-runner-heartbeat",
-              "displayName": "agent-runner-heartbeat",
-              "kind": "service",
-              "registeredAt": "2026-09-06T08:00:00Z"
-            }
-            """);
-        await using var factory = BuildFactory();
-        using var runner = factory.CreateClient();
-
-        var registration = await runner.PutAsJsonAsync(
-            "/api/v1/runners/agent-runner-heartbeat",
-            new Contract.RegisterRunnerRequest(
-                "agent-runner-heartbeat", "host-heartbeat", "coding-1", "1.2.3",
-                Contract.TaskServerProtocol.Current,
-                [Contract.ReviewCapabilities.CodingExecutor]));
-        registration.EnsureSuccessStatusCode();
-
-        var clients = await runner.GetFromJsonAsync<JsonElement[]>("/api/clients");
-        var projected = Assert.Single(clients!, item =>
-            item.GetProperty("id").GetString() == "agent-runner-heartbeat");
-        Assert.Equal(JsonValueKind.String, projected.GetProperty("lastSeenAt").ValueKind);
-        Assert.True(projected.GetProperty("lastSeenAt").GetDateTime() > new DateTime(2026, 9, 6, 8, 0, 0, DateTimeKind.Utc));
-    }
-
-    [Fact]
-    public async Task ProviderAuthProvisioning_RequiresOperator_AndDoesNotEchoTheSecret()
-    {
-        const string secret = "sk-ant-oat01-provider-secret-fixture";
-        var provisioner = new RecordingProviderAuthProvisioner();
-        await using var factory = BuildFactory(provisioner: provisioner);
-        using var client = factory.CreateClient();
-        var request = new ProviderAuthProvisioningRequest(
-            "agent@runner-01",
-            "agent-runner-01",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-            secret);
-
-        var denied = await client.PostAsJsonAsync(
-            "/api/v1/management/remote-hosts/provider-auth",
-            request);
-        Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
-        Assert.Null(provisioner.LastRequest);
-
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        var accepted = await client.PostAsJsonAsync(
-            "/api/v1/management/remote-hosts/provider-auth",
-            request);
-
-        accepted.EnsureSuccessStatusCode();
-        Assert.Equal(secret, provisioner.LastRequest?.Secret);
-        var body = await accepted.Content.ReadAsStringAsync();
-        Assert.DoesNotContain(secret, body, StringComparison.Ordinal);
-        Assert.Contains("awaiting-probe", body, StringComparison.Ordinal);
-        Assert.Contains("no-store", accepted.Headers.CacheControl?.ToString() ?? "");
-    }
-
-    [Theory]
-    [InlineData("runner;touch /tmp/x", "CLAUDE_CODE_OAUTH_TOKEN", "valid-provider-secret-fixture")]
-    [InlineData("agent@runner", "UNSUPPORTED_TOKEN", "valid-provider-secret-fixture")]
-    [InlineData("agent@runner", "ANTHROPIC_API_KEY", "secret with whitespace")]
-    public async Task ProviderAuthProvisioning_RejectsUnsafeInputBeforeTransport(
-        string sshTarget,
-        string environmentVariable,
-        string secret)
-    {
-        var provisioner = new RecordingProviderAuthProvisioner();
-        await using var factory = BuildFactory(provisioner: provisioner);
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-
-        var response = await client.PostAsJsonAsync(
-            "/api/v1/management/remote-hosts/provider-auth",
-            new ProviderAuthProvisioningRequest(
-                sshTarget,
-                "agent-runner-01",
-                environmentVariable,
-                secret));
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Null(provisioner.LastRequest);
-    }
-
     [Fact]
     public async Task BackupCreate_VerifiesRealArchive_OutsideDataDirectory()
     {
@@ -717,7 +1121,7 @@ public sealed class ManagementApiTests : IDisposable
             || relativeToTemp == ".."
             || relativeToTemp.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal));
         client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        await EnterMaintenance(client, "backup-maintenance-key");
+        await ManagementApiTests.EnterMaintenance(client, "backup-maintenance-key");
         var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
         {
             kind = "backup-create", dryRun = false, confirmation = "backup-create", idempotencyKey = "backup-test-key"
@@ -740,112 +1144,6 @@ public sealed class ManagementApiTests : IDisposable
         Assert.Equal(1, verifyBody.GetProperty("affected").GetInt32());
         var stagingRoot = Path.Combine(_backups, ".restore-verification");
         Assert.False(Directory.Exists(stagingRoot) && Directory.EnumerateFileSystemEntries(stagingRoot).Any());
-    }
-
-    [Fact]
-    public async Task RestoreVerification_RejectsValidArchiveWhoseCreationChecksumChanged()
-    {
-        await using var factory = BuildFactory();
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        await EnterMaintenance(client, "tamper-maintenance-key");
-        (await client.PostAsJsonAsync("/api/v1/management/commands", new
-        {
-            kind = "backup-create", dryRun = false, confirmation = "backup-create", idempotencyKey = "tamper-backup-key"
-        })).EnsureSuccessStatusCode();
-
-        var archivePath = Assert.Single(Directory.GetFiles(_backups, "backup-*.zip"));
-        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Update))
-        {
-            using var writer = new StreamWriter(archive.CreateEntry("tampered-after-creation.txt").Open());
-            writer.Write("changed");
-        }
-
-        var verify = await client.PostAsJsonAsync("/api/v1/management/commands", new
-        {
-            kind = "restore-verify", dryRun = false, confirmation = "restore-verify", idempotencyKey = "tamper-restore-key"
-        });
-        verify.EnsureSuccessStatusCode();
-        var body = await verify.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(0, body.GetProperty("affected").GetInt32());
-        Assert.Contains("failed before extraction", body.GetProperty("summary").GetString());
-    }
-
-    [Fact]
-    public async Task MigrationProjection_IsDurableAndControlsReadiness()
-    {
-        await using var factory = BuildFactory();
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        var migrations = factory.Services.GetRequiredService<MigrationStateStore>();
-
-        migrations.Begin("schema-regression", "Applying schema regression fixture.");
-        var running = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
-        Assert.False(running.GetProperty("health").GetProperty("ready").GetBoolean());
-        Assert.Equal("maintenance", running.GetProperty("health").GetProperty("state").GetString());
-        Assert.Contains("migration-running", running.GetProperty("health").GetProperty("reasons").EnumerateArray().Select(x => x.GetString()));
-
-        migrations.Fail("schema-regression", "fixture failed");
-        var failed = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
-        Assert.Equal("degraded", failed.GetProperty("health").GetProperty("state").GetString());
-        Assert.Equal("failed", failed.GetProperty("migrations")[0].GetProperty("state").GetString());
-
-        migrations.Complete("schema-regression");
-        var recovered = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
-        Assert.True(recovered.GetProperty("health").GetProperty("ready").GetBoolean());
-    }
-
-    [Fact]
-    public async Task ConflictingHeaderAndBodyIdempotencyKeys_AreRejectedBeforeAudit()
-    {
-        await using var factory = BuildFactory();
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/management/commands")
-        {
-            Content = JsonContent.Create(new
-            {
-                kind = "archive-sweep", dryRun = true, idempotencyKey = "body-key",
-            }),
-        };
-        request.Headers.Add("Idempotency-Key", "header-key");
-        var response = await client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.False(File.Exists(Path.Combine(_root, ".audit", "management.jsonl")));
-    }
-
-    [Fact]
-    public async Task ArchiveSweep_SkipsAndReportsEveryUnintegratedCompletedCard()
-    {
-        foreach (var id in new[] { "blocked-one", "blocked-two" })
-        {
-            var folder = Path.Combine(_root, TaskStates.Completed, id);
-            Directory.CreateDirectory(folder);
-            File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
-            {
-                id, title = id, state = TaskStates.Completed,
-                projectName = "Management Test", requiresIntegration = true,
-            }));
-            File.WriteAllText(Path.Combine(folder, "status.md"), "Result: delivered.\n");
-        }
-        await using var factory = BuildFactory();
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
-        {
-            kind = "archive-sweep", dryRun = false, confirmation = "archive-sweep",
-            idempotencyKey = "blocked-archive-sweep",
-        });
-        response.EnsureSuccessStatusCode();
-        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(0, result.GetProperty("affected").GetInt32());
-        var blocked = result.GetProperty("detail").GetProperty("blocked")
-            .EnumerateArray().Select(item => item.GetProperty("taskKey").GetString()).ToArray();
-        Assert.Equal(2, blocked.Length);
-        Assert.Contains(blocked, key => key?.EndsWith("blocked-one", StringComparison.Ordinal) == true);
-        Assert.Contains(blocked, key => key?.EndsWith("blocked-two", StringComparison.Ordinal) == true);
-        Assert.All(new[] { "blocked-one", "blocked-two" }, id =>
-            Assert.True(Directory.Exists(Path.Combine(_root, TaskStates.Completed, id))));
     }
 
     [Fact]
@@ -959,6 +1257,37 @@ public sealed class ManagementApiTests : IDisposable
                 .BuildLookup([overrideCard])[overrideCard.TaskKey]));
     }
 
+    [Fact]
+    public async Task RunnerRegistration_ProjectsItsHeartbeatIntoClients()
+    {
+        var identities = Path.Combine(_root, "identities");
+        Directory.CreateDirectory(identities);
+        await File.WriteAllTextAsync(Path.Combine(identities, "agent-runner-heartbeat.json"), """
+            {
+              "id": "agent-runner-heartbeat",
+              "displayName": "agent-runner-heartbeat",
+              "kind": "service",
+              "registeredAt": "2026-09-06T08:00:00Z"
+            }
+            """);
+        await using var factory = BuildFactory();
+        using var runner = factory.CreateClient();
+
+        var registration = await runner.PutAsJsonAsync(
+            "/api/v1/runners/agent-runner-heartbeat",
+            new Contract.RegisterRunnerRequest(
+                "agent-runner-heartbeat", "host-heartbeat", "coding-1", "1.2.3",
+                Contract.TaskServerProtocol.Current,
+                [Contract.ReviewCapabilities.CodingExecutor]));
+        registration.EnsureSuccessStatusCode();
+
+        var clients = await runner.GetFromJsonAsync<JsonElement[]>("/api/clients");
+        var projected = Assert.Single(clients!, item =>
+            item.GetProperty("id").GetString() == "agent-runner-heartbeat");
+        Assert.Equal(JsonValueKind.String, projected.GetProperty("lastSeenAt").ValueKind);
+        Assert.True(projected.GetProperty("lastSeenAt").GetDateTime() > new DateTime(2026, 9, 6, 8, 0, 0, DateTimeKind.Utc));
+    }
+
     private static string RunGit(string path, params string[] arguments)
     {
         var start = new ProcessStartInfo("git")
@@ -977,78 +1306,6 @@ public sealed class ManagementApiTests : IDisposable
         return output.Trim();
     }
 
-    [Fact]
-    public async Task WhitespacePaddedOwnerCommand_IsRejectedForOperatorBeforeAudit()
-    {
-        await using var factory = BuildFactory();
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-
-        var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
-        {
-            kind = " runner-credential-rotate ",
-            dryRun = true,
-            idempotencyKey = "padded-owner-command-key",
-        });
-
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("owner-required", body.GetProperty("error").GetString());
-        Assert.False(File.Exists(Path.Combine(_root, ".audit", "management.jsonl")));
-    }
-
-    [Fact]
-    public async Task ReusedIdempotencyKey_WithDifferentPayload_IsRejected()
-    {
-        await using var factory = BuildFactory();
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        const string key = "retention-payload-key";
-
-        var first = await client.PostAsJsonAsync("/api/v1/management/commands", new
-        {
-            kind = "backup-retention", dryRun = true, idempotencyKey = key, retentionCount = 2,
-        });
-        first.EnsureSuccessStatusCode();
-
-        var conflicting = await client.PostAsJsonAsync("/api/v1/management/commands", new
-        {
-            kind = "backup-retention", dryRun = true, idempotencyKey = key, retentionCount = 3,
-        });
-        Assert.Equal(HttpStatusCode.Conflict, conflicting.StatusCode);
-        var body = await conflicting.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("idempotency-key-conflict", body.GetProperty("error").GetString());
-
-        var audit = File.ReadLines(Path.Combine(_root, ".audit", "management.jsonl")).ToArray();
-        Assert.Equal(2, audit.Length);
-        Assert.All(audit, row => Assert.Contains("requestFingerprint", row));
-    }
-
-    [Fact]
-    public async Task MaintenanceMode_RefusesOrdinaryMutations_ButManagementRemainsAvailable()
-    {
-        await using var factory = BuildFactory();
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        await EnterMaintenance(client, "maintenance-admission-key");
-
-        var blocked = await client.PostAsJsonAsync("/api/tasks", new { id = "blocked-in-maintenance" });
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, blocked.StatusCode);
-        var status = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
-        Assert.Equal("maintenance", status.GetProperty("maintenance").GetProperty("mode").GetString());
-    }
-
-    [Fact]
-    public async Task RecoveryConsole_IsServerHosted_AndNamesServiceManagerBoundary()
-    {
-        await using var factory = BuildFactory();
-        using var client = factory.CreateClient();
-        var html = await client.GetStringAsync("/recovery");
-        Assert.Contains("Task Server bootstrap and recovery", html);
-        Assert.Contains("service manager owns process start and restart", html);
-        Assert.Contains("/api/v1/management/status", html);
-    }
-
     private WebApplicationFactory<Program> BuildFactory(
         string environment = "Test",
         IProviderAuthProvisioner? provisioner = null,
@@ -1058,80 +1315,9 @@ public sealed class ManagementApiTests : IDisposable
         TimeProvider? timeProvider = null,
         string? connectivityManifest = null,
         ManagementStatisticsCache? statisticsCache = null) =>
-        new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-    {
-        builder.UseEnvironment(environment);
-        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["TaskRepository"] = _root,
-            ["Management:BackupDirectory"] = _backups,
-            ["Logging:BackendFile:LogDirectory"] = _logs,
-            ["WatchPaths:0:Name"] = "Management Test",
-            ["WatchPaths:0:Path"] = _root,
-            ["WatchPaths:0:RootPath"] = _root,
-            ["Supervisor:StuckResumeWindowMinutes"] = "0",
-            ["CodexModels:WarmupOnBoot"] = "false",
-            ["RunnerLinks:0:Enabled"] = runnerLinks ? "true" : "false",
-            ["RunnerLinks:0:RunnerId"] = "agent-runner-01",
-            ["RunnerLinks:0:Kind"] = "ssh-reverse",
-            ["RunnerLinks:0:SshTarget"] = "agent-runner",
-            ["RunnerLinks:0:RemotePort"] = "15031",
-            ["RunnerLinks:0:LocalPort"] = "5031",
-            ["RunnerLinks:0:HeartbeatTimeoutSeconds"] = "90",
-            ["RunnerLinks:0:ExtraForwards:0"] = "5031:127.0.0.1:5031",
-            ["RunnerLinks:0:ExtraForwards:1"] = "4011:localhost:4011",
-            ["RunnerLinks:0:BackoffSeconds:0"] = "5",
-            ["RunnerLinks:0:BackoffSeconds:1"] = "10",
-            ["RunnerLinks:0:BackoffSeconds:2"] = "30",
-            ["RunnerLinks:0:BackoffSeconds:3"] = "60",
-            ["RunnerLinks:0:BackoffSeconds:4"] = "120",
-            [ConnectivityManifestLoader.ManifestPathKey] = connectivityManifest,
-        }));
-        builder.ConfigureTestServices(services =>
-        {
-            services.RemoveAll<IHostedService>();
-            if (statisticsCache is not null) services.AddSingleton(statisticsCache);
-            if (stableRelease is not null)
-            {
-                services.RemoveAll<BuildIdentity>();
-                services.AddSingleton(BuildIdentityFixture(stableRelease));
-                services.RemoveAll<StableReleaseIdentity>();
-                services.AddSingleton(stableRelease);
-            }
-            if (timeProvider is not null)
-            {
-                services.RemoveAll<TimeProvider>();
-                services.AddSingleton(timeProvider);
-            }
-            if (provisioner is not null)
-            {
-                services.RemoveAll<IProviderAuthProvisioner>();
-                services.AddSingleton(provisioner);
-            }
-            if (runnerLinks || launcher is not null || connectivityManifest is not null)
-            {
-                services.RemoveAll<IRunnerLinkProcessLauncher>();
-                services.AddSingleton<IRunnerLinkProcessLauncher>(launcher ?? new FakeLinkProcessLauncher());
-            }
-        });
-    });
-
-    private static BuildIdentity BuildIdentityFixture(StableReleaseIdentity stable) => new(
-        1,
-        "Agent Studio",
-        stable.BuiltAt is null ? "untagged" : $"v{stable.Version}",
-        stable.Version,
-        stable.Commit ?? "unknown",
-        stable.BuiltAt is null,
-        stable.BuiltAt,
-        stable.BuiltAt is null ? "unverified" : "sha256-stable",
-        new ReleaseArtifactIdentity(
-            "CodingAgentRunner", stable.Version, stable.BuiltAt is null ? "untagged" : $"v{stable.Version}",
-            stable.Commit ?? "unknown", stable.BuiltAt is null ? "unverified" : "sha256-runner"),
-        new ReleaseArtifactIdentity(
-            "coding-agent-chat", stable.Version, stable.BuiltAt is null ? "untagged" : $"v{stable.Version}",
-            stable.Commit ?? "unknown", stable.BuiltAt is null ? "unverified" : "sha256-chat"),
-        Legacy: stable.BuiltAt is null);
+        new WebApplicationFactory<Program>().WithWebHostBuilder(builder => ManagementApiTests.Configure(
+            builder, _folders, environment, provisioner, runnerLinks, launcher, stableRelease, timeProvider,
+            connectivityManifest, statisticsCache));
 
     private string ReadWorkspaceBus()
     {
@@ -1141,87 +1327,6 @@ public sealed class ManagementApiTests : IDisposable
             : string.Empty;
     }
 
-    private sealed class FakeLinkProcessLauncher : IRunnerLinkProcessLauncher
-    {
-        private int _pid = 1000;
-        public List<SshCommand> Commands { get; } = [];
-        public FakeLinkProcess? Forward { get; private set; }
-        public Queue<int> BoundedExitCodes { get; } = [];
-        public Queue<string> BoundedStdout { get; } = [];
-        public int? ForwardExitCodeOnStart { get; init; }
-
-        public IRunnerLinkProcess Start(SshCommand command)
-        {
-            Commands.Add(command);
-            var process = new FakeLinkProcess(++_pid, command.Arguments.Contains("-N"));
-            if (command.Arguments.Contains("-N"))
-            {
-                Forward = process;
-                if (ForwardExitCodeOnStart is { } code) process.Exit(code);
-            }
-            else
-            {
-                process.StandardOutput = BoundedStdout.TryDequeue(out var stdout) ? stdout : "";
-                process.Exit(BoundedExitCodes.TryDequeue(out var code) ? code : 0);
-            }
-            return process;
-        }
-
-        public void Dispose() { }
-    }
-
-    private sealed class FakeLinkProcess(int pid, bool longRunning) : IRunnerLinkProcess
-    {
-        private readonly TaskCompletionSource<int> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public int Pid { get; } = pid;
-        public bool HasExited { get; private set; } = !longRunning;
-        public int? ExitCode { get; private set; } = longRunning ? null : 0;
-        public string StandardOutput { get; set; } = "";
-        public string StandardError { get; set; } = "";
-        public bool Terminated { get; private set; }
-
-        public void Exit(int code)
-        {
-            HasExited = true;
-            ExitCode = code;
-            _completion.TrySetResult(code);
-        }
-
-        public Task<int> WaitAsync(CancellationToken cancellationToken)
-            => HasExited ? Task.FromResult(ExitCode ?? 0) : _completion.Task.WaitAsync(cancellationToken);
-
-        public Task TerminateAsync(CancellationToken cancellationToken)
-        {
-            Terminated = true;
-            Exit(137);
-            return Task.CompletedTask;
-        }
-
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
-
-    private sealed class RecordingProviderAuthProvisioner : IProviderAuthProvisioner
-    {
-        public ProviderAuthProvisioningRequest? LastRequest { get; private set; }
-
-        public Task<ProviderAuthProvisioningResponse> ProvisionAsync(
-            ProviderAuthProvisioningRequest request,
-            AgentStudio.Management.ProviderAuthRenewalFence? fence,
-            CancellationToken cancellationToken)
-        {
-            LastRequest = request;
-            return Task.FromResult(new ProviderAuthProvisioningResponse(
-                "claude",
-                request.EnvironmentVariable,
-                request.SshTarget,
-                "awaiting-probe",
-                "Credential installed and daemon environment verified.",
-                DateTime.UtcNow,
-                ["agent-runner.service"],
-                true));
-        }
-    }
-
     private static string CreateServerDataDirectory()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-studio-server-data", "AGT-2194",
@@ -1229,20 +1334,64 @@ public sealed class ManagementApiTests : IDisposable
         return Path.GetFullPath(root);
     }
 
-    private static async Task EnterMaintenance(HttpClient client, string key)
+    public void Dispose() => _folders.Delete();
+}
+
+internal sealed class FakeLinkProcessLauncher : IRunnerLinkProcessLauncher
+{
+    private int _pid = 1000;
+    public List<SshCommand> Commands { get; } = [];
+    public FakeLinkProcess? Forward { get; private set; }
+    public Queue<int> BoundedExitCodes { get; } = [];
+    public Queue<string> BoundedStdout { get; } = [];
+    public int? ForwardExitCodeOnStart { get; init; }
+
+    public IRunnerLinkProcess Start(SshCommand command)
     {
-        var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        Commands.Add(command);
+        var process = new FakeLinkProcess(++_pid, command.Arguments.Contains("-N"));
+        if (command.Arguments.Contains("-N"))
         {
-            kind = "maintenance-enter", dryRun = false,
-            confirmation = "maintenance-enter", idempotencyKey = key,
-        });
-        response.EnsureSuccessStatusCode();
+            Forward = process;
+            if (ForwardExitCodeOnStart is { } code) process.Exit(code);
+        }
+        else
+        {
+            process.StandardOutput = BoundedStdout.TryDequeue(out var stdout) ? stdout : "";
+            process.Exit(BoundedExitCodes.TryDequeue(out var code) ? code : 0);
+        }
+        return process;
     }
 
-    public void Dispose()
+    public void Dispose() { }
+}
+
+internal sealed class FakeLinkProcess(int pid, bool longRunning) : IRunnerLinkProcess
+{
+    private readonly TaskCompletionSource<int> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int Pid { get; } = pid;
+    public bool HasExited { get; private set; } = !longRunning;
+    public int? ExitCode { get; private set; } = longRunning ? null : 0;
+    public string StandardOutput { get; set; } = "";
+    public string StandardError { get; set; } = "";
+    public bool Terminated { get; private set; }
+
+    public void Exit(int code)
     {
-        try { Directory.Delete(_root, true); } catch (Exception ex) { SilentCatch.Note(ex, "ManagementApiTests root cleanup"); }
-        try { Directory.Delete(_backups, true); } catch (Exception ex) { SilentCatch.Note(ex, "ManagementApiTests backup cleanup"); }
-        try { Directory.Delete(_logs, true); } catch (Exception ex) { SilentCatch.Note(ex, "ManagementApiTests log cleanup"); }
+        HasExited = true;
+        ExitCode = code;
+        _completion.TrySetResult(code);
     }
+
+    public Task<int> WaitAsync(CancellationToken cancellationToken)
+        => HasExited ? Task.FromResult(ExitCode ?? 0) : _completion.Task.WaitAsync(cancellationToken);
+
+    public Task TerminateAsync(CancellationToken cancellationToken)
+    {
+        Terminated = true;
+        Exit(137);
+        return Task.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

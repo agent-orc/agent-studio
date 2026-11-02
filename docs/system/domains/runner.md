@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-10-28
+Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
 ## Dynamic placement host agent, DP-S2
@@ -705,6 +705,13 @@ unreported claim expires with its lease and is queued again.
   terminal extraction, and the pure typed-outcome policy. The
   [CLI frame compatibility matrix](../cli/frame-compatibility-matrix.md) is the
   current vocabulary and replay-corpus system of record.
+- Codex's "Selected model is at capacity" failure is a transient model-capacity
+  outcome, distinct from quota and rate-limit refusals. The runner retries the
+  same session after 30 seconds, 2 minutes, and 5 minutes, retaining its fenced
+  lease and provider-auth availability. If all retries fail, the typed
+  `TransientModelCapacity` completion returns the card to Ready with the
+  published salvage ref as its next starting point. A real usage limit or HTTP
+  429 with a reset continues to hold the provider until recovery.
 - `backend/Features/Runner/PromptEnrichmentService.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteRunPrompt.cs`: shared pre-spawn prompt materialization. Local
@@ -2429,6 +2436,15 @@ card), promotes the card to the top of `2-ready` with transition detail
 `202 {"status":"queued","queued":{"reason":"lane-not-runnable"|"delivery-under-review"|"remote-execution"|"project-busy"}}`.
 A manual start carries no prompt, so nothing is persisted; the promotion alone
 carries the intent.
+
+When a follow-up is queued during a live remote run, the card enters Ready but
+the earlier attempt keeps its lease and continues working. Remote dispatch
+records `earlier-run-still-leased` and skips that card until the lease is no
+longer active, so other Ready cards can be claimed. The earlier run's completion
+settles its result without moving the queued card out of Ready. Its commits
+remain on the remote work branch, and the immutable delivery ref and commit
+become the queued follow-up's continuation base unless a newer base was already
+selected. The next claim consumes the prompt and starts from that delivery.
 
 **A kill never loses intent.** Every stop path that terminates a run still
 holding its execution slot - `ClearActiveJobIfMatches` (lane reconciliation and

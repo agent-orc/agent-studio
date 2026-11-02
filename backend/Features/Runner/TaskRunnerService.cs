@@ -500,8 +500,14 @@ public class TaskRunnerService : BackgroundService
             _logger.LogInformation("Initialized runner for project '{Name}' (Root: {RootPath})", entry.Name, entry.RootPath);
         }
 
-        // Check CLI availability (default backend = Claude)
-        if (!_router.Get(CliTypes.Claude).IsAvailable())
+        // Check CLI availability (default backend = Claude). The networked
+        // profile never runs host CLIs, so a missing one there is expected.
+        if (!HostCliDiscovery.Allowed(_config))
+        {
+            _logger.LogInformation("Host CLI runs are disabled in the {Profile} profile; the Claude CLI check is skipped",
+                SecurityProfiles.ActiveProfile(_config));
+        }
+        else if (!_router.Get(CliTypes.Claude).IsAvailable())
         {
             _logger.LogWarning("Claude CLI not available - runners will be in manual/board-only mode");
         }
@@ -1083,6 +1089,13 @@ public class TaskRunnerService : BackgroundService
         return response;
     }
 
+    /// <summary>
+    /// A follow-up for a live remote run is saved and moved to the top of Ready
+    /// while the earlier attempt keeps its lease. Dispatch skips that card until
+    /// the attempt settles and releases its lease. Its completed delivery stays
+    /// on the remote work branch and becomes the next claim's continuation base;
+    /// the queued prompt is consumed by that next run.
+    /// </summary>
     private ContinueJobResponse QueueFollowUp(
         TaskInfo info,
         string jobId,

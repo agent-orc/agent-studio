@@ -124,7 +124,6 @@
         "src/app/features/project-detail/components/project-proposals-panel/project-proposals-panel.component.scss",
         "src/app/features/cli/components/cli-admin-panel/cli-admin-panel.scss",
         "src/app/features/cli/components/cli-console/cli-console.scss",
-        "src/app/features/cli/components/cli-sessions-panel/cli-sessions-panel.scss",
         "src/app/features/dev-tools/components/update-stable-console/update-stable-console.component.scss",
         "src/app/features/task-detail/components/activity-log-view/activity-log-view.scss",
         "src/app/features/task-detail/components/beautiful-results/beautiful-results.component.scss",
@@ -325,7 +324,9 @@
         "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.scss",
         "src/app/features/test-evidence/components/test-evidence-status/test-evidence-status.component.scss",
         "src/app/features/deployments/components/card-environment-badges/card-environment-badges.scss",
-        "src/app/components/task-preview/task-preview.component.scss"
+        "src/app/features/structure/structure-view/structure-view.component.scss",
+        "src/app/components/task-preview/task-preview.component.scss",
+        "src/app/features/flow-health/components/flow-health-page/flow-health-page.scss"
       ],
       "rules": {
         "color-no-hex": null,

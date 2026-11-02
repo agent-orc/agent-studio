@@ -9,7 +9,8 @@
       <em>content</em> lives in Prompts; changes apply to the next run.
     </p>
   </header>
-  <app-pipeline-health-block [projectName]="projectName()" />
+  <app-pipeline-health-block [projectName]="projectName()" (openFlowHealth)="openFlowHealth.emit()" />
+  <app-gate-slot-board [projectName]="projectName()" />
   @if (loadError(); as err) {
     <p class="pp__error" data-testid="pipeline-load-error">{{ err }}</p>
   }

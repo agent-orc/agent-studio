@@ -1048,9 +1048,8 @@ public sealed class GitStateIndexService : BackgroundService
         return state.RecentSpawns.Sum(entry => entry.Spawns);
     }
 
-    private TaskInfo[] ReadTasks(RepoState state) => _scanner.ScanAllJobsRaw()
-        .Where(task => WatchPathComparison.PathsEqual(task.WatchPath, state.WatchPath))
-        .ToArray();
+    private TaskInfo[] ReadTasks(RepoState state)
+        => _scanner.ScanWatchPathRaw(state.WatchPath).ToArray();
 
     private RepoInput CaptureInput(RepoState state, TaskInfo[] tasks, string configSignature)
     {

@@ -68,6 +68,26 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public async Task Oversized_review_report_returns_typed_413_from_shared_limit()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new TaskServerFactory(temp.Path);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            TaskServerProtocol.HeaderName,
+            TaskServerProtocol.Current.ToString());
+        using var body = new StringContent(new string('x', (int)ReviewReportLimits.MaxRequestBodyBytes + 1));
+
+        var response = await client.PostAsync("/api/v1/reviews/attempts/attempt-1/report", body);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("review-report-too-large", problem.RootElement.GetProperty("type").GetString());
+        Assert.Equal(ReviewReportLimits.MaxRequestBodyBytes,
+            problem.RootElement.GetProperty("limitBytes").GetInt64());
+    }
+
+    [Fact]
     public async Task Artifact_larger_than_advertised_file_cap_returns_typed_413()
     {
         using var temp = new TempDirectory();
@@ -479,7 +499,7 @@ public sealed class ProtocolTests
     }
 
     [Fact]
-    public void Provider_capacity_uses_the_bounded_unknown_limit_retry()
+    public void Provider_capacity_is_not_a_rate_limit()
     {
         var observedAt = new DateTimeOffset(2026, 8, 31, 6, 45, 42, TimeSpan.Zero);
 
@@ -489,8 +509,8 @@ public sealed class ProtocolTests
             stderr: "Selected model is at capacity. Please try a different model.",
             observedAt: observedAt);
 
-        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, evidence.Kind);
-        Assert.Equal(observedAt.Add(ProviderAccessClassifier.UnknownLimitRetry), evidence.LimitedUntil);
+        Assert.Equal(ProviderAccessEvidenceKind.ModelCapacity, evidence.Kind);
+        Assert.Null(evidence.LimitedUntil);
         Assert.False(evidence.ResetTimeReported);
     }
 

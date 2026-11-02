@@ -92,6 +92,13 @@ public sealed record BuildTestGateRequest(
     public int GateSlots { get; init; } = 1;
 
     /// <summary>
+    /// AGT-3423: the expected slot hold from the project's recent gate history,
+    /// set by the dispatcher. <see cref="GateSlotFairnessPolicy"/> reads it to
+    /// choose the slots this gate may take; Unknown keeps plain arrival order.
+    /// </summary>
+    public GateDurationClass DurationClass { get; init; }
+
+    /// <summary>
     /// AGT-3232: the host part and timing snapshot for sharded suites. Null
     /// runs the whole gate on this host and plans by class-name hashing.
     /// </summary>
@@ -525,7 +532,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                             fallbackCollision = true;
                             request.OnMachineGateWaiting?.Invoke();
                             request.OnMachineGateSlotWaiting?.Invoke(busy, total);
-                        }, ct).ConfigureAwait(false);
+                        }, ct, request.DurationClass).ConfigureAwait(false);
                     fallbackQueueWaitMs = queueWatch.ElapsedMilliseconds;
                     if (lease is null)
                     {
@@ -849,8 +856,13 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 }, BuildTestGateFailureKind.Code);
             }
 
+            // An invalid definition is a fact of the delivery's own tree, not an
+            // experiment outcome. The diagnosis would compare it against a
+            // baseline and history and, on a first occurrence, retype it as an
+            // environment failure that asks for a host repair (AOW-15).
             if (completed is { Verdict: BuildTestGateVerdict.Fail }
-                && !string.IsNullOrWhiteSpace(request.JobId))
+                && !string.IsNullOrWhiteSpace(request.JobId)
+                && !IsDefinitionFailure(projectPreparation))
             {
                 completed = await DiagnoseGateFailureAsync(
                     request, repositoryPath, workspace, completed, profile, changedFiles,
@@ -985,6 +997,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             .ToLowerInvariant()[..24];
         return Path.Combine(cacheRoot, "manifests", key, "latest.json");
     }
+
+    private static bool IsDefinitionFailure(ProjectPreparationResult? preparation)
+        => preparation is { Configured: true, Succeeded: false, FailureKind: PreparationFailureKind.Definition };
 
     private static bool HasHealthContext(BuildTestGateRequest request)
         => !string.IsNullOrWhiteSpace(request.Project)
@@ -1416,8 +1431,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                                 scope.Lockfiles)));
                 })
                 .ToArray();
-            var installNeeded = decisions.Length == 0
-                || decisions.Any(item => item.Decision.State != "hit");
+            var installNeeded = !DependencyPreparationSkipPolicy.MaySkip(
+                command.CoveredByDependencyScopes,
+                decisions.Select(item => item.Decision).ToArray());
             if (!installNeeded)
             {
                 foreach (var item in decisions)

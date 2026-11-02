@@ -50,6 +50,7 @@ namespace AgentStudio.Tests;
 /// </list>
 /// </para>
 /// </remarks>
+[Trait("Category", "Guard")]
 public class TaskFolderAccessIsolationTest
 {
     /// <summary>
@@ -133,6 +134,12 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Registry/LocalFirstRunGitSetup.cs"] =
                 "Deletes only a failed fresh clone under the AgentStudio first-run-git checkouts root, never task storage.",
 
+            // The readiness commit-tree probe creates a GUID-named repository
+            // under OS temp and removes it after each cached probe. It cannot
+            // use task access because the directory is outside task storage.
+            ["backend/Features/Readiness/ReadinessGitFacts.cs"] =
+                "Deletes only its GUID-named OS-temp commit-tree probe repository, never task storage.",
+
             // Tier 2 (boot): the crash-recovery sweep walks 3-progress
             // before the in-memory store boots. Explicitly carved out in
             // the prompt for this task.
@@ -177,8 +184,6 @@ public class TaskFolderAccessIsolationTest
                 "Deletes CAR's temporary mirror under TaskRepository/.runtime/car-cli-output, never a lane or task folder.",
             ["backend/Features/Cli/Execution/CleanContextPreparation.cs"] =
                 "Adapts the external task clean-home store; failed-start cleanup never targets the job-folder tree.",
-            ["backend/Features/Cli/Execution/CliWorkingMemoryService.cs"] =
-                "Deletes a CLI's own working-memory state under its config home (guarded by a known-state whitelist), not lane folders.",
             ["backend/Features/Cli/Execution/DurableLocalCliProcess.cs"] =
                 "AGT-2780 worker spool directory is outside the task folder tree and owned by the durable worker lifecycle.",
             ["backend/Features/Cli/Routing/OneShot/CodexOneShot.cs"] =

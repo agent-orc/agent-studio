@@ -119,10 +119,15 @@ public static class GateEnvironmentRetryFactsReader
         var acceptanceInFlight = integrationInFlight
             || (string.Equals(task.Phase, LifecyclePhases.Integrating, StringComparison.Ordinal)
                 && task.State != TaskStates.AutoReview);
-        // A shutdown cancellation consumes only one existing infrastructure rung.
-        if (integration?.Failure?.Code == AcceptedIntegrationFailureCodes.GateInterrupted
-            && integration.Failure.Reason?.Contains("Gate cancelled: shutdown.", StringComparison.Ordinal) == true)
+        // The service's own stop interrupted the gate: it resumes on the first
+        // rung's timing and spends no rung, so planned restarts never park a
+        // card (2 November 2026). A crash leaves no shutdown cancellation and
+        // keeps the ordinary budget.
+        if (IsServiceShutdownInterruption(integration))
+        {
             options = options with { Backoff = options.Backoff.Take(1).ToArray() };
+            attemptsSpent = 0;
+        }
         return new GateEnvironmentRetryFacts(
             options.Enabled,
             Lanes.Contains(task.State),
@@ -138,17 +143,32 @@ public static class GateEnvironmentRetryFactsReader
     }
 
     /// <summary>
-    /// The two host-side gate faults this ladder replays. CAC-18 keeps a gate
+    /// The integration gate was cancelled by this service's own stop
+    /// (<see cref="GateCancellationResultProjector"/> words it). A gate whose
+    /// process vanished without that cancellation was a crash.
+    /// </summary>
+    public static bool IsServiceShutdownInterruption(TaskIntegrationStatus? integration)
+        => integration?.Failure?.Code == AcceptedIntegrationFailureCodes.GateInterrupted
+           && integration.Failure.Reason?.Contains(ShutdownCancellationReason, StringComparison.Ordinal) == true;
+
+    private static readonly string ShutdownCancellationReason =
+        $"Gate cancelled: {GateCancellationReasons.Shutdown}.";
+
+    /// <summary>
+    /// The host-side integration faults this ladder replays. CAC-18 keeps a gate
     /// environment failure out of <c>conflict-skipped</c>, so the card stays
     /// Pending and only the typed failure code identifies it; AGT-2849 adds the
     /// gate that never reached a verdict at all because its process died. Both
     /// leave the reviewed delivery untouched, so both are replayed against the
-    /// same delivery SHA rather than sent through a new review.
+    /// same delivery SHA rather than sent through a new review. A fetch whose
+    /// credential was missing or refused (2 November 2026) is replayed too; a
+    /// 403 reads like a transport fault but is retried like the rest.
     /// </summary>
     public static bool IsGateEnvironmentFailure(TaskIntegrationStatus? integration)
-        => (integration?.Failure?.Code is
-            AcceptedIntegrationFailureCodes.GateEnvironmentFailure
-            or AcceptedIntegrationFailureCodes.GateInterrupted)
-            && !GateFailureTriagePolicy.ContainsTransportMarker(
-                integration.Failure.Reason + "\n" + integration.Failure.EvidenceExcerpt);
+        => integration?.Failure?.Code == AcceptedIntegrationFailureCodes.GitCredentialUnavailable
+           || (integration?.Failure?.Code is
+                   AcceptedIntegrationFailureCodes.GateEnvironmentFailure
+                   or AcceptedIntegrationFailureCodes.GateInterrupted
+               && !GateFailureTriagePolicy.ContainsTransportMarker(
+                   integration.Failure.Reason + "\n" + integration.Failure.EvidenceExcerpt));
 }

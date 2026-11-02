@@ -43,6 +43,23 @@
   background: var(--severity-pass);
 }
 
+// The flow-health link sits after the state, pushed to the end of the head.
+.ph__state { margin-inline-start: auto; }
+
+.ph__flow {
+  font: inherit;
+  font-size: var(--studio-card-meta-size);
+  color: var(--studio-accent);
+  background: transparent;
+  border: 0;
+  padding: 0 var(--studio-spacing-1);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+}
+
 .ph--alarm .ph__title i { background: var(--severity-high); }
 .ph--alarm .ph__state { color: var(--severity-high); }
 

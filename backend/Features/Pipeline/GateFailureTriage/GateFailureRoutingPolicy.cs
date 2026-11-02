@@ -98,7 +98,10 @@ public static class GateFailureRoutingPolicy
                     GateFailureParkCategories.SharedCause, "integration-branch-cause");
 
             case GateFailureClasses.Product:
-                if (facts.OtherCardsWithFingerprint >= SharedCauseOtherCards)
+                // A definition issue lives in this delivery's tree; another card
+                // with the same issue code made its own mistake, not a shared one.
+                if (triage.Kind != GateProductKinds.Definition
+                    && facts.OtherCardsWithFingerprint >= SharedCauseOtherCards)
                     return new(GateFailureRouteAction.AttachToCause,
                         GateFailureParkCategories.SharedCause, "fingerprint-seen-on-other-cards");
                 if (!facts.AutomaticRoundsEnabled)
@@ -129,6 +132,9 @@ public static class GateFailureRoutingPolicy
                 : $"Waiting on {causeKey}, the shared cause of this fingerprint.",
             GateFailureRouteAction.ParkUndecidable =>
                 $"Missing evidence: {triage.MissingEvidence ?? "unknown"}. Decide whether the delivery or the environment caused the red gate.",
+            _ when route.Reason == "environment-replay-budget-spent"
+                   && triage.Kind == GateEnvironmentKinds.Credential =>
+                "The bounded replay ladder is spent and origin still refuses this host's Git credential; reconnect the GitHub App or repair the host credential, then use Retry integration.",
             _ when route.Reason == "environment-replay-budget-spent" =>
                 "The bounded environment replay ladder is spent or disabled for this project; repair the gate host, then use Retry integration.",
             _ when route.Reason == "transport-gate-retry-spent" =>

@@ -28,6 +28,32 @@ public static class ReviewRepositoryAccessPolicy
         => NormalizeVisibility(visibility) == PrivateVisibility;
 
     /// <summary>
+    /// The visibility a review plan uses (AGT-3408). <paramref name="reportedPrivate"/>
+    /// is what GitHub reports for a repository an adopted App installation lists,
+    /// null when no installation covers it. A repository GitHub reports as private
+    /// is private whatever the project says; an explicit <c>private</c> setting
+    /// still wins over a public report; otherwise the report decides, and without
+    /// one the setting does (unset is public).
+    /// </summary>
+    public static string EffectiveVisibility(string? projectSetting, bool? reportedPrivate)
+    {
+        if (reportedPrivate == true || IsPrivate(projectSetting)) return PrivateVisibility;
+        if (reportedPrivate == false) return PublicVisibility;
+        return NormalizeVisibility(projectSetting) ?? PublicVisibility;
+    }
+
+    /// <summary>
+    /// The visibility a retry of a sealed review plan runs with (AGT-3408): the
+    /// current <see cref="EffectiveVisibility"/>, so a corrected setting or a
+    /// GitHub report reaches the next attempt. Only when nothing is known now,
+    /// neither a setting nor a report, does the sealed value stay.
+    /// </summary>
+    public static bool CurrentPrivateRepository(bool sealedPrivate, string? currentSetting, bool? reportedPrivate)
+        => NormalizeVisibility(currentSetting) is null && reportedPrivate is null
+            ? sealedPrivate
+            : IsPrivate(EffectiveVisibility(currentSetting, reportedPrivate));
+
+    /// <summary>
     /// Credential-free, case-insensitive <c>host[:port]/owner/name</c> form of a
     /// Git remote, so <c>https://github.com/Owner/Repo.git</c>,
     /// <c>https://github.com/owner/repo</c> and <c>git@github.com:owner/repo.git</c>

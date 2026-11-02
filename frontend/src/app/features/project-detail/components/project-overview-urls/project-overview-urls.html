@@ -43,7 +43,7 @@
                 role="status"
                 aria-live="polite"
                 [attr.data-status]="statusFor(url)"
-                [attr.data-testid]="'project-overview-url-status-' + url.id">{{ statusFor(url) }}</span>
+                [attr.data-testid]="'project-overview-url-status-' + url.id">{{ statusFor(url) | projectUrlStatusLabel }}</span>
           @if (url.startRule && (statusFor(url) === 'offline' || statusFor(url) === 'building')) {
             <button type="button"
                     class="overview-urls__start"

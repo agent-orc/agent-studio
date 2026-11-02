@@ -50,6 +50,13 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly PipelineHealthService? _pipelineHealth;
     private readonly IIntegrationLaneStallAlarm? _laneStallAlarm;
     private readonly PostMergeModeService? _postMergeMode;
+    private readonly AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? _hostCredentials;
+
+    /// <summary>How long one merge waits for the host's first App tokens before it fetches anyway.</summary>
+    internal TimeSpan HostCredentialWaitLimit { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Interval of the wait's log line and readiness check.</summary>
+    internal TimeSpan HostCredentialRetryInterval { get; set; } = TimeSpan.FromSeconds(30);
     private readonly TimeProvider _gateTime;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
@@ -102,8 +109,10 @@ public sealed partial class MergeIntoDevelopRunner
         PipelineHealthService? pipelineHealth = null,
         TimeProvider? timeProvider = null,
         IIntegrationLaneStallAlarm? laneStallAlarm = null,
-        PostMergeModeService? postMergeMode = null)
+        PostMergeModeService? postMergeMode = null,
+        AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? hostCredentials = null)
     {
+        _hostCredentials = hostCredentials;
         _gateTime = timeProvider ?? TimeProvider.System;
         _git = git;
         _pipelineLog = pipelineLog;
@@ -141,6 +150,36 @@ public sealed partial class MergeIntoDevelopRunner
         // Default to the AGT-1944 environmental backoff (30s, 120s, cap 5min); a
         // test injects a zero backoff so it does not sleep between retries.
         _environmentalBackoff = environmentalBackoff ?? PostProcessingOutcomeTaxonomy.RetryBackoff;
+    }
+
+    /// <summary>
+    /// Directly after a start the host's own Git may not have its App tokens
+    /// yet, and a private repository then refuses the integration fetch. Wait
+    /// for them, saying so on every retry. After the bound the merge fetches
+    /// anyway: a refused credential is a transient fault that the bounded
+    /// gate-environment ladder retries instead of parking the card.
+    /// </summary>
+    internal async Task WaitForHostGitCredentialsAsync(string project, string jobId, CancellationToken ct)
+    {
+        if (_hostCredentials is not { Pending: true } readiness) return;
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (waited.Elapsed < HostCredentialWaitLimit)
+        {
+            _logger.LogWarning(
+                "integration-waits-for-host-git-credentials project={Project} job={JobId} waitedSeconds={Waited:0} retryInSeconds={Retry:0} reason={Reason}",
+                project, jobId, waited.Elapsed.TotalSeconds, HostCredentialRetryInterval.TotalSeconds,
+                readiness.LastFailure ?? "the GitHub App tokens for this host's own Git are not written yet");
+            if (await readiness.WaitAsync(HostCredentialRetryInterval, ct).ConfigureAwait(false))
+            {
+                _logger.LogInformation(
+                    "integration-host-git-credentials-ready project={Project} job={JobId} waitedSeconds={Waited:0}",
+                    project, jobId, waited.Elapsed.TotalSeconds);
+                return;
+            }
+        }
+        _logger.LogWarning(
+            "integration-proceeds-without-host-git-credentials project={Project} job={JobId} waitedSeconds={Waited:0} reason={Reason}",
+            project, jobId, waited.Elapsed.TotalSeconds, readiness.LastFailure ?? "not written yet");
     }
 
     /// <summary>
@@ -192,6 +231,7 @@ public sealed partial class MergeIntoDevelopRunner
         Interlocked.Increment(ref _mergeGateUsers);
         try
         {
+            await WaitForHostGitCredentialsAsync(project, jobId, ct).ConfigureAwait(false);
             var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
             using var batchReservation = _batchReservations is null
@@ -426,7 +466,7 @@ public sealed partial class MergeIntoDevelopRunner
             if (!synchronized.Success)
             {
                 result = MergeIntoIntegrationResult.Failed(
-                    AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                    AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                     synchronized.Error);
             }
             else if (lineage?.Mode == ImmediateIntegrationLineageMode.Blocked)
@@ -466,6 +506,7 @@ public sealed partial class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    developerRoot,
                     repoRoot,
                     delivery,
                     branch,
@@ -938,7 +979,10 @@ public sealed partial class MergeIntoDevelopRunner
         DateTime startedAt,
         CancellationToken ct)
     {
+        // A refused Git credential is a host fault the bounded ladder replays;
+        // a follow-up card for it would only repeat what the ladder does.
         if (result.Outcome.IsSuccessfulIntegration()
+            || result.FailureCode == AcceptedIntegrationFailureCodes.GitCredentialUnavailable
             || _failureInterventions is null
             || _taskScanner is null
             || _projectSettings is null)
@@ -1250,6 +1294,33 @@ public sealed partial class MergeIntoDevelopRunner
                 missingAnchor);
         }
 
+        // AGT-3434: the batch per-task fallback ran its selected gate on this
+        // delivery merged onto an integration tip. The same tree on the same
+        // tip stands on that verdict; anything else keeps the gate below.
+        var perTask = DecidePerTaskVerdictReuse(repoRoot, integrationBranch, jobFolderPath, gatedSha, preMergeTip);
+        if (perTask.Reused)
+        {
+            var reused = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 0, string.Empty,
+                "Reused the per-task gate verdict: " + perTask.Reason + ".", false, false)
+            {
+                VerdictSource = GateVerdictSource.CacheHit,
+                OriginEvidencePath = perTask.EvidencePath,
+                ExpectedSha = gatedSha,
+                TestedSha = gatedSha,
+            };
+            IntegrationGateReceipts.Record(
+                jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, reused, _timeline,
+                mergeLockWaitMs: _mergeLockWaitMs.Value);
+            IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
+                level: "per-task-verdict", durationMs: 0, outcome: reused.Verdict.ToString(),
+                reuseToken: "per-task-verdict", reason: perTask.Reason);
+            IntegrationGateJournal.ClearOwned(jobFolderPath, journalOwner);
+            _logger.LogInformation(
+                "merge-into-develop build gate reused the per-task verdict for project={Project} job={JobId} integration={Integration} merged={MergedSha} reason={Reason}",
+                project, jobId, integrationBranch, gatedSha, perTask.Reason);
+            return (result with { GateVerdictReused = true }, reused);
+        }
+
         var settings = ProjectSettingsFor(project);
         var postMergeMode = (_postMergeMode?.Resolve(project, settings)
             ?? IntegrationTestModes.Resolve(settings)) == IntegrationTestModes.PostMerge
@@ -1349,12 +1420,14 @@ public sealed partial class MergeIntoDevelopRunner
         // hold a newer attempt's journal, which must survive.
         IntegrationGateJournal.ClearOwned(gateEvidenceFolder, journalOwner);
 
+        var executed = gate.VerdictSource == GateVerdictSource.Executed
+            && gate.FailureKind is not (BuildTestGateFailureKind.MissingSource or BuildTestGateFailureKind.Cancellation);
         if (PreDevelopBuildGate.IsGreen(gate))
         {
             _logger.LogInformation(
-                "merge-into-develop build gate passed for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reuse={Reuse} reuseReason={ReuseReason}",
-                project, jobId, integrationBranch, gatedSha, gate.Verdict, reuse.Token, reuse.Reason);
-            return (result, gate);
+                "merge-into-develop build gate passed for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reuse={Reuse} reuseReason={ReuseReason} perTaskReuse={PerTaskReason}",
+                project, jobId, integrationBranch, gatedSha, gate.Verdict, reuse.Token, reuse.Reason, perTask.Reason);
+            return (result with { GateExecuted = executed }, gate);
         }
 
         // The merge was created by this invocation, so it owns an exact
@@ -1386,7 +1459,36 @@ public sealed partial class MergeIntoDevelopRunner
             : $"The build gate blocked the merge into {integrationBranch}: {gate.Reason}. " +
               $"Rolling {integrationBranch} back to {Short(preMergeTip!)} FAILED ({reset.Error ?? "unknown error"}); " +
               "the unverified merge is still on the local integration branch and needs manual repair.";
-        return (MergeIntoIntegrationResult.Of(outcome, error: error), gate);
+        return (MergeIntoIntegrationResult.Of(outcome, error: error) with { GateExecuted = executed }, gate);
+    }
+
+    /// <summary>
+    /// Whether this merge may stand on the per-task batch fallback verdict
+    /// (AGT-3434). Gathers the marker beside the card and the Git facts for the
+    /// pure <see cref="PerTaskGateVerdictReusePolicy"/>.
+    /// </summary>
+    private PerTaskGateVerdictReuseDecision DecidePerTaskVerdictReuse(
+        string repoRoot,
+        string integrationBranch,
+        string jobFolderPath,
+        string gatedSha,
+        string? preMergeTip)
+    {
+        BatchGateOwnership? ownership;
+        try { ownership = BatchGateOwnershipStore.Read(jobFolderPath); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+        {
+            SilentCatch.Note(ex, "MergeIntoDevelopRunner: an unreadable batch marker keeps the merge gate");
+            ownership = null;
+        }
+        var resultSha = ownership?.Subject.ResultSha;
+        return PerTaskGateVerdictReusePolicy.Decide(new PerTaskGateVerdictReuseInput(
+            ownership,
+            integrationBranch,
+            preMergeTip,
+            ReviewSubjectStore.IsValidResultSha(resultSha)
+                && _git.IsAncestor(repoRoot, resultSha!, gatedSha),
+            ownership?.FallbackCandidateTreeSha is null ? null : _git.GetCommitTree(repoRoot, gatedSha)));
     }
 
     /// <summary>
@@ -1629,6 +1731,7 @@ public sealed partial class MergeIntoDevelopRunner
         string project,
         string jobId,
         string jobFolderPath,
+        string developerRoot,
         string repoRoot,
         DeliveryRefResolution delivery,
         string releaseBranch,
@@ -1740,13 +1843,14 @@ public sealed partial class MergeIntoDevelopRunner
             return (docsMerge, lightGate);
         }
 
+        // AGT-3435: a delivery behind the release line is merged, and the full
+        // suite runs on that merge result. Main still only advances to a SHA the
+        // full suite passed; only a real conflict goes back to the agent.
         if (!_git.IsAncestor(repoRoot, releaseLine, taskBranch))
         {
-            return (
-                MergeIntoIntegrationResult.Failed(
-                    AcceptedIntegrationFailureCodes.SourceNeedsRebase,
-                    $"Release source '{taskBranch}' must be rebased onto '{releaseBranch}' before the full-suite gate."),
-                null);
+            return await MergeBehindReleaseLineAsync(
+                project, jobId, jobFolderPath, developerRoot, repoRoot, delivery, releaseBranch, ct)
+                .ConfigureAwait(false);
         }
 
         var settings = _projectSettings.Get(project);
@@ -2372,9 +2476,11 @@ public sealed partial class MergeIntoDevelopRunner
                     (preDevelopResult ?? preMainResult)?.Reason);
             case MergeIntoIntegrationOutcome.MergedAfterRebase:
                 var replacementCount = result.RebasedCommits.Count;
-                var rebaseGate = preDevelopResult is null
-                    ? string.Empty
-                    : $" Build gate {preDevelopResult.Verdict} checked the rebased merge result.";
+                var rebaseGate = preDevelopResult is not null
+                    ? $" Build gate {preDevelopResult.Verdict} checked the rebased merge result."
+                    : preMainResult is not null
+                        ? $" Mandatory full suite {preMainResult.Verdict} checked the rebased merge result."
+                        : string.Empty;
                 return (
                     PipelineStepStatus.Passed,
                     "merged-after-rebase",

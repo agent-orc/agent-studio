@@ -139,6 +139,8 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         using var client = backend.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
 
+        await backend.Services.GetRequiredService<BoardShadowWorker>().RunCycleAsync(default);
+
         var first = await ReadBoardAsync(client);
         Assert.Equal(BoardSourceSetting.TaskServer, first.Source);
         Assert.Contains(first.Lanes.GetProperty("backlog").EnumerateArray(), item => item.GetProperty("key").GetString() == Key);

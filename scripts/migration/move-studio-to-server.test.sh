@@ -33,6 +33,8 @@ cat >"$work/bin/docker" <<'DOCKER'
 printf '%s\n' "$*" >>"$FAKE_LOG"
 # The check after the switch asks the API from the frontend container.
 case "$*" in *' exec -T frontend wget '*) printf '{"bootstrapRequired":%s}\n' "$FAKE_BOOTSTRAP"; exit 0 ;; esac
+# The readiness report comes from inside the API container (loopback only).
+case "$*" in *' exec -T api curl '*' http://127.0.0.1:5031/healthz/readiness') cat "$FAKE_READINESS"; exit 0 ;; esac
 case "$*" in *' ps --status '*' --quiet') [ -z "${FAKE_DOCKER_RUNNING:-}" ] || echo "$FAKE_DOCKER_RUNNING" ;; esac
 case "$*" in
   *'-p studio-move-rehearsal '*' down --remove-orphans'*)
@@ -81,9 +83,28 @@ esac
 if [ -n "$out" ]; then printf '%s' "$body" >"$out"; else printf '%s' "$body"; fi
 [ -z "$write" ] || printf 200
 CURL
-chmod 0755 "$work/bin/ssh" "$work/bin/docker" "$work/bin/curl"
+# Git stays real except for the anonymous visibility probes of two GitHub repositories.
+real_git=$(command -v git)
+cat >"$work/bin/git" <<GIT
+#!/bin/sh
+case "\$*" in
+  *'ls-remote --heads -- https://github.com/owner/private-site.git')
+    printf 'LS-REMOTE %s helper=%s prompt=%s\\n' "\$*" "\$(printf '%s' "\$*" | grep -c 'credential.helper= ')" "\$GIT_TERMINAL_PROMPT" >>"\$FAKE_LOG"
+    echo "fatal: could not read Username for 'https://github.com': terminal prompts disabled" >&2; exit 128 ;;
+  *'ls-remote --heads -- https://github.com/owner/public-site.git') exit 0 ;;
+esac
+exec "$real_git" "\$@"
+GIT
+chmod 0755 "$work/bin/ssh" "$work/bin/docker" "$work/bin/curl" "$work/bin/git"
 export FAKE_LOG="$work/fake.log" FAKE_BOOTSTRAP=true FAKE_STABLE_UP="$work/stable-up"
 export FAKE_SERVER_ROOT="$work/server"
+# One failing and one passing check: the move lists the failing one with its remedy.
+cat >"$work/readiness.json" <<'READINESS'
+{"computedAt":"2026-11-01T12:04:00+00:00","state":"fail","failing":1,"attention":0,"checks":[
+ {"id":"git-identity","title":"Git identity of the service user","scope":"server","subject":null,"state":"pass","meaning":"Commits are made as Agent Studio.","remedy":null},
+ {"id":"integration-lane","title":"Integration lane present","scope":"project","subject":"Demo","state":"fail","meaning":"The integration lane refs/agent-studio/integration/main is missing.","remedy":"Seed it from the published branch: git -C /data/projects/demo update-ref refs/agent-studio/integration/main origin/main"}]}
+READINESS
+export FAKE_READINESS="$work/readiness.json"
 PATH="$work/bin:$PATH"
 export PATH
 GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid
@@ -133,8 +154,12 @@ cat >"$ws/.metadata/projects.json" <<EOF
 {"Projects":[{"Id":"PROJ-001","DisplayName":"Demo","StorageLocation":"$ws/projects/demo/tasks","RepositoryPath":"$work/code/Demo",
  "Urls":[{"Id":"repo","Label":"Repository","Url":"ssh://operator:$url_password@test-server$work/remotes/demo.git"}]},
  {"Id":"PROJ-004","DisplayName":"Checkout tasks","StorageLocation":"$storage_inside","RepositoryPath":"$work/code/Demo","Urls":[{"Id":"repo","Label":"Repository","Url":"ssh://operator:$url_password@test-server$work/remotes/demo.git"}]},
- {"Id":"PROJ-011","DisplayName":"Task only","StorageLocation":"$storage_outside","Urls":[]}]}
+ {"Id":"PROJ-011","DisplayName":"Task only","StorageLocation":"$storage_outside","Urls":[]},
+ {"Id":"PROJ-012","DisplayName":"Private site","Urls":[{"Id":"repo","Label":"Repository","Url":"git@github.com:owner/private-site.git"}]},
+ {"Id":"PROJ-013","DisplayName":"Public site","Urls":[{"Id":"repo","Label":"Repository","Url":"https://github.com/owner/public-site.git"}]}]}
 EOF
+# Demo's visibility is set; the two sites have none and are probed anonymously.
+printf '{"Demo":{"RepositoryVisibility":"public"},"Private site":{"AutoCommit":true}}\n' >"$ws/project-settings.json"
 printf '# AGT-1\n' >"$ws/projects/demo/tasks/AGT-1/task.md"
 printf 'open\n' >"$ws/projects/demo/tasks/AGT-1/status.md"
 printf '# AGT-2\n' >"$ws/projects/demo/tasks/AGT-2/task.md"
@@ -195,6 +220,10 @@ check grep -q 'server preflight passed' "$work/out"
 check grep -q "PROJ-004 $storage_inside -> /data/projects/.task-storage/PROJ-004" "$work/out"
 check grep -q "PROJ-011 $storage_outside -> /data/projects/.task-storage/PROJ-011" "$work/out"
 check grep -q 'Git Credential Manager entries' "$work/out"
+check grep -q 'visibility: public (project setting)' "$work/out"
+check grep -q 'visibility: private (anonymous probe; written to the server copy)' "$work/out"
+check grep -q 'visibility: unknown' "$work/out"
+check grep -q 'LS-REMOTE .* helper=1 prompt=0' "$FAKE_LOG"
 [ ! -e "$work/server/move-bin" ] || fail 'dry run wrote to the server'
 [ ! -e "$work/server/move-staging" ] || fail 'dry run created staging'
 
@@ -278,6 +307,8 @@ for line in 'check: path relocation ok' 'check: access state parses' 'check: hea
   check grep -qF "$line" "$work/out"
 done
 check grep -q -- '-p studio-move-rehearsal' "$FAKE_LOG"
+check grep -q 'readiness: 1 failing, 0 need attention, 2 checks' "$work/out"
+check grep -q -- '-p studio-move-rehearsal .* exec -T api curl .* -H Host: move-rehearsal.studio.test http://127.0.0.1:5031/healthz/readiness' "$FAKE_LOG"
 check grep -q -- '-p studio-move-rehearsal .* down --remove-orphans' "$FAKE_LOG"
 check grep -q 'HEADER X-CSRF-Token: csrf-1' "$FAKE_LOG"
 check grep -q 'CONFIG header = "Authorization: Bearer test-secret"' "$FAKE_LOG"
@@ -477,6 +508,11 @@ check test "$(pre_moves)" -eq 2
 check test "$(stat -c %a "$data/workspace/.security/access-state.json")" = 600
 [ -z "$(find "$data/workspace" "$data/projects" ! -type l -perm /077 | head -n 1)" ] || fail 'moved data is readable by other accounts'
 check grep -q 'check: staging relocates with 0 unresolved paths' "$work/out"
+check grep -q 'Repository visibility carried for 2 project(s): Private site, Public site' "$work/out"
+check node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+  if (s["Private site"].RepositoryVisibility!=="private"||s["Private site"].AutoCommit!==true
+      ||s["Public site"].RepositoryVisibility!=="public"||s.Demo.RepositoryVisibility!=="public") process.exit(1);' \
+  "$data/workspace/project-settings.json"
 check grep -q 'check: server stack stopped' "$work/out"
 check grep -q 'check: https://studio.test answers locally with the moved accounts' "$work/out"
 check grep -q '^moved_at=' "$work/server/moved-to-server"
@@ -488,6 +524,14 @@ nothing_beside_workspace
 check grep -q 'Rollback:' "$work/out"
 check grep -qF "DETACH=1 '$devspace/start-stable.sh'" "$work/out"
 check grep -q 'compose --project-directory .*/server/stack .*up -d' "$FAKE_LOG"
+# After the switch the move lists every failing readiness check with its remedy.
+check grep -q 'readiness: 1 failing, 0 need attention, 2 checks (computed 2026-11-01T12:04:00+00:00)' "$work/out"
+check grep -q '  FAIL integration-lane \[Demo\]: Integration lane present' "$work/out"
+check grep -q 'remedy: Seed it from the published branch: git -C /data/projects/demo update-ref' "$work/out"
+! grep -q 'FAIL git-identity' "$work/out" || fail 'a passing readiness check was listed as failing'
+check grep -q "readiness: report kept at $work/server/move-bin/readiness.json" "$work/out"
+check grep -q -- '--env-file .*/server/stack/.env exec -T api curl .* -H Host: studio.test http://127.0.0.1:5031/healthz/readiness' "$FAKE_LOG"
+check grep -q 'Fix every FAIL line of the readiness report above' "$work/out"
 
 # A second apply would roll the live server back to the workstation snapshot: refused before Stable stops.
 fresh
