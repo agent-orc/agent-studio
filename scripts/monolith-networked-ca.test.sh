@@ -6,7 +6,7 @@ stack="$repo_root/deploy/compose/monolith-networked"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/stack" "$work/data/origin-pull"
-cp "$stack"/{compose.yaml,Caddyfile.public,Caddyfile.cloudflare,Caddyfile.frontend,cloudflare-ips.caddy,check-edge-config.sh,backup-encrypted.sh,restore-to-scratch.sh,monitor-baseline.py} "$work/stack/"
+cp "$stack"/{compose.yaml,Caddyfile.public,Caddyfile.cloudflare,Caddyfile.private,Caddyfile.frontend,cloudflare-ips.caddy,check-edge-config.sh,backup-encrypted.sh,restore-to-scratch.sh,monitor-baseline.py} "$work/stack/"
 printf 'STUDIO_CADDYFILE=./Caddyfile.cloudflare\nSTUDIO_PUBLIC_CLOUDFLARE_EDGE=true\nSTUDIO_RESTART_POLICY=on-failure\nSTUDIO_DATA_DIR=%s/data\n' "$work" > "$work/stack/.env"
 for key in STUDIO_API_DIGEST STUDIO_WEB_DIGEST STUDIO_EDGE_DIGEST; do
   printf '%s=%s\n' "$key" "$(openssl rand -hex 32)" >> "$work/stack/.env"

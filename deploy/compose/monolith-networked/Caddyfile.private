@@ -1,3 +1,8 @@
+{
+    # The private edge runs without root and cannot update host trust stores.
+    skip_install_trust
+}
+
 {$STUDIO_DOMAIN} {
     tls internal
     encode zstd gzip

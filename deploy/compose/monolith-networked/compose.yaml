@@ -37,6 +37,9 @@ services:
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+      XDG_CONFIG_HOME: /config
+      XDG_DATA_HOME: /data
+      HOME: /tmp
     volumes:
       - ./Caddyfile.frontend:/etc/caddy/Caddyfile:ro
       - ${STUDIO_DATA_DIR}/frontend-data:/data
@@ -63,6 +66,9 @@ services:
       # Caddyfile.cloudflare only: true admits peers outside Cloudflare's ranges.
       STUDIO_CLOUDFLARE_ALLOW_DIRECT: ${STUDIO_CLOUDFLARE_ALLOW_DIRECT:-false}
       STUDIO_ACCESS_AUTH_URL: ${STUDIO_ACCESS_AUTH_URL:?Set the HTTPS access-layer authorization URL}
+      XDG_CONFIG_HOME: /config
+      XDG_DATA_HOME: /data
+      HOME: /tmp
     ports:
       - '0.0.0.0:80:80'
       - '0.0.0.0:443:443'

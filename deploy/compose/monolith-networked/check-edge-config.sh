@@ -38,10 +38,19 @@ for service in ('api', 'frontend', 'edge'):
             sys.exit(f'{service}: missing writable volume {mount}')
     if service == 'edge' and not re.search(r'^      STUDIO_ACCESS_AUTH_URL:', body, re.M):
         sys.exit('edge: missing access layer URL')
+    if service in ('frontend', 'edge'):
+        for key, value in (('XDG_CONFIG_HOME', '/config'), ('XDG_DATA_HOME', '/data'), ('HOME', '/tmp')):
+            if not re.search(r'^      ' + key + r': ' + value + r'$', body, re.M):
+                sys.exit(f'{service}: missing writable {key} path')
+    if service == 'edge':
+        if not re.search(r"^      net.ipv4.ip_unprivileged_port_start: '0'$", body, re.M):
+            sys.exit('edge: missing unprivileged port setting')
 for name in ('Caddyfile.public', 'Caddyfile.cloudflare'):
     caddy = (stack / name).read_text()
     if not re.search(r'forward_auth \{\$STUDIO_ACCESS_AUTH_URL\} \{\s*uri /verify\s*\}', caddy):
         sys.exit(f'{name}: missing access layer authorization for all paths')
+if not re.search(r'^\s*skip_install_trust\s*$', (stack / 'Caddyfile.private').read_text(), re.M):
+    sys.exit('Caddyfile.private: missing read-only trust-store setting')
 for name, marker, reason in (
     ('backup-encrypted.sh', '-aes-256-gcm', 'encrypted backup'),
     ('restore-to-scratch.sh', 'website.restore.signin', 'monitored scratch restore'),
@@ -58,7 +67,7 @@ if [ "$baseline_only" = true ]; then exit 0; fi
 release_dir="${1:?Usage: check-edge-config.sh <matching-release-stack-directory>}"
 release_dir="$(cd "$release_dir" && pwd)"
 
-for file in compose.yaml Caddyfile.public Caddyfile.cloudflare Caddyfile.frontend cloudflare-ips.caddy backup-encrypted.sh restore-to-scratch.sh monitor-baseline.py; do
+for file in compose.yaml Caddyfile.public Caddyfile.cloudflare Caddyfile.private Caddyfile.frontend cloudflare-ips.caddy backup-encrypted.sh restore-to-scratch.sh monitor-baseline.py; do
   if ! cmp -s "$stack_dir/$file" "$release_dir/$file"; then
     echo "Stale $file; copy it from $release_dir" >&2
     exit 1

@@ -8,6 +8,8 @@ Configure an identity-aware access provider for the entire hostname, including `
 
 Pin all three images by immutable digest. Resolve the published API and web `v<version>` manifest digests and the chosen Caddy manifest digest with `docker buildx imagetools inspect <image:tag>`; copy each `Digest: sha256:...` value without the `sha256:` prefix into `STUDIO_API_DIGEST`, `STUDIO_WEB_DIGEST`, and `STUDIO_EDGE_DIGEST` in the environment before `setup.sh`. Keep the exact values in the installed `.env`, update them with each release, and run `check-edge-config.sh` before deployment. The script refuses missing or malformed digests. Install Python 3.12 or newer and OpenSSL on the host for the baseline, backup, restore, and monitoring scripts.
 
+The non-root installer uses the pinned Caddy image for a one-shot ownership handoff before Compose starts. The image digest must resolve to a published Caddy image, not merely match the 64-character digest format. The website smoke pulls `caddy:2-alpine`, resolves its real registry digest, and uses that same digest for setup and the edge container. It checks that both Caddy containers start as UID 10001 with read-only roots and writable `/data`, `/config`, and `/tmp`. The private edge skips installation of its local root into the container's read-only system trust store. Trust the private root on browser machines as described below.
+
 ## Install
 
 1. Point the hostname at the VM. Allow inbound TCP 80 and 443. Install Docker Compose, Git, OpenSSL, Python 3, and iptables on the VM. Use an operator account with Docker access. Clone or extract the matching release's `deploy/compose/monolith-networked` directory. Configure the access provider and digest variables above first.
