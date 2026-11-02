@@ -450,9 +450,17 @@ unreviewable: WEB-26/27/28 failed their clone with `could not read Username`,
 classified `SnapshotUnavailable`, and escalated after the infrastructure retry
 budget.
 
-- **Plan.** The project setting `repositoryVisibility` (`public` by default,
-  `PUT /api/projects/{project}/repository-visibility`) is sealed into every
-  review plan as `ReviewPlanDto.PrivateRepository` by `RemoteReviewPlanBuilder`.
+- **Plan.** The effective repository visibility is sealed into every review
+  plan as `ReviewPlanDto.PrivateRepository` by `RemoteReviewPlanBuilder`. It
+  combines the project setting `repositoryVisibility` (`public` by default,
+  `PUT /api/projects/{project}/repository-visibility`) with what the connected
+  GitHub App reports (AGT-3408, `ReviewRepositoryAccessPolicy.EffectiveVisibility`,
+  read through `ProjectRepositoryVisibility`): a repository an adopted
+  installation lists follows GitHub's `private` flag, an explicit `private`
+  setting still wins, and a repository GitHub reports private is never planned
+  public. `GitHubAppBroker` caches the installations' repository lists, refreshed
+  by the host credential service (monolith) or `GitHubAppVisibilityRefreshService`
+  (standalone Task Server); a failed listing keeps the last answer.
   Task Server repository registrations may also declare `repositoryVisibility`.
   The existing project setting is copied to matching registrations when it
   changes and reconciled on startup and periodically, including registrations
@@ -462,6 +470,13 @@ budget.
   Changing it re-plans every ReviewAttempt still queued for the project, like a
   build-profile or pipeline-step edit, so an attempt queued before the flip
   carries the new visibility.
+- **Retry.** An infrastructure retry takes the current visibility, not the
+  failed attempt's. The backend builds every successor's plan afresh. The
+  standalone Task Server keeps one plan per subject, so `InsertReviewRetryAsync`
+  renews its `privateRepository` from the registration and the GitHub report
+  (`ReviewRepositoryAccessPolicy.CurrentPrivateRepository`) when it queues the
+  successor; with neither known, the sealed value stays. A new subject of a
+  repository GitHub reports private is stored private.
 - **Claim filter.** `ReviewRepositoryAccessPolicy` (shared contract) turns a
   private plan plus the subject's repository URL into the required key
   `review:repository-read:<host>/<owner>/<repo>` (lower case, no `.git`, same
@@ -517,16 +532,22 @@ budget.
   integration-ref fetch for baseline comparison runs in a fresh runner-owned
   repository and the workspace copies the objects over the local transport,
   so configuration written by review commands never meets the credential.
-- **Public repositories** keep the credential-free, blob-filtered clone
-  unchanged and never read the credentials file, so a file that turns
-  unreadable or malformed after start-up affects only private reviews. A
+- **Held credential wins.** A review host that holds a credential for exactly
+  the subject's repository (App token or credentials file) fetches with it
+  whatever the plan says (AGT-3408), so a repository wrongly planned public
+  costs nothing on such a host. This widens no access: the lookup matches one
+  canonical repository, and only the clone and fetch processes see it.
+- **Public repositories** without a held credential keep the credential-free
+  clone. A public plan does not depend on the credentials file: a file that
+  turns unreadable or malformed after start-up fails only private reviews. A
   credential-free clone that fails with an authentication signature names the
   missing read access in its `SnapshotUnavailable` detail.
 
 Operator setup: [linux-runner-host.md](../../operations/setup/linux-runner-host.md#private-repositories).
 Tests: `runner.Tests/ReviewPrivateRepositoryTests.cs` (clone through a local
 Basic-auth smart-HTTP server), `runner.Tests/ReviewRepositoryAccessPolicyTests.cs`,
-`backend.Tests/PrivateRepositoryReviewClaimTests.cs`, and
+`backend.Tests/PrivateRepositoryReviewClaimTests.cs`,
+`backend.Tests/GitHubAppBrokerTests.cs`, and
 `task-server.Tests/RemoteReviewAuthorityTests.PrivateRepository.cs`.
 
 ## Review-plane parallelism

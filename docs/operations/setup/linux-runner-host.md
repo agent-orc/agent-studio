@@ -112,7 +112,9 @@ therefore needs two steps before any of its cards can be reviewed remotely
 (AGT-3077):
 
 1. Mark the project private through the project settings API, with an
-   operator session, so its review plans require read access:
+   operator session, so its review plans require read access. A repository
+   the connected GitHub App lists is marked private automatically when GitHub
+   reports it private (see [github-app.md](github-app.md#repository-visibility)):
 
    ```bash
    curl -X PUT "$TASK_SERVER/api/projects/<project>/repository-visibility" \

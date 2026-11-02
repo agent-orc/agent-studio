@@ -65,12 +65,17 @@ public sealed record GitHubAppInstallation(
     DateTime AdoptedAtUtc,
     string AdoptedBy);
 
+/// <param name="Visibility">
+/// <c>private</c> or <c>public</c> as GitHub reports it for a repository an
+/// adopted installation lists; null while GitHub has not said.
+/// </param>
 public sealed record GitHubAppRepositoryCoverage(
     string Project,
     string? RepositoryUrl,
     string State,
     long? InstallationId,
-    string? Detail);
+    string? Detail,
+    string? Visibility = null);
 
 public sealed record GitHubAppHostSync(
     string RunnerId,

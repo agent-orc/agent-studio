@@ -78,12 +78,13 @@
       <p class="github-app__meta" data-testid="github-app-uncovered">{{ uncovered() }} still use the host's older credentials, if it has any.</p>
     }
     <table class="github-app__table" data-testid="github-app-repositories">
-      <thead><tr><th scope="col">Project</th><th scope="col">Repository</th><th scope="col">Access</th></tr></thead>
+      <thead><tr><th scope="col">Project</th><th scope="col">Repository</th><th scope="col">Visibility</th><th scope="col">Access</th></tr></thead>
       <tbody>
         @for (repository of current.repositories; track repository.project) {
           <tr [attr.data-state]="repository.state">
             <td>{{ repository.project }}</td>
             <td><code>{{ repository.repositoryUrl ?? '-' }}</code></td>
+            <td data-testid="github-app-repository-visibility">{{ visibilityLabel(repository.visibility) }}</td>
             <td [title]="repository.detail ?? ''"><span class="github-app__badge" [attr.data-state]="repository.state">{{ coverageLabel(repository.state) }}</span></td>
           </tr>
         }
