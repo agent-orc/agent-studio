@@ -355,12 +355,11 @@ public static class ModelMetadataRegistry
             ContextWindow: 272_000, MinimumCliVersion: "0.153.0"),
         new(ModelIds.Gpt6Sol, "GPT-6 Sol", "openai", IsDefault: false, Deprecated: false, Available: false,
             ContextWindow: 1_050_000, MinimumCliVersion: "0.155.0"),
-        // TokenEconomy 0.3.7 recorded a 0.155.0 probe that was rejected by the
-        // provider. This version is only an advisory marker; live discovery
-        // remains the availability gate for GPT-6.1 Sol.
+        // Operator probes on 0.166.0 accepted GPT-6.1 Sol; 0.155.0 rejected it.
+        // Live discovery remains the availability gate.
         new(ModelIds.Gpt61Sol, "GPT-6.1 Sol", "openai", IsDefault: false, Deprecated: false, Available: false,
             ContextWindow: 1_050_000, ThinkingLevels: ["minimal", "low", "medium", "high", "xhigh"],
-            DefaultThinkingLevel: "xhigh", MinimumCliVersion: "0.155.0"),
+            DefaultThinkingLevel: "xhigh", MinimumCliVersion: CodexCliRelease.Gpt61MinimumVersion),
         new(ModelIds.Gpt6Luna, "GPT-6 Luna", "openai", IsDefault: false, Deprecated: false, Available: false,
             ContextWindow: 1_050_000, MinimumCliVersion: "0.155.0"),
         // gpt-5.6-terra / gpt-5.6-luna are the lower cost tiers of the gpt-5.6

@@ -78,8 +78,8 @@ public sealed class TaskServerOptions
     public bool WorkspaceExportPush { get; set; }
     public string WorkspaceExportBranch { get; set; } = "main";
     public int WorkspaceExportPushTimeoutSeconds { get; set; } = 600;
-    public string CodexCliTargetVersion { get; set; } = "0.154.0";
-    public string ClaudeCliTargetVersion { get; set; } = "2.1.269";
+    public string CodexCliTargetVersion { get; set; } = "0.166.0";
+    public string ClaudeCliTargetVersion { get; set; } = "2.1.305";
 
     public string ResolveRetentionArchivePath()
         => string.IsNullOrWhiteSpace(RetentionArchivePath)

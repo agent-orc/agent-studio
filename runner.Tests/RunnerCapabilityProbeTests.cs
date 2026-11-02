@@ -156,6 +156,46 @@ public sealed class RunnerCapabilityProbeTests
     }
 
     [Theory]
+    [InlineData("0.155.0", false)]
+    [InlineData("0.166.0", true)]
+    public async Task Gpt61_acceptance_is_advertised_and_only_probed_at_verified_cli_floor(
+        string version, bool probeable)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var temp = new TempDirectory();
+        var codex = Path.Combine(temp.Path, "codex");
+        await File.WriteAllTextAsync(codex,
+            $"#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli {version}'; else echo '{{\"models\":[]}}'; fi\n");
+        File.SetUnixFileMode(codex, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://127.0.0.1:5031", RunnerId = "runner-test",
+            RunnerName = "runner-test", Hostname = "host-test", BackendName = "test",
+            Role = "coding", WorkDir = temp.Path, BaseBranch = "main",
+            CodexCliBin = codex,
+            ClaudeCliBin = Path.Combine(temp.Path, "missing-claude"),
+        };
+
+        var candidates = RunnerCapabilityProbe.ModelCandidates(options,
+            [(CliSelection.CodexCli, "gpt-6-sol")]);
+        Assert.Equal(probeable, candidates.Contains((CliSelection.CodexCli, CodexCliRelease.Gpt61Sol)));
+        Assert.Equal(probeable, candidates.Contains((CliSelection.CodexCli, CodexCliRelease.Gpt61Terra)));
+
+        var advertised = RunnerCapabilityProbe.Advertise(options, gitPushReady: false);
+        foreach (var model in new[] { CodexCliRelease.Gpt61Sol, CodexCliRelease.Gpt61Terra })
+        {
+            var capability = Assert.Single(advertised,
+                item => item.Key == CapabilityProtocol.ModelAcceptance("codex", model));
+            if (!probeable)
+            {
+                Assert.Equal("unavailable", capability.Status);
+                Assert.Contains("This CLI version does not offer", capability.Detail);
+            }
+            else Assert.Equal("unknown", capability.Status);
+        }
+    }
+
+    [Theory]
     [InlineData(1, "", "HTTP 401 Missing bearer authentication", true)]
     [InlineData(1, "", "login required", true)]
     [InlineData(1, "", "ordinary product failure", false)]

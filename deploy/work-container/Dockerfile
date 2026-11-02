@@ -6,8 +6,8 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
-ARG CODEX_CLI_VERSION=0.154.0
-ARG CLAUDE_CLI_VERSION=2.1.269
+ARG CODEX_CLI_VERSION=0.166.0
+ARG CLAUDE_CLI_VERSION=2.1.305
 LABEL org.opencontainers.image.title="agent-work" \
       org.opencontainers.image.version="$VERSION" \
       org.opencontainers.image.revision="$SHA" \

@@ -10,6 +10,8 @@ public sealed partial class TaskServerStore
     private static readonly (string Model, string Cli, string Minimum)[] ModelCliMinimums =
     [
         ("gpt-6-astra", "codex", "0.153.0"),
+        (CodexCliRelease.Gpt61Sol, "codex", CodexCliRelease.Gpt61MinimumVersion),
+        (CodexCliRelease.Gpt61Terra, "codex", CodexCliRelease.Gpt61MinimumVersion),
         ("claude-opus-5", "claude", "2.1.281"),
     ];
 
