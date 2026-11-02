@@ -1849,6 +1849,9 @@ export class App implements OnInit, OnDestroy {
       case 'deployment-dashboard':
         this.studioTabState.open({ kind: 'deployment-dashboard' });
         break;
+      case 'structure':
+        this.studioTabState.open({ kind: 'structure' });
+        break;
       case 'task':
         this.routeDetailTab.set(route.tab);
         this.routeInspectorTab.set(route.inspector);

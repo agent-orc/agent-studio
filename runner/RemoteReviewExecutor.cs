@@ -590,14 +590,21 @@ public sealed class RemoteReviewExecutor
                         : 0;
                     var reduce = !slot.ReducedReportSubmitted
                                  && (taskServer?.StatusCode == 413 || badGatewayCount >= 3);
+                    var reducedFailures = slot.ReducedReportSubmitted
+                        ? slot.ConsecutiveReducedReportFailures + 1
+                        : 0;
                     var action = authorityAdvanced || authorityRecovered || reduce
                         ? ReviewReportSubmissionAction.Retry
-                        : ReviewReportSubmissionPolicy.Decide(
-                            taskServer?.StatusCode,
-                            taskServer?.ErrorCode,
-                            transportFailure);
-                    if (slot.ReducedReportSubmitted && taskServer?.StatusCode is 413 or 502)
-                        action = ReviewReportSubmissionAction.TerminalRejected;
+                        : slot.ReducedReportSubmitted
+                            ? ReviewReportSubmissionPolicy.DecideReduced(
+                                taskServer?.StatusCode,
+                                taskServer?.ErrorCode,
+                                transportFailure,
+                                reducedFailures)
+                            : ReviewReportSubmissionPolicy.Decide(
+                                taskServer?.StatusCode,
+                                taskServer?.ErrorCode,
+                                transportFailure);
                     var error = exception.Message.Length <= 500
                         ? exception.Message
                         : exception.Message[..500];
@@ -611,6 +618,9 @@ public sealed class RemoteReviewExecutor
                         LastReportError = error,
                         ReducedReportSubmitted = slot.ReducedReportSubmitted || reduce,
                         ConsecutiveReportBadGateway = badGatewayCount,
+                        ConsecutiveReducedReportFailures = authorityAdvanced || authorityRecovered
+                            ? 0
+                            : reducedFailures,
                         TerminalClassification = action == ReviewReportSubmissionAction.Retry
                             ? null
                             : ReviewReportSubmissionPolicy.TerminalClassification(action),

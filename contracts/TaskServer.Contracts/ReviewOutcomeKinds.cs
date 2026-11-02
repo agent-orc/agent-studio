@@ -21,4 +21,5 @@ public static class CompletionOutcomeKinds
     public const string EnvironmentFailure = "environmentfailure";
     public const string Stopped = "stopped";
     public const string MechanicalFallback = "mechanicalfallback";
+    public const string TransientFailure = "transientfailure";
 }

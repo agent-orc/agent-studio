@@ -2269,6 +2269,7 @@ public sealed partial class TaskServerStore
         var mechanicalFallback = string.Equals(
             request.Outcome, ExecutionOutcomeKind.MechanicalFallback.ToString(),
             StringComparison.OrdinalIgnoreCase);
+        var transientModelCapacity = request.OutcomeDecision?.Outcome == ExecutionOutcomeKind.TransientModelCapacity;
         if (mechanicalFallback
             && (request.OutcomeDecision?.Outcome != ExecutionOutcomeKind.MechanicalFallback
                 || request.SessionContinuation is not
@@ -2282,7 +2283,7 @@ public sealed partial class TaskServerStore
         var gateItems = NormalizeGateItems(request.GateItems);
         var needsInput = !string.IsNullOrWhiteSpace(request.NeedsInputMessage);
         var providerRejected = request.OutcomeDecision?.Outcome == ExecutionOutcomeKind.ProviderRejectedRequest;
-        var nextState = mechanicalFallback ? "2-ready"
+        var nextState = mechanicalFallback || transientModelCapacity ? "2-ready"
             : needsInput || providerRejected ? "5-human-review" : "4-auto-review";
         var effectiveSummary = request.Summary;
         if (mechanicalFallback)
@@ -2459,11 +2460,25 @@ public sealed partial class TaskServerStore
             var currentBriefVersion = FollowUpPromptDigest.Compute(currentBody);
             var olderBrief = !string.IsNullOrWhiteSpace(claimedBriefVersion)
                 && !string.Equals(claimedBriefVersion, currentBriefVersion, StringComparison.OrdinalIgnoreCase);
-            if (olderBrief)
+            if (olderBrief && !transientModelCapacity)
             {
                 nextState = "5e-escalated";
                 effectiveSummary = "Delivered against an older brief; choose accept, use as a starting point, or discard.";
             }
+            if (transientModelCapacity
+                && !string.IsNullOrWhiteSpace(request.SalvageBranch)
+                && !string.IsNullOrWhiteSpace(request.SalvageCommitSha))
+                await ExecuteAsync(connection, """
+                    INSERT INTO task_starting_points(task_id, source_run_id, result_ref, result_sha, reason)
+                    VALUES ($task, $run, $ref, $sha, 'transient-model-capacity')
+                    ON CONFLICT(task_id) DO UPDATE SET
+                        source_run_id = excluded.source_run_id,
+                        result_ref = excluded.result_ref,
+                        result_sha = excluded.result_sha,
+                        reason = excluded.reason;
+                    """, ct, transaction,
+                    ("$task", lease.TaskId), ("$run", runId),
+                    ("$ref", request.SalvageBranch), ("$sha", request.SalvageCommitSha));
             await ExecuteAsync(connection, """
                 UPDATE leases SET status = 'completed' WHERE run_id = $run;
                 UPDATE runs
@@ -2506,7 +2521,7 @@ public sealed partial class TaskServerStore
                 ("$repositoryUrl", resultHandoff?.Envelope.RepositoryUrl),
                 ("$resultRef", resultHandoff?.Envelope.ImmutableRemoteRef),
                 ("$bundleSha", resultHandoff?.Envelope.SourceBundleDigest));
-            if (olderBrief)
+            if (olderBrief && !transientModelCapacity)
                 await ExecuteAsync(connection, """
                     INSERT INTO older_brief_deliveries(
                         task_id, run_id, brief_version, current_brief_version,

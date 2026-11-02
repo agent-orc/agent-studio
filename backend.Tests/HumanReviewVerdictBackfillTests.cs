@@ -19,6 +19,8 @@ namespace AgentStudio.Tests;
 public sealed class HumanReviewVerdictBackfillTests : IDisposable
 {
     private const string ProjectName = "demo";
+    private static readonly DateTime LegacyParkedAt =
+        ReviewDecisionOrchestrator.EscalationFunnelIntroducedUtc.AddDays(-30);
     private readonly string _workspaceRoot;
     private readonly string _watchPath;
     private readonly IConfiguration _config;
@@ -105,7 +107,7 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
         WriteJob(
             TaskStates.HumanReview,
             "legacy-verdictless",
-            createdAt: DateTime.UtcNow.AddDays(-30),
+            createdAt: LegacyParkedAt,
             hasRun: true);
         // Already-explained card: carries a prior accept verdict + a real summary.
         WriteJob(TaskStates.HumanReview, "already-explained");
@@ -133,7 +135,7 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
             _timeline.ReadAll(escalatedPath),
             row => row.Kind == TimelineEventKinds.LaneChanged);
         Assert.Equal(TimelineActors.System, backfillMove.Actor);
-        Assert.Contains("Parked in human review", backfillMove.Details!["reason"]);
+        Assert.Equal(ReviewDecisionOrchestrator.VerdictlessLegacyParkReason, backfillMove.Details!["reason"]);
 
         // Explained card untouched: no extra verdict, summary preserved.
         var explained = ReviewDecisionLog.ReadAll(_workspaceRoot, ProjectName)
@@ -150,7 +152,7 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
         WriteJob(
             TaskStates.HumanReview,
             "legacy-verdictless",
-            createdAt: DateTime.UtcNow.AddDays(-30),
+            createdAt: LegacyParkedAt,
             hasRun: true);
 
         _orchestrator.BackfillVerdictlessHumanReview(_workspaceRoot, CancellationToken.None);
@@ -187,7 +189,7 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
         WriteJob(
             TaskStates.HumanReview,
             "old-without-run",
-            createdAt: DateTime.UtcNow.AddDays(-30),
+            createdAt: LegacyParkedAt,
             hasRun: false);
         WriteJob(
             TaskStates.HumanReview,
@@ -221,7 +223,7 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
         WriteJob(
             TaskStates.AutoReview,
             "operator-placed-human-review",
-            createdAt: DateTime.UtcNow.AddDays(-30),
+            createdAt: LegacyParkedAt,
             hasRun: true);
 
         const string reason = "Operator reviewed the evidence and wants this card held here.";
@@ -252,7 +254,7 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
         WriteJob(
             TaskStates.HumanReview,
             "operator-requeued-ready",
-            createdAt: DateTime.UtcNow.AddDays(-30),
+            createdAt: LegacyParkedAt,
             hasRun: true);
 
         const string reason = "Night-wave infrastructure is healthy; run this card again.";
@@ -279,35 +281,17 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
     public void Backfill_UsesLatestLaneChange_NotEarlierOperatorMove()
     {
         WriteJob(
-            TaskStates.AutoReview,
+            TaskStates.HumanReview,
             "system-parked-after-operator-history",
-            createdAt: DateTime.UtcNow.AddDays(-30),
+            createdAt: LegacyParkedAt,
             hasRun: true);
-
-        Assert.Equal(
-            MoveJobStatus.Success,
-            _states.MoveJob(
-                "system-parked-after-operator-history",
-                TaskStates.HumanReview,
-                _watchPath,
-                cause: TimelineActors.Human("night-operator"),
-                reason: "Inspect this intermediate result.").Status);
-        Assert.Equal(
-            MoveJobStatus.Success,
-            _states.MoveJob(
-                "system-parked-after-operator-history",
-                TaskStates.AutoReview,
-                _watchPath,
-                cause: TimelineActors.System,
-                reason: "Runner resumed review processing.").Status);
-        Assert.Equal(
-            MoveJobStatus.Success,
-            _states.MoveJob(
-                "system-parked-after-operator-history",
-                TaskStates.HumanReview,
-                _watchPath,
-                cause: TimelineActors.System,
-                reason: "Runner parked without an automated verdict.").Status);
+        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, "system-parked-after-operator-history");
+        AppendLaneChange(folder, LegacyParkedAt.AddHours(1), TimelineActors.Human("night-operator"),
+            TaskStates.AutoReview, TaskStates.HumanReview);
+        AppendLaneChange(folder, LegacyParkedAt.AddHours(2), TimelineActors.System,
+            TaskStates.HumanReview, TaskStates.AutoReview);
+        AppendLaneChange(folder, LegacyParkedAt.AddHours(3), TimelineActors.System,
+            TaskStates.AutoReview, TaskStates.HumanReview);
 
         _orchestrator.BackfillVerdictlessHumanReview(_workspaceRoot, CancellationToken.None);
 
@@ -320,12 +304,68 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
     }
 
     [Fact]
+    public void Backfill_LeavesCardParkedAfterTheFunnelInHumanReview()
+    {
+        // An old card with a run that a system path parked in Human Review
+        // after the funnel existed is not a legacy park.
+        WriteJob(
+            TaskStates.HumanReview,
+            "parked-after-funnel",
+            createdAt: LegacyParkedAt,
+            hasRun: true,
+            enteredLaneAt: DateTime.UtcNow.AddDays(-1));
+
+        _orchestrator.BackfillVerdictlessHumanReview(_workspaceRoot, CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, "parked-after-funnel")));
+        Assert.Empty(ReviewDecisionLog.ReadAll(_workspaceRoot, ProjectName));
+    }
+
+    [Fact]
+    public void Backfill_LatestLaneChangeAfterTheFunnelOutranksAnOldLaneStamp()
+    {
+        WriteJob(
+            TaskStates.HumanReview,
+            "moved-after-funnel",
+            createdAt: LegacyParkedAt,
+            hasRun: true);
+        AppendLaneChange(Path.Combine(_watchPath, TaskStates.HumanReview, "moved-after-funnel"),
+            DateTime.UtcNow.AddHours(-2), TimelineActors.System, TaskStates.AutoReview, TaskStates.HumanReview);
+
+        _orchestrator.BackfillVerdictlessHumanReview(_workspaceRoot, CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, "moved-after-funnel")));
+        Assert.Empty(ReviewDecisionLog.ReadAll(_workspaceRoot, ProjectName));
+    }
+
+    [Fact]
+    public void Backfill_LeavesCardWithAReviewSubjectInHumanReview()
+    {
+        // A review subject proves a review ran on the delivery; the legacy
+        // reason would be false for it even when its lane stamp is old.
+        WriteJob(
+            TaskStates.HumanReview,
+            "reviewed-without-journal",
+            createdAt: LegacyParkedAt,
+            hasRun: true);
+        File.WriteAllText(
+            AgentStudio.Pipeline.ReviewSubjectStore.PathFor(
+                Path.Combine(_watchPath, TaskStates.HumanReview, "reviewed-without-journal")),
+            "{}");
+
+        _orchestrator.BackfillVerdictlessHumanReview(_workspaceRoot, CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, "reviewed-without-journal")));
+        Assert.Empty(ReviewDecisionLog.ReadAll(_workspaceRoot, ProjectName));
+    }
+
+    [Fact]
     public void Backfill_CompletedCardWithRunProvenance_RemainsUntouched()
     {
         WriteJob(
             TaskStates.Completed,
             "accepted-terminal",
-            createdAt: DateTime.UtcNow.AddDays(-30),
+            createdAt: LegacyParkedAt,
             hasRun: true);
 
         _orchestrator.BackfillVerdictlessHumanReview(_workspaceRoot, CancellationToken.None);
@@ -342,15 +382,17 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
         string slug,
         DateTime? createdAt = null,
         bool hasRun = false,
-        string kind = TaskKinds.Task)
+        string kind = TaskKinds.Task,
+        DateTime? enteredLaneAt = null)
     {
         var dir = Path.Combine(_watchPath, state, slug);
         Directory.CreateDirectory(dir);
-        var created = createdAt ?? DateTime.UtcNow.AddDays(-30);
+        var created = createdAt ?? LegacyParkedAt;
+        var entered = enteredLaneAt ?? created;
         File.WriteAllText(
             Path.Combine(dir, "task.json"),
             $"{{\"id\":\"{slug}\",\"title\":\"{slug}\",\"state\":\"{state}\"," +
-            $"\"createdAt\":\"{created:o}\",\"enteredLaneAt\":\"{created:o}\"," +
+            $"\"createdAt\":\"{created:o}\",\"enteredLaneAt\":\"{entered:o}\"," +
             $"\"agent\":\"claude\",\"cliType\":\"claude\",\"kind\":\"{kind}\"," +
             "\"ownerClientId\":\"local-default\"}");
 
@@ -362,4 +404,14 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
             Path.Combine(logs, "session-events.jsonl"),
             $"{{\"ts\":\"{created.AddMinutes(1):o}\",\"kind\":\"start\",\"cli\":\"claude\"}}{Environment.NewLine}");
     }
+
+    private void AppendLaneChange(string folder, DateTime at, string actor, string from, string to)
+        => _timeline.Append(folder, new TimelineEvent
+        {
+            Ts = at,
+            Kind = TimelineEventKinds.LaneChanged,
+            Actor = actor,
+            Summary = $"{from} -> {to}",
+            Details = new Dictionary<string, string> { ["from"] = from, ["to"] = to },
+        });
 }

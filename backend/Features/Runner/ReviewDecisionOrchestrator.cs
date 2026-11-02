@@ -114,6 +114,17 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     internal static readonly TimeSpan VerdictlessBackfillMinimumAge = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// When <see cref="HumanReviewEscalation"/> landed (commit c0661a559). From
+    /// then on every park writes its own verdict, so a card that entered Human
+    /// Review later is not one the verdict-less boot repair was written for.
+    /// </summary>
+    internal static readonly DateTime EscalationFunnelIntroducedUtc =
+        new(2026, 6, 2, 1, 59, 27, DateTimeKind.Utc);
+
+    internal const string VerdictlessLegacyParkReason =
+        "Parked in human review before the escalation funnel existed (June 2026); no review verdict was recorded for it.";
+
     private readonly TaskScannerService _scanner;
     private readonly ITaskAccess _taskAccess;
     private readonly OrchestratorChatLog _chatLog;
@@ -401,11 +412,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
 
         // Pure data-repair, run on EVERY boot regardless of the Enabled flag:
-        // give an old 5-human-review card with durable run provenance but no
-        // orchestrator verdict a retroactive Escalate verdict + status.md stub
-        // so the board can explain it. Age, provenance, terminal-lane, and
-        // latest-operator-move guards keep accepted or explicitly placed cards
-        // out of this legacy migration.
+        // give a 5-human-review card parked before the escalation funnel, with
+        // durable run provenance but no orchestrator verdict, a retroactive
+        // Escalate verdict + status.md stub so the board can explain it. Lane
+        // entry date, review subject, age, provenance, terminal-lane, and
+        // latest-operator-move guards keep every other card out of it.
         try { BackfillVerdictlessHumanReview(workspace!, stoppingToken); }
         catch (OperationCanceledException) { return; }
         catch (Exception ex) { _logger.LogWarning(ex, "ReviewDecisionOrchestrator: verdict-less human-review backfill failed"); }
@@ -1148,9 +1159,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// <summary>
     /// One-shot boot repair for the bug
     /// <c>karten-landen-in-5-human-review-ohne-verdict-und-ohne-statusmarkdown</c>:
-    /// every old card parked in <c>5-human-review</c> whose per-project decision
-    /// journal holds NO record for that job and whose task folder proves a prior
-    /// agent run gets a retroactive
+    /// every card that entered <c>5-human-review</c> before
+    /// <see cref="EscalationFunnelIntroducedUtc"/>, whose per-project decision
+    /// journal holds NO record for that job, which carries no review subject,
+    /// and whose task folder proves a prior agent run gets a retroactive
     /// <see cref="ReviewDecisionKind.Escalate"/> verdict (category
     /// <see cref="HumanReviewEscalationCategories.UnknownLegacy"/>) and a minimal
     /// <c>status.md</c> stub, written through <see cref="HumanReviewEscalation"/>
@@ -1195,6 +1207,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (string.IsNullOrWhiteSpace(job.ProjectName)) continue;
             if (DateTime.UtcNow - job.CreatedAt < VerdictlessBackfillMinimumAge) continue;
             if (!HasRunProvenance(job)) continue;
+            // Only the pre-funnel parks this repair was written for. A later
+            // card without a journal record reached the lane through a path
+            // that explains itself elsewhere (a passed review, an integration
+            // park), and moving it would state something false about it.
+            if (!EnteredHumanReviewBeforeFunnel(job)) continue;
+            if (File.Exists(ReviewSubjectStore.PathFor(job.FolderPath))) continue;
 
             if (!decisionsByProject.TryGetValue(job.ProjectName, out var records))
             {
@@ -1214,7 +1232,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _humanReviewEscalation.Escalate(
                 job.Id, job.WatchPath, job.ProjectName,
                 HumanReviewEscalationCategories.UnknownLegacy,
-                "Parked in human review before the escalation funnel existed; no automated review ran.");
+                VerdictlessLegacyParkReason);
 
             repaired++;
             _logger.LogInformation(
@@ -1224,6 +1242,36 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         if (repaired > 0)
             _logger.LogInformation("ReviewDecisionOrchestrator: verdict-less human-review backfill repaired {Repaired} card(s).", repaired);
+    }
+
+    /// <summary>
+    /// The later of the card's lane-entry stamp and its latest lane change, so
+    /// a recent move is never read as a legacy park. A timeline that cannot be
+    /// read leaves the stamp alone.
+    /// </summary>
+    private bool EnteredHumanReviewBeforeFunnel(TaskInfo job)
+    {
+        var entered = job.EnteredLaneAt.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(job.EnteredLaneAt, DateTimeKind.Utc)
+            : job.EnteredLaneAt.ToUniversalTime();
+        try
+        {
+            var latestLaneChange = _timeline?.ReadAll(job.FolderPath)
+                .LastOrDefault(evt => string.Equals(evt.Kind, TimelineEventKinds.LaneChanged, StringComparison.Ordinal));
+            if (latestLaneChange is not null)
+            {
+                var moved = latestLaneChange.Ts.Kind == DateTimeKind.Unspecified
+                    ? DateTime.SpecifyKind(latestLaneChange.Ts, DateTimeKind.Utc)
+                    : latestLaneChange.Ts.ToUniversalTime();
+                if (moved > entered) entered = moved;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "ReviewDecisionOrchestrator: lane-entry read failed for {Project}/{JobId}.",
+                job.ProjectName, job.Id);
+        }
+        return entered < EscalationFunnelIntroducedUtc;
     }
 
     private bool HasLatestOperatorLaneVerdict(TaskInfo job)

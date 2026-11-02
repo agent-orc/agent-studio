@@ -51,6 +51,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     }
 
     [Theory]
+    [Trait("Category", "Guard")]
     [MemberData(nameof(Profiles))]
     public void Every_route_declares_a_known_permission(string profile, string? taskServer)
     {

@@ -19,7 +19,10 @@ internal sealed record DetachedReviewSpec(
     int? ReviewNoCpuProgressSeconds = null,
     // AGT-3077: the path only; the worker reads the credential itself.
     string? ReviewGitCredentialsFile = null,
-    string? StateDir = null);
+    string? StateDir = null,
+    // AGT-3424: null (spec written by an older daemon) falls back to the
+    // worker's environment, like the hang detectors above.
+    int? ReviewAspectParallelism = null);
 
 internal sealed record DetachedReviewIdentity(
     int ProcessId,
@@ -356,7 +359,8 @@ internal sealed class DurableReviewProcess
             options.CommandSilenceWatchdogSeconds,
             options.ReviewNoCpuProgressSeconds,
             options.ReviewGitCredentialsFile,
-            options.StateDir);
+            options.StateDir,
+            options.ReviewAspectParallelism);
 
     /// <summary>
     /// Options for the detached worker. Everything the workspace needs comes
@@ -386,6 +390,11 @@ internal sealed class DurableReviewProcess
                 ?? RunnerOptions.EnvInt("RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS", 600),
             ReviewNoCpuProgressSeconds = spec.ReviewNoCpuProgressSeconds
                 ?? RunnerOptions.EnvIntAllowingZero("RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS", 900),
+            ReviewAspectParallelism = ReviewAspectFanOut.Normalize(
+                spec.ReviewAspectParallelism
+                ?? RunnerOptions.EnvInt(
+                    "RUNNER_REVIEW_ASPECT_PARALLELISM",
+                    ReviewAspectFanOut.MaximumParallelism)),
         };
 
     public static async Task<int> RunWorkerAsync(string specPath, bool shutdownBuildServers = false)

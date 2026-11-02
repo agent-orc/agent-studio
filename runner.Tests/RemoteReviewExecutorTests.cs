@@ -216,26 +216,7 @@ public sealed class RemoteReviewExecutorTests : IDisposable
             usesDurableTaskServer: true, options: options);
         var state = new ReviewStateStore(options.StateDir);
         var slot = await CreateCompletedSlotAsync(state);
-        var resultPath = Path.Combine(slot.WorkerDirectory, "review-result.json");
-        var result = JsonSerializer.Deserialize<DetachedReviewResult>(
-            await File.ReadAllTextAsync(resultPath), Json)!;
-        var log = Encoding.UTF8.GetBytes("review failure evidence");
-        var artifact = new ReviewArtifactEvidenceDto("candidate.verify-3.stdout.log", "text/plain",
-            Convert.ToHexString(SHA256.HashData(log)).ToLowerInvariant(), log.Length,
-            Convert.ToBase64String(log));
-        var verdict = new ReviewVerdictDto("build-tests", "block", "NewTestFailures",
-            "One new failure", "command:verify-3", "test failed");
-        await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(result with
-        {
-            Evidence = result.Evidence! with
-            {
-                Outcome = "ProductFailure",
-                Artifacts = [artifact],
-                Verdicts = [verdict],
-            },
-            FailureClassification = "NewTestFailures",
-            Summary = "One new failure",
-        }, Json));
+        await SeedProductFailureResultAsync(slot);
         var executor = new RemoteReviewExecutor(options, client, state, _ => { })
         {
             ReportRetryDelayOverride = _ => TimeSpan.Zero,
@@ -275,6 +256,72 @@ public sealed class RemoteReviewExecutorTests : IDisposable
         Assert.Equal(3, exitCode);
         Assert.Equal(2, handler.Reports.Count);
         Assert.Equal(0, handler.CleanupAttempts);
+        Assert.Empty(state.LoadAll());
+    }
+
+    [Fact]
+    public async Task Reduced_report_survives_bad_gateway_unavailable_and_timeout_before_acceptance()
+    {
+        var handler = new ReducedReportHandler(HttpStatusCode.RequestEntityTooLarge, 1,
+            [HttpStatusCode.BadGateway, HttpStatusCode.ServiceUnavailable, null]);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(http, options.RunnerId,
+            usesDurableTaskServer: true, options: options);
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateCompletedSlotAsync(state);
+        await SeedProductFailureResultAsync(slot);
+        var executor = new RemoteReviewExecutor(options, client, state, _ => { })
+        {
+            ReportRetryDelayOverride = _ => TimeSpan.Zero,
+        };
+
+        var exitCode = await executor.ReattachAsync(slot, CancellationToken.None);
+
+        Assert.Equal(3, exitCode);
+        Assert.Equal(5, handler.Reports.Count);
+        var reduced = handler.Reports[1];
+        Assert.True(reduced.ArtifactsReduced);
+        Assert.All(handler.Reports.Skip(2), report => Assert.Equal(
+            JsonSerializer.Serialize(reduced, Json),
+            JsonSerializer.Serialize(report, Json)));
+        Assert.Equal(handler.Reports[0].Outcome, reduced.Outcome);
+        Assert.Equal(handler.Reports[0].FailureClassification, reduced.FailureClassification);
+        Assert.Equal(handler.Reports[0].Verdicts, reduced.Verdicts);
+        Assert.Equal("NewTestFailures", reduced.FailureClassification);
+        Assert.Single(reduced.Verdicts);
+        Assert.Equal(1, handler.CleanupAttempts);
+        Assert.Empty(state.LoadAll());
+    }
+
+    [Fact]
+    public async Task Reduced_report_stops_after_bounded_transient_failures()
+    {
+        var failures = Enumerable.Repeat<HttpStatusCode?>(
+            HttpStatusCode.BadGateway,
+            ReviewReportSubmissionPolicy.MaxReducedReportTransientFailures).ToArray();
+        var handler = new ReducedReportHandler(HttpStatusCode.RequestEntityTooLarge, 1, failures);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(http, options.RunnerId,
+            usesDurableTaskServer: true, options: options);
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateCompletedSlotAsync(state);
+        var logs = new List<string>();
+        var executor = new RemoteReviewExecutor(options, client, state, logs.Add)
+        {
+            ReportRetryDelayOverride = _ => TimeSpan.Zero,
+        };
+
+        var exitCode = await executor.ReattachAsync(slot, CancellationToken.None);
+
+        Assert.Equal(3, exitCode);
+        Assert.Equal(1 + ReviewReportSubmissionPolicy.MaxReducedReportTransientFailures,
+            handler.Reports.Count);
+        Assert.All(handler.Reports.Skip(1), report => Assert.True(report.ArtifactsReduced));
+        Assert.Equal(0, handler.CleanupAttempts);
+        Assert.Contains(logs, line => line.Contains(
+            "classification=ReportDeliveryExhausted", StringComparison.Ordinal));
         Assert.Empty(state.LoadAll());
     }
 
@@ -771,7 +818,34 @@ public sealed class RemoteReviewExecutorTests : IDisposable
             };
     }
 
-    private sealed class ReducedReportHandler(HttpStatusCode failure, int failures) : HttpMessageHandler
+    private static async Task SeedProductFailureResultAsync(PersistedReviewSlot slot)
+    {
+        var resultPath = Path.Combine(slot.WorkerDirectory, "review-result.json");
+        var result = JsonSerializer.Deserialize<DetachedReviewResult>(
+            await File.ReadAllTextAsync(resultPath), Json)!;
+        var log = Encoding.UTF8.GetBytes("review failure evidence");
+        var artifact = new ReviewArtifactEvidenceDto("candidate.verify-3.stdout.log", "text/plain",
+            Convert.ToHexString(SHA256.HashData(log)).ToLowerInvariant(), log.Length,
+            Convert.ToBase64String(log));
+        var verdict = new ReviewVerdictDto("build-tests", "block", "NewTestFailures",
+            "One new failure", "command:verify-3", "test failed");
+        await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(result with
+        {
+            Evidence = result.Evidence! with
+            {
+                Outcome = "ProductFailure",
+                Artifacts = [artifact],
+                Verdicts = [verdict],
+            },
+            FailureClassification = "NewTestFailures",
+            Summary = "One new failure",
+        }, Json));
+    }
+
+    private sealed class ReducedReportHandler(
+        HttpStatusCode failure,
+        int failures,
+        IReadOnlyList<HttpStatusCode?>? reducedFailures = null) : HttpMessageHandler
     {
         public List<ReviewReportRequest> Reports { get; } = [];
         public int CleanupAttempts { get; private set; }
@@ -790,6 +864,14 @@ public sealed class RemoteReviewExecutorTests : IDisposable
                     {
                         Content = new StringContent("{\"code\":\"review-report-too-large\"}"),
                     };
+                var reducedFailureIndex = Reports.Count - failures - 1;
+                if (reducedFailures is not null && reducedFailureIndex < reducedFailures.Count)
+                {
+                    var status = reducedFailures[reducedFailureIndex];
+                    if (status is null)
+                        throw new TaskCanceledException("simulated report timeout");
+                    return new HttpResponseMessage(status.Value);
+                }
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(JsonSerializer.Serialize(new ReviewReportDto(

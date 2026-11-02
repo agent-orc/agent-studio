@@ -249,7 +249,9 @@ internal static class TaskIntegrationRecordAddressResolver
         TaskScannerService scanner,
         string address,
         string? watchPath)
-        => Resolve(scanner.ScanAllJobsRaw(), address, watchPath);
+        => Resolve(string.IsNullOrWhiteSpace(watchPath)
+            ? scanner.ScanAllJobsRaw()
+            : scanner.ScanWatchPathRaw(watchPath), address, watchPath);
 
     public static TaskIntegrationRecordAddressResolution Resolve(
         IEnumerable<TaskInfo> snapshot, string address, string? watchPath)
@@ -285,9 +287,11 @@ internal static class TaskIntegrationRecordAddressResolver
     }
 
     public static TaskInfo? RefreshFolder(TaskScannerService scanner, TaskInfo task)
-        => scanner.ScanAllJobsRaw().FirstOrDefault(candidate => FolderPathComparer.Equals(
-            candidate.FolderPath,
-            task.FolderPath));
+    {
+        var entry = scanner.GetWatchPaths().FirstOrDefault(candidate =>
+            WatchPathComparison.PathsEqual(candidate.Path, task.WatchPath));
+        return entry is null ? null : scanner.ScanJobFolder(task.FolderPath, entry, task.State, bypassMemo: true);
+    }
 
     private static StringComparer FolderPathComparer { get; } = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase

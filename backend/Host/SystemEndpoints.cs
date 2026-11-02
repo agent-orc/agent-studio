@@ -94,6 +94,10 @@ public static class SystemEndpoints
             });
         });
 
+        // Which slot of the gate host runs what and why a gate waits (AGT-3423).
+        app.MapGet("/api/system/gate-slots", (AgentStudio.Pipeline.GateSlotUsageTracker gateSlots)
+            => Results.Ok(gateSlots.Board()));
+
         // Lists the centrally-managed agent-rule files that are appended as a
         // system-prompt overlay to every Claude job. Used by the Job Detail
         // header to show "Active rules" so the user can verify what's in scope.

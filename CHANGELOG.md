@@ -36,6 +36,7 @@ release yet.
 
 ### Changed
 
+- Short gates no longer queue behind hour-long ones. With several remote gate slots, one slot serves projects whose recent gates are short, a short gate may take any free slot, and a long gate may use the short slot after 45 minutes of waiting. The Pipeline page shows which slot runs what and why a gate waits (AGT-3423).
 - A failed merge gate is classified (environment, product, integration branch, undecidable) and routed by the orchestrator: environment failures replay, product failures get one fix round, a fingerprint shared by two cards opens one cause card, and only undecidable failures park for a person (AGT-3009).
 
 ## [0.9.5] - 2026-10-04

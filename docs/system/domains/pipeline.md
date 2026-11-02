@@ -358,6 +358,12 @@ Member replay routes (AGT-3104, chosen by the pure `BatchReplayPolicy`):
 | Contains a merge commit (a fix round that merged the integration branch) | `git merge --no-ff` of the untouched result commit | the result SHA maps to that one merge commit |
 | Result already contained in the tip | none | unattributable, member ejected |
 
+Direct-merge projects use a different route when a delivery with merge commits
+is behind their current integration tip. They replay the final delivery tree's
+net change against the merge base as one commit on the tip. The gate and push
+use that exact commit, and the card maps each delivery commit absent from the
+tip to it. A tree conflict names its files and starts an agent round.
+
 The merge route is the documented strategy for non-linear deliveries. It is
 the same `--no-ff` merge the per-task integration uses, so every delivery SHA,
 the fix round's own merge included, stays an ancestor of the candidate and no
@@ -738,6 +744,21 @@ observed during a gate dispatch. Reachability becomes unverified five minutes
 after the last successful SSH check; this read endpoint never starts a probe.
 Size slots times processors below host online cores; see the
 [execution hosts runbook](../../operations/remote-hosts.md#remote-buildtest-gate-capacity).
+
+**Fair slot order (AGT-3423).** With more than one SSH gate slot, the last
+slot serves short gates. A gate is short when the median slot hold of its
+project's last ten remote gates is at most 10 minutes; fewer than three
+recorded gates count as long. The transport keeps that history in
+`gate-duration-history.json` under the local application data folder
+(`RemoteGate:DurationHistoryPath` overrides it) and sends the class in the
+invocation. A short gate tries the short slot first and may take any free
+slot. A long gate uses the other slots in arrival order and may also take
+the short slot once it has waited 45 minutes, so no gate starves. Borrowed
+shard lanes follow the same rule. With one slot, or for an unclassified
+request (local gates, pull workers), every gate shares the slots in arrival
+order as before. The rule lives only in `GateSlotFairnessPolicy`.
+`GET /api/system/gate-slots` returns which slot runs which gate of this
+process and why a gate waits; the project Pipeline page shows it.
 SSH must already have a trusted host
 key and noninteractive credentials. Host-key checking and batch mode are
 mandatory. The worker is invoked explicitly with

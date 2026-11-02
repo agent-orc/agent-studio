@@ -120,19 +120,22 @@ public sealed record TaskCoreRecord
     {
         var blocked = waitsOn?.Blocked == true;
         var state = info.References.DependsOn.Count > 0 && waitsOn is null ? "warming" : "ready";
+        // A single sidecar update republishes the graph for every resident task.
+        // Preserve unchanged records instead of serializing and hashing the
+        // entire workspace again for each CLI flush or timeline append. The
+        // comparison reads the inputs in place: this runs for every card on
+        // every publication, so it must not allocate (AGT-3369).
+        if (Version != 0 && DependencyBlocked == blocked && DependencyState == state
+            && SameDependencies(waitsOn)
+            && SameHead(DependsOn, info.References.DependsOn, static edge => edge.Key)
+            && SameHead(BlockedBy, info.References.BlockedBy, static key => key))
+            return this;
+
         var dependencies = waitsOn?.Items.Take(16).Select(item => new TaskCoreDependency(
             item.Key, item.Resolved, item.Fulfilled,
             item.ReleaseGate, item.WaitingForRelease, item.Unsatisfiable)).ToArray() ?? [];
         var dependsOn = info.References.DependsOn.Take(16).Select(edge => edge.Key).ToArray();
         var blockedBy = info.References.BlockedBy.Take(16).ToArray();
-        // A single sidecar update republishes the graph for every resident task.
-        // Preserve unchanged records instead of serializing and hashing the
-        // entire workspace again for each CLI flush or timeline append.
-        if (Version != 0 && DependencyBlocked == blocked && DependencyState == state
-            && Dependencies.SequenceEqual(dependencies)
-            && DependsOn.SequenceEqual(dependsOn)
-            && BlockedBy.SequenceEqual(blockedBy))
-            return this;
 
         var record = this with
         {
@@ -146,6 +149,33 @@ public sealed record TaskCoreRecord
         // Hash every published field. Unchanged facts retain the same validator.
         var hash = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(record));
         return record with { Version = BitConverter.ToInt64(hash, 0) };
+    }
+
+    private bool SameDependencies(WaitsOnStatus? waitsOn)
+    {
+        var items = waitsOn?.Items;
+        var count = items is null ? 0 : Math.Min(items.Count, 16);
+        if (Dependencies.Count != count) return false;
+        for (var i = 0; i < count; i++)
+        {
+            var item = items![i];
+            var current = Dependencies[i];
+            if (current.Key != item.Key || current.Resolved != item.Resolved
+                || current.Fulfilled != item.Fulfilled || current.ReleaseGate != item.ReleaseGate
+                || current.WaitingForRelease != item.WaitingForRelease
+                || current.Unsatisfiable != item.Unsatisfiable)
+                return false;
+        }
+        return true;
+    }
+
+    private static bool SameHead<T>(IReadOnlyList<string> current, List<T> source, Func<T, string> key)
+    {
+        var count = Math.Min(source.Count, 16);
+        if (current.Count != count) return false;
+        for (var i = 0; i < count; i++)
+            if (!string.Equals(current[i], key(source[i]), StringComparison.Ordinal)) return false;
+        return true;
     }
 
     internal static string? Limit(string? value, int maxBytes)

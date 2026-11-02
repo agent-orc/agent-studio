@@ -588,7 +588,6 @@ public sealed partial class ProjectEnvironmentService
             if (declarations is null) return null;
             var state = Load(project);
             AdvanceQueue(state);
-            Save(project, state);
             return new(project, declarations.Select(item =>
             {
                 var history = state.History.Where(row => row.EnvironmentId == item.Id)

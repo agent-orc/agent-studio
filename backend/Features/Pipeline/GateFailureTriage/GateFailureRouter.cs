@@ -91,11 +91,20 @@ public sealed class GateFailureRouter
         _time = time ?? TimeProvider.System;
     }
 
-    /// <summary>The integration failures this router owns: every red or interrupted merge gate.</summary>
+    /// <summary>
+    /// The integration failures this router owns: every red or interrupted merge
+    /// gate, and an integration fetch whose Git credential was missing or refused.
+    /// </summary>
     public static bool Handles(TaskIntegrationStatus? status)
         => status?.Failure?.Code is AcceptedIntegrationFailureCodes.BuildGateFailed
             or AcceptedIntegrationFailureCodes.GateEnvironmentFailure
-            or AcceptedIntegrationFailureCodes.GateInterrupted;
+            or AcceptedIntegrationFailureCodes.GateInterrupted
+            or AcceptedIntegrationFailureCodes.GitCredentialUnavailable;
+
+    /// <summary>Failures that wrote no gate log; their typed code is the whole evidence.</summary>
+    private static bool HasNoGateLog(TaskIntegrationStatus status)
+        => status.Failure?.Code is AcceptedIntegrationFailureCodes.GateInterrupted
+            or AcceptedIntegrationFailureCodes.GitCredentialUnavailable;
 
     public async Task<GateFailureRouting> RouteAsync(
         TaskInfo card, TaskIntegrationStatus status, CancellationToken ct = default)
@@ -104,8 +113,7 @@ public sealed class GateFailureRouter
         ArgumentNullException.ThrowIfNull(status);
 
         var deliverySha = DeliverySha(card);
-        var newest = status.Failure?.Code == AcceptedIntegrationFailureCodes.GateInterrupted
-            ? null : NewestGateLog(card.FolderPath);
+        var newest = HasNoGateLog(status) ? null : NewestGateLog(card.FolderPath);
         var logName = LogName(status, newest);
         var receipt = ReadReceipt(card.FolderPath);
         var settled = receipt?.Triage is not null && receipt.Route is not null
@@ -134,7 +142,7 @@ public sealed class GateFailureRouter
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
         var facts = new GateFailureRoutingFacts(
-            ReplayBudgetLeft(card, deliverySha),
+            ReplayBudgetLeft(card, deliverySha, status),
             otherCards?.Length,
             FixRoundsSpent(card, deliverySha),
             _settings.Get(card.ProjectName).AutomaticFailureContinuationsEnabled);
@@ -190,8 +198,8 @@ public sealed class GateFailureRouter
     }
 
     private static string LogName(TaskIntegrationStatus status, string? newest)
-        => status.Failure?.Code == AcceptedIntegrationFailureCodes.GateInterrupted
-            ? AcceptedIntegrationFailureCodes.GateInterrupted
+        => HasNoGateLog(status)
+            ? status.Failure!.Code!
             : newest is null ? "none" : Path.GetFileName(newest);
 
     /// <summary>
@@ -202,6 +210,8 @@ public sealed class GateFailureRouter
     {
         if (status.Failure?.Code == AcceptedIntegrationFailureCodes.GateInterrupted)
             return GateFailureTriagePolicy.Interrupted();
+        if (status.Failure?.Code == AcceptedIntegrationFailureCodes.GitCredentialUnavailable)
+            return GateFailureTriagePolicy.CredentialUnavailable();
         if (newest is null) return GateFailureTriagePolicy.NoLog();
         try { return GateFailureTriagePolicy.Classify(File.ReadAllText(newest)); }
         catch (IOException) { return GateFailureTriagePolicy.NoLog(); }
@@ -218,7 +228,7 @@ public sealed class GateFailureRouter
             .FirstOrDefault();
     }
 
-    private bool ReplayBudgetLeft(TaskInfo card, string? deliverySha)
+    private bool ReplayBudgetLeft(TaskInfo card, string? deliverySha, TaskIntegrationStatus status)
     {
         var options = GateEnvironmentRetryOptions.FromConfiguration(_configuration);
         // The ladder sweep skips projects without automatic continuations, so a
@@ -226,6 +236,8 @@ public sealed class GateFailureRouter
         if (!options.Enabled || deliverySha is null
             || !_settings.Get(card.ProjectName).AutomaticFailureContinuationsEnabled)
             return false;
+        // A gate the service's own stop interrupted resumes without spending a rung.
+        if (GateEnvironmentRetryFactsReader.IsServiceShutdownInterruption(status)) return true;
         var ledger = GateEnvironmentRetryReceipts.Read(_timeline, card.FolderPath, deliverySha);
         return !ledger.Parked && ledger.AttemptsSpent < options.MaxAttempts;
     }
@@ -247,7 +259,8 @@ public sealed class GateFailureRouter
     {
         var step = _integrationStatus.ReadLatestMergeStep(card);
         if (step is null || step.Status != PipelineStepStatus.Failed) return;
-        if (step.FailureCode == AcceptedIntegrationFailureCodes.GateInterrupted) return;
+        if (step.FailureCode is AcceptedIntegrationFailureCodes.GateInterrupted
+            or AcceptedIntegrationFailureCodes.GitCredentialUnavailable) return;
         var (code, verdict) = triage.IsEnvironment
             ? (AcceptedIntegrationFailureCodes.GateEnvironmentFailure, "gate-environment-failure")
             : (AcceptedIntegrationFailureCodes.BuildGateFailed, "gate-failed");
