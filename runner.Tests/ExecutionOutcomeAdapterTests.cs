@@ -447,14 +447,14 @@ public sealed class ExecutionOutcomeAdapterTests
                 "refs/heads/runner/agent-runner-01/AGT-2692",
                 baseSha));
 
-        Assert.Equal(ExecutionOutcomeKind.QuotaExceeded, decision.Outcome);
+        Assert.Equal(ExecutionOutcomeKind.TransientModelCapacity, decision.Outcome);
         Assert.Equal(message, provider.FailureMessage);
         var failedAttempt = RemoteTaskRunner.BuildRunOutcome(
             decision,
             provider,
             SentinelScanner.Scan(transcript),
             message);
-        Assert.Equal(RunOutcomeKind.Unknown, failedAttempt.Kind);
+        Assert.Equal(RunOutcomeKind.TransientFailure, failedAttempt.Kind);
         Assert.Equal(message, failedAttempt.Reason);
         Assert.Null(RemoteTaskRunner.MissingSentinelIncidentFor(
             failedAttempt,
@@ -473,6 +473,64 @@ public sealed class ExecutionOutcomeAdapterTests
             },
             baseSha,
             "agent-runner-01"));
+    }
+
+    [Fact]
+    public void Capacity_retries_same_session_then_success_is_a_normal_completion()
+    {
+        const string failure = "Selected model is at capacity. Please try a different model.";
+        var failedTurn = Coding(
+            ProviderTerminalEvent: $"{{\"type\":\"turn.failed\",\"error\":{{\"message\":\"{failure}\"}}}}",
+            ExitCode: 1,
+            SessionState: ExecutionSessionState.Resumable,
+            SessionId: "thread-capacity");
+
+        for (var retry = 0; retry < ExecutionOutcomeAdapter.MaxModelCapacityRetryAttempts; retry++)
+        {
+            var decision = ExecutionOutcomeAdapter.Classify(failedTurn with
+            {
+                ModelCapacityRetryAttempts = retry,
+            });
+            Assert.Equal(ExecutionOutcomeKind.TransientModelCapacity, decision.Outcome);
+            Assert.Equal(ExecutionRecoveryAction.ResumeSameSession, decision.RecoveryAction);
+            Assert.Equal(new[] { 30d, 120d, 300d }[retry],
+                ModelCapacityRetryPolicy.DelayForRetry(retry + 1).TotalSeconds);
+        }
+
+        var success = ExecutionOutcomeAdapter.Classify(failedTurn with
+        {
+            ProviderTerminalEvent = "{\"type\":\"turn.completed\"}",
+            FinalAssistantOutput = "[[TASK_DONE]]",
+            StdErr = null,
+            ExitCode = 0,
+            DurableOutputState = DurableOutputState.Acknowledged,
+            ModelCapacityRetryAttempts = 3,
+        });
+        Assert.Equal(ExecutionOutcomeKind.SuccessfulCompletion, success.Outcome);
+        Assert.Equal(ExecutionRecoveryAction.TerminateHonestly, success.RecoveryAction);
+    }
+
+    [Fact]
+    public void Exhausted_capacity_retries_requeue_with_salvage_without_quota_recovery()
+    {
+        var decision = ExecutionOutcomeAdapter.Classify(Coding(
+            ExitCode: 1,
+            StdErr: "Selected model is at capacity. Please try a different model.",
+            SessionState: ExecutionSessionState.Resumable,
+            SessionId: "thread-capacity") with
+        {
+            ModelCapacityRetryAttempts = ExecutionOutcomeAdapter.MaxModelCapacityRetryAttempts,
+        });
+
+        Assert.Equal(ExecutionOutcomeKind.TransientModelCapacity, decision.Outcome);
+        Assert.Equal(ExecutionRecoveryAction.StartFreshAttemptFromSalvage, decision.RecoveryAction);
+        Assert.False(decision.ConsumesProductDefectBudget);
+        var outcome = RemoteTaskRunner.BuildRunOutcome(decision,
+            new ProviderOutputEvidence(null, null, "thread-capacity", false, true,
+                "Selected model is at capacity. Please try a different model."),
+            new RunOutcome(RunOutcomeKind.Unknown, null), null);
+        Assert.Equal(RunOutcomeKind.TransientFailure, outcome.Kind);
+        Assert.Equal("2-ready", outcome.TargetState);
     }
 
     [Fact]

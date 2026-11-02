@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace AgentRunner;
 
 /// <summary>The terminal outcome an agent signs its run off with.</summary>
-public enum RunOutcomeKind { Done, Blocked, NeedsInput, NoOp, Unknown, EnvironmentFailure, Stopped, MechanicalFallback }
+public enum RunOutcomeKind { Done, Blocked, NeedsInput, NoOp, Unknown, EnvironmentFailure, Stopped, MechanicalFallback, TransientFailure }
 
 public sealed record RunOutcome(RunOutcomeKind Kind, string? Reason, string? NeedsInputMessage = null)
 {
@@ -20,7 +20,7 @@ public sealed record RunOutcome(RunOutcomeKind Kind, string? Reason, string? Nee
         // An operator stop is not a verdict on the work: the card returns to
         // Ready so the next round - a queued follow-up or a plain pickup -
         // continues from the salvage this attempt left behind.
-        RunOutcomeKind.EnvironmentFailure or RunOutcomeKind.Stopped => "2-ready",
+        RunOutcomeKind.EnvironmentFailure or RunOutcomeKind.Stopped or RunOutcomeKind.TransientFailure => "2-ready",
         _ => "5-human-review",
     };
 
@@ -32,6 +32,7 @@ public sealed record RunOutcome(RunOutcomeKind Kind, string? Reason, string? Nee
         RunOutcomeKind.NoOp => "Remote run was a no-op",
         RunOutcomeKind.EnvironmentFailure => "Remote claim environment preparation failed",
         RunOutcomeKind.Stopped => "Remote run stopped by an operator",
+        RunOutcomeKind.TransientFailure => "Remote run stopped by transient provider capacity",
         _ => "Remote run ended without a terminal sentinel",
     };
 }
