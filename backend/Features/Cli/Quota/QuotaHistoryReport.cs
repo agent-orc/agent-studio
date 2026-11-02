@@ -41,15 +41,21 @@ public static class QuotaHistoryReport
     public static QuotaHistoryResponse Build(string cliType, int hours, IReadOnlyList<QuotaHistoryPoint> retained, DateTime nowUtc)
     {
         var from = nowUtc - TimeSpan.FromHours(hours);
+        var accountsByWindow = retained.GroupBy(point => point.Window, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key,
+                group => group.Select(point => point.SubscriptionKey).Distinct().Count(),
+                StringComparer.OrdinalIgnoreCase);
         var windows = retained
-            .GroupBy(point => point.Window, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(point => (point.Window, point.SubscriptionKey))
             .Select(group =>
             {
                 var points = group.OrderBy(point => point.At).ToList();
-                var kind = QuotaForecastPolicy.Classify(group.Key);
+                var kind = QuotaForecastPolicy.Classify(group.Key.Window);
                 var forecast = QuotaForecastPolicy.Forecast(points, nowUtc);
                 return (Kind: kind, Window: new QuotaHistoryWindowResponse(
-                    points[^1].Window,
+                    accountsByWindow[group.Key.Window] > 1 && group.Key.SubscriptionKey is { Length: >= 8 }
+                        ? points[^1].Window + " (" + group.Key.SubscriptionKey[..8] + ")"
+                        : points[^1].Window,
                     QuotaForecastPolicy.KindName(kind),
                     points.Where(point => point.At >= from)
                         .Select(point => new QuotaHistoryPointResponse(point.At, point.UsedPct, point.ResetAt))

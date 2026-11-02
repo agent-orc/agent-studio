@@ -12,6 +12,7 @@ import { WikiStarsService } from './wiki-stars.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { DossierReferenceHydratorService } from '../../../../services/dossier-reference-hydrator.service';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import {
   DOSSIER_FIXTURE_KEY,
   dossierChipsIn,
@@ -1533,6 +1534,51 @@ describe('ProjectWikiSectionComponent', () => {
     });
     fixture.detectChanges();
     expect(fixture.componentInstance.openedRel()).toBe('concepts/overview.md');
+    http.verify();
+  });
+
+  it('names the target host in the shared dialog before a Wiki frame opens an external page', async () => {
+    const { fixture, http } = await setup();
+    expandConcepts(fixture);
+    el(fixture)
+      .querySelector<HTMLButtonElement>('[data-testid="project-wiki-file-concepts/page.html"]')!
+      .click();
+    fixture.detectChanges();
+    http.expectOne('/api/projects/Demo/wiki/files/concepts/page.html')
+      .flush({ relPath: 'concepts/page.html', content: '<a href="https://docs.example.org/guide">Guide</a>' });
+    http.expectOne('/api/projects/Demo/wiki/history/concepts/page.html').flush({
+      relPath: 'concepts/page.html', model: null,
+      metadata: { model: null, updatedAt: null, reason: null, taskKey: null, status: null, runCount: null, hasFrontmatter: false },
+      commits: [],
+    });
+    fixture.detectChanges();
+    const frame = el(fixture).querySelector<HTMLIFrameElement>('[data-testid="project-wiki-html-frame"]')!;
+    const confirmDialog = TestBed.inject(ConfirmDialogService);
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const sendExternalLink = () => fixture.componentInstance.onHtmlFrameMessage({
+      source: frame.contentWindow,
+      data: { type: ISOLATED_HTML_LINK_MESSAGE, href: 'https://docs.example.org/guide' },
+    } as MessageEvent);
+
+    sendExternalLink();
+    expect(confirmDialog.active()).toMatchObject({
+      title: 'Open docs.example.org?',
+      message: 'This link leaves Agent Studio and opens a page on docs.example.org in a new tab.',
+      detail: 'https://docs.example.org/guide',
+      confirmLabel: 'Open page',
+      kind: 'primary',
+    });
+    confirmDialog.cancel();
+    await Promise.resolve();
+    expect(openSpy).not.toHaveBeenCalled();
+
+    sendExternalLink();
+    confirmDialog.accept();
+    await Promise.resolve();
+    expect(openSpy).toHaveBeenCalledOnce();
+    expect(openSpy).toHaveBeenCalledWith('https://docs.example.org/guide', '_blank', 'noopener,noreferrer');
+    expect(fixture.componentInstance.openedRel()).toBe('concepts/page.html');
+    openSpy.mockRestore();
     http.verify();
   });
 

@@ -65,6 +65,33 @@ public static class IntegrationVerificationProjection
                     + $" The published branch still carries that tree at {currentIntegrationSha}.",
             };
 
+        // A batch gate names the commits it replayed instead of one tree. The
+        // mapping record ties this delivery to one of them, so the verdict holds
+        // while the branch carries that commit.
+        var batchMapping = integrationRecords.FirstOrDefault(item =>
+            string.Equals(item.Classification, IntegrationRecordClasses.CuratedMapping, StringComparison.Ordinal)
+            && SameBranch(item.IntegrationBranch, currentIntegrationBranch)
+            && ReviewSubjectStore.IsValidResultSha(item.IntegrationSha)
+            && branchCarries?.Invoke(item.IntegrationSha!) == true
+            && !string.IsNullOrWhiteSpace(currentDeliverySha)
+            && ReviewSubjectStore.IsValidResultSha(item.SourceSha)
+            && item.SourceSha!.StartsWith(currentDeliverySha!.Trim(), StringComparison.OrdinalIgnoreCase));
+        var batchRecord = batchMapping is null
+            ? null
+            : integrationRecords.FirstOrDefault(item =>
+                string.Equals(item.Classification, IntegrationRecordClasses.IntegratedVerified, StringComparison.Ordinal)
+                && SameBranch(item.IntegrationBranch, currentIntegrationBranch)
+                && string.IsNullOrWhiteSpace(item.IntegrationSha)
+                && item.CommitShas.Contains(batchMapping.IntegrationSha!, StringComparer.OrdinalIgnoreCase));
+        if (batchRecord is not null)
+            return new TaskIntegrationVerification
+            {
+                State = IntegrationVerificationStates.Verified,
+                Sha = batchMapping!.IntegrationSha,
+                Evidence = IntegrationVerificationEvidence.IntegrationRecord,
+                Reason = $"{batchRecord.Evidence} The published branch carries that commit at {currentIntegrationSha}.",
+            };
+
         if (record is not null
             && string.Equals(record.Sha, currentIntegrationSha, StringComparison.OrdinalIgnoreCase)
             && SameBranch(record.IntegrationBranch, currentIntegrationBranch))

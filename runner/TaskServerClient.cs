@@ -1508,6 +1508,24 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             RunnerModelAcceptanceProbe.Shared.UseConfiguredModels(configuredRoutes);
     }
 
+    public async Task<Contract.HostQuotaClaimResponse?> ClaimHostQuotaAsync(
+        Contract.HostQuotaClaimRequest request, CancellationToken ct)
+    {
+        if (!_useV1 && !_supportsCapabilityAdvertisement) return null;
+        try
+        {
+            return await PostJsonAsync<Contract.HostQuotaClaimRequest, Contract.HostQuotaClaimResponse>(
+                $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/quota/claim", request, ct);
+        }
+        catch (TaskServerException ex) when (ex.StatusCode == 404) { return null; }
+    }
+
+    public async Task ReportHostQuotaAsync(Contract.HostQuotaReportRequest request, CancellationToken ct)
+    {
+        _ = await SendJsonAsync<Contract.HostQuotaReportRequest, object>(HttpMethod.Put,
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/quota/report", request, ct);
+    }
+
     /// <summary>
     /// AGT-2820: the review plane's own parallelism recommendation, adopted on
     /// the minutely capability advertisement. This is the review counterpart of

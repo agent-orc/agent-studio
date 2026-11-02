@@ -3,20 +3,22 @@ id: stale-git-lock
 title: "Evidence flushes or integrations fail for hours on a git lock left by a dead git process"
 status: fixed
 first-seen: 2026-09-27T15:32:00Z
-last-seen: 2026-10-28T09:00:00Z
+last-seen: 2026-11-01T00:00:00Z
 severity: blocker
 category: runtime
 tags: [git, index-lock, workspace, evidence, integration-worktree, pipeline-health, windows]
 affects:
   - backend/Features/Git/StaleLocks
   - backend/Features/Pipeline/WorkspaceArtifactCommitService.cs
+  - backend/Features/Pipeline/WorkspaceAddTimeoutPolicy.cs
+  - backend/Features/Git/GitProcessBoundary.cs
   - backend/Features/Pipeline/WorkspaceEvidenceWorker.cs
   - backend/Features/Pipeline/EvidenceFlushStallTracker.cs
   - backend/Features/Pipeline/PipelineHealthService.cs
   - backend/Features/Git/IntegrationWorktreeProvider.cs
   - backend/Features/Pipeline/BuildTestGateRunner.cs
   - backend/Features/Tasks/TaskTransitionService.cs
-related-tasks: [AGT-3000, AGT-3035, AGT-3337]
+related-tasks: [AGT-3000, AGT-3035, AGT-3337, AGT-3409]
 related-adrs: []
 ---
 
@@ -189,3 +191,54 @@ killed fetch does not release its ref locks.
   A timeout or `cannot lock ref` failure that leaves locks in place emits
   `git-ref-lock-blocked`, at most once per repository per
   `GitStaleLocks:RefLockReportWindowMinutes` (default 15).
+
+## Locks left by a killed git command (AGT-3409)
+
+**Symptom.** On 2026-11-01 the workspace repository got no commit for 70
+minutes. An evidence flush ran `git add`, hit the 30-second git limit and was
+killed. The kill left `.git/index.lock` behind, and the guard above kept it as
+`young` for 10 minutes, so every following write failed with `Unable to create
+'.../index.lock': File exists`: 232 log lines in three hours,
+`workspace-evidence-flush-failed`, and
+`HumanReviewEscalation: workspace artifact commit failed`. No git process was
+running.
+
+**Cause.** The runner kills a timed-out git with SIGKILL (Linux) or
+`TerminateProcess` (Windows). Git then cannot run its own lock cleanup.
+A large log file in the flush made `git add` slower than the fixed 30 seconds.
+
+**What the server does now.**
+
+- When `GitProcessBoundary` kills a git command it started (timeout or
+  cancellation) or loses it after start, it removes the locks in that
+  repository that were written while the command ran (`index.lock`,
+  `HEAD.lock`, `packed-refs.lock`, `refs/**/*.lock`). It does this only when
+  no other git process can hold them: the same ownership probe as above. The
+  killed command is already out of the server's child registry, and a server
+  child or OS git process that started more than 2 seconds after the lock was
+  written cannot hold it. The log line is
+  `git-killed-command-lock-cleared repo=<repo> lock=<path> age=<age>`.
+- A lock the kill had to keep (`git-killed-command-lock-kept ... reason=owned`)
+  is remembered. The next write's guard does not treat it as young and clears it
+  as soon as no git process holds it. A new lock file at the same path is a new
+  writer's, and the age rule applies to it again.
+- `git add` and its commit in the workspace repository get 30 seconds plus the
+  bytes of the modified and untracked files at 2 MiB/s, capped at 10 minutes
+  (`WorkspaceEvidence:GitAddBytesPerSecond`,
+  `WorkspaceEvidence:GitAddMaxTimeoutSeconds`). The size comes from
+  `git ls-files --modified --others`, which does not take the index lock. A
+  raised limit is logged as `workspace-artifact-add-timeout`.
+- A run-boundary, external-completion or upload commit that git refuses on a
+  lock returns `deferred` (a success for the caller) and is retried after 5 s,
+  15 s, 30 s, 1 min, 2 min, 5 min and 10 min (`WorkspaceArtifacts:LockRetryRounds`,
+  default 7). The log shows `workspace-artifact-commit-deferred`, then
+  `workspace-artifact-commit-retried` or
+  `workspace-artifact-commit-lock-retry-exhausted`. A card never fails or
+  escalates because of a lock in the workspace repository. Retries are held in
+  memory; after a restart the boot catch-up commits the project folders.
+
+Measured on a copy of the workspace repository (snapshot 2026-10-15, Git 2.43):
+76,326 files and 4.7 GiB under `projects/`. The largest single files are
+41.6 MB and 25 MB `prompts.jsonl` files, and there are many 12-20 MB review
+settlement logs. A no-op `git add` over 13,042 files took 0.04 s. Adding 145 MB
+took 6.0 s and 323 MB took 12.9 s at host load 30-50.

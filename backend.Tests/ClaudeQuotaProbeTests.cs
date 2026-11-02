@@ -172,6 +172,18 @@ public class ClaudeQuotaProbeTests
     }
 
     [Fact]
+    public void ParseUsageWindows_KeepsSessionPercentWhenResetLineIsAbsent()
+    {
+        const string snapshot = "Current session ███ 12% used\nCurrent week (all models) ███ 33% used Resets 2pm (Europe/Berlin)";
+        var windows = ClaudeQuotaProbe.ParseUsageWindows(snapshot, Now);
+        Assert.Equal(2, windows.Count);
+        Assert.Equal("Current session (5h)", windows[0].Label);
+        Assert.Equal(12, windows[0].UsedPct);
+        Assert.Null(windows[0].ResetAt);
+        Assert.Equal(33, windows[1].UsedPct);
+    }
+
+    [Fact]
     public void ParseUsageWindows_ReadsCompactWeeklyDateWithoutSpaces()
     {
         // Real PTY shape from 2026-10-12: every space is collapsed, including the

@@ -19,7 +19,28 @@ public static class BatchGateLookAheadPlanner
     public static bool AgedOut(DateTimeOffset readyAtUtc, DateTimeOffset nowUtc, int deadlineMinutes)
         => nowUtc - readyAtUtc >= TimeSpan.FromMinutes((double)BacklogAgeOutDeadlines * Math.Max(0, deadlineMinutes));
 
+    /// <summary>
+    /// AGT-3407: the gate host is idle only when the load gate is clear, no
+    /// batch and no per-task gate runs or waits for a slot, and a gate slot is
+    /// free. Only then does a lone card take its own gate before its deadline;
+    /// behind busy slots it waits for a batch partner, because a per-task gate
+    /// there only joins the slot queue.
+    /// </summary>
+    public static bool GateHostIdle(bool loadClear, bool batchRunning, int perTaskGates,
+        int slotsBusy, int slotsTotal)
+        => loadClear && !batchRunning && perTaskGates == 0 && slotsBusy < slotsTotal;
+
+    /// <summary>
+    /// Plans one scope. The decision names the waiting cards it considered, so
+    /// an authority that applies it later can tell which cards it did not know.
+    /// </summary>
     public static BatchPlanDecision Plan(BatchPlanInput input)
+        => PlanSnapshot(input) with
+        {
+            Considered = input.Waiting.Select(card => card.TaskKey).ToArray(),
+        };
+
+    private static BatchPlanDecision PlanSnapshot(BatchPlanInput input)
     {
         var waiting = input.Waiting.OrderBy(card => card.ReadyAtUtc)
             .ThenBy(card => card.TaskKey, StringComparer.Ordinal).ToArray();

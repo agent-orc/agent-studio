@@ -489,8 +489,7 @@ public sealed partial class BatchGatePilotService
                     var snapshot = _snapshots.Build(first.Subject.Project,
                         scope.IntegrationBranch, eligible, options, _time.GetUtcNow(),
                         _store.HasCloseNow(first.Subject.Project),
-                        _load?.Current.Throttle == false
-                            && !AnyBatchRunning(), gateBacklog);
+                        GateHostIdle(), gateBacklog);
                     var decision = await PlanLookAheadAsync(first.Subject.Project,
                         ScopeKey(group.Key), snapshot, ct).ConfigureAwait(false);
                     // An engine-owned decision is pending; the scope waits for its intent.
@@ -741,6 +740,20 @@ public sealed partial class BatchGatePilotService
     {
         lock (_runningBatches)
             return _runningBatches.Values.Any(task => !task.IsCompleted);
+    }
+
+    /// <summary>
+    /// AGT-3407: a per-task gate that runs or waits for a slot, and a busy
+    /// slot, keep the gate host busy as a running batch does. A process
+    /// without a slot tracker counts its configured slots as free.
+    /// </summary>
+    private bool GateHostIdle()
+    {
+        int perTaskGates;
+        lock (_fallbackFlights) perTaskGates = _fallbackFlights.Values.Count(task => !task.IsCompleted);
+        var slots = _gateSlots?.Snapshot() ?? new GateSlotUsage(0, Math.Max(1, ConfiguredGateSlots()));
+        return MonolithTransitionAdapter.BatchGateHostIdle(_load?.Current.Throttle == false,
+            AnyBatchRunning(), perTaskGates, slots.Busy, slots.Total);
     }
 
     // A pause stops the batch, not its members. Released members already

@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review and gate on packages | Article document</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+  <style>
+    .dg-box rect, .dg-card rect { fill: var(--article-surface); stroke: var(--article-line); }
+    .dg-card rect { fill: var(--article-paper); }
+    .dg-accent rect { fill: var(--article-link-soft); stroke: color-mix(in srgb, var(--article-link) 45%, var(--article-line)); }
+    .dg-kicker { fill: var(--article-faint); font: 700 11px var(--article-sans); letter-spacing: 0.08em; }
+    .dg-strong { fill: var(--article-ink); font: 650 15px var(--article-sans); }
+    .dg-text { fill: var(--article-muted); font: 13px var(--article-sans); }
+    .dg-note { fill: var(--article-faint); font: 12px var(--article-sans); }
+    .dg-arrow { stroke: var(--article-faint); stroke-width: 2; fill: none; }
+    .dg-divider { stroke: var(--article-line); stroke-width: 1; stroke-dasharray: 4 4; fill: none; }
+    .ch-grid path { stroke: var(--article-line); stroke-width: 1; }
+    .ch-axis text, .ch-note { fill: var(--article-faint); font: 12px var(--article-sans); }
+    .ch-range rect { fill: var(--article-link); }
+    .ch-target rect { fill: var(--article-good); }
+    .ch-label { fill: var(--article-ink); font: 13px var(--article-sans); }
+    .ch-value { fill: var(--article-muted); font: 12px var(--article-sans); }
+    figure > svg text { font-family: var(--article-sans); }
+    .toc { margin: 24px 0; font-family: var(--article-sans); font-size: 0.86rem; line-height: 1.9; }
+    .decision { margin: 22px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-family: var(--article-sans); font-size: 0.9rem; line-height: 1.55; }
+    .decision h3 { margin: 0 0 10px; }
+    .decision label { display: flex; gap: 12px; align-items: flex-start; margin: 8px 0; padding: 9px 10px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); cursor: pointer; }
+    .decision label input { margin-top: 4px; }
+    .decision label b { display: block; }
+    .decision label span.d { display: block; color: var(--article-muted); font-size: 0.84rem; }
+    .decision .consequence { margin: 10px 0 0; color: var(--article-muted); font-size: 0.84rem; }
+    .decision textarea { width: 100%; min-height: 60px; margin-top: 8px; padding: 8px; border: 1px solid var(--article-line); border-radius: 6px; background: var(--article-paper); color: var(--article-ink); font: 0.86rem var(--article-sans); }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept dossier &middot; AGT-3400</p>
+    <h1>Review and gate on packages</h1>
+    <p class="lede">Most batches are pairs because the planner closes as soon as it can see two cards, and at the current arrival rate it rarely sees more. This Dossier decides the package for each check. The gate package becomes the post-merge window that D1 already decided. The review package becomes the cards of one Dossier wave, but only for the review aspects that gain from shared context. Build, tests and requirement fit stay per card.</p>
+    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-3400</span><span><b>Builds on</b> AGT-3276 (D1 to D10), AGT-W59, AGT-W77</span><span><b>As of</b> develop <code>984b4535</code>, 1 November 2026</span></div>
+  </header>
+
+  <div class="callout">
+    <p><b>Source.</b> Robert, 1 November 2026, translated from German: "The main problem with review and gate is that they don't work in groups, so the pieces are too small."</p>
+    <p><b>Frame.</b> Decisions D1 to D10 of the pipeline target picture (<a href="../operations/pipeline-delivery-target/index.html">AGT-3276</a>), accepted 26 October 2026 and recorded 27 October 2026, are fixed inputs here. D1 T-B places affected tests per card, the full suite after merge and before delivery. D1 is built (AGT-3310, AGT-3311, AGT-3313, AGT-3314) but not active for Agent Studio.</p>
+  </div>
+
+  <nav class="toc" aria-label="Contents">
+    <a href="#summary">00 Summary</a> &middot; <a href="#baseline">01 Starting point</a> &middot; <a href="#formation">02 Why few batches form</a> &middot; <a href="#packages">03 The right package</a> &middot; <a href="#failure">04 Failed packages</a> &middot; <a href="#division">05 Division of work with D1</a> &middot; <a href="#savings">06 Expected savings</a> &middot; <a href="#alternatives">07 Alternatives</a> &middot; <a href="#recommendation">08 Recommendation</a> &middot; <a href="#plan">09 Implementation plan</a> &middot; <a href="#evidence">10 Evidence</a> &middot; <a href="#open-decisions">11 Open decisions</a>
+  </nav>
+
+  <section id="summary">
+    <h2><span class="number">00</span> Summary</h2>
+    <p><b>Why so few batches form.</b> The look-ahead planner sets its target size to the number of cards it can see right now, waiting or due inside the look-ahead window. With two cards waiting and nothing due, the target is two, so it closes the pair at once as "target size reached". The 15-minute deadline never comes into play. A single card on an idle gate host skips the wait and goes straight to the per-card fallback. At about 2.6 gated merges per day, a second card arrives within 15 minutes about 5 % of the time. No deadline setting turns that into batches of four without hours of waiting. Deliveries that do not batch take the per-card fallback: a full suite on the card's SHA, then a second full suite in the integration lane, because the integration gate does not reuse the fallback verdict.</p>
+    <p><b>Package for the gate.</b> The gate package is the post-merge window (T3) that D1 already decided. Cards merge after T1 and T2, and the window tests what merged together. In this design batch size no longer costs lead time, so small packages stop being a problem. The pre-merge batch gate stays as the fallback mode, with settings changes only.</p>
+    <p><b>Package for review.</b> The review splits into two tiers. A card check runs per card and per round: build, affected tests (T1), deterministic checks and the requirement-fit aspect. A package review runs once per Dossier wave: code quality, documentation impact, tests and evidence, grade, plus a new cross-card consistency check against the Dossier. Every member keeps its own verdict and lane state, and a passing member never waits for a failing one. Cards without a Dossier stay on today's per-card review.</p>
+    <p><b>Where the hours are.</b> On the measured figures, D1 saves about 31 to 42 runner-hours a week and 33 to 66 minutes of lead time per card. The 3.4 review hours per card come mostly from Remote Review running its aspects one after another. Running them in parallel saves more wall time than packaging, at no token cost. Packaging saves tokens and catches cross-card inconsistencies, which no step checks today.</p>
+    <div class="callout" data-tone="accent"><p><b>First step.</b> Activate D1 for Agent Studio. Replay T1 on recent review plans. Install the post-merge timers on the runner host, which needs a host-specific drop-in because the unit templates name a user that does not exist there. Size the window with the batch settings, then switch <code>testing.mode</code> to <code>post-merge</code>. This takes the full suite out of every card's path. Most of the code exists, the fallback to pre-merge is automatic, and rollback is one setting.</p></div>
+  </section>
+
+  <section id="baseline">
+    <h2><span class="number">01</span> Starting point</h2>
+    <p>Operator measurements from the card (Agent Studio, 1 November 2026). The verification column states what this run could check.</p>
+    <table>
+      <thead><tr><th>Figure</th><th>Value</th><th>Verified here</th></tr></thead>
+      <tbody>
+        <tr><td>Batch gate settings</td><td>On, look-ahead planner, size 2 to 4, deadline 15 min, <code>overlap: separate</code></td><td>The values match the AGT-W77 rollout (<code>docs/operations/test-acceleration/</code>). The live settings were not readable from this host.</td></tr>
+        <tr><td>Batches closed 13 to 29 October</td><td>186: 160 with two cards, 18 with three, 8 with four; mean 2.2 (406 members)</td><td>No. See below.</td></tr>
+        <tr><td>Batches per day before the move</td><td>1, 5, 3, 3, 1, then none</td><td>No. See below.</td></tr>
+        <tr><td>Last 7 days</td><td>18 gated merges, 77 full-suite runs (4.3 per merge), median 33 gate minutes per card, reuse rate 0</td><td>No. The gate economics endpoint returns 401 without an operator credential.</td></tr>
+        <tr><td>Per-card integration lane gate</td><td>Median 38 min, after the batch fallback step</td><td>The path is a code fact (section 02). The duration is not verified.</td></tr>
+        <tr><td>Review aspects and decision</td><td>Median 3.4 h per card, against 1.8 h coding; 52 of 72 cards moved backwards at least once</td><td>The stage definitions are code facts (section 10). The values are not verified.</td></tr>
+        <tr><td>D1 state</td><td><code>testing</code> unset, no post-merge worker</td><td>Yes. No post-merge unit is installed on <code>agent-runner-01</code>.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout" data-tone="warn"><p><b>Why the batch figures are not re-counted here.</b> The batch store lives at <code>&lt;LocalApplicationData&gt;/agentstudio/instances/&lt;id&gt;/batch-gates</code> on the Studio host (<code>BatchGateStorageRoot.cs:9-16</code>). This run executes on the runner host <code>agent-runner-01</code>. Its 69,841 instance folders contain only <code>pull-gates</code>, <code>claimed-gate-canary</code> and <code>batch-push-reservations</code> test residue, and none has a <code>batch-gates</code> folder. The Studio API requires an operator credential, and this run did not borrow a runner credential to read it. The Dossier therefore ships a read-only census script, <a href="batch-gate-census.py"><code>batch-gate-census.py</code></a>. It prints the size distribution, batches per day, splits, verdicts, plan decisions with reasons, gate minutes and pending records from one instance folder. Slice S2 runs it on the Studio host and records the output beside this Dossier.</p></div>
+    <figure>
+      <svg viewBox="0 0 1080 250" role="img" aria-labelledby="sz-title sz-desc">
+        <title id="sz-title">Batch sizes, 13 to 29 October 2026</title>
+        <desc id="sz-desc">186 batches: 160 with two cards, 18 with three, 8 with four.</desc>
+        <g class="ch-grid"><path d="M150 40 V210"/></g>
+        <g class="ch-axis"><text x="140" y="74" text-anchor="end">2 cards</text><text x="140" y="134" text-anchor="end">3 cards</text><text x="140" y="194" text-anchor="end">4 cards</text></g>
+        <g class="ch-range">
+          <rect x="150" y="54" width="800" height="28" rx="4"><title>2 cards: 160 batches (86 %)</title></rect>
+          <rect x="150" y="114" width="90" height="28" rx="4"><title>3 cards: 18 batches (10 %)</title></rect>
+          <rect x="150" y="174" width="40" height="28" rx="4"><title>4 cards: 8 batches (4 %)</title></rect>
+        </g>
+        <text class="ch-value" x="960" y="73">160 (86 %)</text>
+        <text class="ch-value" x="250" y="133">18 (10 %)</text>
+        <text class="ch-value" x="200" y="193">8 (4 %)</text>
+        <text class="ch-note" x="150" y="236">Maximum size is 4. The planner's own cost model prefers four at every risk below its limit (section 02).</text>
+      </svg>
+      <figcaption>Batch sizes as reported by the operator for 13 to 29 October 2026 (card statement, not re-counted here). Hover a bar for its value.</figcaption>
+    </figure>
+  </section>
+
+  <section id="formation">
+    <h2><span class="number">02</span> Why few batches form</h2>
+    <p>A card enters the batch queue when its Remote Review passes while it is in Auto Review. Its ready time is the review completion (<code>V1ReviewPlaneEndpoints.cs:1446-1450</code>). Every 30 seconds the pilot groups waiting cards by project, repository, branch, gate profile and platform version. It builds a snapshot and asks the pure planner <code>BatchGateLookAheadPlanner.Plan</code> for one of four decisions: <code>idle</code>, <code>wait</code>, <code>close</code> or <code>per-task</code>. Each decision is appended to <code>plans/&lt;project&gt;.jsonl</code>.</p>
+    <figure>
+      <svg viewBox="0 0 1080 430" role="img" aria-labelledby="fl-title fl-desc">
+        <title id="fl-title">Where a reviewed card goes</title>
+        <desc id="fl-desc">The planner either closes a pair at once, sends a lone card to the per-card fallback, or waits until the deadline. The per-card fallback runs a full suite and the integration lane runs another one.</desc>
+        <g class="dg-box"><rect x="20" y="30" width="220" height="80" rx="10"/></g>
+        <text class="dg-kicker" x="36" y="56">ENTRY</text>
+        <text class="dg-strong" x="36" y="80">Review passed</text>
+        <text class="dg-text" x="36" y="100">ready time = review end</text>
+        <g class="dg-box"><rect x="290" y="30" width="250" height="80" rx="10"/></g>
+        <text class="dg-kicker" x="306" y="56">FILTERS</text>
+        <text class="dg-strong" x="306" y="80">Risk &lt; limit, path-disjoint</text>
+        <text class="dg-text" x="306" y="100">separate: shared file excludes</text>
+        <g class="dg-accent"><rect x="590" y="30" width="470" height="80" rx="10"/></g>
+        <text class="dg-kicker" x="606" y="56">TARGET SIZE</text>
+        <text class="dg-strong" x="606" y="80">target = min(max, visible cards)</text>
+        <text class="dg-text" x="606" y="100">visible = waiting + reviews due inside look-ahead</text>
+        <path class="dg-arrow" d="M240 70 H285"/><path class="dg-arrow" d="M540 70 H585"/>
+        <g class="dg-card"><rect x="20" y="170" width="320" height="96" rx="10"/></g>
+        <text class="dg-kicker" x="36" y="196">TWO OR MORE VISIBLE</text>
+        <text class="dg-strong" x="36" y="220">Close at once</text>
+        <text class="dg-text" x="36" y="242">"target size reached"; no wait</text>
+        <g class="dg-card"><rect x="380" y="170" width="320" height="96" rx="10"/></g>
+        <text class="dg-kicker" x="396" y="196">ONE CARD, IDLE GATE HOST</text>
+        <text class="dg-strong" x="396" y="220">Per-task at once</text>
+        <text class="dg-text" x="396" y="242">the deadline wait is skipped</text>
+        <g class="dg-card"><rect x="740" y="170" width="320" height="96" rx="10"/></g>
+        <text class="dg-kicker" x="756" y="196">ONE CARD, BUSY HOST</text>
+        <text class="dg-strong" x="756" y="220">Wait for the deadline</text>
+        <text class="dg-text" x="756" y="242">15 min after ready, then per-task</text>
+        <path class="dg-arrow" d="M825 110 V165"/><path class="dg-arrow" d="M540 110 V165"/><path class="dg-arrow" d="M180 110 V165"/>
+        <g class="dg-box"><rect x="380" y="320" width="680" height="84" rx="10"/></g>
+        <text class="dg-kicker" x="396" y="346">PER-CARD FALLBACK</text>
+        <text class="dg-strong" x="396" y="370">Full suite on the card SHA, then a full suite again in the integration lane</text>
+        <text class="dg-text" x="396" y="392">the integration gate does not reuse the fallback verdict (IntegrationGateReusePolicy.cs:121-125)</text>
+        <path class="dg-arrow" d="M540 266 V315"/><path class="dg-arrow" d="M900 266 V315"/>
+        <g class="dg-box"><rect x="20" y="320" width="320" height="84" rx="10"/></g>
+        <text class="dg-kicker" x="36" y="346">BATCH</text>
+        <text class="dg-strong" x="36" y="370">One full suite on the candidate</text>
+        <text class="dg-text" x="36" y="392">green verdict is carried to integration</text>
+        <path class="dg-arrow" d="M180 266 V315"/>
+      </svg>
+      <figcaption>Planner paths for a reviewed card, from <code>orchestration-decisions/BatchGateLookAheadPlanner.cs:22-88</code> and <code>BatchGatePilotService.cs:488-508, 2026-2256</code>. The accented box is the cause of the pairs.</figcaption>
+    </figure>
+
+    <h3>Causes, ranked</h3>
+    <table>
+      <thead><tr><th>#</th><th>Cause</th><th>Mechanism</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr><td>C1</td><td>Target size capped by visible supply</td><td><code>TargetSize</code> searches sizes from the minimum up to <code>min(max, waiting + arriving)</code>. At every risk below the limit, its cost model <code>ExpectedRunsPerCard</code> falls as size grows, so the target equals the supply. Two waiting cards and nothing due give "target size reached" on the next tick (<code>BatchGateLookAheadPlanner.cs:49-51, 84-87, 97-112</code>).</td><td>Code. The threshold planner with <code>closeSize: 4</code> is a settings workaround, but <code>closeSize</code> is reachable only through the API, not the UI.</td></tr>
+        <tr><td>C2</td><td>Low arrival rate</td><td>18 gated merges in 7 days is about 2.6 per day. Spread over 12 active hours that is 0.22 per hour. The chance that a second card is ready within 15 minutes is 1 &minus; e<sup>&minus;0.055</sup> &asymp; 5 %. Within 60 minutes it is about 20 %. Three partners for a batch of four take about 14 active hours. During 13 to 29 October, 406 batched members over 17 days is about 24 per day. That was a different regime, which is why pairs formed at all.</td><td>Neither. A pre-merge batch is a throughput tool for high arrival rates.</td></tr>
+        <tr><td>C3</td><td>Idle-host bypass</td><td>A host is idle when load is not throttled and no batch is running (<code>BatchGatePilotService.cs:492-493</code>). An idle host skips the "waiting for target size or deadline" branch. A lone card then falls through to "close condition reached below minimum batch size" and goes per-task at once (<code>BatchGateLookAheadPlanner.cs:73-82</code>). At a low arrival rate the host is idle most of the time, so the deadline rarely applies.</td><td>Code.</td></tr>
+        <tr><td>C4</td><td>Look-ahead sees almost nothing</td><td>A card in review is "arriving" only if review start plus the median review time falls inside the window. The median is taken from waiting cards and drops samples of 240 minutes or more, with 30 minutes as the default (<code>BatchGateSnapshotBuilder.cs:150-160</code>). With a measured 3.4 h median, most ETAs are already in the past, and an ETA in the past counts as overdue, not arriving. Cards still being coded get no ETA at all (<code>:95-101</code>).</td><td>Code.</td></tr>
+        <tr><td>C5</td><td><code>overlap: separate</code></td><td>Overlap means one shared file path, case-insensitive, with no module logic (<code>:141-142</code>). With <code>separate</code>, a card that shares any file with a chosen card is dropped. That includes shared files such as <code>docs/start/README.md</code>, which <code>AGENTS.md</code> requires every new document to touch. Overlapping cards that are due also do not count toward the target (<code>:44-45</code>).</td><td>Setting: <code>adjacent</code> (the default). A module-level overlap needs code.</td></tr>
+        <tr><td>C6</td><td>Risk limit and risk history without decay</td><td>A card at or above 0.55 (balanced) goes per-task. An unknown diff scores exactly 0.55. Any card that was ever in a red batch gets +0.2, and any card sharing an <code>area:</code> tag with one gets +0.1. These are read from every manifest ever written, with no time bound (<code>BatchGateSnapshotBuilder.cs:36-53</code>; <code>BatchGateRiskModel.cs:25-48</code>).</td><td>Setting: <code>aggressive</code> raises the limit to 0.75. Decay needs code.</td></tr>
+        <tr><td>C7</td><td>Leaks before the queue</td><td>The review plan does not defer to the batch when the card touches a command-inventory file (<code>project.yml</code>, <code>package.json</code>, <code>angular.json</code>, the two main <code>.csproj</code> files), when the selection needs the full suite, or when no test is selected (<code>RemoteReviewPlanBuilder.cs:167-214</code>). Such a card never reaches the planner.</td><td>Mostly code. The project map of D1 P3 reduces full-suite selections.</td></tr>
+        <tr><td>C8</td><td>One batch at a time per project</td><td>While a batch runs, others wait (<code>BatchGatePilotService.cs:719-722, 1130-1134</code>). With 30 to 45 minute suites this caps throughput, not size.</td><td>Code.</td></tr>
+      </tbody>
+    </table>
+    <h3>Why the count fell to none</h3>
+    <p>Three explanations fit "1, 5, 3, 3, 1 per day, then none". The census script separates them on the Studio host.</p>
+    <ul>
+      <li><b>Fewer arrivals.</b> 18 gated merges in the last 7 days is below the 13 to 29 October rate (C2).</li>
+      <li><b>A new instance folder.</b> The folder name hashes the content root and the task repository path (<code>BatchGateStorageRoot.cs:11-15</code>). A moved installation therefore writes to a fresh, empty <code>batch-gates</code> folder. Counting only the old folder shows "none" even if batches continued. The census must run on every instance folder that has a <code>batch-gates</code> directory.</li>
+      <li><b>No reviews completing.</b> Since 31 October, the review runner on <code>agent-runner-01</code> logged 11,193 "could not reach the task server" lines. Without completed reviews nothing enters the queue.</li>
+    </ul>
+    <h3>Why pairs do not pay at the measured green rate</h3>
+    <p>The planner's own cost model is <code>ExpectedRunsPerCard = (1 + (1 &minus; P(all green)) &middot; (&lceil;log2 n&rceil; + 1)) / n</code>. With the historical per-card green rate after review of 57.9 % (<code>docs/operations/gates/d10-measurement.md</code>) and independent outcomes, it gives:</p>
+    <table>
+      <thead><tr><th>Route</th><th>Full suites per card, green path and isolation</th><th>Plus fallback of ejected members</th></tr></thead>
+      <tbody>
+        <tr><td>Per-card fallback</td><td>1 on the card SHA, plus 1 in the integration lane when green: 1 + 0.579 = 1.58</td><td>none</td></tr>
+        <tr><td>Batch of 2</td><td>1.16</td><td>+ 0.42 &rarr; about 1.58</td></tr>
+        <tr><td>Batch of 3</td><td>1.14</td><td>+ 0.42 &rarr; about 1.56</td></tr>
+        <tr><td>Batch of 4</td><td>0.92</td><td>+ 0.42 &rarr; about 1.34</td></tr>
+      </tbody>
+    </table>
+    <p>A pair costs about as many full suites per card as the per-card route and adds a wait. Only batches of four save a fifth of the suite runs. The observed 4.3 full-suite runs per merge is far above either model. The rest comes from attempts that went red and did not merge in the window, infrastructure retries, full-suite reviews of non-deferred cards (C7) and promotion runs. Slice S2 attributes the 77 runs.</p>
+    <h3>Setting or code</h3>
+    <table>
+      <thead><tr><th>A setting can change</th><th>Needs code</th></tr></thead>
+      <tbody>
+        <tr><td><code>overlap: adjacent</code> (C5); <code>riskPolicy: aggressive</code> (C6); <code>planner: threshold</code> with <code>closeSize: 4</code> through <code>PUT /api/projects/{name}/batch-gate</code> (C1 workaround; the PUT resets fields left out of the body, <code>ProjectSettingsEndpoints.cs:1189-1235</code>); <code>testing.mode: post-merge</code>, which turns the pre-merge batch route off and makes C1 to C8 irrelevant for the project (<code>BatchGatePilotService.cs:2629-2635</code>).</td><td>A target size not capped by visible supply (C1); idle-host bypass only after the deadline (C3); an ETA model that keeps overdue reviews and estimates coding cards (C4); module-level overlap (C5); risk history decay (C6); reuse of the fallback verdict in the integration gate; more than one batch per project (C8).</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="packages">
+    <h2><span class="number">03</span> The right package</h2>
+    <p>A good package saves something that each member would otherwise pay separately, without making any member wait longer than that saving is worth. Gate and review save different things. The gate saves suite runs, a cost that depends on the size of the tree, not on what the cards mean. The review saves reading: instructions, the Dossier, its decisions and the shared code around the change.</p>
+    <table>
+      <thead><tr><th>Package</th><th>For the gate</th><th>For the review</th></tr></thead>
+      <tbody>
+        <tr><td>Cards of one Dossier or wave (<code>task.json.dossier.path</code>)</td><td>Poor. Members finish coding hours apart, so the gate would wait. Test failures do not cluster by Dossier.</td><td><b>Best.</b> Shared intent, decisions and acceptance scopes, so the Dossier is read once. It also enables the one check nobody runs today: do the slices implement the same decision consistently? Waves exist: six slices of AGT-3276 were delivered on 27 October 2026.</td></tr>
+        <tr><td>Cards that touch the same area</td><td>Mixed. A higher red rate makes isolation cost more. T2 and T3 already cover conflicts between them.</td><td>Fair. Shared code context, but unrelated intents. The reviewer still reads each card's context separately.</td></tr>
+        <tr><td>Time window</td><td><b>Best after merge.</b> The T3 window of D1 tests what landed together and costs no lead time.</td><td>Poor. No shared context, only shared overhead. It adds wait for no reading saving.</td></tr>
+        <tr><td>Batch candidate as review subject</td><td>Today's pre-merge package; see section 02.</td><td>Poor. The batch forms after review, so this is circular. Its makeup is random and averages 2.2 cards. One ejection invalidates the combined review.</td></tr>
+      </tbody>
+    </table>
+    <h3>Two review tiers</h3>
+    <figure>
+      <svg viewBox="0 0 1080 360" role="img" aria-labelledby="tr-title tr-desc">
+        <title id="tr-title">Card check and package review</title>
+        <desc id="tr-desc">Three cards of one Dossier each pass a per-card check, then one package review produces a verdict per member. Members then go to T1 and T2 and merge; the T3 window tests what merged.</desc>
+        <g class="dg-card"><rect x="20" y="30" width="200" height="60" rx="10"/><rect x="20" y="110" width="200" height="60" rx="10"/><rect x="20" y="190" width="200" height="60" rx="10"/></g>
+        <text class="dg-strong" x="36" y="66">Card A of Dossier X</text><text class="dg-strong" x="36" y="146">Card B of Dossier X</text><text class="dg-strong" x="36" y="226">Card C of Dossier X</text>
+        <g class="dg-box"><rect x="260" y="30" width="260" height="220" rx="10"/></g>
+        <text class="dg-kicker" x="276" y="58">CARD CHECK, PER CARD AND ROUND</text>
+        <text class="dg-text" x="276" y="88">build and T1 affected tests</text>
+        <text class="dg-text" x="276" y="112">lint, format, diff budget</text>
+        <text class="dg-text" x="276" y="136">authority and scope rules</text>
+        <text class="dg-text" x="276" y="160">requirement fit (own criteria)</text>
+        <text class="dg-note" x="276" y="196">blocks only this card</text>
+        <g class="dg-accent"><rect x="560" y="30" width="260" height="220" rx="10"/></g>
+        <text class="dg-kicker" x="576" y="58">PACKAGE REVIEW, ONCE PER WAVE</text>
+        <text class="dg-text" x="576" y="88">code quality</text>
+        <text class="dg-text" x="576" y="112">documentation impact</text>
+        <text class="dg-text" x="576" y="136">tests and evidence</text>
+        <text class="dg-text" x="576" y="160">cross-card consistency</text>
+        <text class="dg-text" x="576" y="184">grade</text>
+        <text class="dg-note" x="576" y="220">one verdict per member</text>
+        <g class="dg-box"><rect x="860" y="30" width="200" height="220" rx="10"/></g>
+        <text class="dg-kicker" x="876" y="58">PER MEMBER</text>
+        <text class="dg-text" x="876" y="88">engine decision</text>
+        <text class="dg-text" x="876" y="112">T2 compile, merge</text>
+        <text class="dg-text" x="876" y="136">or back to Ready</text>
+        <text class="dg-note" x="876" y="172">passing members</text>
+        <text class="dg-note" x="876" y="190">never wait</text>
+        <path class="dg-arrow" d="M220 60 H255"/><path class="dg-arrow" d="M220 140 H255"/><path class="dg-arrow" d="M220 220 H255"/>
+        <path class="dg-arrow" d="M520 140 H555"/><path class="dg-arrow" d="M820 140 H855"/>
+        <path class="dg-divider" d="M20 290 H1060"/>
+        <text class="dg-text" x="20" y="322">After merge: the T3 window runs the union of affected tests, nightly runs the full suite, T4 runs before delivery (D1, D3). No review step runs tests beyond T1.</text>
+      </svg>
+      <figcaption>Proposed review tiers (option R-B, section 07). The accented box is the package. Requirement fit stays per card because it is the aspect a package can blur the most.</figcaption>
+    </figure>
+    <p><b>Formation.</b> A package holds the members of one Dossier whose card check passed within 60 minutes of the first. It is capped at four members and at the Remote Review material budget of 200 files and 12,000 lines (<code>RemoteReviewWorkspace.cs:21-22</code>). It never waits for cards still being coded, and a lone member is reviewed as a package of one. The subject is a stacked candidate: members applied in dependency order on the current integration tip, with each member's commits kept separate so every hunk has an owner.</p>
+    <h3>What a package review can miss, and how to catch it</h3>
+    <table>
+      <thead><tr><th>Risk</th><th>Example</th><th>Catch</th></tr></thead>
+      <tbody>
+        <tr><td>A member's own acceptance criteria are not checked</td><td>The package looks coherent, but slice B never adds the endpoint its scope demands.</td><td>Requirement fit stays in the per-card check. The package output must also list every member with a verdict and its acceptance criteria.</td></tr>
+        <tr><td>Masking</td><td>Card B incidentally fixes a defect that card A introduced. B is later ejected and A ships broken.</td><td>When a member leaves the package, the package verdict of every member whose hunks touch the same files is invalidated. Those members get a scoped re-review of their own diff on the new base, which the existing 20-file delta rule already supports (<code>review.md:186-194</code>).</td></tr>
+        <tr><td>Wrong attribution</td><td>A finding in shared code lands on the wrong card.</td><td>Every finding cites a file and line, and the hunk owner from the stacked commits names the member. A finding without an owner is a cross-card finding, assigned to the later member in dependency order.</td></tr>
+        <tr><td>Attention and truncation</td><td>A large union diff is truncated or skimmed.</td><td>Size is capped by the material budget, not only by count. A package over budget splits; it is never truncated.</td></tr>
+        <tr><td>Scope creep hidden among members</td><td>One member edits files outside its slice.</td><td>A deterministic per-card path-scope check against the slice's <code>acceptanceScope</code>.</td></tr>
+        <tr><td>Unknown miss rate</td><td>Package review is new, so its blind spots are unmeasured.</td><td>For the first two weeks, one in five package members also gets a shadow per-card review. Stop if package review misses a blocking finding that per-card review found more than once per 20 members (decision PK9).</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="failure">
+    <h2><span class="number">04</span> Failed packages</h2>
+    <h3>Gate before merge (today, and the fallback mode)</h3>
+    <p>A red candidate is classified first. An infrastructure red gets one retry on the same SHA. A red base pauses the batch as <code>integration-branch-red</code> without halving. A flaky red follows quarantine. A deterministic red starts ordered halving: &lceil;log2 n&rceil; probes per cycle, within a total budget of min(6, 2&middot;&lceil;log2 n&rceil;), then a green survivor run publishes (<code>BatchGateIsolation.cs:29-85</code>; <code>BatchGatePilotService.cs:1247-1289, 1552-1630</code>). Ejected or unresolved members take the per-card fallback (<code>:1358-1359</code>).</p>
+    <table>
+      <thead><tr><th>Size</th><th>Full suites, one offender, worst case</th><th>Wall time at 33 to 43 min per suite</th></tr></thead>
+      <tbody>
+        <tr><td>2</td><td>1 candidate + 1 probe + 1 survivor + 1 fallback for the offender = 4</td><td>1.7 to 2.2 h before the survivor merges</td></tr>
+        <tr><td>3</td><td>1 + 2 + 1 + 1 = 5</td><td>2.2 to 2.9 h (the fallback runs in parallel only if a slot is free)</td></tr>
+        <tr><td>4</td><td>1 + 2 + 1 + 1 = 5</td><td>2.2 to 2.9 h</td></tr>
+      </tbody>
+    </table>
+    <p>Every member waits for the isolation, so a red member costs its partners hours.</p>
+    <h3>Gate after merge (D1 T3 window)</h3>
+    <p>A red window costs no member any waiting. Merges continue outside the failing area (D2 A). Attribution runs in three cheap steps. First, it intersects each suspect merge's paths with the failing tests' project map. Second, it reruns only the failing tests at the merge points; a failed-class rerun took 7.3 s against 93 min for the suite (AGT-W77 P3). Third, it bisects only when more than one suspect remains. Then one repair card per failure fingerprint reverts the merge when that is clean, and fixes forward otherwise. The cost is seconds to minutes of targeted test runs and one repair card. It is not hours of full suites.</p>
+    <h3>Review package</h3>
+    <p>A review package does not fail as a whole. Each member gets its own verdict and its own engine decision through the existing <code>TransitionDecisionPolicy</code>, within its own round budget (AGT-W65 D18).</p>
+    <ul>
+      <li><b>A passing member</b> proceeds to T2 and merge at once. It never waits for a failing member.</li>
+      <li><b>A failing member</b> returns to <code>2-ready</code> with its findings, as today. In the next round it runs its card check, then a scoped package review of its own delta. If another package of the same Dossier is forming within 60 minutes, it joins that one instead.</li>
+      <li><b>A cross-card finding</b> goes to the later member in dependency order. It names the earlier member as related but does not block it.</li>
+      <li><b>An ejection</b> invalidates the package verdict of members that share files with the ejected one, which then get a scoped re-review (section 03).</li>
+    </ul>
+    <p><b>Cost compared with today.</b> A failing member costs one more round, as it does now. Its second round is cheaper than today's, because the package-tier aspects rerun on the member's delta, not on the whole card. Passing members pay nothing more.</p>
+  </section>
+
+  <section id="division">
+    <h2><span class="number">05</span> Division of work with D1</h2>
+    <p>Review and post-merge verification answer different questions. Review judges intent, design, documentation and evidence. Post-merge runs code. Neither repeats the other.</p>
+    <table>
+      <thead><tr><th>Question</th><th>Owner</th><th>Not done by</th></tr></thead>
+      <tbody>
+        <tr><td>Does the card build; do its affected tests, lint and format pass?</td><td>T1 in the card check, per card and round (D1)</td><td>Package review; the review aspects do not run tests</td></tr>
+        <tr><td>Does the merged tree compile?</td><td>T2 at merge, per project and branch (AGT-3314)</td><td>Review</td></tr>
+        <tr><td>Do cards that merged together break each other at test level?</td><td>T3 window: union of affected tests (AGT-3311)</td><td>Package review, which looks for semantic conflicts only</td></tr>
+        <tr><td>Does the whole suite pass?</td><td>T3 nightly and T4 on the release candidate (D3, AGT-3313)</td><td>Any per-card or per-package step in post-merge mode</td></tr>
+        <tr><td>Which merge broke develop?</td><td>T3 attribution and the repair card (D2)</td><td>Review findings</td></tr>
+        <tr><td>Is a failing test flaky?</td><td>Quarantine (AGT-W57 D3) before attribution</td><td>Review</td></tr>
+        <tr><td>Does the card meet its own criteria, and stay in scope?</td><td>Card check: requirement fit and path scope</td><td>Package review</td></tr>
+        <tr><td>Is the code sound, documented and evidenced?</td><td>Package review</td><td>Post-merge</td></tr>
+        <tr><td>Do the slices of one Dossier implement its decisions consistently?</td><td>Package review: cross-card consistency (new)</td><td>No step today</td></tr>
+      </tbody>
+    </table>
+    <p>What leaves the card path in post-merge mode: the per-card fallback full suite (<code>batch-fallback</code>), the integration gate's own full suite (reduced to T2), and the batch-deferred <code>review-verification</code> runs. The <code>tests-and-evidence</code> aspect stays. It reads which tests were added and what evidence exists. It does not execute them.</p>
+  </section>
+
+  <section id="savings">
+    <h2><span class="number">06</span> Expected savings</h2>
+    <p>Every input is a measured figure from section 01 or a cited code fact. Where a share is not yet measured, the table shows a range and names the slice that measures it.</p>
+    <h3>Gate: D1 active for Agent Studio (slice S1)</h3>
+    <table>
+      <thead><tr><th>Quantity</th><th>Today (measured)</th><th>With D1</th><th>Saving per week</th></tr></thead>
+      <tbody>
+        <tr><td>Full-suite runs</td><td>77 in 7 days</td><td>7 nightly + about 5 release candidates = 12</td><td>About 65 runs (84 %)</td></tr>
+        <tr><td>Suite runner-hours</td><td>77 &times; 33 to 43 min = 42 to 55 h</td><td>12 full runs (6.6 to 8.6 h) + T1 and T2 for 18 cards (18 &times; 15 min = 4.5 h)</td><td><b>31 to 42 runner-hours</b></td></tr>
+        <tr><td>Lead time per card after review</td><td>Integration lane gate 38 min, plus the fallback full suite (about one suite, 33 min) when the card did not batch</td><td>T2 about 5 min; T1 runs inside the review</td><td><b>33 to 66 min per card</b>, 10 to 20 card-hours for 18 cards</td></tr>
+        <tr><td>Model tokens</td><td>Gates spend none (AGT-W28: gate 0 tokens)</td><td>None</td><td>0</td></tr>
+      </tbody>
+    </table>
+    <p class="dim">33 minutes is the measured median gate time per card; 43 minutes is the recorded AGT-3133 full run. Five release candidates a week assumes one per working day; each extra candidate adds one full run. Red-develop repairs cost coding rounds that do not exist today. D2 bounds them, and S1 reports them.</p>
+    <h3>Review: parallel aspects (slice S3) and packages (slice S5)</h3>
+    <p>The base is 72 cards at a median of 3.4 h of review aspects and decision, which is about 245 review wall-hours. Remote Review runs every planned command, the four aspects included, in one sequential loop (<code>runner/RemoteReviewWorkspace.cs:284-357</code>). Local review already runs aspects in parallel, up to four (<code>AspectRunnerService.cs:163-165, 231-254</code>).</p>
+    <table>
+      <thead><tr><th>Lever</th><th>Formula</th><th>Range</th><th>For 72 cards</th><th>Tokens</th></tr></thead>
+      <tbody>
+        <tr><td>Parallel aspects (S3)</td><td>The four aspects take a share <i>a</i> of the 3.4 h; running them in parallel saves about &frac34;&middot;<i>a</i></td><td><i>a</i> = 0.5 to 0.8 gives 1.3 to 2.0 h per card</td><td><b>92 to 147 wall-hours</b></td><td>0 (the same calls)</td></tr>
+        <tr><td>Package review (S5)</td><td>Package-tier input tokens fall by <i>f</i>&middot;(1 &minus; 1/<i>k</i>), where <i>f</i> is the fixed (non-diff) share of an aspect prompt and <i>k</i> the package size</td><td><i>f</i> 0.3 to 0.5, <i>k</i> 2 to 3 gives 15 to 33 %</td><td>Hours: about neutral, since the shared run is longer and formation can add up to 60 min</td><td><b>15 to 33 % of package-tier tokens</b></td></tr>
+        <tr><td>Cheaper rework rounds (S5)</td><td>A second round reruns the package tier on the member's delta, not the whole card</td><td>Depends on round size</td><td>Measured in S2 and S5</td><td>Positive, unquantified</td></tr>
+      </tbody>
+    </table>
+    <p>The token and duration fields already exist per aspect: <code>PipelineStepExecution</code> token counters and <code>ReviewObservation</code>, served by <code>GET /api/projects/{p}/token-usage/reviews</code>. They were not readable from this host. Slice S2 fixes <i>a</i>, <i>f</i> and <i>k</i> from them before S3 and S5 are judged. Caveat on the backward moves: <code>BackwardTransitions</code> counts every level drop, including runner lease recovery (<code>TaskCycleTime.cs:62-63</code>). Some of the 52 cards may have moved back without a review cause. S2 reports the moves by cause.</p>
+    <div class="callout"><p><b>Reading of the figures.</b> Robert's diagnosis holds for the gate, but it is solved by placement, not by bigger pre-merge batches. For review, most of the hours come from serial execution and the tokens from repeated context. Packages address the tokens and add a cross-card check. Parallelism addresses the hours.</p></div>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">07</span> Alternatives</h2>
+    <h3>Gate package</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>G-A &middot; Tune the pre-merge batch</h3><p>Use <code>overlap: adjacent</code>, the threshold planner with <code>closeSize: 4</code> and a 60-minute deadline, and fix C1 to C6 in code. At 2.6 arrivals a day, batches of four cost hours of waiting. Pairs save no suite runs at a 57.9 % green rate (section 02). Develop stays green by construction.</p></article>
+      <article class="variant"><h3>G-B &middot; Post-merge window as the gate package (recommended)</h3><p>Activate D1 T-B. Cards merge after T1 and T2, and the T3 window, sized by <code>maximumSize</code> and <code>lookAheadMinutes</code>, tests what landed together. Waiting no longer depends on package size. The pre-merge batch stays as the automatic fallback.</p></article>
+      <article class="variant"><h3>G-C &middot; Dossier wave as gate package</h3><p>Gate a wave's members together before merge. Members finish hours apart, and test failures do not cluster by Dossier. This takes the worst of both: long waits, plus isolation when one member is red.</p></article>
+    </div>
+    <h3>Review package</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>R-A &middot; Per card and round (today)</h3><p>Every aspect, every round, every card, run serially. No package risk. The context is paid per card, and nobody checks cross-card consistency.</p></article>
+      <article class="variant"><h3>R-B &middot; Card check per card, package review per Dossier wave (recommended)</h3><p>Build, T1, deterministic checks and requirement fit stay per card. Code quality, documentation impact, tests and evidence, grade and cross-card consistency run once per wave package. Every member keeps its own verdict. Cards without a Dossier stay on R-A.</p></article>
+      <article class="variant"><h3>R-C &middot; Whole review per package</h3><p>All aspects, requirement fit included, run on the package. This saves the most tokens, but a member's own criteria get blurred and the miss risk is highest.</p></article>
+      <article class="variant"><h3>R-D &middot; Batch candidate or time window as review subject</h3><p>Review the combined batch candidate or what arrived in a time window. Formation is circular for the candidate, there is no shared context in a window, and the makeup is random.</p></article>
+    </div>
+    <h3>Review execution</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>X-A &middot; Serial aspects (today)</h3><p>Simple and predictable on load. Wall time is the sum of all aspect calls.</p></article>
+      <article class="variant"><h3>X-B &middot; Parallel aspects within one attempt, cap 4 (recommended)</h3><p>The local path already does this. Wall time becomes the longest aspect. Tool commands keep running first, and checkpoints are kept per aspect.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">08</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended default</h3>
+      <p><b>G-B, R-B and X-B, in the order S1, S2, S3, S4, S5.</b> The gate works on packages by testing after merge: the T3 window is the package. The review works on packages for the aspects that read shared context, with one package per Dossier wave, while per-card facts stay per card. Run aspects in parallel within every review. Keep the pre-merge batch gate as the fallback mode with <code>overlap: adjacent</code>, and change its planner code only if a project stays pre-merge for 30 days after S1.</p>
+      <p><b>The most important reason.</b> The largest measured cost is the full suite in every card's path: 77 runs a week, two per non-batched card. D1 removes it. That is decided, built and reversible by one setting. Bigger pre-merge batches cannot reach the same saving at today's arrival rate.</p>
+    </div>
+    <h3>First step</h3>
+    <p><b>S1: activate D1 for Agent Studio.</b></p>
+    <ol>
+      <li>Replay T1 on the last 20 Agent Studio review plans.</li>
+      <li>Install the window and nightly post-merge timers on <code>agent-runner-01</code> with a drop-in for the host's user and paths, and run them in dry-run for one day.</li>
+      <li>Set <code>maximumSize: 6</code> and <code>lookAheadMinutes: 30</code>. In post-merge mode these values size the window (<code>PostMergeRunEndpoints.cs:31-37</code>).</li>
+      <li>Switch <code>testing.mode</code> to <code>post-merge</code>.</li>
+    </ol>
+    <p>Why this step has the least risk: the automatic fallback returns the project to pre-merge after two hours of red develop or an escalated repair (<code>PostMergeModeService.cs:9-39</code>), and rollback is one setting. It gives the largest gain: 31 to 42 runner-hours a week and 33 to 66 minutes of lead time per card.</p>
+    <h3>Risks</h3>
+    <table>
+      <thead><tr><th>Risk</th><th>Mitigation</th></tr></thead>
+      <tbody>
+        <tr><td>T1 replay median above 10 minutes, the documented switch condition (<code>pipeline.md:48-52</code>)</td><td>Decision PK2: switch at a median of 20 minutes or less. Even then T1 replaces about 71 minutes of two full suites. 10 minutes stays the target.</td></tr>
+        <tr><td>Red develop after the switch</td><td>D2 A: revert or fix forward, with fallback to pre-merge after 2 hours. S1 reports red time and revert share.</td></tr>
+        <tr><td>Package review misses card defects</td><td>Requirement fit stays per card; masking invalidation; shadow sampling with an abort rule (PK9).</td></tr>
+        <tr><td>Parallel aspects raise provider quota peaks</td><td>Cap 4 per attempt, under the existing slot and load admission. The aspect count and tokens per review are unchanged.</td></tr>
+        <tr><td>Few cards belong to a wave</td><td>S2 measures the share. Below 30 % of reviewed cards, S5 stops after shadow and only S3 ships.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="plan">
+    <h2><span class="number">09</span> Implementation plan</h2>
+    <p>Slices listed in delivery order as <code>workbench.json</code> <code>implementationTasks</code>. They carry no card keys. S1 and S2 can run in parallel. This concept run changes only its own directory. S1 therefore also adds the <code>docs/start/README.md</code> row for this Dossier.</p>
+    <table>
+      <thead><tr><th>#</th><th>Slice</th><th>Depends on</th><th>Decision</th></tr></thead>
+      <tbody>
+        <tr><td>S1</td><td>Activate post-merge testing for Agent Studio</td><td>none</td><td>PK1, PK2</td></tr>
+        <tr><td>S2</td><td>Review and batch baseline: per-step review time and tokens, wave census, batch census, attribution of the full-suite runs</td><td>none</td><td>PK3, PK5</td></tr>
+        <tr><td>S3</td><td>Parallel review aspects in Remote Review</td><td>S2 baseline recorded</td><td>PK7</td></tr>
+        <tr><td>S4</td><td>Package review subject in shadow</td><td>S2</td><td>PK3, PK4, PK5</td></tr>
+        <tr><td>S5</td><td>Package review live with per-member settlement and sampling</td><td>S4 shadow report</td><td>PK4, PK6, PK9</td></tr>
+        <tr><td>S6</td><td>Pre-merge planner fixes (conditional)</td><td>A project still pre-merge 30 days after S1</td><td>PK8</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">10</span> Evidence</h2>
+    <p>Code facts are cited against develop <code>984b4535</code> (1 November 2026). Operator figures are marked as card statements. No claim here is about a visible product surface, so there is no screenshot. The settings UI labels are cited from source, not from a capture.</p>
+    <div class="evidence-list">
+      <a class="evidence" href="#ev-target"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-target">Target size equals visible supply</b><small><code>orchestration-decisions/BatchGateLookAheadPlanner.cs:49-51</code> (target from candidates plus arriving, capped by maximum), <code>:84-87</code> (close as "target size reached"), <code>:90-112</code> (cost model and size search).</small></span></a>
+      <a class="evidence" href="#ev-idle"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-idle">Idle host skips the deadline</b><small><code>BatchGatePilotService.cs:488-495</code> (idle = not throttled and no batch running); planner <code>:73-82</code>.</small></span></a>
+      <a class="evidence" href="#ev-eta"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-eta">Arrival forecast</b><small><code>BatchGateSnapshotBuilder.cs:89-101</code> (review ETA = start + median; coding cards without ETA), <code>:150-160</code> (samples under 240 min, default 30), planner <code>:40-48</code> (an overdue ETA is not arriving).</small></span></a>
+      <a class="evidence" href="#ev-overlap"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-overlap">Overlap is file equality</b><small>Planner <code>:114-142</code>; values <code>adjacent</code> (default) and <code>separate</code> in <code>BatchGatePolicy.cs:63-91</code>; UI labels "Keep adjacent" and "Separate" in <code>batch-settings.html:34</code>.</small></span></a>
+      <a class="evidence" href="#ev-risk"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-risk">Risk limit and history</b><small><code>contracts/TaskServer.Contracts/BatchGate/BatchGateRiskModel.cs:14, 25-48</code> (unknown diff 0.55; prior red +0.2, flaky +0.1, area red +0.1); <code>BatchGateSnapshotBuilder.cs:36-53</code> (from every manifest, no time bound).</small></span></a>
+      <a class="evidence" href="#ev-leak"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-leak">Deferral switched off before the queue</b><small><code>backend/Features/Runner/RemoteReviewPlanBuilder.cs:167-214</code>.</small></span></a>
+      <a class="evidence" href="#ev-fallback"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-fallback">Fallback runs the full suite twice</b><small><code>BatchGatePilotService.cs:2085-2106</code> (Full gate, source <code>batch-fallback</code>, evidence <code>logs/batch-fallback-&lt;review&gt;.json</code>), <code>:2211-2214</code> (hand-off to the integration lane); <code>IntegrationGateReusePolicy.cs:118-125</code> (work-package reviews force a Full integration gate). No identifier <code>batch-fallback-review</code> exists; the card's step name maps to this path.</small></span></a>
+      <a class="evidence" href="#ev-isolation"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-isolation">Red-member isolation</b><small><code>BatchGateIsolation.cs:29-85</code>; <code>BatchGatePilotService.cs:1247-1289, 1358-1359, 1552-1630</code>; AGT-W59 D5 in <code>docs/operations/gates/</code>.</small></span></a>
+      <a class="evidence" href="#ev-store"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-store">Batch store is per instance and not on this host</b><small><code>BatchGateStorageRoot.cs:9-16</code>; 69,841 instance folders on <code>agent-runner-01</code> without <code>batch-gates</code>; <code>/api/gate-economics</code> answered 401 on 2 November 2026.</small></span></a>
+      <a class="evidence" href="#ev-runner"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-runner">Review runner disconnected; no post-merge units</b><small><code>journalctl -u agent-runner-review --since 2026-10-31</code>: 11,193 "could not reach the task server" lines. <code>systemctl list-units --all</code> lists no <code>agent-post-merge-*</code> unit. The templates name <code>User=agent-runner</code> and <code>/home/agent-runner</code>, but the runner here runs as <code>agent</code> and no <code>agent-runner</code> user exists (<code>deploy/systemd/agent-post-merge-window@.service</code>; runbook <code>docs/operations/setup/linux-runner-host.md:1660-1683</code>).</small></span></a>
+      <a class="evidence" href="#ev-postmerge"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-postmerge">Post-merge mode is built</b><small><code>ProjectSettings.cs:1167-1212</code> (<code>testing.perCard</code>, <code>testing.mode</code>); <code>BatchGatePilotService.cs:2629-2635</code> (batch route off); <code>PostMergeModeService.cs:9-39</code> (automatic fallback); <code>PostMergeRunEndpoints.cs:31-37</code> (window from batch settings); <code>pipeline.md:48-52</code> (Agent Studio stays pre-merge until the T1 replay median is at most 10 min).</small></span></a>
+      <a class="evidence" href="#ev-serial"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-serial">Remote aspects run serially</b><small><code>runner/RemoteReviewWorkspace.cs:284-357</code> (each planned command awaited in one loop); local parallel path <code>backend/Features/Runner/AspectRunnerService.cs:163-165, 231-254</code>; aspects in <code>PipelineCatalogue.cs:78-84</code>.</small></span></a>
+      <a class="evidence" href="#ev-subject"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-subject">Review subjects are per card; Dossier grouping exists</b><small><code>task-server/TaskServerReviewStore.cs:38-86</code> (subject references one task); <code>backend/Shared/Models/TaskDossier.cs:4-12</code> (<code>dossier.path</code>, <code>implementationIndex</code>), set at promotion in <code>ConceptPromotionService.cs:46-47</code>.</small></span></a>
+      <a class="evidence" href="#ev-metrics"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-metrics">Stage and token data exist</b><small><code>CycleTimeStages.cs:25-26</code> (<code>reviewOther</code> = aspects, grade, decision, overhead); <code>TaskCycleTime.cs:62-63</code> (backward moves include lease recovery); <code>ReviewStatisticsEndpoints.cs:9</code>; <code>ReviewObservation.cs:9-16</code>; <code>PipelineModels.cs:241-300</code>.</small></span></a>
+      <a class="evidence" href="#ev-green"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-green">Historical green rate</b><small><code>docs/operations/gates/d10-measurement.md</code>: 670 of 1,158 explicit gate outcomes after review green (57.9 %); four-card proxy 32.4 %.</small></span></a>
+      <a class="evidence" href="#ev-wave"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-wave">Waves happen</b><small>The implementation log of <code>docs/operations/pipeline-delivery-target/index.html</code> records AGT-3308, AGT-3311, AGT-3313, AGT-3314, AGT-3316 and AGT-3319 as delivered on 27 October 2026.</small></span></a>
+      <a class="evidence" href="#ev-card"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-card">Operator figures (card statement)</b><small>186 batches (160/18/8), batches per day, 18 merges, 77 full-suite runs, 33 and 38 min medians, reuse 0, 3.4 h and 1.8 h, 52 of 72: from the AGT-3400 card, 1 November 2026, not re-counted here.</small></span></a>
+      <a class="evidence" href="#ev-arrival"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-arrival">Arrival model</b><small>Poisson arrivals at 2.6 per day over 12 active hours; the batch-cost table uses the planner's formula with independent outcomes, which the 32.4 % proxy shows to be pessimistic for size four.</small></span></a>
+      <a class="evidence" href="#ev-savings"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-savings">Savings ranges</b><small>Suite duration 33 to 43 min; five release candidates per week; aspect share <i>a</i>, fixed token share <i>f</i> and package size <i>k</i> as ranges until S2 measures them.</small></span></a>
+      <a class="evidence" href="#ev-proposed"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-proposed">Package rules</b><small>Two tiers, 60-minute formation, cap of four members and the material budget, masking invalidation, the 1-in-5 sampling and its abort rule, and the 30 % wave-share threshold are proposals of this Dossier.</small></span></a>
+    </div>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">11</span> Open decisions</h2>
+    <p>Nine decisions. Each names a recommended working option, which a promoted card uses unless a recorded operator decision selects another. They are numbered PK to keep them apart from D1 to D10 of AGT-3276.</p>
+    <table>
+      <thead><tr><th>Decision</th><th>Recommended</th><th>Main consequence</th></tr></thead>
+      <tbody>
+        <tr><td><a href="#pk1-gate-package">PK1</a> Gate package</td><td>Post-merge window (G-B)</td><td>Agent Studio switches to <code>testing.mode: post-merge</code></td></tr>
+        <tr><td><a href="#pk2-switch">PK2</a> Switch condition</td><td>T1 replay median at most 20 min</td><td>Amends the 10-minute rule in <code>pipeline.md</code></td></tr>
+        <tr><td><a href="#pk3-review-unit">PK3</a> Review package unit</td><td>Dossier wave, per card otherwise</td><td>Grouping by <code>dossier.path</code></td></tr>
+        <tr><td><a href="#pk4-tiers">PK4</a> Review split</td><td>Card check per card, package review per wave</td><td>Requirement fit stays per card</td></tr>
+        <tr><td><a href="#pk5-formation">PK5</a> Package formation</td><td>60 min, at most 4 members, within the material budget</td><td>A package never waits for coding</td></tr>
+        <tr><td><a href="#pk6-failure">PK6</a> Failed package</td><td>Per-member verdicts; passing members proceed</td><td>Masking invalidation and scoped re-review</td></tr>
+        <tr><td><a href="#pk7-parallel">PK7</a> Aspect execution</td><td>Parallel, cap 4</td><td>Change in <code>RemoteReviewWorkspace</code></td></tr>
+        <tr><td><a href="#pk8-planner">PK8</a> Pre-merge planner</td><td>Settings now, code only on need</td><td><code>overlap: adjacent</code></td></tr>
+        <tr><td><a href="#pk9-sampling">PK9</a> Miss-rate control</td><td>1 in 5 shadow per-card reviews for two weeks</td><td>Abort rule before S5 stays on</td></tr>
+      </tbody>
+    </table>
+
+    <div class="decision" id="pk1-gate-package" data-decision-id="pk1-gate-package" data-decision-kind="single" data-decision-status="open" data-recommended-option-id="post-merge-window" data-decision-label="PK1 Gate package">
+      <h3>PK1 Gate package &middot; What does the gate test together?</h3>
+      <label data-option-id="post-merge-window" data-option-label="G-B &middot; The post-merge T3 window; activate D1 for Agent Studio (recommended)"><input type="radio" name="pk1-gate-package" value="post-merge-window"><span><b>G-B &middot; The post-merge T3 window; activate D1 for Agent Studio (recommended)</b><span class="d">The full suite leaves every card's path; package size no longer costs waiting.</span></span></label>
+      <label data-option-id="tune-pre-merge" data-option-label="G-A &middot; Tune the pre-merge batch"><input type="radio" name="pk1-gate-package" value="tune-pre-merge"><span><b>G-A &middot; Tune the pre-merge batch</b><span class="d">Develop stays green by construction; bigger batches cost hours of waiting at today's arrival rate.</span></span></label>
+      <label data-option-id="wave-gate" data-option-label="G-C &middot; Dossier wave as gate package"><input type="radio" name="pk1-gate-package" value="wave-gate"><span><b>G-C &middot; Dossier wave as gate package</b><span class="d">Long waits for members; failures do not cluster by Dossier.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: S1 installs the post-merge timers and switches <code>testing.mode</code>; the pre-merge batch remains the automatic fallback.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="pk2-switch" data-decision-id="pk2-switch" data-decision-kind="single" data-decision-status="open" data-recommended-option-id="median-20" data-decision-label="PK2 Switch condition">
+      <h3>PK2 Switch condition &middot; When may Agent Studio switch to post-merge?</h3>
+      <label data-option-id="median-20" data-option-label="A &middot; T1 replay median at most 20 min and p90 at most 30 min; 10 min stays the target (recommended)"><input type="radio" name="pk2-switch" value="median-20"><span><b>A &middot; T1 replay median at most 20 min and p90 at most 30 min; 10 min stays the target (recommended)</b><span class="d">T1 replaces about 71 minutes of two full suites, so even 20 minutes is a large gain.</span></span></label>
+      <label data-option-id="median-10" data-option-label="B &middot; Keep the documented 10-minute median"><input type="radio" name="pk2-switch" value="median-10"><span><b>B &middot; Keep the documented 10-minute median</b><span class="d">Stricter; the switch may wait for further selection work.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: S1 updates the sentence in <code>docs/system/domains/pipeline.md</code> with the replay result.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="pk3-review-unit" data-decision-id="pk3-review-unit" data-decision-kind="single" data-decision-status="open" data-recommended-option-id="dossier-wave" data-decision-label="PK3 Review package unit">
+      <h3>PK3 Review package unit &middot; Which cards share a review?</h3>
+      <label data-option-id="dossier-wave" data-option-label="A &middot; Cards of one Dossier (dossier.path); cards without a Dossier stay per card (recommended)"><input type="radio" name="pk3-review-unit" value="dossier-wave"><span><b>A &middot; Cards of one Dossier (<code>dossier.path</code>); cards without a Dossier stay per card (recommended)</b><span class="d">Shared intent and decisions; enables the cross-card consistency check.</span></span></label>
+      <label data-option-id="same-area" data-option-label="B &middot; Cards that touch the same area"><input type="radio" name="pk3-review-unit" value="same-area"><span><b>B &middot; Cards that touch the same area</b><span class="d">Shared code context, unrelated intents.</span></span></label>
+      <label data-option-id="time-window" data-option-label="C &middot; Time window"><input type="radio" name="pk3-review-unit" value="time-window"><span><b>C &middot; Time window</b><span class="d">Shared overhead only.</span></span></label>
+      <label data-option-id="batch-candidate" data-option-label="D &middot; Batch candidate as review subject"><input type="radio" name="pk3-review-unit" value="batch-candidate"><span><b>D &middot; Batch candidate as review subject</b><span class="d">Circular formation; random makeup.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: S4 groups review subjects by <code>dossier.path</code>; S2 measures the share of cards with a Dossier.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="pk4-tiers" data-decision-id="pk4-tiers" data-decision-kind="single" data-decision-status="open" data-recommended-option-id="two-tiers" data-decision-label="PK4 Review split">
+      <h3>PK4 Review split &middot; Which aspects move to the package?</h3>
+      <label data-option-id="two-tiers" data-option-label="R-B &middot; Card check per card (build, T1, deterministic checks, requirement fit); package review for code quality, documentation impact, tests and evidence, grade and cross-card consistency (recommended)"><input type="radio" name="pk4-tiers" value="two-tiers"><span><b>R-B &middot; Card check per card; package review for the context-heavy aspects (recommended)</b><span class="d">The aspect most at risk of blurring stays per card.</span></span></label>
+      <label data-option-id="whole-package" data-option-label="R-C &middot; Whole review per package"><input type="radio" name="pk4-tiers" value="whole-package"><span><b>R-C &middot; Whole review per package</b><span class="d">Most token saving; highest miss risk.</span></span></label>
+      <label data-option-id="per-card" data-option-label="R-A &middot; Per card and round (today)"><input type="radio" name="pk4-tiers" value="per-card"><span><b>R-A &middot; Per card and round (today)</b><span class="d">No package risk; no saving; no cross-card check.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: the review plan gains a tier per step; a new aspect <code>aspect-cross-card-consistency</code> joins the package tier.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="pk5-formation" data-decision-id="pk5-formation" data-decision-kind="single" data-decision-status="open" data-recommended-option-id="window-60" data-decision-label="PK5 Package formation">
+      <h3>PK5 Package formation &middot; How long does a package wait for members?</h3>
+      <label data-option-id="window-60" data-option-label="A &middot; Members whose card check passed within 60 min of the first; at most 4 members and 200 files / 12,000 lines; never wait for coding (recommended)"><input type="radio" name="pk5-formation" value="window-60"><span><b>A &middot; 60 minutes, at most 4 members, within the material budget; never wait for coding (recommended)</b><span class="d">Bounded added wait; a lone member is a package of one.</span></span></label>
+      <label data-option-id="whole-wave" data-option-label="B &middot; Wait for the whole wave"><input type="radio" name="pk5-formation" value="whole-wave"><span><b>B &middot; Wait for the whole wave</b><span class="d">Largest packages; members wait for the slowest slice.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: a package-formation tick beside the review admission, with its decisions logged like batch plans.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="pk6-failure" data-decision-id="pk6-failure" data-decision-kind="single" data-decision-status="open" data-recommended-option-id="per-member" data-decision-label="PK6 Failed package">
+      <h3>PK6 Failed package &middot; What happens when members fail?</h3>
+      <label data-option-id="per-member" data-option-label="A &middot; Per-member verdicts; passing members proceed; an ejection invalidates the verdicts of members sharing files (recommended)"><input type="radio" name="pk6-failure" value="per-member"><span><b>A &middot; Per-member verdicts; passing members proceed; ejection invalidates members sharing files (recommended)</b><span class="d">No member waits for another; masking is caught by scoped re-review.</span></span></label>
+      <label data-option-id="whole-package-returns" data-option-label="B &middot; The whole package returns"><input type="radio" name="pk6-failure" value="whole-package-returns"><span><b>B &middot; The whole package returns</b><span class="d">Simple; every member pays for one failure.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: settlement submits one fact per member through the existing decision library; lane rules are unchanged.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="pk7-parallel" data-decision-id="pk7-parallel" data-decision-kind="single" data-decision-status="open" data-recommended-option-id="parallel-4" data-decision-label="PK7 Aspect execution">
+      <h3>PK7 Aspect execution &middot; Do Remote Review aspects run in parallel?</h3>
+      <label data-option-id="parallel-4" data-option-label="X-B &middot; Parallel within one attempt, cap 4; tool commands first (recommended)"><input type="radio" name="pk7-parallel" value="parallel-4"><span><b>X-B &middot; Parallel within one attempt, cap 4; tool commands first (recommended)</b><span class="d">Wall time becomes the longest aspect; tokens unchanged.</span></span></label>
+      <label data-option-id="serial" data-option-label="X-A &middot; Serial (today)"><input type="radio" name="pk7-parallel" value="serial"><span><b>X-A &middot; Serial (today)</b><span class="d">Predictable load; wall time is the sum.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: S3 changes the agent part of the command loop in <code>runner/RemoteReviewWorkspace.cs</code> and keeps checkpoints per aspect.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="pk8-planner" data-decision-id="pk8-planner" data-decision-kind="single" data-decision-status="open" data-recommended-option-id="settings-now" data-decision-label="PK8 Pre-merge planner">
+      <h3>PK8 Pre-merge planner &middot; Fix the batch planner?</h3>
+      <label data-option-id="settings-now" data-option-label="A &middot; Settings now (overlap adjacent); code fixes only if a project stays pre-merge 30 days after S1 (recommended)"><input type="radio" name="pk8-planner" value="settings-now"><span><b>A &middot; Settings now (<code>overlap: adjacent</code>); code fixes only if a project stays pre-merge 30 days after S1 (recommended)</b><span class="d">No code for a mode that becomes the fallback.</span></span></label>
+      <label data-option-id="code-now" data-option-label="B &middot; Fix C1, C3, C4, C5, C6 in code now"><input type="radio" name="pk8-planner" value="code-now"><span><b>B &middot; Fix C1, C3, C4, C5, C6 in code now</b><span class="d">Better batches for pre-merge projects; effort spent before need is shown.</span></span></label>
+      <label data-option-id="retire" data-option-label="C &middot; Retire the pre-merge batch gate"><input type="radio" name="pk8-planner" value="retire"><span><b>C &middot; Retire the pre-merge batch gate</b><span class="d">Removes the fallback D1 relies on.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: S6 stays conditional; S1 sets <code>overlap: adjacent</code> together with the window settings.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="pk9-sampling" data-decision-id="pk9-sampling" data-decision-kind="single" data-decision-status="open" data-recommended-option-id="sample-1-in-5" data-decision-label="PK9 Miss-rate control">
+      <h3>PK9 Miss-rate control &middot; How is package review held to account?</h3>
+      <label data-option-id="sample-1-in-5" data-option-label="A &middot; Shadow per-card review on 1 in 5 members for two weeks; abort if more than 1 missed blocking finding per 20 members (recommended)"><input type="radio" name="pk9-sampling" value="sample-1-in-5"><span><b>A &middot; Shadow per-card review on 1 in 5 members for two weeks; abort above 1 missed blocking finding per 20 members (recommended)</b><span class="d">A measured miss rate before package review becomes the default.</span></span></label>
+      <label data-option-id="none" data-option-label="B &middot; No sampling"><input type="radio" name="pk9-sampling" value="none"><span><b>B &middot; No sampling</b><span class="d">Cheaper; misses stay unmeasured.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: S5 records shadow comparisons as review observations and reports the miss rate.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+  </section>
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">12</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged. Each slice is one <code>workbench.json</code> <code>implementationTasks</code> entry with a bounded <code>acceptanceScope</code>.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>
