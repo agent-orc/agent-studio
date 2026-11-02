@@ -76,6 +76,9 @@ public static class MonolithTransitionAdapter
         => GateCancellationPolicy.Decide(expectedSha, currentSha, expectedLane, currentLane,
             continuePending, shuttingDown, reportedReason);
 
+    public static int GateStartsAfterCancellation(int startsBeforeThisRun, string? reason, bool serviceStopping)
+        => GateCancellationPolicy.ChargedStartsAfterCancellation(startsBeforeThisRun, reason, serviceStopping);
+
     public static bool GateCancellationOwnsResult(string? expectedSha, string? currentSha,
         string? expectedAttempt, string? currentAttempt,
         string? expectedLane, string? currentLane, bool continuePending)

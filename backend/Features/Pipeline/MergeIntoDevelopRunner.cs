@@ -50,6 +50,13 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly PipelineHealthService? _pipelineHealth;
     private readonly IIntegrationLaneStallAlarm? _laneStallAlarm;
     private readonly PostMergeModeService? _postMergeMode;
+    private readonly AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? _hostCredentials;
+
+    /// <summary>How long one merge waits for the host's first App tokens before it fetches anyway.</summary>
+    internal TimeSpan HostCredentialWaitLimit { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Interval of the wait's log line and readiness check.</summary>
+    internal TimeSpan HostCredentialRetryInterval { get; set; } = TimeSpan.FromSeconds(30);
     private readonly TimeProvider _gateTime;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
@@ -102,8 +109,10 @@ public sealed partial class MergeIntoDevelopRunner
         PipelineHealthService? pipelineHealth = null,
         TimeProvider? timeProvider = null,
         IIntegrationLaneStallAlarm? laneStallAlarm = null,
-        PostMergeModeService? postMergeMode = null)
+        PostMergeModeService? postMergeMode = null,
+        AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? hostCredentials = null)
     {
+        _hostCredentials = hostCredentials;
         _gateTime = timeProvider ?? TimeProvider.System;
         _git = git;
         _pipelineLog = pipelineLog;
@@ -141,6 +150,36 @@ public sealed partial class MergeIntoDevelopRunner
         // Default to the AGT-1944 environmental backoff (30s, 120s, cap 5min); a
         // test injects a zero backoff so it does not sleep between retries.
         _environmentalBackoff = environmentalBackoff ?? PostProcessingOutcomeTaxonomy.RetryBackoff;
+    }
+
+    /// <summary>
+    /// Directly after a start the host's own Git may not have its App tokens
+    /// yet, and a private repository then refuses the integration fetch. Wait
+    /// for them, saying so on every retry. After the bound the merge fetches
+    /// anyway: a refused credential is a transient fault that the bounded
+    /// gate-environment ladder retries instead of parking the card.
+    /// </summary>
+    internal async Task WaitForHostGitCredentialsAsync(string project, string jobId, CancellationToken ct)
+    {
+        if (_hostCredentials is not { Pending: true } readiness) return;
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (waited.Elapsed < HostCredentialWaitLimit)
+        {
+            _logger.LogWarning(
+                "integration-waits-for-host-git-credentials project={Project} job={JobId} waitedSeconds={Waited:0} retryInSeconds={Retry:0} reason={Reason}",
+                project, jobId, waited.Elapsed.TotalSeconds, HostCredentialRetryInterval.TotalSeconds,
+                readiness.LastFailure ?? "the GitHub App tokens for this host's own Git are not written yet");
+            if (await readiness.WaitAsync(HostCredentialRetryInterval, ct).ConfigureAwait(false))
+            {
+                _logger.LogInformation(
+                    "integration-host-git-credentials-ready project={Project} job={JobId} waitedSeconds={Waited:0}",
+                    project, jobId, waited.Elapsed.TotalSeconds);
+                return;
+            }
+        }
+        _logger.LogWarning(
+            "integration-proceeds-without-host-git-credentials project={Project} job={JobId} waitedSeconds={Waited:0} reason={Reason}",
+            project, jobId, waited.Elapsed.TotalSeconds, readiness.LastFailure ?? "not written yet");
     }
 
     /// <summary>
@@ -192,6 +231,7 @@ public sealed partial class MergeIntoDevelopRunner
         Interlocked.Increment(ref _mergeGateUsers);
         try
         {
+            await WaitForHostGitCredentialsAsync(project, jobId, ct).ConfigureAwait(false);
             var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
             using var batchReservation = _batchReservations is null
@@ -426,7 +466,7 @@ public sealed partial class MergeIntoDevelopRunner
             if (!synchronized.Success)
             {
                 result = MergeIntoIntegrationResult.Failed(
-                    AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                    AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                     synchronized.Error);
             }
             else if (lineage?.Mode == ImmediateIntegrationLineageMode.Blocked)
@@ -939,7 +979,10 @@ public sealed partial class MergeIntoDevelopRunner
         DateTime startedAt,
         CancellationToken ct)
     {
+        // A refused Git credential is a host fault the bounded ladder replays;
+        // a follow-up card for it would only repeat what the ladder does.
         if (result.Outcome.IsSuccessfulIntegration()
+            || result.FailureCode == AcceptedIntegrationFailureCodes.GitCredentialUnavailable
             || _failureInterventions is null
             || _taskScanner is null
             || _projectSettings is null)
