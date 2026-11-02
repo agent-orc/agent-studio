@@ -105,6 +105,14 @@ public static class ResultFinalizationPolicy
             _ => Degraded(Limit(reason) ?? ExhaustedBudget),
         };
 
+    /// <summary>
+    /// True when the orchestrator prompt boundary refused the summary input.
+    /// The same card yields the same input, so neither another finalization
+    /// attempt nor a queued retry can succeed (AGT-3410).
+    /// </summary>
+    public static bool IsInputRefusal(string? error)
+        => OrchestratorPromptBoundary.IsRefusal(error?.Trim());
+
     /// <summary>Trim and bound a free-form failure reason for wire + timeline use.</summary>
     public static string? Limit(string? reason)
     {
@@ -120,12 +128,19 @@ public static class ResultFinalizationPolicy
         TimelineSummary: $"Summary pending ({Humanize(reason)})",
         ScheduleRetry: true);
 
-    private static ResultAcknowledgementPlan Degraded(string error) => new(
-        ResultSummaryDelivery.Degraded,
-        CommitStatusDocument: false,
-        ResultDocumentStatus: "degraded:" + error,
-        TimelineSummary: $"Summary pending (degraded: {error})",
-        ScheduleRetry: true);
+    private static ResultAcknowledgementPlan Degraded(string error) => IsInputRefusal(error)
+        ? new(
+            ResultSummaryDelivery.Degraded,
+            CommitStatusDocument: false,
+            ResultDocumentStatus: "degraded:" + error,
+            TimelineSummary: $"Summary degraded (input refused: {error})",
+            ScheduleRetry: false)
+        : new(
+            ResultSummaryDelivery.Degraded,
+            CommitStatusDocument: false,
+            ResultDocumentStatus: "degraded:" + error,
+            TimelineSummary: $"Summary pending (degraded: {error})",
+            ScheduleRetry: true);
 
     private static string Humanize(string reason) => reason.Replace('-', ' ');
 }

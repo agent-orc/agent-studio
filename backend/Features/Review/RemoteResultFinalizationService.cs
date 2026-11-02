@@ -174,7 +174,10 @@ public sealed class RemoteResultFinalizationService
 
             if (!outcome.Generated)
             {
-                Reschedule(entry, outcome.Error, asOfUtc);
+                if (ResultFinalizationPolicy.IsInputRefusal(outcome.Error))
+                    Drop(entry with { Reason = outcome.Error ?? entry.Reason }, "input-refused");
+                else
+                    Reschedule(entry, outcome.Error, asOfUtc);
                 continue;
             }
 
@@ -222,6 +225,31 @@ public sealed class RemoteResultFinalizationService
             CredentialRedactor.Redact(ResultFinalizationPolicy.Limit(reason) ?? string.Empty));
         var next = DateTime.UtcNow.AddSeconds(RetryDelaySeconds);
         var known = _pending.TryGetValue(task.TaskKey, out var existing);
+        if (!plan.ScheduleRetry)
+        {
+            // A refused input is refused again; queueing it only repeats the failure.
+            _pending.TryRemove(task.TaskKey, out _);
+            if (plan.TimelineSummary is not null)
+            {
+                _timeline.Append(
+                    task.FolderPath,
+                    TimelineEventKinds.ResultSummaryPending,
+                    TimelineActors.System,
+                    plan.TimelineSummary,
+                    details: new Dictionary<string, string>
+                    {
+                        ["status"] = plan.ResultDocumentStatus ?? string.Empty,
+                    });
+            }
+            _logger.LogWarning(
+                "remote-result-summary-abandoned taskKey={TaskKey} jobId={JobId} attempts={Attempts} cause={Cause} reason={Reason}",
+                task.TaskKey,
+                task.Id,
+                known ? existing!.Attempts : 0,
+                "input-refused",
+                plan.ResultDocumentStatus);
+            return plan;
+        }
         _pending[task.TaskKey] = new PendingEntry(
             task.TaskKey,
             task.Id,

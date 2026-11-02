@@ -2500,8 +2500,22 @@ operator changes cause the step to fail before its writer runs.
   `claude-opus-5-5` / `low`. The Haiku fallback and the shared
   `ClaudeCli:SummaryModel` key no longer apply to it. An inherited model the
   chosen CLI cannot run falls back to the catalogue default.
-  The prompt receives the log tail and an evidence bundle
-  (`SummaryEvidenceAssembler`). The bundle holds the lane and lane history,
+  The prompt receives the run evidence and an evidence bundle
+  (`SummaryEvidenceAssembler`). The step is an orchestrator step, so the
+  whole prompt must stay under the 32 KB `OrchestratorPromptBoundary` limit
+  (AGT-3410). `SummaryPromptFit` fills the `{{log}}` slot with the bytes the
+  rest of the prompt leaves: the task prompt head (`prompt.md`), the run
+  status lines and last terminal sentinel, the `results/` deliverables and the
+  latest agent messages keep bounded sections; the run log before them gets
+  the remainder, newest lines first, without `runner-log-delivery` markers and
+  with long tool-call lines cut to 400 bytes. An `OMITTED TO FIT THE PROMPT
+  LIMIT` list at the top of the slot names everything left out, and raw
+  session paths and credentials are replaced before the boundary sees them.
+  Each shortened prompt logs `Summary prompt shortened` with its size and a
+  running count. A boundary refusal (`decision-input-incomplete:*`) is not
+  retried: finalization stops after the first attempt, logs
+  `Result finalization degraded` with `promptBytes` and `degradedTotal`, and
+  queues no remote retry. The bundle holds the lane and lane history,
   pipeline step statuses, reasons and failure codes, the commit chain and
   `codeActivityDetected`, integration records and verification, salvage refs
   from `agent_run_finished`, the completion claim, review and sight-review
