@@ -145,6 +145,9 @@ public class TaskFolderAccessIsolationTest
                 "Moves and replaces dependency caches under the OS review-workspace temp root, never task storage.",
             ["backend/Features/Pipeline/GateResultCache.cs"] =
                 "Deletes only the hashed per-project gate-result cache under local application data, never task storage.",
+            // AGT-3401 moves only the API's own legacy local state into its durable root.
+            ["backend/Features/State/LocalStateStartup.cs"] =
+                "Moves only API-owned legacy local state into the durable local state root, never task folders.",
             ["backend/Features/Pipeline/GateSourceCacheRetention.cs"] =
                 "Evicts only SHA-keyed host gate source caches under local application data, never task folders.",
             ["backend/Features/Pipeline/BuildTestGateRunner.cs"] =

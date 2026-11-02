@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.Git;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tasks;
 
@@ -296,9 +297,7 @@ public sealed class BoardShadowLedger
         if (!string.IsNullOrWhiteSpace(configured)) return System.IO.Path.GetFullPath(configured);
         var taskRepository = configuration["TaskRepository"];
         if (!string.IsNullOrWhiteSpace(taskRepository)) return System.IO.Path.Combine(taskRepository, "logs", FileName);
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrWhiteSpace(local)) local = System.IO.Path.GetTempPath();
-        return System.IO.Path.Combine(local, "agent-taskboard", "logs", FileName);
+        return LocalStateRoot.Combine("agent-taskboard", "logs", FileName);
     }
 
     private sealed class LedgerState

@@ -161,7 +161,17 @@ for (const service of ["orchestrator-api", "orchestrator-api-dev"]) {
   if (Object.hasOwn(services[service].environment ?? {}, "TaskRepository"))
     throw new Error(`${service} must not configure a compatibility TaskRepository`);
 }
+// Local state below the service account HOME (~/.local/share) must survive a
+// container recreate, so HOME is a named volume, never the container layer.
+for (const [service, home] of [
+  ["orchestrator-api", "/data/home"], ["orchestrator-api-dev", "/data/home"],
+  ["task-server", "/var/lib/agent-orchestrator/home"], ["task-server-dev", "/var/lib/agent-orchestrator/home"]]) {
+  if (!services[service].volumes?.some(volume => volume.type === "volume" && volume.target === home))
+    throw new Error(`${service} must keep its HOME ${home} on a named volume`);
+}
 ' "$compose_json"
+grep -F 'VOLUME ["/data/workspace", "/data/projects", "/data/home"]' "$repo_root/backend/Dockerfile" > /dev/null
+grep -F -- '--home-dir /var/lib/agent-orchestrator/home' "$repo_root/task-server/Dockerfile" > /dev/null
 
 # The operator-facing profile table must name exactly the services each
 # non-dev profile starts, so the documented install contract cannot drift.
