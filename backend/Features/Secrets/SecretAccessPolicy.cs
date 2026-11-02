@@ -11,8 +11,8 @@ public sealed record SecretAccessDecision(bool Allowed, string Code, string Reas
 /// <summary>
 /// Pure scope check for issuing a value to a workload. A workload reads the
 /// workspace scope, its own project scope and, when it runs for an
-/// environment, that environment's scope. A deploy job reads only names its
-/// environment declaration lists.
+/// environment, that environment's scope. Every workload reads only the names
+/// it declares; a workload without a declaration reads none.
 /// </summary>
 public static partial class SecretAccessPolicy
 {
@@ -42,7 +42,9 @@ public static partial class SecretAccessPolicy
             return SecretAccessDecision.Deny("invalid-purpose", "A purpose is required: lowercase letters, digits, ':', '.', '_' or '-'.");
         if (string.IsNullOrWhiteSpace(workload.Project) || string.IsNullOrWhiteSpace(workload.Identity))
             return SecretAccessDecision.Deny("workload-unbound", "The workload is not bound to a project.");
-        if (workload.DeclaredNames is { } declared && !declared.Contains(reference.Name, StringComparer.Ordinal))
+        if (workload.DeclaredNames is not { } declared)
+            return SecretAccessDecision.Deny("workload-undeclared", "The workload declares no secret names.");
+        if (!declared.Contains(reference.Name, StringComparer.Ordinal))
             return SecretAccessDecision.Deny("reference-not-declared", $"The workload does not declare '{reference.Name}'.");
         if (workload.DeclaredReferences is { } bindings
             && (!bindings.TryGetValue(reference.Name, out var bound) || bound != reference.ToString()))

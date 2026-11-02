@@ -1146,6 +1146,7 @@ builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityStudioConnectionS
 builder.Services.AddHttpClient("quality-studio-integration", client => client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityStudioRevokeOutbox>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.QualityStudio.QualityStudioRevokeOutbox>());
+builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
 builder.Services.AddSingleton<AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService>();
