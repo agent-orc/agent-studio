@@ -113,6 +113,23 @@ public sealed class UsageCockpitContractTests
     }
 
     [Fact]
+    public void Host_reading_preserves_source_observation_and_account_digest()
+    {
+        var digest = new string('a', 64);
+        var snapshot = new QuotaSnapshot
+        {
+            CliType = "codex", SubscriptionKey = digest, FetchedAt = At,
+            Source = "host /status",
+            Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 18 }]
+        };
+        var projected = UsageCockpitEndpoints.ProjectCli(snapshot, 600, true,
+            At.AddMinutes(1), null, true);
+        Assert.Equal("host /status", projected.Source);
+        Assert.Equal(At, projected.FetchedAt);
+        Assert.Equal(digest, projected.SubscriptionKey);
+    }
+
+    [Fact]
     public void Failed_source_is_isolated_and_run_exposes_configured_and_effective_route()
     {
         var failed = UsageCockpitEndpoints.TryRead<object>(() => throw new IOException(), At);

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using AgentStudio.Security;
 
 namespace AgentStudio.Cli;
 
@@ -25,6 +26,11 @@ public sealed class QuotaService
     private readonly QuotaCacheStore _store;
     private readonly CliVersionTracker? _versionTracker;
     private readonly QuotaHistoryStore? _history;
+    private readonly bool _networked;
+    private readonly TimeProvider _clock;
+    private readonly ConcurrentDictionary<string, QuotaSnapshot> _pendingHostDrops = new();
+    private readonly Dictionary<string, DateTime> _seenHostObservations = new(StringComparer.Ordinal);
+    private readonly object _hostIngestGate = new();
 
     public QuotaService(
         ILogger<QuotaService> logger,
@@ -32,7 +38,8 @@ public sealed class QuotaService
         IConfiguration configuration,
         QuotaCacheStore store,
         CliVersionTracker? versionTracker = null,
-        QuotaHistoryStore? history = null)
+        QuotaHistoryStore? history = null,
+        TimeProvider? clock = null)
     {
         _logger = logger;
         _probes = probes.ToDictionary(p => p.CliType, StringComparer.OrdinalIgnoreCase);
@@ -41,6 +48,8 @@ public sealed class QuotaService
         _store = store;
         _versionTracker = versionTracker;
         _history = history;
+        _networked = !SecurityProfiles.IsLocal(configuration);
+        _clock = clock ?? TimeProvider.System;
 
         // Hydrate the in-memory cache from disk on startup so the
         // header / strip have something to render before the first
@@ -51,7 +60,8 @@ public sealed class QuotaService
             foreach (var snap in _store.Read())
             {
                 if (string.IsNullOrWhiteSpace(snap.CliType)) continue;
-                _cache[snap.CliType] = snap;
+                _cache[snap.SubscriptionKey is { Length: > 0 }
+                    ? snap.CliType + ":" + snap.SubscriptionKey : snap.CliType] = snap;
                 _versionTracker?.Seed(snap.CliType, snap.CliVersion);
                 RecordHistory(snap);
             }
@@ -73,9 +83,33 @@ public sealed class QuotaService
         return new QuotaReport
         {
             TtlSeconds = (int)_ttl.TotalSeconds,
-            Snapshots = _probes.Keys
-                .Select(k => _cache.TryGetValue(k, out var s) ? s : new QuotaSnapshot { CliType = k })
-                .ToList()
+            Snapshots = _probes.Keys.SelectMany(k =>
+            {
+                if (!_networked) return [_cache.TryGetValue(k, out var local)
+                    ? local : new QuotaSnapshot { CliType = k }];
+                if (k == CliTypes.Gemini) return [new QuotaSnapshot
+                {
+                    CliType = k, FetchedAt = default,
+                    Error = "Gemini subscription quota is not available from execution hosts."
+                }];
+                var hosted = _cache.Where(entry => entry.Key.StartsWith(k + ":", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                    .Select(entry => _clock.GetUtcNow().UtcDateTime - entry.Value.FetchedAt > _ttl
+                        && entry.Value.Error is null
+                        ? entry.Value with
+                        {
+                            Error = $"No recent reading from a healthy {k} host sign-in.",
+                            ProbeFailedAt = entry.Value.FetchedAt + _ttl
+                        }
+                        : entry.Value).ToArray();
+                if (hosted.Length > 0) return hosted;
+                var prior = _cache.TryGetValue(k, out var old) ? old : new QuotaSnapshot { CliType = k };
+                return [prior with
+                {
+                    RawSample = null,
+                    Error = $"No healthy reporting host has supplied a {k} sign-in reading."
+                }];
+            }).ToList()
         };
     }
 
@@ -87,7 +121,81 @@ public sealed class QuotaService
     public QuotaSnapshot? GetCachedFor(string cliType)
     {
         if (string.IsNullOrWhiteSpace(cliType)) return null;
+        if (_networked)
+        {
+            var hosted = _cache.Where(entry => entry.Key.StartsWith(cliType + ":", StringComparison.OrdinalIgnoreCase))
+                .Select(entry => entry.Value)
+                .Where(snapshot => _clock.GetUtcNow().UtcDateTime - snapshot.FetchedAt <= _ttl
+                    && snapshot.Error is null).ToArray();
+            // The existing admission contract has no subscription selector. With
+            // multiple accounts, no provider-wide percentage is authoritative.
+            return hosted.Length == 1 ? hosted[0] : null;
+        }
         return _cache.TryGetValue(cliType, out var s) ? s : null;
+    }
+
+    /// <summary>Accept a parsed host reading through the same cache, gate and history path.</summary>
+    public void IngestHostReading(AgentStudio.TaskServer.Contracts.HostQuotaReadingDto reading)
+    {
+        if (!_networked || !AgentStudio.TaskServer.Contracts.HostQuotaCoordinator.Valid(
+                reading.Provider, reading.SubscriptionKey)) return;
+        var key = reading.Provider + ":" + reading.SubscriptionKey;
+        lock (_hostIngestGate)
+        {
+        var reportAt = reading.ProbeFailedAt ?? reading.ObservedAt;
+        if (_seenHostObservations.TryGetValue(key, out var seen) && seen >= reportAt)
+            return;
+        _seenHostObservations[key] = reportAt;
+        _cache.TryGetValue(key, out var previous);
+        var source = reading.Provider == CliTypes.Claude ? "host /usage" : "host /status";
+        var candidate = new QuotaSnapshot
+        {
+            CliType = reading.Provider,
+            SubscriptionKey = reading.SubscriptionKey,
+            FetchedAt = reading.ObservedAt,
+            CliVersion = reading.CliVersion,
+            Plan = reading.Plan,
+            Source = source,
+            Windows = reading.Windows.Select(window => new QuotaWindow
+            {
+                Label = window.Label, UsedPct = window.UsedPct, Unit = "%",
+                ResetAt = window.ResetAt, ResetLabel = window.ResetLabel
+            }).ToList(),
+            Error = reading.Error,
+            ProbeFailedAt = reading.ProbeFailedAt,
+        };
+        if (candidate.Error is not null)
+        {
+            candidate = RetainLastGoodOnFailure(previous, candidate);
+        }
+        else
+        {
+            var suspicion = QuotaPlausibilityGate.Evaluate(previous, candidate, _clock.GetUtcNow().UtcDateTime);
+            if (suspicion.Suspicious)
+            {
+                if (_pendingHostDrops.TryGetValue(key, out var pending)
+                    && QuotaPlausibilityGate.AreConsistent(pending, candidate))
+                {
+                    _pendingHostDrops.TryRemove(key, out _);
+                }
+                else
+                {
+                    _pendingHostDrops[key] = candidate;
+                    candidate = (previous ?? candidate) with
+                    {
+                        Suspicious = true, SuspiciousReason = suspicion.Reason
+                    };
+                }
+            }
+            else _pendingHostDrops.TryRemove(key, out _);
+            if (!candidate.Suspicious)
+                candidate = QuotaWindowProjection.AnchorWindowStarts(previous, candidate, reading.ObservedAt);
+        }
+        _cache[key] = candidate;
+        _versionTracker?.Observe(reading.Provider, candidate.CliVersion, "host-quota-report");
+        PersistCache();
+        RecordHistory(candidate);
+        }
     }
 
     /// <summary>
@@ -96,6 +204,7 @@ public sealed class QuotaService
     /// </summary>
     public QuotaReport GetWithBackgroundRefresh(CancellationToken ct = default)
     {
+        if (_networked) return GetCached();
         // The HTTP request token is deliberately not passed to the refresh.
         // A disconnected client must not cancel shared cache maintenance, and
         // no synchronous CLI startup work may run on the GET request thread.
@@ -124,12 +233,14 @@ public sealed class QuotaService
     /// <summary>Force a re-probe of every CLI and await all of them.</summary>
     public async Task<QuotaReport> RefreshAllAsync(CancellationToken ct = default)
     {
+        if (_networked) return GetCached();
         await Task.WhenAll(_probes.Keys.Select(k => RefreshAsync(k, ct)));
         return GetCached();
     }
 
     public async Task<QuotaSnapshot?> RefreshAsync(string cliType, CancellationToken ct = default)
     {
+        if (_networked) return GetCachedFor(cliType);
         if (!_probes.TryGetValue(cliType, out var probe)) return null;
         var sem = _locks.GetOrAdd(cliType, _ => new SemaphoreSlim(1, 1));
         if (!await sem.WaitAsync(0, ct))

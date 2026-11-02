@@ -39,6 +39,8 @@ public record QuotaWindow
 public record QuotaSnapshot
 {
     public string CliType { get; init; } = "";
+    /// <summary>Opaque digest identifying a host subscription, when known.</summary>
+    public string? SubscriptionKey { get; init; }
     public DateTime FetchedAt { get; init; } = DateTime.UtcNow;
     /// <summary>
     /// Version reported by the CLI's <c>--version</c> command for this probe.

@@ -31,6 +31,7 @@ import {
   WORKBENCH_DECISION_HYDRATE_MESSAGE,
   WORKBENCH_DECISION_READY_MESSAGE,
   buildIsolatedHtmlSrcdoc,
+  openIsolatedHtmlExternalLink,
   resolveIsolatedHtmlNavigation,
 } from '../../../../services/sandboxed-html.util';
 import { resolveWikiImageSrc } from '../../../../services/wiki-image-resolver';
@@ -40,6 +41,7 @@ import {
 } from '../../../../services/workbench-decision-markup.util';
 import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draft.store';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
 import { DossierCardListComponent } from '../dossier-card-list/dossier-card-list.component';
 
@@ -82,6 +84,7 @@ export class WorkbenchViewerComponent {
   private readonly hub = inject(JobsHubClient);
   private readonly decisionDrafts = inject(WorkbenchDecisionDraftStore);
   private readonly publicDemo = inject(PublicDemoModeService);
+  private readonly confirmDialog = inject(ConfirmDialogService);
   private readonly frame = viewChild<ElementRef<HTMLIFrameElement>>('workbenchFrame');
   private readonly inlineActionHost = viewChild<ElementRef<HTMLElement>>('inlineActionHost');
   private requestGeneration = 0;
@@ -216,7 +219,7 @@ export class WorkbenchViewerComponent {
           : 'replace-current',
       });
     } else if (navigation?.kind === 'external') {
-      window.open(navigation.url, '_blank', 'noopener,noreferrer');
+      void openIsolatedHtmlExternalLink(this.confirmDialog, navigation.url);
     }
   }
 

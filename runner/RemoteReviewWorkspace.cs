@@ -497,6 +497,16 @@ public sealed class RemoteReviewWorkspace
                         command,
                         execution.AgentUsage));
                     SaveCaches(candidateCache);
+                    // AGT-3420: a CLI that refuses its model failed on the
+                    // project's review setting, not on this host's toolchain.
+                    if (AgentModelUnknownToCli(command, execution.Process))
+                        throw await InfrastructureFailureAsync(
+                            ReviewModelConfigurationPolicy.Classification,
+                            ReviewModelConfigurationPolicy.Summary(command.StepId, command.CliType, command.Model) +
+                            $" {CommandLine(command)}; exit={execution.Process.ExitCode}.",
+                            commands,
+                            artifacts,
+                            ct);
                     throw await InfrastructureFailureAsync(
                         "ToolUnavailable",
                         $"Review command '{command.StepId}' could not use its declared toolchain: " +
@@ -3382,6 +3392,16 @@ public sealed class RemoteReviewWorkspace
         => ReviewCommandKinds.IsAgent(command.ExecutionKind)
            && !result.Success
            && !result.StdOut.Contains("[[ASPECT_VERDICT:", StringComparison.Ordinal);
+
+    /// <summary>
+    /// AGT-3420: a failed agent aspect whose CLI does not know its model. A
+    /// missing CLI binary (exit 127) stays a host <c>ToolUnavailable</c>.
+    /// </summary>
+    internal static bool AgentModelUnknownToCli(ReviewCommandDto command, ProcessResult result)
+        => AgentCommandUnavailable(command, result)
+           && result.ExitCode != 127
+           && ReviewModelConfigurationPolicy.IsModelUnknownToCli(
+               command.CliType ?? command.FileName, command.Model, result.StdOut + "\n" + result.StdErr);
 
     /// <summary>
     /// True when an agent-aspect call was killed on its own timeout budget

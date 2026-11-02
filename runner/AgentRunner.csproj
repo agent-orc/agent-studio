@@ -54,6 +54,7 @@
       to the one in backend/OrchestratorApi.csproj (T4 adds the guard test).
     -->
     <PackageReference Include="CodingAgentRunner" Version="[0.7.0]" />
+    <PackageReference Include="Porta.Pty" Version="1.0.7" />
   </ItemGroup>
 
 </Project>

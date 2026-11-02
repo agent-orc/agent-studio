@@ -41,27 +41,33 @@ public interface IGitLockOwnerProbe
         => lockLastWriteTimesUtc.Select(time => Probe(scope, time)).ToArray();
 }
 
+/// <summary>One live git child of this server: where it runs and when it was registered.</summary>
+public sealed record GitServerChild(string WorkingDirectory, DateTime? StartedAtUtc);
+
 /// <summary>
 /// Live git children of this server, keyed by their working directory. Every
 /// backend spawn through <see cref="GitProcessBoundary"/> registers here,
 /// so the stale-lock guard can tell "our own git is still running in that
 /// repository" without an OS inventory (on Windows the inventory cannot read
-/// another process's working directory).
+/// another process's working directory). The registration time is taken
+/// before the process starts, so a child cannot have written a lock earlier.
 /// </summary>
 public static class GitChildProcessRegistry
 {
-    private static readonly ConcurrentDictionary<long, string> Live = new();
+    private static readonly ConcurrentDictionary<long, GitServerChild> Live = new();
     private static long _next;
 
     public static IDisposable Track(string? workingDirectory)
     {
         if (string.IsNullOrWhiteSpace(workingDirectory)) return NoopScope.Instance;
         var id = Interlocked.Increment(ref _next);
-        Live[id] = workingDirectory;
+        Live[id] = new GitServerChild(workingDirectory, DateTime.UtcNow);
         return new Scope(id);
     }
 
-    public static IReadOnlyList<string> WorkingDirectories() => Live.Values.ToArray();
+    public static IReadOnlyList<string> WorkingDirectories() => Live.Values.Select(child => child.WorkingDirectory).ToArray();
+
+    public static IReadOnlyList<GitServerChild> Children() => Live.Values.ToArray();
 
     private sealed class Scope(long id) : IDisposable
     {
@@ -81,25 +87,41 @@ public static class GitChildProcessRegistry
 /// a git process tied to the repository: on Linux by <c>/proc/&lt;pid&gt;/cwd</c>
 /// or command line, on Windows by a <c>git*.exe</c> whose command line names the
 /// path. A process whose working directory cannot be read and whose command
-/// line does not identify this repository leaves ownership unknown.
+/// line does not identify this repository leaves ownership unknown. A server
+/// child or OS process that started after the lock was last written cannot
+/// have taken it (git fails on an existing lock), so it does not count.
 /// </summary>
 public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
 {
-    private readonly Func<IReadOnlyList<string>> _serverChildren;
+    private readonly Func<IReadOnlyList<GitServerChild>> _serverChildren;
     private readonly Func<IReadOnlyList<GitProcessObservation>?> _inventory;
 
     public GitProcessLockOwnerProbe()
-        : this(GitChildProcessRegistry.WorkingDirectories, ReadInventory)
+        : this(GitChildProcessRegistry.Children, ReadInventory)
     {
     }
 
+    /// <summary>Server children without a known start time: each one is a possible owner.</summary>
     internal GitProcessLockOwnerProbe(
         Func<IReadOnlyList<string>> serverChildren,
+        Func<IReadOnlyList<GitProcessObservation>?> inventory)
+        : this(() => serverChildren().Select(cwd => new GitServerChild(cwd, null)).ToArray(), inventory)
+    {
+    }
+
+    private GitProcessLockOwnerProbe(
+        Func<IReadOnlyList<GitServerChild>> serverChildren,
         Func<IReadOnlyList<GitProcessObservation>?> inventory)
     {
         _serverChildren = serverChildren;
         _inventory = inventory;
     }
+
+    /// <summary>A probe over server children with registration times and an injected OS inventory.</summary>
+    internal static GitProcessLockOwnerProbe WithServerChildren(
+        Func<IReadOnlyList<GitServerChild>> serverChildren,
+        Func<IReadOnlyList<GitProcessObservation>?> inventory)
+        => new(serverChildren, inventory);
 
     public GitLockOwnership Probe(GitLockScope scope, DateTime lockLastWriteTimeUtc)
         => ProbeMany(scope, [lockLastWriteTimeUtc])[0];
@@ -108,17 +130,23 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
     {
         if (lockLastWriteTimesUtc.Count == 0) return [];
         var paths = scope.Paths().Select(NormalizeDirectory).ToArray();
-        if (_serverChildren().Any(cwd => IsInside(cwd, paths)))
+        var children = _serverChildren().Where(child => IsInside(child.WorkingDirectory, paths)).ToArray();
+        var ownedByChild = lockLastWriteTimesUtc
+            .Select(time => children.Any(child => child.StartedAtUtc is null || child.StartedAtUtc <= time))
+            .ToArray();
+        if (ownedByChild.All(owned => owned))
             return Enumerable.Repeat(GitLockOwnership.Owned, lockLastWriteTimesUtc.Count).ToArray();
 
         // A sibling working tree we could not resolve may host the owner.
         if (!scope.SharedWorkTreesComplete)
-            return Enumerable.Repeat(GitLockOwnership.Unknown, lockLastWriteTimesUtc.Count).ToArray();
+            return ownedByChild.Select(owned => owned ? GitLockOwnership.Owned : GitLockOwnership.Unknown).ToArray();
 
         var processes = _inventory();
         if (processes is null)
-            return Enumerable.Repeat(GitLockOwnership.Unknown, lockLastWriteTimesUtc.Count).ToArray();
-        return lockLastWriteTimesUtc.Select(time => DecideOwnership(processes, paths, time)).ToArray();
+            return ownedByChild.Select(owned => owned ? GitLockOwnership.Owned : GitLockOwnership.Unknown).ToArray();
+        return lockLastWriteTimesUtc
+            .Select((time, index) => ownedByChild[index] ? GitLockOwnership.Owned : DecideOwnership(processes, paths, time))
+            .ToArray();
     }
 
     private static GitLockOwnership DecideOwnership(
