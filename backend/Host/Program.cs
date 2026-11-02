@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.HttpOverrides;
 using AgentStudio.Telemetry;
+using AgentStudio.Host;
 using Serilog;
 using Serilog.Events;
 
@@ -55,6 +56,12 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+// WebApplicationFactory can use the default environment, so also detect its
+// in-process xunit host before loading any machine-specific settings.
+var underTestHost = Array.Exists(
+    AppDomain.CurrentDomain.GetAssemblies(),
+    a => a.GetName().Name?.StartsWith("xunit", StringComparison.OrdinalIgnoreCase) == true);
+HostStartupConfiguration.LoadLocalSettings(builder, args, underTestHost);
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
 builder.Services.AddSingleton<AgentStudio.Review.ReviewObservationStore>();
@@ -105,20 +112,7 @@ builder.Services.AddOptions<Microsoft.AspNetCore.HttpsPolicy.HstsOptions>().Conf
     options.MaxAge = TimeSpan.FromDays(365);
     options.IncludeSubDomains = true;
 });
-var publicDemoBodyCap = SecurityProfiles.IsPublicDemo(builder.Configuration);
-var maxRequestBodyBytes = builder.Configuration.GetValue<long>(
-    publicDemoBodyCap ? "Security:PublicDemoMaxRequestBodyBytes" : "Security:MaxRequestBodyBytes",
-    publicDemoBodyCap ? 16 * 1024 : 25 * 1024 * 1024);
-builder.Services.AddSingleton(new AgentStudio.Diagnostics.ArtifactRequestLimits(maxRequestBodyBytes));
-builder.WebHost.ConfigureKestrel(options =>
-{
-    // A public-demo visitor never has a legitimate reason to send a large
-    // body - every mutation is denied at the edge before it would be read.
-    // The tighter default only bounds the cost of an oversized request
-    // reaching Kestrel in the first place; it is not the mutation boundary.
-    options.Limits.MaxRequestBodySize = maxRequestBodyBytes;
-    options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
-});
+HostStartupConfiguration.ConfigureRequestBodyLimit(builder);
 
 // Default BackgroundServiceExceptionBehavior is StopHost: an unhandled
 // exception escaping any HostedService.ExecuteAsync stops the entire host.
@@ -129,25 +123,6 @@ builder.WebHost.ConfigureKestrel(options =>
 // surface the cause.
 builder.Services.Configure<HostOptions>(o =>
     o.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore);
-
-// WebApplicationFactory runs the real entry point in the xunit process. Keep
-// this signal alongside the Test environment check because a small number of
-// opt-in integration fixtures intentionally exercise the default environment.
-var underTestHost = Array.Exists(
-    AppDomain.CurrentDomain.GetAssemblies(),
-    a => a.GetName().Name?.StartsWith("xunit", StringComparison.OrdinalIgnoreCase) == true);
-
-// Local-only override file (gitignored) - sets per-checkout flags such as
-// Environment:IsDev. Loaded after appsettings.Development.json so a developer
-// can flip the dev banner / dev PWA icon on for their checkout without
-// committing the toggle. Test hosts must not inherit any configuration from
-// this machine-specific file. In-memory test fixtures are added later by
-// WebApplicationFactory and remain available without merging with local array
-// entries such as WatchPaths:1..n.
-if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
-{
-    builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
-}
 
 // Test-isolation guard (prevention). An integration test that boots
 // WebApplicationFactory<Program> must never touch the production task

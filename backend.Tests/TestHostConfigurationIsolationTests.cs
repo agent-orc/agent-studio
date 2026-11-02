@@ -1,13 +1,76 @@
+using AgentStudio.Diagnostics;
+using AgentStudio.Host;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
 public sealed class TestHostConfigurationIsolationTests
 {
+    [Fact]
+    public async Task LocalFileBodyLimit_ReachesKestrelAndArtifactLimits()
+    {
+        var contentRoot = TempPath("local-body-limit");
+        Directory.CreateDirectory(contentRoot);
+        try
+        {
+            File.WriteAllText(Path.Combine(contentRoot, "appsettings.Local.json"),
+                "{\"Security\":{\"MaxRequestBodyBytes\":134217728}}");
+            var builder = NewBuilder(contentRoot, "Production");
+            HostStartupConfiguration.LoadLocalSettings(builder, [], underTestHost: false);
+            HostStartupConfiguration.ConfigureRequestBodyLimit(builder);
+
+            await using var app = builder.Build();
+            Assert.Equal(134217728, app.Services.GetRequiredService<ArtifactRequestLimits>().MaxRequestBodyBytes);
+            Assert.Equal(134217728,
+                app.Services.GetRequiredService<IOptions<KestrelServerOptions>>().Value.Limits.MaxRequestBodySize);
+        }
+        finally
+        {
+            DeleteBestEffort(contentRoot);
+        }
+    }
+
+    [Theory]
+    [InlineData("Test", false)]
+    [InlineData("Production", true)]
+    public async Task TestHostSkipsLocalFileBeforeBodyLimitIsRead(string environment, bool underTestHost)
+    {
+        var contentRoot = TempPath("isolated-body-limit");
+        Directory.CreateDirectory(contentRoot);
+        try
+        {
+            File.WriteAllText(Path.Combine(contentRoot, "appsettings.Local.json"),
+                "{\"Security\":{\"MaxRequestBodyBytes\":134217728}}");
+            var builder = NewBuilder(contentRoot, environment);
+            HostStartupConfiguration.LoadLocalSettings(builder, [], underTestHost);
+            HostStartupConfiguration.ConfigureRequestBodyLimit(builder);
+
+            await using var app = builder.Build();
+            Assert.Equal(25L * 1024 * 1024,
+                app.Services.GetRequiredService<ArtifactRequestLimits>().MaxRequestBodyBytes);
+            Assert.Equal(25L * 1024 * 1024,
+                app.Services.GetRequiredService<IOptions<KestrelServerOptions>>().Value.Limits.MaxRequestBodySize);
+        }
+        finally
+        {
+            DeleteBestEffort(contentRoot);
+        }
+    }
+
+    private static WebApplicationBuilder NewBuilder(string contentRoot, string environment) =>
+        WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            ContentRootPath = contentRoot,
+            EnvironmentName = environment,
+        });
+
     [Fact]
     public async Task FreshTestHost_DoesNotLoadLocalConfiguration_AndStartsWithEmptyProjectRegistry()
     {
