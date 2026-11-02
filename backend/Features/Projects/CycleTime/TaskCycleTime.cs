@@ -88,6 +88,12 @@ public sealed record TaskCycleTime(
     public int EpisodeUnpricedCalls => Flow?.UnpricedCalls ?? 0;
     public long CardTokens { get; init; }
     public decimal CardCostUsd { get; init; }
+    /// <summary>
+    /// Seconds per review aspect step (<c>aspect-*</c>) inside the card's Post
+    /// Processing stays. Ledger rows win; local pipeline steps are the fallback.
+    /// </summary>
+    public IReadOnlyDictionary<string, double> ReviewAspectSeconds { get; init; } =
+        new Dictionary<string, double>(StringComparer.Ordinal);
 }
 
 /// <summary>Outcome of analysing one task: either a row or the reason it was excluded.</summary>
@@ -436,7 +442,40 @@ public static class TaskCycleTimeAnalyzer
             ReAcceptanceArtefacts = anchors.Artefacts.Count,
             ReAcceptanceArtefactTimes = anchors.Artefacts,
             Flow = flow,
+            ReviewAspectSeconds = AspectSeconds(intervals, postStepEvents, steps),
         }, null);
+    }
+
+    // ---- review aspects ----
+
+    private static IReadOnlyDictionary<string, double> AspectSeconds(
+        IReadOnlyList<LaneInterval> intervals, List<TimelineEvent> postStepEvents, List<PipelineStepTiming> steps)
+    {
+        var stays = intervals.Where(interval => interval.Lane == TaskStates.AutoReview).ToArray();
+        bool InReview(DateTime at) => stays.Any(stay => stay.Contains(at));
+        static bool IsAspect(string? stepId) => stepId?.StartsWith("aspect-", StringComparison.Ordinal) == true;
+        var seconds = new Dictionary<string, double>(StringComparer.Ordinal);
+        void Add(string aspect, double value) => seconds[aspect] = seconds.GetValueOrDefault(aspect) + value;
+
+        var finished = postStepEvents.Where(e => e.Kind == TimelineEventKinds.PostStepFinished
+            && InReview(e.Ts) && IsAspect(Detail(e, "pipelineStepId"))).ToList();
+        foreach (var row in finished)
+        {
+            var ms = ParseLong(Detail(row, "durationMs"));
+            if (ms is > 0)
+            {
+                Add(Detail(row, "pipelineStepId")!, ms.Value / 1000.0);
+                continue;
+            }
+            var started = postStepEvents.LastOrDefault(e => e.Kind == TimelineEventKinds.PostStepStarted
+                && e.Ts <= row.Ts && Detail(e, "stepId") == Detail(row, "stepId")
+                && Detail(e, "attemptId") == Detail(row, "attemptId"));
+            Add(Detail(row, "pipelineStepId")!, started is null ? 0 : Math.Max(0, (row.Ts - started.Ts).TotalSeconds));
+        }
+        if (finished.Count == 0)
+            foreach (var step in steps.Where(step => IsAspect(step.StepId) && InReview(step.StartedAt)))
+                Add(step.StepId, step.Seconds);
+        return seconds.ToDictionary(pair => pair.Key, pair => Round(pair.Value), StringComparer.Ordinal);
     }
 
     // ---- auto review split ----

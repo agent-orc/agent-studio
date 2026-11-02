@@ -29,6 +29,13 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+Each gate-economics row also carries the grouping figures of its window
+(AGT-3399): `batchesClosed` (distinct batches whose gate ran), `meanBatchSize`
+(largest membership per batch, averaged), and `soloGatedMerges` (merges
+integrated by a per-card gate). The project Flow health view reads them with the
+cycle-time rows, whose `reviewAspectSeconds` split review time per `aspect-*`
+step inside Post Processing.
+
 ### Per-project integration test placement (AGT-3314)
 
 `testing.mode` defaults to `pre-merge`. That path retains the existing
