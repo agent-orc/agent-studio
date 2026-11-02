@@ -36,6 +36,7 @@ public sealed class HostGitInvocationGuardTests
     [Trait("Category", "MachineBound")]
     [InlineData("core.hooksPath", "hostile-hooks")]
     [InlineData("core.fsmonitor", "true")]
+    [InlineData("core.symlinks", "true")]
     [InlineData("safe.bareRepository", "all")]
     public void HostGitInvocationOverridesInheritedUnsafeConfiguration(string key, string unsafeValue)
     {
@@ -58,11 +59,11 @@ public sealed class HostGitInvocationGuardTests
         Assert.Equal(key switch
         {
             "core.hooksPath" => OperatingSystem.IsWindows() ? "NUL" : "/dev/null",
-            "core.fsmonitor" => "false",
+            "core.fsmonitor" or "core.symlinks" => "false",
             _ => "explicit",
         }, result.StandardOutput.Trim());
-        Assert.Equal("4", start.Environment["GIT_CONFIG_COUNT"]);
+        Assert.Equal("5", start.Environment["GIT_CONFIG_COUNT"]);
         HostGitProcessHardening.Apply(start);
-        Assert.Equal("4", start.Environment["GIT_CONFIG_COUNT"]);
+        Assert.Equal("5", start.Environment["GIT_CONFIG_COUNT"]);
     }
 }

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Git;
+using AgentStudio.Shared;
 
 namespace AgentStudio.Pipeline;
 
@@ -147,7 +148,7 @@ public static class BatchGatePolicy
         IEnumerable<BatchGateSubject> candidates, BatchGateScope scope,
         string baseSha, BatchGateFormationOptions options,
         DateTimeOffset now, int reviewQueueLength = 0, bool loadThrottled = false,
-        bool gateBacklog = false)
+        bool gateBacklog = false, bool baseRed = false)
     {
         if (!options.IsValid) throw new ArgumentOutOfRangeException(nameof(options));
         var eligible = new List<BatchGateSubject>();
@@ -169,7 +170,13 @@ public static class BatchGatePolicy
         // slot queue alone as a per-task gate, until it aged out.
         var pressure = eligible.Count >= options.PressureSize
             && (reviewQueueLength >= options.ReviewQueuePressure || loadThrottled || gateBacklog);
-        if (eligible.Count < options.CloseSize && !deadline && !pressure)
+        // AGT-3414: a documentation-only gate runs no test, so waiting for a
+        // partner saves no suite and such a set closes at once. A backlogged
+        // gate queue keeps the AGT-3219 rules: each gate still takes a slot.
+        // A base recorded red keeps its hold instead of gating another candidate.
+        var closesAtOnce = !gateBacklog && !baseRed
+            && eligible.All(subject => subject.DocumentationOnly);
+        if (eligible.Count < options.CloseSize && !deadline && !pressure && !closesAtOnce)
             return new(null, exclusions, keys, false);
         if (eligible.Count == 1 && deadline)
             return new(null, exclusions, keys, !gateBacklog || reviewQueueLength == 0
@@ -185,6 +192,22 @@ public static class BatchGatePolicy
             selected, exclusions.ToArray(), keys);
         return new(manifest, exclusions, keys, false);
     }
+
+    /// <summary>
+    /// AGT-3414: the test level of a batch or per-task gate. Documentation-only
+    /// subjects run the build-only level, the build and lint commands without
+    /// any test; anything else runs the complete suite. The gated diff is
+    /// classified again so a stale or wrong subject flag cannot skip a test:
+    /// an unknown diff, a mixed one or one without subjects runs the suite.
+    /// A project whose plan has no build or lint command runs the suite too;
+    /// the build-only level would leave nothing to verify.
+    /// </summary>
+    public static string GateTestLevel(IReadOnlyCollection<BatchGateSubject> subjects,
+        IReadOnlyList<string>? gatedPaths, bool buildStepPlanned)
+        => buildStepPlanned && subjects.Count > 0
+           && subjects.All(subject => subject.DocumentationOnly)
+           && DocsOnlyDeliveryPolicy.IsDocsOnly(gatedPaths)
+            ? TestExecutionLevels.BuildOnly : TestExecutionLevels.Full;
 
     /// <summary>
     /// AGT-3103: a waiting member whose result SHA the integration branch
