@@ -18,6 +18,7 @@ export default defineConfig({
       '**/board/failed-pickup-lane.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',
+      '**/workspace/structure-view.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/studio-shell/activity-bar-single-active.spec.ts',
     ],

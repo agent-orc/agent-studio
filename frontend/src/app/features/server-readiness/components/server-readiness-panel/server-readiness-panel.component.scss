@@ -1,0 +1,83 @@
+@use '../../../../../styles/mixins' as m;
+
+.readiness {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+  h2 { margin: 0; font-size: 1rem; }
+  h2 small { font-weight: normal; color: var(--studio-text-secondary); }
+  p { margin: 0; color: var(--studio-text-secondary); }
+}
+.readiness__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--studio-spacing-3);
+  margin-bottom: var(--studio-spacing-2);
+}
+.readiness__actions {
+  display: flex;
+  gap: var(--studio-spacing-2);
+  button {
+    color: inherit;
+    background: var(--studio-surface);
+    border: 1px solid var(--studio-border);
+    border-radius: .4rem;
+    padding: .35rem .75rem;
+    cursor: pointer;
+    &:disabled { cursor: progress; color: var(--studio-text-secondary); }
+  }
+}
+// "Show N passing" expands rows in place: the shared disclosure grammar (ADM-17).
+.readiness__actions .readiness__passing {
+  @include m.disclosure-control;
+  width: auto;
+}
+.readiness__table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+}
+.readiness table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  text-align: left;
+  background: var(--studio-surface);
+  th, td {
+    padding: var(--studio-spacing-2) var(--studio-spacing-3);
+    border-bottom: 1px solid var(--studio-border);
+    vertical-align: top;
+  }
+  thead { color: var(--studio-text-secondary); font-size: 0.76rem; }
+  thead th:nth-child(1) { width: 7.5rem; }
+  thead th:nth-child(2) { width: 15rem; }
+  tbody th { font-weight: 500; }
+  tbody th small { display: block; font-weight: normal; color: var(--studio-text-secondary); overflow-wrap: anywhere; }
+  td { overflow-wrap: anywhere; }
+  tr[data-state='fail'] { background: color-mix(in srgb, var(--studio-error) 8%, var(--studio-surface)); }
+  tr[data-state='warn'] { background: color-mix(in srgb, var(--studio-warn) 8%, var(--studio-surface)); }
+  code {
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+.readiness__group th {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--studio-text-secondary);
+  background: var(--studio-bg-surface);
+}
+.readiness__state { white-space: nowrap; }
+.readiness__none { color: var(--studio-text-secondary); }
+.readiness__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--studio-spacing-1);
+  border-radius: 50%;
+  background: var(--studio-text-secondary);
+  &[data-state='pass'] { background: var(--studio-success); }
+  &[data-state='warn'] { background: var(--studio-warn); }
+  &[data-state='fail'] { background: var(--studio-error); }
+}

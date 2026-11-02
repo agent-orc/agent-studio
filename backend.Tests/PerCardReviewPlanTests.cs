@@ -73,12 +73,48 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.Contains("bash scripts/npm-frontend.sh run lint", shells);
         Assert.Contains("dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "
             + "\"(Category!=MachineBound)&(FullyQualifiedName~FooServiceTests)\"", shells);
+        Assert.Contains("dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "
+            + "\"(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)\"", shells);
         Assert.DoesNotContain(BackendTest, shells);
         Assert.DoesNotContain(FrontendUnit, shells);
         Assert.DoesNotContain("bash scripts/npm-frontend.sh run typecheck", shells);
         Assert.Equal(TestExecutionLevels.WorkPackage, plan.TestLevel);
         Assert.Matches("^[0-9a-f]{64}$", plan.TestSelectionDigest!);
         Assert.False(plan.BuildTestDeferredToBatch);
+    }
+
+    [Fact]
+    public void BackendReviewRunsDeclaredGuardsWhenClassSelectionFindsNoTest()
+    {
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        var selected = verify with
+        {
+            Commands = verify.Commands.Where(command => command.Kind != VerifyCommandKind.Test).ToArray(),
+        };
+
+        var plan = V1ReviewPlaneEndpoints.FallbackPlan(_repo, null, "develop",
+            ["backend/FooService.cs"], selected);
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains(
+            "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "
+            + "\"(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)\""));
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains(BackendTest));
+    }
+
+    [Fact]
+    public void BackendReviewRunsGuardsWhenThePlanBuilderResolvesTheDiff()
+    {
+        var resultSha = Commit("backend/FooService.cs");
+        var plan = Builder().Build(new TaskInfo
+        {
+            Id = "task", TaskKey = "task", ProjectName = "project",
+            WatchPath = _repo, FolderPath = _folder, State = TaskStates.AutoReview,
+        }, _repo, new ProjectSettings(), "develop", resultSha,
+            changedFiles: null, immutableResultRef: ResultRef);
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains(
+            "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "
+            + "\"(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)\""));
     }
 
     [Fact]

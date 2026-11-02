@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-10-28
+Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
 ## Dynamic placement host agent, DP-S2
@@ -705,6 +705,13 @@ unreported claim expires with its lease and is queued again.
   terminal extraction, and the pure typed-outcome policy. The
   [CLI frame compatibility matrix](../cli/frame-compatibility-matrix.md) is the
   current vocabulary and replay-corpus system of record.
+- Codex's "Selected model is at capacity" failure is a transient model-capacity
+  outcome, distinct from quota and rate-limit refusals. The runner retries the
+  same session after 30 seconds, 2 minutes, and 5 minutes, retaining its fenced
+  lease and provider-auth availability. If all retries fail, the typed
+  `TransientModelCapacity` completion returns the card to Ready with the
+  published salvage ref as its next starting point. A real usage limit or HTTP
+  429 with a reset continues to hold the provider until recovery.
 - `backend/Features/Runner/PromptEnrichmentService.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteRunPrompt.cs`: shared pre-spawn prompt materialization. Local

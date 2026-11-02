@@ -2,6 +2,9 @@ using AgentStudio.Deploy;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Management;
+using AgentStudio.Registry;
+using AgentStudio.Git;
 
 namespace AgentStudio.Projects;
 
@@ -9,6 +12,37 @@ public static class ProjectOperatorDashboardEndpoints
 {
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/v1/operations/structure", (string? scope, string? environment,
+            IConfiguration configuration, ProjectRegistry projects, WorkspaceRegistry workspaces,
+            ProjectEnvironmentService environments, EnvironmentHealthService health,
+            GitService git) =>
+        {
+            if (scope is not null && scope != "workspace" && !scope.StartsWith("project:", StringComparison.Ordinal))
+                return Results.BadRequest(new { error = "scope must be workspace or project:{id}." });
+            var projectId = scope?.StartsWith("project:", StringComparison.Ordinal) == true ? scope[8..] : null;
+            if (projectId is not null)
+            {
+                var project = projects.FindByIdOrDisplayName(projectId);
+                if (project is null) return Results.NotFound();
+                projectId = project.Id;
+            }
+            InstallationConnectivityManifest? manifest = null;
+            var path = configuration[ConnectivityManifestLoader.ManifestPathKey];
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                try { manifest = InstallationConnectivityManifest.Parse(File.ReadAllText(Path.GetFullPath(path))); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                { return Results.Problem("Connectivity manifest is unavailable.", statusCode: 503); }
+            }
+            return Results.Ok(StructureProjection.Build(manifest, projects.List(),
+                environments.DeclarationFiles, projectId, environment,
+                project => git.ResolveRepoRootForProject(project.DisplayName),
+                workspaces.List().Where(workspace => projectId is null ||
+                    projects.FindById(projectId)?.WorkspaceId == workspace.Id)
+                    .SelectMany(workspace => workspace.Systems).ToArray(),
+                ManagedServiceProbes(health)));
+        });
+
         app.MapGet("/api/environment/flow", (EnvironmentFlowService flow) =>
             Results.Ok(flow.Build()));
 
@@ -348,6 +382,24 @@ public static class ProjectOperatorDashboardEndpoints
             { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
                 statusCode: StatusCodes.Status403Forbidden),
             var refused => Results.Conflict(new { error = refused.Error }),
+        };
+    }
+
+    /// <summary>
+    /// A managed service is observed through the environment health check it
+    /// names; the control-plane worker already probes those checks. One health
+    /// read per project and request.
+    /// </summary>
+    private static Func<ProjectRecord, string, string, StructureProbe?> ManagedServiceProbes(EnvironmentHealthService health)
+    {
+        var read = new Dictionary<string, ProjectEnvironmentHealthResponse?>(StringComparer.OrdinalIgnoreCase);
+        return (project, environment, checkId) =>
+        {
+            if (!read.TryGetValue(project.DisplayName, out var response))
+                read[project.DisplayName] = response = health.Read(project.DisplayName);
+            var check = response?.Environments.FirstOrDefault(item => item.EnvironmentId == environment)?
+                .Checks.FirstOrDefault(item => item.Id == checkId);
+            return check is null ? null : new StructureProbe(check.Kind, check.Status);
         };
     }
 

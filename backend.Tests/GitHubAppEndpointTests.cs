@@ -347,6 +347,124 @@ public sealed class GitHubAppEndpointTests(GitHubAppEndpointTests.LocalHost loca
         Assert.False(File.Exists(store + ".config"));
     }
 
+    [Fact]
+    public async Task Background_start_writes_the_host_tokens_and_signals_readiness()
+    {
+        var store = Path.Combine(_root, "studio-host-start", "git-credentials");
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 6, 0, 0, TimeSpan.Zero));
+        using var http = new HttpClient(new TokenOnlyGitHub(clock));
+        var readiness = new GitHubAppHostCredentialReadiness();
+        var service = HostCredentials(new GitHubAppBroker(new GitHubAppClient(http, clock), new FixedConnectionVault(),
+            new FixedCatalog("https://github.com/owner/private.git"), clock), clock, store, readiness);
+        Assert.True(readiness.Pending);
+        try
+        {
+            await service.StartAsync(CancellationToken.None);
+            Assert.True(await readiness.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None));
+            Assert.True(File.Exists(store));
+            Assert.True(File.Exists(store + ".config"));
+            Assert.False(readiness.Pending);
+            Assert.True(await readiness.WaitAsync(TimeSpan.Zero, CancellationToken.None));
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+            clock.Advance(TimeSpan.FromMinutes(61));
+            service.DropIfExpired();
+        }
+    }
+
+    [Fact]
+    public async Task A_held_repository_catalog_does_not_hold_host_start()
+    {
+        var store = Path.Combine(_root, "studio-host-held-catalog", "git-credentials");
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 6, 0, 0, TimeSpan.Zero));
+        using var http = new HttpClient(new TokenOnlyGitHub(clock));
+        var catalog = new BlockingCatalog("https://github.com/owner/private.git");
+        var readiness = new GitHubAppHostCredentialReadiness();
+        var service = HostCredentials(new GitHubAppBroker(new GitHubAppClient(http, clock), new FixedConnectionVault(),
+            catalog, clock), clock, store, readiness);
+        try
+        {
+            await service.StartAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+            await catalog.Entered.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(readiness.Pending);
+            Assert.False(File.Exists(store));
+
+            catalog.Release();
+            Assert.True(await readiness.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None));
+            Assert.True(File.Exists(store));
+        }
+        finally
+        {
+            catalog.Release();
+            await service.StopAsync(CancellationToken.None);
+            clock.Advance(TimeSpan.FromMinutes(61));
+            service.DropIfExpired();
+        }
+    }
+
+    [Fact]
+    public async Task A_failed_start_refresh_keeps_integration_waiting_until_a_retry_writes_the_tokens()
+    {
+        var store = Path.Combine(_root, "studio-host-retry", "git-credentials");
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 6, 0, 0, TimeSpan.Zero));
+        var github = new SwitchableGitHub(new TokenOnlyGitHub(clock)) { Refuse = true };
+        using var http = new HttpClient(github);
+        var readiness = new GitHubAppHostCredentialReadiness();
+        var service = HostCredentials(new GitHubAppBroker(new GitHubAppClient(http, clock), new FixedConnectionVault(),
+            new FixedCatalog("https://github.com/owner/private.git"), clock), clock, store, readiness);
+        service.NotReadyRetryInterval = TimeSpan.FromMilliseconds(50);
+        try
+        {
+            // A failed first refresh does not hold the host start.
+            await service.StartAsync(CancellationToken.None);
+
+            Assert.False(File.Exists(store));
+            Assert.True(readiness.Pending);
+            using var failureWait = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (string.IsNullOrWhiteSpace(readiness.LastFailure))
+                await Task.Delay(10, failureWait.Token);
+            Assert.False(await readiness.WaitAsync(TimeSpan.FromMilliseconds(100), CancellationToken.None));
+
+            github.Refuse = false;
+
+            Assert.True(await readiness.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None));
+            Assert.True(File.Exists(store));
+            Assert.Null(readiness.LastFailure);
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+            clock.Advance(TimeSpan.FromMinutes(61));
+            service.DropIfExpired();
+        }
+    }
+
+    [Fact]
+    public async Task A_host_without_the_credential_service_never_waits_for_it()
+    {
+        var readiness = new GitHubAppHostCredentialReadiness();
+
+        Assert.False(readiness.Pending);
+        Assert.True(await readiness.WaitAsync(TimeSpan.Zero, CancellationToken.None));
+    }
+
+    private static GitHubAppHostCredentialService HostCredentials(GitHubAppBroker broker, TimeProvider clock,
+        string store, GitHubAppHostCredentialReadiness readiness)
+        => new(broker, new ConfigurationBuilder().Build(), clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GitHubAppHostCredentialService>.Instance, store, readiness);
+
+    private sealed class SwitchableGitHub(HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        public volatile bool Refuse;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Refuse
+                ? throw new HttpRequestException("GitHub is not reachable yet.")
+                : base.SendAsync(request, cancellationToken);
+    }
+
     private sealed class FixedConnectionVault : IGitHubAppVault
     {
         private static readonly string Key = CreateKey();
@@ -372,6 +490,21 @@ public sealed class GitHubAppEndpointTests(GitHubAppEndpointTests.LocalHost loca
     {
         public Task<IReadOnlyList<RegisteredRepository>> ListAsync(CancellationToken ct)
             => Task.FromResult<IReadOnlyList<RegisteredRepository>>([new("Site", url)]);
+    }
+
+    private sealed class BlockingCatalog(string url) : IRegisteredRepositoryCatalog
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task Entered => _entered.Task;
+        public void Release() => _released.TrySetResult();
+
+        public async Task<IReadOnlyList<RegisteredRepository>> ListAsync(CancellationToken ct)
+        {
+            _entered.TrySetResult();
+            await _released.Task.WaitAsync(ct);
+            return [new RegisteredRepository("Site", url)];
+        }
     }
 
     private sealed class TokenOnlyGitHub(TimeProvider clock) : HttpMessageHandler

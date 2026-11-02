@@ -1,0 +1,38 @@
+<section class="readiness" aria-labelledby="readiness-title" data-testid="server-readiness" [attr.data-state]="report()?.state">
+  <div class="readiness__head">
+    <h2 id="readiness-title">Server readiness @if (summary()) { <small>{{ summary() }}</small> }</h2>
+    <div class="readiness__actions">
+      @if (passing()) {
+        <button type="button" class="readiness__passing" data-testid="server-readiness-passing" aria-controls="readiness-lines" [attr.aria-expanded]="showPassing()"
+          (click)="showPassing.set(!showPassing())">
+          <app-disclosure-marker [open]="showPassing()" [size]="10" />
+          <span>{{ showPassing() ? 'Hide' : 'Show' }} {{ passing() }} passing</span></button>
+      }
+      <button type="button" data-testid="server-readiness-recheck" [disabled]="checking()" (click)="recheck()">
+        {{ checking() ? 'Checking…' : 'Recheck' }}</button>
+    </div>
+  </div>
+  @if (error(); as message) { <p role="status">{{ message }}</p> }
+  @if (report(); as state) {
+    @if (state.computedAt && !groups().length) {
+      <p data-testid="server-readiness-all-ready">Every check passes.</p>
+    } @else if (state.computedAt) {
+      <div class="readiness__table-wrap" id="readiness-lines"><table>
+        <thead><tr><th scope="col">State</th><th scope="col">Check</th><th scope="col">What it means</th><th scope="col">Remedy</th></tr></thead>
+        @for (group of groups(); track group.key) {
+          <tbody>
+            <tr class="readiness__group"><th colspan="4" scope="colgroup">{{ group.label }}</th></tr>
+            @for (check of group.checks; track key(check)) {
+              <tr [attr.data-state]="check.state" [attr.data-check]="check.id" [attr.data-testid]="'readiness-' + key(check)">
+                <td class="readiness__state"><span class="readiness__dot" [attr.data-state]="check.state" aria-hidden="true"></span>{{ label[check.state] }}</td>
+                <th scope="row">{{ check.title }} @if (check.subject && check.scope !== 'project') { <small>{{ check.subject }}</small> }</th>
+                <td>{{ check.meaning }}</td>
+                <td>@if (check.remedy) { <code>{{ check.remedy }}</code> } @else { <span class="readiness__none">None needed</span> }</td>
+              </tr>
+            }
+          </tbody>
+        }
+      </table></div>
+    } @else { <p role="status">The server is computing its first readiness report.</p> }
+  } @else if (!error()) { <p role="status">Loading server readiness…</p> }
+</section>

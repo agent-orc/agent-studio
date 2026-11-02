@@ -4,12 +4,24 @@ using AgentStudio.TaskServer.Contracts;
 namespace AgentRunner;
 
 /// <summary>
+/// Executes one frozen Remote Review agent aspect. The workspace calls it from
+/// several aspects at once (AGT-3424), so an implementation keeps no state per
+/// call and stops the aspect when its token is cancelled.
+/// </summary>
+internal interface IReviewAgentCommandRunner
+{
+    string PlannedExecutable(ReviewCommandDto command);
+
+    Task<CommandExecution> RunAsync(ReviewCommandDto command, CancellationToken ct);
+}
+
+/// <summary>
 /// CAR-backed, read-only coding-agent execution for a frozen Remote Review
 /// aspect. Keeping the agent invocation adapter separate from repository tool
 /// commands prevents the generic review workspace from becoming a second CLI
 /// process-launch layer.
 /// </summary>
-internal sealed class RemoteReviewAgentCommandRunner
+internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
 {
     private readonly RunnerOptions _options;
     private readonly ReviewLeaseDto _lease;
@@ -95,7 +107,8 @@ internal sealed class RemoteReviewAgentCommandRunner
                 workerDirectory,
                 (stream, line) =>
                     _log($"review-agent step={command.StepId} stream={stream} {line}"),
-                cleanContextRoot: _homePath);
+                cleanContextRoot: _homePath,
+                stopToken: ct);
             ct.ThrowIfCancellationRequested();
             var provider = ProviderOutputEvidenceExtractor.Extract(raw.StdOut);
             var response = string.IsNullOrWhiteSpace(provider.FinalAssistantOutput)

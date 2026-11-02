@@ -34,7 +34,8 @@ public sealed record PersistedReviewSlot(
     string? WorkerReleaseId = null,
     string? WorkerBinaryPath = null,
     bool ReducedReportSubmitted = false,
-    int ConsecutiveReportBadGateway = 0)
+    int ConsecutiveReportBadGateway = 0,
+    int ConsecutiveReducedReportFailures = 0)
 {
     public string AttemptId => Claim.Attempt?.AttemptId
                                ?? throw new InvalidDataException("Persisted review claim has no attempt.");

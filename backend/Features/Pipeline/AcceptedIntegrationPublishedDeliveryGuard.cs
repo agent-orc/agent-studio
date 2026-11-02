@@ -77,6 +77,7 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
     {
         if (job.State != TaskStates.Completed || git is null ||
             failureCode is not (AcceptedIntegrationFailureCodes.BranchSyncFailed or
+                AcceptedIntegrationFailureCodes.GitCredentialUnavailable or
                 AcceptedIntegrationFailureCodes.WorktreeUnavailable or
                 AcceptedIntegrationFailureCodes.NoTaskBranch)) return false;
         var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);

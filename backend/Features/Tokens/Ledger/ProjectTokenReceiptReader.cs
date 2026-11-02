@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 
@@ -14,6 +15,14 @@ namespace AgentStudio.Tokens;
 /// Each task's calls collapse through <see cref="TokenLedgerDuplicates"/>
 /// before the totals are derived, so history no longer inflates the
 /// project rollups.
+/// <para>
+/// The ledger re-reads every receipt of a project, archive included, whenever
+/// the task index moves. On a workspace with thousands of cards that walk was
+/// the largest single allocator of the API (AGT-3369). Each folder's parsed
+/// receipt is therefore kept against the length and write time of its
+/// <c>task.json</c>, the fingerprint the task scanner uses as well: an
+/// unchanged card costs one file stat, a rewritten one is parsed again.
+/// </para>
 /// </remarks>
 public sealed class ProjectTokenReceiptReader
 {
@@ -21,6 +30,22 @@ public sealed class ProjectTokenReceiptReader
     {
         PropertyNameCaseInsensitive = true,
     };
+
+    private readonly ConcurrentDictionary<string, ParsedReceipt> _parsed = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
+    /// <summary>
+    /// One folder's receipt as read from its <c>task.json</c>. <see cref="JobId"/>
+    /// is null when the file names no task; <see cref="Summary"/> is null when the
+    /// task has no receipt; <see cref="Failed"/> marks an unreadable file.
+    /// </summary>
+    private sealed record ParsedReceipt(
+        long Length,
+        DateTime WriteUtc,
+        string? JobId,
+        TaskTokenSummary? Summary,
+        TokenLedgerCollapseCount Collapsed,
+        bool Failed);
 
     public ProjectTokenReceiptReadResult Read(string watchPath)
     {
@@ -40,52 +65,33 @@ public sealed class ProjectTokenReceiptReader
         var failed = 0;
         var collapsed = TokenLedgerCollapseCount.None;
 
+        var visited = new HashSet<string>(_parsed.Comparer);
         try
         {
             foreach (var folder in EnumerateTaskFolders(watchPath))
             {
                 var path = Path.Combine(folder, "task.json");
-                if (!File.Exists(path)) continue;
+                var file = new FileInfo(path);
+                if (!file.Exists) continue;
+                visited.Add(path);
 
-                try
-                {
-                    using var document = JsonDocument.Parse(File.ReadAllText(path));
-                    var root = document.RootElement;
-                    var jobId = ReadString(root, "id") ?? Path.GetFileName(folder);
-                    if (string.IsNullOrWhiteSpace(jobId))
-                    {
-                        failed++;
-                        continue;
-                    }
-                    if (!seenTaskIds.Add(jobId)) continue;
-
-                    if (!TryGetProperty(root, "tokenSummary", out var tokenSummaryElement)
-                        || tokenSummaryElement.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-                    {
-                        continue;
-                    }
-
-                    var summary = tokenSummaryElement.Deserialize<TaskTokenSummary>(Json);
-                    if (summary is null)
-                    {
-                        failed++;
-                        continue;
-                    }
-
-                    var normalized = NormalizeSummary(summary, out var taskCollapsed);
-                    collapsed = collapsed.Add(taskCollapsed);
-                    summaries[jobId] = normalized;
-                    if (normalized.TotalTokens > 0 && normalized.Entries.Count == 0)
-                    {
-                        failed++;
-                        continue;
-                    }
-                    entries.AddRange(ToEntries(jobId, normalized));
-                }
-                catch (Exception)
+                var receipt = ReadReceipt(path, folder, file);
+                if (receipt.Failed)
                 {
                     failed++;
+                    continue;
                 }
+                if (!seenTaskIds.Add(receipt.JobId!)) continue;
+                if (receipt.Summary is not { } normalized) continue;
+
+                collapsed = collapsed.Add(receipt.Collapsed);
+                summaries[receipt.JobId!] = normalized;
+                if (normalized.TotalTokens > 0 && normalized.Entries.Count == 0)
+                {
+                    failed++;
+                    continue;
+                }
+                entries.AddRange(ToEntries(receipt.JobId!, normalized));
             }
         }
         catch (Exception)
@@ -99,10 +105,68 @@ public sealed class ProjectTokenReceiptReader
                 CollapsedDuplicates: collapsed);
         }
 
+        // Forget folders of this project that are gone, so the memo cannot grow
+        // with history. Other projects' entries live under other prefixes.
+        var prefix = Path.TrimEndingDirectorySeparator(watchPath) + Path.DirectorySeparatorChar;
+        foreach (var path in _parsed.Keys)
+        {
+            if (path.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+                && !visited.Contains(path))
+                _parsed.TryRemove(path, out _);
+        }
+
         var warning = failed > 0
             ? $"Token receipts for {failed} task{(failed == 1 ? "" : "s")} could not be read. Values may be incomplete."
             : null;
         return new ProjectTokenReceiptReadResult(entries, summaries, true, failed, warning, collapsed);
+    }
+
+    private ParsedReceipt ReadReceipt(string path, string folder, FileInfo file)
+    {
+        if (_parsed.TryGetValue(path, out var known)
+            && known.Length == file.Length
+            && known.WriteUtc == file.LastWriteTimeUtc)
+        {
+            return known;
+        }
+
+        var parsed = ParseReceipt(folder, file);
+        _parsed[path] = parsed;
+        return parsed;
+    }
+
+    private static ParsedReceipt ParseReceipt(string folder, FileInfo file)
+    {
+        var length = file.Length;
+        var writeUtc = file.LastWriteTimeUtc;
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(file.FullName));
+            var root = document.RootElement;
+            var jobId = ReadString(root, "id") ?? Path.GetFileName(folder);
+            if (string.IsNullOrWhiteSpace(jobId))
+                return new ParsedReceipt(length, writeUtc, null, null, TokenLedgerCollapseCount.None, Failed: true);
+
+            if (!TryGetProperty(root, "tokenSummary", out var tokenSummaryElement)
+                || tokenSummaryElement.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            {
+                return new ParsedReceipt(length, writeUtc, jobId, null, TokenLedgerCollapseCount.None, Failed: false);
+            }
+
+            var summary = tokenSummaryElement.Deserialize<TaskTokenSummary>(Json);
+            if (summary is null)
+                return new ParsedReceipt(length, writeUtc, jobId, null, TokenLedgerCollapseCount.None, Failed: true);
+
+            var normalized = NormalizeSummary(summary, out var taskCollapsed);
+            return new ParsedReceipt(length, writeUtc, jobId, normalized, taskCollapsed, Failed: false);
+        }
+        catch (Exception)
+        {
+            // A torn or half-written file: parse it again on the next read
+            // instead of keeping the failure against a fingerprint that a
+            // finished write may not change.
+            return new ParsedReceipt(-1, default, null, null, TokenLedgerCollapseCount.None, Failed: true);
+        }
     }
 
     internal static TaskTokenSummary NormalizeSummary(

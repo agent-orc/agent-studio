@@ -226,6 +226,8 @@
               <section class="studio-explorer">
                 <button type="button" class="studio-deployment-entry" data-testid="studio-open-deployment-dashboard"
                         (click)="openDeploymentDashboard()">Deployment dashboard</button>
+                <button type="button" class="studio-deployment-entry" data-testid="studio-open-structure"
+                        (click)="openStructure()">Structure</button>
                 <!-- F46: two-level workspace → project tree. The flat
                      project list is grouped under its registry workspace
                      by <app-explorer-workspace-tree>; the shell keeps
@@ -478,6 +480,13 @@
             (openDeployment)="openProjectDeployment($event)"
             (openCard)="openDeliveryCard($event)" />
           }
+        }
+        @if (activeTab()?.kind === 'structure') {
+          @defer (when structureComponent()) {
+            @if (structureComponent(); as component) {
+              <ng-container *ngComponentOutlet="component; inputs: { projectName: $any(activeTab()).projectName ?? null }" />
+            }
+          } @placeholder { <p>Loading structure…</p> }
         }
         @if (activeTab() === null) {
           <app-studio-welcome

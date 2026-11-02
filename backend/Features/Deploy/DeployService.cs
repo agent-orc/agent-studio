@@ -589,7 +589,7 @@ public sealed class DeployService
     {
         lock (_gate)
         {
-            var snapshot = SyncLocked(project);
+            var snapshot = ReadOnlySnapshot(project);
             if (snapshot is null) return null;
             var runs = snapshot.Deployments(project).Where(item => item.Tenant is null).ToArray();
             var health = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
@@ -1306,6 +1306,19 @@ public sealed class DeployService
         return run with { Steps = DeploymentStepPlan.Build(run) };
     }
 
+    // Delivery reads project current files in memory. Reconciliation writes and
+    // failure-card creation belong to the background/mutation paths, never GET.
+    private Snapshot? ReadOnlySnapshot(string project)
+    {
+        var view = _environments.Read(project);
+        if (view is null) return null;
+        var environments = MapEnvironments(project, view.Environments.Select(item => item.Declaration));
+        var records = _store.ReadReleaseRecords(project);
+        var result = DeploymentReconciler.Reconcile(new(environments, records, _store.ReadDeployments(project),
+            view.Jobs, view.Promotions, _clock.GetUtcNow().UtcDateTime));
+        return new Snapshot(environments, records, result.Deployments, view);
+    }
+
     private Snapshot? SyncLocked(string project)
     {
         var view = _environments.Read(project);
@@ -1370,8 +1383,7 @@ public sealed class DeployService
         }
         // The published task index can lag a new card. Read storage once so a
         // restart cannot mint a duplicate for a run that already has its card.
-        var existing = _scanner.ScanAllJobsRaw()
-            .Where(item => WatchPathComparison.PathsEqual(item.WatchPath, watchPath))
+        var existing = _scanner.ScanWatchPathRaw(watchPath)
             .Select(item => item.Id)
             .ToHashSet(StringComparer.Ordinal);
         foreach (var run in pending.Where(item => !existing.Contains(FailureCardId(item.Id))))

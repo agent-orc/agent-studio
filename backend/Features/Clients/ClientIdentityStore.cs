@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -49,7 +48,7 @@ public class ClientIdentityStore
     private readonly Dictionary<string, ClientIdentityFileDiagnostic> _diagnostics = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _lastSeenPersistedAt = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
-    private readonly ConcurrentDictionary<string, byte> _pendingSeen = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _dirtySeen = new(StringComparer.OrdinalIgnoreCase);
 
     public ClientIdentityStore(IConfiguration config, ILogger<ClientIdentityStore> logger)
         : this(config, logger, new AtomicJsonFileWriter())
@@ -175,17 +174,8 @@ public class ClientIdentityStore
         return Volatile.Read(ref _published).Values;
     }
 
-    /// <summary>Coalesce board last-seen stamps so a read never waits for identity persistence.</summary>
-    public void RecordSeenDeferred(string id)
-    {
-        if (!_pendingSeen.TryAdd(id, 0)) return;
-        _ = Task.Run(() =>
-        {
-            try { RecordSeen(id); }
-            catch (Exception ex) { _logger.LogError(ex, "Failed to record board last-seen for '{Id}'", id); }
-            finally { _pendingSeen.TryRemove(id, out _); }
-        });
-    }
+    /// <summary>Board reads use the same in-memory stamp as every request.</summary>
+    public void RecordSeenDeferred(string id) => RecordSeen(id);
 
     private void SetRecordLocked(ClientIdentity record)
     {
@@ -655,15 +645,23 @@ public class ClientIdentityStore
         lock (_lock)
         {
             if (!_byId.TryGetValue(id, out var existing)) return;
-            // Throttle disk writes: only flush when last-seen is older than 30s.
-            // The in-memory copy always carries the freshest value.
-            var stamped = existing with { LastSeenAt = DateTime.UtcNow };
-            SetRecordLocked(stamped);
-            var lastPersistedAt = _lastSeenPersistedAt.GetValueOrDefault(id);
-            if (lastPersistedAt == default
-                || (stamped.LastSeenAt!.Value - lastPersistedAt).TotalSeconds >= 30)
+            var now = DateTime.UtcNow;
+            if (existing.LastSeenAt is { } seen && now - seen < TimeSpan.FromSeconds(1)) return;
+            SetRecordLocked(existing with { LastSeenAt = now });
+            _dirtySeen.Add(id);
+        }
+    }
+
+    /// <summary>Persist coalesced last-seen stamps off the request path.</summary>
+    public void FlushLastSeen()
+    {
+        if (!Volatile.Read(ref _loaded)) return;
+        lock (_lock)
+        {
+            foreach (var id in _dirtySeen.ToArray())
             {
-                try { WriteLocked(stamped); }
+                if (!_byId.TryGetValue(id, out var record)) { _dirtySeen.Remove(id); continue; }
+                try { WriteLocked(record); _dirtySeen.Remove(id); }
                 catch (Exception ex) { _logger.LogError(ex, "Failed to persist last-seen for '{Id}'", id); }
             }
         }
@@ -691,6 +689,7 @@ public class ClientIdentityStore
     {
         var path = Path.Combine(IdentitiesFolder, record.Id + ".json");
         _fileWriter.Write(path, JsonSerializer.Serialize(record, WriteOpts));
+        _dirtySeen.Remove(record.Id);
         _diagnostics.Remove(record.Id);
         if (record.LastSeenAt is { } lastSeenAt)
             _lastSeenPersistedAt[record.Id] = lastSeenAt;
