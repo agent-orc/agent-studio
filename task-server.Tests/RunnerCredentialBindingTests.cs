@@ -521,10 +521,10 @@ public sealed class RunnerCredentialBindingTests
                 services.AddSingleton<IGitHubAppVault>(github.Vault);
                 services.RemoveAll<GitHubAppBroker>();
                 services.AddSingleton(provider => new GitHubAppBroker(
-                    new GitHubAppClient(new HttpClient(github), TimeProvider.System),
+                    new GitHubAppClient(new HttpClient(github), clock),
                     github.Vault,
                     provider.GetRequiredService<IRegisteredRepositoryCatalog>(),
-                    TimeProvider.System));
+                    clock));
             });
         }
     }
@@ -560,7 +560,7 @@ public sealed class RunnerCredentialBindingTests
                 return Json(new
                 {
                     token = "fake-" + RandomNumberGenerator.GetHexString(32).ToLowerInvariant(),
-                    expires_at = DateTime.UtcNow.AddHours(1),
+                    expires_at = Start.AddHours(1),
                     permissions = body.RootElement.GetProperty("permissions"),
                     repositories = new[] { new { name } },
                 });

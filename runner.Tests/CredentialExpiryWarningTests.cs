@@ -1,5 +1,6 @@
 using System.Net;
 using AgentRunner;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -34,8 +35,9 @@ public sealed class CredentialExpiryWarningTests
     public async Task The_handler_reads_the_server_header_and_warns_once()
     {
         var warnings = new List<string>();
-        var expires = DateTime.UtcNow.AddDays(3).ToString("O", System.Globalization.CultureInfo.InvariantCulture);
-        using var client = new HttpClient(new CredentialExpiryWarningHandler(new Answer(expires), warnings.Add, TimeProvider.System))
+        var expires = Now.AddDays(3).ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        var clock = new FakeTimeProvider(new DateTimeOffset(Now));
+        using var client = new HttpClient(new CredentialExpiryWarningHandler(new Answer(expires), warnings.Add, clock))
         {
             BaseAddress = new Uri("http://127.0.0.1"),
         };
