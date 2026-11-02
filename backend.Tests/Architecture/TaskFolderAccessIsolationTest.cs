@@ -50,6 +50,7 @@ namespace AgentStudio.Tests;
 /// </list>
 /// </para>
 /// </remarks>
+[Trait("Category", "Guard")]
 public class TaskFolderAccessIsolationTest
 {
     /// <summary>
