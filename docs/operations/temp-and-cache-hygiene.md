@@ -95,6 +95,14 @@ Individual fixtures additionally remove their own directory
 which clears the read-only attribute Git puts on `.git/objects` and retries a
 handle Windows has not released yet.
 
+A fixture that needs a starting Git repository can take a copy of a
+`GitRepositoryTemplate` instead of running `git init`, `git config` and
+`git commit` per test (AGT-3419). The template is built once per test host
+below the suite root and is read-only throughout, folders included, so a test
+can write only into its copy. `TestTempRoot.TryDelete` restores a folder's
+write permission before it removes the entries, so the template goes with the
+suite root.
+
 Two checks keep this in place, both in `backend.Tests`:
 
 - `TempRootHygieneGuardTests` asserts the redirect is active, that every listed

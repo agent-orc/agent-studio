@@ -89,5 +89,6 @@ public sealed class GitHubAppRouteTests
             => Task.FromResult(Values.TryGetValue(name, out var value) ? value : null);
         public Task WriteAsync(string name, string value, CancellationToken ct) { Values[name] = value; return Task.CompletedTask; }
         public Task DeleteAsync(string name, CancellationToken ct) { Values.Remove(name); return Task.CompletedTask; }
+        public Task EnsureWritableAsync(CancellationToken ct) => Task.CompletedTask;
     }
 }

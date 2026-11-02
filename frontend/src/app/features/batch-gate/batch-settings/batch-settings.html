@@ -44,6 +44,9 @@
       </fieldset>
       <fieldset><legend>LLM advisor</legend>
         <p>Advise records a recommendation. Enforce lets the advisor veto a proposed batch.</p>
+        @if (advisorEffective()?.reason; as reason) {
+          <p class="batch-settings__advisor-off" role="status" data-testid="batch-settings-advisor-off">Advisor is off on this server. {{ reason }}</p>
+        }
         <label>Mode <select name="advisorMode" [ngModel]="form.advisor.mode" (ngModelChange)="advisor('mode', $event)" [attr.aria-invalid]="invalid('mode')"><option value="off">Off</option><option value="advise">Advise</option><option value="enforce">Enforce</option></select></label>
         @if (invalid('mode')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
         <label>CLI type <input type="text" name="advisorCliType" [ngModel]="form.advisor.cliType" (ngModelChange)="advisor('cliType', $event)" [attr.aria-invalid]="invalid('cliType')"></label>

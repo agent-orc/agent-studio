@@ -1136,6 +1136,7 @@ public static class ProjectSettingsEndpoints
                 BuildCmds = req.BuildCmds,
                 TestCmds = req.TestCmds,
                 Lockfiles = req.Lockfiles,
+                InstallCoveredByLockfiles = req.InstallCoveredByLockfiles,
                 PreserveGlobs = req.PreserveGlobs,
                 PoolSize = req.PoolSize,
             });
@@ -1192,14 +1193,14 @@ public static class ProjectSettingsEndpoints
         }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapGet("/api/projects/{projectName}/batch-gate", (string projectName,
-            ProjectSettingsService settings, TaskScannerService scanner) =>
+            ProjectSettingsService settings, TaskScannerService scanner, IConfiguration configuration) =>
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
-                ? Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate))
+                ? Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate, configuration))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
         app.MapPut("/api/projects/{projectName}/batch-gate", async (string projectName,
             HttpContext context, ProjectSettingsService settings, TaskScannerService scanner,
             ProjectRegistry projects, GitService git, RemoteReviewPlanBuilder remoteReviewPlans,
-            ReviewAttemptTaskLifecycleService reviewLifecycle,
+            ReviewAttemptTaskLifecycleService reviewLifecycle, IConfiguration configuration,
             ILogger<ProjectSettingsService> logger) =>
         {
             if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
@@ -1236,7 +1237,7 @@ public static class ProjectSettingsEndpoints
                     logger.LogError(ex, "batch-gate-replan-failed project={Project}", projectName);
                 }
             });
-            return Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate));
+            return Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate, configuration));
         });
         app.MapGet("/api/projects/{projectName}/batch-gate/report", (string projectName, BatchGatePilotService pilot, TaskScannerService scanner) =>
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
@@ -1581,7 +1582,8 @@ public static class ProjectSettingsEndpoints
                 git, repositoryPath, integrationRef, subject.ExpectedResultSha)
             : null;
 
-    private static object BatchGateSettingsResponse(BatchGateFormationOptions value) => new
+    internal static object BatchGateSettingsResponse(BatchGateFormationOptions value,
+        IConfiguration? configuration) => new
     {
         settings = new
         {
@@ -1599,6 +1601,9 @@ public static class ProjectSettingsEndpoints
             value.GateTimeoutMinutes,
             advisor = value.Advisor ?? new BatchGateAdvisorOptions(),
         },
+        // The mode that actually applies on this host: a configured advisor the
+        // host cannot run reports "off" with its reason (AGT-3411).
+        advisorEffective = BatchGateAdvisorCarrierPolicy.Resolve(value.Advisor, configuration),
         limits = new { hardMaximumSize = 8 },
     };
 

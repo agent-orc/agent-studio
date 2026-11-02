@@ -91,6 +91,13 @@ public sealed class RunnerOptions
     public string ReviewWorkDir { get; init; } = Path.Combine(Path.GetTempPath(), "agent-review-work");
 
     /// <summary>
+    /// Test seam for the parent of the short attempt temp roots. Production
+    /// leaves it null, so the daemon and its detached workers always agree on
+    /// <see cref="ReviewAttemptTemp.DefaultBase"/> (AGT-3429).
+    /// </summary>
+    internal string? ReviewTempBase { get; init; }
+
+    /// <summary>
     /// Comma-separated environment variable names admitted into review child
     /// processes. The review service account must provision them as read-only.
     /// </summary>

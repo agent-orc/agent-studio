@@ -19,6 +19,8 @@ const extras = [
   ['GET', '/api/tasks/{taskId}/attachments/{fileName}', 'frontend/src/app/features/task-detail/components/protocol-pane/protocol-image-resolver.ts:34'],
   ['GET', '/api/tasks/{taskId}/results/{path*}', 'frontend/src/app/features/task-detail/components/task-artifact-links/task-artifact-link.ts:47'],
   ['GET', '/api/tasks/{taskId}/screenshot', 'frontend/src/app/features/task-detail/components/protocol-pane/protocol-image-resolver.ts:44'],
+  // taskV1Url() builds this route in two stages, beyond the extractor's literal matching.
+  ['POST', '/api/v1/projects/{projectId}/tasks/{taskId}/move', 'frontend/src/app/services/task.service.ts:388'],
   // task.service.ts builds these through a `scope === 'code' ? checkout-path
   // : files-path` ternary assigned to a local `base`, which the static
   // extractor cannot evaluate; both branches are real, already-landed
@@ -35,6 +37,7 @@ const extras = [
 export function canonicalPath(input) {
   let value = input
     .replace(/\(watchPath \?.*$/, '')
+    .replace(/\((?:sshTarget|this\.projectId\(\)).*$/, '')
     .replaceAll('{job.id}', '{taskId}')
     .replaceAll('{jobId}', '{taskId}')
     .replaceAll('{task}', '{taskId}')
@@ -134,6 +137,9 @@ const queryKeys = new Map(Object.entries({
   'GET /api/workspace/tokens/timeline/cached': ['windowHours', 'bucketMinutes'],
   'GET /api/workspace/tokens/expensive-jobs': ['limit'],
   'GET /api/cli/model-routing/recommendation': ['taskType', 'cliType'],
+  'GET /api/v1/management/remote-hosts/{hostId}/claude-sign-in/{handle}': ['sshTarget'],
+  'GET /api/v1/management/remote-hosts/provider-auth-renewals/{operationId}': ['sshTarget'],
+  'POST /api/workspaces/{workspaceId}/decision-rules/versions': ['projectId'],
   'GET /api/clients/{clientId}/telemetry': ['window'],
   'GET /api/cli/{cliType}/models': ['refresh'],
   'GET /api/git/hygiene': ['project'],

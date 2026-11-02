@@ -624,6 +624,39 @@ public sealed class ExecutionOutcomeAdapterTests
         Assert.Equal(["claude-haiku-4-5-20251001"], result.ModelMismatch.ObservedModels);
     }
 
+    [Fact]
+    public void Pinned_model_used_next_to_a_side_model_is_success_and_keeps_both_models_as_evidence()
+    {
+        var result = ExecutionOutcomeAdapter.Classify(Coding(
+            ProviderTerminalEvent: """{"type":"result","subtype":"success"}""",
+            FinalAssistantOutput: "ok [[TASK_DONE]]",
+            ExitCode: 0,
+            EffectiveCliType: "claude",
+            EffectiveModel: "claude-opus-5-5",
+            ObservedModels: ["claude-opus-5-5-20260925", "claude-haiku-4-5-20251001"]));
+
+        Assert.Equal(ExecutionOutcomeKind.SuccessfulCompletion, result.Outcome);
+        Assert.Null(result.ModelMismatch);
+        Assert.Null(result.ProviderRejection);
+        Assert.Equal(["claude-opus-5-5-20260925", "claude-haiku-4-5-20251001"], result.RawFacts.ObservedModels);
+    }
+
+    [Fact]
+    public void Several_models_none_of_them_pinned_is_still_a_mismatch()
+    {
+        var result = ExecutionOutcomeAdapter.Classify(Coding(
+            ProviderTerminalEvent: """{"type":"result","subtype":"success"}""",
+            FinalAssistantOutput: "ok [[TASK_DONE]]",
+            ExitCode: 0,
+            EffectiveCliType: "claude",
+            EffectiveModel: "claude-opus-5-5",
+            ObservedModels: ["claude-sonnet-5-5", "claude-haiku-4-5-20251001"]));
+
+        Assert.Equal(ExecutionOutcomeKind.ProviderRejectedRequest, result.Outcome);
+        Assert.Equal("model_mismatch", result.ProviderRejection!.Code);
+        Assert.Equal(["claude-sonnet-5-5", "claude-haiku-4-5-20251001"], result.ModelMismatch!.ObservedModels);
+    }
+
     [Theory]
     [InlineData("claude-opus-5.5", "claude-opus-5-5")]
     [InlineData("claude-opus-5-5", "claude-opus-5-5-20260925")]

@@ -17,8 +17,16 @@ export interface BatchGateSettings {
   advisor: { mode: 'off' | 'advise' | 'enforce'; cliType: string; model?: string; timeoutSeconds: number };
 }
 
+/** The advisor mode that applies on this host; `reason` explains a configured advisor the host cannot run. */
+export interface BatchGateAdvisorEffective {
+  effectiveMode: 'off' | 'advise' | 'enforce';
+  carrier: 'monolith' | 'engine' | 'none';
+  reason: string | null;
+}
+
 export interface BatchGateConfiguration {
   settings: BatchGateSettings;
+  advisorEffective?: BatchGateAdvisorEffective | null;
   limits: { hardMaximumSize: number };
 }
 
@@ -105,6 +113,17 @@ export function batchMemberFor(state: BatchGateState | null, ...keys: (string | 
     if (key && state.members[key]) return state.members[key];
   }
   return null;
+}
+
+/** Lifetime batch pilot figures from `GET /batch-gate/report` (subset the UI reads). */
+export interface BatchGateReport {
+  project: string;
+  closedBatches: number;
+  eligibleDeliveredMembers: number;
+  fullSuiteRuns: number;
+  meanBatchSize: number | null;
+  batchGreenRate: number | null;
+  constructionEjectionRate: number | null;
 }
 
 /** AGT-3219: cards parked by a machine gate queue overrun, from `/batch-gate/queue-stalls`. */

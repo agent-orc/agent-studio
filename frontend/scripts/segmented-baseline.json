@@ -220,14 +220,6 @@
         "8602e31cf96dd928"
       ]
     },
-    "src/app/features/cli/components/cli-sessions-panel/cli-sessions-panel.html": {
-      "reason": "Session filter chips have counts and many options.",
-      "signatures": [
-        "55bfbd4e71e73b94",
-        "5e98f798f4bc1fae",
-        "a0e142b87ade585a"
-      ]
-    },
     "src/app/features/remote-hosts/components/remote-hosts-panel/remote-hosts-panel.html": {
       "reason": "Show retired is an independent visibility toggle.",
       "signatures": [

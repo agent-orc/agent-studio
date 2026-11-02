@@ -91,8 +91,10 @@ product never changes task lanes merely to make the dialog green.
    cannot reduce this suite, and there is no release override for a red or
    incomplete full-suite result. The existing deferred integration merge
    enforces this when a project's configured integration target is `main`: it
-   tests the exact source, rechecks both refs, and permits only a fast-forward
-   to that tested SHA. This safety boundary does not replace the REL-1 manifest
+   tests the exact subject and advances `main` only to that tested SHA: the
+   delivery itself by fast-forward when it descends from `main`, otherwise the
+   merge of the delivery onto `main`, which the full suite tested and which
+   still contains the published `main` (AGT-3435). This safety boundary does not replace the REL-1 manifest
    and confirmation surface.
 
 ## Main is released; a stable tag is frozen
