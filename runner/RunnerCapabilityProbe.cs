@@ -366,6 +366,37 @@ internal static class RunnerCapabilityProbe
                 BuildNodeSweep.Latest is null ? null : BuildNodeSweep.TerminatedTotal,
                 BuildNodeSweep.Latest?.ObservedAt);
 
+    /// <summary>A missing Docker daemon leaves the optional inventory absent for older hosts.</summary>
+    public static async Task<IReadOnlyList<HostContainerSummaryDto>?> ContainersAsync(CancellationToken ct)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(3));
+        try
+        {
+            var result = await ProcessRunner.RunAsync("docker",
+                ["ps", "-a", "--no-trunc", "--format", "{{.ID}}"],
+                ct: deadline.Token);
+            if (!result.Success) return null;
+            var ids = result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (ids.Length == 0) return [];
+            if (ids.Length > 200) return null;
+            var inspected = await ProcessRunner.RunAsync("docker",
+                ["inspect", "--format", "{{.Name}}\t{{.Image}}\t{{.State.Status}}", .. ids],
+                ct: deadline.Token);
+            if (!inspected.Success) return null;
+            return inspected.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.TrimEnd('\r').Split('\t'))
+                .Where(parts => parts.Length == 3 && parts[0].Length > 0)
+                .Select(parts => new HostContainerSummaryDto(parts[0].TrimStart('/'),
+                    parts[1].StartsWith("sha256:", StringComparison.Ordinal) ? parts[1] : null,
+                    parts[2]))
+                .ToArray();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException
+                                   || ex is OperationCanceledException && !ct.IsCancellationRequested)
+        { return null; }
+    }
+
     private static string ConnectivityDetail(TaskServerConnectivitySnapshot? connectivity)
     {
         if (connectivity is null || connectivity.Status == TaskServerConnectivityStates.Unknown)

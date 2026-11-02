@@ -5,6 +5,9 @@ using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Management;
 using AgentStudio.Registry;
 using AgentStudio.Git;
+using AgentStudio.Host;
+using AgentStudio.Diagnostics;
+using System.Net.Http.Json;
 
 namespace AgentStudio.Projects;
 
@@ -12,10 +15,16 @@ public static class ProjectOperatorDashboardEndpoints
 {
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/v1/operations/structure", (string? scope, string? environment,
+        app.MapGet("/api/v1/operations/structure", async Task<IResult> (HttpContext context, string? scope, string? environment,
             IConfiguration configuration, ProjectRegistry projects, ProjectEnvironmentService environments,
-            GitService git) =>
+            GitService git, AgentStudio.Runner.V1ReviewExecutorRegistry hosts,
+            LinkSupervisor links, EnvironmentHealthService health,
+            AgentStudio.Runner.HostReleaseDriftWatchdog releases,
+            AgentStudio.Runner.OrchestrationEngineReadiness engine,
+            AgentStudio.Pipeline.PullGateStore gates, TimeProvider clock,
+            IHttpClientFactory clients, CancellationToken cancellationToken) =>
         {
+            context.Response.Headers.CacheControl = "no-store";
             if (scope is not null && scope != "workspace" && !scope.StartsWith("project:", StringComparison.Ordinal))
                 return Results.BadRequest(new { error = "scope must be workspace or project:{id}." });
             var projectId = scope?.StartsWith("project:", StringComparison.Ordinal) == true ? scope[8..] : null;
@@ -33,9 +42,33 @@ public static class ProjectOperatorDashboardEndpoints
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
                 { return Results.Problem("Connectivity manifest is unavailable.", statusCode: 503); }
             }
-            return Results.Ok(StructureProjection.Build(manifest, projects.List(),
+            var selected = projects.List().Where(p => !p.Archived && (projectId is null || p.Id == projectId)).ToArray();
+            var declared = StructureProjection.Build(manifest, selected,
                 environments.DeclarationFiles, projectId, environment,
-                project => git.ResolveRepoRootForProject(project.DisplayName)));
+                project => git.ResolveRepoRootForProject(project.DisplayName));
+            var deploymentFacts = selected.SelectMany(project =>
+                environments.Read(project.DisplayName)?.Environments.Select(view =>
+                    new StructureDeploymentFact(project.Id, view)) ?? []).ToArray();
+            var healthFacts = health.Overview().Environments.Join(selected,
+                view => view.Project, project => project.DisplayName,
+                (view, project) => new StructureHealthFact(project.Id, view)).ToArray();
+            IReadOnlyList<RunnerCapabilitySnapshotDto> hostFacts = hosts.ListCapabilitySnapshots();
+            if (TaskServerPlaneProxy.IsConfigured(configuration))
+            {
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                deadline.CancelAfter(TimeSpan.FromSeconds(5));
+                try
+                {
+                    hostFacts = await clients.CreateClient(TaskServerPlaneProxy.ClientName)
+                        .GetFromJsonAsync<RunnerCapabilitySnapshotDto[]>("/api/v1/management/remote-hosts",
+                            deadline.Token) ?? [];
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+                { SilentCatch.Warn(ex, "StructureProjection: remote host reports unavailable"); }
+            }
+            return Results.Ok(ObservedStructureProjection.Apply(declared, hostFacts,
+                links.Snapshot(), deploymentFacts, healthFacts, releases.Current,
+                engine.State, clock.GetUtcNow().UtcDateTime, gates.Hosts()));
         });
 
         app.MapGet("/api/environment/flow", (EnvironmentFlowService flow) =>

@@ -706,7 +706,8 @@ public sealed partial class TaskServerStore
                     _options.ClaudeCliTargetVersion),
                 CliUpdate: await ReadHostCliUpdateAsync(connection, null, runner.HostId, ct),
                 Release: runner.Release,
-                ActiveGateCount: activeGateCount));
+                ActiveGateCount: activeGateCount,
+                Containers: telemetry?.Containers));
         }
         return result;
     }

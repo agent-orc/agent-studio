@@ -1,11 +1,12 @@
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, afterNextRender, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, HostListener, OnDestroy, afterNextRender, computed, effect, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
+import { AuthService } from '../../../services/auth.service';
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
 import { SegmentedControlComponent } from '../../../components/segmented-control/segmented-control.component';
-import { nearestVisible, projectStructure, summaryText, visibleBoxes,
-  type StructureBox, type StructureData, type StructureLink } from '../structure.model';
+import { nearestVisible, observationGlyph, observationWord, projectStructure, summaryText, visibleBoxes,
+  type StructureBox, type StructureData, type StructureLink, type StructureObservation } from '../structure.model';
 
 interface DrawnLink { index: number; path: string; x: number; y: number; kind: string; label: string; }
 
@@ -17,22 +18,32 @@ interface DrawnLink { index: number; path: string; x: number; y: number; kind: s
   templateUrl: './structure-view.component.html',
   styleUrl: './structure-view.component.scss',
 })
-export class StructureViewComponent {
+export class StructureViewComponent implements OnDestroy {
   private readonly http = inject(HttpClient);
+  private readonly auth = inject(AuthService);
   private readonly element = inject(ElementRef) as ElementRef<HTMLElement>;
   readonly data = signal<StructureData>({ nodes: [], links: [] });
   readonly viewOptions = [{ value: 'host', label: 'Host' }, { value: 'container', label: 'Container' }] as const;
   readonly levelOptions = [{ value: 1, label: '1' }, { value: 2, label: '2' }, { value: 3, label: '3' }] as const;
+  readonly overlayOptions = [
+    { value: 'health', label: 'Health' }, { value: 'version', label: 'Version' },
+    { value: 'drift', label: 'Drift' }, { value: 'load', label: 'Load' },
+  ] as const;
   readonly error = signal<string | null>(null);
   readonly view = signal<'host' | 'container'>('host');
   readonly level = signal<1 | 2 | 3>(2);
+  readonly overlay = signal<'health' | 'version' | 'drift' | 'load'>('health');
   readonly toggles = signal<Record<string, boolean>>({});
   readonly selected = signal<string | null>(null);
   readonly roots = computed(() => projectStructure(this.data(), this.view(), this.level(), this.toggles()));
   readonly visible = computed(() => visibleBoxes(this.roots()));
   readonly drawnLinks = signal<DrawnLink[]>([]);
   readonly summaryText = summaryText;
+  readonly stateWord = observationWord;
+  readonly stateGlyph = observationGlyph;
   private frame = 0;
+  private refreshTimer?: ReturnType<typeof setInterval>;
+  private loading = false;
   private readonly linkRefresh = effect(() => {
     this.roots();
     if (typeof requestAnimationFrame !== 'undefined') {
@@ -44,20 +55,42 @@ export class StructureViewComponent {
   constructor() {
     afterNextRender(() => this.element.nativeElement.querySelector<HTMLElement>('.structure-main')?.focus());
     try {
-      const saved = JSON.parse(localStorage.getItem('studio.structure.workspace') || '{}') as
-        { view?: 'host' | 'container'; level?: 1 | 2 | 3 };
+      const saved = JSON.parse(localStorage.getItem(this.preferenceKey()) || '{}') as
+        { view?: 'host' | 'container'; level?: 1 | 2 | 3; overlay?: 'health' | 'version' | 'drift' | 'load' };
       if (saved.view === 'host' || saved.view === 'container') this.view.set(saved.view);
       if (saved.level === 1 || saved.level === 2 || saved.level === 3) this.level.set(saved.level);
+      if (saved.overlay && this.overlayOptions.some(option => option.value === saved.overlay))
+        this.overlay.set(saved.overlay);
     } catch { /* Optional preference. */ }
     void this.load();
+    this.startRefresh();
+  }
+
+  ngOnDestroy(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    cancelAnimationFrame(this.frame);
+  }
+
+  private startRefresh(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (document.visibilityState !== 'visible') return;
+    this.refreshTimer = setInterval(() => void this.load(), 15_000);
+  }
+
+  @HostListener('document:visibilitychange') onVisibilityChange(): void {
+    this.startRefresh();
+    if (document.visibilityState === 'visible') void this.load();
   }
 
   private async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
     try {
       this.data.set(await firstValueFrom(this.http.get<StructureData>('/api/v1/operations/structure',
         { params: { scope: 'workspace' } })));
       this.error.set(null);
-    } catch { this.error.set('Structure declarations could not be loaded.'); }
+    } catch { this.error.set('Structure observations could not be loaded.'); }
+    finally { this.loading = false; }
   }
 
   setView(view: 'host' | 'container'): void {
@@ -68,6 +101,32 @@ export class StructureViewComponent {
     this.level.set(level);
     this.remember();
   }
+  setOverlay(overlay: 'health' | 'version' | 'drift' | 'load'): void {
+    this.overlay.set(overlay);
+    this.remember();
+  }
+  difference(observation?: StructureObservation | null): string {
+    return observation?.difference ?? 'declared-only';
+  }
+  detail(observation?: StructureObservation | null): string {
+    if (this.overlay() === 'version') return observation?.version
+      ? `${observation.behind ? '↓ behind · ' : ''}${observation.version}${observation.expectedVersion ? ` · expected ${observation.expectedVersion}` : ''}`
+      : 'Version not observed';
+    if (this.overlay() === 'drift') return observation?.difference === 'differs'
+      ? `≠ declared${observation.version ? ` · ${observation.version}` : ''}${observation.expectedVersion ? ` / ${observation.expectedVersion}` : ''}`
+      : this.difference(observation).replaceAll('-', ' ');
+    if (this.overlay() === 'load') return observation?.cpuPercent != null || observation?.memoryUsedBytes != null || observation?.activeGates != null
+      ? `${observation.cpuPercent != null ? `${observation.cpuPercent.toFixed(0)}% CPU` : 'CPU not observed'} · ${observation.memoryUsedBytes != null ? `${(observation.memoryUsedBytes / 1024 ** 3).toFixed(1)} GiB memory` : 'Memory not observed'}${observation.activeGates != null ? ` · ${observation.activeGates} active gates` : ''}`
+      : 'Load not observed';
+    return observation?.detail ?? this.stateWord(observation);
+  }
+  nodeLabel(box: StructureBox): string {
+    return `${box.label}, ${box.kind}, ${this.stateWord(box.observation)}, ${this.detail(box.observation)}` +
+      (box.collapsed ? `, ${summaryText(box)}` : '');
+  }
+  lastObserved(observation?: StructureObservation | null): string {
+    return observation?.observedAt ? `Last observed ${new Date(observation.observedAt).toLocaleString('en-US')}` : 'No report';
+  }
   toggle(box: StructureBox): void {
     this.selected.set(box.id);
     if (box.children.length) this.toggles.update(current => ({ ...current, [box.id]: !box.collapsed }));
@@ -77,9 +136,10 @@ export class StructureViewComponent {
     this.element.nativeElement.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
   }
   private remember(): void {
-    try { localStorage.setItem('studio.structure.workspace', JSON.stringify({ view: this.view(), level: this.level() })); }
+    try { localStorage.setItem(this.preferenceKey(), JSON.stringify({ view: this.view(), level: this.level(), overlay: this.overlay() })); }
     catch { /* Preference storage is optional. */ }
   }
+  private preferenceKey(): string { return `studio.structure.workspace.${this.auth.status()?.user?.id ?? 'local'}`; }
 
   @HostListener('document:keydown', ['$event'])
   onKeydown(event: KeyboardEvent): void {

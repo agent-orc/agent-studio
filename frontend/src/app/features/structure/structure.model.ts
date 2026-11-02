@@ -6,9 +6,24 @@ export interface StructureNode {
   unitId: string | null;
   environmentId: string | null;
   project: string | null;
-  provenance: 'declared';
+  provenance: 'declared' | 'observed';
   sourceRef: string;
   role?: string | null;
+  observation?: StructureObservation | null;
+}
+
+export interface StructureObservation {
+  difference: 'matched' | 'declared-only' | 'undeclared' | 'differs' | 'stale' | 'unreachable-by-design';
+  health: 'up' | 'down' | 'degraded' | 'stale' | 'not observed' | string;
+  observedAt?: string | null;
+  version?: string | null;
+  expectedVersion?: string | null;
+  behind?: boolean;
+  cpuPercent?: number | null;
+  memoryUsedBytes?: number | null;
+  memoryTotalBytes?: number | null;
+  activeGates?: number | null;
+  detail?: string | null;
 }
 
 export interface StructureLink {
@@ -17,6 +32,7 @@ export interface StructureLink {
   kind: string;
   label: string;
   sourceRef: string;
+  observation?: StructureObservation | null;
 }
 
 export interface StructureData { nodes: StructureNode[]; links: StructureLink[]; }
@@ -113,4 +129,21 @@ export function nearestVisible(id: string, visible: ReadonlySet<string>, source:
   let node = source.get(id);
   while (node && !visible.has(node.id)) node = node.parentId ? source.get(node.parentId) : undefined;
   return node?.id ?? null;
+}
+
+export function observationWord(observation?: StructureObservation | null): string {
+  if (!observation) return 'Not observed';
+  if (observation.difference === 'undeclared') return 'Not declared';
+  if (observation.difference === 'unreachable-by-design') return 'Unreachable by design';
+  if (observation.difference === 'stale') return 'Stale';
+  if (observation.health === 'down') return 'Down';
+  if (observation.health === 'degraded') return 'Degraded';
+  if (observation.difference === 'declared-only' || observation.health === 'not observed') return 'Not observed';
+  if (observation.difference === 'differs') return 'Differs';
+  return observation.health === 'up' || observation.health === 'healthy' ? 'Up' : 'Not observed';
+}
+
+export function observationGlyph(observation?: StructureObservation | null): string {
+  const word = observationWord(observation);
+  return word === 'Up' ? '●' : word === 'Down' ? '■' : word === 'Degraded' || word === 'Differs' ? '▲' : '○';
 }

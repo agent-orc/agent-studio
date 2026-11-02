@@ -91,3 +91,70 @@ test('declared structure is accessible in both projections, widths and themes', 
   await expect(view.locator('[data-outline-id]')).toHaveCount(ids.length);
   expect(errors).toEqual([]);
 });
+
+test('observed differences, versions and a stopped host refresh in both themes', async ({ page }) => {
+  fs.mkdirSync(results, { recursive: true });
+  await page.clock.install();
+  let stopped = false;
+  const observed = [
+    { ...makeNode('b', 'boundary', 'AGT installation', null), observation: { difference: 'matched', health: 'up' } },
+    { ...makeNode('host', 'physical', 'Runner host', 'b'), observation: { difference: 'matched', health: 'up', version: '1.4', expectedVersion: '1.4', cpuPercent: 28, memoryUsedBytes: 2147483648 } },
+    { ...makeNode('declared', 'process', 'Declared process', 'host'), observation: { difference: 'declared-only', health: 'not observed' } },
+    { ...makeNode('extra', 'container', 'Extra container', 'host'), provenance: 'observed', observation: { difference: 'undeclared', health: 'up', version: 'sha256:abc' } },
+    { ...makeNode('older', 'container', 'Review host', 'host'), observation: { difference: 'differs', health: 'up', version: '1.3', expectedVersion: '1.4', behind: true } },
+    { ...makeNode('stale', 'container', 'Gate', 'host'), observation: { difference: 'stale', health: 'stale', observedAt: '2026-11-02T11:00:00Z' } },
+    { ...makeNode('outside', 'external', 'Registry', null), observation: { difference: 'unreachable-by-design', health: 'not observed' } },
+  ];
+  const observedLinks = [{ from: 'host', to: 'outside', kind: 'tunnel', label: 'Runner route', sourceRef: 'role fixture', observation: { difference: 'matched', health: 'up' } }];
+  await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+    v: 1, tabs: [{ kind: 'structure' }], activeKey: 'structure',
+  })));
+  await page.context().route('**/api/**', route => {
+    const url = route.request().url();
+    const json = (body: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    if (url.includes('/api/v1/operations/structure')) {
+      const state = stopped ? observed.map(node => node.id === 'host' ? { ...node, observation: { difference: 'stale', health: 'stale' } } : node) : observed;
+      const connections = stopped ? observedLinks.map(link => ({ ...link, observation: { difference: 'matched', health: 'down' } })) : observedLinks;
+      return json({ nodes: state, links: connections });
+    }
+    if (url.includes('/api/v1/studio/auth/status')) return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
+    if (url.includes('/api/v1/management/credential-inventory')) return json({ generatedAt: '2026-11-02T00:00:00Z', items: [] });
+    if (url.includes('/api/usage/cockpit')) return json({ workspaceId: 'workspace', clis: [], cost: null });
+    if (url.includes('/api/cli/usage') || url.includes('/api/cli/quota')) return json({ at: '2026-11-02T00:00:00Z', ttlSeconds: 600, snapshots: [] });
+    if (url.includes('/api/watch-paths') || url.includes('/api/v1/projects') || url.includes('/api/v1/workspaces') || url.includes('/api/workspaces')) return json([]);
+    if (url.includes('/api/v1/studio/board')) return json({ backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [], codeNotComplete: [], autoReview: [], review: [], humanReview: [], escalated: [], completed: [], archive: [] });
+    if (url.includes('/api/tasks/archive')) return json({ items: [], total: 0, offset: 0, limit: 50 });
+    if (url.includes('/api/v1/studio/runner/status')) return json({ projects: {} });
+    if (url.includes('/api/environment')) return json({ isDev: false, devTools: {} });
+    if (url.includes('/api/workbenches')) return json({ projectName: null, count: 0, currentCount: 0, historyCount: 0, items: [] });
+    return json([]);
+  });
+  await page.goto('/#/workspace/operations/structure');
+  const view = page.getByTestId('structure-view');
+  await expect(view.locator('[data-node-id="host"]')).toBeVisible();
+  await page.keyboard.press('3');
+  const states = ['matched', 'declared-only', 'undeclared', 'differs', 'stale', 'unreachable-by-design'];
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+    for (const state of states) {
+      const box = view.locator(`[data-difference="${state}"]`).last();
+      await expect(box).toBeVisible();
+      await box.screenshot({ path: path.join(results, `structure-state-${state}-${theme}.png`) });
+    }
+    await view.getByRole('button', { name: 'Version', exact: true }).click();
+    await expect(view.locator('[data-node-id="older"]')).toContainText('↓ behind · 1.3 · expected 1.4');
+    await view.screenshot({ path: path.join(results, `structure-version-${theme}.png`) });
+    await view.getByRole('button', { name: 'Drift', exact: true }).click();
+    await expect(view.locator('[data-node-id="older"]')).toContainText('≠ declared');
+    await view.screenshot({ path: path.join(results, `structure-drift-${theme}.png`) });
+    await view.getByRole('button', { name: 'Load', exact: true }).click();
+    await expect(view.locator('[data-node-id="host"]')).toContainText('28% CPU');
+    await expect(view.locator('[data-node-id="declared"]')).toContainText('Load not observed');
+    await view.screenshot({ path: path.join(results, `structure-load-${theme}.png`) });
+    await view.getByRole('button', { name: 'Health', exact: true }).click();
+  }
+  stopped = true;
+  await page.clock.fastForward(15_000);
+  await expect(view.locator('[data-node-id="host"]')).toContainText('Stale');
+  await expect(view.getByTestId('structure-link-key')).toContainText('Down');
+});
