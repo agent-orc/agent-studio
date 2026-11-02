@@ -313,6 +313,10 @@ public sealed class AccessSecurityMiddleware
         var originalPath = context.Items[AgentStudio.Host.StudioV1LegacyRouteAlias.OriginalPathItem] as string;
         var humanTaskFileRead = human is not null && IsRunnerTaskFileRead(context.Request.Method, path);
         var productTaskFileRead = humanTaskFileRead && ContributorAccessPolicy.IsProductSession(human!.User);
+        // A signed-in member reads card attachments through the route's own
+        // permission; only a service credential takes the runner branch.
+        var humanTaskInputRead = humanTaskFileRead
+            || human is not null && IsRunnerTaskAttachmentRead(context.Request.Method, path);
         if (productTaskFileRead
             && !ContributorAccessPolicy.Allows(context.Request.Method, path, null, false))
         {
@@ -322,7 +326,7 @@ public sealed class AccessSecurityMiddleware
         var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path)
             ?? (originalPath is null ? null : RequiredRunnerScope(context.Request.Method, NormalizePath(originalPath)));
         if (requiredRunnerScope is not null
-            && (human is null || !(humanTaskFileRead || IsHumanSessionRead(context.Request.Method, path)
+            && (human is null || !(humanTaskInputRead || IsHumanSessionRead(context.Request.Method, path)
                 || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
             if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
@@ -333,10 +337,11 @@ public sealed class AccessSecurityMiddleware
                 await Reject(context, 403, "runner-identity-denied", "A Runner may access only its enrolled identity.");
                 return;
             }
-            if (IsRunnerTaskFileRead(context.Request.Method, path)
+            if ((IsRunnerTaskFileRead(context.Request.Method, path) || IsRunnerTaskAttachmentRead(context.Request.Method, path))
                 && !RunnerOwnsTaskInput(path, runner.RunnerId))
             {
-                await Reject(context, 403, "runner-task-denied", "A Runner may read prompt.md only while it holds that task's live lease.");
+                await Reject(context, 403, "runner-task-denied",
+                    "A Runner may read prompt.md and the card's attachments only while it holds that task's live lease.");
                 return;
             }
             await _next(context);
@@ -346,6 +351,17 @@ public sealed class AccessSecurityMiddleware
         if (runner is not null && IsRunnerSelfRead(context.Request.Method, path, runner.RunnerId))
         {
             await _next(context);
+            return;
+        }
+
+        // A host also calls feature routes that only the standalone Task
+        // Server maps. A runner credential learns that the route does not
+        // exist here, so the host pauses that loop instead of retrying a
+        // refusal. An anonymous caller still gets 401 below. No middleware
+        // after this one answers an unrouted request.
+        if (runner is not null && human is null && context.GetEndpoint() is null)
+        {
+            await RejectUnmappedRoute(context);
             return;
         }
 
@@ -847,6 +863,7 @@ public sealed class AccessSecurityMiddleware
             && path.StartsWith("/api/runner/artifacts", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Artifacts;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/completion", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsGet(method) && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase) && path.Contains("/files/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (IsRunnerTaskAttachmentRead(method, path)) return RunnerScopes.Claim;
         if (HttpMethods.IsGet(method) && path.Equals("/api/system/about", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/renew", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
@@ -915,19 +932,39 @@ public sealed class AccessSecurityMiddleware
            && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
            && path.Contains("/files/", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary><c>GET /api/tasks/{key}/attachments/{name}</c>, one attachment of a card.</summary>
+    private static bool IsRunnerTaskAttachmentRead(string method, string path)
+    {
+        if (!HttpMethods.IsGet(method) || !path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)) return false;
+        var segments = path["/api/tasks/".Length..].Split('/');
+        return segments.Length == 3 && segments[0].Length > 0 && segments[2].Length > 0
+               && segments[1].Equals("attachments", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsReadOnlyPost(string method, string path)
         => HttpMethods.IsPost(method)
            && path.Equals("/api/tasks/reference-status", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// The card input a host reads for its run: <c>prompt.md</c> and the
+    /// card's attachments, only while the host holds the task's live lease.
+    /// </summary>
     private bool RunnerOwnsTaskInput(string path, string runnerId)
     {
         if (_leases is null) return false;
         var rest = path["/api/tasks/".Length..];
+        string taskKey;
         var fileMarker = rest.IndexOf("/files/", StringComparison.OrdinalIgnoreCase);
-        if (fileMarker <= 0) return false;
-        var taskKey = Uri.UnescapeDataString(rest[..fileMarker]);
-        var relativePath = Uri.UnescapeDataString(rest[(fileMarker + "/files/".Length)..]);
-        if (!relativePath.Equals("prompt.md", StringComparison.OrdinalIgnoreCase)) return false;
+        if (fileMarker > 0)
+        {
+            var relativePath = Uri.UnescapeDataString(rest[(fileMarker + "/files/".Length)..]);
+            if (!relativePath.Equals("prompt.md", StringComparison.OrdinalIgnoreCase)) return false;
+            taskKey = Uri.UnescapeDataString(rest[..fileMarker]);
+        }
+        else if (IsRunnerTaskAttachmentRead(HttpMethods.Get, path))
+            taskKey = Uri.UnescapeDataString(rest.Split('/')[0]);
+        else
+            return false;
         var lease = _leases.Peek(taskKey).Lease;
         return lease is not null && string.Equals(lease.RunnerId, runnerId, StringComparison.Ordinal);
     }
@@ -1166,6 +1203,20 @@ public sealed class AccessSecurityMiddleware
         else
             await Reject(context, 403, "role-denied", $"The {requirement.MinimumRole} role or higher is required.");
         return true;
+    }
+
+    /// <summary>
+    /// 404 for a route this server does not map. The body carries the code
+    /// as <c>error</c>, like every refusal here, and as <c>code</c>, the
+    /// field the host's Task Server client reads.
+    /// </summary>
+    private static async Task RejectUnmappedRoute(HttpContext context)
+    {
+        const string code = AgentStudio.TaskServer.Contracts.RouteAbsenceContract.ErrorCode;
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        context.Response.ContentType = "application/json";
+        context.Response.Headers.CacheControl = "no-store";
+        await context.Response.WriteAsJsonAsync(new { error = code, code, message = "This server does not map the route." });
     }
 
     private static async Task Reject(

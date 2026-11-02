@@ -105,6 +105,8 @@ public sealed class PostWorkDaemon
     public async Task RunAsync(CancellationToken shutdown)
     {
         await RecoverPersistedClaimAsync(shutdown);
+        // A monolith does not map the post-work authority.
+        var absence = new FeatureRouteAbsence("post-work", _log);
         while (!shutdown.IsCancellationRequested)
         {
             try
@@ -119,6 +121,7 @@ public sealed class PostWorkDaemon
                 var version = await _authority.AllocationVersionAsync(shutdown);
                 var claim = await _authority.ClaimAsync(
                     new PostWorkClaimRequest(_executorId, _instanceId(), _leaseSeconds, version), shutdown);
+                absence.RecordAnswered();
                 if (claim is { Status: "claimed", Subject: { } subject, Lease: { } lease })
                     await ExecuteAsync(subject, lease, shutdown);
                 else
@@ -130,8 +133,9 @@ public sealed class PostWorkDaemon
             }
             catch (Exception exception)
             {
-                _log($"post-work poll failed: {exception.GetType().Name}: {exception.Message}");
-                try { await Task.Delay(_poll, shutdown); }
+                if (!absence.TryRecordAbsent(exception))
+                    _log($"post-work poll failed: {exception.GetType().Name}: {exception.Message}");
+                try { await Task.Delay(absence.NextDelay(_poll), shutdown); }
                 catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
             }
         }

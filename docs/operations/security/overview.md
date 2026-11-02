@@ -449,8 +449,13 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,
 `runner.events`, `runner.artifacts`, and `runner.completion`. Reading the prompt
-for a claimed task is covered by `runner.claim`. Lease requests bind the wire
-`runnerId` to the authenticated service identity.
+and the attachments of a claimed task is covered by `runner.claim` and needs
+the task's live lease. Lease requests bind the wire `runnerId` to the
+authenticated service identity. A Runner credential on a route this server
+does not map, such as a standalone Task Server feature route called against
+the monolith, gets `404` with code `route-not-mapped`; the host then pauses
+that poll loop for an hour and logs it once. Anonymous callers still get `401`.
+`HostRouteClassificationTests` classifies every route the host client calls.
 
 ## Transport and exposed surfaces
 

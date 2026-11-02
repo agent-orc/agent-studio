@@ -302,16 +302,19 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
     public async Task RunAsync(CancellationToken ct)
     {
         RestoreClaudeToken();
+        var absence = new FeatureRouteAbsence("device-login", log);
         while (!ct.IsCancellationRequested)
         {
             try
             {
                 var claim = await client.ClaimDeviceLoginAsync(ct);
+                absence.RecordAnswered();
                 if (claim is not null) await ServeAsync(claim, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (Exception ex) when (absence.TryRecordAbsent(ex)) { }
             catch (Exception ex) { log($"device-login poll failed: {ex.GetType().Name}"); }
-            await Task.Delay(PollInterval, _clock, ct);
+            await Task.Delay(absence.NextDelay(PollInterval), _clock, ct);
         }
     }
 
