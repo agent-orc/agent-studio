@@ -1089,6 +1089,13 @@ public class TaskRunnerService : BackgroundService
         return response;
     }
 
+    /// <summary>
+    /// A follow-up for a live remote run is saved and moved to the top of Ready
+    /// while the earlier attempt keeps its lease. Dispatch skips that card until
+    /// the attempt settles and releases its lease. Its completed delivery stays
+    /// on the remote work branch and becomes the next claim's continuation base;
+    /// the queued prompt is consumed by that next run.
+    /// </summary>
     private ContinueJobResponse QueueFollowUp(
         TaskInfo info,
         string jobId,
