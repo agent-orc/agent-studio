@@ -8,6 +8,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 stack="$repo_root/deploy/compose/monolith-networked"
 caddy_image="${CADDY_IMAGE:-caddy:2-alpine}"
+export STUDIO_API_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_WEB_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_EDGE_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_ACCESS_AUTH_URL=https://access.example.test
+export STUDIO_ACCESS_MFA_ENFORCED=true
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 

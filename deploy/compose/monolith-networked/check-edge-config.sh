@@ -2,10 +2,63 @@
 set -euo pipefail
 
 stack_dir="$(cd "$(dirname "$0")" && pwd)"
+if [ "${1:-}" = --baseline-only ]; then
+  stack_dir="$(cd "${2:?Usage: check-edge-config.sh --baseline-only <stack-directory>}" && pwd)"
+  baseline_only=true
+else
+  baseline_only=false
+fi
+python3 - "$stack_dir" <<'PY'
+import pathlib
+import re
+import sys
+
+stack = pathlib.Path(sys.argv[1])
+compose = (stack / 'compose.yaml').read_text()
+for service in ('api', 'frontend', 'edge'):
+    match = re.search(r'^  ' + service + r':\n(.*?)(?=^  [a-z-]+:|^networks:)',
+                      compose, re.M | re.S)
+    if not match:
+        sys.exit(f'{service}: service missing')
+    body = match.group(1)
+    checks = (
+        ('digest', r'^    image: [^\n]+@sha256:\$\{STUDIO_[A-Z_]+_DIGEST:\?'),
+        ('non-root', r"^    user: '10001:10001'$"),
+        ('read-only root', r'^    read_only: true$'),
+        ('cap_drop', r'^    cap_drop: \[ALL\]$'),
+        ('no-new-privileges', r'^    security_opt: \[no-new-privileges:true\]$'),
+        ('writable tmpfs', r'^    tmpfs: \[/tmp\]$'),
+    )
+    for reason, pattern in checks:
+        if not re.search(pattern, body, re.M):
+            sys.exit(f'{service}: missing {reason}')
+    required = ('/data/workspace', '/data/projects', '/data/home') if service == 'api' else ('/data', '/config')
+    for mount in required:
+        if not re.search(r'^      - [^\n]+:' + re.escape(mount) + r'$', body, re.M):
+            sys.exit(f'{service}: missing writable volume {mount}')
+    if service == 'edge' and not re.search(r'^      STUDIO_ACCESS_AUTH_URL:', body, re.M):
+        sys.exit('edge: missing access layer URL')
+for name in ('Caddyfile.public', 'Caddyfile.cloudflare'):
+    caddy = (stack / name).read_text()
+    if not re.search(r'forward_auth \{\$STUDIO_ACCESS_AUTH_URL\} \{\s*uri /verify\s*\}', caddy):
+        sys.exit(f'{name}: missing access layer authorization for all paths')
+for name, marker, reason in (
+    ('backup-encrypted.sh', '-aes-256-gcm', 'encrypted backup'),
+    ('restore-to-scratch.sh', 'website.restore.signin', 'monitored scratch restore'),
+    ('monitor-baseline.py', 'login-failures', 'login failure alert'),
+    ('monitor-baseline.py', 'new-session', 'new session alert'),
+    ('monitor-baseline.py', 'certificate-expiry', 'certificate expiry alert'),
+):
+    path = stack / name
+    if not path.is_file() or marker not in path.read_text():
+        sys.exit(f'{name}: missing {reason}')
+print('Website container and access layer baseline passed.')
+PY
+if [ "$baseline_only" = true ]; then exit 0; fi
 release_dir="${1:?Usage: check-edge-config.sh <matching-release-stack-directory>}"
 release_dir="$(cd "$release_dir" && pwd)"
 
-for file in compose.yaml Caddyfile.public Caddyfile.cloudflare Caddyfile.frontend cloudflare-ips.caddy; do
+for file in compose.yaml Caddyfile.public Caddyfile.cloudflare Caddyfile.frontend cloudflare-ips.caddy backup-encrypted.sh restore-to-scratch.sh monitor-baseline.py; do
   if ! cmp -s "$stack_dir/$file" "$release_dir/$file"; then
     echo "Stale $file; copy it from $release_dir" >&2
     exit 1
@@ -37,6 +90,22 @@ if ! grep -Fq '0.0.0.0:443:443' "$stack_dir/compose.yaml"; then
 fi
 
 if [ -f "$stack_dir/.env" ]; then
+  for key in STUDIO_API_DIGEST STUDIO_WEB_DIGEST STUDIO_EDGE_DIGEST; do
+    digest="$(sed -n "s/^${key}=//p" "$stack_dir/.env" | tail -n 1)"
+    if ! [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "$key must be a 64-character lowercase image digest" >&2
+      exit 1
+    fi
+  done
+  auth_url="$(sed -n 's/^STUDIO_ACCESS_AUTH_URL=//p' "$stack_dir/.env" | tail -n 1)"
+  if [[ ! "$auth_url" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+    echo 'STUDIO_ACCESS_AUTH_URL must be an HTTPS origin' >&2
+    exit 1
+  fi
+  if [ "$(sed -n 's/^STUDIO_ACCESS_MFA_ENFORCED=//p' "$stack_dir/.env" | tail -n 1)" != true ]; then
+    echo 'STUDIO_ACCESS_MFA_ENFORCED must attest the provider MFA policy' >&2
+    exit 1
+  fi
   data_dir="$(sed -n 's/^STUDIO_DATA_DIR=//p' "$stack_dir/.env" | tail -n 1)"
   public_edge="$(sed -n 's/^STUDIO_PUBLIC_CLOUDFLARE_EDGE=//p' "$stack_dir/.env" | tail -n 1)"
   case "$public_edge" in

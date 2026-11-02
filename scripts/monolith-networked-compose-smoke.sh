@@ -35,7 +35,22 @@ if [ "${WEBSITE_REUSE_WEBSITE_IMAGES:-0}" != 1 ]; then
 fi
 
 cd "$stack"
+export STUDIO_API_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_WEB_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_EDGE_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_ACCESS_AUTH_URL=https://access.example.test
+export STUDIO_ACCESS_MFA_ENFORCED=true
 bash setup.sh --private "$version" studio.test "$smoke_root/data" >/dev/null
+cat > "$smoke_root/local-images.yaml" <<EOF
+services:
+  api:
+    image: $api_image
+  frontend:
+    image: $web_image
+  edge:
+    image: caddy:2-alpine
+EOF
+export COMPOSE_FILE="$stack/compose.yaml:$smoke_root/local-images.yaml"
 code="$(sed -n 's/^STUDIO_BOOTSTRAP_CODE=//p' .env)"
 docker compose up -d --no-build
 url=https://studio.test
