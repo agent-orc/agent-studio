@@ -27,7 +27,7 @@ public sealed record GitRefLockJanitorResult(
 /// <para>Runs before a fetch, after a fetch timeout, and after a fetch that
 /// failed on a ref lock. It only touches the shared ref store
 /// (<c>packed-refs.lock</c> and <c>refs/**/*.lock</c>) through
-/// <see cref="GitStaleLockGuard"/> with a shorter threshold (default 5 minutes)
+/// <see cref="GitStaleLockGuard"/> with its own threshold (default 5 minutes)
 /// and never waits. A lock is removed only when it is older than the threshold
 /// and no git process (a child of this server or any OS git process tied to the
 /// repository) runs there. In the same pass Git prunes unlocked

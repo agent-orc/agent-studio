@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ConfirmDialogOptions } from '../models/app-dialog.model';
 import {
   ISOLATED_HTML_ACTIVE_ANCHOR_MESSAGE,
   ISOLATED_HTML_ANCHORS_READY_MESSAGE,
@@ -8,6 +9,7 @@ import {
   WORKBENCH_DECISION_CHANGE_MESSAGE,
   WORKBENCH_DECISION_HYDRATE_MESSAGE,
   buildIsolatedHtmlSrcdoc,
+  openIsolatedHtmlExternalLink,
   resolveIsolatedHtmlNavigation,
 } from './sandboxed-html.util';
 
@@ -114,5 +116,68 @@ describe('sandboxed HTML navigation', () => {
       'docs/operations/nordstern/index.html',
       'mailto:docs@example.com',
     )).toBeNull();
+  });
+});
+
+describe('external links from isolated HTML frames', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function dialogAnswering(answer: boolean) {
+    const asked: ConfirmDialogOptions[] = [];
+    return {
+      asked,
+      dialog: {
+        confirm: (options: ConfirmDialogOptions) => {
+          asked.push(options);
+          return Promise.resolve(answer);
+        },
+      },
+    };
+  }
+
+  it('names the target host in the dialog and opens the page only after confirmation', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const { dialog, asked } = dialogAnswering(true);
+
+    await expect(openIsolatedHtmlExternalLink(dialog, 'https://example.com:8443/reference?q=1'))
+      .resolves.toBe(true);
+
+    expect(asked).toEqual([{
+      title: 'Open example.com:8443?',
+      message: 'This link leaves Agent Studio and opens a page on example.com:8443 in a new tab.',
+      detail: 'https://example.com:8443/reference?q=1',
+      confirmLabel: 'Open page',
+      kind: 'primary',
+    }]);
+    expect(open).toHaveBeenCalledWith('https://example.com:8443/reference?q=1', '_blank', 'noopener,noreferrer');
+  });
+
+  it('opens nothing when the operator cancels', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const { dialog } = dialogAnswering(false);
+
+    await expect(openIsolatedHtmlExternalLink(dialog, 'https://example.com/')).resolves.toBe(false);
+
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('shows the host the browser will contact, not the credentials or Unicode form in the link', async () => {
+    vi.spyOn(window, 'open').mockImplementation(() => null);
+    const { dialog, asked } = dialogAnswering(true);
+
+    await openIsolatedHtmlExternalLink(dialog, 'https://studio.example@b\u00fccher.example/login');
+
+    expect(asked[0].title).toBe('Open xn--bcher-kva.example?');
+  });
+
+  it('asks nothing for a URL that is not HTTP(S)', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const { dialog, asked } = dialogAnswering(true);
+
+    await expect(openIsolatedHtmlExternalLink(dialog, 'javascript:alert(1)')).resolves.toBe(false);
+    await expect(openIsolatedHtmlExternalLink(dialog, 'not a url')).resolves.toBe(false);
+
+    expect(asked).toEqual([]);
+    expect(open).not.toHaveBeenCalled();
   });
 });

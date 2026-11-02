@@ -49,7 +49,7 @@ import type {
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
 import type { ClaudeSessionResponse } from '../features/claude';
-import type { CliModelCatalog, CliCompletionContract, CliUsageReport, CliSessionDetail, CliSessionDeleteResult, CliWorkingMemoryReport, CliWorkingMemoryDeleteResult, ModelMigrationCatalog } from '../features/cli';
+import type { CliModelCatalog, CliCompletionContract, CliUsageReport, ModelMigrationCatalog } from '../features/cli';
 import type { GitFileChange, GitStatus, TaskCommitDetail, TaskProvenanceView } from '../features/git';
 import type {
   OrchestratorLogResponse,
@@ -2123,44 +2123,9 @@ export class TaskService {
     return this.http.get<CliUsageReport>(`${this.baseUrl}/cli/usage`);
   }
 
-  /**
-   * Lazy deep-read of one CLI session (model, thinking, message count, first
-   * prompt, git branch). Fetched only when a session row is expanded so the
-   * inventory list never reads transcript bodies.
-   */
-  getCliSessionDetail(cliType: CliType, id: string, cwd: string | null) {
-    return this.http.get<CliSessionDetail>(
-      `${this.baseUrl}/cli/${encodeURIComponent(cliType)}/session-detail`,
-      { params: cwd ? { id, cwd } : { id } },
-    );
-  }
-
-  /** Guarded cleanup delete of a single session transcript. The backend refuses paths outside the CLI session store. */
-  deleteCliSession(cliType: CliType, id: string, cwd: string | null) {
-    return this.http.delete<CliSessionDeleteResult>(
-      `${this.baseUrl}/cli/${encodeURIComponent(cliType)}/session`,
-      { params: cwd ? { id, cwd } : { id } },
-    );
-  }
-
   /** Per-CLI completion contracts (how each backend signals turn completion). */
   getCliCompletionContracts() {
     return this.http.get<CliCompletionContract[]>(`${this.baseUrl}/cli/contracts`);
-  }
-
-  /** Per-CLI working-memory report: memory / session state plus protected auth / config (ASS-1748 / T1c). */
-  getCliWorkingMemory(cliType: CliType) {
-    return this.http.get<CliWorkingMemoryReport>(
-      `${this.baseUrl}/cli/${encodeURIComponent(cliType)}/working-memory`,
-    );
-  }
-
-  /** Delete one memory / session state by absolute path. The backend refuses auth / config paths. */
-  deleteCliWorkingMemory(cliType: CliType, path: string) {
-    return this.http.delete<CliWorkingMemoryDeleteResult>(
-      `${this.baseUrl}/cli/${encodeURIComponent(cliType)}/working-memory`,
-      { params: { path } },
-    );
   }
 
   // Cycle 10d: quota / subscription rate-limit reporting moved to

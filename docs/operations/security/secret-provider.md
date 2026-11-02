@@ -366,6 +366,11 @@ used: set the environment variable or `Secrets:KeyFile` explicitly. With an
 explicit `Secrets:KeyFile`, the first write to an empty store may create the
 file there. To provide the key yourself, write 32 random bytes in base64, for
 example `head -c 32 /dev/urandom | base64 > secrets.kek && chmod 600 secrets.kek`.
+The networked Compose stack does this in `setup.sh` and mounts the key read-only
+(see [Studio website](../setup/studio-website.md)). Before the GitHub App
+registration sends the owner to GitHub, Studio checks that the store can write
+(the key loads and may seal a new name, and the store directory takes a file),
+so a missing key fails before the App exists.
 
 The provider refuses a key file inside the workspace. It also refuses a key
 file that other users can access (see [File protection](#file-protection)).

@@ -35,13 +35,7 @@ interface CapRow {
  * gates later admissions without interrupting in-flight runs); and the
  * per-CLI completion contract (how each backend signals turn completion).
  *
- * The per-CLI session inventory and on-disk filesystem locations were split out
- * of this host into their own encapsulated settings pages (CLI sessions / CLI
- * paths) per AGT-2101, so this hub stays focused on catalog + caps + contracts.
- * The former "Usage detail" displays moved to the Token-usage section (one
- * usage area, no double display) and the "Working memory" panel moved to its
- * own settings section; both left this host per AGT-2035. The model catalog and
- * completion-contract sections are dedicated child components
+ * The model catalog and completion-contract sections are dedicated child components
  * ({@link CliModelsPanelComponent} / {@link CliContractsPanelComponent}) so
  * this host stays within its size budget.
  */

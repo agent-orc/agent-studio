@@ -1,5 +1,6 @@
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
+using AgentStudio.Shared;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -94,11 +95,86 @@ public sealed class BatchGatePolicyTests
     [Fact]
     public void FormationTriggersHonorDeadlinePressureAndLoneFallback()
     {
-        Assert.Null(BatchGatePolicy.Form([Subject("a")], Scope, Sha, Enabled, Now).Manifest);
-        Assert.True(BatchGatePolicy.Form([Subject("a", -16)], Scope, Sha, Enabled, Now).UsePerTaskGate);
-        Assert.NotNull(BatchGatePolicy.Form([Subject("a"), Subject("b")], Scope, Sha, Enabled, Now,
+        var code = Enabled with { Scope = "code" };
+        BatchGateSubject Code(string key, int minute = 0) => Subject(key, minute) with { DocumentationOnly = false };
+        Assert.Null(BatchGatePolicy.Form([Code("a")], Scope, Sha, code, Now).Manifest);
+        Assert.False(BatchGatePolicy.Form([Code("a")], Scope, Sha, code, Now).UsePerTaskGate);
+        Assert.True(BatchGatePolicy.Form([Code("a", -16)], Scope, Sha, code, Now).UsePerTaskGate);
+        Assert.NotNull(BatchGatePolicy.Form([Code("a"), Code("b")], Scope, Sha, code, Now,
             reviewQueueLength: 12).Manifest);
-        Assert.Null(BatchGatePolicy.Form([Subject("a"), Subject("b")], Scope, Sha, Enabled, Now).Manifest);
+        Assert.Null(BatchGatePolicy.Form([Code("a"), Code("b")], Scope, Sha, code, Now).Manifest);
+    }
+
+    [Theory]
+    [InlineData("documentation")]
+    [InlineData("code")]
+    public void DocumentationOnlyCardClosesAtOnceInsteadOfWaitingForItsDeadline(string scope)
+    {
+        // AGT-3414: its gate runs no test, so a partner saves no suite.
+        var options = Enabled with { Scope = scope };
+        var lone = BatchGatePolicy.Form([Subject("a")], Scope, Sha, options, Now);
+        Assert.Equal(["a"], lone.Manifest!.Members.Select(member => member.TaskKey));
+        Assert.False(lone.UsePerTaskGate);
+        // Past the deadline the lone card keeps its per-task gate, at the same level.
+        Assert.True(BatchGatePolicy.Form([Subject("a", -16)], Scope, Sha, options, Now).UsePerTaskGate);
+        var pair = BatchGatePolicy.Form([Subject("a"), Subject("b", sequence: 2)], Scope, Sha, options, Now);
+        Assert.Equal(["a", "b"], pair.Manifest!.Members.Select(member => member.TaskKey));
+    }
+
+    [Fact]
+    public void DocumentationOnlyCardStillWaitsForAPartnerBehindAGateBacklog()
+    {
+        // AGT-3219 still holds: a backlogged gate queue holds a lone card for a partner.
+        var held = BatchGatePolicy.Form([Subject("a")], Scope, Sha, Enabled, Now,
+            reviewQueueLength: 1, gateBacklog: true);
+        Assert.False(held.UsePerTaskGate);
+        Assert.Null(held.Manifest);
+    }
+
+    [Fact]
+    public void DocumentationOnlyCardKeepsTheHoldOnARedBase()
+    {
+        var held = BatchGatePolicy.Form([Subject("a")], Scope, Sha, Enabled, Now, baseRed: true);
+        Assert.Null(held.Manifest);
+        Assert.False(held.UsePerTaskGate);
+    }
+
+    [Fact]
+    public void MixedCodeSetKeepsTheThresholds()
+    {
+        var code = Enabled with { Scope = "code" };
+        var mixed = BatchGatePolicy.Form([Subject("a"), Subject("b", sequence: 2) with { DocumentationOnly = false }],
+            Scope, Sha, code, Now);
+        Assert.Null(mixed.Manifest);
+        Assert.False(mixed.UsePerTaskGate);
+    }
+
+    [Fact]
+    public void GateTestLevel_DocumentationSubjectsWithADocumentationDiffSkipTheTests()
+        => Assert.Equal(TestExecutionLevels.BuildOnly, BatchGatePolicy.GateTestLevel(
+            [Subject("a"), Subject("b")], ["docs/concepts/batch.html", "README.md"], buildStepPlanned: true));
+
+    [Fact]
+    public void GateTestLevel_AnyCodeSubjectRunsTheCompleteSuite()
+        => Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel(
+            [Subject("a"), Subject("b") with { DocumentationOnly = false }], ["docs/a.md"], buildStepPlanned: true));
+
+    [Theory]
+    [InlineData("backend/Program.cs")]
+    [InlineData(".agent-studio/project.yml")]
+    [InlineData("prompts/runtime/review.md")]
+    public void GateTestLevel_AMixedGatedDiffRunsTheCompleteSuiteDespiteTheFlag(string product)
+        => Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel(
+            [Subject("a")], ["docs/a.md", product], buildStepPlanned: true));
+
+    [Fact]
+    public void GateTestLevel_FailsClosed()
+    {
+        Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel([Subject("a")], null, true));
+        Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel([Subject("a")], [], true));
+        Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel([], ["docs/a.md"], true));
+        // Nothing but tests to run: the build-only level would verify nothing.
+        Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel([Subject("a")], ["docs/a.md"], false));
     }
 
     [Theory]

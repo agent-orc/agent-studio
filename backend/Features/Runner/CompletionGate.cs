@@ -265,12 +265,13 @@ public static class CompletionGate
     /// <summary>
     /// Which check produced the findings. The follow-up wording depends on it:
     /// a Dossier maintenance gap is not unfinished work in the run's own
-    /// result/status evidence.
+    /// result/status evidence, and neither is an invalid project definition.
     /// </summary>
     public enum CompletionGateSource
     {
         RunEvidence,
         DossierMaintenance,
+        ProjectDefinition,
     }
 
     public sealed record Decision
@@ -358,6 +359,12 @@ public static class CompletionGate
             sb.AppendLf("Follow the \"Dossier implementation update\" section of this run's instructions: append exactly one entry for this card inside the canonical implementation log and change nothing else in the Dossier.");
             sb.AppendLf("If the entry for this card is already on the integration branch, report that with the revision that carries it and do not add it again.");
             sb.AppendLf("End with [[TASK_DONE]] only when the Dossier entry is in place.");
+        }
+        else if (source == CompletionGateSource.ProjectDefinition)
+        {
+            sb.AppendLf("The Orchestrator project definition check found that .agent-studio/project.yml in this delivery is invalid at the delivered commit. Every build and merge gate stops on it before it runs a command.");
+            sb.AppendLf("Fix each issue below in the file. commands.prepare is required and names a repository-relative script that exists in the delivery and is committed executable; the minimal valid file is in docs/system/domains/pipeline.md.");
+            sb.AppendLf("End with [[TASK_DONE]] only when the file is valid.");
         }
         else
         {

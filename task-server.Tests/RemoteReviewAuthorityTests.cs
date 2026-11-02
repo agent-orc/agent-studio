@@ -1467,8 +1467,10 @@ public sealed partial class RemoteReviewAuthorityTests
         Assert.Equal("4-auto-review", (await TaskAsync(store, subject.TaskId)).State);
     }
 
-    [Fact]
-    public async Task Preparation_failure_preserves_full_command_evidence_and_retries_as_infrastructure()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Preparation_failure_preserves_classification_when_report_artifacts_are_reduced(bool reduced)
     {
         using var temp = new TempDirectory();
         var store = Store(temp.Path);
@@ -1520,6 +1522,7 @@ public sealed partial class RemoteReviewAuthorityTests
             Outcome = "ReviewInfra",
             FailureClassification = "PreparationFailed",
             Summary = "Preparation command 'prepare-dependencies' exited 9; budget=120000ms.",
+            ArtifactsReduced = reduced,
             Commands = [failed],
             Artifacts =
             [
@@ -1528,13 +1531,13 @@ public sealed partial class RemoteReviewAuthorityTests
                     "text/plain; charset=utf-8",
                     stdoutDigest,
                     stdout.LongLength,
-                    Convert.ToBase64String(stdout)),
+                    reduced ? null : Convert.ToBase64String(stdout)),
                 new ReviewArtifactEvidenceDto(
                     "candidate.prepare-dependencies.stderr.log",
                     "text/plain; charset=utf-8",
                     stderrDigest,
                     stderr.LongLength,
-                    Convert.ToBase64String(stderr)),
+                    reduced ? null : Convert.ToBase64String(stderr)),
             ],
             Verdicts = [],
         };

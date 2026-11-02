@@ -47,15 +47,18 @@ public sealed class CrashRecoveryServiceTests : IDisposable
         _logDir = Path.Combine(_tempDir, "logs");
         Directory.CreateDirectory(_tempDir);
         foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(_watchPath, state));
-        Directory.CreateDirectory(_repoRoot);
         Directory.CreateDirectory(_logDir);
 
-        RunGit(_repoRoot, "init -q -b main");
-        RunGit(_repoRoot, "config user.email test@example.com");
-        RunGit(_repoRoot, "config user.name test");
-        File.WriteAllText(Path.Combine(_repoRoot, "README.md"), "seed");
-        RunGit(_repoRoot, "add -A");
-        RunGit(_repoRoot, "commit -q -m seed");
+        // Built once per test process; each test starts from a copy (AGT-3419).
+        GitRepositoryTemplate.CopyTo("crash-recovery:seed:v1", _repoRoot, repo =>
+        {
+            RunGit(repo, "init -q -b main");
+            RunGit(repo, "config user.email test@example.com");
+            RunGit(repo, "config user.name test");
+            File.WriteAllText(Path.Combine(repo, "README.md"), "seed");
+            RunGit(repo, "add -A");
+            RunGit(repo, "commit -q -m seed");
+        });
     }
 
     // AGT-2858: TryDelete already clears the read-only attribute Git puts on

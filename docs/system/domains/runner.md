@@ -2430,6 +2430,15 @@ card), promotes the card to the top of `2-ready` with transition detail
 A manual start carries no prompt, so nothing is persisted; the promotion alone
 carries the intent.
 
+When a follow-up is queued during a live remote run, the card enters Ready but
+the earlier attempt keeps its lease and continues working. Remote dispatch
+records `earlier-run-still-leased` and skips that card until the lease is no
+longer active, so other Ready cards can be claimed. The earlier run's completion
+settles its result without moving the queued card out of Ready. Its commits
+remain on the remote work branch, and the immutable delivery ref and commit
+become the queued follow-up's continuation base unless a newer base was already
+selected. The next claim consumes the prompt and starts from that delivery.
+
 **A kill never loses intent.** Every stop path that terminates a run still
 holding its execution slot - `ClearActiveJobIfMatches` (lane reconciliation and
 the move endpoint), the silence watchdog, and the quota-cap watchdog - calls

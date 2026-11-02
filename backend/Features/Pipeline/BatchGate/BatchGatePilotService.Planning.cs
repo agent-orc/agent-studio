@@ -24,6 +24,7 @@ public sealed partial class BatchGatePilotService
     private static readonly TimeSpan EngineIntentLifetime = TimeSpan.FromMinutes(5);
     private static readonly JsonSerializerOptions PlanJson = new(JsonSerializerDefaults.Web);
     private int _batchPlanRefusalLogged;
+    private int _advisorOffLogged;
 
     /// <summary>
     /// Effective owner of the <c>BatchPlan</c> transition. Engine and Shadow
@@ -81,8 +82,13 @@ public sealed partial class BatchGatePilotService
             return await TakeEngineDecisionAsync(occurrences, settings,
                 new BatchPlanFacts(project, scopeKey, snapshot, prior, advisorMode), ct).ConfigureAwait(false);
         }
+        var carrier = BatchGateAdvisorCarrierPolicy.Resolve(advisorMode,
+            _configuration is null || HostCliDiscovery.Allowed(_configuration), owner);
+        if (carrier.Reason is not null && Interlocked.Exchange(ref _advisorOffLogged, 1) == 0)
+            _logger.LogInformation("batch-plan-advisor-off project={Project} reason={Reason}",
+                project, carrier.Reason);
         var facts = new BatchPlanFacts(project, scopeKey, snapshot, prior,
-            _advisor is null ? "off" : advisorMode);
+            _advisor is null ? "off" : carrier.EffectiveMode);
         var step = AgentStudio.Runner.MonolithTransitionAdapter.BatchPlan(facts);
         var decision = step.ConsultAdvisor
             ? await _advisor!.AdviseAsync(project, settings, snapshot, step.Decision, ct)

@@ -146,7 +146,8 @@ public sealed partial class BatchGatePilotService
     /// Returns false when the result is the card's to settle or a cancellation.
     /// </summary>
     private async Task<bool> ResolveBeforeSettlementAsync(TaskInfo task, BatchGatePendingRecord pending,
-        BuildTestGateResult gate, string evidence, DateTimeOffset started, bool recordInStore, CancellationToken ct)
+        BuildTestGateResult gate, string evidence, DateTimeOffset started, string level, bool recordInStore,
+        CancellationToken ct)
     {
         // GateCancellationPolicy classifies a cancelled gate, a stale one
         // included; the escalation itself refuses a generation that is not current.
@@ -175,7 +176,7 @@ public sealed partial class BatchGatePilotService
             if (live is not null
                 && !MonolithTransitionAdapter.IsGateQueueOverrun(gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase))
                 RecordFallbackExecution(pending, gate,
-                    Path.Combine(TaskPaths.LogsDir(live.FolderPath), Path.GetFileName(evidence)), started);
+                    Path.Combine(TaskPaths.LogsDir(live.FolderPath), Path.GetFileName(evidence)), started, level);
             SupersedeFallbackResult(live ?? task, pending, recordInStore);
             return true;
         }

@@ -71,6 +71,14 @@ public static partial class FailureInterventionPolicy
             failureClass = "integration/unverified-branch";
             reason = "The integration branch carries a delivery whose merged tree never passed a gate; the branch needs repair.";
         }
+        else if (EqualsAny(code, AgentStudio.TaskServer.Contracts.ReviewModelConfigurationPolicy.Classification))
+        {
+            // AGT-3420: the review CLI refused the model the project's review
+            // step setting named; the host's toolchain is fine.
+            domain = FailureDomains.Infrastructure;
+            failureClass = "ReviewConfig/ModelUnknownToCli";
+            reason = "The project's review step names a model its review CLI does not know; fix the project setting.";
+        }
         else if (EqualsAny(code, "ToolUnavailable") || lower.Contains("model is not supported")
             || lower.Contains("tool unavailable") || lower.Contains("command not found"))
         {

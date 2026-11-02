@@ -11,6 +11,7 @@ import {
   WORKBENCH_DECISION_CHANGE_MESSAGE,
   WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE,
 } from '../../../../services/sandboxed-html.util';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
 import { TaskService } from '../../../../services/task.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
@@ -277,10 +278,22 @@ describe('WorkbenchViewerComponent', () => {
     }]);
 
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-    fixture.componentInstance.onFrameMessage({
+    const confirmDialog = TestBed.inject(ConfirmDialogService);
+    const sendExternalLink = () => fixture.componentInstance.onFrameMessage({
       source: frame.contentWindow,
       data: { type: ISOLATED_HTML_LINK_MESSAGE, href: 'https://example.com/reference' },
     } as MessageEvent);
+    sendExternalLink();
+    expect(confirmDialog.active()?.title).toBe('Open example.com?');
+    expect(confirmDialog.active()?.detail).toBe('https://example.com/reference');
+    expect(openSpy).not.toHaveBeenCalled();
+    confirmDialog.cancel();
+    await Promise.resolve();
+    expect(openSpy).not.toHaveBeenCalled();
+
+    sendExternalLink();
+    confirmDialog.accept();
+    await Promise.resolve();
     expect(openSpy).toHaveBeenCalledWith(
       'https://example.com/reference',
       '_blank',

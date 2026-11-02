@@ -1915,7 +1915,7 @@ export type ProjectUrlStartResponse = ProjectUrlProcessSnapshot;
 export type ProjectUrlDiagnosisClass =
   | 'not-started' | 'starting' | 'command-unavailable' | 'invalid-cwd'
   | 'process-exited' | 'port-in-use' | 'port-never-opened' | 'timeout' | 'http-error-response'
-  | 'content-not-renderable' | 'invalid-configuration' | 'running';
+  | 'content-not-renderable' | 'invalid-configuration' | 'running' | 'local-only';
 
 /** AGT-2180 — bounded, redacted evidence snapshot behind the offline card. */
 export interface ProjectUrlDiagnostic {

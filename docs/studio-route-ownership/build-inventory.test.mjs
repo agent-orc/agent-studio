@@ -124,3 +124,14 @@ test('buildInventory marks the generated target as existing only when the standa
     fs.rmSync(emptyBackendRoot, { recursive: true, force: true });
   }
 });
+
+test('conditional query concatenation does not become a connector path suffix', () => {
+  assert.equal(
+    canonicalPath('/api/v1/management/remote-hosts/{hostId}/claude-sign-in/{handle}(sshTarget'),
+    '/api/v1/management/remote-hosts/{hostId}/claude-sign-in/{handle}',
+  );
+  assert.equal(
+    canonicalPath('/api/workspaces/{workspaceId}/decision-rules/versions(this.projectId()'),
+    '/api/workspaces/{workspaceId}/decision-rules/versions',
+  );
+});

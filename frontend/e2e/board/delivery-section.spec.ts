@@ -89,7 +89,7 @@ async function measureGroupHeaders(page: Page) {
     return ids.map((id) => {
       const group = board.querySelector(`[data-testid="lane-group-${id}"]`);
       const header = group?.querySelector('header');
-      const label = header?.querySelector('span');
+      const label = header?.querySelector('.lane-group__label');
       const content = header?.nextElementSibling;
       if (!group || !header || !label) throw new Error(`Missing ${id} header`);
       const box = header.getBoundingClientRect();
@@ -126,6 +126,7 @@ test('Delivery group places accepted cards by environment in both themes', async
   await page.clock.install({ time: new Date('2026-10-21T12:00:00Z') });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   let productionLive = false;
+  let deliveryEmpty = false;
   const grouped = { backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
     codeNotComplete: [], autoReview: [], humanReview: [], escalated: [], review: [], completed: cards, archive: [] };
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
@@ -142,7 +143,9 @@ test('Delivery group places accepted cards by environment in both themes', async
   await page.route('**/api/watch-paths', route => route.fulfill(json([
     { name: PROJECT, path: '/fixtures/demo', rootPath: '/fixtures/demo' },
   ])));
-  await page.route('**/api/projects/*/deploy/lanes**', route => route.fulfill(json(lanes(productionLive))));
+  await page.route('**/api/projects/*/deploy/lanes**', route => route.fulfill(json(deliveryEmpty
+    ? { ...lanes(false), columns: lanes(false).columns.map((item) => ({ ...item, landed: [], waiting: [], rolledBack: [], pendingApproval: null, lastRun: null })) }
+    : lanes(productionLive))));
   await page.setViewportSize({ width: 2000, height: 1900 });
   await page.goto('/');
   await expect(page.getByTestId('studio-project-picker-trigger')).toBeVisible({ timeout: 30_000 });
@@ -199,6 +202,32 @@ test('Delivery group places accepted cards by environment in both themes', async
   await expect(delivery.getByTestId('delivery-group-count')).toHaveText(String(tiles));
   expect(columnCounts).toBe(tiles);
 
+  for (const width of [1440, 800]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const expandedCounts = (await delivery.locator('[data-testid^="delivery-column-count-"]').allTextContents()).map(Number);
+      await board.screenshot({ path: path.join(results, `agt-3355-expanded-${theme}-${width}.png`) });
+      await delivery.getByTestId('delivery-group-toggle').click();
+      const rail = delivery.getByTestId('delivery-group-rail');
+      await expect(rail).toHaveAttribute('aria-label', `Expand Delivery, ${tiles} cards`);
+      await expect(delivery.getByTestId('delivery-rail-total')).toHaveText(String(tiles));
+      const railCounts = (await delivery.locator('[data-testid^="delivery-rail-count-"]').allTextContents()).map(Number);
+      expect(railCounts).toEqual(expandedCounts);
+      await expect(delivery.getByTestId('delivery-columns')).toHaveCount(0);
+      await expect(delivery.getByText('!', { exact: true })).toHaveCount(1);
+      const widths = await board.evaluate((element) => [...element.children].slice(0, 3).map((child) => child.getBoundingClientRect().width));
+      expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
+      expect(await board.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await board.screenshot({ path: path.join(results, `agt-3355-collapsed-${theme}-${width}.png`) });
+      await page.reload();
+      await expect(delivery.getByTestId('delivery-group-rail')).toBeVisible();
+      await rail.click();
+      await expect(delivery.getByTestId('delivery-columns')).toBeVisible();
+    }
+  }
+  await page.setViewportSize({ width: 2000, height: 1900 });
+
   // Reduced motion: the column toggle has no transition.
   const toggleTransition = await delivery.getByTestId('delivery-column-toggle-dev')
     .evaluate((el) => getComputedStyle(el).transitionDuration);
@@ -215,12 +244,14 @@ test('Delivery group places accepted cards by environment in both themes', async
 
   // Display option: each card once, in its furthest environment.
   await delivery.getByTestId('delivery-furthest-only').check();
+  await expect(delivery.getByTestId('delivery-group-count')).toHaveText('5');
   expect(await tileKeys(dev, 'landed')).toEqual(['AGT-3301', 'AGT-3304']);
   expect(await tileKeys(stage, 'landed')).toEqual(['AGT-3288']);
   expect(await tileKeys(stage, 'waiting')).toEqual(['AGT-3290']);
   expect(await tileKeys(production, 'waiting')).toEqual([]);
   await delivery.screenshot({ path: path.join(results, 'agt-3316-delivery-section-furthest-only-dark.png') });
   await delivery.getByTestId('delivery-furthest-only').uncheck();
+  await expect(delivery.getByTestId('delivery-group-count')).toHaveText(String(tiles));
 
   // Collapsible like the board lanes.
   await delivery.getByTestId('delivery-column-toggle-integrated').click();
@@ -236,4 +267,34 @@ test('Delivery group places accepted cards by environment in both themes', async
   await expect(production.getByTestId('delivery-run-state')).toHaveText('Succeeded');
   await setTheme(page, 'light');
   await delivery.screenshot({ path: path.join(results, 'agt-3316-delivery-section-after-approval-light.png') });
+
+  deliveryEmpty = true;
+  await page.clock.fastForward(30_000);
+  await expect(delivery).toBeHidden();
+  for (const width of [1440, 800]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const widths = await board.evaluate((element) => [...element.children].slice(0, 3).map((child) => child.getBoundingClientRect().width));
+      expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
+      expect(await board.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await board.screenshot({ path: path.join(results, `agt-3355-empty-${theme}-${width}.png`) });
+    }
+  }
+  deliveryEmpty = false;
+  await page.clock.fastForward(30_000);
+  await expect(delivery).toBeVisible();
+
+  // The other lanes retain their drag affordance and keyboard focus mode.
+  await expect(board.getByTestId('lane-6-completed').locator('[draggable="true"]').first()).toBeVisible();
+  await board.click({ position: { x: 12, y: 18 } });
+  await page.keyboard.press('2');
+  await expect(board.getByTestId('lane-group-active')).toBeVisible();
+  await expect(board.getByTestId('lane-group-backlog')).toBeHidden();
+  await expect(board.getByTestId('lane-group-decide')).toBeHidden();
+  await expect(delivery).toBeHidden();
+  await page.keyboard.press('0');
+  await expect(board.getByTestId('lane-group-backlog')).toBeVisible();
+  await expect(board.getByTestId('lane-group-decide')).toBeVisible();
+  await expect(delivery).toBeVisible();
 });
