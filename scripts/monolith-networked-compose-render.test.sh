@@ -106,6 +106,12 @@ for name, (caddyfile, allow_direct, public_edge, restart_policy) in expected.ite
     assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3,172.30.83.2', api['environment']
     assert api['environment']['Security__PublicCloudflareEdge'] == public_edge, api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
+    # The secret store key sits outside the workspace that backups archive.
+    assert api['environment']['Secrets__KeyFile'] == '/data/keys/secrets.kek', api['environment']
+    api_volumes = {volume['target']: volume for volume in api['volumes']}
+    assert api_volumes['/data/keys']['source'].endswith('/data/keys'), api_volumes
+    assert api_volumes['/data/keys'].get('read_only') is True, api_volumes['/data/keys']
+    assert env['STUDIO_BACKUP_DESTINATION'] == '', (name, env)
 print('Compose render passed for public, Cloudflare, direct-access and private modes.')
 PY
 

@@ -14,10 +14,13 @@ services:
       Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2
       AllowedHosts: ${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+      # Outside the workspace, so backups never contain it (see secret-key.sh).
+      Secrets__KeyFile: /data/keys/secrets.kek
     volumes:
       - ${STUDIO_DATA_DIR:?Run setup.sh}/workspace:/data/workspace
       - ${STUDIO_DATA_DIR}/projects:/data/projects
       - ${STUDIO_DATA_DIR}/home:/data/home
+      - ${STUDIO_DATA_DIR}/keys:/data/keys:ro
     networks:
       website:
         ipv4_address: 172.30.83.4

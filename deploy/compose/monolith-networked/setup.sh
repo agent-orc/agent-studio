@@ -63,6 +63,7 @@ else
   docker run --rm --user 0 -v "$data_dir:/site" --entrypoint chown caddy:2-alpine \
     -R 10001:10001 /site/workspace /site/projects /site/home
 fi
+bash ./secret-key.sh create "$data_dir"
 code="$(openssl rand -hex 24)"
 umask 077
 cat > .env <<EOF
@@ -74,8 +75,11 @@ STUDIO_CADDYFILE=./Caddyfile.$edge
 STUDIO_CLOUDFLARE_ALLOW_DIRECT=$allow_direct
 STUDIO_PUBLIC_CLOUDFLARE_EDGE=$public_edge
 STUDIO_RESTART_POLICY=$restart_policy
+STUDIO_BACKUP_DESTINATION=
 EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
+echo 'Secret store key: keep a copy of `bash secret-key.sh print '"$data_dir"'` apart from the backups; they do not contain it.'
+echo 'Backups are off until STUDIO_BACKUP_DESTINATION is set; see docs/operations/setup/studio-backup-restore.md.'
 if [ "$edge" = cloudflare ]; then
   echo 'Cloudflare mode: create an A record only (no AAAA) and set SSL/TLS mode Full (strict).'
   echo 'Install the account-specific origin-pull CA and Docker firewall before starting the stack.'
