@@ -27,7 +27,7 @@
 .structure-main { min-width: 0; overflow: auto; padding: var(--studio-spacing-4); }
 .structure-canvas { position: relative; display: flex; flex-wrap: wrap; align-content: flex-start; gap: var(--studio-spacing-4); min-height: 320px; min-width: 850px; }
 .structure-box { position: relative; min-width: 170px; background: var(--studio-bg-surface); border: 1px solid var(--studio-border-strong); border-radius: 8px; }
-.structure-box[data-kind='boundary'] { flex: 1 1 100%; border-style: dashed; }
+.structure-box[data-kind='boundary'], .structure-box[data-kind='system'] { flex: 1 1 100%; border-style: dashed; }
 .structure-box[data-kind='location'] { flex: 1 1 260px; }
 .structure-box[data-kind='physical'], .structure-box[data-kind='cloud-server'], .structure-box[data-kind='vm'] { flex: 1 1 220px; }
 .structure-box[data-kind='external'] { border-style: dashed; }
@@ -35,6 +35,7 @@
 .structure-box[data-kind='process'] { border-radius: 18px; }
 .structure-box[data-kind='group'] { flex: 1 1 220px; }
 .structure-box[data-selected='true'] { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+.structure-box[data-other-project='true'] { opacity: .72; border-style: dashed; }
 .structure-node { @include m.disclosure-control; flex-wrap: wrap; align-items: baseline; min-height: 42px; padding: var(--studio-spacing-3); color: var(--studio-fg); }
 .structure-node strong { color: var(--studio-fg-strong); font-size: 12px; font-weight: 650; }
 .structure-node small { color: var(--studio-fg-muted); font-size: 10px; }

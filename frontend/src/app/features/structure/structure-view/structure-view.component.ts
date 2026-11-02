@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, afterNextRender, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, HostListener, afterNextRender, computed, effect, inject, input, signal } from '@angular/core';
 import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
@@ -29,6 +29,7 @@ interface StructureLibrary { registries: LibraryRegistry[]; consumers: LibraryCo
   styleUrl: './structure-view.component.scss',
 })
 export class StructureViewComponent {
+  readonly projectName = input<string | null>(null);
   private readonly http = inject(HttpClient);
   private readonly element = inject(ElementRef) as ElementRef<HTMLElement>;
   readonly data = signal<StructureData>({ nodes: [], links: [] });
@@ -46,6 +47,15 @@ export class StructureViewComponent {
   readonly visible = computed(() => visibleBoxes(this.roots()));
   readonly drawnLinks = signal<DrawnLink[]>([]);
   readonly summaryText = summaryText;
+  private readGeneration = 0;
+  ownerDescription(box: StructureBox): string {
+    return box.otherProject ? `other project · ${box.ownerLabel ?? box.project}` : box.kind;
+  }
+  accessibleLabel(box: StructureBox): string {
+    return `${box.label}, ${box.kind}` +
+      (box.otherProject ? `, other project, ${box.ownerLabel ?? box.project}` : '') +
+      (box.collapsed ? `, ${summaryText(box)}` : '');
+  }
   private frame = 0;
   private readonly linkRefresh = effect(() => {
     this.roots();
@@ -57,14 +67,12 @@ export class StructureViewComponent {
 
   constructor() {
     afterNextRender(() => this.element.nativeElement.querySelector<HTMLElement>('.structure-main')?.focus());
-    try {
-      const saved = JSON.parse(localStorage.getItem('studio.structure.workspace') || '{}') as
-        { view?: 'host' | 'container'; level?: 1 | 2 | 3 };
-      if (saved.view === 'host' || saved.view === 'container') this.view.set(saved.view);
-      if (saved.level === 1 || saved.level === 2 || saved.level === 3) this.level.set(saved.level);
-    } catch { /* Optional preference. */ }
-    void this.load();
     void this.loadLibrary(false);
+    effect(() => {
+      const projectName = this.projectName();
+      this.readPreference(projectName);
+      void this.load(projectName);
+    });
   }
 
   async loadLibrary(refresh: boolean): Promise<void> {
@@ -83,12 +91,28 @@ export class StructureViewComponent {
       jfrog: 'JFrog', internal: 'Internal registry' } as Record<string, string>)[provider] ?? provider;
   }
 
-  private async load(): Promise<void> {
+  private preferenceKey(projectName: string | null): string {
+    return `studio.structure.${projectName ?? 'workspace'}`;
+  }
+
+  private readPreference(projectName: string | null): void {
     try {
-      this.data.set(await firstValueFrom(this.http.get<StructureData>('/api/v1/operations/structure',
-        { params: { scope: 'workspace' } })));
+      const saved = JSON.parse(localStorage.getItem(this.preferenceKey(projectName)) || '{}') as
+        { view?: 'host' | 'container'; level?: 1 | 2 | 3 };
+      this.view.set(saved.view === 'container' ? 'container' : 'host');
+      this.level.set(saved.level === 1 || saved.level === 3 ? saved.level : 2);
+    } catch { /* Optional preference. */ }
+  }
+
+  private async load(projectName: string | null): Promise<void> {
+    const generation = ++this.readGeneration;
+    try {
+      const data = await firstValueFrom(this.http.get<StructureData>('/api/v1/operations/structure',
+        { params: { scope: projectName ? `project:${projectName}` : 'workspace' } }));
+      if (generation !== this.readGeneration) return;
+      this.data.set(data);
       this.error.set(null);
-    } catch { this.error.set('Structure declarations could not be loaded.'); }
+    } catch { if (generation === this.readGeneration) this.error.set('Structure declarations could not be loaded.'); }
   }
 
   setView(view: 'host' | 'container'): void {
@@ -108,7 +132,7 @@ export class StructureViewComponent {
     this.element.nativeElement.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
   }
   private remember(): void {
-    try { localStorage.setItem('studio.structure.workspace', JSON.stringify({ view: this.view(), level: this.level() })); }
+    try { localStorage.setItem(this.preferenceKey(this.projectName()), JSON.stringify({ view: this.view(), level: this.level() })); }
     catch { /* Preference storage is optional. */ }
   }
 

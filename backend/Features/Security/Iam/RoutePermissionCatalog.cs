@@ -315,6 +315,7 @@ public static class RoutePermissionCatalog
 
         // --- Workspace administration, settings, and operation -------------
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/usage-calendar");
+        Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/systems/{}");
         Add("POST", IamPermissions.WorkspaceAdminister, "/api/projects/path-import");
         Add("POST", IamPermissions.WorkspaceSettingsWrite, "/api/projects");
         Add("W", IamPermissions.WorkspaceSettingsWrite,

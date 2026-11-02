@@ -83,4 +83,15 @@ describe('Structure projection', () => {
     expect(visibleBoxes(projectStructure(fixture, 'container', 2, {})).map(box => box.id))
       .toContain('app');
   });
+
+  it('draws a system environment boundary around its exclusive shared placement', () => {
+    const fixture: StructureData = { nodes: [node('installation', 'boundary', 'Workspace', null),
+      node('system:product:production', 'system', 'Product · production', 'installation'),
+      node('machine:web', 'vm', 'Web placement', 'installation'),
+      { ...node('website', 'process', 'Website', 'machine:web'), project: 'PROJ-002', systemBoundaryId: 'system:product:production' },
+      { ...node('agent', 'process', 'Run-target agent', 'machine:web'), project: 'PROJ-001', systemBoundaryId: 'system:product:production' }], links: [] };
+    const roots = projectStructure(fixture, 'host', 3, {});
+    expect(roots[0].children[0].children.map(child => child.id)).toEqual(['machine:web']);
+    expect(fixture.nodes.find(item => item.id === 'machine:web')?.parentId).toBe('installation');
+  });
 });

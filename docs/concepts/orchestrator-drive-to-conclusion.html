@@ -3107,6 +3107,13 @@
           <td>The summary step is an orchestrator step, so its prompt must stay under the 32 KB boundary limit, but it carried a 60,000-character log tail. Measured on six cards, that tail alone was 34 to 61 KB, 70 to 85 percent of it tool-call JSON. The refusal was retried like a transient failure.</td>
           <td>The observed terminal was a degraded Result: the card kept the scaffold <code>status.md</code> and no summary. <code>SummaryPromptFit</code> now fits the log slot into the bytes the rest of the prompt leaves. It keeps the task prompt head, the run status, the deliverables and the final agent messages, shortens the run log before them, and names every omission in the prompt. A boundary refusal ends finalization after one attempt and queues no retry. <code>Summary prompt shortened</code> and <code>Result finalization degraded</code> log the prompt size and running counts.</td>
         </tr>
+        <tr id="case-codex-model-capacity-quota-hold">
+          <td>2026-11-02</td>
+          <td><code>AGT-3389 / AGT-3385 / QS-135</code><br><span class="small">Codex model capacity misclassified as quota exhaustion</span></td>
+          <td>Three Codex turns failed with "Selected model is at capacity" and <code>turn.failed</code>. The runner classified them as <code>QuotaExceeded</code>, held <code>provider-auth:codex</code> limited, and stopped claiming Codex cards. The cards ended Unknown or escalated; an operator restarted the runner and salvaged the work.</td>
+          <td>The shared provider-access classifier listed "at capacity" among rate-limit signals. The typed outcome therefore selected <code>WaitForCapabilityRecovery</code>, and the provider-auth probe applied a host-wide hold. The completion planes had no distinct transient capacity terminal.</td>
+          <td>The observed terminal was Unknown or Escalated. Model capacity now has its own typed outcome and three bounded same-session retries at 30 seconds, 2 minutes, and 5 minutes. Exhaustion returns the card to Ready with its salvage as the next starting point. The provider login stays available; explicit usage limits and HTTP 429 reset refusals retain their existing hold.</td>
+        </tr>
       </tbody>
     </table>
 

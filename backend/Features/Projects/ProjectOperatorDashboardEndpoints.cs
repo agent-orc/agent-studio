@@ -13,7 +13,8 @@ public static class ProjectOperatorDashboardEndpoints
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
         app.MapGet("/api/v1/operations/structure", (string? scope, string? environment,
-            IConfiguration configuration, ProjectRegistry projects, ProjectEnvironmentService environments,
+            IConfiguration configuration, ProjectRegistry projects, WorkspaceRegistry workspaces,
+            ProjectEnvironmentService environments,
             GitService git) =>
         {
             if (scope is not null && scope != "workspace" && !scope.StartsWith("project:", StringComparison.Ordinal))
@@ -35,7 +36,10 @@ public static class ProjectOperatorDashboardEndpoints
             }
             return Results.Ok(StructureProjection.Build(manifest, projects.List(),
                 environments.DeclarationFiles, projectId, environment,
-                project => git.ResolveRepoRootForProject(project.DisplayName)));
+                project => git.ResolveRepoRootForProject(project.DisplayName),
+                workspaces.List().Where(workspace => projectId is null ||
+                    projects.FindById(projectId)?.WorkspaceId == workspace.Id)
+                    .SelectMany(workspace => workspace.Systems).ToArray()));
         });
 
         app.MapGet("/api/v1/operations/structure/library", async (StructureLibraryService library,

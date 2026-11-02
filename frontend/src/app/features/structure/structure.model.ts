@@ -9,6 +9,9 @@ export interface StructureNode {
   provenance: 'declared';
   sourceRef: string;
   role?: string | null;
+  ownerLabel?: string | null;
+  otherProject?: boolean;
+  systemBoundaryId?: string | null;
 }
 
 export interface StructureLink {
@@ -28,7 +31,7 @@ export interface StructureBox extends StructureNode {
 }
 
 const PLACEMENT = new Set(['physical', 'cloud-server', 'vm', 'cluster', 'namespace', 'host', 'server']);
-const GROUP = new Set(['boundary', 'environment', 'location', 'group', ...PLACEMENT]);
+const GROUP = new Set(['boundary', 'system', 'environment', 'location', 'group', ...PLACEMENT]);
 const isPlacement = (node: StructureNode): boolean => PLACEMENT.has(node.kind) || node.id.startsWith('machine:');
 const isGroup = (node: StructureNode): boolean => GROUP.has(node.kind) || isPlacement(node);
 
@@ -50,6 +53,23 @@ export function projectStructure(data: StructureData, view: 'host' | 'container'
     const parentId = view === 'container' && !isGroup(node) && node.kind !== 'external'
       ? `function:${node.role || 'Other'}` : node.parentId;
     nodes.set(node.id, { ...node, parentId, children: [], collapsed: false, summary: {}, replicas: 1 });
+  }
+  if (view === 'host') {
+    const children = new Map<string, StructureNode[]>();
+    for (const node of data.nodes) if (node.parentId) {
+      const siblings = children.get(node.parentId) ?? [];
+      siblings.push(node);
+      children.set(node.parentId, siblings);
+    }
+    const members = (id: string): StructureNode[] => (children.get(id) ?? []).flatMap(child =>
+      child.project && !isGroup(child) ? [child] : members(child.id));
+    for (const node of data.nodes.filter(node => node.parentId === boundary?.id &&
+      (node.kind === 'location' || isPlacement(node)))) {
+      const owned = members(node.id);
+      const systemId = owned[0]?.systemBoundaryId;
+      if (systemId && owned.every(member => member.systemBoundaryId === systemId) && nodes.has(systemId))
+        nodes.get(node.id)!.parentId = systemId;
+    }
   }
   const roots: StructureBox[] = [];
   for (const node of nodes.values()) {
