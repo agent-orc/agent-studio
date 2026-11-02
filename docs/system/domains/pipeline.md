@@ -389,6 +389,7 @@ record keeps the route it failed on (`merge` for a merge-parent mismatch).
 Every ejected member, conflict or unattributable, returns to per-task fallback
 after publication. Before scheduling a gate, the tick checks whether the
 integration branch already contains its result by ancestry or patch equivalence.
+Members deferred by the conflict cascade remain queued for the next batch.
 Published members leave through a containment record without another gate or
 per-task integration. Publication recovery repeats this check on later ticks
 while the member's review is still pending, so a restart between the remote push
@@ -551,8 +552,34 @@ gate the tree again. An uncontained delivery remains blocked. A failed acceptanc
 Verified members also
 receive an idempotent integration bookkeeping
 record with their mapped SHA set and tested remote tip. A disabled project and
-a lone aged member use the ordinary per-card
-gate on the same immutable result subject. Within one backend process that
+a lone aged member use the per-card gate on the same immutable delivery.
+Since AGT-3434 that gate tests the delivery merged onto the freshly fetched
+integration tip. AGT-3408 spent 56
+minutes there and escalated on tests develop had already fixed; the merge
+path then ran a second gate on the merged tree. The candidate is a `--no-ff`
+merge commit with the tip and the result SHA as parents, or the result SHA
+when it already descends from the tip. It is pinned under
+`refs/agent-studio/fallback-candidates/` only while its gate runs. The card
+marker keeps `fallbackTestedSha` as the delivery SHA that passed, so lane
+release and acceptance compare it with the result SHA as before. The marker
+also records the tip, candidate and tree it tested. A resumed gate keeps that
+candidate while the tip stands, so the exact-SHA verdict cache still applies.
+A merge conflict runs no gate: the card returns to its agent for one
+automatic merge round whose prompt names the conflicted files, or escalates
+with those files when that round cannot start. The old base protected one
+thing, which the change keeps: a red integration branch must not escalate a
+delivery that is green on its own. A deterministic red on a merged candidate
+therefore reads the durable base verdict of that tip, which it shares with
+batches and runs only once per tip. When the tip is red on its own, the same
+flight retests the delivery on its own base and records `fallbackOwnBase`.
+A tip that cannot be fetched or merged for a reason other than a conflict
+also keeps the own-base subject.
+The publish step stands on that verdict instead of running the merge gate
+when the merge lands on the recorded tip with the recorded tree
+(`PerTaskGateVerdictReusePolicy`). Its receipt reads `verdictSource=CacheHit`
+and the lane event level is `per-task-verdict`. A moved tip, another tree, or
+an own-base verdict keeps today's merge gate on the merged tree.
+Within one backend process that
 per-card gate runs at most once at a time per review generation: a retried
 review report or a tick that meets a running fallback waits for it instead of
 starting a second gate. The card marker records that per-card gate as active
@@ -596,7 +623,11 @@ that separate target remains described in the [Gates Dossier](../../operations/g
 including `integrationBranchRedBatches` and the correctness floor; comparable baseline and cost fields remain null
 until measured on the same window. `fullSuiteRuns` and `fullSuiteHostMinutes`
 count every gate execution, including emergency per-task fallbacks run at
-review settlement. `reviewVerificationRuns`, `reviewVerificationHostMinutes`
+review settlement. `perTaskFallbackCards`, `perTaskFallbackSuiteRuns`,
+`perTaskFallbackSuitesPerCard` and `perTaskPublishVerdictReuses` (AGT-3434)
+count, once per review generation the per-task path settled, the suites that
+card ran: its per-task gates, the tip verdict it triggered, and the merge gate
+when the publish step ran it instead of reusing the per-task verdict. `reviewVerificationRuns`, `reviewVerificationHostMinutes`
 and `reviewVerificationBaselineMinutes` count the builds and selected tests a
 batch-deferred review ran itself (`review-verification` tool commands,
 candidate and clean-repeat plus non-cached baseline workspaces), recorded once
