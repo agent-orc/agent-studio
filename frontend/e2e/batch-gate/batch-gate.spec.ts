@@ -46,6 +46,7 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
   await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({ v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__' })));
   await page.route('**/api/**', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
+  await page.route('**/api/v1/management/credential-inventory', route => json(route, { items: [] }));
   await page.route('**/api/v1/studio/board**', route => json(route, grouped));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0 }));
   await page.route('**/api/watch-paths**', route => json(route, [{ name: project, path, rootPath: path, repositoryPath: path }]));
@@ -54,6 +55,12 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
     workspaceId: 'workspace-1', storageLocation: path, rootPath: path, repositoryPath: path,
     repositoryUrl: null, urls: [], archived: false, sortOrder: 0,
   }] }]));
+  const admission = { status: 'ok', message: null, overrideActive: false,
+    codingAllowed: true, hostingAllowed: true, limited: false };
+  await page.route('**/api/workspaces/*/quota/admission', route => json(route, {
+    workspaceId: 'workspace-1', workspace: { ...admission, projectId: null, project: null },
+    projects: [{ ...admission, projectId: project, project }],
+  }));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/usage/cockpit**', route => json(route, {
     snapshotVersion: 1, workspaceId: null, generatedAt: '2026-10-11T13:00:00Z', timeZone: 'Europe/Berlin', weekStart: 1,
@@ -85,6 +92,7 @@ test('board badge, batch panel and project settings save use batch contract', as
   let saved = false;
   await routeBoard(page, state, () => { saved = true; });
   await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
   // This route-only fixture has no SignalR server; keep its offline banner out of the target surface.
   await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
   const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
@@ -125,6 +133,7 @@ test('ejected batch member badge names why it went to the per-task gate', async 
     members: { 'AGT-2': { status: 'fallback', batchId: 'batch-8', phase: 'running', position: 1, size: 1, reason: 'unattributable', reasonDetail: detail } },
   });
   await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
   await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
   const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
   const badge = card.getByTestId('batch-member-badge');

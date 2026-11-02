@@ -3,6 +3,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: the fixed date is input to a pure admission policy and never meets the wall clock.
 public sealed class BatchGatePreCheckPolicyTests
 {
     [Theory]
