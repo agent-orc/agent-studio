@@ -62,7 +62,6 @@ const COMPONENT_CSS = [
   compileComponent(rel('app', 'components', 'list-row', 'list-row.component.scss')),
   compileComponent(rel('app', 'components', 'section-header', 'section-header.component.scss')),
   compileComponent(rel('app', 'components', 'count-badge', 'count-badge.component.scss')),
-  compileComponent(rel('app', 'features', 'cli', 'components', 'cli-sessions-panel', 'cli-sessions-panel.scss')),
   compileComponent(rel('app', 'features', 'shell', 'components', 'workspace-overlays', 'workspace-overlays.component.scss')),
 ].join('\n');
 
