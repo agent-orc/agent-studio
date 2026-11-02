@@ -211,6 +211,7 @@ public sealed class ScopedSecretStore : ISecretStore
     public Task<byte[]> ReadValueAsync(SecretScope scope, string name, int version, CancellationToken ct)
         => Select(scope).ReadValueAsync(scope, name, version, ct);
     public Task<bool> DeleteAsync(SecretScope scope, string name, CancellationToken ct) => Select(scope).DeleteAsync(scope, name, ct);
+    public Task EnsureWritableAsync(SecretScope scope, CancellationToken ct) => Select(scope).EnsureWritableAsync(scope, ct);
 }
 
 public interface IExternalSecretStore : ISecretStore

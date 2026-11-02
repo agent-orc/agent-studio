@@ -291,6 +291,7 @@ public sealed class SecretProviderTests : IDisposable
         }
 
         public Task<bool> DeleteAsync(SecretScope s, string n, CancellationToken ct) => inner.DeleteAsync(s, n, ct);
+        public Task EnsureWritableAsync(SecretScope s, CancellationToken ct) => inner.EnsureWritableAsync(s, ct);
     }
 
     private sealed class FailingStore : ISecretStore
@@ -307,5 +308,6 @@ public sealed class SecretProviderTests : IDisposable
 
         public Task<byte[]> ReadValueAsync(SecretScope scope, string name, int version, CancellationToken ct) => throw new IOException("disk unavailable");
         public Task<bool> DeleteAsync(SecretScope scope, string name, CancellationToken ct) => throw new IOException("disk unavailable");
+        public Task EnsureWritableAsync(SecretScope scope, CancellationToken ct) => throw new IOException("disk unavailable");
     }
 }

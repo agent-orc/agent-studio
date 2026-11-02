@@ -366,6 +366,25 @@ public sealed class GitHubAppBrokerTests
     }
 
     [Fact]
+    public async Task Registration_stops_before_GitHub_when_the_secret_store_cannot_write()
+    {
+        _vault.Unwritable = new InvalidOperationException("No key-encryption key is configured.");
+
+        var failure = await Assert.ThrowsAsync<GitHubAppException>(() =>
+            _broker.StartRegistrationAsync(new StartGitHubAppRegistrationRequest(Origin, null), default));
+
+        Assert.Equal("secret-store-unavailable", failure.Code);
+        Assert.Equal(503, failure.StatusCode);
+        Assert.Contains("No key-encryption key is configured.", failure.Message);
+        Assert.Empty(_github.Paths);
+        Assert.Null(await _vault.LoadConnectionAsync(default));
+
+        _vault.Unwritable = null;
+        await RegisterAsync();
+        Assert.NotNull(await _vault.LoadConnectionAsync(default));
+    }
+
+    [Fact]
     public async Task A_second_registration_is_refused_while_connected()
     {
         await RegisterAsync();
@@ -661,6 +680,8 @@ public sealed class GitHubAppBrokerTests
         public Task<GitHubAppSecrets?> ReadSecretsAsync(CancellationToken ct) => Task.FromResult(Secrets);
         public Task WriteSecretsAsync(GitHubAppSecrets secrets, string actor, CancellationToken ct) { Secrets = secrets; return Task.CompletedTask; }
         public Task DeleteSecretsAsync(string actor, CancellationToken ct) { Secrets = null; return Task.CompletedTask; }
+        public Exception? Unwritable { get; set; }
+        public Task EnsureWritableAsync(CancellationToken ct) => Unwritable is null ? Task.CompletedTask : throw Unwritable;
     }
 
     private sealed class FakeGitHub : HttpMessageHandler

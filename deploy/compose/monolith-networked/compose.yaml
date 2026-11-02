@@ -1,9 +1,21 @@
 name: agent-studio-website
 
+# Every container drops all capabilities and cannot gain privileges.
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
 services:
   api:
     image: ghcr.io/agent-orc/agent-studio-api:v${STUDIO_VERSION:?Run setup.sh with a release version}
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    <<: *hardening
+    # The root file system stays writable: agent CLIs and project build gates
+    # run in this container and need a disk-backed /tmp. A tmpfs would count
+    # toward the memory limit below.
+    pids_limit: 8192
+    # .NET caps its heap at 75 % of this limit; 8g stalled on a real workspace.
+    mem_limit: ${STUDIO_API_MEMORY_LIMIT:-20g}
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       TaskRepository: /data/workspace
@@ -14,7 +26,10 @@ services:
       Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2
       AllowedHosts: ${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+      # The key-encryption key of the secret store, kept outside the data directory.
+      Secrets__KeyFile: /run/secrets/studio-secrets.kek
     volumes:
+      - ${STUDIO_SECRETS_KEY_FILE:?Run setup.sh or set STUDIO_SECRETS_KEY_FILE}:/run/secrets/studio-secrets.kek:ro
       - ${STUDIO_DATA_DIR:?Run setup.sh}/workspace:/data/workspace
       - ${STUDIO_DATA_DIR}/projects:/data/projects
       - ${STUDIO_DATA_DIR}/home:/data/home
@@ -25,8 +40,19 @@ services:
   frontend:
     image: ghcr.io/agent-orc/agent-studio-web:v${STUDIO_VERSION}
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    <<: *hardening
+    # The image's caddy binary carries this file capability and cannot start
+    # without it in the bounding set; the server listens on 8080.
+    cap_add: [NET_BIND_SERVICE]
+    read_only: true
+    pids_limit: 512
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+    tmpfs:
+      # Caddy's autosave and state; the shell itself is part of the image.
+      - /config:uid=10001,gid=10001,mode=0700
+      - /data:uid=10001,gid=10001,mode=0700
+      - /tmp
     volumes:
       - ./Caddyfile.frontend:/etc/caddy/Caddyfile:ro
     depends_on:
@@ -36,9 +62,17 @@ services:
         ipv4_address: 172.30.83.3
 
   edge:
-    image: caddy:2-alpine
+    image: caddy:2.11-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     # Public stacks wait for the firewall boot unit; private stacks use Docker restart.
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    <<: *hardening
+    # Caddy runs as root in this image; it keeps only the right to bind 80 and 443.
+    # caddy-data and caddy-config therefore belong to root (setup.sh).
+    cap_add: [NET_BIND_SERVICE]
+    read_only: true
+    pids_limit: 512
+    tmpfs:
+      - /tmp
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
       # Caddyfile.cloudflare only: true admits peers outside Cloudflare's ranges.
