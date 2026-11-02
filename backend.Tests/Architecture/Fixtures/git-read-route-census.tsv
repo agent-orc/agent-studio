@@ -303,6 +303,7 @@
 /api/supervisor/{project}/recent-events	free	-	-	-
 /api/system/about	free	-	-	-
 /api/system/execution-infrastructure	free	-	-	-
+/api/system/readiness	free	-	-	-
 /api/system/version	free	-	-	-
 /api/tags/	free	-	-	-
 /api/tasks/	free	-	-	-
@@ -421,4 +422,5 @@
 /healthz/container	free	-	-	-
 /healthz/drain	free	-	-	-
 /healthz/orchestration-engine	free	-	-	-
+/healthz/readiness	free	-	-	-
 /recovery	free	-	-	-

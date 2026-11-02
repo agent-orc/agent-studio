@@ -73,6 +73,13 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     }
 
     [Theory]
+    [InlineData("GET", "/api/system/readiness", IamPermissions.WorkspaceOperate)]
+    [InlineData("POST", "/api/system/readiness/refresh", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/healthz/readiness", IamPermissions.Anonymous)]
+    public void Readiness_routes_use_their_intended_permissions(string method, string path, string permission)
+        => Assert.Equal(permission, RoutePermissionCatalog.Resolve(method, path)?.Permission);
+
+    [Theory]
     [InlineData("GET", "/api/tasks/{jobId}", IamPermissions.ProjectRead)]
     [InlineData("PUT", "/api/tasks/{jobId}/title", IamPermissions.ProjectCardsWrite)]
     [InlineData("POST", "/api/tasks/{jobId}/move", IamPermissions.ProjectCardsWrite)]

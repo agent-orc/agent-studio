@@ -94,6 +94,38 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
     }
 
     [Fact]
+    public async Task Readiness_probe_answers_only_inside_the_container_and_the_page_route_needs_a_session()
+    {
+        using (var factory = BuildFactory(remoteIp: "127.0.0.1"))
+        {
+            using var client = NewClient(factory);
+            using (var pending = await client.GetAsync("/healthz/readiness"))
+            {
+                Assert.Equal(HttpStatusCode.OK, pending.StatusCode);
+                Assert.Equal("pending", JsonDocument.Parse(await pending.Content.ReadAsStringAsync()).RootElement.GetProperty("state").GetString());
+            }
+            await factory.Services.GetRequiredService<AgentStudio.Readiness.ServerReadinessMonitor>().RefreshAsync(CancellationToken.None);
+            using var probe = await client.GetAsync("/healthz/readiness");
+            Assert.Equal(HttpStatusCode.OK, probe.StatusCode);
+            var report = JsonDocument.Parse(await probe.Content.ReadAsStringAsync()).RootElement;
+            Assert.Equal("2026-10-20T08:00:00+00:00", report.GetProperty("computedAt").GetString());
+            var ids = report.GetProperty("checks").EnumerateArray().Select(check => check.GetProperty("id").GetString()).ToArray();
+            Assert.Contains("git-identity", ids);
+            Assert.Contains("committer-identity", ids);
+            Assert.Contains("state-writable", ids);
+            Assert.Contains("gate-worker", ids);
+            using var page = await client.GetAsync("/api/system/readiness");
+            Assert.Equal(HttpStatusCode.Unauthorized, page.StatusCode);
+        }
+        using (var factory = BuildFactory(remoteIp: "203.0.113.15", repository: Path.Combine(_workspace, "remote-readiness")))
+        {
+            using var client = NewClient(factory);
+            using var denied = await client.GetAsync("/healthz/readiness");
+            Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        }
+    }
+
+    [Fact]
     public async Task Api_shell_rejection_and_health_responses_carry_the_baseline_headers()
     {
         using var factory = BuildFactory();
