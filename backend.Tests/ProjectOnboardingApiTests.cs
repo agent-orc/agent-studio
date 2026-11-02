@@ -10,6 +10,44 @@ namespace AgentStudio.Tests;
 public sealed class ProjectOnboardingApiTests
 {
     [Fact]
+    public async Task PostProject_is_not_blocked_by_quality_studio_registration_failure()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "quality-project-onboard-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>()
+                .WithWebHostBuilder(builder =>
+                {
+                    builder.UseEnvironment("Test");
+                    builder.ConfigureAppConfiguration((_, config) =>
+                        config.AddInMemoryCollection(new Dictionary<string, string?>
+                        {
+                            ["TaskRepository"] = root,
+                            ["Logging:BackendFile:LogDirectory"] = Path.Combine(root, "logs"),
+                            ["QualityStudio:BaseUrl"] = "http://quality.invalid",
+                            ["QualityStudio:RunnerWorkdir"] = Path.Combine(root, "runner"),
+                        }));
+                });
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+
+            using var created = await client.PostAsJsonAsync("/api/projects", new
+            {
+                displayName = "Quality Offline Project", shortCode = "QOP",
+                workspaceId = DefaultWorkspace.Id,
+            });
+
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            Assert.Single(await client.GetFromJsonAsync<List<ProjectSummary>>("/api/projects") ?? []);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public void ProjectSource_RemainsAnInternalLocalFolderBackcompatDefault()
     {
         Assert.Equal(ProjectSourceTypes.LocalFolder, new ProjectRecord().SourceType);

@@ -1,0 +1,25 @@
+<header class="quality-panel__head">
+  <h2>Quality Studio</h2>
+  <p>Repository registration for this project</p>
+</header>
+<section class="quality-panel__body" data-testid="quality-studio-panel" aria-live="polite">
+  @if (registration.status(); as status) {
+    <p class="quality-panel__state" data-testid="quality-studio-state">
+      {{ !status.connected ? 'Not connected' : status.state === 'registered' ? 'Registered' : 'Not registered' }}
+    </p>
+    @if (status.repositoryId) {
+      <p>Repository: <code>{{ status.repositoryId }}</code></p>
+    }
+    @if (status.reason) {
+      <p data-testid="quality-studio-reason">{{ status.reason }}</p>
+    }
+    @if (status.connected && status.state !== 'registered' && registration.canRegister()) {
+      <button type="button" data-testid="quality-studio-register"
+              [disabled]="registration.busy()" (click)="registration.reconcile()">
+        {{ registration.busy() ? 'Registering…' : 'Register now' }}
+      </button>
+    }
+  } @else {
+    <p>Checking registration…</p>
+  }
+</section>

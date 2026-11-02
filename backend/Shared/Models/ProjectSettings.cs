@@ -9,6 +9,9 @@ public static class CauseBreakerSettingsDefaults
 
 public record ProjectSettings
 {
+    /// <summary>Quality Studio's durable project-to-repository mapping and last registration outcome.</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("qualityStudio")]
+    public QualityStudioRegistration? QualityStudio { get; init; }
     /// <summary>Documentation-only batch gate pilot. Disabled until a project opts in.</summary>
     public AgentStudio.Pipeline.BatchGateFormationOptions BatchGate { get; init; } = new();
     /// <summary>Optional project override for chat metadata visibility.</summary>
@@ -471,6 +474,8 @@ public record ProjectSettings
     /// </summary>
     public IReadOnlyList<ProjectAreaSetting>? Areas { get; init; }
 }
+
+public sealed record QualityStudioRegistration(string? RepositoryId, string State, string? Reason);
 
 /// <summary>
 /// One project addition to the areas registry. The id is the stable

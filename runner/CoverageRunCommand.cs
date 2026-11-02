@@ -21,6 +21,7 @@ public sealed record CoverageRunOptions(
     bool DryRun,
     bool Force)
 {
+    public bool LegacyQualityStudioRepositoryId { get; init; }
     public const string DefaultBranch = "develop";
     public const string DefaultHistoryPath = "/var/lib/agent-runner/coverage-runs.jsonl";
     public const double DefaultMaxLoadPerCore = 0.5;
@@ -69,6 +70,8 @@ public sealed record CoverageRunOptions(
         }
         var maxLoad = Value("--max-load-per-core", "COVERAGE_RUN_MAX_LOAD_PER_CORE");
         var maxSlots = Value("--max-active-slots", "COVERAGE_RUN_MAX_ACTIVE_SLOTS");
+        var mappedRepositoryId = ReadMappedRepositoryId(Env("QUALITY_STUDIO_SETTINGS_PATH"),
+            Env("QUALITY_STUDIO_PROJECT_NAME"));
         return new(
             Path.GetFullPath(checkout),
             Value("--branch", "COVERAGE_RUN_BRANCH") ?? DefaultBranch,
@@ -78,11 +81,35 @@ public sealed record CoverageRunOptions(
             maxLoad is null ? DefaultMaxLoadPerCore : ParseNonNegative(maxLoad, "--max-load-per-core"),
             maxSlots is null ? 0 : (int)ParseNonNegative(maxSlots, "--max-active-slots"),
             Env("QUALITY_STUDIO_BASE_URL"),
-            Env("QUALITY_STUDIO_REPO_ID"),
+            mappedRepositoryId ?? Env("QUALITY_STUDIO_REPO_ID"),
             Env("QUALITY_STUDIO_API_TOKEN"),
             Env("QUALITY_STUDIO_CLIENT_ID"),
             dryRun,
-            force);
+            force)
+        {
+            LegacyQualityStudioRepositoryId = mappedRepositoryId is null && Env("QUALITY_STUDIO_REPO_ID") is not null,
+        };
+    }
+
+    private static string? ReadMappedRepositoryId(string? path, string? projectName)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(projectName) || !File.Exists(path))
+            return null;
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            var project = document.RootElement.EnumerateObject().FirstOrDefault(item =>
+                string.Equals(item.Name, projectName, StringComparison.OrdinalIgnoreCase)).Value;
+            if (project.ValueKind != JsonValueKind.Object
+                || !project.TryGetProperty("qualityStudio", out var quality)
+                || quality.ValueKind != JsonValueKind.Object
+                || !quality.TryGetProperty("RepositoryId", out var id)) return null;
+            return id.GetString();
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            throw new ArgumentException("Quality Studio project settings could not be read.", ex);
+        }
     }
 
     private static double ParseNonNegative(string value, string name)
@@ -222,6 +249,8 @@ public sealed class CoverageRunCommand
                 $"no testSuites with category '{CoverageRunPlanner.ReleaseCategory}' in {ProjectPreparationPaths.Definition}", [], 0, "not-run"), 1);
 
         _output.WriteLine($"coverage-run start commit={commit} branch={_options.Branch} host={host.Reason} change={change.Reason}");
+        if (_options.LegacyQualityStudioRepositoryId)
+            _output.WriteLine("coverage-run Quality Studio legacy repository id fallback is in use.");
         var steps = new List<CoverageRunStepRecord>();
         foreach (var step in plan.Steps)
         {
@@ -266,9 +295,11 @@ public sealed class CoverageRunCommand
         _output.WriteLine($"# steps from {ProjectPreparationPaths.Definition} of the current checkout; the run reads them after checkout");
         foreach (var step in plan.Steps)
             _output.WriteLine($"[{step.Id}] {step.Display}  # timeout {step.Timeout.TotalMinutes:0} min");
+        if (_options.LegacyQualityStudioRepositoryId)
+            _output.WriteLine("# Quality Studio legacy repository id fallback is in use; configure QUALITY_STUDIO_SETTINGS_PATH and QUALITY_STUDIO_PROJECT_NAME.");
         _output.WriteLine(_options.QualityStudioConfigured
             ? $"POST {ScanUri()}  # coverage reports: {ReportPaths}"
-            : "# Quality Studio scan not configured: set QUALITY_STUDIO_BASE_URL and QUALITY_STUDIO_REPO_ID");
+            : "# Quality Studio scan not configured: set QUALITY_STUDIO_BASE_URL and a project mapping.");
         return plan.Suites.Count == 0 ? 1 : 0;
     }
 

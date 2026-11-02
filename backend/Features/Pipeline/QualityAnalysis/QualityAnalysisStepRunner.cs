@@ -2,6 +2,9 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
+using AgentStudio.Registry;
+using AgentStudio.Projects;
+using AgentStudio.Security;
 
 namespace AgentStudio.Pipeline;
 
@@ -175,19 +178,27 @@ public interface IQualityStudioAnalysisCore
 
 /// <summary>
 /// Reads deterministic findings from the Quality Studio HTTP sensor API.
-/// The registration must point at this exact checkout; a sibling checkout is
-/// not valid evidence for the current review subject.
+/// Uses the project mapping. Local unconnected installations retain the
+/// historical exact-checkout lookup as a compatibility fallback.
 /// </summary>
 public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCore
 {
     internal const string RulesAnalysisName = "quality-rules";
     private readonly HttpClient client;
     private readonly IConfiguration configuration;
+    private readonly ProjectRegistry? projects;
+    private readonly ProjectSettingsService? settings;
+    private readonly ILogger<QualityStudioAnalysisCoreAdapter>? logger;
 
-    public QualityStudioAnalysisCoreAdapter(HttpClient client, IConfiguration configuration)
+    public QualityStudioAnalysisCoreAdapter(HttpClient client, IConfiguration configuration,
+        ProjectRegistry? projects = null, ProjectSettingsService? settings = null,
+        ILogger<QualityStudioAnalysisCoreAdapter>? logger = null)
     {
         this.client = client;
         this.configuration = configuration;
+        this.projects = projects;
+        this.settings = settings;
+        this.logger = logger;
     }
 
     public async Task<QualityStudioCoreResult> RunAsync(
@@ -207,16 +218,23 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
             return Unavailable($"Analysis '{analysisName}' is not supported by the HTTP adapter.");
         try
         {
-            using var registrations = await SendAsync(origin, HttpMethod.Get, "api/repos", cancellationToken);
-            var repositories = registrations.RootElement.GetProperty("repositories");
-            var expectedRoot = Path.GetFullPath(repositoryPath).TrimEnd(Path.DirectorySeparatorChar);
-            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-            var registered = repositories.EnumerateArray().FirstOrDefault(item =>
-                string.Equals(Path.GetFullPath(item.GetProperty("rootPath").GetString()!)
-                    .TrimEnd(Path.DirectorySeparatorChar), expectedRoot, comparison));
-            if (registered.ValueKind == JsonValueKind.Undefined)
-                return Unavailable("Quality Studio has no registration for this exact checkout.");
-            var repositoryId = registered.GetProperty("id").GetString()!;
+            var repositoryId = ResolveMappedRepositoryId(repositoryPath);
+            if (repositoryId is null)
+            {
+                if (SecurityProfiles.IsNetworked(this.configuration))
+                    return Unavailable("Quality Studio repository mapping is not registered for this project.");
+                logger?.LogWarning("quality-studio-legacy-path-fallback checkout={Checkout}", repositoryPath);
+                using var registrations = await SendAsync(origin, HttpMethod.Get, "api/repos", cancellationToken);
+                var repositories = registrations.RootElement.GetProperty("repositories");
+                var expectedRoot = Path.GetFullPath(repositoryPath).TrimEnd(Path.DirectorySeparatorChar);
+                var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                var registered = repositories.EnumerateArray().FirstOrDefault(item =>
+                    string.Equals(Path.GetFullPath(item.GetProperty("rootPath").GetString()!)
+                        .TrimEnd(Path.DirectorySeparatorChar), expectedRoot, comparison));
+                if (registered.ValueKind == JsonValueKind.Undefined)
+                    return Unavailable("Quality Studio has no registration for this exact checkout.");
+                repositoryId = registered.GetProperty("id").GetString()!;
+            }
             var wanted = relativePaths.Select(path => path.Replace('\\', '/'))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (wanted.Count == 0)
@@ -255,6 +273,18 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
         {
             return Unavailable($"Quality Studio HTTP analysis failed ({ex.GetBaseException().Message}).");
         }
+    }
+
+    private string? ResolveMappedRepositoryId(string repositoryPath)
+    {
+        if (projects is null || settings is null) return null;
+        var expected = Path.GetFullPath(repositoryPath).TrimEnd(Path.DirectorySeparatorChar);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var project = projects.List().FirstOrDefault(item =>
+            new[] { item.RepositoryPath, item.RootPath }.Any(path =>
+                !string.IsNullOrWhiteSpace(path) && string.Equals(
+                    Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar), expected, comparison)));
+        return project is null ? null : settings.Get(project.DisplayName).QualityStudio?.RepositoryId;
     }
 
     private async Task<JsonDocument> SendAsync(Uri origin, HttpMethod method, string route, CancellationToken cancellationToken)

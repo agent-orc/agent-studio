@@ -111,6 +111,19 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetQualityStudioRegistration(string projectName, QualityStudioRegistration registration)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            if (current.QualityStudio == registration) return;
+            _cache[key] = current with { QualityStudio = registration };
+            Persist();
+        }
+    }
+
     public void SetAutomaticFailureContinuationsEnabled(string projectName, bool enabled)
     {
         EnsureLoaded();

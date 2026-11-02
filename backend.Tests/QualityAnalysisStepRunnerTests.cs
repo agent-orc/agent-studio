@@ -1,6 +1,9 @@
 using AgentStudio.Pipeline;
 
 using AgentStudio.Runner;
+using AgentStudio.Registry;
+using AgentStudio.Projects;
+using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -199,6 +202,37 @@ public sealed class QualityAnalysisStepRunnerTests : IDisposable
         Assert.Empty(result.Findings);
         Assert.Contains("apps/b/two.component.ts", result.UnavailableReason);
         Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Http_adapter_uses_stored_repository_id_when_quality_root_differs()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = root,
+            ["QualityStudio:BaseUrl"] = "http://quality.test",
+        }).Build();
+        var projects = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        projects.Append(new ProjectRecord
+        {
+            Id = "PROJ-002", DisplayName = "Agent Studio", ShortCode = "AS", WorkspaceId = "WS-001",
+            StorageLocation = TaskFolder, RepositoryPath = Repository,
+        });
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        settings.SetQualityStudioRegistration("Agent Studio", new QualityStudioRegistration("mapped-repo", "registered", null));
+        var calls = new List<string>();
+        var adapter = new QualityStudioAnalysisCoreAdapter(new HttpClient(new StubHandler(request =>
+        {
+            calls.Add(request.RequestUri!.PathAndQuery);
+            return Json("""{"available":true,"provenance":{"sensorVersion":"1"},"findings":[]}""");
+        })), config, projects, settings);
+
+        var result = await adapter.RunAsync(Repository,
+            QualityStudioAnalysisCoreAdapter.RulesAnalysisName, new Dictionary<string, string>(),
+            ["frontend/src/app/example.component.scss"], CancellationToken.None);
+
+        Assert.True(result.Available);
+        Assert.Equal(["/api/repos/mapped-repo/sensors/eslint/scan?path=frontend"], calls);
     }
 
     [Fact]

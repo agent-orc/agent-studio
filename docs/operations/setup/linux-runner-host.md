@@ -1629,7 +1629,11 @@ Review and integration gates run the .NET suites without a coverage collector
    tip is visible. A red prepare or build ends the run as `setup-failed`. It
    refuses a checkout with tracked changes.
 4. **Hands the reports to Quality Studio.** It calls
-   `POST <QUALITY_STUDIO_BASE_URL>/api/repos/<QUALITY_STUDIO_REPO_ID>/sensors/coverage/scan`.
+   `POST <QUALITY_STUDIO_BASE_URL>/api/repos/<mapped repository id>/sensors/coverage/scan`.
+   Set `QUALITY_STUDIO_SETTINGS_PATH` to Studio's `project-settings.json`
+   and `QUALITY_STUDIO_PROJECT_NAME` to the project's display name. The command
+   reads `qualityStudio.repositoryId` from that file. `QUALITY_STUDIO_REPO_ID`
+   remains a logged fallback for unconnected local installations.
    The sensor reads `coverage/dotnet/**/*.cobertura.xml` and
    `coverage/frontend/lcov.info` and records the checkout's HEAD as the
    measured commit; HEAD is still the commit the suites ran against. The
