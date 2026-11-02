@@ -15,10 +15,11 @@ namespace AgentStudio.Tests;
 /// <para>A host built per test started after the test wrote its folders: its
 /// boot scanned them, and its file watcher never saw them being written. This
 /// one is up before the test writes anything, so <see cref="CreateClient"/>
-/// first lets the watcher deliver those writes, then rescans the task index
-/// and refills the wiki cache, the two reads a boot makes. The first request
-/// then sees what the per-test host's first request saw, and no late watcher
-/// event republishes a card behind it. <see cref="Reset"/> empties every lane,
+/// replays what a boot does with such folders: it rescans the task index, runs
+/// the boot's result-document backfill, lets the watcher deliver every write
+/// so far, rescans again and refills the wiki cache. The first request then
+/// sees what the per-test host's first request saw, and no late watcher event
+/// republishes a card behind it. <see cref="Reset"/> empties every lane,
 /// so a test starts from the empty projects a fresh host started from.</para>
 /// </summary>
 public abstract class BoardTestHost : SharedTestHost
@@ -89,6 +90,8 @@ public abstract class BoardTestHost : SharedTestHost
     /// <summary>A client for the host, after a rescan of what the test wrote.</summary>
     public HttpClient CreateClient()
     {
+        Index.ForceRefresh();
+        Services.GetRequiredService<TaskTransitionService>().BackfillMissingResultDocuments();
         DrainWatcher();
         Index.ForceRefresh();
         var wiki = Services.GetRequiredService<WikiContentCache>();
