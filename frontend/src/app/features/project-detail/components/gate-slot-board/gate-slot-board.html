@@ -1,0 +1,34 @@
+@if (board(); as data) {
+  <section class="gsb" data-testid="gate-slot-board" aria-labelledby="gate-slot-board-title">
+    <header class="gsb__head">
+      <h3 id="gate-slot-board-title" class="gsb__title">Gate slots</h3>
+      <span class="gsb__count" data-testid="gate-slot-board-busy">{{ busy() }}/{{ data.total }} busy here</span>
+    </header>
+    <p class="gsb__rule" data-testid="gate-slot-board-rule">{{ data.rule }}</p>
+    <ul class="gsb__slots" aria-label="Slots">
+      @for (slot of data.slots; track slot.slot) {
+        <li class="gsb__slot" [class.gsb__slot--own]="slot.project === projectName()"
+            [attr.data-testid]="'gate-slot-' + slot.slot">
+          <span class="gsb__slot-name">Slot {{ slot.slot }}</span>
+          @if (slot.shortSlot) { <span class="gsb__badge">Short gates</span> }
+          @if (slot.project) {
+            <span class="gsb__slot-run">{{ slot.project }} · {{ slot.gateId }} · {{ classLabel(slot.durationClass) }} · {{ minutesSince(slot.since) }}</span>
+          } @else {
+            <span class="gsb__slot-idle">Free or held by another Studio process</span>
+          }
+        </li>
+      }
+    </ul>
+    @if (data.waiting.length) {
+      <h4 class="gsb__subtitle">Waiting ({{ data.waiting.length }})</h4>
+      <ul class="gsb__waiting">
+        @for (waiter of data.waiting; track waiter.since + waiter.project + waiter.gateId) {
+          <li class="gsb__waiter" [class.gsb__slot--own]="waiter.project === projectName()" data-testid="gate-slot-waiter">
+            <span class="gsb__slot-run">{{ waiter.project }} · {{ waiter.gateId }} · {{ classLabel(waiter.durationClass) }} · {{ minutesSince(waiter.since) }}</span>
+            <span class="gsb__reason">{{ waiter.reason }}</span>
+          </li>
+        }
+      </ul>
+    }
+  </section>
+}

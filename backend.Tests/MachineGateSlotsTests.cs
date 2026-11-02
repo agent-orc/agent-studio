@@ -89,4 +89,46 @@ public sealed class MachineGateSlotsTests : IDisposable
         Assert.Equal(1, slotOne.Slot);
         Assert.NotEqual(first.SlotPath(0), second.SlotPath(1));
     }
+
+    [Fact]
+    public async Task Short_gate_takes_the_short_slot_and_a_long_gate_waits_until_it_ages()
+    {
+        var slots = Slots();
+        using var shortGate = await slots.AcquireAsync(3, TimeSpan.FromHours(2), null, CancellationToken.None,
+            GateDurationClass.Short);
+        Assert.Equal(2, shortGate!.Slot);
+        shortGate.Dispose();
+        using var first = await slots.AcquireAsync(3, TimeSpan.FromHours(2), null, CancellationToken.None,
+            GateDurationClass.Long);
+        using var second = await slots.AcquireAsync(3, TimeSpan.FromHours(2), null, CancellationToken.None,
+            GateDurationClass.Long);
+        Assert.Equal((0, 1), (first!.Slot, second!.Slot));
+        var waiting = new TaskCompletionSource<(int Busy, int Total)>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var third = slots.AcquireAsync(3, TimeSpan.FromHours(2), (busy, total) => waiting.TrySetResult((busy, total)),
+            CancellationToken.None, GateDurationClass.Long);
+
+        Assert.Equal((2, 3), await waiting.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.False(third.IsCompleted);
+        Assert.Empty(await slots.TryAcquireFreeAsync(3, 1, CancellationToken.None, GateDurationClass.Long));
+        _clock.Advance(GateSlotFairnessPolicy.AgeLimit);
+        for (var attempt = 0; attempt < 50 && !third.IsCompleted; attempt++)
+        {
+            _clock.Advance(TimeSpan.FromMilliseconds(100));
+            await Task.Delay(10);
+        }
+        using var aged = await third.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, aged!.Slot);
+    }
+
+    [Fact]
+    public async Task Short_gate_takes_a_shared_slot_when_the_short_slot_is_busy()
+    {
+        var slots = Slots();
+        using var held = await slots.AcquireAsync(2, TimeSpan.FromMinutes(1), null, CancellationToken.None,
+            GateDurationClass.Short);
+        using var next = await slots.AcquireAsync(2, TimeSpan.FromMinutes(1), null, CancellationToken.None,
+            GateDurationClass.Short);
+        Assert.Equal((1, 0), (held!.Slot, next!.Slot));
+    }
 }
