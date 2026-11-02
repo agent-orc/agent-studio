@@ -15,6 +15,23 @@ and the binding lease contract in
 the Runner API surface added by RM-3 (fenced lease) and RM-4 (log + artifact
 upload).
 
+## Subscription quota reporting
+
+Deploy the updated Task Server and Studio before updating coding and review
+role images on execution hosts. Both adapters in `agent-host` can claim one quota
+probe lease per provider subscription from the Task Server. It reads Claude
+`/usage` and Codex `/status` under its own service account and reports parsed
+windows only. The Task Server keeps the last reading for 600 seconds. Other
+hosts with a healthy sign-in take over when the lease expires or a probe fails.
+Gate, post, and integration role images do not need this change.
+
+An older coding or review host keeps its existing claim and execution behavior.
+It does not report quota; a mixed fleet starts reporting as soon as one updated
+host with the same sign-in is deployed. The Studio server never starts a
+provider CLI in the networked profile. If no updated healthy host reports,
+the cockpit displays the last observation time and a sign-in availability
+reason. Gemini subscription quota cannot be read from an execution host.
+
 ## What the agent host is
 
 A single self-contained .NET console process (`agent-host`) that runs on a
@@ -112,7 +129,9 @@ therefore needs two steps before any of its cards can be reviewed remotely
 (AGT-3077):
 
 1. Mark the project private through the project settings API, with an
-   operator session, so its review plans require read access:
+   operator session, so its review plans require read access. A repository
+   the connected GitHub App lists is marked private automatically when GitHub
+   reports it private (see [github-app.md](github-app.md#repository-visibility)):
 
    ```bash
    curl -X PUT "$TASK_SERVER/api/projects/<project>/repository-visibility" \
@@ -958,7 +977,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
 | `RUNNER_WORKDIR` | `--workdir` | `$TMPDIR/agent-runner-work` | Where repo checkouts, result files, and attempt evidence live. |
 | `RUNNER_ROLE` | `--role` | `coding` | `coding`, the separately registered `review` service, the separately registered `gate` service, or the separately registered `integration` service. The gate role uses its own runner identity, credential, state directory, and disposable `RUNNER_REVIEW_WORKDIR`; see the [claimable gate contract](../../system/domains/runner.md#claimable-gate-host-and-task-api). The integration role (AGT-3061) claims accepted deliveries from a standalone Task Server under the project's publication lease, merges them into the registered integration ref in a disposable repository below `RUNNER_STATE_DIR`, and pushes without force; the host's Git credentials must allow that push. |
-| `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` and `.verify-cache` are preserved; see [Baseline verify result cache](#baseline-verify-result-cache) and [Verify result reuse after ReviewInfra](#verify-result-reuse-after-reviewinfra). |
+| `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache`, `.verify-cache` and `.dependency-cache` are preserved; the shared NuGet folder `.dependency-cache/nuget-packages` drops package versions older than 30 days while no attempt is active. Attempt temp directories live in `/tmp/rv-<digest>` and are removed with their attempt; see [Baseline verify result cache](#baseline-verify-result-cache) and [Verify result reuse after ReviewInfra](#verify-result-reuse-after-reviewinfra). |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
 | `RUNNER_REVIEW_GIT_CREDENTIALS_FILE` | `--review-git-credentials-file` | (none) | Review role only. Owner-only `git credential-store` file with one read-only, repository-scoped `https://` credential per private repository. Registers `review:repository-read:<host>/<owner>/<repo>` and is used only by the review clone and fetch processes; see [Private repositories](#private-repositories). |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
@@ -1082,8 +1101,9 @@ its centrally versioned live capacity.
 
 Review slots used to be limited by a resource the workspace fence did not cover.
 `RemoteReviewWorkspace` roots every writable path of an attempt under the attempt
-directory (`HOME`, `TMPDIR`, `NUGET_PACKAGES`, `DOTNET_CLI_HOME`,
-`XDG_CACHE_HOME`) and the Task Server hands each attempt a private
+directory (`HOME`, `DOTNET_CLI_HOME`, `XDG_CACHE_HOME`), gives it a short private
+`TMPDIR` below `/tmp/rv-<digest>`, shares one host-stable `NUGET_PACKAGES`
+folder in the dependency cache (AGT-3429), and the Task Server hands each attempt a private
 `ResourceNamespace` and an eight-port window. The .NET build servers sit outside
 that fence: on Linux, Roslyn's `VBCSCompiler` listens on `/tmp/<pipename>` derived
 from the compiler directory and the user name, and reusable MSBuild worker nodes

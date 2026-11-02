@@ -5,6 +5,9 @@ using System.Text.Json;
 
 namespace AgentStudio.Pipeline;
 
+/// <param name="BatchesClosed">Distinct batches whose gate ran in the window.</param>
+/// <param name="MeanBatchSize">Mean members per closed batch; null without a batch.</param>
+/// <param name="SoloGatedMerges">Gated merges integrated by a per-card gate, not a batch.</param>
 public sealed record GateEconomicsRow(
     string Project, int GatedMerges, int GateGreen, int GateRed, int GateCancelled,
     double? GateMinutesMedian, double? GateMinutesP90,
@@ -20,7 +23,8 @@ public sealed record GateEconomicsRow(
     int EjectedConflict, int EjectedAgentRound, int EjectedRed, int EjectedError,
     double ArrivalsPerHour, double MergesPerHour,
     string? ProjectShortCode = null, string? ProjectColor = null, PipelineBaseline? Baseline = null,
-    string? DevelopState = null, string? LastGreenSha = null);
+    string? DevelopState = null, string? LastGreenSha = null,
+    int BatchesClosed = 0, double? MeanBatchSize = null, int SoloGatedMerges = 0);
 
 /// <param name="BoardRead">
 /// Installation-wide board handler latency and git spawns over the last
@@ -70,13 +74,17 @@ public static class GateEconomicsEndpoints
         IReadOnlyList<(string Name, IReadOnlyList<string> Folders, GateRetestReport Retest,
             string? ShortCode, string? Color)> projects,
         IReadOnlyList<BatchGateMetric> batchSamples,
-        DateTimeOffset since, DateTimeOffset now, Func<string, bool>? allowed)
+        DateTimeOffset since, DateTimeOffset now, Func<string, bool>? allowed,
+        IReadOnlyList<BatchGateExecutionFact>? gateFacts = null)
     {
         var names = projects.Select(project => project.Name).ToArray();
         IEnumerable<BatchGateMetric> For(string name) => batchSamples.Where(sample =>
             string.Equals(sample.Project, name, StringComparison.OrdinalIgnoreCase));
+        IEnumerable<BatchGateExecutionFact> FactsFor(IEnumerable<string> names) => (gateFacts ?? []).Where(fact =>
+            names.Contains(fact.Project, StringComparer.OrdinalIgnoreCase));
         var rows = projects.Select(project => ProjectRow(project.Name, project.Folders,
-            since, now, project.Retest, For(project.Name), project.ShortCode, project.Color)).ToList();
+            since, now, project.Retest, For(project.Name), project.ShortCode, project.Color,
+            FactsFor([project.Name]))).ToList();
         var executed = projects.Sum(project => project.Retest.Executed);
         var retests = projects.Sum(project => project.Retest.SameShaRetests);
         var allReport = new GateRetestReport(executed, retests,
@@ -84,7 +92,7 @@ public static class GateEconomicsEndpoints
             projects.Sum(project => project.Retest.CacheHits), GateResultCache.RetestWindowSize);
         var all = ProjectRow(AllProjects, projects.SelectMany(project => project.Folders),
             since, now, allReport, batchSamples.Where(sample =>
-                names.Contains(sample.Project, StringComparer.OrdinalIgnoreCase)));
+                names.Contains(sample.Project, StringComparer.OrdinalIgnoreCase)), gateFacts: FactsFor(names));
         return [.. new[] { all }.Concat(rows).Select(row => row.GateHoldingProject is { } holder
             && allowed is not null && !allowed(holder)
                 ? row with { GateHoldingProject = OtherProject } : row)];
@@ -93,7 +101,8 @@ public static class GateEconomicsEndpoints
     internal static GateEconomicsRow ProjectRow(string name, IEnumerable<string> folders,
         DateTimeOffset since, DateTimeOffset now, GateRetestReport? retest,
         IEnumerable<BatchGateMetric>? batchMetrics = null,
-        string? shortCode = null, string? color = null)
+        string? shortCode = null, string? color = null,
+        IEnumerable<BatchGateExecutionFact>? gateFacts = null)
     {
         var receipts = new List<GateReceiptMetric>();
         var events = new List<IntegrationLaneEvent>();
@@ -145,7 +154,8 @@ public static class GateEconomicsEndpoints
         // Every batch attempt stays in the gate outcome counts. Published
         // members receive only the final successful attempt's minutes.
         var batches = (batchMetrics ?? []).ToArray();
-        var baseline = PipelineBaselineMetrics.Compute(baselineFolders, batches, since, now);
+        var baseline = PipelineBaselineMetrics.Compute(baselineFolders, batches, since, now,
+            (gateFacts ?? []).Where(fact => fact.CompletedAtUtc >= since && fact.CompletedAtUtc <= now).ToArray());
         // Economics per merge uses the final gate that actually integrated the
         // delivery. Red attempts remain gate runs in the outcome counts below.
         var publishedBatches = batches.Where(sample => sample.Published)
@@ -221,6 +231,9 @@ public static class GateEconomicsEndpoints
         // the coordinator under a second sequence.
         var arrivals = enqueued.Select(e => (e.Project, e.JobId, e.DeliveredAtUtc ?? e.AtUtc))
             .Distinct().Count();
+        // A batch counts once, at the largest membership any of its runs carried.
+        var closedBatches = batches.GroupBy(sample => sample.Fact.BatchId, StringComparer.Ordinal)
+            .Select(batch => batch.Max(sample => sample.Members)).ToArray();
         return new GateEconomicsRow(name, gatedMerges,
             outcomes.Count(sample => sample.Verdict is "Ok" or "Warn"),
             outcomes.Count(sample => sample.Verdict == "Fail"),
@@ -252,7 +265,10 @@ public static class GateEconomicsEndpoints
             ejections.Count(e => e.Outcome == "GateFailed"),
             ejections.Count(e => e.Outcome is not ("Conflict" or "AgentRoundRequired" or "GateFailed")),
             arrivals / (double)LaneWindowHours, published.Length / (double)LaneWindowHours,
-            shortCode, color, baseline);
+            shortCode, color, baseline,
+            BatchesClosed: closedBatches.Length,
+            MeanBatchSize: closedBatches.Length == 0 ? null : closedBatches.Average(),
+            SoloGatedMerges: integratedReceipts.Count);
     }
 
     // A batch delivery handed to the per-task fallback continues under the
@@ -266,9 +282,12 @@ public static class GateEconomicsEndpoints
         => PipelineBaselineMetrics.Percentile(numbers, fraction);
 }
 
-/// <summary>One batch gate run; <paramref name="Published"/> when that run's candidate was published.</summary>
+/// <summary>
+/// One batch gate run; <paramref name="Published"/> when that run's candidate was published,
+/// <paramref name="Isolation"/> when it gated a diagnostic manifest split from a red batch.
+/// </summary>
 internal sealed record BatchGateMetric(string Project, int Members, BatchGateExecutionFact Fact,
-    bool Published = false);
+    bool Published = false, bool Isolation = false);
 
 internal sealed record GateReceiptMetric(long? DurationMs, long? GateQueueWaitMs,
     long? MergeLockWaitMs, string? Rung, string? TestLevel,

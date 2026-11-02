@@ -195,6 +195,8 @@ public static class RoutePermissionCatalog
 
         // --- Runner and engine service routes (credential scopes decide) ----
         Add("R", IamPermissions.RunnerService, "/api/quota/admission/{}");
+        Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/claim");
+        Add("PUT", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/report");
         Add("R", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/desired-state");
         Add("POST", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/observed-state");
         Add("*", IamPermissions.RunnerService,
@@ -343,7 +345,7 @@ public static class RoutePermissionCatalog
             "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",
             "/api/system/execution-infrastructure", "/api/agent-rules", "/api/adhoc-usage/**");
         Add("W", IamPermissions.WorkspaceOperate,
-            "/api/cli/quota/refresh/**", "/api/cli/{}/session", "/api/cli/{}/working-memory", "/api/clients/**",
+            "/api/cli/quota/refresh/**", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",
             "/api/maintenance/**", "/api/attempts/**", "/api/cause-breakers/**", "/api/watcher/**",
             "/api/devtools/**", "/api/_internal/**", "/api/tasks/orphan-folder");

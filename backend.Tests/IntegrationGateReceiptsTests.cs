@@ -114,6 +114,10 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         Assert.Equal(.5, row.FullSuiteShare);
         Assert.Equal(1200, row.QueueWaitP90Ms);
         Assert.Null(row.SameShaRetestRate);
+        // Both merges went through a per-card gate; no batch closed.
+        Assert.Equal(2, row.SoloGatedMerges);
+        Assert.Equal(0, row.BatchesClosed);
+        Assert.Null(row.MeanBatchSize);
         var withRetests = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
             since: Now.AddDays(-1), now: Now,
             retest: new GateRetestReport(4, 1, .25, 0, GateResultCache.RetestWindowSize));
@@ -163,6 +167,10 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         Assert.Equal(2, row.GateRed);
         Assert.Equal(40, row.GateMinutesMedian);
         Assert.Equal(1, row.FullSuiteShare);
+        // Each run here closed its own batch: sizes 3, 2 and 1.
+        Assert.Equal(3, row.BatchesClosed);
+        Assert.Equal(2, row.MeanBatchSize);
+        Assert.Equal(0, row.SoloGatedMerges);
     }
 
     [Fact]
@@ -184,6 +192,9 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         Assert.Equal(3, row.GatedMerges);
         Assert.Equal(1, row.GateRed);
         Assert.Equal(1, row.GateGreen);
+        // An infrastructure retry reruns the same batch: it closes once.
+        Assert.Equal(1, row.BatchesClosed);
+        Assert.Equal(3, row.MeanBatchSize);
         Assert.NotNull(row.GateMinutesMedian);
         Assert.Equal(15, row.GateMinutesMedian.Value, precision: 6);
     }

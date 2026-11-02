@@ -209,7 +209,7 @@ public static class ArtifactIngestionEndpoints
                 committedFiles);
 
             var status = commit.Success
-                ? commit.DidCommit ? "committed" : $"skipped:{commit.Error}"
+                ? commit.DidCommit ? "committed" : commit.Deferred ? commit.Error! : $"skipped:{commit.Error}"
                 : $"failed:{commit.Error}";
             logger.LogInformation(
                 "runner-artifact-ingest taskKey={TaskKey} jobId={JobId} uploaded={Uploaded} commitStatus={CommitStatus} "

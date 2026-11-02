@@ -1,10 +1,34 @@
-<header class="delivery__head" [attr.title]="copy.groupSentence">
-  <span class="delivery__label">{{ group().label }}</span>
+@if (groupCollapsed()) {
+  <button type="button" class="delivery__rail" data-testid="delivery-group-rail"
+          [attr.aria-label]="'Expand Delivery, ' + group().count + ' cards'"
+          aria-expanded="false" (click)="toggleGroup()">
+    <app-disclosure-marker [open]="false" />
+    <span class="delivery__rail-label">{{ group().label }}</span>
+    <span class="delivery__rail-count" data-testid="delivery-rail-total">{{ group().count }}</span>
+    @for (column of group().columns; track column.id) {
+      <span class="delivery__rail-column" [attr.title]="column.title"
+            [attr.aria-label]="column.title + ': ' + (column.landed.length + column.waiting.length)"
+            [attr.data-testid]="'delivery-rail-column-' + column.id">
+        <span class="delivery__rail-column-label" aria-hidden="true">{{ column.integrated ? 'Int' : column.title.replace('Delivery to ', '') }}</span>
+        <span class="delivery__rail-column-count" [attr.data-testid]="'delivery-rail-count-' + column.id">{{ column.landed.length + column.waiting.length }}</span>
+        @if (column.approvalPending) { <span class="delivery__rail-attention" title="Approval pending" aria-label="Approval pending">!</span> }
+        @if (failedRun(column)) { <span class="delivery__rail-attention" title="Run failed" aria-label="Run failed">!</span> }
+      </span>
+    }
+  </button>
+} @else {
+<header class="lane-group__head" [attr.title]="copy.groupSentence">
+  <button type="button" class="delivery__group-toggle" data-testid="delivery-group-toggle"
+          [attr.aria-label]="'Collapse Delivery, ' + group().count + ' cards'"
+          aria-expanded="true" (click)="toggleGroup()">
+    <app-disclosure-marker [open]="true" />
+    <span class="lane-group__label">{{ group().label }}</span>
+  </button>
   <span class="delivery__count" data-testid="delivery-group-count">{{ group().count }}</span>
   <label class="delivery__option">
-    <input type="checkbox" data-testid="delivery-furthest-only"
+    <input type="checkbox" data-testid="delivery-furthest-only" [attr.aria-label]="copy.furthestOnly"
            [checked]="furthestOnly()" (change)="toggleFurthestOnly()" />
-    {{ copy.furthestOnly }}
+    <span class="delivery__option-text">{{ copy.furthestOnly }}</span>
   </label>
 </header>
 @if (error()) {
@@ -80,3 +104,4 @@
     </section>
   }
 </div>
+}

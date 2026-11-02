@@ -390,6 +390,7 @@ public sealed class RemoteReviewDaemon
             await advertisement;
         }
 
+        Task quotaPoll = Task.CompletedTask;
         try
         {
             await HonorControlBeforeClaimsAsync(shutdown);
@@ -432,6 +433,8 @@ public sealed class RemoteReviewDaemon
 
             var capabilityGeneration = DateTime.UtcNow.Ticks;
             await AdvertiseCapabilitiesWithControlAsync(capabilityGeneration, shutdown);
+            if (!string.IsNullOrWhiteSpace(_options.AuthToken))
+                quotaPoll = new HostQuotaPoller(_client, _options, _log).PollAsync(auxiliaryStop.Token);
             StartModelAcceptanceProbe();
 
             var nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
@@ -796,6 +799,7 @@ public sealed class RemoteReviewDaemon
         auxiliaryStop.Cancel();
         await gitSetupPoll;
         await repositoryProbePoll;
+        await quotaPoll;
         if (active.Count > 0)
             await Task.WhenAll(active.Select(slot => slot.Run));
         _log(drainedToStop

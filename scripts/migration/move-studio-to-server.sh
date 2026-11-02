@@ -48,6 +48,9 @@ safe_path() {
 
 env_value() { sed -n "s/^$1=//p" "$2" | tail -n 1; }
 
+# An installation's own additions to the release stack, as plain `docker compose` in the stack directory reads them.
+stack_override() { [ ! -f "$1/compose.override.yaml" ] || printf -- '-f %s/compose.override.yaml' "$1"; }
+
 json_field() {
   node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s)[process.argv[1]];process.stdout.write(v===undefined||v===null?"":String(v));});' "$1"
 }
@@ -138,7 +141,7 @@ server_clone_checkout() {
   mkdir -p "$(dirname "$dir")"
   if [ -d "$dir/.git" ]; then
     git -C "$dir" remote set-url origin "$url"
-    git -C "$dir" fetch -q --prune origin
+    git -C "$dir" fetch -q --prune origin || printf 'warning: cannot fetch %s yet; the checkout keeps its seeded state\n' "$url" >&2
   else
     git clone -q "$url" "$dir" || fail "cannot clone $url on the server"
   fi
@@ -164,6 +167,12 @@ server_relocate() {
   relocate_paths "$@" >"$root/move-bin/relocate-report.json" \
     || fail "path relocation has unresolved paths; see $root/move-bin/relocate-report.json and add them with --extra-mapping"
   relocate_paths "$@" --apply >/dev/null
+  # A project without a repository visibility setting takes what the
+  # workstation's anonymous probe found, so a private repository arrives private.
+  if [ -f "$root/move-bin/visibility.json" ]; then
+    node "$root/move-bin/move-studio-to-server.mjs" carry-visibility --workspace "$2" \
+      --visibility "$root/move-bin/visibility.json" || fail 'cannot carry the repository visibility into project-settings.json'
+  fi
 }
 
 server_disable_push() {
@@ -254,7 +263,7 @@ server_rehearse() {
   rehearsal_project=studio-move-rehearsal
   host=move-rehearsal.studio.test
   [ -d "$root/move-staging/workspace/.git" ] || fail 'staging is empty; the transfer pass did not run'
-  compose() { docker compose -p "$rehearsal_project" -f "$stack/compose.yaml" -f "$rehearsal/compose.override.yaml" --env-file "$rehearsal/.env" "$@"; }
+  compose() { docker compose -p "$rehearsal_project" --project-directory "$stack" -f "$stack/compose.yaml" $(stack_override "$stack") -f "$rehearsal/compose.override.yaml" --env-file "$rehearsal/.env" "$@"; }
   stop_rehearsal() {
     compose down --remove-orphans >/dev/null 2>&1 || return 1
     remaining=$(compose ps --status running --status restarting --status paused --quiet) || return 1
@@ -347,7 +356,7 @@ server_apply() {
   marker="$root/moved-to-server"
   data_dir=$(env_value STUDIO_DATA_DIR "$stack/.env")
   domain=$(env_value STUDIO_DOMAIN "$stack/.env")
-  live() { docker compose --project-directory "$stack" -f "$stack/compose.yaml" --env-file "$stack/.env" "$@"; }
+  live() { docker compose --project-directory "$stack" -f "$stack/compose.yaml" $(stack_override "$stack") --env-file "$stack/.env" "$@"; }
   if [ -f "$marker" ] && [ "$force" != force ]; then
     refuse "Studio already moved here ($(tr '\n' ' ' <"$marker")); another apply would replace the live server data with the workstation snapshot"
   fi
@@ -396,7 +405,7 @@ server_apply() {
   as_service_owner 10001:10001 "$data_dir" /site/workspace /site/projects /site/home
   live up -d --quiet-pull >/dev/null
   attempt=0
-  until curl --silent --fail --insecure --max-time 10 --resolve "$domain:443:127.0.0.1" "https://$domain/api/auth/status" >"$root/move-bin/status.json" 2>/dev/null; do
+  until live exec -T frontend wget -q -T 10 -O - --header "Host: $domain" --header 'X-Forwarded-Proto: https' http://api:5031/api/auth/status >"$root/move-bin/status.json" 2>/dev/null; do
     attempt=$((attempt + 1))
     [ "$attempt" -lt 90 ] || fail "the server stack did not answer https://$domain/api/auth/status"
     sleep 2
@@ -430,7 +439,7 @@ if [ "${1:-}" = --server-side ]; then
     sync-workspace) server_sync_workspace "$@" ;;
     receive-archive) server_receive_archive "$@" ;;
     ensure-dir) if [ -d "$1" ]; then echo existing; else private_dir "$1"; echo created; fi ;;
-    remove-paths) cd "$1" && xargs -0 rm -f -- ;;
+    remove-paths) cd "$1" && xargs -0 rm -rf -- ;;
     clone-checkout) server_clone_checkout "$@" ;;
     rehearse) server_rehearse "$@" ;;
     apply) server_apply "$@" ;;
@@ -567,8 +576,24 @@ inventory() {
     url=$(git -C "$repository" remote get-url origin 2>/dev/null | strip_url)
     [ -z "$url" ] || printf '%s\t%s\n' "$project_id" "$url" >>"$state_dir/remotes.tsv"
   done <"$state_dir/projects.tsv"
+  # Anonymous probe per repository: one that asks for credentials is private.
+  # Every credential source is off, so a token on this workstation cannot make it look public.
+  : >"$state_dir/visibility-probes.tsv"
+  probe_timeout=
+  ! command -v timeout >/dev/null 2>&1 || probe_timeout='timeout 30'
+  node "$script_dir/move-studio-to-server.mjs" probe-targets --workspace "$(native_path "$workspace")" \
+    --remotes "$state_dir/remotes.tsv" >"$state_dir/probe-targets.tsv"
+  while IFS="$tab" read -r project_id url; do
+    probe_status=0
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true SSH_ASKPASS=true GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+      $probe_timeout git -c credential.helper= ls-remote --heads -- "$url" >/dev/null 2>"$state_dir/probe.err" </dev/null \
+      || probe_status=$?
+    printf '%s\t%s\t%s\n' "$project_id" "$probe_status" "$(tr '\t\r\n' '   ' <"$state_dir/probe.err" | cut -c1-300)" \
+      >>"$state_dir/visibility-probes.tsv"
+  done <"$state_dir/probe-targets.tsv"
+  rm -f "$state_dir/probe.err"
   set -- inventory --workspace "$(native_path "$workspace")" --tracked "$state_dir/tracked.z" --dirty "$state_dir/dirty.z" \
-    --remotes "$state_dir/remotes.tsv" --home "$(native_path "$HOME")" \
+    --remotes "$state_dir/remotes.tsv" --visibility-probes "$state_dir/visibility-probes.tsv" --home "$(native_path "$HOME")" \
     --credential-helper "$(git -C "$workspace" config --get credential.helper || true)" --out-dir "$state_dir"
   [ -z "$extra_mapping" ] || set -- "$@" --extra-mapping "$extra_mapping"
   inventory_status=0
@@ -584,6 +609,8 @@ transfer_pass() {
   upload "$self" move-studio-to-server.sh
   upload "$script_dir/relocate-workspace-paths.mjs" relocate-workspace-paths.mjs
   upload "$state_dir/path-map.json" path-map.json
+  upload "$script_dir/move-studio-to-server.mjs" move-studio-to-server.mjs
+  upload "$state_dir/visibility.json" visibility.json
   git -C "$workspace" remote get-url origin >/dev/null 2>&1 || fail 'the workspace has no origin remote to clone on the server'
   workspace_url=$(git -C "$workspace" remote get-url origin | strip_url)
   clone_state=$(server_side clone-workspace "$staging/workspace" "$workspace_url")

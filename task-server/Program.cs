@@ -31,7 +31,7 @@ var builder = WebApplication.CreateBuilder(command.HostArguments);
 if (string.Equals(Environment.GetEnvironmentVariable("TASK_SERVER_PROFILE"), "local-compatibility", StringComparison.OrdinalIgnoreCase))
     builder.Configuration.AddJsonFile("appsettings.LocalCompatibility.json", optional: false, reloadOnChange: false);
 var taskServerRequestBodyLimit = builder.Configuration.GetValue<long?>(
-    $"{TaskServerOptions.SectionName}:MaxRequestBodyBytes") ?? 25L * 1024 * 1024;
+    $"{TaskServerOptions.SectionName}:MaxRequestBodyBytes") ?? ReviewReportLimits.MaxRequestBodyBytes;
 builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = taskServerRequestBodyLimit);
 builder.Services.AddSingleton(serviceProvider =>
@@ -53,6 +53,8 @@ builder.Services
             options.RetentionArchivePath = configuration["ARCHIVE_PATH"];
     });
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSingleton(new HostQuotaCoordinator(
+    builder.Configuration.GetValue<int?>("Quota:TtlSeconds") ?? HostQuotaCoordinator.DefaultTtlSeconds));
 builder.Services.AddHttpClient(nameof(HttpWorkspaceQuotaAdmission), client =>
     client.Timeout = TimeSpan.FromSeconds(3));
 // Without a meter URL quota admission is off: no admission object, no per-claim event, one startup log line.
@@ -86,6 +88,7 @@ builder.Services.AddSingleton(services => new AgentStudio.TaskServer.Contracts.G
     services.GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.IGitHubAppVault>(),
     services.GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.IRegisteredRepositoryCatalog>(),
     TimeProvider.System));
+builder.Services.AddHostedService<GitHubAppVisibilityRefreshService>();
 builder.Services.AddSingleton<RuntimeCapacitySettingsService>();
 builder.Services.AddSingleton<HostProjectPolicyService>();
 builder.Services.AddSingleton<LegacyMigrationService>();
@@ -115,6 +118,9 @@ if (!string.IsNullOrWhiteSpace(configuredUrl)
 
 var app = builder.Build();
 var store = app.Services.GetRequiredService<TaskServerStore>();
+// The broker lists the store's repositories, so the store reads GitHub's visibility through this hook.
+store.ReportedRepositoryPrivate = app.Services
+    .GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.GitHubAppBroker>().ReportedPrivate;
 var migration = app.Services.GetRequiredService<LegacyMigrationService>();
 var commandJson = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
 if (command.Kind == TaskServerCommandKind.Inventory)

@@ -24,6 +24,7 @@ import { TaskService } from '../../../../services/task.service';
 import { CliCatalogStore } from '../../../cli';
 import { NotificationService } from '../../../../services/notification.service';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
@@ -113,6 +114,7 @@ import { WikiLiveRefreshService } from '../../services/wiki-live-refresh.service
 import {
   ISOLATED_HTML_LINK_MESSAGE,
   buildIsolatedHtmlSrcdoc,
+  openIsolatedHtmlExternalLink,
   resolveIsolatedHtmlNavigation,
 } from '../../../../services/sandboxed-html.util';
 
@@ -216,6 +218,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   private readonly sanitizer = inject(DomSanitizer);
   private readonly notifications = inject(NotificationService);
   private readonly publicDemo = inject(PublicDemoModeService);
+  private readonly confirmDialog = inject(ConfirmDialogService);
   private readonly taskNavigation = inject(TaskReferenceNavigationService);
   private readonly metaPanelState = inject(WikiMetaPanelStateService);
   private readonly wikiLiveRefresh = inject(WikiLiveRefreshService);
@@ -409,10 +412,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     const openedRel = this.openedRel();
     if (!openedRel) return;
     const navigation = resolveIsolatedHtmlNavigation(`docs/${openedRel}`, message.href);
-    if (navigation?.kind === 'external') {
-      window.open(navigation.url, '_blank', 'noopener,noreferrer');
-      return;
-    }
+    if (navigation?.kind === 'external') return void openIsolatedHtmlExternalLink(this.confirmDialog, navigation.url);
     if (navigation?.kind !== 'wiki') return;
     const node = this.findNode(this.roots(), navigation.relPath);
     if (!node || node.type === 'folder' || !node.relPath) return;

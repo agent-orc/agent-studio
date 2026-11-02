@@ -37,6 +37,7 @@ public sealed class ClaudeModelDiscovery
 
     private CliModelCatalog? _memCache;
     private DateTime _memCacheAt = DateTime.MinValue;
+    private int _networkedRegistryLogged;
 
     public ClaudeModelDiscovery(ILogger<ClaudeModelDiscovery> logger, IConfiguration config,
         CliVersionTracker? versionTracker = null)
@@ -63,6 +64,15 @@ public sealed class ClaudeModelDiscovery
 
     public async Task<CliModelCatalog> GetAsync(string cliPath, bool forceRefresh = false, CancellationToken ct = default)
     {
+        if (!HostCliDiscovery.Allowed(_config))
+        {
+            if (Interlocked.Exchange(ref _networkedRegistryLogged, 1) == 0)
+                _logger.LogInformation(
+                    "Claude model discovery uses the registry catalogue: host CLI discovery is disabled in the {Profile} profile",
+                    SecurityProfiles.ActiveProfile(_config));
+            return Publish(FallbackCatalog(HostCliDiscovery.NetworkedRegistrySource));
+        }
+
         if (!forceRefresh)
         {
             if (_memCache != null && DateTime.UtcNow - _memCacheAt < Ttl) return Publish(_memCache);

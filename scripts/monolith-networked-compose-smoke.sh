@@ -35,7 +35,7 @@ if [ "${WEBSITE_REUSE_WEBSITE_IMAGES:-0}" != 1 ]; then
 fi
 
 cd "$stack"
-bash setup.sh --private "$version" studio.test "$smoke_root/data" >/dev/null
+STUDIO_SECRETS_KEY_FILE="$smoke_root/keys/secrets.kek" bash setup.sh --private "$version" studio.test "$smoke_root/data" >/dev/null
 code="$(sed -n 's/^STUDIO_BOOTSTRAP_CODE=//p' .env)"
 docker compose up -d --no-build
 url=https://studio.test
@@ -50,20 +50,29 @@ import json, sys
 status = json.load(open(sys.argv[1], encoding='utf-8'))
 assert status['bootstrapRequired'] and status['bootstrapCodeRequired'], status
 PY
-curl "${curl_args[@]}" --fail "$url/" | grep -q '<app-root'
+curl "${curl_args[@]}" --fail "$url/" > "$smoke_root/shell.html"
+grep -q '<app-root' "$smoke_root/shell.html"
 payload="$(python3 - "$code" <<'PY'
 import json, sys
 print(json.dumps({'username':'website.owner','password':'correct horse battery staple!', 'displayName':'Website Owner', 'bootstrapCode':sys.argv[1]}))
 PY
 )"
-curl "${curl_args[@]}" --fail -H 'Content-Type: application/json' -H 'Origin: https://studio.test' -d "$payload" "$url/api/auth/bootstrap" >/dev/null
+jar="$smoke_root/cookies.txt"
+curl "${curl_args[@]}" --fail -c "$jar" -H 'Content-Type: application/json' -H 'Origin: https://studio.test' -d "$payload" "$url/api/auth/bootstrap" >/dev/null
+# Starting a GitHub App registration checks that the secret store can write;
+# it answers with GitHub's form and contacts nobody.
+csrf="$(awk '$6 == "__Host-agentstudio-csrf" { print $7 }' "$jar")"
+curl "${curl_args[@]}" --fail-with-body -b "$jar" -H 'Content-Type: application/json' -H 'Origin: https://studio.test' \
+  -H "X-CSRF-Token: $csrf" -d '{"origin":"https://studio.test"}' \
+  "$url/api/v1/management/github-app/registration" > "$smoke_root/registration.json"
+grep -q '"actionUrl":"https://github.com/settings/apps/new' "$smoke_root/registration.json"
 STUDIO_SMOKE_URL="$url" \
 STUDIO_SMOKE_USERNAME=website.owner \
 STUDIO_SMOKE_PASSWORD='correct horse battery staple!' \
   node "$repo_root/frontend/scripts/monolith-networked-browser-smoke.mjs"
-echo 'Website smoke passed: TLS, owner bootstrap, browser login, and board.'
+echo 'Website smoke passed: TLS, owner bootstrap, writable secret store, browser login, and board.'
 if [ -n "${JOB_RESULTS_DIR:-}" ]; then
   mkdir -p "$JOB_RESULTS_DIR"
   rm -f "$JOB_RESULTS_DIR/website-smoke.log"
-  printf 'Website smoke passed: TLS, owner bootstrap, browser login, and board.\n' > "$JOB_RESULTS_DIR/website-smoke.txt"
+  printf 'Website smoke passed: TLS, owner bootstrap, writable secret store, browser login, and board.\n' > "$JOB_RESULTS_DIR/website-smoke.txt"
 fi

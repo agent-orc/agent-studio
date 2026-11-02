@@ -501,8 +501,6 @@ public sealed class IamHandlerAccessTests : IDisposable
         foreach (var route in new[]
                  {
                      "/api/cli/usage",
-                     "/api/cli/claude/session-detail?id=missing",
-                     "/api/cli/claude/working-memory",
                  })
         {
             using var denied = await viewer.GetAsync(route);

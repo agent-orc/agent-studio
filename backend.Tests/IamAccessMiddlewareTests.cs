@@ -90,6 +90,9 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         index.Invalidate(TaskIndexCache.InvalidationSource.External);
         index.GetMatchingCoreFacts(card.Id);
         Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
+        // Captured while held: once released, the finished refresh clears this property.
+        var refresh = index.RefreshInFlight;
+        Assert.NotNull(refresh);
         try
         {
             var trace = TaskSwitchTrace.Begin(null, null);
@@ -106,7 +109,7 @@ public sealed class IamAccessMiddlewareTests : IDisposable
             finally { trace.Restore(); }
         }
         finally { release.Set(); }
-        await index.RefreshInFlight!.WaitAsync(TimeSpan.FromSeconds(5));
+        await refresh.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -259,6 +262,23 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         _store.DisableServiceAccount(account.Id);
         var disabled = await InvokeBearer("POST", "/api/projects/{projectName}/wiki/pages", "/api/projects/alpha/wiki/pages", token);
         Assert.Equal((401, false), (disabled.Status, disabled.Called));
+    }
+
+    [Fact]
+    public async Task Post_merge_worker_uses_its_runner_credential()
+    {
+        var secret = _store.EnrollRunner(_store.CreateEnrollment(new RunnerEnrollmentRequest("post-merge-worker", null, null, null)).Code).Secret;
+        const string state = "/api/runner/post-merge/projects/alpha";
+
+        Assert.True((await InvokeBearer("GET", "/api/runner/post-merge/projects/{project}", state, secret)).Called);
+        Assert.True((await InvokeBearer("POST", "/api/runner/post-merge/projects/{project}/runs", state + "/runs", secret)).Called);
+        Assert.True((await InvokeBearer("POST", "/api/runner/post-merge/projects/{project}/escalation-check", state + "/escalation-check", secret)).Called);
+
+        var limited = _store.EnrollRunner(_store.CreateEnrollment(new RunnerEnrollmentRequest("claim-only", [RunnerScopes.Claim], null, null)).Code).Secret;
+        var denied = await InvokeBearer("POST", "/api/runner/post-merge/projects/{project}/runs", state + "/runs", limited);
+        Assert.Equal((403, "runner-scope-denied"), (denied.Status, denied.Error));
+        var stranger = await InvokeBearer("GET", "/api/runner/post-merge/projects/{project}", state, "not-a-credential");
+        Assert.Equal((401, false), (stranger.Status, stranger.Called));
     }
 
     [Fact]

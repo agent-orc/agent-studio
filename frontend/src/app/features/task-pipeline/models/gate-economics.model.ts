@@ -42,6 +42,12 @@ export interface GateEconomicsRow {
   projectColor: string | null;
   /** Pipeline delivery-target baseline (AGT-3309); absent from an older backend. */
   baseline?: PipelineBaseline | null;
+  /** Distinct batches whose gate ran in the window; absent from an older backend. */
+  batchesClosed?: number;
+  /** Mean members per closed batch; null without a batch. */
+  meanBatchSize?: number | null;
+  /** Gated merges integrated by a per-card gate, not a batch. */
+  soloGatedMerges?: number;
 }
 
 /** Null values are unknown inputs, never zero. */

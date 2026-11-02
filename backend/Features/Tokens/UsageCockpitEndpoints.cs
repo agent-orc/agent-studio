@@ -14,7 +14,8 @@ public sealed record UsageCliWindow(string Id, string Label, double? UsedPct, Da
 public sealed record UsageCli(string CliId, bool Primary, string? Plan, string? Source,
     IReadOnlyList<UsageCliWindow> Windows, DateTime? FetchedAt, int TtlSeconds,
     bool Suspicious, string? SuspiciousReason, DateTime? ProbeFailedAt,
-    bool? Limited, string? LimitedReason, UsageSourceState Availability);
+    bool? Limited, string? LimitedReason, UsageSourceState Availability,
+    string? SubscriptionKey = null);
 public sealed record UsageRun(string Id, string ProjectId, string TaskId, string? TaskKey,
     DateTime? StartedAt, decimal? ProvisionalCostUsd, bool IncludedInTotals,
     string ConfiguredCli, string ConfiguredModel, string ConfiguredReasoning,
@@ -292,6 +293,6 @@ public static class UsageCockpitEndpoints
             limitSourceAvailable ? limited is not null : null, limited?.Reason,
             new UsageSourceState(available,
                 !hasObservation || snapshot.FetchedAt == default ? null : snapshot.FetchedAt,
-                ttl, snapshot.Error));
+                ttl, snapshot.Error), snapshot.SubscriptionKey);
     }
 }

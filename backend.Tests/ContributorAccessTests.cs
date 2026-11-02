@@ -180,6 +180,16 @@ public sealed class ContributorAccessTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/results/run.log", owner.SessionToken));
         foreach (var name in new[] { "prompt.md", "status.md", "results/report.html", "results/screens/final.png" })
             Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/{name}", product.SessionToken));
+        foreach (var name in new[] { "prompt.md", "status.md", "results/report.html", "results/run.log" })
+            Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/{name}", owner.SessionToken));
+        var developerInvite = store.InviteUser(new InviteUserRequest("project.developer", "Project Developer", StudioRoles.Operator, [project]));
+        var developer = store.AcceptInvitation(new AcceptInvitationRequest(developerInvite.Token, "project developer password!"));
+        Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/results/run.log", developer.SessionToken));
+        var outsiderInvite = store.InviteUser(new InviteUserRequest("other.developer", "Other Developer", StudioRoles.Operator, [restricted.DisplayName]));
+        var outsider = store.AcceptInvitation(new AcceptInvitationRequest(outsiderInvite.Token, "other developer password!"));
+        Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/prompt.md", outsider.SessionToken));
+        using (var anonymous = await http.GetAsync($"/api/tasks/{taskKey}/files/prompt.md"))
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
         foreach (var route in new[]
         {
             "files/results/run.log", "FILES/RESULTS/run.log", "files/logs/cli-output.log",

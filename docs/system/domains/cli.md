@@ -104,6 +104,26 @@ CLI execution tests.
   await CLI startup or PTY parsing. Failed refreshes retain the last good
   values and expose `probeFailedAt`, `cliVersion`, and the probe error so the UI
   can show an attributable stale marker.
+- In the networked profile, coding and review execution hosts claim a single Task Server
+  probe lease per provider subscription and read Claude `/usage` or Codex
+  `/status` locally. The host sends only parsed windows and a digest of the
+  account identity. Task Server caches one reading for 600 seconds per digest;
+  another healthy signed-in host may claim after a failed read, an expired
+  probe lease, or the original host's capability becoming stale. Studio imports
+  those readings into `QuotaService`, which keeps plausibility, history, alarms,
+  and cockpit projection on the existing path. The cockpit includes the opaque
+  subscription digest when multiple accounts need distinct rows. Host terminal output and
+  credential material never cross this route. Gemini has no host-readable
+  subscription quota and is shown as unavailable.
+  Claude uses its account UUID or, if needed, a locally hashed account email;
+  Codex uses the ID token subject or account ID. If neither exposes a stable
+  identity, the host hashes the provider name as the fallback subscription key.
+- Networked admission ignores expired or ambiguous provider snapshots. A
+  provider with two distinct account digests has no single provider-wide cap
+  value for the current admission contract, so its cached percentages are
+  displayed separately and excluded from provider-wide routing. The host's
+  provider capability and actual provider response remain the launch signals.
+  The local profile keeps its current direct probe behavior.
 - `GET /api/cli/quota/history` (AGT-3001) is also store-only: it reads the
   14-day `QuotaHistoryStore` series that `QuotaService` appends after each
   trusted probe, and its rate and 100 % forecast come from the pure

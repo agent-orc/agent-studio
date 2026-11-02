@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -460,6 +461,95 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
         Assert.DoesNotContain("cli-output.log", committed);
         Assert.True(File.Exists(large));
         Assert.Empty(RunGitCapture(_root, "ls-files", Relative(large)));
+    }
+
+    [Fact]
+    public async Task RunBoundaryCommit_BehindATransientLock_IsDeferredAndRetriedUntilItCommits()
+    {
+        // AGT-3409: the escalation's own artifact commit failed on index.lock.
+        // A lock in the workspace repository must not fail the card's commit.
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 11, 1, 3, 0, 0, TimeSpan.Zero));
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["WorkspaceEvidence:IndexLockRetryAttempts"] = "1",
+                ["GitStaleLocks:WaitMilliseconds"] = "0",
+            })
+            .Build();
+        var service = new WorkspaceArtifactCommitService(
+            config, NullLogger<WorkspaceArtifactCommitService>.Instance, time: time);
+        var job = JobFolder("ASS-LOCKED");
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "status.md"), "escalated\n");
+        var lockPath = Path.Combine(_root, ".git", "index.lock");
+        File.WriteAllBytes(lockPath, []);
+        var before = RunGitCapture(_root, "rev-parse", "HEAD").Trim();
+
+        var result = service.TryCommitRunBoundary(_root, "ASS-LOCKED", null, job, ReviewDecisionKind.Escalate);
+
+        Assert.True(result.Success, result.Error);
+        Assert.True(result.Deferred);
+        Assert.False(result.DidCommit);
+        Assert.Contains("index.lock", result.Error);
+        Assert.Equal(before, RunGitCapture(_root, "rev-parse", "HEAD").Trim());
+
+        // The live writer finishes; the first retry is due after 5 seconds.
+        File.Delete(lockPath);
+        time.Advance(TimeSpan.FromSeconds(5));
+        await service.LockRetriesSettledAsync();
+
+        var message = RunGitCapture(_root, "log", "-1", "--format=%B");
+        Assert.Contains("record run artifacts for ASS-LOCKED", message);
+        Assert.Contains("Verdict: escalate", message);
+        Assert.Contains(Relative(Path.Combine(job, "status.md")),
+            RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD"));
+    }
+
+    [Fact]
+    public void RunBoundaryCommit_WithoutLockRetry_StillReportsTheLockFailure()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["WorkspaceEvidence:IndexLockRetryAttempts"] = "1",
+                ["GitStaleLocks:WaitMilliseconds"] = "0",
+                ["WorkspaceArtifacts:LockRetryRounds"] = "0",
+            })
+            .Build();
+        var service = new WorkspaceArtifactCommitService(config, NullLogger<WorkspaceArtifactCommitService>.Instance);
+        var job = JobFolder("ASS-NO-RETRY");
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "status.md"), "done\n");
+        File.WriteAllBytes(Path.Combine(_root, ".git", "index.lock"), []);
+
+        var result = service.TryCommitRunBoundary(_root, "ASS-NO-RETRY", null, job, ReviewDecisionKind.AcceptAsDone);
+
+        Assert.False(result.Success);
+        Assert.False(result.Deferred);
+        Assert.Contains("index.lock", result.Error);
+    }
+
+    [Fact]
+    public void ArtifactCommit_SizesTheAddTimeoutByTheBytesToAdd()
+    {
+        var logger = new GitStaleLockGuardTests.CapturingLogger<WorkspaceArtifactCommitService>();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })
+            .Build();
+        var service = new WorkspaceArtifactCommitService(config, logger);
+        var job = JobFolder("ASS-SIZED");
+        Directory.CreateDirectory(Path.Combine(job, "logs"));
+        File.WriteAllBytes(Path.Combine(job, "logs", "session.jsonl"), new byte[8 * 1024 * 1024]);
+
+        var result = service.TryCommitArtifactUpload(_root, "ASS-SIZED", job, ["logs/session.jsonl"]);
+
+        Assert.True(result.DidCommit, result.Error);
+        // 30 s base plus 8 MiB at the 2 MiB/s floor rate.
+        Assert.Contains(logger.Messages, line =>
+            line.Contains("workspace-artifact-add-timeout") && line.Contains("bytes=8388608")
+            && line.Contains("timeoutSeconds=34"));
     }
 
     private string JobFolder(string id) =>
