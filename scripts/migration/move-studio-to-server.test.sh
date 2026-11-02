@@ -15,6 +15,10 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 check() { "$@" || fail "check failed: $*"; }
 
 mkdir -p "$work/bin" "$work/server/stack" "$work/server/data"
+# Like the real ssh, the fake consumes standard input for a server-side command
+# even when that command reads none of it (1 November 2026: a `while read` loop
+# over the task storage roots lost every root after the first). Git transport
+# commands keep their interactive pipe.
 cat >"$work/bin/ssh" <<'SSH'
 #!/bin/sh
 while [ "$#" -gt 0 ]; do
@@ -25,6 +29,13 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 shift
+case "$*" in
+  *' --server-side '*)
+    status=0
+    sh -c "$*" || status=$?
+    [ -t 0 ] || cat >/dev/null
+    exit "$status" ;;
+esac
 exec sh -c "$*"
 SSH
 # FAKE_DOCKER_RUNNING names containers that `compose ps --status ... --quiet` still reports.
@@ -43,6 +54,7 @@ case "$*" in
     [ ! -f "$FAKE_SERVER_ROOT/rehearsal-active" ] || exit 49
     [ -f "$FAKE_SERVER_ROOT/move-rehearsal/data/projects/.task-storage/PROJ-004/AGT-4/task.md" ] || exit 45
     [ -f "$FAKE_SERVER_ROOT/move-rehearsal/data/projects/.task-storage/PROJ-011/AGT-11/new.md" ] || exit 46
+    [ -f "$FAKE_SERVER_ROOT/move-rehearsal/data/projects/.task-storage/PROJ-012/AGT-22/job.json" ] || exit 46
     [ "${FAKE_REHEARSE_UP_FAIL:-0}" != 1 ] || exit 47
     touch "$FAKE_SERVER_ROOT/rehearsal-active" ;;
 esac
@@ -114,11 +126,19 @@ git -C "$work/code/Demo" commit -qm 'demo'
 # scp-style URL: a usable remote for the planner, served through the fake ssh.
 git -C "$work/code/Demo" remote add origin "git@test-server:$work/remotes/demo.git"
 git -C "$work/code/Demo" push -q origin main
+# Three external task storage roots, each with its own cards. A card is a folder
+# with task.json or job.json; one below results/ is evidence, not a card.
 storage_inside="$work/code/Demo/.orchestrator/jobs"
 storage_outside="$work/code/TaskOnly/.orchestrator/jobs"
-mkdir -p "$storage_inside/AGT-4" "$storage_outside/AGT-11"
+storage_third="$work/code/Third/.orchestrator/jobs"
+mkdir -p "$storage_inside/AGT-4" "$storage_outside/AGT-11" "$storage_third/AGT-21" "$storage_third/AGT-22/results/nested"
 printf '# AGT-4\n' >"$storage_inside/AGT-4/task.md"
+printf '{"key":"AGT-4"}' >"$storage_inside/AGT-4/task.json"
 printf '# AGT-11\n' >"$storage_outside/AGT-11/task.md"
+printf '{"key":"AGT-11"}' >"$storage_outside/AGT-11/task.json"
+printf '{"key":"AGT-21"}' >"$storage_third/AGT-21/task.json"
+printf '{"key":"AGT-22"}' >"$storage_third/AGT-22/job.json"
+printf '{"key":"copied evidence"}' >"$storage_third/AGT-22/results/nested/task.json"
 
 # Workspace with pushed history, one unpushed commit, and untracked state.
 ws="$projects_root/agent-taskboard-workspace"
@@ -131,9 +151,11 @@ cat >"$ws/.metadata/projects.json" <<EOF
 {"Projects":[{"Id":"PROJ-001","DisplayName":"Demo","StorageLocation":"$ws/projects/demo/tasks","RepositoryPath":"$work/code/Demo",
  "Urls":[{"Id":"repo","Label":"Repository","Url":"ssh://operator:$url_password@test-server$work/remotes/demo.git"}]},
  {"Id":"PROJ-004","DisplayName":"Checkout tasks","StorageLocation":"$storage_inside","RepositoryPath":"$work/code/Demo","Urls":[{"Id":"repo","Label":"Repository","Url":"ssh://operator:$url_password@test-server$work/remotes/demo.git"}]},
- {"Id":"PROJ-011","DisplayName":"Task only","StorageLocation":"$storage_outside","Urls":[]}]}
+ {"Id":"PROJ-011","DisplayName":"Task only","StorageLocation":"$storage_outside","Urls":[]},
+ {"Id":"PROJ-012","DisplayName":"Third tasks","StorageLocation":"$storage_third","Urls":[]}]}
 EOF
 printf '# AGT-1\n' >"$ws/projects/demo/tasks/AGT-1/task.md"
+printf '{"key":"AGT-1"}' >"$ws/projects/demo/tasks/AGT-1/task.json"
 printf 'open\n' >"$ws/projects/demo/tasks/AGT-1/status.md"
 printf '# AGT-2\n' >"$ws/projects/demo/tasks/AGT-2/task.md"
 git -C "$ws" add -A
@@ -163,10 +185,10 @@ printf '{"auths":{}}' >"$ws/.docker/config.json"
 # A CLI log that echoed a GitHub token, built at runtime.
 printf 'token %s_%s\n' 'ghp' "$(printf 'x%.0s' $(seq 1 36))" >"$ws/.runtime/cli-output/leak.log"
 
-run() { sh "$move" "$@" --workspace "$ws" --devspace "$devspace" --server test-server --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "move-studio-to-server.sh $* exited non-zero"; }; }
+run() { sh "$move" "$@" --workspace "$ws" --devspace "$devspace" --server test-server --server-root "$work/server" --state-dir "$work/state" </dev/null >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "move-studio-to-server.sh $* exited non-zero"; }; }
 
 run_fails() {
-  if sh "$move" "$@" --workspace "$ws" --devspace "$devspace" --server test-server --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1; then
+  if sh "$move" "$@" --workspace "$ws" --devspace "$devspace" --server test-server --server-root "$work/server" --state-dir "$work/state" </dev/null >"$work/out" 2>&1; then
     cat "$work/out" >&2; fail "move-studio-to-server.sh $* succeeded but should fail"
   fi
 }
@@ -176,7 +198,7 @@ if sh "$move" --dry-run --server test-server --server-root "$work/server" >"$wor
 check grep -q -- '--workspace is required' "$work/out"
 
 # Dry run without --devspace names what --apply will need.
-sh "$move" --dry-run --workspace "$ws" --server test-server --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1 \
+sh "$move" --dry-run --workspace "$ws" --server test-server --server-root "$work/server" --state-dir "$work/state" </dev/null >"$work/out" 2>&1 \
   || { cat "$work/out" >&2; fail 'dry run without --devspace exited non-zero'; }
 check grep -q 'devspace: --devspace is not set' "$work/out"
 
@@ -192,6 +214,7 @@ check grep -q 'credentials removed from the URL' "$work/out"
 check grep -q 'server preflight passed' "$work/out"
 check grep -q "PROJ-004 $storage_inside -> /data/projects/.task-storage/PROJ-004" "$work/out"
 check grep -q "PROJ-011 $storage_outside -> /data/projects/.task-storage/PROJ-011" "$work/out"
+check grep -q "PROJ-012 $storage_third -> /data/projects/.task-storage/PROJ-012" "$work/out"
 check grep -q 'Git Credential Manager entries' "$work/out"
 [ ! -e "$work/server/move-bin" ] || fail 'dry run wrote to the server'
 [ ! -e "$work/server/move-staging" ] || fail 'dry run created staging'
@@ -208,6 +231,13 @@ check test -f "$staged/projects/demo/tasks/AGT-1/results/report.html"
 check test -f "$staged/.orchestration-occurrences/o.json"
 check test -f "$work/server/move-staging/storage/PROJ-004/AGT-4/task.md"
 check test -f "$work/server/move-staging/storage/PROJ-011/AGT-11/task.md"
+# Every storage root arrives, not only the first one the loop reads.
+check test -f "$work/server/move-staging/storage/PROJ-012/AGT-21/task.json"
+check test -f "$work/server/move-staging/storage/PROJ-012/AGT-22/job.json"
+check test -f "$work/server/move-staging/storage/PROJ-012/AGT-22/results/nested/task.json"
+check grep -q 'task storage PROJ-012 staged' "$work/out"
+printf 'PROJ-001\tworkspace/projects/demo/tasks\t1\nPROJ-004\tstorage/PROJ-004\t1\nPROJ-011\tstorage/PROJ-011\t1\nPROJ-012\tstorage/PROJ-012\t2\n' >"$work/cards.expected"
+check cmp -s "$work/cards.expected" "$work/server/move-bin/cards.tsv"
 [ ! -e "$staged/.git-credentials" ] || fail 'credential file was transferred'
 [ ! -e "$staged/runner.env" ] || fail 'runner.env was transferred'
 [ ! -e "$staged/.docker/config.json" ] || fail 'Docker config was transferred'
@@ -231,7 +261,8 @@ printf 'new' >"$ws/.runtime/cli-output/AGT-3.log"
 rm "$ws/.runtime/cli-output/AGT-1.log"
 run --transfer
 check grep -q 'Delta: 3 to copy, 2 to remove' "$work/out"
-check grep -q 'Delta: 0 to copy, 0 to remove, 1 unchanged' "$work/out"
+check grep -q 'Delta: 0 to copy, 0 to remove, 2 unchanged' "$work/out"
+check grep -q 'Delta: 0 to copy, 0 to remove, 3 unchanged' "$work/out"
 check test "$(wc -l <"$staged/logs/bus/day.jsonl")" -eq 2
 check test -f "$staged/.runtime/cli-output/AGT-3.log"
 [ ! -e "$staged/.runtime/cli-output/AGT-1.log" ] || fail 'removed source file still exists in staging'
@@ -271,7 +302,8 @@ rm "$ws/.runtime/cli-output/AGT-3.log"
 # Rehearsal: copy, relocation, separate Compose project, smoke checks, teardown.
 : >"$FAKE_LOG"
 run --rehearse --rehearsal-port 18443
-for line in 'check: path relocation ok' 'check: access state parses' 'check: health ok' 'check: sign-in ok (bootstrap' \
+for line in 'check: cards PROJ-001 1 on the server, as on the source' 'check: cards PROJ-012 2 on the server, as on the source' \
+  'check: path relocation ok' 'check: access state parses' 'check: health ok' 'check: sign-in ok (bootstrap' \
   'check: board read ok (PROJ-001)' 'check: runner claim ok (move-rehearsal-runner, status empty)' 'rehearsal: torn down'; do
   check grep -qF "$line" "$work/out"
 done
@@ -315,6 +347,19 @@ FAKE_REHEARSE_PS_STUCK=1 run_fails --rehearse
 check grep -q 'rehearsal: shutdown failed; copy kept' "$work/out"
 [ -e "$work/server/move-rehearsal/.env" ] || fail 'running-container failure discarded the copy'
 run --rehearse
+
+# A card lost on the way stops the rehearsal before its stack starts. The
+# manifest says the file was sent, so only a fresh storage manifest repairs it.
+rm "$work/server/move-staging/storage/PROJ-012/AGT-22/job.json"
+: >"$FAKE_LOG"
+run_fails --rehearse
+check grep -q 'card count differs for PROJ-012: source 2, server 1' "$work/out"
+check grep -q 'the rehearsal copy holds a different number of cards than the source' "$work/out"
+! grep -q -- '-p studio-move-rehearsal .* up -d' "$FAKE_LOG" || fail 'rehearsal stack started with missing cards'
+[ ! -e "$work/server/move-rehearsal" ] || fail 'rehearsal copy with missing cards was not torn down'
+rm "$work/state/storage-PROJ-012.manifest.json"
+run --rehearse
+check grep -q 'check: cards PROJ-012 2 on the server, as on the source' "$work/out"
 
 # Apply. Stable scripts record what ran; the guard and the maintenance marker
 # live in the devspace, where api.sh and the watchdog look, not beside the workspace.
@@ -411,6 +456,17 @@ check grep -q 'ps --status running --status restarting --status paused --quiet' 
 restarted
 untouched
 
+# Staging that lost a card is refused before the server stack stops; Stable restarts.
+fresh
+rm "$work/server/move-staging/storage/PROJ-012/AGT-21/task.json"
+run_fails --apply --yes
+check grep -q 'card count differs for PROJ-012: source 2, server 1' "$work/out"
+check grep -q 'staging holds a different number of cards than the source' "$work/out"
+! grep -q 'server/stack .* stop$' "$FAKE_LOG" || fail 'a card mismatch stopped the server stack'
+restarted
+untouched
+rm "$work/state/storage-PROJ-012.manifest.json"
+
 # Stable did not answer before the stop: a pre-switch failure keeps it down.
 fresh
 rm -f "$work/stable-up"
@@ -470,7 +526,9 @@ check test -f "$data/workspace/logs/bus/day.jsonl"
 check test -d "$data/projects/demo/.git"
 check test -f "$data/projects/.task-storage/PROJ-004/AGT-4/task.md"
 check test -f "$data/projects/.task-storage/PROJ-011/AGT-11/new.md"
+check test -f "$data/projects/.task-storage/PROJ-012/AGT-21/task.json"
 [ ! -e "$data/projects/.task-storage/PROJ-011/AGT-11/task.md" ] || fail 'vanished task was copied on apply'
+check grep -q 'check: cards PROJ-012 2 on the server, as on the source' "$work/out"
 check test "$(pre_moves)" -eq 2
 check test "$(stat -c %a "$data/workspace/.security/access-state.json")" = 600
 [ -z "$(find "$data/workspace" "$data/projects" ! -type l -perm /077 | head -n 1)" ] || fail 'moved data is readable by other accounts'
@@ -519,4 +577,4 @@ check test "$(git -C "$data/workspace" rev-parse HEAD)" = "$head"
 check test -f "$maintenance"
 check grep -qx 'status=moved' "$guard"
 
-printf 'move-studio-to-server: required workspace and devspace, read-only dry run, first pass, delta pass, idempotent repeat, rehearsal, apply guards, restart only when safe, failed-switch stop and re-run refusal, rollback, re-apply refusal, and forced apply verified.\n'
+printf 'move-studio-to-server: required workspace and devspace, read-only dry run, first pass with three storage roots, delta pass, idempotent repeat, rehearsal, card count checks, apply guards, restart only when safe, failed-switch stop and re-run refusal, rollback, re-apply refusal, and forced apply verified.\n'

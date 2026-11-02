@@ -385,6 +385,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-refused-salvage-push-retained">
+          <td>2026-11-01</td>
+          <td>four finished deliveries<br><span class="small">refused-salvage-push-retained (fix <code>AGT-3406</code>)</span></td>
+          <td>No CLI crashed. A coding and a review role on one host shared a state folder. About a second after the coding role wrote its GitHub App write tokens, the review role replaced them with read tokens, so every salvage push got 403. Terminal at discovery: Blocked with a <code>worktree-blocked</code> gate ("Remote runner retained unsecured worktree"), cards escalated although the work was complete.</td>
+          <td>Both roles wrote <code>&lt;state&gt;/github-app/git-credentials</code>. A refused push escalated at once, nothing picked the retained worktree up again, and the project preflight kept its cached write-probe failure for five minutes after the credentials were repaired.</td>
+          <td>The observed terminal was Escalated. Each role now keeps its tokens in its own folder, and a second process for the same role on one state folder refuses to start. A push refused for authorization refreshes the tokens and retries on a fixed schedule (5, 15, 30, 60 seconds) before the gate is raised. The card's next round on the same host continues from the retained worktree in place. A failed preflight is probed again as soon as the host reports a new credential generation.</td>
+        </tr>
         <tr>
           <td>2026-10-20</td>
           <td><code>AGT-3245</code>, <code>AGT-3246</code>, <code>AGT-3227</code><br><span class="small">salvage-base-delivery-refusal (fix <code>AGT-3257</code>)</span></td>

@@ -166,6 +166,13 @@ server_relocate() {
   relocate_paths "$@" --apply >/dev/null
 }
 
+# verify_cards <workspace> <storage>: the copy must hold as many cards per
+# project as the source had at inventory time (move-bin/cards.tsv).
+verify_cards() {
+  node "$root/move-bin/move-studio-to-server.mjs" verify-cards --expected "$root/move-bin/cards.tsv" \
+    --workspace "$1" --storage "$2"
+}
+
 server_disable_push() {
   repo=$1
   for remote in $(git -C "$repo" remote); do
@@ -291,6 +298,8 @@ server_rehearse() {
     mkdir -p "$rehearsal/data/projects/.task-storage"
     cp -a "$root/move-staging/storage/." "$rehearsal/data/projects/.task-storage/"
   fi
+  verify_cards "$rehearsal/data/workspace" "$rehearsal/data/projects/.task-storage" \
+    || fail 'the rehearsal copy holds a different number of cards than the source; see above'
   server_relocate "$root" "$rehearsal/data/workspace" "$rehearsal/data/projects"
   echo 'check: path relocation ok (0 unresolved)'
   server_disable_push "$rehearsal/data/workspace"
@@ -355,6 +364,8 @@ server_apply() {
   relocate_paths "$root" "$root/move-staging/workspace" "$root/move-staging/projects" >"$root/move-bin/relocate-report.json" \
     || refuse "staging has unresolved Windows paths (see $root/move-bin/relocate-report.json); the live data was not touched"
   echo 'check: staging relocates with 0 unresolved paths'
+  verify_cards "$root/move-staging/workspace" "$root/move-staging/storage" \
+    || refuse 'staging holds a different number of cards than the source (see above); the live data was not touched'
   for name in workspace projects; do
     [ ! -e "$data_dir/$name.pre-move-$stamp" ] || refuse "$data_dir/$name.pre-move-$stamp already exists"
   done
@@ -390,6 +401,8 @@ server_apply() {
     mkdir -p "$data_dir/projects/.task-storage"
     cp -a "$root/move-staging/storage/." "$data_dir/projects/.task-storage/"
   fi
+  verify_cards "$data_dir/workspace" "$data_dir/projects/.task-storage" \
+    || fail 'the switched data holds a different number of cards than the source; see above'
   server_relocate "$root" "$data_dir/workspace" "$data_dir/projects"
   echo 'check: path relocation ok (0 unresolved)'
   protect_access_state "$data_dir/workspace"
@@ -538,7 +551,13 @@ staging="$server_root/move-staging"
 # Native (Windows) spelling of a path when running under Git Bash.
 native_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
 
-server_side() {
+# ssh forwards its standard input to the remote command whether that command
+# reads it or not. Inside a `while read` loop it would swallow the rest of the
+# loop's input, so server_side never passes stdin on; only server_side_input
+# does, for the commands that stream data (archives, path lists, the owner login).
+server_side() { server_side_input "$@" </dev/null; }
+
+server_side_input() {
   remote_command="sh $(sq "$server_root/move-bin/move-studio-to-server.sh") --server-side"
   for argument in "$@"; do remote_command="$remote_command $(sq "$argument")"; done
   ssh -o BatchMode=yes "$server" "$remote_command"
@@ -563,10 +582,12 @@ inventory() {
   : >"$state_dir/remotes.tsv"
   node "$script_dir/move-studio-to-server.mjs" projects --workspace "$(native_path "$workspace")" >"$state_dir/projects.tsv"
   tab=$(printf '\t')
-  while IFS="$tab" read -r project_id repository; do
-    url=$(git -C "$repository" remote get-url origin 2>/dev/null | strip_url)
+  # Loops over plan files read from descriptor 3: a command inside that reads
+  # standard input (ssh, git, node) can then never consume the loop's input.
+  while IFS="$tab" read -r project_id repository <&3; do
+    url=$(git -C "$repository" remote get-url origin 2>/dev/null </dev/null | strip_url)
     [ -z "$url" ] || printf '%s\t%s\n' "$project_id" "$url" >>"$state_dir/remotes.tsv"
-  done <"$state_dir/projects.tsv"
+  done 3<"$state_dir/projects.tsv"
   set -- inventory --workspace "$(native_path "$workspace")" --tracked "$state_dir/tracked.z" --dirty "$state_dir/dirty.z" \
     --remotes "$state_dir/remotes.tsv" --home "$(native_path "$HOME")" \
     --credential-helper "$(git -C "$workspace" config --get credential.helper || true)" --out-dir "$state_dir"
@@ -584,6 +605,8 @@ transfer_pass() {
   upload "$self" move-studio-to-server.sh
   upload "$script_dir/relocate-workspace-paths.mjs" relocate-workspace-paths.mjs
   upload "$state_dir/path-map.json" path-map.json
+  upload "$script_dir/move-studio-to-server.mjs" move-studio-to-server.mjs
+  upload "$state_dir/cards.tsv" cards.tsv
   git -C "$workspace" remote get-url origin >/dev/null 2>&1 || fail 'the workspace has no origin remote to clone on the server'
   workspace_url=$(git -C "$workspace" remote get-url origin | strip_url)
   clone_state=$(server_side clone-workspace "$staging/workspace" "$workspace_url")
@@ -604,23 +627,23 @@ transfer_pass() {
       tar_status=0
       tar -C "$workspace" --null -T "$state_dir/copy.z" --warning=no-file-changed -cf - || tar_status=$?
       echo "$tar_status" >"$state_dir/tar.status"
-    } | gzip -1 | server_side receive-archive "$staging/workspace"
+    } | gzip -1 | server_side_input receive-archive "$staging/workspace"
     # Exit 1 means a file changed while it was read; its new mtime sends it again next pass.
     case "$(cat "$state_dir/tar.status")" in 0|1) ;; *) fail 'tar failed while streaming the untracked state' ;; esac
   fi
-  [ ! -s "$state_dir/remove.z" ] || server_side remove-paths "$staging/workspace" <"$state_dir/remove.z"
+  [ ! -s "$state_dir/remove.z" ] || server_side_input remove-paths "$staging/workspace" <"$state_dir/remove.z"
   mv "$state_dir/manifest.next.json" "$state_dir/manifest.json"
 
   tab=$(printf '\t')
-  while IFS="$tab" read -r name url; do
+  while IFS="$tab" read -r name url <&3; do
     [ -n "$url" ] || fail "checkout $name has no repository URL"
-    server_side clone-checkout "$staging/projects/$name" "$url" </dev/null
+    server_side clone-checkout "$staging/projects/$name" "$url"
     log "checkout /data/projects/$name from $url"
-  done <"$state_dir/checkouts.tsv"
+  done 3<"$state_dir/checkouts.tsv"
 
   # Task storage in a project checkout is usually untracked. A clone cannot
   # carry it, so each external StorageLocation has its own manifest and delta.
-  while IFS="$tab" read -r storage_id storage_source; do
+  while IFS="$tab" read -r storage_id storage_source <&3; do
     [ -n "$storage_id" ] || continue
     storage_local=$storage_source
     if command -v cygpath >/dev/null 2>&1; then storage_local=$(cygpath -u "$storage_source"); fi
@@ -641,13 +664,13 @@ transfer_pass() {
         tar_status=0
         tar -C "$storage_local" --null -T "$storage_copy" --warning=no-file-changed -cf - || tar_status=$?
         echo "$tar_status" >"$state_dir/storage-$storage_id.tar.status"
-      } | gzip -1 | server_side receive-archive "$storage_stage"
+      } | gzip -1 | server_side_input receive-archive "$storage_stage"
       case "$(cat "$state_dir/storage-$storage_id.tar.status")" in 0|1) ;; *) fail "tar failed while streaming task storage $storage_id" ;; esac
     fi
-    [ ! -s "$storage_remove" ] || server_side remove-paths "$storage_stage" <"$storage_remove"
+    [ ! -s "$storage_remove" ] || server_side_input remove-paths "$storage_stage" <"$storage_remove"
     mv "$state_dir/storage-$storage_id.manifest.next.json" "$storage_manifest"
     log "task storage $storage_id staged at /data/projects/.task-storage/$storage_id"
-  done <"$state_dir/storage.tsv"
+  done 3<"$state_dir/storage.tsv"
 }
 
 server_side_preflight() {
@@ -749,9 +772,9 @@ case "$mode" in
     if [ -n "${MOVE_REHEARSAL_OWNER_USERNAME:-}" ]; then
       # The owner login travels on stdin, never on a command line.
       printf '%s\n%s\n' "$MOVE_REHEARSAL_OWNER_USERNAME" "${MOVE_REHEARSAL_OWNER_PASSWORD:-}" \
-        | server_side rehearse "$server_root" "$rehearsal_port" "$rehearsal_subnet" login
+        | server_side_input rehearse "$server_root" "$rehearsal_port" "$rehearsal_subnet" login
     else
-      server_side rehearse "$server_root" "$rehearsal_port" "$rehearsal_subnet" bootstrap </dev/null
+      server_side rehearse "$server_root" "$rehearsal_port" "$rehearsal_subnet" bootstrap
     fi
     log 'Rehearsal passed. Staging keeps the transferred state, so --apply only sends the final delta.'
     ;;

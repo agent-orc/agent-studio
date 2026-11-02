@@ -3388,6 +3388,54 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
+    public async Task A_failed_preflight_is_probed_again_at_once_after_the_hosts_credentials_change()
+    {
+        // 1 November 2026: a cached write-probe failure kept refusing claims after
+        // the host's credentials had been repaired.
+        SeedTask(TaskStates.Ready, TaskKey, "Credential repaired", "Prompt.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/repaired-project.git");
+        // The server stamps its own receipt time; the host's report time is not read.
+        var reportedAt = new DateTime(2026, 11, 1, 12, 0, 0, DateTimeKind.Utc);
+        var request = new RClaim(RunnerId, ProjectName, "host", 1, "remote-runner",
+            RepositoryCredentialGeneration: "generation-read");
+
+        var offered = await client.ClaimAsync(request, CancellationToken.None);
+        Assert.Equal(RClaimStatus.PreflightRequired, offered.Status);
+        var refused = await client.ClaimAsync(request with
+        {
+            ProjectPreflight = new Runner::AgentRunner.RunnerProjectPreflightReport(
+                offered.ProjectId!, offered.RegistrationFingerprint!, false,
+                "write probe failed (128): The requested URL returned error: 403",
+                reportedAt, offered.RepositoryUrl!, offered.RepositoryUrl!),
+        }, CancellationToken.None);
+        Assert.Equal(RClaimStatus.PreflightFailed, refused.Status);
+
+        var unchanged = await client.ClaimAsync(request, CancellationToken.None);
+        Assert.Equal(RClaimStatus.PreflightFailed, unchanged.Status);
+
+        var repaired = request with { RepositoryCredentialGeneration = "generation-write" };
+        var reprobe = await client.ClaimAsync(repaired, CancellationToken.None);
+        Assert.Equal(RClaimStatus.PreflightRequired, reprobe.Status);
+        var admitted = await client.ClaimAsync(repaired with
+        {
+            ProjectPreflight = new Runner::AgentRunner.RunnerProjectPreflightReport(
+                reprobe.ProjectId!, reprobe.RegistrationFingerprint!, true,
+                "clone/fetch URLs match registration; target branch exists; write probe succeeded",
+                reportedAt, reprobe.RepositoryUrl!, reprobe.RepositoryUrl!),
+        }, CancellationToken.None);
+
+        Assert.True(
+            admitted.Status == RClaimStatus.Claimed,
+            $"Expected the claim after a fresh preflight, got {admitted.Status}: {admitted.Message}");
+        Assert.Equal(TaskKey, admitted.JobId);
+    }
+
+    [Fact]
     public async Task Failed_project_preflight_does_not_block_another_assigned_project()
     {
         const string deliverableProjectName = "deliverable-project";

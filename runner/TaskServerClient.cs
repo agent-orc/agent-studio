@@ -766,6 +766,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                     req.EffectiveMaxParallelismAppliedAt ?? _centralHostMaxParallelismAppliedAt,
                 BootstrapMaxParallelism = req.BootstrapMaxParallelism ?? _options?.HostMaxParallelism,
                 CapabilityInstanceId = RunnerInstanceId,
+                RepositoryCredentialGeneration = req.RepositoryCredentialGeneration ?? RepositoryCredentialRouting.Generation,
                 RequiredCapabilities = _options is null
                     ? req.RequiredCapabilities
                     : RunnerCapabilityProbe.CodingHostRequirements(_options),

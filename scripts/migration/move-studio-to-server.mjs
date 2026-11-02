@@ -3,6 +3,7 @@
 // classification, path mapping generation, and delta selection. The shell
 // script owns every process, SSH, Git, tar, and Docker side effect; this module
 // only reads the workspace and writes plan files into the local state directory.
+// The server runs its read-only verify-cards command against the copy.
 import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -531,6 +532,71 @@ export function formatInventory(inventory) {
   return lines.join('\n');
 }
 
+/**
+ * Where each project's cards live, relative to the transferred trees: inside
+ * the workspace copy or in its own task storage root. Projects without a
+ * storage location or with a refused storage id have no card location.
+ */
+export function cardLocations({ workspace, projects, storageRoots }) {
+  const locations = [];
+  for (const project of projects) {
+    const storage = project.storageLocation;
+    if (!storage) continue;
+    if (isUnder(storage, workspace)) {
+      const relative = normalized(storage).slice(normalized(workspace).length + 1);
+      locations.push({ id: project.id, location: relative ? `workspace/${relative}` : 'workspace', relative });
+      continue;
+    }
+    const root = storageRoots.find(item => item.id === project.id);
+    if (root) locations.push({ id: project.id, location: `storage/${root.id}`, source: root.source });
+  }
+  return locations;
+}
+
+// Same exclusions as the Task Server's legacy migration scan.
+const nonCardDirectories = new Set(['results', 'attachments', 'logs', 'test-results']);
+
+/** A card is a folder that holds task.json or job.json. A missing root holds none. */
+export function countCards(root) {
+  if (!existsSync(root) || !statSync(root).isDirectory()) return 0;
+  let count = 0;
+  const walk = directory => {
+    const items = readdirSync(directory, { withFileTypes: true });
+    if (items.some(item => item.isFile() && (item.name === 'task.json' || item.name === 'job.json'))) count++;
+    for (const item of items) {
+      if (!item.isDirectory() || skippedDirectories.has(item.name) || nonCardDirectories.has(item.name.toLowerCase())) continue;
+      walk(path.join(directory, item.name));
+    }
+  };
+  walk(root);
+  return count;
+}
+
+/** Resolves a cards.tsv location against the workspace copy and the task storage folder on the server. */
+export function resolveCardLocation(location, { workspace, storage }) {
+  if (location === 'workspace') return workspace;
+  if (location.startsWith('workspace/')) {
+    const relative = location.slice('workspace/'.length);
+    assertSafeRelative(relative);
+    return path.join(workspace, ...relative.split('/'));
+  }
+  const id = location.startsWith('storage/') ? location.slice('storage/'.length) : '';
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id)) throw new Error(`Unknown card location: ${JSON.stringify(location)}`);
+  return path.join(storage, id);
+}
+
+/** Compares the source card counts with the copy. Returns the projects whose counts differ. */
+export function compareCardCounts(expected, count) {
+  return expected.map(item => ({ ...item, server: count(item.location) }))
+    .map(item => ({ ...item, matches: item.server === item.source }));
+}
+
+const readCards = file => readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean).map(line => {
+  const [id, location, source] = line.split('\t');
+  if (!id || !location || !/^\d+$/.test(source ?? '')) throw new Error(`Invalid cards line: ${JSON.stringify(line)}`);
+  return { id, location, source: Number(source) };
+});
+
 const readList = file => (file && existsSync(file) ? readFileSync(file, 'utf8').split('\0').filter(Boolean) : []);
 const readJson = (file, fallback) => (file && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : fallback);
 
@@ -612,6 +678,10 @@ export function runCli(argv, {
     writeFileSync(path.join(out, 'path-map.json'), JSON.stringify(inventory.mapping, null, 2) + '\n');
     writeFileSync(path.join(out, 'checkouts.tsv'), inventory.checkouts.map(item => `${item.name}\t${item.repositoryUrl ?? ''}\n`).join(''));
     writeFileSync(path.join(out, 'storage.tsv'), inventory.storageRoots.map(item => `${item.id}\t${item.source}\n`).join(''));
+    // Card counts per project, compared with the server copy by verify-cards.
+    const cards = cardLocations({ workspace: options['source-workspace'] ?? options.workspace, projects: registry, storageRoots: plan.storageRoots })
+      .map(item => `${item.id}\t${item.location}\t${countCards(item.source ?? path.join(options.workspace, ...item.relative.split('/').filter(Boolean)))}\n`);
+    writeFileSync(path.join(out, 'cards.tsv'), cards.join(''));
     write(formatInventory(inventory) + '\n');
     return inventory.issues.length ? 3 : 0;
   }
@@ -627,7 +697,18 @@ export function runCli(argv, {
     write(`Delta: ${delta.copy.length} to copy, ${delta.remove.length} to remove, ${delta.unchanged} unchanged\n`);
     return 0;
   }
-  throw new Error('Usage: move-studio-to-server.mjs projects|inventory|delta|strip-url [--option value]...');
+  if (command === 'verify-cards') {
+    const roots = { workspace: options.workspace, storage: options.storage };
+    if (!options.expected || !roots.workspace || !roots.storage) throw new Error('verify-cards needs --expected, --workspace, and --storage');
+    const results = compareCardCounts(readCards(options.expected), location => countCards(resolveCardLocation(location, roots)));
+    for (const item of results) {
+      write(item.matches
+        ? `check: cards ${item.id} ${item.server} on the server, as on the source\n`
+        : `card count differs for ${item.id}: source ${item.source}, server ${item.server} (${item.location})\n`);
+    }
+    return results.every(item => item.matches) ? 0 : 4;
+  }
+  throw new Error('Usage: move-studio-to-server.mjs projects|inventory|delta|verify-cards|strip-url [--option value]...');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  buildInventory, classifyPath, classifyWorkspace, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
+  buildInventory, cardLocations, classifyPath, classifyWorkspace, countCards, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
   readProjectRegistry, runCli, scanFileContent, scanWorkspace, screenTokens, selectDelta, stripUrlCredentials, taskRoots, tokenStateIssues,
 } from './move-studio-to-server.mjs';
 import { relocate } from './relocate-workspace-paths.mjs';
@@ -490,6 +490,85 @@ test('external task storage blocks on token hits and missing source despite extr
     assert.equal(runCli(args, { now: fixedClock, write: () => {} }), 3);
     inventory = JSON.parse(await readFile(path.join(root, 'inventory.json'), 'utf8'));
     assert.equal(inventory.issues.some(issue => issue.code === 'missing-storage-root' && issue.projects[0] === 'PROJ-005'), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('counts folders with task.json or job.json and skips evidence folders', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-studio-cards-'));
+  try {
+    const files = ['AGT-1/task.json', 'AGT-1/job.json', 'AGT-2/job.json', 'lane/AGT-3/task.json', 'AGT-4/task.md',
+      'AGT-1/results/copy/task.json', 'AGT-2/attachments/task.json', 'AGT-2/logs/job.json', 'AGT-2/test-results/task.json',
+      'node_modules/pkg/task.json', '.git/task.json'];
+    for (const relative of files) {
+      await mkdir(path.dirname(path.join(root, relative)), { recursive: true });
+      await writeFile(path.join(root, relative), '{}');
+    }
+    assert.equal(countCards(root), 3);
+    assert.equal(countCards(path.join(root, 'missing')), 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('card locations follow the copied tree of each project', () => {
+  const workspace = 'C:\\Projects\\workspace';
+  const projects = [
+    { id: 'PROJ-001', storageLocation: 'C:\\Projects\\workspace\\projects\\demo\\tasks' },
+    { id: 'PROJ-011', storageLocation: 'C:\\Projects\\repo\\.orchestrator\\jobs' },
+    { id: 'PROJ-012', storageLocation: null },
+    { id: 'bad id', storageLocation: 'D:\\Tasks' },
+  ];
+  const { storageRoots } = generateMapping({ workspace, projects });
+  assert.deepEqual(cardLocations({ workspace, projects, storageRoots }).map(item => [item.id, item.location]),
+    [['PROJ-001', 'workspace/projects/demo/tasks'], ['PROJ-011', 'storage/PROJ-011']]);
+});
+
+test('inventory records card counts and verify-cards stops on any difference', async () => {
+  const { root, workspace } = await materialize({ 'projects/demo/tasks/3-done/AGT-1/task.json': '{}' });
+  try {
+    const external = path.join(root, 'external', '.orchestrator', 'jobs');
+    await writeFile(path.join(external, 'AGT-1', 'task.json'), '{}');
+    await mkdir(path.join(external, 'AGT-2'));
+    await writeFile(path.join(external, 'AGT-2', 'job.json'), '{}');
+    const state = path.join(root, 'state');
+    await mkdir(state);
+    runCli(['inventory', '--workspace', workspace, '--source-workspace', fixture.workspace, '--home', fixture.home, '--out-dir', state],
+      { now: fixedClock, write: () => {} });
+    const cards = (await readFile(path.join(state, 'cards.tsv'), 'utf8')).trim().split('\n').map(line => line.split('\t'));
+    assert.deepEqual(cards, [
+      ['PROJ-001', 'workspace/projects/demo/tasks', '1'],
+      ['PROJ-002', 'workspace/projects/docs/tasks', '0'],
+      ['PROJ-003', 'workspace/projects/demo-two/tasks', '0'],
+      ['PROJ-004', 'workspace/projects/task-only/tasks', '0'],
+      ['PROJ-005', 'storage/PROJ-005', '2'],
+    ]);
+
+    // The server copy: the workspace tree and one folder per storage root.
+    const server = path.join(root, 'server');
+    await mkdir(path.join(server, 'storage'), { recursive: true });
+    await writeFile(path.join(state, 'cards.tsv'), 'PROJ-001\tworkspace/projects/demo/tasks\t1\nPROJ-005\tstorage/PROJ-005\t2\nPROJ-006\tworkspace\t1\n');
+    await mkdir(path.join(server, 'workspace', 'projects', 'demo', 'tasks', 'AGT-1'), { recursive: true });
+    await writeFile(path.join(server, 'workspace', 'projects', 'demo', 'tasks', 'AGT-1', 'task.json'), '{}');
+    await mkdir(path.join(server, 'storage', 'PROJ-005', 'AGT-1'), { recursive: true });
+    await writeFile(path.join(server, 'storage', 'PROJ-005', 'AGT-1', 'task.json'), '{}');
+    const verify = output => runCli(['verify-cards', '--expected', path.join(state, 'cards.tsv'),
+      '--workspace', path.join(server, 'workspace'), '--storage', path.join(server, 'storage')], { write: text => output.push(text) });
+    let output = [];
+    assert.equal(verify(output), 4);
+    assert.match(output.join(''), /card count differs for PROJ-005: source 2, server 1 \(storage\/PROJ-005\)/);
+    assert.match(output.join(''), /check: cards PROJ-001 1 on the server, as on the source/);
+    assert.match(output.join(''), /check: cards PROJ-006 1 on the server/);
+    await mkdir(path.join(server, 'storage', 'PROJ-005', 'AGT-2'));
+    await writeFile(path.join(server, 'storage', 'PROJ-005', 'AGT-2', 'job.json'), '{}');
+    output = [];
+    assert.equal(verify(output), 0);
+
+    await writeFile(path.join(state, 'cards.tsv'), 'PROJ-001\tworkspace/../outside\t0\n');
+    assert.throws(() => verify([]), /Unsafe/);
+    await writeFile(path.join(state, 'cards.tsv'), 'PROJ-001\tstorage/../x\t0\n');
+    assert.throws(() => verify([]), /Unknown card location/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

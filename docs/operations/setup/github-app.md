@@ -108,9 +108,12 @@ Task Server the operator port answers it, like this page.
 
 ## How Git finds the token
 
-Tokens live in a `git credential-store` file: `github-app/git-credentials` under
-the host's state directory, or `AgentStudio/github-app/git-credentials` under the
-application data folder of the Studio host. Beside it lies a generated Git config
+Tokens live in a `git credential-store` file: `github-app/<role>/git-credentials`
+under the host's state directory, or `AgentStudio/github-app/git-credentials` under the
+application data folder of the Studio host. Each role has its own folder, so a coding
+and a review role on one state directory keep their own access level. A second
+process with the same role on one state directory refuses to start; give it its own
+`RUNNER_STATE_DIR`. The shared files of older releases are removed on the first renewal. Beside it lies a generated Git config
 with one `[credential]` section per covered repository, which every platform Git
 process includes.
 
@@ -122,7 +125,7 @@ long-lived store. A process that isolates its Git configuration, such as a proof
 one specific token, is left alone.
 
 Review workspaces use a cleared environment and select their credential
-themselves; they read the same tokens from `github-app/review-credentials`.
+themselves; they read the same tokens from `github-app/review/review-credentials`.
 
 Coding CLIs do not get the settings, the host key's path or the token files' path.
 This is not a boundary against a determined agent: a CLI runs under the same
@@ -131,7 +134,15 @@ it could read `~/.git-credentials` before. Tokens at least expire within the hou
 Running CLIs under their own user is the real fix and is still open.
 
 A scheduled coverage or post-merge run shares the tokens when its unit sets
-`RUNNER_STATE_DIR`.
+`RUNNER_STATE_DIR`. It reads the folder of `RUNNER_ROLE`, or of `coding` when the unit
+sets none.
+
+A push the remote refuses for authorization asks the server for fresh tokens at once
+and pushes again, up to four times within two minutes, before the run escalates the
+retained worktree. The card's next round on the same host continues from that
+worktree. Every renewal that changes the files gives the host a new credential
+generation, and a failed project delivery preflight is run again as soon as the host
+reports one.
 
 ## Moving away from personal tokens
 
