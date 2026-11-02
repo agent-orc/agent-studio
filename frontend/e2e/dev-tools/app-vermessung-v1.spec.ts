@@ -181,7 +181,7 @@ test('App-Vermessung v1 real stable sweep', async ({ page }) => {
     await recordMissing(page, 'Usage', 'status bar entry', 'Usage status control was not visible.');
   }
 
-  for (const key of ['overview', 'appearance', 'updates', 'workspaces', 'caps', 'working-memory', 'prompts', 'tokens', 'screenshots', 'remote-hosts']) {
+  for (const key of ['overview', 'appearance', 'updates', 'workspaces', 'caps', 'prompts', 'tokens', 'screenshots', 'remote-hosts']) {
     await page.goto(`/#/workspace/settings/${key}`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(850);
     const recoveryOverlay = page.getByTestId('crash-recovery-prompt-overlay');

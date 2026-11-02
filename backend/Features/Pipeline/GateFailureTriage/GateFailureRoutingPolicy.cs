@@ -98,7 +98,10 @@ public static class GateFailureRoutingPolicy
                     GateFailureParkCategories.SharedCause, "integration-branch-cause");
 
             case GateFailureClasses.Product:
-                if (facts.OtherCardsWithFingerprint >= SharedCauseOtherCards)
+                // A definition issue lives in this delivery's tree; another card
+                // with the same issue code made its own mistake, not a shared one.
+                if (triage.Kind != GateProductKinds.Definition
+                    && facts.OtherCardsWithFingerprint >= SharedCauseOtherCards)
                     return new(GateFailureRouteAction.AttachToCause,
                         GateFailureParkCategories.SharedCause, "fingerprint-seen-on-other-cards");
                 if (!facts.AutomaticRoundsEnabled)

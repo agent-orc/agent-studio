@@ -84,6 +84,32 @@ public sealed class ResultFinalizationPolicyTests
         Assert.Equal("Summary pending (degraded: A task was canceled.)", plan.TimelineSummary);
     }
 
+    [Theory]
+    [InlineData("decision-input-incomplete:oversize-orchestrator-prompt", true)]
+    [InlineData("  decision-input-incomplete:raw-session-path", true)]
+    [InlineData("A task was canceled.", false)]
+    [InlineData("summary-protocol-invalid: missing # Status", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void Input_refusal_matrix(string? error, bool expected)
+        => Assert.Equal(expected, ResultFinalizationPolicy.IsInputRefusal(error));
+
+    [Fact]
+    public void A_summary_whose_input_the_boundary_refused_schedules_no_retry()
+    {
+        var plan = ResultFinalizationPolicy.Plan(
+            ResultSummaryDelivery.Degraded,
+            "decision-input-incomplete:oversize-orchestrator-prompt");
+
+        Assert.False(plan.Generated);
+        Assert.False(plan.CommitStatusDocument);
+        Assert.False(plan.ScheduleRetry);
+        Assert.Equal("degraded:decision-input-incomplete:oversize-orchestrator-prompt", plan.ResultDocumentStatus);
+        Assert.Equal(
+            "Summary degraded (input refused: decision-input-incomplete:oversize-orchestrator-prompt)",
+            plan.TimelineSummary);
+    }
+
     [Fact]
     public void A_degraded_summary_without_an_error_names_the_spent_budget()
         => Assert.Equal(

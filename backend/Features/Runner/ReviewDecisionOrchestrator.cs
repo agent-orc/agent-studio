@@ -2454,6 +2454,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         }
 
+        var definitionGate = RunProjectDefinitionCheck(workspace, entry, current);
+        if (definitionGate.IsIncomplete)
+        {
+            await HandleCompletionGateAsync(workspace, entry, pending, current, definitionGate, ct);
+            return;
+        }
+
         var dossierReview = RunDossierMaintenancePostStep(entry, current);
         if (dossierReview is { Required: true, IsComplete: false })
         {
@@ -6206,6 +6213,44 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// result as a first-class pipeline timeline row. A missing required entry
     /// gates delivery; an unreferenced card records NotApplicable.
     /// </summary>
+    /// <summary>
+    /// Validates the delivery's <c>.agent-studio/project.yml</c> at the exact
+    /// commit the build gate will test (AOW-15). Without git, a subject SHA, or
+    /// a readable file the check passes; the build gate stays the backstop.
+    /// </summary>
+    private CompletionGate.Decision RunProjectDefinitionCheck(
+        string workspace,
+        WatchPathEntry entry,
+        TaskInfo current)
+    {
+        var sha = ResolveBuildTestGateSubject(current, entry.Path).Sha;
+        if (_git is null || string.IsNullOrWhiteSpace(sha))
+            return new CompletionGate.Decision { Source = CompletionGate.CompletionGateSource.ProjectDefinition };
+        var repositoryRoot = string.IsNullOrWhiteSpace(entry.RepositoryPath)
+            ? entry.RootPath
+            : entry.RepositoryPath;
+        try
+        {
+            var decision = ProjectDefinitionGate.Evaluate(
+                _git.GetFileAtCommit(repositoryRoot, sha, ProjectPreparationPaths.Definition),
+                path => _git.FileExistsAtCommit(repositoryRoot, sha, path),
+                CountPriorReissues(workspace, entry.Name, current.Id),
+                ConfiguredMaxReissues(entry.Name));
+            if (decision.IsIncomplete)
+                _logger.LogInformation(
+                    "project-definition-invalid project={Project} job={JobId} sha={Sha} action={Action} reason={Reason}",
+                    entry.Name, current.Id, sha, decision.Action, decision.Reason);
+            return decision;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Project definition check failed for {Project}/{JobId}; the build gate decides",
+                entry.Name, current.Id);
+            return new CompletionGate.Decision { Source = CompletionGate.CompletionGateSource.ProjectDefinition };
+        }
+    }
+
     private DossierMaintenanceReview? RunDossierMaintenancePostStep(
         WatchPathEntry entry,
         TaskInfo current)

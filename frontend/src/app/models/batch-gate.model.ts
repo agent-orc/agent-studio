@@ -115,6 +115,17 @@ export function batchMemberFor(state: BatchGateState | null, ...keys: (string | 
   return null;
 }
 
+/** Lifetime batch pilot figures from `GET /batch-gate/report` (subset the UI reads). */
+export interface BatchGateReport {
+  project: string;
+  closedBatches: number;
+  eligibleDeliveredMembers: number;
+  fullSuiteRuns: number;
+  meanBatchSize: number | null;
+  batchGreenRate: number | null;
+  constructionEjectionRate: number | null;
+}
+
 /** AGT-3219: cards parked by a machine gate queue overrun, from `/batch-gate/queue-stalls`. */
 export interface GateQueueStallReport {
   project: string;

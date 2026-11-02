@@ -29,6 +29,13 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+Each gate-economics row also carries the grouping figures of its window
+(AGT-3399): `batchesClosed` (distinct batches whose gate ran), `meanBatchSize`
+(largest membership per batch, averaged), and `soloGatedMerges` (merges
+integrated by a per-card gate). The project Flow health view reads them with the
+cycle-time rows, whose `reviewAspectSeconds` split review time per `aspect-*`
+step inside Post Processing.
+
 ### Per-project integration test placement (AGT-3314)
 
 `testing.mode` defaults to `pre-merge`. That path retains the existing
@@ -2493,8 +2500,22 @@ operator changes cause the step to fail before its writer runs.
   `claude-opus-5-5` / `low`. The Haiku fallback and the shared
   `ClaudeCli:SummaryModel` key no longer apply to it. An inherited model the
   chosen CLI cannot run falls back to the catalogue default.
-  The prompt receives the log tail and an evidence bundle
-  (`SummaryEvidenceAssembler`). The bundle holds the lane and lane history,
+  The prompt receives the run evidence and an evidence bundle
+  (`SummaryEvidenceAssembler`). The step is an orchestrator step, so the
+  whole prompt must stay under the 32 KB `OrchestratorPromptBoundary` limit
+  (AGT-3410). `SummaryPromptFit` fills the `{{log}}` slot with the bytes the
+  rest of the prompt leaves: the task prompt head (`prompt.md`), the run
+  status lines and last terminal sentinel, the `results/` deliverables and the
+  latest agent messages keep bounded sections; the run log before them gets
+  the remainder, newest lines first, without `runner-log-delivery` markers and
+  with long tool-call lines cut to 400 bytes. An `OMITTED TO FIT THE PROMPT
+  LIMIT` list at the top of the slot names everything left out, and raw
+  session paths and credentials are replaced before the boundary sees them.
+  Each shortened prompt logs `Summary prompt shortened` with its size and a
+  running count. A boundary refusal (`decision-input-incomplete:*`) is not
+  retried: finalization stops after the first attempt, logs
+  `Result finalization degraded` with `promptBytes` and `degradedTotal`, and
+  queues no remote retry. The bundle holds the lane and lane history,
   pipeline step statuses, reasons and failure codes, the commit chain and
   `codeActivityDetected`, integration records and verification, salvage refs
   from `agent_run_finished`, the completion claim, review and sight-review
@@ -2834,6 +2855,68 @@ new fact even when its operator-facing summary is unchanged.
   its intent / prompt note / timeline receipt, and the fresh budget after an
   operator requeue) plus the loop breaker
   `backend.Tests/Architecture/RunTimeoutContinuationBreakerTest.cs`.
+
+## Minimal repository execution definition (AOW-15)
+
+A repository without a build system still needs a valid
+`.agent-studio/project.yml` once it adds one. The smallest valid file is:
+
+```yaml
+schemaVersion: 1
+stack: [shell]
+commands:
+  prepare: .agent-studio/prepare
+  build: []
+  test: []
+  lint: []
+```
+
+with an executable prepare script next to it:
+
+```sh
+#!/bin/sh
+set -eu
+```
+
+Rules an agent must follow when it writes the file:
+
+- `commands.prepare` is required. It is a repository-relative path with
+  forward slashes and no `..`; anything else is `prepare-path-invalid`.
+- The script must exist in the same delivery (`prepare-script-missing`
+  otherwise) and must be committed executable
+  (`git update-index --chmod=+x .agent-studio/prepare`). POSIX hosts run it
+  through `/bin/sh`; Windows hosts use `prepare.ps1` beside it or Git Bash.
+- `stack` needs at least one entry. `shell` is a free label that binds no
+  dependency cache; `node`, `dotnet` and `playwright` bind the npm, NuGet and
+  Playwright caches.
+- Empty `build`, `test` and `lint` lists are valid. The gate then has no
+  verify command and records `NotApplicable` (`No build/test defined`).
+
+An invalid definition is a code failure of the delivery that carries it, in
+every gate path:
+
+- `ProjectPreparationExecutor.RunAsync` returns a reason that lists each issue
+  as `path (line N) [code] message`, bounded by
+  `ProjectDefinitionIssueText.MaxLength`. The structured issues stay on
+  `BuildTestGateResult.ProjectDefinitionIssues`.
+- `BuildTestGateRunner` maps `PreparationFailureKind.Definition` to
+  `BuildTestGateFailureKind.Code` and does not run the baseline / clean-repeat
+  diagnosis for it. Before AOW-15 that diagnosis returned
+  `unclassified-first-occurrence` and retyped the failure as `Environment`, so
+  the merge gate reported `gate-environment-failure`, spent the environment
+  replay ladder, and parked the card with "repair the gate host".
+- `GateFailureTriagePolicy` classifies a gate log whose reason carries the
+  invalid-definition text as `product` with kind `definition`, before any
+  environment marker. The failing items are the `path [code]` pairs. Routing
+  starts the one fix round with the issues and the rule above, never attaches
+  the card to a shared cause, and never spends the environment replay budget.
+- Review checks the file first. Right after the completion gate,
+  `ProjectDefinitionGate` reads `project.yml` at the exact subject SHA through
+  git and validates it, including the existence of every referenced file. An
+  invalid file reissues the card to its agent with one finding per issue,
+  within the shared reissue budget, before the build gate or any review aspect
+  runs. A delivery without the file, or a subject git cannot read, passes this
+  check; the build gate stays the backstop.
 
 ## Project deployment definition (P1)
 

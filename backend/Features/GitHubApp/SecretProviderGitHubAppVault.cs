@@ -55,6 +55,8 @@ public sealed class SecretProviderGitHubAppVault(ISecretProvider secrets, string
         await secrets.PutAsync(SecretScope.Workspace, ClientSecretName, values.ClientSecret, owner, ct);
     }
 
+    public Task EnsureWritableAsync(CancellationToken ct) => secrets.EnsureWritableAsync(SecretScope.Workspace, ct);
+
     public async Task DeleteSecretsAsync(string actor, CancellationToken ct)
     {
         var owner = SecretActor.Human(actor);

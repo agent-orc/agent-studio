@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -10,50 +8,32 @@ namespace AgentStudio.Tests;
 
 /// <summary>
 /// AGT-2008: the git-pane's rendered md/html preview reads a file's full text
-/// through <see cref="GitService.GetFileContentResult"/>. These tests stand up
-/// a real repo + registered job and assert:
-///  - the working-tree copy is read live (and from the task worktree when one
-///    exists, matching the diff endpoint);
-///  - a specific commit's blob is read via the sha path;
-///  - a NUL-containing blob is reported as binary with no text;
+/// through <see cref="GitService.GetFileContentResult"/>, and the diff of an
+/// untracked file falls back to its body through <see cref="GitService.GetDiffResult"/>.
+/// These tests stand up a real repo + registered job and assert:
+///  - the working-tree copy is read live;
+///  - a NUL-containing file is reported as binary with no text;
 ///  - path traversal and a missing file are refused;
-///  - a `..` segment cannot escape the repo root.
+///  - only a regular file inside the checkout is served: a committed link,
+///    Git metadata and an oversize file are refused by both readers.
 /// </summary>
 public class GitServiceFileContentTests : IDisposable
 {
-    private readonly string _tempDir;
+    private readonly CheckoutFileFixture _checkout = new("git-file-content");
 
-    public GitServiceFileContentTests()
-    {
-        _tempDir = Path.Combine(Path.GetTempPath(), "git-file-content-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempDir);
-    }
-
-    public void Dispose()
-    {
-        try
-        {
-            foreach (var f in Directory.EnumerateFiles(_tempDir, "*", SearchOption.AllDirectories))
-            {
-                try { File.SetAttributes(f, FileAttributes.Normal); } catch { }
-            }
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch { /* best-effort */ }
-    }
+    public void Dispose() => _checkout.Dispose();
 
     [Fact]
     public void WorkingTree_ReadsLiveFileContent()
     {
-        var (repoRoot, jobId, watchPath) = SetupRepoAndJob();
-        WriteFile(repoRoot, "README.md", "# committed\n");
-        RunGit(repoRoot, "add", "-A");
-        RunGit(repoRoot, "commit", "-q", "-m", "seed");
+        var (jobId, watchPath) = SetupJob();
+        _checkout.Write("README.md", "# committed\n");
+        _checkout.Commit();
         // Working tree now diverges from HEAD; the preview must show the live copy.
-        WriteFile(repoRoot, "README.md", "# working tree\n");
+        _checkout.Write("README.md", "# working tree\n");
 
-        var git = BuildGitService(repoRoot, watchPath);
-        var result = git.GetFileContentResult(jobId, watchPath, "README.md", sha: null, preferRunLocation: true);
+        var git = BuildGitService(watchPath);
+        var result = git.GetFileContentResult(jobId, watchPath, "README.md", preferRunLocation: true);
 
         Assert.True(result.Success);
         Assert.False(result.IsBinary);
@@ -61,33 +41,13 @@ public class GitServiceFileContentTests : IDisposable
     }
 
     [Fact]
-    public void Sha_ReadsHistoricalBlob_NotWorkingTree()
-    {
-        var (repoRoot, jobId, watchPath) = SetupRepoAndJob();
-        WriteFile(repoRoot, "README.md", "# committed\n");
-        RunGit(repoRoot, "add", "-A");
-        RunGit(repoRoot, "commit", "-q", "-m", "seed");
-        var sha = RunGitCapture(repoRoot, "rev-parse", "HEAD").Trim();
-        // Change the working tree so we can prove the sha path ignores it.
-        WriteFile(repoRoot, "README.md", "# working tree\n");
-
-        var git = BuildGitService(repoRoot, watchPath);
-        var result = git.GetFileContentResult(jobId, watchPath, "README.md", sha);
-
-        Assert.True(result.Success);
-        Assert.False(result.IsBinary);
-        Assert.Equal("# committed\n", result.Content);
-    }
-
-    [Fact]
     public void BinaryBlob_IsFlagged_WithoutText()
     {
-        var (repoRoot, jobId, watchPath) = SetupRepoAndJob();
-        var full = Path.Combine(repoRoot, "logo.html");
-        File.WriteAllBytes(full, new byte[] { 0x3C, 0x00, 0x68, 0x74, 0x6D, 0x6C });
+        var (jobId, watchPath) = SetupJob();
+        File.WriteAllBytes(_checkout.Full("logo.html"), [0x3C, 0x00, 0x68, 0x74, 0x6D, 0x6C]);
 
-        var git = BuildGitService(repoRoot, watchPath);
-        var result = git.GetFileContentResult(jobId, watchPath, "logo.html", sha: null, preferRunLocation: true);
+        var git = BuildGitService(watchPath);
+        var result = git.GetFileContentResult(jobId, watchPath, "logo.html", preferRunLocation: true);
 
         Assert.True(result.Success);
         Assert.True(result.IsBinary);
@@ -97,13 +57,12 @@ public class GitServiceFileContentTests : IDisposable
     [Fact]
     public void MissingWorkingTreeFile_Fails()
     {
-        var (repoRoot, jobId, watchPath) = SetupRepoAndJob();
-        WriteFile(repoRoot, "README.md", "seed");
-        RunGit(repoRoot, "add", "-A");
-        RunGit(repoRoot, "commit", "-q", "-m", "seed");
+        var (jobId, watchPath) = SetupJob();
+        _checkout.Write("README.md", "seed");
+        _checkout.Commit();
 
-        var git = BuildGitService(repoRoot, watchPath);
-        var result = git.GetFileContentResult(jobId, watchPath, "does/not/exist.md", sha: null, preferRunLocation: true);
+        var git = BuildGitService(watchPath);
+        var result = git.GetFileContentResult(jobId, watchPath, "does/not/exist.md", preferRunLocation: true);
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);
@@ -112,31 +71,107 @@ public class GitServiceFileContentTests : IDisposable
     [Fact]
     public void TraversalPath_IsRejected()
     {
-        var (repoRoot, jobId, watchPath) = SetupRepoAndJob();
+        var (jobId, watchPath) = SetupJob();
         // Plant a secret one level above the repo root.
-        File.WriteAllText(Path.Combine(_tempDir, "secret.md"), "top secret");
+        File.WriteAllText(Path.Combine(_checkout.Parent, "secret.md"), "top secret");
 
-        var git = BuildGitService(repoRoot, watchPath);
-        var result = git.GetFileContentResult(jobId, watchPath, "../secret.md", sha: null, preferRunLocation: true);
+        var git = BuildGitService(watchPath);
+        var result = git.GetFileContentResult(jobId, watchPath, "../secret.md", preferRunLocation: true);
 
         Assert.False(result.Success);
         Assert.DoesNotContain("top secret", result.Content);
     }
 
-    private (string repoRoot, string jobId, string watchPath) SetupRepoAndJob()
+    [Fact]
+    public void CommittedLinkToFileOutsideCheckout_IsRefused()
     {
-        var repoRoot = Path.Combine(_tempDir, "repo");
-        var watchPath = Path.Combine(repoRoot, ".orchestrator", "jobs");
-        Directory.CreateDirectory(watchPath);
+        var (jobId, watchPath) = SetupJob();
+        var outside = _checkout.OutsideFile("secret.md", "outside content");
+        if (!_checkout.TryCommitLink("docs/linked.md", outside)) return;
 
-        RunGit(_tempDir, "init", "-q", "-b", "main", "repo");
-        RunGit(repoRoot, "config", "user.email", "test@example.com");
-        RunGit(repoRoot, "config", "user.name", "test");
-        RunGit(repoRoot, "config", "commit.gpgsign", "false");
+        AssertRefusedByBothReaders(jobId, watchPath, "docs/linked.md", "outside content");
+    }
+
+    [Fact]
+    public void CommittedLinkToProcessEnvironment_IsRefused()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (jobId, watchPath) = SetupJob();
+        Assert.True(_checkout.TryCommitLink("environ.md", "/proc/self/environ"));
+
+        var git = BuildGitService(watchPath);
+        var file = git.GetFileContentResult(jobId, watchPath, "environ.md", preferRunLocation: true);
+        var diff = git.GetDiffResult(jobId, watchPath, "environ.md", preferRunLocation: true);
+
+        Assert.False(file.Success);
+        Assert.Equal("", file.Content);
+        Assert.True(diff.Success);
+        Assert.DoesNotContain("PATH=", diff.Diff, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GitConfig_IsRefused()
+    {
+        var (jobId, watchPath) = SetupJob();
+        _checkout.Write("README.md", "seed");
+        _checkout.Commit();
+
+        AssertRefusedByBothReaders(jobId, watchPath, ".git/config", "[core]");
+        if (_checkout.TryCommitLink("docs/config.md", _checkout.Full(".git/config")))
+            AssertRefusedByBothReaders(jobId, watchPath, "docs/config.md", "[core]");
+    }
+
+    [Fact]
+    public void OversizeFile_IsRefused()
+    {
+        var (jobId, watchPath) = SetupJob();
+        _checkout.Commit();
+        _checkout.WriteOversize("docs/big.md", GitService.MaxWorkingTreeFileReadBytes);
+
+        var git = BuildGitService(watchPath);
+        var result = git.GetFileContentResult(jobId, watchPath, "docs/big.md", preferRunLocation: true);
+
+        Assert.False(result.Success);
+        Assert.Equal("File is too large to preview.", result.Error);
+        var diff = git.GetDiffResult(jobId, watchPath, "docs/big.md", preferRunLocation: true);
+        Assert.True(diff.Success);
+        Assert.Equal("", diff.Diff);
+    }
+
+    [Fact]
+    public void UntrackedRegularFile_DiffStillShowsItsBody()
+    {
+        var (jobId, watchPath) = SetupJob();
+        _checkout.Write("README.md", "seed");
+        _checkout.Commit();
+        _checkout.Write("docs/new.md", "# new page\n");
+
+        var git = BuildGitService(watchPath);
+        var diff = git.GetDiffResult(jobId, watchPath, "docs/new.md", preferRunLocation: true);
+
+        Assert.True(diff.Success);
+        Assert.Equal("# new page\n", diff.Diff);
+    }
+
+    private void AssertRefusedByBothReaders(string jobId, string watchPath, string path, string secret)
+    {
+        var git = BuildGitService(watchPath);
+        var file = git.GetFileContentResult(jobId, watchPath, path, preferRunLocation: true);
+        Assert.False(file.Success);
+        Assert.Equal("Invalid file path.", file.Error);
+        Assert.DoesNotContain(secret, file.Content, StringComparison.Ordinal);
+
+        var diff = git.GetDiffResult(jobId, watchPath, path, preferRunLocation: true);
+        Assert.DoesNotContain(secret, diff.Diff, StringComparison.Ordinal);
+    }
+
+    private (string jobId, string watchPath) SetupJob()
+    {
+        var watchPath = Path.Combine(_checkout.Root, ".orchestrator", "jobs");
+        File.WriteAllText(Path.Combine(_checkout.Root, ".gitignore"), ".orchestrator/\n");
 
         var jobId = "demo-task";
         var jobFolder = Path.Combine(watchPath, "3-progress", jobId);
-        Directory.CreateDirectory(jobFolder);
         Directory.CreateDirectory(Path.Combine(jobFolder, "logs"));
         var jobJson = new
         {
@@ -150,51 +185,21 @@ public class GitServiceFileContentTests : IDisposable
         File.WriteAllText(Path.Combine(jobFolder, "task.json"),
             JsonSerializer.Serialize(jobJson, new JsonSerializerOptions { WriteIndented = true }));
         File.WriteAllText(Path.Combine(jobFolder, "prompt.md"), "Do the thing.");
-        return (repoRoot, jobId, watchPath);
+        return (jobId, watchPath);
     }
 
-    private static GitService BuildGitService(string repoRoot, string watchPath)
+    private GitService BuildGitService(string watchPath)
     {
         var dict = new Dictionary<string, string?>
         {
             ["WatchPaths:0:Name"] = "Demo",
-            ["WatchPaths:0:RootPath"] = repoRoot,
-            ["WatchPaths:0:RepositoryPath"] = repoRoot,
+            ["WatchPaths:0:RootPath"] = _checkout.Root,
+            ["WatchPaths:0:RepositoryPath"] = _checkout.Root,
             ["WatchPaths:0:Path"] = watchPath
         };
         var config = new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         return new GitService(NullLogger<GitService>.Instance, scanner, config);
-    }
-
-    private static void WriteFile(string root, string relativePath, string content)
-    {
-        var full = Path.Combine(root, relativePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        File.WriteAllText(full, content);
-    }
-
-    private static void RunGit(string cwd, params string[] args) => RunGitCapture(cwd, args);
-
-    private static string RunGitCapture(string cwd, params string[] args)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "git",
-            WorkingDirectory = cwd,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        foreach (var a in args) psi.ArgumentList.Add(a);
-        using var p = Process.Start(psi)!;
-        var stdout = p.StandardOutput.ReadToEnd();
-        var stderr = p.StandardError.ReadToEnd();
-        p.WaitForExit(15_000);
-        if (p.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {stderr}");
-        return stdout;
     }
 }

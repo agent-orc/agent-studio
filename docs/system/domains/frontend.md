@@ -560,6 +560,17 @@ occur. It is not a claim about tunnel transfer time.
   `GET .../cycle-time/tasks/{taskKey}`. The stage model, the transition
   taxonomy, and their data sources are documented in
   [concepts/cycle-time-stage-model.md](../../concepts/cycle-time-stage-model.md).
+- `frontend/src/app/features/flow-health/`: the Flow health view of the project
+  Deploy area (tab next to Pipeline, also linked from Pipeline health on Run
+  steps). It joins existing read models only: `GET /api/gate-economics` (7 and
+  30 days, including the all-projects row), `GET .../cycle-time` (7 and 30
+  days), `GET .../pipeline-health`, `GET .../batch-gate/report` and settings,
+  `GET /api/system/execution-infrastructure`, and the host registry signal for
+  review and coding slots. None of these reads starts a Git process; the
+  Git-backed `GET .../batch-gate/state` is deliberately not read. The pure
+  derivation in `state/flow-health.derive.ts` produces the grouping, gate and
+  review figures, the waits per stage, and the main-brake sentence. Every target
+  is named once in `models/flow-health-targets.ts` and printed beside its figure.
 - `frontend/src/app/features/project-detail/`: project shell and project-level
   quality, settings, architecture, runtime, drift, and supervisor panels. The
   left rail (`project-shell`) is a collapsible-segment tree

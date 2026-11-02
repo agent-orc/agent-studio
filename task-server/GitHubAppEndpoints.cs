@@ -35,6 +35,8 @@ public sealed class AttemptRootGitHubAppVault(IAttemptRootSecretStore roots) : I
         => roots.WriteAsync(SecretsName, JsonSerializer.Serialize(secrets, Json), ct);
 
     public Task DeleteSecretsAsync(string actor, CancellationToken ct) => roots.DeleteAsync(SecretsName, ct);
+
+    public Task EnsureWritableAsync(CancellationToken ct) => roots.EnsureWritableAsync(ct);
 }
 
 /// <summary>The repository each project registered with this Task Server.</summary>
@@ -49,6 +51,30 @@ public sealed class TaskServerRepositoryCatalog(TaskServerStore store) : IRegist
             repositories.Add(new RegisteredRepository(project.Name, registration?.RepositoryUrl));
         }
         return repositories;
+    }
+}
+
+/// <summary>
+/// Keeps GitHub's own repository visibility current (AGT-3408), so review
+/// subjects and their retries never treat a repository GitHub reports as
+/// private as public. A failed listing keeps what GitHub reported before.
+/// </summary>
+public sealed class GitHubAppVisibilityRefreshService(
+    GitHubAppBroker broker, ILogger<GitHubAppVisibilityRefreshService> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try { await broker.RefreshRepositoryVisibilityAsync(stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+            catch (Exception exception)
+            {
+                logger.LogWarning("github-app-repository-visibility refresh failed: {Reason}", exception.Message);
+            }
+            try { await Task.Delay(TimeSpan.FromSeconds(GitHubAppBroker.HostRefreshSeconds), stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+        }
     }
 }
 

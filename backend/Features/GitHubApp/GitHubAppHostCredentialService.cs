@@ -117,6 +117,12 @@ public sealed class GitHubAppHostCredentialService : BackgroundService
             _readiness.MarkFailed(reason);
             _logger.LogWarning("github-app-host-credentials incomplete; integration waits and the refresh retries: {Reason}", reason);
         }
+        // Review plans read GitHub's own visibility from here (AGT-3408); a failed listing keeps the last one.
+        try { await _broker.RefreshRepositoryVisibilityAsync(ct); }
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning("github-app-repository-visibility refresh failed: {Reason}", exception.Message);
+        }
     }
 
     /// <summary>When refreshing keeps failing, an expired token must not answer before the host's older credential.</summary>

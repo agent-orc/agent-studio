@@ -4,7 +4,7 @@
       <app-project-deploy-area [projectName]="projectName()" [initialView]="deployView()"
         [releaseTarget]="selectedRelease()"
         [focusStepId]="pipelineStepId()" (openPrompts)="setRail('prompts')" (openTask)="openTask.emit($event)"
-        (viewChange)="onDeployView($event)" />
+        (viewChange)="onDeployView($event)" (openRail)="setRail($event)" />
     }
   </div>
 } @else if (activeRail() === 'operations') {

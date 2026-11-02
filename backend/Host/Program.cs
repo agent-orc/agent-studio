@@ -727,7 +727,6 @@ builder.Services.AddKeyedSingleton<GenericCliExecutionService>(CliTypes.Gemini, 
         sp.GetRequiredService<ILoggerFactory>().CreateLogger("AgentStudio.Cli.AntigravityCliService"),
         sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<ClaudeSessionInspector>();
-builder.Services.AddSingleton<CliWorkingMemoryService>();
 builder.Services.AddSingleton<CliRouter>(sp => new CliRouter(
     sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Claude),
     sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Codex),
@@ -1142,6 +1141,7 @@ builder.Services.AddSingleton<ProjectIntegrationViewService>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchIndexes>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
 builder.Services.AddSingleton<ProjectSettingsService>();
+builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
 builder.Services.AddSingleton<AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService>();

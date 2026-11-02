@@ -525,7 +525,9 @@ public sealed partial class BatchGatePilotService
                             _authority.ListPendingReviewAttempts().Count(review =>
                                 string.Equals(_scanner.FindJob(review.TaskKey)?.ProjectName,
                                     first.Subject.Project, StringComparison.OrdinalIgnoreCase)),
-                            _load?.Current.Throttle == true, gateBacklog);
+                            _load?.Current.Throttle == true, gateBacklog,
+                            _store.ReadBaseVerdict(first.Subject.Project, baseSha,
+                                first.Subject.GateProfileDigest)?.Outcome == "fail");
                     }
                     _store.AppendPlanDecision(first.Subject.Project,
                         new BatchPlanDecision(
@@ -1658,7 +1660,8 @@ public sealed partial class BatchGatePilotService
     private BatchGateRunRecord NewRun(BatchGateManifest manifest, string sha,
         long fence, string repo, BuildProfile? profile)
     {
-        var commands = PlanCandidateCommands(repo, sha, profile)
+        var commands = AtLevel(PlanCandidateCommands(repo, sha, profile),
+                BatchTestLevel(manifest, repo, sha))
             .Select(command => command.Command).ToArray();
         return new BatchGateRunRecord(
             Guid.NewGuid().ToString("N"), manifest.BatchId,
@@ -1692,15 +1695,17 @@ public sealed partial class BatchGatePilotService
         IReadOnlyList<BatchGatePendingRecord>? gated = null)
     {
         var started = _time.GetUtcNow();
+        var manifest = _store.ReadManifest(run.BatchId);
+        var level = BatchTestLevel(manifest, repo, run.CandidateSha);
         foreach (var member in gated ?? [])
-            Lane(member, "gate-requested", level: TestExecutionLevels.Full,
+            Lane(member, "gate-requested", level: level,
                 reuseToken: run.BatchRunId, reason: $"batch:{run.BatchId}");
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var project = _store.ReadManifest(run.BatchId).Scope.Project;
+        var project = manifest.Scope.Project;
         var claimed = ClaimedBatchGateRunner.Enabled(_configuration)
             ? _services?.GetService<ClaimedBatchGateRunner>() : null;
         var gateTask = claimed is not null
-            ? RunClaimedGateAsync(claimed, run, repo, project, gated, linked.Token)
+            ? RunClaimedGateAsync(claimed, run, repo, project, gated, level, linked.Token)
             : _gate.RunAsync(new BuildTestGateRequest(
                 repo, run.CandidateSha, "batch-gate")
             {
@@ -1708,7 +1713,7 @@ public sealed partial class BatchGatePilotService
                 GateId = "batch-gate",
                 SubjectRef = run.CandidateSha,
                 IntegrationRef = run.BaseSha,
-                RequiredTestLevel = TestExecutionLevels.Full,
+                RequiredTestLevel = level,
                 TestExecution = _settings.Get(_store.ReadManifest(run.BatchId).Scope.Project).TestExecution,
                 DisableVerdictCache = true,
                 OnMachineGateSlotWaiting = (busy, total) =>
@@ -1718,7 +1723,7 @@ public sealed partial class BatchGatePilotService
                     var holder = _pipelineHealth?.HoldingProject()
                         ?? _activeBatchGates.Values.FirstOrDefault();
                     foreach (var member in gated ?? [])
-                        Lane(member, "gate-token-waiting", level: TestExecutionLevels.Full,
+                        Lane(member, "gate-token-waiting", level: level,
                             holdingProject: holder);
                 },
                 OnMachineGateAcquired = () =>
@@ -1726,7 +1731,7 @@ public sealed partial class BatchGatePilotService
                     _queueStalls.Left(run.BatchRunId);
                     _activeBatchGates[run.BatchRunId] = project;
                     foreach (var member in gated ?? [])
-                        Lane(member, "gate-token-acquired", level: TestExecutionLevels.Full);
+                        Lane(member, "gate-token-acquired", level: level);
                 },
             }, null, _settings.Get(_store.ReadManifest(run.BatchId).Scope.Project).BuildProfile,
             PostStepMode.Fail,
@@ -1775,7 +1780,7 @@ public sealed partial class BatchGatePilotService
             _time.GetUtcNow(), result.GateQueueWaitMs, overloadMinutes,
             run.EvidencePath, result.DurationMs, gated?.Select(member => member.Subject.TaskKey).ToArray()));
         foreach (var member in gated ?? [])
-            Lane(member, "gate-finished", level: TestExecutionLevels.Full,
+            Lane(member, "gate-finished", level: level,
                 durationMs: result.DurationMs, queueWaitMs: result.GateQueueWaitMs,
                 outcome: result.Verdict.ToString(), reuseToken: run.BatchRunId,
                 reason: $"batch:{run.BatchId}");
@@ -1785,13 +1790,13 @@ public sealed partial class BatchGatePilotService
     /// <summary>The batch suite as a claimed gate attempt on a runner host (D16 A).</summary>
     private async Task<BuildTestGateResult> RunClaimedGateAsync(ClaimedBatchGateRunner claimed,
         BatchGateRunRecord run, string repo, string project,
-        IReadOnlyList<BatchGatePendingRecord>? gated, CancellationToken ct)
+        IReadOnlyList<BatchGatePendingRecord>? gated, string level, CancellationToken ct)
     {
         var settings = _settings.Get(project);
-        var verify = PlanCandidateCommands(repo, run.CandidateSha, settings.BuildProfile);
+        var verify = AtLevel(PlanCandidateCommands(repo, run.CandidateSha, settings.BuildProfile), level);
         _activeBatchGates[run.BatchRunId] = project;
         foreach (var member in gated ?? [])
-            Lane(member, "gate-token-acquired", level: TestExecutionLevels.Full);
+            Lane(member, "gate-token-acquired", level: level);
         return await claimed.RunAsync(_store.ReadManifest(run.BatchId), run, repo, verify,
             TimeSpan.FromMinutes(settings.BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
     }
@@ -2098,7 +2103,13 @@ public sealed partial class BatchGatePilotService
                 new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
                     FallbackGateActive: true, FallbackGateStarts: starts + 1));
             var started = _time.GetUtcNow();
-            Lane(pending, "gate-requested", level: TestExecutionLevels.Full,
+            // AGT-3414: the per-task gate runs what a batch of the same
+            // subject runs, classified on the exact SHA it gates.
+            var level = BatchGatePolicy.GateTestLevel([pending.Subject],
+                DeliveryPaths(pending.RepositoryPath, pending.Subject.IntegrationBranch,
+                    pending.Subject.ResultSha),
+                BuildStepPlanned(pending.RepositoryPath, pending.Subject.Project));
+            Lane(pending, "gate-requested", level: level,
                 reason: "per-task-fallback");
             BuildTestGateResult gate;
             try
@@ -2108,7 +2119,7 @@ public sealed partial class BatchGatePilotService
                     {
                         Project = pending.Subject.Project,
                         SubjectRef = pending.Subject.ResultRef,
-                        RequiredTestLevel = TestExecutionLevels.Full,
+                        RequiredTestLevel = level,
                         TestExecution = _settings.Get(pending.Subject.Project).TestExecution,
                         OnMachineGateSlotWaiting = (busy, total) => _queueStalls.Waiting(
                             pending.Subject.Project, pending.ReviewAttemptId, busy, total),
@@ -2150,7 +2161,8 @@ public sealed partial class BatchGatePilotService
             // A stale result resolves as superseded; a queue overrun returns
             // to the queue. Neither reaches the settlement. A cancellation
             // keeps its own classification below, which supersedes a stale one.
-            if (await ResolveBeforeSettlementAsync(task, pending, gate, evidence, started, recordInStore, ct)
+            if (await ResolveBeforeSettlementAsync(task, pending, gate, evidence, started, level,
+                    recordInStore, ct)
                     .ConfigureAwait(false))
                 return FallbackSettled(pending);
             if (!recordInStore && !ct.IsCancellationRequested
@@ -2190,7 +2202,7 @@ public sealed partial class BatchGatePilotService
                     Details = new Dictionary<string, string> { ["reason"] = reason },
                 });
             }
-            RecordFallbackExecution(pending, gate, evidence, started);
+            RecordFallbackExecution(pending, gate, evidence, started, level);
             if (gate.CancellationReason == GateCancellationReasons.Superseded)
             {
                 SupersedeFallbackResult(task, pending, recordInStore);
@@ -2288,7 +2300,7 @@ public sealed partial class BatchGatePilotService
         => _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath) is { State: not TaskStates.AutoReview };
 
     private void RecordFallbackExecution(BatchGatePendingRecord pending, BuildTestGateResult gate,
-        string evidence, DateTimeOffset started)
+        string evidence, DateTimeOffset started, string level)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(evidence)!);
         using (var stream = new FileStream(evidence, FileMode.Create, FileAccess.Write, FileShare.None))
@@ -2303,10 +2315,59 @@ public sealed partial class BatchGatePilotService
             gate.TestedSha ?? pending.Subject.ResultSha,
             gate.CancellationReason ?? gate.Verdict.ToString(), Environment.MachineName,
             started, _time.GetUtcNow(), gate.GateQueueWaitMs, 0, evidence));
-        Lane(pending, "gate-finished", level: TestExecutionLevels.Full,
+        Lane(pending, "gate-finished", level: level,
             durationMs: gate.DurationMs, queueWaitMs: gate.GateQueueWaitMs,
             outcome: gate.Verdict.ToString(), reason: "per-task-fallback");
     }
+
+    /// <summary>A delivery's own changed paths, or null when Git cannot tell.</summary>
+    private IReadOnlyList<string>? DeliveryPaths(string repo, string branch, string resultSha)
+    {
+        try { return BatchGateDeliveryDiff.ChangedPaths(_git, repo, branch, resultSha); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "batch-gate-delivery-diff-unavailable sha={Sha}", resultSha);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The test level of a batch candidate: its members' flags and the
+    /// candidate's own diff against the manifest base (AGT-3414).
+    /// </summary>
+    private string BatchTestLevel(BatchGateManifest manifest, string repo, string candidateSha)
+    {
+        IReadOnlyList<string>? paths;
+        try { paths = _git.ChangedPathsAgainstMergeBase(repo, manifest.BaseSha, candidateSha); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "batch-gate-candidate-diff-unavailable batch={BatchId}", manifest.BatchId);
+            paths = null;
+        }
+        return BatchGatePolicy.GateTestLevel(manifest.Members, paths,
+            BuildStepPlanned(repo, manifest.Scope.Project));
+    }
+
+    // A documentation-only delivery cannot change the command inventory: its
+    // project files are not documentation. The checkout's plan stands for it.
+    private bool BuildStepPlanned(string repo, string project)
+    {
+        try
+        {
+            return VerifyCommandPlanner.Plan(repo, _settings.Get(project).BuildProfile).Commands
+                .Any(command => command.Kind != VerifyCommandKind.Test);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "batch-gate-command-plan-unavailable project={Project}", project);
+            return false;
+        }
+    }
+
+    private static IReadOnlyList<VerifyCommand> AtLevel(IReadOnlyList<VerifyCommand> commands, string level)
+        => level == TestExecutionLevels.BuildOnly
+            ? commands.Where(command => command.Kind != VerifyCommandKind.Test).ToArray()
+            : commands;
 
     private static string FallbackReleaseKey(BatchGatePendingRecord pending, string? containedInSha)
         => $"batch-fallback:{pending.ReviewAttemptId}:{containedInSha ?? pending.Subject.ResultSha}";
