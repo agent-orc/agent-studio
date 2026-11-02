@@ -649,6 +649,100 @@ public sealed class GitHubAppBrokerTests
         _github.Paths.Clear();
     }
 
+    [Fact]
+    public async Task GitHub_reports_the_visibility_of_every_repository_an_adopted_installation_lists()
+    {
+        await ConnectAsync();
+        _clock.Advance(TimeSpan.FromMinutes(11));
+        _github.ListingTokenRequests.Clear();
+
+        await _broker.RefreshRepositoryVisibilityAsync(default);
+
+        Assert.True(_broker.ReportedPrivate("https://github.com/Owner/Site.git"));
+        Assert.True(_broker.ReportedPrivate("git@github.com:owner/site.git"));
+        Assert.False(_broker.ReportedPrivate("https://github.com/owner/core"));
+        Assert.Null(_broker.ReportedPrivate("https://github.com/owner/unlisted"));
+        Assert.Null(_broker.ReportedPrivate("https://gitlab.com/owner/elsewhere.git"));
+        // The listing token reads metadata only, covers the installation, and is revoked at once.
+        var listing = Assert.Single(_github.ListingTokenRequests);
+        Assert.Equal(FakeGitHub.InstallationId, listing.InstallationId);
+        Assert.Equal(["metadata=read"], listing.Permissions);
+        Assert.NotEmpty(_github.RevokedListingTokens);
+        Assert.Empty(_github.RevokedTokens);
+    }
+
+    [Fact]
+    public async Task The_repository_list_shows_the_visibility_GitHub_reports()
+    {
+        await ConnectAsync();
+
+        var status = await _broker.StatusAsync(false, default);
+
+        Assert.Equal("private", status.Repositories.Single(item => item.Project == "Site").Visibility);
+        Assert.Equal("public", status.Repositories.Single(item => item.Project == "Core").Visibility);
+        Assert.Null(status.Repositories.Single(item => item.Project == "Elsewhere").Visibility);
+        Assert.NotEmpty(_github.ListingTokenRequests);
+        Assert.DoesNotContain("listing-", JsonSerializer.Serialize(status), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_outage_never_turns_a_private_repository_public()
+    {
+        await ConnectAsync();
+        _clock.Advance(TimeSpan.FromMinutes(11));
+        await _broker.RefreshRepositoryVisibilityAsync(default);
+        Assert.True(_broker.ReportedPrivate("https://github.com/owner/site"));
+
+        _github.FailListing = true;
+        _clock.Advance(TimeSpan.FromMinutes(11));
+        await _broker.RefreshRepositoryVisibilityAsync(default);
+
+        Assert.True(_broker.ReportedPrivate("https://github.com/owner/site"));
+        Assert.False(_broker.ReportedPrivate("https://github.com/owner/core"));
+    }
+
+    [Fact]
+    public async Task A_repository_taken_out_of_the_selection_falls_back_to_its_setting()
+    {
+        await ConnectAsync();
+        _clock.Advance(TimeSpan.FromMinutes(11));
+        await _broker.RefreshRepositoryVisibilityAsync(default);
+        lock (_github.InstallationRepositories) _github.InstallationRepositories.RemoveAll(item => item.Name == "site");
+
+        // Within the lifetime nothing is asked again; a forced refresh reads the new selection.
+        await _broker.RefreshRepositoryVisibilityAsync(default);
+        Assert.True(_broker.ReportedPrivate("https://github.com/owner/site"));
+        await _broker.RefreshRepositoryVisibilityAsync(default, force: true);
+
+        Assert.Null(_broker.ReportedPrivate("https://github.com/owner/site"));
+        Assert.False(_broker.ReportedPrivate("https://github.com/owner/core"));
+    }
+
+    [Fact]
+    public async Task A_listing_token_with_more_rights_is_revoked_and_reports_nothing()
+    {
+        _github.GrantExtraListingPermission = true;
+        await ConnectAsync();
+
+        await _broker.RefreshRepositoryVisibilityAsync(default, force: true);
+
+        Assert.Null(_broker.ReportedPrivate("https://github.com/owner/site"));
+        Assert.NotEmpty(_github.ListingTokenRequests);
+        Assert.Equal(_github.ListingTokenRequests.Count, _github.RevokedListingTokens.Count);
+    }
+
+    [Fact]
+    public async Task Disconnecting_forgets_what_GitHub_reported()
+    {
+        await ConnectAsync();
+        await _broker.RefreshRepositoryVisibilityAsync(default, force: true);
+        Assert.True(_broker.ReportedPrivate("https://github.com/owner/site"));
+
+        await _broker.DisconnectAsync("owner", default);
+
+        Assert.Null(_broker.ReportedPrivate("https://github.com/owner/site"));
+    }
+
     private async Task ConnectAsync()
     {
         await RegisterAsync();
@@ -723,6 +817,13 @@ public sealed class GitHubAppBrokerTests
             ["owner/core"] = InstallationId,
         };
         public List<(long InstallationId, string[] Repositories, string[] Permissions)> TokenRequests { get; } = [];
+        /// <summary>Installation-wide tokens minted only to list repositories (AGT-3408).</summary>
+        public List<(long InstallationId, string[] Permissions)> ListingTokenRequests { get; } = [];
+        public List<string> RevokedListingTokens { get; } = [];
+        public List<(string Owner, string Name, bool Private)> InstallationRepositories { get; } =
+            [("owner", "site", true), ("owner", "core", false)];
+        public bool FailListing { get; set; }
+        public bool GrantExtraListingPermission { get; set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -756,8 +857,29 @@ public sealed class GitHubAppBrokerTests
             if (path == $"/applications/{ClientId}/token") { UserTokenRevoked = true; return new HttpResponseMessage(HttpStatusCode.NoContent); }
             if (path == "/installation/token")
             {
-                lock (RevokedTokens) RevokedTokens.Add(request.Headers.Authorization!.Parameter!);
+                var revoked = request.Headers.Authorization!.Parameter!;
+                if (revoked.StartsWith("listing-", StringComparison.Ordinal))
+                    lock (RevokedListingTokens) RevokedListingTokens.Add(revoked);
+                else
+                    lock (RevokedTokens) RevokedTokens.Add(revoked);
                 return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
+            if (path == "/installation/repositories")
+            {
+                Assert.StartsWith("listing-", request.Headers.Authorization!.Parameter!, StringComparison.Ordinal);
+                if (FailListing)
+                    return new HttpResponseMessage(HttpStatusCode.BadGateway) { Content = new StringContent("{\"message\":\"Server Error\"}") };
+                List<(string Owner, string Name, bool Private)> listed;
+                lock (InstallationRepositories) listed = [.. InstallationRepositories];
+                return Json(new
+                {
+                    total_count = listed.Count,
+                    repositories = listed.Select(item => new
+                    {
+                        name = item.Name, full_name = item.Owner + "/" + item.Name, @private = item.Private,
+                        owner = new { login = item.Owner },
+                    }),
+                });
             }
             if (path.StartsWith("/repos/", StringComparison.Ordinal) && path.EndsWith("/installation", StringComparison.Ordinal))
             {
@@ -770,6 +892,20 @@ public sealed class GitHubAppBrokerTests
             if (path.EndsWith("/access_tokens", StringComparison.Ordinal))
             {
                 using var parsed = JsonDocument.Parse(body);
+                if (!parsed.RootElement.TryGetProperty("repositories", out _))
+                {
+                    var asked = parsed.RootElement.GetProperty("permissions").EnumerateObject()
+                        .Select(item => item.Name + "=" + item.Value.GetString()).Order(StringComparer.Ordinal).ToArray();
+                    lock (ListingTokenRequests) ListingTokenRequests.Add((long.Parse(path.Split('/')[3]), asked));
+                    return Json(new
+                    {
+                        token = "listing-" + Guid.NewGuid().ToString("N"),
+                        expires_at = _clock.GetUtcNow().UtcDateTime.AddHours(1).ToString("O"),
+                        permissions = GrantExtraListingPermission
+                            ? new Dictionary<string, string> { ["metadata"] = "read", ["contents"] = "read" }
+                            : new Dictionary<string, string> { ["metadata"] = "read" },
+                    }, HttpStatusCode.Created);
+                }
                 var repositories = parsed.RootElement.GetProperty("repositories").EnumerateArray().Select(item => item.GetString()!).ToArray();
                 var permissions = parsed.RootElement.GetProperty("permissions").EnumerateObject()
                     .Select(item => item.Name + "=" + item.Value.GetString()).Order(StringComparer.Ordinal).ToArray();
