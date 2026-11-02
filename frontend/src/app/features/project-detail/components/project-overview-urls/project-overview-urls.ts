@@ -10,7 +10,7 @@ import {
 } from '@angular/core';
 import type { RegistryProjectUrl } from '../../../../models/task.model';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
-import { ProjectUrlProbeService, type ProjectUrlStatus } from '../../../../services/project-url-probe.service';
+import { ProjectUrlProbeService, ProjectUrlStatusLabelPipe, type ProjectUrlStatus } from '../../../../services/project-url-probe.service';
 import { TaskService } from '../../../../services/task.service';
 
 type OverviewUrlStatus = ProjectUrlStatus | 'building';
@@ -20,6 +20,7 @@ type OverviewUrlStatus = ProjectUrlStatus | 'building';
 @Component({
   selector: 'app-project-overview-urls',
   standalone: true,
+  imports: [ProjectUrlStatusLabelPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-overview-urls.html',
   styleUrl: './project-overview-urls.scss',

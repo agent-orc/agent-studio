@@ -320,6 +320,8 @@ public sealed class AccessSecurityTests : IDisposable
             ("GET", $"/api/v1/runners/{id}/cli-update", RunnerScopes.Claim),
             ("POST", $"/api/v1/runners/{id}/cli-update/result", RunnerScopes.Events),
             ("POST", $"/api/v1/runners/{id}/provider-canary/codex", RunnerScopes.Claim),
+            ("POST", $"/api/v1/runners/{id}/quota/claim", RunnerScopes.Claim),
+            ("PUT", $"/api/v1/runners/{id}/quota/report", RunnerScopes.Events),
             ("GET", $"/api/v1/runners/{id}/provider-comparison", RunnerScopes.Claim),
             ("POST", "/api/v1/work-permits/permit/accept", RunnerScopes.Claim),
             ("POST", "/api/v1/runs/run/reconcile", RunnerScopes.Claim),
