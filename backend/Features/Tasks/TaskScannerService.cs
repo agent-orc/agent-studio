@@ -724,6 +724,10 @@ public class TaskScannerService : ITaskScanner
 
     public TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
         bool bypassMemo = false)
+        => ScanJobFolder(jobDir, entry, state, bypassMemo, rereadIfMoved: true);
+
+    private TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
+        bool bypassMemo, bool rereadIfMoved)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         // One stat for existence + length + mtime. FileInfo caches the probe, so
@@ -748,8 +752,9 @@ public class TaskScannerService : ITaskScanner
             // parsed TaskInfo is reusable. Only the un-fingerprinted marker files
             // (see ApplyVolatileMarkers) are re-read, keeping quota-wait / park /
             // steer / lifecycle / intent chips live even on a hit.
+            var fingerprint = ComputeLiveFingerprint(jobDir, taskJsonInfo);
             if (!bypassMemo && _liveFolders.TryGetValue(jobDir, out var live)
-                && live.Fingerprint == ComputeLiveFingerprint(jobDir, taskJsonInfo))
+                && live.Fingerprint == fingerprint)
             {
                 return ApplyVolatileMarkers(live.Task, jobDir);
             }
@@ -931,13 +936,23 @@ public class TaskScannerService : ITaskScanner
                 Decision = ReadDecision(raw),
                 Preview = AgentStudio.Deploy.CardPreviewStore.Read(jobDir)?.Preview
             };
-            // Re-stat first so a self-heal this scan performed itself (the
-            // divergent-id repair above, the ownerClientId migration below) is
-            // captured in the fingerprint; otherwise the next scan sees a fresh
-            // mtime and needlessly misses. A write that recent is also the one
-            // case the fingerprint cannot represent, so it is memoized only once
-            // it has aged past the TaskFolderMemoPolicy granule.
+            // Re-stat: a self-heal this scan performed itself (the divergent-id
+            // repair, the ownerClientId migration) or a writer racing it moved
+            // the folder after the facts above were read, last activity among
+            // them. Memoized under the new fingerprint, those facts would be
+            // served as current until the folder moved again; read it once more.
             taskJsonInfo.Refresh();
+            if (ComputeLiveFingerprint(jobDir, taskJsonInfo) != fingerprint)
+            {
+                _liveFolders.TryRemove(jobDir, out _);
+                _archivedFolders.TryRemove(jobDir, out _);
+                return rereadIfMoved
+                    ? ScanJobFolder(jobDir, entry, state, bypassMemo: true, rereadIfMoved: false)
+                    : info;
+            }
+            // A write that recent is the one case the fingerprint cannot
+            // represent, so it is memoized only once it has aged past the
+            // TaskFolderMemoPolicy granule.
             var memoizable = TaskFolderMemoPolicy.IsMemoizable(
                 taskJsonInfo.LastWriteTimeUtc, DateTime.UtcNow, _folderMemoTimestampGranularity);
             if (isArchive)
@@ -963,8 +978,7 @@ public class TaskScannerService : ITaskScanner
                 _archivedFolders.TryRemove(jobDir, out _);
                 if (memoizable)
                 {
-                    _liveFolders[jobDir] = new LiveFolderSnapshot(
-                        ComputeLiveFingerprint(jobDir, taskJsonInfo), info);
+                    _liveFolders[jobDir] = new LiveFolderSnapshot(fingerprint, info);
                 }
                 else
                 {
