@@ -2216,6 +2216,7 @@ public sealed partial class MergeIntoDevelopRunner
                     + $"POST /api/projects/{project}/checkout/sync after resolving its obstacles.";
                 _logger.LogInformation("merge-into-develop push: {ReleaseWarning}", releaseWarning);
             }
+            RecordPublishedGate(project, jobId, jobFolderPath, watchPath, releaseRoot, integrationBranch, result.Sha);
         }
         try
         {

@@ -62,6 +62,12 @@ public static class IntegrationVerificationEvidence
     /// </summary>
     public const string CarriedTree = "carried-tree";
 
+    /// <summary>
+    /// AGT-3436: another card's gate passed on a published tree that the
+    /// branch still carries and that contains the delivery.
+    /// </summary>
+    public const string PublishedGate = "published-gate";
+
     /// <summary>Nothing proves the tree.</summary>
     public const string None = "none";
 }
