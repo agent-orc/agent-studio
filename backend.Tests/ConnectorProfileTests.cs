@@ -17,14 +17,14 @@ namespace AgentStudio.Tests;
 public sealed class ConnectorProfileTests(ConnectorProfileFixture shared) : IClassFixture<ConnectorProfileFixture>
 {
     [Fact]
-    public void Inventory_is_the_approved_110_local_and_358_proxy_surface()
+    public void Inventory_is_the_approved_107_local_and_400_proxy_surface()
     {
         var inventory = ConnectorRouteInventory.Load();
 
         Assert.Equal(ConnectorRouteInventory.ExpectedInventorySha256, inventory.SourceChecksum);
-        Assert.Equal(468, inventory.Operations.Count);
-        Assert.Equal(110, inventory.DevSeatOperations.Count);
-        Assert.Equal(358, inventory.TaskServerOperations.Count);
+        Assert.Equal(507, inventory.Operations.Count);
+        Assert.Equal(107, inventory.DevSeatOperations.Count);
+        Assert.Equal(400, inventory.TaskServerOperations.Count);
         var hub = Assert.Single(inventory.TaskServerOperations, operation => operation.Method == "WS");
         Assert.Equal("/hubs/v1/studio", hub.Path);
     }
@@ -81,8 +81,8 @@ public sealed class ConnectorProfileTests(ConnectorProfileFixture shared) : ICla
 
         Assert.All(endpoints, endpoint => Assert.NotEmpty(
             endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>()));
-        Assert.Equal(468, metadata.Length);
-        Assert.Equal(110, endpoints
+        Assert.Equal(507, metadata.Length);
+        Assert.Equal(107, endpoints
             .SelectMany(endpoint => endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>())
             .Where(item => item.Classification == ConnectorRouteInventory.DevSeatClassification)
             .Select(item => new ConnectorRouteKey(item.Method, ConnectorRouteKey.NormalizePath(item.Path)))
@@ -145,7 +145,7 @@ public sealed class ConnectorProfileTests(ConnectorProfileFixture shared) : ICla
         }
 
         Assert.True(failures.Count == 0, "Task Server routes not forwarded:\n" + string.Join('\n', failures));
-        Assert.Equal(358, forwarded);
+        Assert.Equal(400, forwarded);
     }
 
     [Fact]
