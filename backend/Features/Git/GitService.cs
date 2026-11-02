@@ -8276,6 +8276,22 @@ public partial class GitService
     }
 
     /// <summary>
+    /// True when <paramref name="repoRelPath"/> names a tracked file at
+    /// <paramref name="sha"/>; false when it does not or cannot be read. Uses
+    /// <c>git cat-file -e</c>, so a large file is never loaded.
+    /// </summary>
+    public bool FileExistsAtCommit(string repoRoot, string sha, string repoRelPath)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(repoRelPath)) return false;
+        if (string.IsNullOrWhiteSpace(sha) || !IsLikelyShaOrRef(sha) || sha.StartsWith('-')) return false;
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return false;
+
+        var (_, _, code) = RunGitArgs(root, "cat-file", "-e", $"{sha}:{repoRelPath.Replace('\\', '/')}");
+        return code == 0;
+    }
+
+    /// <summary>
     /// BD-1: the commits reachable from <paramref name="tip"/> but not from
     /// <paramref name="exclusiveBase"/>, newest first and at most
     /// <paramref name="maxCount"/>. A release uses them to find the cards it
