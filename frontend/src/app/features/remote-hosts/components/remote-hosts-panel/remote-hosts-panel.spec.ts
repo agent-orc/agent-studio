@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
@@ -29,6 +29,7 @@ function reviewSnapshot(overrides: Partial<ReviewQueueSnapshot> = {}): ReviewQue
  * (R3 sum invariant).
  */
 describe('RemoteHostsPanelComponent', () => {
+  beforeEach(() => localStorage.clear());
   it('shows provider request refusals by model and day', async () => {
     await TestBed.configureTestingModule({
       imports: [RemoteHostsPanelComponent],

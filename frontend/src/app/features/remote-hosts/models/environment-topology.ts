@@ -60,7 +60,9 @@ export function buildEnvironmentTopology(map: EnvironmentMap): EnvironmentTopolo
 }
 
 function machineCapacity(nodes: readonly EnvironmentNode[]): string {
-  const slots = nodes.map(node => node.capacity.match(/^(\d+)\/(\d+) slots$/));
-  if (!slots.length || slots.some(slot => !slot)) return 'Unknown';
-  return `${slots.reduce((sum, slot) => sum + Number(slot![1]), 0)}/${slots.reduce((sum, slot) => sum + Number(slot![2]), 0)} slots`;
+  const slots = nodes.map(node => node.capacity.match(/^(\d+)\/(\d+) slots$/))
+    .filter((value): value is RegExpMatchArray => value !== null);
+  if (!slots.length) return 'Unknown';
+  const reported = `${slots.reduce((sum, slot) => sum + Number(slot[1]), 0)}/${slots.reduce((sum, slot) => sum + Number(slot[2]), 0)} slots`;
+  return slots.length === nodes.length ? reported : `${reported} reported`;
 }

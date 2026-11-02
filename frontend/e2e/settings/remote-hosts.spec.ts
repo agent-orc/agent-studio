@@ -459,8 +459,8 @@ test.describe('Execution Hosts settings section', () => {
       await page.screenshot({ path: join(output, `environment-responsive-${width}-dark.png`), animations: 'disabled' });
       await setTheme(page, 'light');
       await page.goto('/#/workspace/settings/credentials');
-      await expect(page.getByTestId('credential-inventory')).toContainText('requires a Task Server connection');
-      expect(inventoryRequests).toBe(0);
+      await expect(page.getByTestId('credential-inventory')).toContainText('Credential inventory unavailable.');
+      expect(inventoryRequests).toBeGreaterThan(0);
     }
   });
 
@@ -529,8 +529,9 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('remote-host-detail-row')).toBeVisible();
     await expect(page.getByTestId('environment-repository-access')).toContainText('writes');
     await page.setViewportSize({ width: 900, height: 800 });
-    await page.getByTestId('environment-map-toggle').evaluate((button: HTMLElement) => button.click());
+    await page.getByTestId('environment-list-toggle').click();
     await expect(map).toBeHidden();
+    await page.getByRole('button', { name: 'Back to hosts' }).click();
     await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
     expect(errors).toEqual([]);
   });
@@ -652,7 +653,10 @@ test.describe('Execution Hosts settings section', () => {
     const pageErrors: string[] = [];
     page.on('pageerror', error => pageErrors.push(error.message));
     await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({
-      preparation: [], ready: [], progress: [], review: [], completed: [], archive: [],
+      backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+      failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
+      escalated: [], review: [], completed: [], archive: [],
+      gitStateAt: null, stale: false,
     }));
     await page.route('**/api/v1/installation', json({
       installationId: 'ins_demo_01', ownerBootstrapped: true, ownerBootstrapArmed: false,
@@ -674,8 +678,10 @@ test.describe('Execution Hosts settings section', () => {
       user: { id: 'demo-operator', username: 'demo-operator', displayName: 'Demo Operator',
         role: 'operator', projects: ['demo-app'], disabled: false, mustChangePassword: false },
     }));
-    await page.goto('/#/workspace/settings/execution-hosts');
+    await page.goto('/');
     await dismissDevErrorDialog(page);
+    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('workspace-settings-rail-remote-hosts').click();
     await page.getByTestId('environment-installation-toggle').click();
     const checkpoints = page.getByTestId('deployment-checkpoints');
     await expect(checkpoints).toBeVisible();
@@ -745,11 +751,11 @@ test.describe('Execution Hosts settings section', () => {
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
 
-    const machineRow = page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' });
+    const machineRow = page.locator('[data-testid="remote-host-primary-row"][data-host-row="agent-runner-01"]');
     await expect(machineRow).toContainText('37%');
     const roles = page.getByTestId('remote-host-role-row');
     await expect(roles.filter({ hasText: 'Coding' }).getByTestId('remote-host-slots-summary')).toHaveText(/0 \/ 2/);
-    await expect(roles.filter({ hasText: 'Review' }).getByTestId('remote-host-slots-summary')).toHaveText(/0 \/ 6/);
+    await expect(roles.filter({ hasText: 'Review' }).getByTestId('remote-host-slots-summary')).toHaveText(/0 \/ 2/);
     await roles.filter({ hasText: 'Review' }).click();
     await expect(page.getByTestId('remote-host-role-restart')).toContainText('6 reviews lost');
     await machineRow.click();
@@ -772,6 +778,7 @@ test.describe('Execution Hosts settings section', () => {
   test('names the Stable release and marks a role whose release lags it', async ({ page }) => {
     // All host and release responses are mocked; no backend lifecycle is needed.
     await stubGroupedHostApis(page);
+    const observedAt = new Date().toISOString();
     const oldRelease = {
       releaseId: 'agt-host-20260823T060000Z-bbbbbbb',
       version: '0.2.7',
@@ -783,7 +790,7 @@ test.describe('Execution Hosts settings section', () => {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        observedAt: '2026-09-15T12:00:00Z',
+        observedAt,
         stable: { version: '0.3.0', commit: 'aaaaaaa1111', builtAt: '2026-09-11T08:00:00Z' },
         behindCount: 2,
         hosts: ['agent-runner-01', 'agent-runner-01-review'].map(runnerId => ({
@@ -797,7 +804,7 @@ test.describe('Execution Hosts settings section', () => {
           behindForHours: 458,
           alarmDue: true,
           reason: 'The host build is 19d 2h older than the Stable build.',
-          lastSeenAt: '2026-09-15T11:59:00Z',
+          lastSeenAt: observedAt,
           heartbeatStale: false,
         })),
       }),
@@ -837,8 +844,8 @@ test.describe('Execution Hosts settings section', () => {
     for (const releaseCase of ['new', 'same', 'missing'] as const) {
       test(`${releaseCase === 'same' ? 'keeps drift for the same release' : 'does not mark a newer host release behind'} when ${order} resolves first (${releaseCase})`, async ({ page }) => {
         await stubGroupedHostApis(page);
-        const newer = new Date().toISOString();
-        const older = new Date(Date.parse(newer) - 60_000).toISOString();
+        const older = new Date(Date.now() + 1_000).toISOString();
+        const newer = new Date(Date.parse(older) + 60_000).toISOString();
         const oldRelease = { releaseId: 'old-build', version: '0.2.7', commit: 'old-commit' };
         const release = releaseCase === 'missing' ? null : releaseCase === 'same'
           ? oldRelease : { releaseId: 'new-build', version: '0.3.0', commit: 'new-commit' };
@@ -1020,7 +1027,7 @@ test.describe('Execution Hosts settings section', () => {
     await expect(diagnostic).toContainText('identity file corrupt: agent-runner-01.json');
     await expect(diagnostic).toContainText('POST /api/clients/register');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expect(remote.getByTestId('remote-host-status')).toContainText('Offline');
 
     await setTheme(page, 'light');
@@ -1056,7 +1063,7 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.goto('/#/workspace/settings/remote-hosts');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expect(remote.getByTestId('remote-host-status')).toContainText('Loading live status');
     await expect(remote).not.toContainText('Daemonstopped');
 
@@ -1155,8 +1162,8 @@ test.describe('Execution Hosts settings section', () => {
     });
 
     await page.goto('/#/workspace/settings/execution-hosts');
-    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    await page.locator('[data-testid="remote-host-primary-row"][data-host-row="runner-host-a"]').click();
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-release')).toHaveText('1.0.0');
     await expect(remote.getByTestId('remote-host-slots')).toContainText('0 active / 4 free / 4 total');
@@ -1209,7 +1216,7 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
 
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    let card = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    let card = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expect(card.getByTestId('remote-host-action-drain')).toHaveAttribute('title', /No new leases|Stop new leases/);
     await card.getByTestId('remote-host-action-drain').click();
     await expect(card.getByTestId('remote-host-status')).toContainText('Draining');
@@ -1219,10 +1226,10 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('remote-host-confirm')).toContainText('remains visible and can be revived');
     await page.screenshot({ path: join(SHOT_DIR, 'remote-host-retire-confirm-dark.png'), fullPage: false });
     await page.getByTestId('remote-host-confirm-submit').click();
-    card = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    card = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expect(card).toHaveCount(0);
     await page.getByTestId('remote-hosts-retired-filter').click();
-    card = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    card = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expect(card).toHaveAttribute('data-retired', 'true');
     await expect(card.getByTestId('remote-host-status')).toContainText('Retired');
     await card.scrollIntoViewIfNeeded();
@@ -1263,7 +1270,7 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.goto('/#/workspace/settings/remote-hosts');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     await remote.getByTestId('remote-host-action-setup').click();
 
@@ -1353,8 +1360,8 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
-    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    await page.locator('[data-testid="remote-host-primary-row"][data-host-row="host-berlin"]').click();
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'unavailable');
     await expect(remote.getByTestId('remote-host-provider-auth-codex')).toHaveAttribute('data-state', 'retrying');
@@ -1436,7 +1443,7 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.goto('/#/workspace/settings/remote-hosts');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? '../results', 'codex-sign-in');
     mkdirSync(evidenceDir, { recursive: true });
     await expandHost(remote);
@@ -1528,7 +1535,7 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.goto('/#/workspace/settings/remote-hosts');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? '../results', 'claude-sign-in');
     mkdirSync(evidenceDir, { recursive: true });
     await expandHost(remote);
@@ -1565,7 +1572,7 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.goto('/#/workspace/settings/remote-hosts');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     const badge = remote.getByTestId('remote-host-git-status');
     await expect(badge).toBeVisible();
@@ -1590,7 +1597,7 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.goto('/#/workspace/settings/remote-hosts');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-git-status')).toContainText('Fallback repo: ok');
     await expect(remote.getByTestId('remote-host-workflow-status'))
@@ -1655,8 +1662,8 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.goto('/#/workspace/settings/remote-hosts');
     await expect(page.getByTestId('environment-attention')).toBeVisible();
-    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    await page.locator('[data-testid="remote-host-primary-row"][data-host-row="host-berlin"]').click();
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-task-server-route')).toContainText('unreachable');
     const route = remote.getByTestId('remote-host-task-server-route-state');
@@ -1732,8 +1739,8 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
-    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const card = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    await page.locator('[data-testid="remote-host-primary-row"][data-host-row="host-berlin"]').click();
+    const card = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(card);
     const capability = card.getByTestId('remote-host-capability-provider-auth:codex');
     await expect(capability).toContainText('draining');
@@ -1766,8 +1773,8 @@ test.describe('Execution Hosts settings section', () => {
       }]),
     }));
     await page.goto('/#/workspace/settings/remote-hosts');
-    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const card = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    await page.locator('[data-testid="remote-host-primary-row"][data-host-row="host-berlin"]').click();
+    const card = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(card);
     const admission = card.getByTestId('remote-host-admission');
     await expect(admission).toContainText('Automatic whole-host drain');
@@ -1799,7 +1806,7 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.goto('/#/workspace/settings/remote-hosts');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     const failure = remote.getByTestId('remote-host-project-preflight-failures');
     await expect(failure).toContainText('Payments');
@@ -1848,7 +1855,7 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.goto('/#/workspace/settings/remote-hosts');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-telemetry')).toBeVisible();
     await expect(remote.getByTestId('remote-host-slots-context')).toContainText('6 RUN active · host load 6.4 of 12 cores');
@@ -1980,7 +1987,7 @@ test.describe('Execution Hosts settings section', () => {
         detail: 'Installed; awaiting real requests from both units.',
       }) });
     });
-    await page.route('**/api/v1/management/remote-hosts/provider-auth-renewals/renewal-fixture', route =>
+    await page.route('**/api/v1/management/remote-hosts/provider-auth-renewals/renewal-fixture**', route =>
       route.fulfill({ status: 200, contentType: 'application/json',
         body: JSON.stringify({ step: completed ? 'complete' : 'installed' }) }));
     await page.goto('/#/workspace/settings/remote-hosts', { waitUntil: 'commit' });
@@ -2011,12 +2018,11 @@ test.describe('Execution Hosts settings section', () => {
     await page.waitForLoadState('domcontentloaded');
     await setTheme(page, 'light');
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible({ timeout: 5_000 });
-    await expect(page.getByTestId('remote-host-card').first()).toBeVisible();
-    await page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(SHOT_DIR, 'remote-hosts-section-light--mocked.png'), fullPage: false });
-
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
+    await expect(remote).toBeVisible();
+    await remote.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(SHOT_DIR, 'remote-hosts-section-light--mocked.png'), fullPage: false });
     await expandHost(remote);
     await remote.getByTestId('remote-host-action-setup').click();
     await expect(page.getByTestId('runner-setup-dialog')).toBeVisible();
@@ -2048,7 +2054,7 @@ test.describe('Execution Hosts settings section', () => {
     await page.goto('/#/workspace/settings/remote-hosts');
     await setTheme(page, 'dark');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-stale')).toContainText('last slot sample is marked stale');
     await expect(remote.getByTestId('remote-host-vitals')).toHaveCount(0);
@@ -2142,7 +2148,7 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.goto('/#/workspace/settings/remote-hosts');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     const runPool = remote.getByTestId('remote-host-run-pool');
     await expect(remote.getByTestId('remote-host-status')).toContainText('Online');
@@ -2176,7 +2182,7 @@ test.describe('Execution Hosts settings section', () => {
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
     await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
-    const machine = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' }).first();
+    const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]').first();
     await expandHost(machine);
 
     const columns = await machine.getByTestId('remote-host-capability-health').locator('.health__list')

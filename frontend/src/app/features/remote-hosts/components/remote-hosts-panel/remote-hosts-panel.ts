@@ -39,16 +39,12 @@ import { OperationalStallsComponent } from '../operational-stalls/operational-st
 import { EnvironmentHostListComponent } from '../environment-host-list/environment-host-list';
 import { EnvironmentAttentionComponent } from '../environment-attention/environment-attention';
 import { buildEnvironmentAttention } from '../../models/environment-attention';
-import { OrchestratorFeedStore } from '../../../orchestrator';
+import { OrchestratorFeedStore } from '../../../orchestrator/state/orchestrator-feed.store';
 import { hostReadiness } from '../../models/host-readiness';
 
 /**
- * Execution Hosts settings page (AGT-1921). The local
- * machine and each remote runner in one sortable table so the whole fleet reads
- * as one picture. Each row carries current operator truth while secondary
- * identity, capability, connection, capacity, and deployment facts are disclosed
- * on demand ({@link RemoteHostCardComponent}).
- *
+ * Environment settings page. The machine list selects a detail surface for
+ * identity, connection, capability, capacity, and deployment facts.
  */
 @Component({
   selector: 'app-remote-hosts-panel',

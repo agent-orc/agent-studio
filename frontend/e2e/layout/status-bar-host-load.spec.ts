@@ -46,6 +46,7 @@ async function stubHostLoad(
   const local = Array.from({ length: localRuns }, (_, index) => ({
     ...baseTask(`local-${index + 1}`, `local-project-${index + 1}`),
     execution: { status: 'running', startedAt: now },
+    executionLocation: { state: 'local-running', connectionState: 'connected', startedAt: now },
   }));
   const remote = Array.from({ length: remoteRuns }, (_, index) => ({
     ...baseTask(`remote-${index + 1}`, `remote-project-${index + 1}`),
@@ -88,13 +89,22 @@ async function stubHostLoad(
     path: `/mock/project-${index + 1}`,
     rootPath: `/mock/project-${index + 1}`,
   }))));
-  await page.route('**/api/v1/studio/board', json({
+  await page.route('**/api/v1/studio/board**', json({
+    backlog: [],
     preparation: [],
+    orchestratorPrep: [],
     ready: [],
     progress: [...local, ...remote],
+    failedPickup: [],
+    codeNotComplete: [],
+    autoReview: [],
+    humanReview: [],
+    escalated: [],
     review: [],
     completed: [],
     archive: [],
+    gitStateAt: null,
+    stale: false,
   }));
   await page.route('**/api/tasks', json([]));
   await page.route('**/api/v1/studio/runner/status', json({ projects: runnerProjects, cliRepairs }));
@@ -212,11 +222,11 @@ test.describe('Status bar execution-host load companion signal', () => {
     await expect(running).toContainText('2 local · remote idle');
     await running.click();
 
-    await expect(page).toHaveURL(/#\/workspace\/settings\/execution-hosts(?:&|$)/);
+    await expect(page).toHaveURL(/#\/workspace\/settings\/environment(?:&|$)/);
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
     await expect(page.getByTestId('remote-hosts-panel').getByRole('heading', { level: 2 }))
       .toHaveText('Environment');
-    await expect(page.getByTestId('remote-hosts-empty')).toBeVisible();
+    await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
   });
 
   test('high load without runs becomes a quiet hint in both themes', async ({ page }) => {

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input } from '@angular/core';
-import { OrchestratorFeedStore } from '../../../orchestrator';
+import { OrchestratorFeedStore } from '../../../orchestrator/state/orchestrator-feed.store';
 import { StallInterventionsService } from '../../services/stall-interventions.service';
 import { StallInterventionReceiptComponent } from '../stall-intervention-receipt/stall-intervention-receipt';
 
