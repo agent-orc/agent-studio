@@ -6,11 +6,27 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
+using AgentStudio.Host;
 
 namespace AgentStudio.Tests;
 
 public sealed class ManagementEnvironmentEndpointTests
 {
+    [Theory]
+    [InlineData("local", null, "local monolith")]
+    [InlineData("networked", null, "server monolith")]
+    [InlineData("networked", "http://task-server.test", "remote Task Server")]
+    public void Infrastructure_task_server_label_uses_the_security_profile(
+        string profile, string? taskServer, string expected)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Security:Profile"] = profile,
+            ["TaskServer:BaseUrl"] = taskServer,
+        }).Build();
+        Assert.Equal(expected, SystemEndpoints.TaskServerLabel(config));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -89,7 +89,10 @@ public sealed record AdvertisedCapabilityDto(
     // Runner-local causal order of model-acceptance evidence. A ready entry
     // carries the sequence its verdict was written at; any other entry carries
     // the runner's current sequence. Comparable only within one instance.
-    long? ProbeSequence = null)
+    long? ProbeSequence = null,
+    DateTime? Since = null,
+    int? HttpStatus = null,
+    string? Request = null)
 {
     // Keep the previous in-process constructor available during rolling
     // upgrades. Rich fields are negotiated on the HTTP wire separately.
@@ -284,7 +287,10 @@ public sealed record CapabilityHealthDto(
     IReadOnlyList<string>? EvidenceRefs = null,
     string? HealthOutcome = null,
     string? ServiceAvailability = null,
-    string? CredentialHealth = null)
+    string? CredentialHealth = null,
+    DateTime? Since = null,
+    int? HttpStatus = null,
+    string? Request = null)
 {
     [JsonConstructor]
     public CapabilityHealthDto(

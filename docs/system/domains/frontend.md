@@ -602,6 +602,9 @@ occur. It is not a claim about tunnel transfer time.
   derivation in `state/flow-health.derive.ts` produces the grouping, gate and
   review figures, the waits per stage, and the main-brake sentence. Every target
   is named once in `models/flow-health-targets.ts` and printed beside its figure.
+- The Environment host list uses Task Server capability snapshots in the networked
+  profile. Legacy client identities and the local execution seed belong only to
+  the local profile, so an old client name cannot create a second machine row.
 - `frontend/src/app/features/project-detail/`: project shell and project-level
   quality, settings, architecture, runtime, drift, and supervisor panels. The
   left rail (`project-shell`) is a collapsible-segment tree

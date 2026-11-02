@@ -18,8 +18,9 @@ import type { RemoteHost } from '../models/remote-host.model';
  * Only the local reference entry uses a relative fixture timestamp. Remote
  * liveness always comes from the Task Server identity registry.
  */
-export function seedRemoteHosts(_nowMs: number): RemoteHost[] {
+export function seedRemoteHosts(_nowMs: number, profile = 'local'): RemoteHost[] {
   void _nowMs;
+  if (profile !== 'local') return [];
   return [
     {
       id: 'local',

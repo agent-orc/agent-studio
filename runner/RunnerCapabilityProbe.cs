@@ -103,8 +103,13 @@ internal static class RunnerCapabilityProbe
                 "foundation",
                 null,
                 new Uri(options.ServerUrl).Authority,
-                connectivity?.Status == TaskServerConnectivityStates.Unreachable ? "unavailable" : "ready",
-                ConnectivityDetail(connectivity)),
+                ConnectivityUnavailable(connectivity) ? "unavailable" : "ready",
+                ConnectivityDetail(connectivity)) with
+                {
+                    Since = connectivity?.FailureStartedAt,
+                    HttpStatus = connectivity?.HttpStatus,
+                    Request = connectivity?.Request,
+                },
             Capability($"platform:{Platform()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
             Capability($"platform:{PlatformClass()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
         };
@@ -372,10 +377,16 @@ internal static class RunnerCapabilityProbe
             return "Task Server route has not completed its first observed request yet.";
         if (connectivity.Status == TaskServerConnectivityStates.Reachable)
             return $"Task Server route reachable; observed {connectivity.ObservedAt:o}.";
-        return $"Task Server route unavailable since {connectivity.FailureStartedAt:o}; " +
+        return $"Task Server route {(ConnectivityUnavailable(connectivity) ? "unavailable" : "has failures")} "
+               + $"since {connectivity.FailureStartedAt:o}; " +
                $"{connectivity.ConsecutiveFailures} consecutive request failures. " +
                (connectivity.LastError ?? "No transport detail was captured.");
     }
+
+    private static bool ConnectivityUnavailable(TaskServerConnectivitySnapshot? connectivity)
+        => connectivity is { Status: TaskServerConnectivityStates.Unreachable,
+            ConsecutiveFailures: >= 3, FailureStartedAt: { } since, ObservedAt: { } observed }
+           && observed - since >= TimeSpan.FromSeconds(60);
 
     public static string Provider(string cliBinary)
     {

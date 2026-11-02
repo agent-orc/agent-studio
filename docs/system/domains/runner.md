@@ -3,6 +3,11 @@
 Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
+Task Server connectivity stays capability-ready until three consecutive failed
+requests span at least 60 seconds. The capability detail retains the failure
+count, and the route advertises structured `since`, `httpStatus`, and `request`
+fields beside it. A successful request resets the sequence.
+
 ## Dynamic placement host agent, DP-S2
 
 Selected working decision: dynamic placement D2 option A, one supervised host

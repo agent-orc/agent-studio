@@ -777,6 +777,10 @@ the remote host. Environment variables use double underscores, for example
 host, live occupied and configured slots, and the most recent SSH reachability
 observed during a gate dispatch. Reachability becomes unverified five minutes
 after the last successful SSH check; this read endpoint never starts a probe.
+For SSH gates, the slot line and idle-capacity detector use the same recent
+gate-host slot report when available. A process-local count does not include
+workers left by an earlier Studio process. The idle detector requires a fresh
+host report. Pull gate wait age comes only from jobs still in the queued state.
 Size slots times processors below host online cores; see the
 [execution hosts runbook](../../operations/remote-hosts.md#remote-buildtest-gate-capacity).
 
