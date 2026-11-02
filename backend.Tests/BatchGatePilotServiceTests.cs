@@ -8,7 +8,9 @@ using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts.BatchGate;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -51,24 +53,60 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         _origin = Path.Combine(_workspace, "origin.git");
         foreach (var state in TaskStates.All)
             Directory.CreateDirectory(Path.Combine(_watchPath, state));
-        Directory.CreateDirectory(_repo);
-        Git(_workspace, "init", "-q", "--bare", "--initial-branch=develop", _origin);
-        Git(_repo, "init", "-q", "-b", "develop");
-        Git(_repo, "config", "user.email", "batch-test@example.invalid");
-        Git(_repo, "config", "user.name", "Batch Test");
-        Directory.CreateDirectory(Path.Combine(_repo, ".agent-studio"));
-        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "prepare"), "#!/bin/sh\nexit 0\n");
-        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "project.yml"),
+        var template = RepositoryTemplate.Value;
+        CopyDirectory(Path.Combine(template, "origin.git"), _origin);
+        CopyDirectory(Path.Combine(template, "repo"), _repo);
+        // The copied checkout still names the template origin.
+        var config = Path.Combine(_repo, ".git", "config");
+        File.WriteAllText(config, File.ReadAllText(config)
+            .Replace(Path.Combine(template, "origin.git"), _origin, StringComparison.Ordinal));
+    }
+
+    // Every test starts from a copy of one prepared origin and checkout:
+    // creating them per test ran nine Git commands before the test began.
+    private static readonly Lazy<string> RepositoryTemplate = new(CreateRepositoryTemplate);
+
+    private static string CreateRepositoryTemplate()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "atp-batch-pilot-template-" + Guid.NewGuid().ToString("N"));
+        var repo = Path.Combine(root, "repo");
+        var origin = Path.Combine(root, "origin.git");
+        Directory.CreateDirectory(repo);
+        Git(root, "init", "-q", "--bare", "--initial-branch=develop", origin);
+        Git(repo, "init", "-q", "-b", "develop");
+        Git(repo, "config", "user.email", "batch-test@example.invalid");
+        Git(repo, "config", "user.name", "Batch Test");
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "prepare"), "#!/bin/sh\nexit 0\n");
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"),
             "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
             + "  prepare: .agent-studio/prepare\n  build:\n  test: [echo test]\n"
             + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
-        File.WriteAllText(Path.Combine(_repo, "README.md"), "Batch pilot.\n");
-        Git(_repo, "add", ".");
-        Git(_repo, "commit", "-qm", "base");
-        Git(_repo, "remote", "add", "origin", _origin);
-        Git(_repo, "push", "-q", "origin", "develop");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "Batch pilot.\n");
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-qm", "base");
+        Git(repo, "remote", "add", "origin", origin);
+        Git(repo, "push", "-q", "origin", "develop");
         // Publication fast-forwards the local integration ref; keep it unchecked-out.
-        Git(_repo, "checkout", "-q", "--detach");
+        Git(repo, "checkout", "-q", "--detach");
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                SilentCatch.Note(ex, "BatchGatePilotServiceTests: repository template cleanup failed");
+            }
+        };
+        return root;
+    }
+
+    private static void CopyDirectory(string source, string target)
+    {
+        Directory.CreateDirectory(target);
+        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, directory)));
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+            File.Copy(file, Path.Combine(target, Path.GetRelativePath(source, file)));
     }
 
     public void Dispose()
@@ -3266,21 +3304,54 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                 // State transitions in this fixture are driven explicitly.
                 // Keep only the queue consumer needed by report requests; the
                 // periodic host loops can otherwise resume a seeded review or
-                // move its lane between the tick and the assertion.
+                // move its lane between the tick and the assertion. Most host
+                // loops are registered through a factory, so the registering
+                // code identifies them, not an implementation type.
                 for (var index = services.Count - 1; index >= 0; index--)
                 {
-                    var descriptor = services[index];
-                    if (descriptor.ServiceType == typeof(IHostedService)
-                        && descriptor.ImplementationType?.Namespace?.StartsWith("AgentStudio.", StringComparison.Ordinal) == true)
+                    if (IsStudioHostedService(services[index]))
                         services.RemoveAt(index);
                 }
                 services.AddHostedService<RemoteReviewEvidenceProjectionWorker>();
+                // Most tests never send a request; building every endpoint
+                // at start cost each test seconds. The first request builds
+                // the unchanged pipeline.
+                services.AddSingleton<IStartupFilter, DeferredPipelineStartupFilter>();
                 services.AddSingleton<MonolithOrchestrationRecoveryService>();
             });
             if (testServices is not null) builder.ConfigureTestServices(testServices);
         });
         factory.Services.GetRequiredService<BatchGatePilotService>().WaitForFlightsInTick = true;
         return factory;
+    }
+
+    private static bool IsStudioHostedService(ServiceDescriptor descriptor)
+    {
+        if (descriptor.ServiceType != typeof(IHostedService)) return false;
+        var registeredBy = descriptor.ImplementationType ?? descriptor.ImplementationInstance?.GetType()
+            ?? descriptor.ImplementationFactory?.Method.DeclaringType;
+        return registeredBy?.Assembly == typeof(Program).Assembly
+            || registeredBy?.Namespace?.StartsWith("AgentStudio.", StringComparison.Ordinal) == true;
+    }
+
+    /// <summary>
+    /// Builds the application pipeline on the first request instead of at
+    /// host start. Building it compiles a request delegate for every endpoint,
+    /// and a test that only drives services never needs one.
+    /// </summary>
+    private sealed class DeferredPipelineStartupFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
+            => app =>
+            {
+                var branch = app.New();
+                var pipeline = new Lazy<RequestDelegate>(() =>
+                {
+                    next(branch);
+                    return branch.Build();
+                });
+                app.Run(context => pipeline.Value(context));
+            };
     }
 
     private sealed class PilotTimeProvider(Func<DateTimeOffset> now) : TimeProvider
