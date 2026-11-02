@@ -266,7 +266,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
         Assert.DoesNotContain(("kori-review-01", "codex"), _h.Routes.Excluded);
         var released = _h.Store.Find(reroute.Id)!;
         Assert.Equal(("login stall cleared", false, false), (released.RevertedBy, released.Undoable, released.RouteMayBeInForce));
-        Assert.Contains("I routed codex to it again", released.Outcome);
+        Assert.Contains("codex routes to it again", released.Outcome);
     }
 
     [Fact]
@@ -310,7 +310,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
         Assert.Equal(["review-3097"], record.AttemptIds);
         Assert.DoesNotContain("review-3097", _h.Gate.Pending);
         Assert.Contains("review-3044", _h.Gate.Pending);
-        Assert.Contains("I dropped AGT-3097 from the gate queue", record.Receipt);
+        Assert.Contains("The AI Operator dropped AGT-3097 from the gate queue", record.Receipt);
         Assert.Contains(StallInterventionReceipts.Headline(record), _h.CardTimeline(TaskStates.Completed, "AGT-3097"));
     }
 
@@ -540,7 +540,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
         var settled = Assert.Single(_h.Store.All());
         Assert.Equal((applying.Id, StallInterventionStatuses.Escalated), (settled.Id, settled.Status));
         Assert.Contains("interrupted", settled.Outcome);
-        Assert.Contains("did not repeat it", settled.Outcome);
+        Assert.Contains("it was not repeated", settled.Outcome);
         Assert.StartsWith("stall-intervention:stall:", applying.WriteKey);
         Assert.Equal(applying.WriteKey, Assert.Single(_h.Restarts.Keys));
     }
@@ -583,6 +583,32 @@ public sealed class StallInterventionScenarioTests : IDisposable
         Assert.Equal((StallInterventionActions.ProposeRestartService, StallInterventionStatuses.Proposed, "running-work"),
             (record.Action, record.Status, record.ReasonCode));
         Assert.Contains("It still runs 2 items", record.Observed);
+        var receipt = StallInterventionReceipts.View(record);
+        Assert.DoesNotContain("I prepared", receipt.Done);
+        Assert.Equal(string.Empty, receipt.Undo);
+        var older = StallInterventionReceipts.View(record with
+        {
+            Done = "I prepared a proposal for a person; nothing was changed.",
+            Undo = "Nothing to undo.",
+        });
+        Assert.Equal("A proposal is ready for operator review. No action was taken.", older.Done);
+        Assert.Equal(string.Empty, older.Undo);
+    }
+
+    [Fact]
+    public async Task Offline_host_proposal_is_superseded_after_the_host_reports_again()
+    {
+        _h.Raise(new OperationalStallSnapshot([], [], [], [], [], [], [],
+            [new HostHeartbeatFact("runner-old", "coding", _h.Now.AddMinutes(-20), [])]));
+        await _h.Service.RunOnceAsync();
+        var proposal = Assert.Single(_h.Store.All());
+        Assert.Equal(StallInterventionStatuses.Proposed, proposal.Status);
+
+        _h.Clock.Advance(TimeSpan.FromMinutes(1));
+        _h.Clear();
+        await _h.Service.RunOnceAsync();
+
+        Assert.Equal(StallInterventionStatuses.Superseded, _h.Store.Find(proposal.Id)!.Status);
     }
 
     [Fact]
@@ -889,7 +915,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
         var record = Assert.Single(observe.Store.All());
         Assert.Equal((StallInterventionStatuses.Observed, StallInterventionActions.LowerAdmission), (record.Status, record.Action));
         Assert.Contains("observe mode", record.Done);
-        Assert.Contains("I would have done this: I lowered its admission from 8 to 6", record.Done);
+        Assert.Contains("Planned action: The AI Operator lowered its admission from 8 to 6", record.Done);
         Assert.False(StallInterventionReceipts.View(record).Undoable);
         Assert.Equal(StallInterventionModes.Observe, StallInterventionOptions.FromConfiguration(observe.Configuration).Mode);
     }

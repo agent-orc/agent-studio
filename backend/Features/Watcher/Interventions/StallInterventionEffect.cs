@@ -38,6 +38,24 @@ public sealed class StallInterventionEffect(
 
     public string Decider => AiOperatorDeciders.StallIntervention;
 
+    public void SupersedeRecoveredProposals(IReadOnlyCollection<WatcherCase> cases)
+    {
+        foreach (var record in store.All().Where(item => item.Status == StallInterventionStatuses.Proposed
+            && item.Kind == StallKinds.HostOffline))
+        {
+            var current = cases.FirstOrDefault(item => item.Fingerprint == record.Fingerprint);
+            if (!ProposalRecoveryPolicy.ShouldSupersede(record, current)) continue;
+            var updated = record with
+            {
+                Status = StallInterventionStatuses.Superseded,
+                ResolvedAtUtc = time.GetUtcNow().UtcDateTime,
+                Outcome = "The host reported after this proposal was decided.",
+            };
+            store.Save(updated);
+            receipts.Publish(updated, store.All());
+        }
+    }
+
     // One writer per subject: an engine receipt, the in-process path, a
     // recovery and a person's Undo never interleave their read and save.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _subjects = new(StringComparer.Ordinal);
@@ -223,7 +241,7 @@ public sealed class StallInterventionEffect(
                         EffectObserved = false,
                         EffectEvidence = "the provider exclusion remains in force",
                         Outcome = "The login stall cleared, but the route exclusion remains in force."
-                            + " I handed the event to a person and kept the original reroute undoable.",
+                            + " The event was handed to an operator and the original reroute remains undoable.",
                     };
             }
             store.Save(settled);
@@ -258,8 +276,8 @@ public sealed class StallInterventionEffect(
                 FollowUpDueUtc = null,
                 EffectEvidence = mismatch,
                 Outcome = mismatch.StartsWith("the overload or memory pressure", StringComparison.Ordinal)
-                    ? $"Superseded: {mismatch}. I did not act."
-                    : $"Superseded by a person: {mismatch}. I did not act.",
+                    ? $"Superseded: {mismatch}. No action was taken."
+                    : $"Superseded by a person: {mismatch}. No action was taken.",
             };
             store.Save(superseded);
             if (original is not null) Settle(original, superseded, now);
@@ -283,7 +301,7 @@ public sealed class StallInterventionEffect(
                 EffectEvidence = $"the action failed: {exception.Message}",
                 ResolvedAtUtc = time.GetUtcNow().UtcDateTime,
                 Undoable = UndoableAction(record.Action),
-                Outcome = $"The action failed ({exception.Message}); I handed the event to a person.",
+                Outcome = $"The action failed ({exception.Message}); the event was handed to an operator.",
             };
         }
         if (record.Status == StallInterventionStatuses.Applying)
@@ -329,7 +347,7 @@ public sealed class StallInterventionEffect(
                 EffectObserved = true,
                 EffectEvidence = evidence,
                 Undoable = UndoableAction(record.Action),
-                Outcome = "The action was interrupted before its receipt settled; its effect is observed, so I did not repeat it.",
+                Outcome = "The action was interrupted before its receipt settled; its effect is observed, so it was not repeated.",
             }
             : record with
             {
@@ -339,7 +357,7 @@ public sealed class StallInterventionEffect(
                 ResolvedAtUtc = now,
                 Undoable = UndoableAction(record.Action),
                 Outcome = "The action was interrupted (a restart or failure) before its receipt settled"
-                    + (observed ? "" : " and its effect is not observed") + "; I did not repeat it and handed the event to a person.",
+                    + (observed ? "" : " and its effect is not observed") + "; it was not repeated and the event was handed to an operator.",
             };
         store.Save(recovered);
         if (record.Trigger != StallInterventionTriggers.Stall
@@ -378,7 +396,7 @@ public sealed class StallInterventionEffect(
                     Undoable = false,
                     ResolvedAtUtc = current.ResolvedAtUtc ?? time.GetUtcNow().UtcDateTime,
                     Outcome = (current.Outcome ?? string.Empty) + (owned
-                        ? $" The login stall on {current.Host} cleared; I routed {provider} to it again."
+                        ? $" The login stall on {current.Host} cleared; {provider} routes to it again."
                         : $" The exclusion of {provider} on {current.Host} is no longer this intervention's; nothing to route back."),
                 };
                 store.Save(settled);
@@ -427,7 +445,7 @@ public sealed class StallInterventionEffect(
             Status = record.Status == StallInterventionStatuses.Applied ? StallInterventionStatuses.Verified : record.Status,
             ResolvedAtUtc = record.ResolvedAtUtc ?? now,
             Outcome = $"The admission no longer reads the lowered value ({evidence}); the reduction is no longer in force "
-                + "and I do not restore over it.",
+                + "and the earlier admission is not restored over it.",
         };
         store.Save(released);
         return released;
@@ -526,12 +544,12 @@ public sealed class StallInterventionEffect(
         var why = options.Mode == StallInterventionModes.Act
             ? $"The action {record.Action} is switched off (StallIntervention:Actions:{record.Action})"
             : "The AI Operator runs in observe mode (StallIntervention:Mode)";
-        var done = $"{why}, so nothing was changed. I would have done this: {record.Done}";
+        var done = $"{why}, so nothing was changed. Planned action: {record.Done}";
         return record with
         {
             Status = StallInterventionStatuses.Observed,
             Done = done,
-            Undo = "Nothing to undo.",
+            Undo = string.Empty,
             Receipt = string.Join(" ", new[] { record.Observed, done, record.Why,
                 record.Before.Length == 0 && record.After.Length == 0 ? string.Empty
                     : $"Would change: {record.Before} to {record.After}." }.Where(part => part.Length > 0)),
@@ -605,7 +623,7 @@ public sealed class StallInterventionEffect(
                         .Limits.RestoreBelowTargetFraction, now);
                     if (live?.Admission != expected || lowering?.AdmissionStampUtc is { } aiStamp && live.CapacityStampUtc != aiStamp)
                         return Superseded(record, now, record.Action == StallInterventionActions.RestoreAdmission
-                            ? $"the capacity of {record.Host} was changed after the lowering; I do not restore over it"
+                            ? $"the capacity of {record.Host} was changed after the lowering; the earlier admission is not restored over it"
                             : "the admission changed before the atomic update");
                 }
                 record = record with { AdmissionStampUtc = stamp };
@@ -633,7 +651,7 @@ public sealed class StallInterventionEffect(
                 // Only the attempts frozen at decision time, re-checked against their card now.
                 var dropped = gate.Drop(record.Project, record.AttemptIds, $"ai-operator:{record.Id}");
                 if (dropped.Count == 0 && record.BatchId is null)
-                    return Superseded(record, now, "every frozen member changed state before I acted; nothing was dropped");
+                    return Superseded(record, now, "every frozen member changed state before the action; nothing was dropped");
                 var closed = record.BatchId is null || gate.CloseNow(record.Project);
                 record = record with
                 {
@@ -651,7 +669,7 @@ public sealed class StallInterventionEffect(
                 record = record with
                 {
                     Outcome = pinned.Count == record.Members.Count ? null
-                        : $"pinned {pinned.Count} of {record.Members.Count} cards; the others changed before I acted",
+                        : $"pinned {pinned.Count} of {record.Members.Count} cards; the others changed before the action",
                     Members = pinned,
                 };
                 break;
@@ -679,7 +697,7 @@ public sealed class StallInterventionEffect(
             EffectEvidence = evidence,
             ResolvedAtUtc = now,
             Undoable = undoable,
-            Outcome = $"The effect was not observed ({evidence}); I handed the event to a person"
+            Outcome = $"The effect was not observed ({evidence}); the event was handed to an operator"
                 + (undoable ? "; Undo reverts whatever part of the change is in force." : "."),
         };
     }
@@ -691,7 +709,7 @@ public sealed class StallInterventionEffect(
             ResolvedAtUtc = now,
             FollowUpDueUtc = null,
             EffectEvidence = evidence,
-            Outcome = $"Superseded: {evidence}. I did not act.",
+            Outcome = $"Superseded: {evidence}. No action was taken.",
         };
 
     private static bool UndoableAction(string action) => action is StallInterventionActions.LowerAdmission

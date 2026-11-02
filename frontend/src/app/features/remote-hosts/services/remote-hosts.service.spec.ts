@@ -4,6 +4,11 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { RemoteHostsService, mergeReleaseReport } from './remote-hosts.service';
 import { seedRemoteHosts } from './remote-hosts.seed';
+import { AuthSessionState } from '../../../services/auth.service';
+
+it('does not seed local or historical runner machines for a networked installation', () => {
+  expect(seedRemoteHosts(Date.now(), 'networked')).toEqual([]);
+});
 
 it('keeps a newer capability release report over an older drift snapshot', () => {
   const current = { ...seedRemoteHosts(0)[0], lastHeartbeatAt: '2026-10-16T08:00:00Z',
@@ -106,6 +111,27 @@ describe('RemoteHostsService', () => {
 });
 
 describe('RemoteHostsService client registry hydration', () => {
+  it('uses capability hosts and ignores legacy client machines in the networked profile', () => {
+    TestBed.configureTestingModule({
+      providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()],
+    });
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', authenticated: true, bootstrapRequired: false,
+    });
+    const svc = TestBed.inject(RemoteHostsService);
+    const http = TestBed.inject(HttpTestingController);
+    svc.reload();
+    expect(svc.hosts()).toEqual([]);
+    http.expectOne('/api/clients').flush([{
+      id: 'agent-runner-01', displayName: 'agent-runner-01', kind: 'service',
+      registeredAt: '2026-08-05T14:35:00Z', lastSeenAt: null,
+    }]);
+    http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    expect(svc.hosts()).toEqual([]);
+    flushHostHydration(http);
+    flushRunnerInfrastructureFailures(http);
+    http.verify();
+  });
   it('hydrates runner infrastructure failures for Execution Hosts', () => {
     TestBed.configureTestingModule({
       providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()],

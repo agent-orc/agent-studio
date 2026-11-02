@@ -479,6 +479,46 @@ public sealed class RunnerCapabilityProbeTests
         Assert.Contains("11 consecutive request failures", route.Detail);
     }
 
+    [Theory]
+    [InlineData(1, 120, "ready")]
+    [InlineData(2, 120, "ready")]
+    [InlineData(3, 59, "ready")]
+    [InlineData(3, 60, "unavailable")]
+    public void Connectivity_requires_three_failures_and_a_minute(int failures, int seconds, string expected)
+    {
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://127.0.0.1:15031", RunnerId = "runner-test",
+            RunnerName = "runner-test", Hostname = "test-host", BackendName = "test",
+            WorkDir = Path.GetTempPath(), BaseBranch = "main", ClaudeCliBin = "/bin/sh",
+        };
+        var first = new DateTime(2026, 8, 1, 15, 30, 0, DateTimeKind.Utc);
+        var monitor = new TaskServerConnectivityMonitor(_ => { });
+        for (var index = 0; index < failures; index++)
+            monitor.RecordFailure(first.AddSeconds(index == 0 ? 0 : index == failures - 1 ? seconds : index),
+                "POST /api/runner/claim", new HttpRequestException("origin timeout", null,
+                    (System.Net.HttpStatusCode)524), TimeSpan.Zero, 0);
+        var route = Assert.Single(RunnerCapabilityProbe.Advertise(options, true,
+            connectivity: monitor.Snapshot), item => item.Key == CapabilityProtocol.TaskServerConnectivity);
+        Assert.Equal(expected, route.Status);
+        Assert.Contains($"{failures} consecutive request failures", route.Detail);
+        Assert.Equal(first, route.Since);
+        Assert.Equal(524, route.HttpStatus);
+        Assert.Equal("POST /api/runner/claim", route.Request);
+        var roundTrip = System.Text.Json.JsonSerializer.Deserialize<AdvertisedCapabilityDto>(
+            System.Text.Json.JsonSerializer.Serialize(route))!;
+        Assert.Equal((route.Since, route.HttpStatus, route.Request),
+            (roundTrip.Since, roundTrip.HttpStatus, roundTrip.Request));
+
+        monitor.RecordSuccess(first.AddSeconds(seconds + 1), "POST /api/runner/claim");
+        var recovered = Assert.Single(RunnerCapabilityProbe.Advertise(options, true,
+            connectivity: monitor.Snapshot), item => item.Key == CapabilityProtocol.TaskServerConnectivity);
+        Assert.Equal("ready", recovered.Status);
+        Assert.Null(recovered.Since);
+        Assert.Null(recovered.HttpStatus);
+        Assert.Null(recovered.Request);
+    }
+
     [Fact]
     public void Salvage_gate_adds_the_token_scope_fix_for_a_real_workflow_rejection()
     {

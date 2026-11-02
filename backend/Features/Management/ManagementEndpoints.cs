@@ -31,7 +31,7 @@ public static class ManagementEndpoints
                 routes = manifest?.Runners.Select(route => new { route.RunnerId, route.Route }).ToArray(),
                 machines = manifest?.Machines,
                 gateHost = string.IsNullOrWhiteSpace(gateHost) ? null : gateHost,
-                gateSlots = string.IsNullOrWhiteSpace(gateHost) ? null : gateSlots.Snapshot(),
+                gateSlots = string.IsNullOrWhiteSpace(gateHost) ? null : gateSlots.ReportedOrLocalSnapshot(),
                 gateWorkers = pullGates.Hosts(),
                 taskServer = new { build.Version, build.Commit },
                 engine = new { state = engine.State, lastContact = engine.LastContact, engineId = engine.LastEngineId },

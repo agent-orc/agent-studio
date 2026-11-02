@@ -75,7 +75,7 @@ public static class SystemEndpoints
             var pullHost = pullGates.HealthyHosts().FirstOrDefault();
             var workers = pullGates.Hosts();
             var host = pullHost?.Name ?? config["RemoteGate:SshHost"]?.Trim();
-            var slots = gateSlots.Snapshot();
+            var slots = gateSlots.ReportedOrLocalSnapshot();
             var reached = gateSlots.LastReachedAt;
             var failed = gateSlots.LastFailureAt;
             var reachability = pullHost is not null ? "reachable"
@@ -87,8 +87,7 @@ public static class SystemEndpoints
                     total = pullHost?.Slots ?? slots.Total, reachability,
                     lastReachedAt = pullHost?.LastHeartbeat ?? reached, lastFailureAt = failed,
                     workers },
-                taskServer = string.IsNullOrWhiteSpace(config["TaskServer:BaseUrl"])
-                    ? "local monolith" : "remote Task Server",
+                taskServer = TaskServerLabel(config),
                 engine = new { engine.State, engine.Required, engine.LastContact, engine.LastEngineId },
                 workstation = Environment.MachineName,
             });
@@ -308,4 +307,9 @@ public static class SystemEndpoints
             Results.Text(readiness.State, "text/plain",
                 statusCode: readiness.IsLive ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable));
     }
+
+    public static string TaskServerLabel(IConfiguration configuration)
+        => !string.IsNullOrWhiteSpace(configuration["TaskServer:BaseUrl"])
+            ? "remote Task Server"
+            : SecurityProfiles.IsLocal(configuration) ? "local monolith" : "server monolith";
 }

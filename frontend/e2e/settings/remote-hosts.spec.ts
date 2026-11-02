@@ -315,6 +315,23 @@ test.describe('Execution Hosts settings section', () => {
     await dismissDevErrorDialog(page);
   });
 
+  test('networked profile hides legacy and local phantom machines', async ({ page }) => {
+    await page.route('**/api/auth/status', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true,
+        user: { id: 'operator', username: 'operator', displayName: 'Operator', role: 'owner',
+          projects: ['agent-taskboard'], disabled: false, mustChangePassword: false } }),
+    }));
+    await page.reload();
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await dismissDevErrorDialog(page);
+    await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
+    await expect(page.getByTestId('remote-host-card')).toHaveCount(0);
+    await expect(page.getByText('Local machine')).toHaveCount(0);
+    await expect(page.getByText('agent-runner-01')).toHaveCount(0);
+    await page.screenshot({ path: join(SHOT_DIR, 'networked-hosts-no-phantoms.png'), fullPage: false });
+  });
+
   test('rail + overview expose the Execution Hosts section', async ({ page }) => {
     await page.getByTestId('status-bar-settings').click();
     await expect(settingsHome(page)).toBeVisible();

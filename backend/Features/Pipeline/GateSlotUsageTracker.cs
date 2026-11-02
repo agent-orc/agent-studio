@@ -29,6 +29,10 @@ public sealed class GateSlotUsageTracker
 
     public GateSlotUsage Snapshot() => new(_active.Count, Volatile.Read(ref _total));
 
+    /// <summary>Use the gate host's recent report when it has one; it includes workers from older server processes.</summary>
+    public GateSlotUsage ReportedOrLocalSnapshot()
+        => RemoteSnapshot(TimeSpan.FromMinutes(10)) ?? Snapshot();
+
     public int Dispatching { get { lock (_dispatchGate) return _dispatching.Count; } }
 
     public IDisposable? TryBeginDispatch(string runId)
