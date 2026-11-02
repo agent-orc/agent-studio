@@ -33,9 +33,9 @@ test('Owner enrollment requires a verified authenticator and shows recovery code
   await page.getByRole('button', { name: 'Set up authenticator' }).click();
   await expect(page.getByTestId('totp-secret')).toHaveText(secret);
   await setTheme(page, 'light');
-  await page.screenshot({ path: join(resultDir, 'second-factor-light.png'), fullPage: true });
+  await page.screenshot({ path: join(resultDir, 'second-factor-light--mocked.png'), fullPage: true });
   await setTheme(page, 'dark');
-  await page.screenshot({ path: join(resultDir, 'second-factor-dark.png'), fullPage: true });
+  await page.screenshot({ path: join(resultDir, 'second-factor-dark--mocked.png'), fullPage: true });
   await page.getByLabel('Authenticator code').fill('123456');
   await page.getByRole('button', { name: 'Verify authenticator' }).click();
   await expect(page.getByTestId('factor-recovery-codes')).toContainText(recovery[0]);
@@ -91,18 +91,18 @@ test('Owner can inspect and revoke sessions and receives a new-session notice', 
   await expect(page.getByTestId('session-row')).toHaveCount(1);
   sessions.push({ id: 'new', device: 'Second browser', address: '192.0.2.11',
     createdAt: '2026-11-02T10:00:00Z', lastUseAt: '2026-11-02T10:00:00Z', current: false });
-  await page.getByRole('button', { name: 'Refresh' }).click();
+  await page.getByTestId('session-manager-panel').getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(page.getByTestId('new-session-notice')).toBeVisible();
   await expect(page.getByTestId('session-row')).toHaveCount(2);
   await setTheme(page, 'light');
-  await page.screenshot({ path: join(resultDir, 'sessions-light.png'), fullPage: true });
+  await page.screenshot({ path: join(resultDir, 'sessions-light--mocked.png'), fullPage: true });
   await setTheme(page, 'dark');
-  await page.screenshot({ path: join(resultDir, 'sessions-dark.png'), fullPage: true });
+  await page.screenshot({ path: join(resultDir, 'sessions-dark--mocked.png'), fullPage: true });
   await page.getByTestId('session-row').filter({ hasText: 'Second browser' }).getByRole('button', { name: 'Revoke' }).click();
   await expect(page.getByTestId('session-row')).toHaveCount(1);
   sessions.push({ id: 'newer', device: 'Another browser', address: '192.0.2.12',
     createdAt: '2026-11-02T11:00:00Z', lastUseAt: '2026-11-02T11:00:00Z', current: false });
-  await page.getByRole('button', { name: 'Refresh' }).click();
+  await page.getByTestId('session-manager-panel').getByRole('button', { name: 'Refresh', exact: true }).click();
   await page.getByRole('button', { name: 'Revoke all other sessions' }).click();
   await expect(page.getByTestId('session-row')).toHaveCount(1);
 });

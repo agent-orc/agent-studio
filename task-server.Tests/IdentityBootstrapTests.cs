@@ -27,6 +27,7 @@ public sealed class IdentityBootstrapTests
     private const string OwnerCode = "owner-code-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string OtherOwnerCode = "owner-code-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private const string OwnerPassword = "owner password long enough";
+    private static readonly DateTimeOffset DefaultNow = new(2026, 11, 2, 12, 0, 0, TimeSpan.Zero);
 
     // ---- Pure policy matrices -------------------------------------------------
 
@@ -190,7 +191,7 @@ public sealed class IdentityBootstrapTests
                 new StudioBootstrapRequest("owner", OwnerPassword, BootstrapCode: OtherOwnerCode)), HttpStatusCode.Unauthorized));
 
             var owner = await BootstrapOwnerAsync(edge);
-            loginFactorCode = await StudioFactorTestHelper.EnrollTotpAsync(edge);
+            loginFactorCode = await StudioFactorTestHelper.EnrollTotpAsync(edge, DefaultNow.UtcDateTime);
             Assert.StartsWith("rcv_", owner.RecoveryCode, StringComparison.Ordinal);
             Assert.DoesNotContain("ats_", owner.SessionToken, StringComparison.Ordinal);
             var afterBootstrap = await edge.GetFromJsonAsync<StudioAuthStatusDto>("/api/v1/studio/auth/status");
@@ -258,7 +259,7 @@ public sealed class IdentityBootstrapTests
         var login = await (await edge.PostAsJsonAsync("/api/v1/studio/auth/login",
             new StudioLoginRequest("alex", "operator password 1"))).Content.ReadFromJsonAsync<StudioAuthSessionDto>();
         using var operatorClient = Client(factory, StudioToken, login!.SessionToken);
-        await StudioFactorTestHelper.EnrollTotpAsync(operatorClient);
+        await StudioFactorTestHelper.EnrollTotpAsync(operatorClient, DefaultNow.UtcDateTime);
 
         // The operator keeps ordinary task access.
         Assert.Equal(HttpStatusCode.OK, (await operatorClient.GetAsync("/api/v1/studio/board")).StatusCode);
@@ -451,7 +452,7 @@ public sealed class IdentityBootstrapTests
         await using var factory = new IdentityFactory(temp.Path, OwnerCode);
         using var edge = Client(factory, StudioToken);
         var owner = await BootstrapOwnerAsync(edge);
-        var loginFactorCode = await StudioFactorTestHelper.EnrollTotpAsync(edge);
+        var loginFactorCode = await StudioFactorTestHelper.EnrollTotpAsync(edge, DefaultNow.UtcDateTime);
 
         Assert.Equal("invalid-recovery", await ErrorCodeAsync(await edge.PostAsJsonAsync("/api/v1/studio/auth/recover",
             new StudioRecoverRequest("owner", "rcv_wrong", "new owner password 1")), HttpStatusCode.Unauthorized));
@@ -913,7 +914,7 @@ public sealed class IdentityBootstrapTests
             new StudioBootstrapRequest("owner", OwnerPassword, BootstrapCode: OwnerCode));
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var owner = (await response.Content.ReadFromJsonAsync<StudioOwnerBootstrapSessionDto>())!;
-        await StudioFactorTestHelper.EnrollTotpAsync(edge, now);
+        await StudioFactorTestHelper.EnrollTotpAsync(edge, now ?? DefaultNow.UtcDateTime);
         return owner;
     }
 
@@ -1018,8 +1019,8 @@ public sealed class IdentityBootstrapTests
                 if (ownerCode is not null) values["OWNER_BOOTSTRAP_CODE"] = ownerCode;
                 configuration.AddInMemoryCollection(values);
             });
-            if (clock is not null)
-                builder.ConfigureTestServices(services => services.AddSingleton(clock));
+            builder.ConfigureTestServices(services => services.AddSingleton(
+                clock ?? new ManualTimeProvider(DefaultNow)));
         }
     }
 }

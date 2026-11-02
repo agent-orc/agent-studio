@@ -18,7 +18,8 @@ public sealed class StudioEndpointsTests
     public async Task Bootstrap_login_change_password_and_logout_form_the_studio_auth_lifecycle()
     {
         using var temp = new TempDirectory();
-        await using var factory = new StudioApiFactory(temp.Path);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
+        await using var factory = new StudioApiFactory(temp.Path, clock);
         using var client = Client(factory);
 
         var initialStatus = await client.GetFromJsonAsync<StudioAuthStatusDto>("/api/v1/studio/auth/status");
@@ -38,7 +39,7 @@ public sealed class StudioEndpointsTests
         var totpSetup = await enrollmentClient.PostAsync("/api/v1/studio/auth/totp/start", null);
         totpSetup.EnsureSuccessStatusCode();
         var secret = (await totpSetup.Content.ReadFromJsonAsync<TotpSetup>())!.Secret;
-        var code = SecondFactorCodes.CurrentTotp(secret, DateTime.UtcNow);
+        var code = SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime);
         (await enrollmentClient.PostAsJsonAsync("/api/v1/studio/auth/totp/confirm", new StudioConfirmTotpRequest(code)))
             .EnsureSuccessStatusCode();
 
@@ -307,7 +308,8 @@ public sealed class StudioEndpointsTests
     public async Task Runner_status_reports_active_work_grouped_by_project()
     {
         using var temp = new TempDirectory();
-        await using var factory = new StudioApiFactory(temp.Path);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
+        await using var factory = new StudioApiFactory(temp.Path, clock);
         using var client = Client(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Runner WS"), "test", default);
@@ -324,9 +326,9 @@ public sealed class StudioEndpointsTests
             "test",
             default);
         var report = new HostReportRequest(
-            HostOrchestratorContract.Current, "host-status", "instance-status", 1, DateTime.UtcNow,
+            HostOrchestratorContract.Current, "host-status", "instance-status", 1, clock.GetUtcNow().UtcDateTime,
             new HostCapacityDto(1, 1, 0, 0, 1),
-            [new HostCapabilityDto("git-push", "ready", ObservedAt: DateTime.UtcNow)],
+            [new HostCapabilityDto("git-push", "ready", ObservedAt: clock.GetUtcNow().UtcDateTime)],
             [], [], []);
         var available = await store.AcceptHostReportAsync("runner-status", report, "runner-status", default);
         var permit = Assert.Single(available.AvailableWork);
@@ -345,7 +347,7 @@ public sealed class StudioEndpointsTests
                 new HostWorkStatusDto(
                     acceptance.PermitId, acceptance.Task.TaskId, acceptance.Task.TaskKey, acceptance.Run.RunId,
                     acceptance.Lease.LeaseId, acceptance.Lease.Fence, "running", null, 4242,
-                    acceptance.Lease.AcquiredAt, DateTime.UtcNow),
+                    acceptance.Lease.AcquiredAt, clock.GetUtcNow().UtcDateTime),
             ],
         };
         await store.AcceptHostReportAsync("runner-status", runningReport, "runner-status", default);
@@ -392,7 +394,7 @@ public sealed class StudioEndpointsTests
 
     private sealed record TotpSetup(string Secret);
 
-    private sealed class StudioApiFactory(string dataDirectory) : WebApplicationFactory<Program>
+    private sealed class StudioApiFactory(string dataDirectory, TimeProvider? clock = null) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -404,6 +406,8 @@ public sealed class StudioEndpointsTests
                     ["TaskServer:ListenUrl"] = string.Empty,
                     ["TaskServer:RetentionSchedulerEnabled"] = "false",
                 }));
+            if (clock is not null)
+                builder.ConfigureServices(services => services.AddSingleton(clock));
         }
     }
 }

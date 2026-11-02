@@ -15,7 +15,8 @@ public sealed class StudioSecondFactorTests
     public async Task Passkey_registration_login_and_step_up_verify_signed_challenges()
     {
         using var temp = new TempDirectory();
-        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }), TimeProvider.System);
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            new MutableClock(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero)));
         await store.InitializeAsync();
         var password = "owner pass phrase " + Guid.NewGuid().ToString("N");
         var bootstrap = await store.BootstrapStudioAuthAsync(new StudioBootstrapRequest("owner", password), false, default);

@@ -1,4 +1,9 @@
-.session-manager { position: relative; display: inline-block; }
+.session-manager {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+}
 .session-manager__toggle,
 .session-manager__panel button {
   border: 1px solid var(--studio-border);
@@ -26,4 +31,5 @@
 .session-manager__panel h3 { margin: 0; font-size: 1rem; }
 .session-manager__rows { display: grid; gap: var(--studio-spacing-2); margin: var(--studio-spacing-3) 0; }
 .session-manager__row { display: grid; gap: var(--studio-spacing-1); padding: var(--studio-spacing-2) 0; border-bottom: 1px solid var(--studio-border); }
+.session-manager__row div:first-child { display: flex; align-items: center; gap: var(--studio-spacing-1); }
 .session-manager__row div:last-of-type { color: var(--studio-fg-dim); font-size: .8rem; }

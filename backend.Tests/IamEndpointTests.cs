@@ -22,6 +22,7 @@ public sealed class IamEndpointTests : IDisposable
 {
     private const string Password = "correct horse battery staple!";
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "iam-endpoints-" + Guid.NewGuid().ToString("N"));
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
 
     [Fact]
     public async Task Owner_manages_groups_bindings_and_service_accounts_over_http()
@@ -190,7 +191,7 @@ public sealed class IamEndpointTests : IDisposable
             .GetProperty("revokedAt").GetString());
     }
 
-    private static async Task<string> LoginAsync(HttpClient client, string username, string password, DateTime? now = null)
+    private async Task<string> LoginAsync(HttpClient client, string username, string password, DateTime? now = null)
     {
         client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
         var response = await client.PostAsJsonAsync("/api/auth/login", new { username, password });
@@ -202,7 +203,7 @@ public sealed class IamEndpointTests : IDisposable
             var start = await SendRawAsync(client, HttpMethod.Post, "/api/auth/totp/start", csrf, new { });
             start.EnsureSuccessStatusCode();
             var secret = (await start.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("secret").GetString()!;
-            var code = SecondFactorCodes.CurrentTotp(secret, now ?? DateTime.UtcNow);
+            var code = SecondFactorCodes.CurrentTotp(secret, now ?? _clock.GetUtcNow().UtcDateTime);
             (await SendRawAsync(client, HttpMethod.Post, "/api/auth/totp/confirm", csrf, new { code }))
                 .EnsureSuccessStatusCode();
         }
@@ -234,9 +235,8 @@ public sealed class IamEndpointTests : IDisposable
             ["Security:Profile"] = profile,
             ["AllowedHosts"] = profile == SecurityProfiles.Networked ? "studio.test" : "*",
         }));
-        if (clock is not null)
-            builder.ConfigureServices(services => services.AddSingleton(provider => new AccessSecurityStore(
-                provider.GetRequiredService<IConfiguration>(), NullLogger<AccessSecurityStore>.Instance, clock)));
+        builder.ConfigureServices(services => services.AddSingleton(provider => new AccessSecurityStore(
+            provider.GetRequiredService<IConfiguration>(), NullLogger<AccessSecurityStore>.Instance, clock ?? _clock)));
     });
 
     public void Dispose()

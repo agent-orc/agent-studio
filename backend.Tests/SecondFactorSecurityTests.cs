@@ -4,12 +4,14 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
 public sealed class SecondFactorSecurityTests
 {
+    private static readonly DateTime TestUtcNow = new(2026, 11, 2, 12, 0, 0, DateTimeKind.Utc);
     [Fact]
     public void Owner_password_alone_cannot_create_a_networked_session()
     {
@@ -45,11 +47,11 @@ public sealed class SecondFactorSecurityTests
             var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
             var principal = store.AuthenticateSession(bootstrap.SessionToken)!;
             var secret = store.BeginTotpEnrollment(principal);
-            var recovery = store.ConfirmTotpEnrollment(principal, SecondFactorCodes.CurrentTotp(secret, DateTime.UtcNow));
+            var recovery = store.ConfirmTotpEnrollment(principal, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
 
             Assert.Equal("second-factor-required", Assert.Throws<SecurityOperationException>(
                 () => store.Login("owner", password, "client", requireSecondFactor: true)).Code);
-            var totp = store.Login("owner", password, "client", SecondFactorCodes.CurrentTotp(secret, DateTime.UtcNow),
+            var totp = store.Login("owner", password, "client", SecondFactorCodes.CurrentTotp(secret, TestUtcNow),
                 requireSecondFactor: true);
             Assert.False(store.AuthenticateSession(totp.SessionToken)!.Session.SecondFactorEnrollmentOnly);
             Assert.Equal("second-factor-required", Assert.Throws<SecurityOperationException>(
@@ -72,8 +74,8 @@ public sealed class SecondFactorSecurityTests
             var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
             var principal = store.AuthenticateSession(bootstrap.SessionToken)!;
             var secret = store.BeginTotpEnrollment(principal);
-            store.ConfirmTotpEnrollment(principal, SecondFactorCodes.CurrentTotp(secret, DateTime.UtcNow));
-            var code = SecondFactorCodes.CurrentTotp(secret, DateTime.UtcNow);
+            store.ConfirmTotpEnrollment(principal, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
+            var code = SecondFactorCodes.CurrentTotp(secret, TestUtcNow);
             var other = store.Login("owner", password, "client", code, requireSecondFactor: true,
                 device: "Test browser", address: "192.0.2.1");
             Assert.Contains(store.ListSessions(principal), x => x.Device == "Test browser" && x.Address == "192.0.2.1");
@@ -150,7 +152,8 @@ public sealed class SecondFactorSecurityTests
             ["TaskRepository"] = root,
             ["Security:Profile"] = SecurityProfiles.Networked
         }).Build();
-        return new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance);
+        return new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance,
+            new FakeTimeProvider(new DateTimeOffset(TestUtcNow)));
     }
 
     private static string ClientData(string type, string challenge, string origin)
