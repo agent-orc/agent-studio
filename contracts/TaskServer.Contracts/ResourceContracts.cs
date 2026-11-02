@@ -182,7 +182,8 @@ public sealed record ArtifactDto(
 public sealed record ArtifactTransferLimitsResponse(
     long MaxRequestBodyBytes,
     long MaxFileBytes,
-    long MaxTotalBytes);
+    long MaxTotalBytes,
+    long? MaxChunkedFileBytes = null);
 
 /// <summary>
 /// One immutable identity needed to reconstruct a coding result. Git submodules

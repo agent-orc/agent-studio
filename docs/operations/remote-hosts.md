@@ -15,6 +15,10 @@ For artifacts above the default 8 MiB per-file and 100 MiB total budgets,
 raise `TaskServer:ResultArtifactMaxFileBytes` and
 `TaskServer:ResultArtifactMaxTotalBytes` explicitly; the proxy body ceiling
 still applies to each chunk request.
+`GET /api/v1/artifact-limits` reports `MaxFileBytes` as the safe ceiling for
+the single-request JSON upload. `MaxChunkedFileBytes` reports the configured
+file ceiling when the request budget can carry resumable chunks. Older hosts
+that read only `MaxFileBytes` stay within the request body cap.
 
 | Host route | Limit exposure | Handling |
 |---|---|---|

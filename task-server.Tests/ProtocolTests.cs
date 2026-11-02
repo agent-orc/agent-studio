@@ -38,8 +38,33 @@ public sealed class ProtocolTests
 
         Assert.NotNull(limits);
         Assert.Equal(10L * 1024 * 1024, limits!.MaxRequestBodyBytes);
-        Assert.Equal(20L * 1024 * 1024, limits.MaxFileBytes);
+        Assert.Equal(TaskServerEndpoints.RequestSafeArtifactBytes(10L * 1024 * 1024), limits.MaxFileBytes);
+        Assert.True((limits.MaxFileBytes + 2) / 3 * 4 < limits.MaxRequestBodyBytes);
+        Assert.Equal(20L * 1024 * 1024, limits.MaxChunkedFileBytes);
         Assert.Equal(30L * 1024 * 1024, limits.MaxTotalBytes);
+    }
+
+    [Fact]
+    public async Task Chunked_file_limit_is_not_advertised_when_request_budget_cannot_carry_a_chunk()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new TaskServerFactory(
+            temp.Path,
+            new Dictionary<string, string?>
+            {
+                ["TaskServer:MaxRequestBodyBytes"] = (2L * 1024 * 1024).ToString(),
+                ["TaskServer:ResultArtifactMaxFileBytes"] = (20L * 1024 * 1024).ToString(),
+            });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName,
+            TaskServerProtocol.Current.ToString());
+
+        var limits = await client.GetFromJsonAsync<ArtifactTransferLimitsResponse>(
+            "/api/v1/artifact-limits");
+
+        Assert.NotNull(limits);
+        Assert.Null(limits.MaxChunkedFileBytes);
+        Assert.Equal(TaskServerEndpoints.RequestSafeArtifactBytes(2L * 1024 * 1024), limits.MaxFileBytes);
     }
 
     [Fact]

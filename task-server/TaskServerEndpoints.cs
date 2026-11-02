@@ -94,10 +94,14 @@ public static class TaskServerEndpoints
             var options = configured.Value;
             var requestBytes = Math.Max(1, options.MaxRequestBodyBytes);
             var maxTotalBytes = Math.Max(1, options.ResultArtifactMaxTotalBytes);
+            var configuredFileBytes = Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes), maxTotalBytes);
             return Results.Ok(new ArtifactTransferLimitsResponse(
                 requestBytes,
-                Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes), maxTotalBytes),
-                maxTotalBytes));
+                Math.Min(configuredFileBytes, RequestSafeArtifactBytes(requestBytes)),
+                maxTotalBytes,
+                requestBytes >= ArtifactChunkProtocol.MaxChunkBytes * 2L
+                    ? configuredFileBytes
+                    : null));
         });
 
         api.MapGet("/runner/tasks/{taskKey}/attachments/{fileName}", async (
@@ -681,10 +685,9 @@ public static class TaskServerEndpoints
             IOptions<TaskServerOptions> configured, CancellationToken ct) =>
         {
             var options = configured.Value;
-            var reserve = Math.Min(64L * 1024, options.MaxRequestBodyBytes / 4);
-            var requestSafeBytes = Math.Max(1, (options.MaxRequestBodyBytes - reserve) / 4 * 3);
             var limit = Math.Min(
-                Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes), requestSafeBytes),
+                Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes),
+                    RequestSafeArtifactBytes(options.MaxRequestBodyBytes)),
                 Math.Max(1, options.ResultArtifactMaxTotalBytes));
             var encoded = request.ContentBase64 ?? string.Empty;
             var padding = encoded.EndsWith("==", StringComparison.Ordinal) ? 2
@@ -1439,6 +1442,13 @@ public static class TaskServerEndpoints
            ?? context.Request.Headers["X-Actor-Id"].FirstOrDefault()
            ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
            ?? "local-compatibility";
+
+    internal static long RequestSafeArtifactBytes(long requestBytes)
+    {
+        var budget = Math.Max(1, requestBytes);
+        var reserve = Math.Min(64L * 1024, budget / 4);
+        return Math.Max(1, (budget - reserve) / 4 * 3);
+    }
 
     private static bool OwnsCredentialAttempt(HttpContext context, string runId, AttemptCredentialIdentity identity)
         => context.TaskServerPrincipal() is

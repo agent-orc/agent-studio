@@ -47,6 +47,21 @@ public sealed class RemoteArtifactTransferTests
         => Assert.Equal(TimeSpan.FromSeconds(90), TaskServerClient.EffectiveRequestTimeout(240));
 
     [Fact]
+    public void Chunk_cap_allows_large_file_while_legacy_cap_stays_request_safe()
+    {
+        var limits = new ArtifactTransferLimitsResponse(
+            100_000_000, 74_000_000, 150L * 1024 * 1024, 140L * 1024 * 1024);
+        var (selected, skipped) = ArtifactTransferPolicy.Select(
+            "/results",
+            [("/results/large.bin", "large.bin", 130L * 1024 * 1024)],
+            limits);
+
+        Assert.Single(selected);
+        Assert.Empty(skipped);
+        Assert.Contains("140 MB", RemoteRunPrompt.Build("Do the work.", null, "/results", artifactLimits: limits));
+    }
+
+    [Fact]
     public async Task Durable_artifact_replay_uses_proxy_sized_chunks_and_preserves_sequence()
     {
         var bytes = new byte[5 * 1024 * 1024];

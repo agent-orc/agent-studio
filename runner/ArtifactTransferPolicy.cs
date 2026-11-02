@@ -71,12 +71,12 @@ public static class ArtifactTransferPolicy
                     "is a video excluded by the result-artifact policy"));
                 continue;
             }
-            if (file.SizeBytes > limits.MaxFileBytes)
+            if (file.SizeBytes > limits.TransferFileLimitBytes)
             {
                 skipped.Add(new ArtifactTransferIssue(
                     wirePath,
                     file.SizeBytes,
-                    $"exceeded the {FormatMb(limits.MaxFileBytes)} MB per-file result budget"));
+                    $"exceeded the {FormatMb(limits.TransferFileLimitBytes)} MB per-file result budget"));
                 continue;
             }
             if (total + file.SizeBytes > limits.MaxTotalBytes)
