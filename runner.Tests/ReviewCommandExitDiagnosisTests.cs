@@ -1,7 +1,10 @@
 using AgentRunner;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentRunner.Tests;
+
+// clock-independent: the dates are literal log text in command output fixtures and never meet "now".
 
 public sealed class ReviewCommandExitDiagnosisTests
 {
@@ -97,5 +100,116 @@ public sealed class ReviewCommandExitDiagnosisTests
         Assert.Contains(testName, evidence);
         Assert.Contains(sha, evidence);
         Assert.Contains("error CS1234: compile failed", evidence);
+    }
+    // AGT-3430 (Quality Studio, 2026-11-02): the baseline Karma run failed in
+    // stdout while stderr started with npm's version notice.
+    private const string KarmaStdout =
+        "> quality-studio@1.0.0 test\n" +
+        "> ng test --watch=false --browsers=ChromeHeadless\n" +
+        "02 11 2026 09:14:07.311:INFO [karma-server]: Karma v6.4.4 server started at http://localhost:9876/\n" +
+        "02 11 2026 09:14:07.840:FATAL [karma-server]: Socket path too long: /review/attempt/baseline-runtime-0123456789ab/tmp/karma-1/socket\n" +
+        "02 11 2026 09:14:09.902:ERROR [launcher]: ChromeHeadless failed 2 times (cannot start). Giving up.\n";
+
+    private const string NpmNoticeStderr =
+        "npm notice\n" +
+        "npm notice New minor version of npm available! 10.8.2 -> 10.9.0\n" +
+        "npm notice To update run: npm install -g npm@10.9.0\n" +
+        "npm notice\n";
+
+    [Fact]
+    public void Failure_text_quotes_the_stdout_cause_and_skips_npm_notice()
+    {
+        var text = ReviewCommandExitDiagnosis.FailureText(KarmaStdout, NpmNoticeStderr);
+
+        Assert.NotNull(text);
+        Assert.Contains("FATAL [karma-server]: Socket path too long", text, StringComparison.Ordinal);
+        Assert.Contains("ChromeHeadless failed 2 times (cannot start)", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("npm notice", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("server started", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Unrun_baseline_summary_names_the_cause_instead_of_the_npm_notice()
+    {
+        var command = new ReviewCommandDto("verify-4", "build-tests", "sh", ["-c", "npm test"]);
+
+        var summary = RemoteReviewWorkspace.UnrunBaselineSummary(
+            command, new ProcessResult(1, KarmaStdout, NpmNoticeStderr));
+
+        Assert.StartsWith(
+            "baseline verify-4 exited 1 without reporting a test result: ", summary, StringComparison.Ordinal);
+        Assert.Contains("Socket path too long", summary, StringComparison.Ordinal);
+        Assert.Contains("ChromeHeadless failed 2 times (cannot start)", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("npm notice", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Failure_text_puts_npm_wrapper_lines_behind_the_real_cause()
+    {
+        var text = ReviewCommandExitDiagnosis.FailureText(
+            "Build at: 2026-11-02\nError: Cannot find module 'karma-chrome-launcher'\n",
+            "npm warn deprecated inflight@1.0.6\nnpm error code 1\nnpm error command failed\n");
+
+        Assert.NotNull(text);
+        Assert.StartsWith("Error: Cannot find module 'karma-chrome-launcher'", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("npm warn", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Failure_text_ignores_zero_counts_and_falls_back_to_the_first_stderr_line()
+    {
+        var text = ReviewCommandExitDiagnosis.FailureText(
+            "Build succeeded.\n    0 Warning(s)\n    0 Error(s)\n",
+            "npm notice\nThe argument /review/Fixture.dll is invalid.\n");
+
+        Assert.Equal("The argument /review/Fixture.dll is invalid.", text);
+        Assert.Null(ReviewCommandExitDiagnosis.FailureText("", NpmNoticeStderr));
+    }
+
+    [Fact]
+    public void Failure_text_is_bounded_and_redacted()
+    {
+        var credential = "token=" + new string('s', 50);
+        var stdout = string.Join("\n", Enumerable.Range(1, 20).Select(index =>
+            $"error {index}: {new string('x', 400)}")) + $"\nerror: login failed with {credential}";
+
+        var text = ReviewCommandExitDiagnosis.FailureText(stdout, "");
+
+        Assert.NotNull(text);
+        Assert.Equal(3, text.Split(" | ").Length);
+        Assert.True(text.Length <= 3 * 243 + 2 * 3, $"length={text.Length}");
+        Assert.StartsWith("error 1:", text, StringComparison.Ordinal);
+
+        var redacted = ReviewCommandExitDiagnosis.FailureText($"error: login failed with {credential}", "");
+        Assert.Contains("[redacted]", redacted, StringComparison.Ordinal);
+        Assert.DoesNotContain(credential, redacted, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Output_tail_keeps_the_end_of_each_stream_within_its_limit()
+    {
+        const int limit = ReviewCommandOutputTailDto.MaximumCharacters;
+        var stdout = new string('x', limit * 3) + "\nFATAL: Socket path too long";
+
+        var tail = ReviewCommandExitDiagnosis.OutputTail(stdout, NpmNoticeStderr);
+
+        Assert.Equal(limit, tail.Stdout.Length);
+        Assert.True(tail.StdoutTruncated);
+        Assert.EndsWith("FATAL: Socket path too long", tail.Stdout, StringComparison.Ordinal);
+        Assert.Equal(NpmNoticeStderr, tail.Stderr);
+        Assert.False(tail.StderrTruncated);
+    }
+
+    [Fact]
+    public void Output_tail_redacts_secrets_like_other_report_text()
+    {
+        var credential = "NPM_TOKEN=" + new string('s', 50);
+
+        var tail = ReviewCommandExitDiagnosis.OutputTail($"publishing\n{credential}\nerror: failed", credential);
+
+        Assert.DoesNotContain(credential, tail.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain(credential, tail.Stderr, StringComparison.Ordinal);
+        Assert.Contains("[redacted]", tail.Stdout, StringComparison.Ordinal);
+        Assert.Contains("error: failed", tail.Stdout, StringComparison.Ordinal);
     }
 }

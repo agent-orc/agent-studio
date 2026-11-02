@@ -523,7 +523,8 @@ public sealed class RemoteReviewExecutor
                     verdict.Classification is
                         DeliveryFailureDiagnosis.Environment or
                         DeliveryFailureDiagnosis.Intermittent or
-                        DeliveryFailureDiagnosis.FirstOccurrence)?.Classification;
+                        DeliveryFailureDiagnosis.FirstOccurrence
+                    || ReviewCachedBaselinePolicy.IsCacheDefect(verdict.Classification))?.Classification;
                 var request = new ReviewReportRequest(
                     lease.ExecutorId,
                     lease.InstanceId,
@@ -1292,7 +1293,8 @@ public sealed class RemoteReviewExecutor
     {
         var baseline = evidence.Verdicts
             .Where(verdict => verdict.Classification is
-                "BaselineCompared" or "NewTestFailures" or ReviewFlakyTestIndex.VerdictClassification)
+                "BaselineCompared" or "NewTestFailures" or ReviewFlakyTestIndex.VerdictClassification
+                || ReviewCachedBaselinePolicy.IsCacheDefect(verdict.Classification))
             .Select(verdict => $"{verdict.Aspect}: {verdict.Summary}")
             .ToArray();
         var skipped = plan?.SkippedAspects is { Count: > 0 }
