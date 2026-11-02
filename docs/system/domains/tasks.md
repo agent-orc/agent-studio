@@ -1179,7 +1179,8 @@ Every task Markdown surface binds relative `results/*` and allowed `logs/*`
 links, plus absolute runner paths containing those folders, to the open card's
 task context. `GET /api/tasks/{id}/results/{**path}` serves nested result
 artifacts with traversal containment and type-aware responses. Self-contained
-HTML opens inline in a new tab under a response-level sandbox policy; known
+HTML renders inline under a response-level sandbox policy only when a Studio
+page frames it; opened directly in a tab it is a download (AGT-3364). Known
 preview types keep their MIME type, and unknown binary types remain
 `application/octet-stream`. Allowed text log links use the existing
 workspace-scoped task file route.

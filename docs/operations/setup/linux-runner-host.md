@@ -15,6 +15,23 @@ and the binding lease contract in
 the Runner API surface added by RM-3 (fenced lease) and RM-4 (log + artifact
 upload).
 
+## Subscription quota reporting
+
+Deploy the updated Task Server and Studio before updating coding and review
+role images on execution hosts. Both adapters in `agent-host` can claim one quota
+probe lease per provider subscription from the Task Server. It reads Claude
+`/usage` and Codex `/status` under its own service account and reports parsed
+windows only. The Task Server keeps the last reading for 600 seconds. Other
+hosts with a healthy sign-in take over when the lease expires or a probe fails.
+Gate, post, and integration role images do not need this change.
+
+An older coding or review host keeps its existing claim and execution behavior.
+It does not report quota; a mixed fleet starts reporting as soon as one updated
+host with the same sign-in is deployed. The Studio server never starts a
+provider CLI in the networked profile. If no updated healthy host reports,
+the cockpit displays the last observation time and a sign-in availability
+reason. Gemini subscription quota cannot be read from an execution host.
+
 ## What the agent host is
 
 A single self-contained .NET console process (`agent-host`) that runs on a

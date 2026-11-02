@@ -491,6 +491,9 @@ public sealed class RemoteRunnerDaemon
             new AgentRunner.SourceFacts.SourceFactsProducer(
                 _client, $"{_options.RunnerId}:{_client.RunnerInstanceId}", _log),
             _log).PollAsync(auxiliaryStop.Token);
+        var quotaPoll = !string.IsNullOrWhiteSpace(_options.AuthToken)
+            ? new HostQuotaPoller(_client, _options, _log).PollAsync(auxiliaryStop.Token)
+            : Task.CompletedTask;
         while (!shutdown.IsCancellationRequested)
         {
             idleWatchdog.RecordActiveSlots(active.Count);
@@ -1010,6 +1013,7 @@ public sealed class RemoteRunnerDaemon
         await repositoryProbePoll;
         await gitSetupPoll;
         await sourceFactsPoll;
+        await quotaPoll;
         await salvageSweep;
         try { await interactiveChat.DrainAsync(); }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
