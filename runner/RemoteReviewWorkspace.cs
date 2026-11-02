@@ -25,7 +25,8 @@ public sealed class RemoteReviewWorkspace
     private readonly ReviewLeaseDto _lease;
     private readonly Action<string> _log;
     private readonly Func<string, Task<FailureFingerprintHistoryDto?>>? _historyReader;
-    private readonly RemoteReviewAgentCommandRunner _agentCommands;
+    private readonly IReviewAgentCommandRunner _agentCommands;
+    private readonly Lock _cacheSaveLock = new();
     private readonly Func<DateTime> _utcNow;
     private readonly ISourceFactsClient? _sourceFacts;
     private string? _initialTree;
@@ -70,6 +71,16 @@ public sealed class RemoteReviewWorkspace
             HomePath,
             log);
     }
+
+    /// <summary>Test seam: agent aspects run through <paramref name="agentCommands"/>.</summary>
+    internal RemoteReviewWorkspace(
+        RunnerOptions options,
+        ReviewSubjectDto subject,
+        ReviewLeaseDto lease,
+        Action<string> log,
+        IReviewAgentCommandRunner agentCommands)
+        : this(options, subject, lease, log)
+        => _agentCommands = agentCommands;
 
     public string AttemptRoot { get; }
     public string RepositoryPath { get; }
@@ -242,6 +253,8 @@ public sealed class RemoteReviewWorkspace
         var artifacts = resume?.Artifacts?.ToList() ?? [];
         DependencyCacheSession? candidateCache = null;
         string? reviewMaterial = null;
+        IReadOnlyDictionary<string, VerifyCacheEntry> reusableVerify =
+            new Dictionary<string, VerifyCacheEntry>(StringComparer.Ordinal);
         try
         {
             // Capture the integration tip before any verification. A resumed
@@ -279,484 +292,130 @@ public sealed class RemoteReviewWorkspace
                 artifacts,
                 ct);
 
-            var reusableVerify = await ReusableVerifyResultsAsync(plannedCommands, ct);
+            reusableVerify = await ReusableVerifyResultsAsync(plannedCommands, ct);
 
-            foreach (var plannedCommand in plannedCommands)
+            // AGT-3424 (AGT-3400 PK7, option X-B): tool commands run serially
+            // first, exactly as before. Whatever stops the attempt here stops it
+            // before any agent aspect starts.
+            foreach (var plannedCommand in plannedCommands
+                         .Where(command => !ReviewCommandKinds.IsAgent(command.ExecutionKind)))
             {
                 if (CanResumeCommand(plannedCommand, commands, verdicts))
                     continue;
+                await ExecuteCommandAsync(plannedCommand, commands, artifacts, verdicts, ct);
+                await SaveCheckpointAsync();
+            }
 
-                var headBefore = await GitValueAsync("rev-parse", "HEAD", ct);
-                var treeBefore = await GitValueAsync("rev-parse", "HEAD^{tree}", ct);
-                if (!string.Equals(headBefore, _subject.ExpectedResultSha, StringComparison.OrdinalIgnoreCase))
-                    throw new ReviewInfrastructureException(
-                        "CommandSubjectMismatch",
-                        $"Step '{plannedCommand.StepId}' would run at '{headBefore}', not '{_subject.ExpectedResultSha}'.");
+            // Then the agent aspects, up to ReviewAspectParallelism at a time.
+            // Each keeps its own budget; the review material is built once and
+            // only read by them.
+            var pendingAspects = plannedCommands
+                .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                                  && !CanResumeCommand(command, commands, verdicts))
+                .ToArray();
+            if (pendingAspects.Length > 0)
+            {
+                reviewMaterial = await BuildReviewMaterialAsync(
+                    ReviewMaterialMaximumFiles,
+                    ReviewMaterialMaximumLines,
+                    ct);
+                await RunAspectsAsync(pendingAspects);
+            }
+            RestorePlanOrder(commands, plannedCommands, command => command.StepId, item => item.StepId);
+            RestorePlanOrder(verdicts, plannedCommands, command => command.Aspect, item => item.Aspect);
+        }
+        finally
+        {
+            if (candidateCache is not null)
+                foreach (var message in candidateCache.Save()) _log(message);
+        }
 
-                // AGT-2841: a ReviewInfra successor carries a command that
-                // already passed in the failed attempt instead of executing it
-                // again. Only a matching, passed result is in this map.
-                if (reusableVerify.TryGetValue(plannedCommand.StepId, out var reusedVerify))
+        // One planned command. The ledgers are parameters on purpose and shadow
+        // the attempt's: a tool command passes the attempt's ledgers, an agent
+        // aspect passes its own because other aspects run beside it.
+        async Task ExecuteCommandAsync(
+            ReviewCommandDto plannedCommand,
+            List<ReviewCommandEvidenceDto> commands,
+            List<ReviewArtifactEvidenceDto> artifacts,
+            List<ReviewVerdictDto> verdicts,
+            CancellationToken ct)
+        {
+            var headBefore = await GitValueAsync("rev-parse", "HEAD", ct);
+            var treeBefore = await GitValueAsync("rev-parse", "HEAD^{tree}", ct);
+            if (!string.Equals(headBefore, _subject.ExpectedResultSha, StringComparison.OrdinalIgnoreCase))
+                throw new ReviewInfrastructureException(
+                    "CommandSubjectMismatch",
+                    $"Step '{plannedCommand.StepId}' would run at '{headBefore}', not '{_subject.ExpectedResultSha}'.");
+
+            // AGT-2841: a ReviewInfra successor carries a command that
+            // already passed in the failed attempt instead of executing it
+            // again. Only a matching, passed result is in this map.
+            if (reusableVerify.TryGetValue(plannedCommand.StepId, out var reusedVerify))
+            {
+                await ReuseVerifyResultAsync(plannedCommand, reusedVerify, commands, artifacts, verdicts, ct);
+                return;
+            }
+            // The command executes: whatever pass an earlier attempt stored
+            // for it must not outlive a run that fails or never finishes.
+            if (!ReviewCommandKinds.IsAgent(plannedCommand.ExecutionKind))
+                ReviewVerifyResultCache.Delete(VerifyCacheRoot, VerifyCacheKey(plannedCommand), _log);
+
+            // AGT-2820: the plan froze a budget for the prompt as authored.
+            // The authoritative diff is appended here, at execution time, so
+            // the budget is re-derived against what the model actually has to
+            // read. The executed budget - never the frozen one - is what the
+            // evidence and any violation report.
+            var command = plannedCommand;
+            if (ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            {
+                var prompt = AppendReviewMaterial(
+                    command.Prompt!,
+                    reviewMaterial ??= await BuildReviewMaterialAsync(
+                        ReviewMaterialMaximumFiles,
+                        ReviewMaterialMaximumLines,
+                        ct));
+                var budget = ReviewAspectBudgetPolicy.Derive(
+                    command.CliType,
+                    command.Model,
+                    command.ThinkingLevel,
+                    ReviewAspectBudgetPolicy.MaterialCharacters(prompt));
+                command = command with
                 {
-                    await ReuseVerifyResultAsync(plannedCommand, reusedVerify, commands, artifacts, verdicts, ct);
-                    await SaveCheckpointAsync();
-                    continue;
-                }
-                // The command executes: whatever pass an earlier attempt stored
-                // for it must not outlive a run that fails or never finishes.
-                if (!ReviewCommandKinds.IsAgent(plannedCommand.ExecutionKind))
-                    ReviewVerifyResultCache.Delete(VerifyCacheRoot, VerifyCacheKey(plannedCommand), _log);
+                    Prompt = prompt,
+                    TimeoutSeconds = Math.Max(plannedCommand.TimeoutSeconds, budget.Seconds),
+                };
+                _log(
+                    $"review-aspect-budget step={command.StepId} {budget.Describe()} " +
+                    $"planned={plannedCommand.TimeoutSeconds}s effective={command.TimeoutSeconds}s");
+            }
 
-                // AGT-2820: the plan froze a budget for the prompt as authored.
-                // The authoritative diff is appended here, at execution time, so
-                // the budget is re-derived against what the model actually has to
-                // read. The executed budget - never the frozen one - is what the
-                // evidence and any violation report.
-                var command = plannedCommand;
-                if (ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            if (ComposeScenarioDiskAdmission.IsComposeScenario(command))
+            {
+                var disk = ComposeScenarioDiskGate(command.StepId);
+                if (!disk.Admit)
                 {
-                    var prompt = AppendReviewMaterial(
-                        command.Prompt!,
-                        reviewMaterial ??= await BuildReviewMaterialAsync(
-                            ReviewMaterialMaximumFiles,
-                            ReviewMaterialMaximumLines,
-                            ct));
-                    var budget = ReviewAspectBudgetPolicy.Derive(
-                        command.CliType,
-                        command.Model,
-                        command.ThinkingLevel,
-                        ReviewAspectBudgetPolicy.MaterialCharacters(prompt));
-                    command = command with
-                    {
-                        Prompt = prompt,
-                        TimeoutSeconds = Math.Max(plannedCommand.TimeoutSeconds, budget.Seconds),
-                    };
-                    _log(
-                        $"review-aspect-budget step={command.StepId} {budget.Describe()} " +
-                        $"planned={plannedCommand.TimeoutSeconds}s effective={command.TimeoutSeconds}s");
-                }
-
-                if (ComposeScenarioDiskAdmission.IsComposeScenario(command))
-                {
-                    var disk = ComposeScenarioDiskGate(command.StepId);
-                    if (!disk.Admit)
-                    {
-                        SaveCaches(candidateCache);
-                        throw await InfrastructureFailureAsync(
-                            ComposeScenarioDiskAdmission.DiskLowClassification,
-                            disk.RefusalSummary(command.StepId, CommandLine(command) ?? command.FileName),
-                            commands,
-                            artifacts,
-                            ct);
-                    }
-                }
-
-                var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
-                    ? await _agentCommands.RunAsync(command, ct)
-                    : await RunCommandAsync(command, RepositoryPath, ct);
-                if (AspectCommandTimedOut(command, execution))
-                {
-                    // AGT-2749 addendum (2026-09-07 19:20): a review aspect call
-                    // killed on its own timeout is a budget problem, not a
-                    // broken toolchain. Before this check it fell into
-                    // AgentCommandUnavailable() below and was classified
-                    // ToolUnavailable - exit=124 on every card whose CLI budget
-                    // was too small, most visibly Claude aspect calls under the
-                    // old flat 60s budget.
-                    commands.Add(await AddCommandEvidenceAsync(
-                        command.StepId,
-                        command.Aspect,
-                        command.FileName,
-                        command.Arguments,
-                        headBefore,
-                        treeBefore,
-                        execution.Process,
-                        execution.StartedAt,
-                        execution.FinishedAt,
-                        execution.Signal,
-                        command.TimeoutSeconds,
-                        "verification",
-                        "candidate",
-                        baselineSha: null,
-                        comparison: null,
-                        retryPerformed: false,
-                        dependencyCacheHit: false,
-                        dependencyCache: null,
-                        artifacts,
-                        ct,
-                        command,
-                        execution.AgentUsage));
                     SaveCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
-                        "AspectTimeout",
-                        $"Review aspect '{command.StepId}' violated review-command budget on " +
-                        $"model '{command.Model ?? "unspecified"}'; it was killed on its timeout, " +
-                        $"not on its toolchain, and says nothing about the reviewed change: " +
-                        $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                        $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
+                        ComposeScenarioDiskAdmission.DiskLowClassification,
+                        disk.RefusalSummary(command.StepId, CommandLine(command) ?? command.FileName),
                         commands,
                         artifacts,
                         ct);
                 }
+            }
 
-                if (execution.Signal == "stalled")
-                {
-                    commands.Add(await AddCommandEvidenceAsync(
-                        command.StepId,
-                        command.Aspect,
-                        command.FileName,
-                        command.Arguments,
-                        headBefore,
-                        treeBefore,
-                        execution.Process,
-                        execution.StartedAt,
-                        execution.FinishedAt,
-                        execution.Signal,
-                        command.TimeoutSeconds,
-                        "verification",
-                        "candidate",
-                        baselineSha: null,
-                        comparison: null,
-                        retryPerformed: false,
-                        dependencyCacheHit: false,
-                        dependencyCache: null,
-                        artifacts,
-                        ct,
-                        command,
-                        execution.AgentUsage));
-                    SaveCaches(candidateCache);
-                    throw await InfrastructureFailureAsync(
-                        "CommandStalled",
-                        $"Review command '{command.StepId}' produced no output for its whole silence " +
-                        $"window and was killed: {CommandLine(command)}; " +
-                        $"{FailureDetail(execution.Process)}; " +
-                        $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
-                        commands,
-                        artifacts,
-                        ct);
-                }
-
-                if (StalledWithoutCpuProgress(execution))
-                {
-                    commands.Add(await AddCommandEvidenceAsync(
-                        command.StepId,
-                        command.Aspect,
-                        command.FileName,
-                        command.Arguments,
-                        headBefore,
-                        treeBefore,
-                        execution.Process,
-                        execution.StartedAt,
-                        execution.FinishedAt,
-                        execution.Signal,
-                        command.TimeoutSeconds,
-                        "verification",
-                        "candidate",
-                        baselineSha: null,
-                        comparison: null,
-                        retryPerformed: false,
-                        dependencyCacheHit: false,
-                        dependencyCache: null,
-                        artifacts,
-                        ct,
-                        command,
-                        execution.AgentUsage));
-                    SaveCaches(candidateCache);
-                    throw await InfrastructureFailureAsync(
-                        NoCpuProgressClassification,
-                        NoProgressSummary("Review command", command.StepId, CommandLine(command), execution),
-                        commands,
-                        artifacts,
-                        ct);
-                }
-
-                if (MissingToolchain(execution.Process)
-                    || AgentCommandUnavailable(command, execution.Process))
-                {
-                    commands.Add(await AddCommandEvidenceAsync(
-                        command.StepId,
-                        command.Aspect,
-                        command.FileName,
-                        command.Arguments,
-                        headBefore,
-                        treeBefore,
-                        execution.Process,
-                        execution.StartedAt,
-                        execution.FinishedAt,
-                        execution.Signal,
-                        command.TimeoutSeconds,
-                        "verification",
-                        "candidate",
-                        baselineSha: null,
-                        comparison: null,
-                        retryPerformed: false,
-                        dependencyCacheHit: false,
-                        dependencyCache: null,
-                        artifacts,
-                        ct,
-                        command,
-                        execution.AgentUsage));
-                    SaveCaches(candidateCache);
-                    throw await InfrastructureFailureAsync(
-                        "ToolUnavailable",
-                        $"Review command '{command.StepId}' could not use its declared toolchain: " +
-                        $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                        $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
-                        commands,
-                        artifacts,
-                        ct);
-                }
-
-                if (TmpMountTornDownDuringBuild(execution.Process))
-                {
-                    commands.Add(await AddCommandEvidenceAsync(
-                        command.StepId,
-                        command.Aspect,
-                        command.FileName,
-                        command.Arguments,
-                        headBefore,
-                        treeBefore,
-                        execution.Process,
-                        execution.StartedAt,
-                        execution.FinishedAt,
-                        execution.Signal,
-                        command.TimeoutSeconds,
-                        "verification",
-                        "candidate",
-                        baselineSha: null,
-                        comparison: null,
-                        retryPerformed: false,
-                        dependencyCacheHit: false,
-                        dependencyCache: null,
-                        artifacts,
-                        ct,
-                        command,
-                        execution.AgentUsage));
-                    SaveCaches(candidateCache);
-                    throw await InfrastructureFailureAsync(
-                        ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
-                        $"Review command '{command.StepId}' failed with a torn-down-/tmp signature " +
-                        "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure: " +
-                        $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                        $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
-                        commands,
-                        artifacts,
-                        ct);
-                }
-
-                var retryPerformed = false;
-                if (ReviewCommandKinds.IsAgent(command.ExecutionKind)
-                    && execution.Process.Success
-                    && string.Equals(
-                        ParseVerdict(command, execution.Process).Classification,
-                        "review:unparseable",
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    _log($"review aspect '{command.StepId}' returned an unparseable verdict; retrying that aspect once");
-                    execution = await _agentCommands.RunAsync(command, ct);
-                    retryPerformed = true;
-                    if (!execution.Process.Success || execution.Signal is not null)
-                    {
-                        throw new ReviewInfrastructureException(
-                            execution.Signal == "timeout" ? "AspectTimeout" : "ToolUnavailable",
-                            $"Review aspect '{command.StepId}' failed while retrying an unparseable verdict: "
-                            + $"exit={execution.Process.ExitCode}; signal={execution.Signal ?? "none"}.");
-                    }
-                }
-
-                BaselineComparison? comparison = null;
-                CommandExecution? cleanRepeat = null;
-                if (!ReviewCommandKinds.IsAgent(command.ExecutionKind) && !execution.Process.Success)
-                {
-                    comparison = await CompareToBaselineAsync(
-                        command,
-                        execution.Process,
-                        candidateCache,
-                        commands,
-                        artifacts,
-                        ct);
-                    if (execution.Signal != "timeout"
-                        && (execution.Signal is not null || execution.Process.ExitCode == 127
-                            || execution.Process.ExitCode >= 128))
-                    {
-                        commands.Add(await AddCommandEvidenceAsync(
-                            command.StepId, command.Aspect, command.FileName, command.Arguments,
-                            headBefore, treeBefore, execution.Process, execution.StartedAt,
-                            execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
-                            "verification", "candidate", comparison.BaselineSha, comparison,
-                            retryPerformed: false, dependencyCacheHit: false, dependencyCache: null,
-                            artifacts, ct, command));
-                        SaveCaches(candidateCache);
-                        throw await InfrastructureFailureAsync(
-                            execution.Signal == "timeout" || execution.Process.ExitCode == 124
-                                ? "CommandTimeout" : "CommandInterrupted",
-                            $"Review command '{command.StepId}' did not complete normally: " +
-                            $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                            $"signal={execution.Signal ?? "none"}.",
-                            commands, artifacts, ct);
-                    }
-                    if (comparison is not null && !comparison.BlockedByIsolatedBuild)
-                    {
-                        var reviewFlakyTests = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
-                        retryPerformed = true;
-                        // The clean repeat records its own clean-repeat evidence;
-                        // the candidate evidence below keeps the first run, so a
-                        // failure the repeat cleared stays visible to diagnosis.
-                        var failedTests = ParsedTestFailures(execution.Process);
-                        var repeatCommand = ReviewTargetedRerunPolicy.Select(
-                            command, failedTests, execution.Process.StdOut + "\n" + execution.Process.StdErr,
-                            execution.Signal);
-                        _log($"review clean repeat step={command.StepId} scope=" +
-                             (ReferenceEquals(repeatCommand, command) ? "full" : "failed-classes"));
-                        cleanRepeat = await RunCleanRepeatAsync(
-                            command, repeatCommand, failedTests, commands, artifacts, ct);
-                        if (MissingToolchain(cleanRepeat.Process))
-                        {
-                            commands.Add(await AddCommandEvidenceAsync(
-                                command.StepId,
-                                command.Aspect,
-                                command.FileName,
-                                command.Arguments,
-                                headBefore,
-                                treeBefore,
-                                execution.Process,
-                                execution.StartedAt,
-                                execution.FinishedAt,
-                                execution.Signal,
-                                command.TimeoutSeconds,
-                                "verification",
-                                "candidate",
-                                comparison.BaselineSha,
-                                comparison: null,
-                                retryPerformed: true,
-                                dependencyCacheHit: false,
-                                dependencyCache: null,
-                                artifacts,
-                                ct));
-                            SaveCaches(candidateCache);
-                            throw await InfrastructureFailureAsync(
-                                "ToolUnavailable",
-                                $"Review retry '{command.StepId}' lost its declared toolchain; " +
-                                $"exit={cleanRepeat.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, cleanRepeat, command.Model)}.",
-                                commands,
-                                artifacts,
-                                ct);
-                        }
-                        if (cleanRepeat.Signal is not null || cleanRepeat.Process.ExitCode is 124 or < 0 or >= 128
-                            || ((execution.Signal is not null || execution.Process.ExitCode is 124 or < 0)
-                                && !cleanRepeat.Process.Success))
-                        {
-                            commands.Add(await AddCommandEvidenceAsync(
-                                command.StepId, command.Aspect, command.FileName, command.Arguments,
-                                headBefore, treeBefore, execution.Process, execution.StartedAt,
-                                execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
-                                "verification", "candidate", comparison.BaselineSha, comparison,
-                                retryPerformed: true, dependencyCacheHit: false, dependencyCache: null,
-                                artifacts, ct, command));
-                            SaveCaches(candidateCache);
-                            throw await InfrastructureFailureAsync(
-                                cleanRepeat.Signal == "timeout" || cleanRepeat.Process.ExitCode == 124
-                                    || execution.Signal == "timeout" || execution.Process.ExitCode == 124
-                                    ? "CommandTimeout" : "CommandInterrupted",
-                                $"Review retry '{command.StepId}' did not complete normally: " +
-                                $"{CommandLine(command)}; exit={cleanRepeat.Process.ExitCode}; " +
-                                $"signal={cleanRepeat.Signal ?? "none"}.",
-                                commands, artifacts, ct);
-                        }
-                        if (StalledWithoutCpuProgress(cleanRepeat))
-                        {
-                            commands.Add(await AddCommandEvidenceAsync(
-                                command.StepId,
-                                command.Aspect,
-                                command.FileName,
-                                command.Arguments,
-                                headBefore,
-                                treeBefore,
-                                execution.Process,
-                                execution.StartedAt,
-                                execution.FinishedAt,
-                                execution.Signal,
-                                command.TimeoutSeconds,
-                                "verification",
-                                "candidate",
-                                comparison.BaselineSha,
-                                comparison: null,
-                                retryPerformed: true,
-                                dependencyCacheHit: false,
-                                dependencyCache: null,
-                                artifacts,
-                                ct));
-                            SaveCaches(candidateCache);
-                            throw await InfrastructureFailureAsync(
-                                NoCpuProgressClassification,
-                                NoProgressSummary(
-                                    "Review retry",
-                                    command.StepId,
-                                    CommandLine(command),
-                                    cleanRepeat),
-                                commands,
-                                artifacts,
-                                ct);
-                        }
-                        if (TmpMountTornDownDuringBuild(cleanRepeat.Process))
-                        {
-                            commands.Add(await AddCommandEvidenceAsync(
-                                command.StepId,
-                                command.Aspect,
-                                command.FileName,
-                                command.Arguments,
-                                headBefore,
-                                treeBefore,
-                                execution.Process,
-                                execution.StartedAt,
-                                execution.FinishedAt,
-                                execution.Signal,
-                                command.TimeoutSeconds,
-                                "verification",
-                                "candidate",
-                                comparison.BaselineSha,
-                                comparison: null,
-                                retryPerformed: true,
-                                dependencyCacheHit: false,
-                                dependencyCache: null,
-                                artifacts,
-                                ct));
-                            SaveCaches(candidateCache);
-                            throw await InfrastructureFailureAsync(
-                                ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
-                                $"Review retry '{command.StepId}' failed with a torn-down-/tmp signature " +
-                                "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure; " +
-                                $"exit={cleanRepeat.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, cleanRepeat, command.Model)}.",
-                                commands,
-                                artifacts,
-                                ct);
-                        }
-                        comparison = comparison.Reclassify(
-                            SubjectFailures(command, cleanRepeat.Process),
-                            reviewFlakyTests,
-                            repeatPassed: cleanRepeat.Process.Success && cleanRepeat.Signal is null);
-                    }
-                    var requiredComparison = RequireBaselineComparison(comparison, command);
-                    comparison = requiredComparison.BlockedByIsolatedBuild
-                        ? requiredComparison
-                        : requiredComparison with
-                        {
-                            Diagnosis = IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
-                                ? new DeliveryFailureDiagnosisResult(
-                                    IntegrationBranchDefectClassification, 1,
-                                    [$"build {command.StepId} was already red on the integration branch"])
-                                : await DiagnoseFailureAsync(
-                                    command, requiredComparison, execution, cleanRepeat, ct),
-                        };
-                    if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
-                        && candidateCache is not null)
-                    {
-                        foreach (var message in candidateCache.DiscardIncludingWorkspace("diagnosed-environment"))
-                            _log(message);
-                        candidateCache = null;
-                    }
-                }
-
+            var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                ? await _agentCommands.RunAsync(command, ct)
+                : await RunCommandAsync(command, RepositoryPath, ct);
+            if (AspectCommandTimedOut(command, execution))
+            {
+                // AGT-2749 addendum (2026-09-07 19:20): a review aspect call
+                // killed on its own timeout is a budget problem, not a
+                // broken toolchain. Before this check it fell into
+                // AgentCommandUnavailable() below and was classified
+                // ToolUnavailable - exit=124 on every card whose CLI budget
+                // was too small, most visibly Claude aspect calls under the
+                // old flat 60s budget.
                 commands.Add(await AddCommandEvidenceAsync(
                     command.StepId,
                     command.Aspect,
@@ -771,35 +430,484 @@ public sealed class RemoteReviewWorkspace
                     command.TimeoutSeconds,
                     "verification",
                     "candidate",
-                    comparison?.BaselineSha,
-                    comparison,
-                    retryPerformed,
+                    baselineSha: null,
+                    comparison: null,
+                    retryPerformed: false,
                     dependencyCacheHit: false,
                     dependencyCache: null,
                     artifacts,
                     ct,
                     command,
                     execution.AgentUsage));
-                var verdict = comparison is null
-                    ? ParseVerdict(command, execution.Process)
-                    : BaselineVerdict(command, comparison);
-                verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
-                    verdict,
-                    ReviewCommandKinds.IsAgent(command.ExecutionKind)));
-                if (comparison is null
-                    && !ReviewCommandKinds.IsAgent(command.ExecutionKind)
-                    && execution.Process.Success
-                    && execution.Signal is null
-                    && string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
-                    await StoreVerifyResultAsync(command, headBefore, treeBefore, execution.Process, ct);
-                await SaveCheckpointAsync();
-                PurgeStepTemp(command.StepId);
+                SaveCaches(candidateCache);
+                throw await InfrastructureFailureAsync(
+                    "AspectTimeout",
+                    $"Review aspect '{command.StepId}' violated review-command budget on " +
+                    $"model '{command.Model ?? "unspecified"}'; it was killed on its timeout, " +
+                    $"not on its toolchain, and says nothing about the reviewed change: " +
+                    $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
+                    $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
+                    commands,
+                    artifacts,
+                    ct);
             }
+
+            if (execution.Signal == "stalled")
+            {
+                commands.Add(await AddCommandEvidenceAsync(
+                    command.StepId,
+                    command.Aspect,
+                    command.FileName,
+                    command.Arguments,
+                    headBefore,
+                    treeBefore,
+                    execution.Process,
+                    execution.StartedAt,
+                    execution.FinishedAt,
+                    execution.Signal,
+                    command.TimeoutSeconds,
+                    "verification",
+                    "candidate",
+                    baselineSha: null,
+                    comparison: null,
+                    retryPerformed: false,
+                    dependencyCacheHit: false,
+                    dependencyCache: null,
+                    artifacts,
+                    ct,
+                    command,
+                    execution.AgentUsage));
+                SaveCaches(candidateCache);
+                throw await InfrastructureFailureAsync(
+                    "CommandStalled",
+                    $"Review command '{command.StepId}' produced no output for its whole silence " +
+                    $"window and was killed: {CommandLine(command)}; " +
+                    $"{FailureDetail(execution.Process)}; " +
+                    $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
+                    commands,
+                    artifacts,
+                    ct);
+            }
+
+            if (StalledWithoutCpuProgress(execution))
+            {
+                commands.Add(await AddCommandEvidenceAsync(
+                    command.StepId,
+                    command.Aspect,
+                    command.FileName,
+                    command.Arguments,
+                    headBefore,
+                    treeBefore,
+                    execution.Process,
+                    execution.StartedAt,
+                    execution.FinishedAt,
+                    execution.Signal,
+                    command.TimeoutSeconds,
+                    "verification",
+                    "candidate",
+                    baselineSha: null,
+                    comparison: null,
+                    retryPerformed: false,
+                    dependencyCacheHit: false,
+                    dependencyCache: null,
+                    artifacts,
+                    ct,
+                    command,
+                    execution.AgentUsage));
+                SaveCaches(candidateCache);
+                throw await InfrastructureFailureAsync(
+                    NoCpuProgressClassification,
+                    NoProgressSummary("Review command", command.StepId, CommandLine(command), execution),
+                    commands,
+                    artifacts,
+                    ct);
+            }
+
+            if (MissingToolchain(execution.Process)
+                || AgentCommandUnavailable(command, execution.Process))
+            {
+                commands.Add(await AddCommandEvidenceAsync(
+                    command.StepId,
+                    command.Aspect,
+                    command.FileName,
+                    command.Arguments,
+                    headBefore,
+                    treeBefore,
+                    execution.Process,
+                    execution.StartedAt,
+                    execution.FinishedAt,
+                    execution.Signal,
+                    command.TimeoutSeconds,
+                    "verification",
+                    "candidate",
+                    baselineSha: null,
+                    comparison: null,
+                    retryPerformed: false,
+                    dependencyCacheHit: false,
+                    dependencyCache: null,
+                    artifacts,
+                    ct,
+                    command,
+                    execution.AgentUsage));
+                SaveCaches(candidateCache);
+                throw await InfrastructureFailureAsync(
+                    "ToolUnavailable",
+                    $"Review command '{command.StepId}' could not use its declared toolchain: " +
+                    $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
+                    $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
+                    commands,
+                    artifacts,
+                    ct);
+            }
+
+            if (TmpMountTornDownDuringBuild(execution.Process))
+            {
+                commands.Add(await AddCommandEvidenceAsync(
+                    command.StepId,
+                    command.Aspect,
+                    command.FileName,
+                    command.Arguments,
+                    headBefore,
+                    treeBefore,
+                    execution.Process,
+                    execution.StartedAt,
+                    execution.FinishedAt,
+                    execution.Signal,
+                    command.TimeoutSeconds,
+                    "verification",
+                    "candidate",
+                    baselineSha: null,
+                    comparison: null,
+                    retryPerformed: false,
+                    dependencyCacheHit: false,
+                    dependencyCache: null,
+                    artifacts,
+                    ct,
+                    command,
+                    execution.AgentUsage));
+                SaveCaches(candidateCache);
+                throw await InfrastructureFailureAsync(
+                    ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
+                    $"Review command '{command.StepId}' failed with a torn-down-/tmp signature " +
+                    "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure: " +
+                    $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
+                    $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
+                    commands,
+                    artifacts,
+                    ct);
+            }
+
+            var retryPerformed = false;
+            if (ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                && execution.Process.Success
+                && string.Equals(
+                    ParseVerdict(command, execution.Process).Classification,
+                    "review:unparseable",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _log($"review aspect '{command.StepId}' returned an unparseable verdict; retrying that aspect once");
+                execution = await _agentCommands.RunAsync(command, ct);
+                retryPerformed = true;
+                if (!execution.Process.Success || execution.Signal is not null)
+                {
+                    throw new ReviewInfrastructureException(
+                        execution.Signal == "timeout" ? "AspectTimeout" : "ToolUnavailable",
+                        $"Review aspect '{command.StepId}' failed while retrying an unparseable verdict: "
+                        + $"exit={execution.Process.ExitCode}; signal={execution.Signal ?? "none"}.");
+                }
+            }
+
+            BaselineComparison? comparison = null;
+            CommandExecution? cleanRepeat = null;
+            if (!ReviewCommandKinds.IsAgent(command.ExecutionKind) && !execution.Process.Success)
+            {
+                comparison = await CompareToBaselineAsync(
+                    command,
+                    execution.Process,
+                    candidateCache,
+                    commands,
+                    artifacts,
+                    ct);
+                if (execution.Signal != "timeout"
+                    && (execution.Signal is not null || execution.Process.ExitCode == 127
+                        || execution.Process.ExitCode >= 128))
+                {
+                    commands.Add(await AddCommandEvidenceAsync(
+                        command.StepId, command.Aspect, command.FileName, command.Arguments,
+                        headBefore, treeBefore, execution.Process, execution.StartedAt,
+                        execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
+                        "verification", "candidate", comparison.BaselineSha, comparison,
+                        retryPerformed: false, dependencyCacheHit: false, dependencyCache: null,
+                        artifacts, ct, command));
+                    SaveCaches(candidateCache);
+                    throw await InfrastructureFailureAsync(
+                        execution.Signal == "timeout" || execution.Process.ExitCode == 124
+                            ? "CommandTimeout" : "CommandInterrupted",
+                        $"Review command '{command.StepId}' did not complete normally: " +
+                        $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
+                        $"signal={execution.Signal ?? "none"}.",
+                        commands, artifacts, ct);
+                }
+                if (comparison is not null && !comparison.BlockedByIsolatedBuild)
+                {
+                    var reviewFlakyTests = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
+                    retryPerformed = true;
+                    // The clean repeat records its own clean-repeat evidence;
+                    // the candidate evidence below keeps the first run, so a
+                    // failure the repeat cleared stays visible to diagnosis.
+                    var failedTests = ParsedTestFailures(execution.Process);
+                    var repeatCommand = ReviewTargetedRerunPolicy.Select(
+                        command, failedTests, execution.Process.StdOut + "\n" + execution.Process.StdErr,
+                        execution.Signal);
+                    _log($"review clean repeat step={command.StepId} scope=" +
+                         (ReferenceEquals(repeatCommand, command) ? "full" : "failed-classes"));
+                    cleanRepeat = await RunCleanRepeatAsync(
+                        command, repeatCommand, failedTests, commands, artifacts, ct);
+                    if (MissingToolchain(cleanRepeat.Process))
+                    {
+                        commands.Add(await AddCommandEvidenceAsync(
+                            command.StepId,
+                            command.Aspect,
+                            command.FileName,
+                            command.Arguments,
+                            headBefore,
+                            treeBefore,
+                            execution.Process,
+                            execution.StartedAt,
+                            execution.FinishedAt,
+                            execution.Signal,
+                            command.TimeoutSeconds,
+                            "verification",
+                            "candidate",
+                            comparison.BaselineSha,
+                            comparison: null,
+                            retryPerformed: true,
+                            dependencyCacheHit: false,
+                            dependencyCache: null,
+                            artifacts,
+                            ct));
+                        SaveCaches(candidateCache);
+                        throw await InfrastructureFailureAsync(
+                            "ToolUnavailable",
+                            $"Review retry '{command.StepId}' lost its declared toolchain; " +
+                            $"exit={cleanRepeat.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, cleanRepeat, command.Model)}.",
+                            commands,
+                            artifacts,
+                            ct);
+                    }
+                    if (cleanRepeat.Signal is not null || cleanRepeat.Process.ExitCode is 124 or < 0 or >= 128
+                        || ((execution.Signal is not null || execution.Process.ExitCode is 124 or < 0)
+                            && !cleanRepeat.Process.Success))
+                    {
+                        commands.Add(await AddCommandEvidenceAsync(
+                            command.StepId, command.Aspect, command.FileName, command.Arguments,
+                            headBefore, treeBefore, execution.Process, execution.StartedAt,
+                            execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
+                            "verification", "candidate", comparison.BaselineSha, comparison,
+                            retryPerformed: true, dependencyCacheHit: false, dependencyCache: null,
+                            artifacts, ct, command));
+                        SaveCaches(candidateCache);
+                        throw await InfrastructureFailureAsync(
+                            cleanRepeat.Signal == "timeout" || cleanRepeat.Process.ExitCode == 124
+                                || execution.Signal == "timeout" || execution.Process.ExitCode == 124
+                                ? "CommandTimeout" : "CommandInterrupted",
+                            $"Review retry '{command.StepId}' did not complete normally: " +
+                            $"{CommandLine(command)}; exit={cleanRepeat.Process.ExitCode}; " +
+                            $"signal={cleanRepeat.Signal ?? "none"}.",
+                            commands, artifacts, ct);
+                    }
+                    if (StalledWithoutCpuProgress(cleanRepeat))
+                    {
+                        commands.Add(await AddCommandEvidenceAsync(
+                            command.StepId,
+                            command.Aspect,
+                            command.FileName,
+                            command.Arguments,
+                            headBefore,
+                            treeBefore,
+                            execution.Process,
+                            execution.StartedAt,
+                            execution.FinishedAt,
+                            execution.Signal,
+                            command.TimeoutSeconds,
+                            "verification",
+                            "candidate",
+                            comparison.BaselineSha,
+                            comparison: null,
+                            retryPerformed: true,
+                            dependencyCacheHit: false,
+                            dependencyCache: null,
+                            artifacts,
+                            ct));
+                        SaveCaches(candidateCache);
+                        throw await InfrastructureFailureAsync(
+                            NoCpuProgressClassification,
+                            NoProgressSummary(
+                                "Review retry",
+                                command.StepId,
+                                CommandLine(command),
+                                cleanRepeat),
+                            commands,
+                            artifacts,
+                            ct);
+                    }
+                    if (TmpMountTornDownDuringBuild(cleanRepeat.Process))
+                    {
+                        commands.Add(await AddCommandEvidenceAsync(
+                            command.StepId,
+                            command.Aspect,
+                            command.FileName,
+                            command.Arguments,
+                            headBefore,
+                            treeBefore,
+                            execution.Process,
+                            execution.StartedAt,
+                            execution.FinishedAt,
+                            execution.Signal,
+                            command.TimeoutSeconds,
+                            "verification",
+                            "candidate",
+                            comparison.BaselineSha,
+                            comparison: null,
+                            retryPerformed: true,
+                            dependencyCacheHit: false,
+                            dependencyCache: null,
+                            artifacts,
+                            ct));
+                        SaveCaches(candidateCache);
+                        throw await InfrastructureFailureAsync(
+                            ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
+                            $"Review retry '{command.StepId}' failed with a torn-down-/tmp signature " +
+                            "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure; " +
+                            $"exit={cleanRepeat.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, cleanRepeat, command.Model)}.",
+                            commands,
+                            artifacts,
+                            ct);
+                    }
+                    comparison = comparison.Reclassify(
+                        SubjectFailures(command, cleanRepeat.Process),
+                        reviewFlakyTests,
+                        repeatPassed: cleanRepeat.Process.Success && cleanRepeat.Signal is null);
+                }
+                var requiredComparison = RequireBaselineComparison(comparison, command);
+                comparison = requiredComparison.BlockedByIsolatedBuild
+                    ? requiredComparison
+                    : requiredComparison with
+                    {
+                        Diagnosis = IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
+                            ? new DeliveryFailureDiagnosisResult(
+                                IntegrationBranchDefectClassification, 1,
+                                [$"build {command.StepId} was already red on the integration branch"])
+                            : await DiagnoseFailureAsync(
+                                command, requiredComparison, execution, cleanRepeat, ct),
+                    };
+                if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
+                    && candidateCache is not null)
+                {
+                    foreach (var message in candidateCache.DiscardIncludingWorkspace("diagnosed-environment"))
+                        _log(message);
+                    candidateCache = null;
+                }
+            }
+
+            commands.Add(await AddCommandEvidenceAsync(
+                command.StepId,
+                command.Aspect,
+                command.FileName,
+                command.Arguments,
+                headBefore,
+                treeBefore,
+                execution.Process,
+                execution.StartedAt,
+                execution.FinishedAt,
+                execution.Signal,
+                command.TimeoutSeconds,
+                "verification",
+                "candidate",
+                comparison?.BaselineSha,
+                comparison,
+                retryPerformed,
+                dependencyCacheHit: false,
+                dependencyCache: null,
+                artifacts,
+                ct,
+                command,
+                execution.AgentUsage));
+            var verdict = comparison is null
+                ? ParseVerdict(command, execution.Process)
+                : BaselineVerdict(command, comparison);
+            verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
+                verdict,
+                ReviewCommandKinds.IsAgent(command.ExecutionKind)));
+            if (comparison is null
+                && !ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                && execution.Process.Success
+                && execution.Signal is null
+                && string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
+                await StoreVerifyResultAsync(command, headBefore, treeBefore, execution.Process, ct);
+            // Purging the attempt temp directory under running aspects would
+            // delete their files; the aspect phase purges once when it ends.
+            if (!ReviewCommandKinds.IsAgent(command.ExecutionKind))
+                PurgeStepTemp(command.StepId);
         }
-        finally
+
+        async Task RunAspectsAsync(IReadOnlyList<ReviewCommandDto> aspects)
         {
-            if (candidateCache is not null)
-                foreach (var message in candidateCache.Save()) _log(message);
+            using var ledgerGate = new SemaphoreSlim(1, 1);
+            try
+            {
+                await ReviewAspectFanOut.RunAsync(aspects, _options.ReviewAspectParallelism, RunAspectAsync, ct);
+            }
+            catch (ReviewInfrastructureException exception) when (exception.Evidence is not null)
+            {
+                // The failing aspect reported its own evidence only. The attempt
+                // reports the tool commands and every aspect that ran, as the
+                // serial loop did.
+                RestorePlanOrder(commands, plannedCommands, command => command.StepId, item => item.StepId);
+                throw new ReviewInfrastructureException(
+                    exception.Classification,
+                    exception.Message,
+                    exception.InnerException,
+                    exception.Evidence with
+                    {
+                        Commands = commands.ToArray(),
+                        Artifacts = artifacts.ToArray(),
+                    });
+            }
+            PurgeStepTemp("agent-aspects");
+
+            async Task RunAspectAsync(ReviewCommandDto aspect, CancellationToken aspectCt)
+            {
+                var aspectCommands = new List<ReviewCommandEvidenceDto>();
+                var aspectArtifacts = new List<ReviewArtifactEvidenceDto>();
+                var aspectVerdicts = new List<ReviewVerdictDto>();
+                var completed = false;
+                try
+                {
+                    await ExecuteCommandAsync(aspect, aspectCommands, aspectArtifacts, aspectVerdicts, aspectCt);
+                    completed = true;
+                }
+                finally
+                {
+                    // The attempt's ledgers change only under the gate, which also
+                    // serialises the checkpoint writes. A result that arrives after
+                    // a sibling stopped the attempt is evidence, not a checkpoint:
+                    // the serial loop would not have reached it.
+                    await ledgerGate.WaitAsync(CancellationToken.None);
+                    try
+                    {
+                        commands.AddRange(aspectCommands);
+                        artifacts.AddRange(aspectArtifacts);
+                        verdicts.AddRange(aspectVerdicts);
+                        if (completed && !aspectCt.IsCancellationRequested)
+                            await SaveCheckpointAsync();
+                    }
+                    finally
+                    {
+                        ledgerGate.Release();
+                    }
+                }
+            }
         }
 
         async Task SaveCheckpointAsync()
@@ -990,6 +1098,32 @@ public sealed class RemoteReviewWorkspace
     private sealed record ScopedRuntimePlan(
         IReadOnlyList<ReviewCommandDto> Commands,
         IReadOnlyList<ReviewVerdictDto> CarriedVerdicts);
+
+    /// <summary>
+    /// Puts the agent-aspect entries of a ledger back in plan order. Aspects
+    /// finish in any order, and a resumed attempt holds the aspects it already
+    /// completed ahead of the ones it reran; every other entry keeps its place.
+    /// </summary>
+    internal static void RestorePlanOrder<T>(
+        List<T> ledger,
+        IReadOnlyList<ReviewCommandDto> plan,
+        Func<ReviewCommandDto, string> planKey,
+        Func<T, string> key)
+    {
+        var planIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < plan.Count; index++)
+            if (ReviewCommandKinds.IsAgent(plan[index].ExecutionKind))
+                planIndex.TryAdd(planKey(plan[index]), index);
+        var positions = Enumerable.Range(0, ledger.Count)
+            .Where(position => planIndex.ContainsKey(key(ledger[position])))
+            .ToArray();
+        var ordered = positions
+            .Select(position => ledger[position])
+            .OrderBy(item => planIndex[key(item)])
+            .ToArray();
+        for (var index = 0; index < positions.Length; index++)
+            ledger[positions[index]] = ordered[index];
+    }
 
     private static bool CanResumeCommand(
         ReviewCommandDto command,
@@ -2357,8 +2491,10 @@ public sealed class RemoteReviewWorkspace
 
     private void SaveCaches(params DependencyCacheSession?[] sessions)
     {
-        foreach (var session in sessions.Where(item => item is not null).Cast<DependencyCacheSession>())
-            foreach (var message in session.Save()) _log(message);
+        // Two aspects that fail at the same time both save the candidate cache.
+        lock (_cacheSaveLock)
+            foreach (var session in sessions.Where(item => item is not null).Cast<DependencyCacheSession>())
+                foreach (var message in session.Save()) _log(message);
     }
 
     /// <summary>

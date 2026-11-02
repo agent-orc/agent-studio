@@ -131,6 +131,15 @@ public sealed class RunnerOptions
     /// </summary>
     public int ReviewNoCpuProgressSeconds { get; init; } = 900;
 
+    /// <summary>
+    /// How many agent review aspects one Remote Review attempt runs at the same
+    /// time (<c>RUNNER_REVIEW_ASPECT_PARALLELISM</c>, default 4). <c>1</c> keeps
+    /// the serial aspect loop; values above 4 are capped at 4 (AGT-3400 PK7).
+    /// The aspects share the attempt's one review slot, so this does not admit
+    /// more attempts on the host.
+    /// </summary>
+    public int ReviewAspectParallelism { get; init; } = ReviewAspectFanOut.MaximumParallelism;
+
     /// <summary>Durable daemon slot records and detached-worker logs.</summary>
     public string StateDir { get; init; } = "";
 
@@ -560,6 +569,12 @@ public sealed class RunnerOptions
                                          && noProgressValue >= 0
                 ? noProgressValue
                 : EnvIntAllowingZero("RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS", 900),
+            ReviewAspectParallelism = ReviewAspectFanOut.Normalize(
+                overrides.TryGetValue("review-aspect-parallelism", out var aspectParallelism)
+                && int.TryParse(aspectParallelism, out var aspectParallelismValue)
+                && aspectParallelismValue > 0
+                    ? aspectParallelismValue
+                    : EnvInt("RUNNER_REVIEW_ASPECT_PARALLELISM", ReviewAspectFanOut.MaximumParallelism)),
             StateDir = stateDir,
             RequiredCapabilities = Val(
                     "required-capabilities",

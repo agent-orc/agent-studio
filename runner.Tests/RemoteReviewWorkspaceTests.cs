@@ -405,6 +405,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal("needs work Detail: summary=again", verdict.Summary);
     }
 
+    // Serial aspects (parallelism 1): the run stops right after the second
+    // checkpoint, so no other aspect was started. The parallel crash path is in
+    // RemoteReviewAspectParallelismTests.
     [Fact]
     public async Task Restart_after_two_of_four_graded_aspects_resumes_without_rerunning_them()
     {
@@ -439,7 +442,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             commands,
             24120,
             integrationRef: "refs/heads/main",
-            codexCliBin: fakeCodex);
+            codexCliBin: fakeCodex,
+            reviewAspectParallelism: 1);
         await workspace.PrepareAsync(null!, default);
 
         ReviewExecutionCheckpoint? saved = null;
@@ -2590,6 +2594,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         int commandSilenceWatchdogSeconds = 600,
         int reviewNoCpuProgressSeconds = 900,
         int composeScenarioMinFreePercent = ComposeScenarioDiskAdmission.DefaultMinFreePercent,
+        int reviewAspectParallelism = ReviewAspectFanOut.MaximumParallelism,
         Action<string>? log = null,
         Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null,
         AgentRunner.SourceFacts.ISourceFactsClient? sourceFacts = null)
@@ -2645,6 +2650,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             CommandSilenceWatchdogSeconds = commandSilenceWatchdogSeconds,
             ReviewNoCpuProgressSeconds = reviewNoCpuProgressSeconds,
             ComposeScenarioMinFreePercent = composeScenarioMinFreePercent,
+            ReviewAspectParallelism = reviewAspectParallelism,
         };
         return (new RemoteReviewWorkspace(options, subject, lease, log ?? (_ => { }),
             historyReader ?? (_ => Task.FromResult<FailureFingerprintHistoryDto?>(null)),
