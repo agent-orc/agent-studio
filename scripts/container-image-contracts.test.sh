@@ -41,14 +41,16 @@ if grep -Eq 'docker\.sock|podman\.sock|^VOLUME' "$repo_root/deploy/work-containe
 fi
 for version in CODEX_CLI_VERSION CLAUDE_CLI_VERSION; do
     expected="$(grep -E "^ARG $version=" "$repo_root/runner/Dockerfile")"
-    grep -Fx "$expected" "$repo_root/deploy/work-container/Dockerfile" > /dev/null || {
-        echo "deploy/work-container/Dockerfile $version differs from runner/Dockerfile" >&2
-        exit 1
-    }
+    for image in backend/Dockerfile deploy/work-container/Dockerfile; do
+        grep -Fx "$expected" "$repo_root/$image" > /dev/null || {
+            echo "$image $version differs from runner/Dockerfile" >&2
+            exit 1
+        }
+    done
 done
 
-grep -F 'ARG CODEX_CLI_VERSION=0.154.0' "$repo_root/runner/Dockerfile" > /dev/null
-grep -F 'ARG CLAUDE_CLI_VERSION=2.1.269' "$repo_root/runner/Dockerfile" > /dev/null
+grep -F 'ARG CODEX_CLI_VERSION=0.166.0' "$repo_root/runner/Dockerfile" > /dev/null
+grep -F 'ARG CLAUDE_CLI_VERSION=2.1.305' "$repo_root/runner/Dockerfile" > /dev/null
 grep -F '"@openai/codex@${CODEX_CLI_VERSION}"' "$repo_root/runner/Dockerfile" > /dev/null
 grep -F '"@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}"' "$repo_root/runner/Dockerfile" > /dev/null
 

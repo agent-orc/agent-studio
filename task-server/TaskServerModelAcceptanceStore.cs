@@ -110,6 +110,20 @@ public sealed partial class TaskServerStore
         var (provider, model, isPrimary) = await ReadEffectiveModelRouteAsync(
             connection, transaction, taskId, ct);
         if (string.IsNullOrWhiteSpace(model)) return null;
+        if (provider == "codex" && model is CodexCliRelease.Gpt61Sol or CodexCliRelease.Gpt61Terra)
+        {
+            var installed = Convert.ToString(await ScalarAsync(connection, """
+                SELECT capability.version FROM runner_capabilities capability JOIN runners runner
+                  ON runner.id = capability.runner_id
+                 WHERE capability.runner_id = $runner
+                   AND capability.advertised_instance_id = runner.instance_id
+                   AND capability.capability_key = 'cli-execution:codex';
+                """, ct, transaction, ("$runner", runnerId)), CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(installed)
+                && InstalledCliVersionPolicy.IsBelow(installed, CodexCliRelease.Gpt61MinimumVersion))
+                return $"This CLI version does not offer {model}: codex-cli {installed} " +
+                       $"requires {CodexCliRelease.Gpt61MinimumVersion} or newer.";
+        }
         var key = CapabilityProtocol.ModelAcceptance(provider, model);
         var now = UtcNow;
         var protocolAdvertised = Convert.ToInt64(await ScalarAsync(connection, """

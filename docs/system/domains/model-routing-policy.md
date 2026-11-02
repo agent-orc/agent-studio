@@ -116,10 +116,15 @@ current input/output list price from the TokenEconomy cost API
 GPT-6 runs comes from the same dated TokenEconomy price snapshots. Cached
 input is priced once at the cache-read rate (AGT-2882).
 
-GPT-6 Sol and GPT-6 Luna require codex-cli `0.155.0`. GPT-6.1 Sol's registry
-version marker is codex-cli `0.155.0`, the version in the TokenEconomy 0.3.7
-probe. That probe received HTTP 400, so the marker does not guarantee execution;
-only live CLI discovery can offer the model. Claude Opus 5.5 uses
+GPT-6 Sol and GPT-6 Luna require codex-cli `0.155.0`. GPT-6.1 Sol and Terra
+require codex-cli `0.166.0`, the first version verified with real ChatGPT Pro
+requests on the execution host. Codex CLI `0.155.0` rejected both with HTTP 400
+and misleading account wording. A host below the verified floor reports that its
+CLI version does not offer either model. At or above the floor, live discovery
+and a credential-bound host acceptance probe still decide availability.
+GPT-6.1 Terra stays outside the Studio model registry until AGT-3405 brings
+TokenEconomy 0.3.9 pricing; the host acceptance probe still checks it.
+Claude Opus 5.5 uses
 Studio's `high` default effort, while [Anthropic's API default is `medium`](https://platform.claude.com/docs/en/models/opus-5-5/overview).
 Its CLI floor is claude-code `2.1.281`. TokenEconomy `0.3.7` records Claude
 Sonnet 5.5 as `unsupported` because the probed CLI did not offer it. Studio

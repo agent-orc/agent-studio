@@ -305,8 +305,11 @@ public sealed class CodexModelDiscovery
     internal static CliModelCatalog WithKnownButUnavailableModels(CliModelCatalog cat, string? cliVersion)
     {
         cliVersion = SemanticCliVersion.FromCliOutput(cliVersion);
+        // Terra is probed on hosts but enters Studio only with AGT-3405's price.
+        var pricedModels = cat.Models.Where(model => model.Id != AgentStudio.TaskServer.Contracts.CodexCliRelease.Gpt61Terra
+            || ModelMetadataRegistry.Find(model.Id) is not null).ToArray();
         var models = ModelMetadataRegistry.AppendUnavailableRegistryEntries(
-                cat.Models,
+                pricedModels,
                 vendor: "openai",
                 cliType: CliTypes.Codex,
                 availabilityNote: ModelMetadataRegistry.UnavailableOnInstalledCliNote(CliLabel, cliVersion));
@@ -314,7 +317,8 @@ public sealed class CodexModelDiscovery
         {
             Models = models.Select(model =>
             {
-                var minimum = ModelMetadataRegistry.Find(model.Id)?.MinimumCliVersion;
+                var minimum = AgentStudio.TaskServer.Contracts.CodexCliRelease.MinimumVersionForModel(model.Id)
+                    ?? ModelMetadataRegistry.Find(model.Id)?.MinimumCliVersion;
                 var belowFloor = !string.IsNullOrWhiteSpace(minimum)
                     && SemanticCliVersion.TryCompare(cliVersion, minimum, out var comparison)
                     && comparison < 0;

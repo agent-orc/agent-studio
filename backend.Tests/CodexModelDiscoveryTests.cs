@@ -142,7 +142,7 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void Gpt61Sol_UsesRecordedProbeVersionAsFloor_ButRequiresLiveDiscovery()
+    public void Gpt61Sol_RequiresVerifiedCliVersionAndLiveDiscovery()
     {
         const string output = """
         {"models":[{"slug":"gpt-6.1-sol","display_name":"GPT-6.1-Sol","visibility":"list","priority":1,
@@ -153,15 +153,37 @@ public class CodexModelDiscoveryTests : IDisposable
         var old = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = parsed }, "0.154.0");
         Assert.False(Assert.Single(old.Models, m => m.Id == ModelIds.Gpt61Sol).Available);
 
-        var absent = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = [] }, "0.159.0");
+        var absent = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = [] }, "0.166.0");
         Assert.False(Assert.Single(absent.Models, m => m.Id == ModelIds.Gpt61Sol).Available);
 
-        var current = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = parsed }, "0.159.0");
+        var belowFloor = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = parsed }, "0.165.0");
+        Assert.False(Assert.Single(belowFloor.Models, m => m.Id == ModelIds.Gpt61Sol).Available);
+
+        var current = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = parsed }, "0.166.0");
         var sol = Assert.Single(current.Models, m => m.Id == ModelIds.Gpt61Sol);
         Assert.True(sol.Available);
         Assert.Equal(["minimal", "low", "medium", "high", "xhigh"], sol.ThinkingLevels);
         Assert.Equal("xhigh", sol.DefaultThinkingLevel);
         Assert.Equal(1_050_000, ModelMetadataRegistry.ContextWindowFor(sol.Id));
+        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+    }
+
+    [Fact]
+    public void Gpt61Terra_stays_out_of_Studio_catalogue_until_priced()
+    {
+        const string output = """
+        {"models":[{"slug":"gpt-6.1-terra","display_name":"GPT-6.1 Terra","visibility":"list","priority":2,
+          "supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"}],"default_reasoning_level":"medium"}]}
+        """;
+        var parsed = CodexModelDiscovery.ParseDebugModelsJson(output);
+        var old = CodexModelDiscovery.WithKnownButUnavailableModels(
+            new CliModelCatalog { Models = parsed }, "0.165.0");
+        Assert.DoesNotContain(old.Models, m => m.Id == AgentStudio.TaskServer.Contracts.CodexCliRelease.Gpt61Terra);
+
+        var current = CodexModelDiscovery.WithKnownButUnavailableModels(
+            new CliModelCatalog { Models = parsed }, "0.166.0");
+        Assert.DoesNotContain(current.Models, m => m.Id == AgentStudio.TaskServer.Contracts.CodexCliRelease.Gpt61Terra);
+        Assert.Null(ModelMetadataRegistry.Find(AgentStudio.TaskServer.Contracts.CodexCliRelease.Gpt61Terra));
         Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 

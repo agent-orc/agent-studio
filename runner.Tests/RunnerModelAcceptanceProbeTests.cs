@@ -7,6 +7,31 @@ namespace AgentRunner.Tests;
 public sealed class RunnerModelAcceptanceProbeTests
 {
     [Fact]
+    public async Task Both_gpt61_models_are_probed_once_and_advertised_ready_for_a_login()
+    {
+        var calls = new List<string>();
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((_, model, _) =>
+        {
+            calls.Add(model);
+            return Task.FromResult(new ProcessResult(0,
+                "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}", ""));
+        }, _ => "login-a");
+        (string Provider, string Model)[] candidates =
+        [
+            ("codex", CodexCliRelease.Gpt61Sol),
+            ("codex", CodexCliRelease.Gpt61Terra),
+        ];
+
+        await probe.RefreshAsync(candidates, CancellationToken.None);
+        await probe.RefreshAsync(candidates, CancellationToken.None);
+
+        Assert.Equal([CodexCliRelease.Gpt61Sol, CodexCliRelease.Gpt61Terra], calls);
+        Assert.All(probe.Snapshot("codex", candidates.Select(item => item.Model).ToArray()),
+            capability => Assert.Equal("ready", capability.Status));
+    }
+
+    [Fact]
     public async Task Rejection_is_cached_for_one_credential_generation_and_refreshed_after_login()
     {
         var generation = "login-a";

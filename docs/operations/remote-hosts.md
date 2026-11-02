@@ -135,7 +135,7 @@ On Ubuntu, install the base tools and the agent host dependencies:
 sudo apt-get update
 sudo apt-get install -y git curl build-essential
 sudo npm install --global --prefix /usr/local \
-  @anthropic-ai/claude-code@2.1.269 @openai/codex@0.154.0
+  @anthropic-ai/claude-code@2.1.305 @openai/codex@0.166.0
 npx playwright install --with-deps chromium
 ```
 
@@ -155,6 +155,26 @@ The helper can install only the pinned Codex and Claude packages, probes version
 login status, and models in staging, switches atomically, and restores the old
 prefix if activation fails. Success and failure are host events. Drift produces
 one feed alarm after 24 hours.
+
+For the Codex CLI `0.166.0` release, keep Claude Code at `2.1.305`:
+
+1. On `agent-runner-01`, deploy the updated Task Server target and host
+   hardening assets, then use **Update CLIs**. The managed action drains both
+   `agent-runner.service` and `agent-runner-review.service` before activating
+   `0.166.0` and restarting the units. Active attempts finish during the drain.
+2. On KORI, publish the new `runner/Dockerfile` image for each distributed
+   review container. Drain its review claims and wait for active attempts to
+   finish before replacing the container. Recreating a busy review container
+   interrupts the attempts inside it.
+3. Publish the new `deploy/work-container/Dockerfile` image and promote its
+   immutable digest through the work container image manifest. Existing
+   per-attempt containers keep their old digest and finish; new attempts use
+   the promoted digest. Roll the `backend/Dockerfile` image where the monolith
+   runs local Codex work or review.
+
+Both GPT-6.1 models use cached, bounded host probes on credential changes and
+periodic refresh; the probe does not run per card. A CLI below `0.166.0` advertises the models as
+unavailable with a version explanation without sending provider requests.
 
 ## Host release versus the Stable release
 
@@ -210,13 +230,13 @@ aspects received no diff, every larger delivery drew a code-quality "no unified
 diff" concern, and the drift was found only by reading the host release symlink.
 
 Root SSH with
-`/usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269` is an emergency
+`/usr/local/sbin/agent-runner-deploy update-clis 0.166.0 2.1.305` is an emergency
 fallback only. Drain first, verify both role rows have zero active slots, and
 retain the `agent-runner-deploy` journal entry as incident evidence. Do not run
 an unpinned global npm update on a managed host. If the helper is unavailable
 during an incident, the 2026-09-12 fallback is a root SSH session followed by
-the exact pinned `npm install --global @openai/codex@0.154.0
-@anthropic-ai/claude-code@2.1.269`, explicit version checks, and both service
+the exact pinned `npm install --global @openai/codex@0.166.0
+@anthropic-ai/claude-code@2.1.305`, explicit version checks, and both service
 restarts. That path has no staged rollback and must be recorded as an incident.
 
 Provision Claude authentication in the wizard, or afterward with **Sign in

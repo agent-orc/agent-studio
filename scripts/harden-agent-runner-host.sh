@@ -138,7 +138,7 @@ grep -Fq '/usr/local/sbin/agent-runner-deploy ""' <<<"$sudo_list" \
   || die "deploy helper is missing from the effective sudo policy"
 grep -Fq '/usr/local/sbin/agent-runner-deploy restart-review' <<<"$sudo_list" \
   || die "sanctioned Review replacement is missing from the effective sudo policy"
-grep -Fq '/usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269' <<<"$sudo_list" \
+grep -Fq '/usr/local/sbin/agent-runner-deploy update-clis 0.166.0 2.1.305' <<<"$sudo_list" \
   || die "pinned CLI update is missing from the effective sudo policy"
 grep -Fq '/usr/local/sbin/agent-runner-deploy chown-results' <<<"$sudo_list" \
   || die "bounded result ownership repair is missing from the effective sudo policy"

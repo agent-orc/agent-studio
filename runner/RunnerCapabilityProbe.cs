@@ -50,7 +50,19 @@ internal static class RunnerCapabilityProbe
                     && RunnerModelAcceptanceProbe.IsProbeableModelId(route.Model))
             .Distinct()
             .ToArray();
-        return routed.Length > 0 ? routed : BuiltInModelCandidates(options);
+        var baseline = routed.Length > 0 ? routed : BuiltInModelCandidates(options);
+        // Include these two in cached host probes before routing switches to
+        // them. Old CLIs cannot serve them, so skip the paid calls.
+        var codex = CodingCliBinaries(options).FirstOrDefault(item => item.CliType == CliSelection.CodexCli);
+        var installation = codex.Binary is null ? null : InspectCli(codex.Binary);
+        if (installation is null || !CodexCliRelease.OffersGpt61(installation.Version))
+            return baseline.Where(route => route.Provider != CliSelection.CodexCli
+                || route.Model is not (CodexCliRelease.Gpt61Sol or CodexCliRelease.Gpt61Terra)).ToArray();
+        return baseline.Concat(new[]
+        {
+            (CliSelection.CodexCli, CodexCliRelease.Gpt61Sol),
+            (CliSelection.CodexCli, CodexCliRelease.Gpt61Terra),
+        }).Distinct().ToArray();
     }
 
     private static IReadOnlyList<(string Provider, string Model)> BuiltInModelCandidates(RunnerOptions options)
@@ -550,6 +562,17 @@ internal static class RunnerCapabilityProbe
                              .Where(candidate => candidate.Provider == cliType)
                              .Select(candidate => candidate.Model).ToArray()))
                 capabilities.Add(modelCapability);
+            if (cliType == CliSelection.CodexCli && installation is not null)
+            {
+                foreach (var model in new[] { CodexCliRelease.Gpt61Sol, CodexCliRelease.Gpt61Terra })
+                {
+                    if (CodexCliRelease.OffersGpt61(installation.Version)) continue;
+                    capabilities.Add(new AdvertisedCapabilityDto(
+                        CapabilityProtocol.ModelAcceptance(cliType, model), "model-acceptance", "unavailable",
+                        Identity: $"{cliType}/{model}",
+                        Detail: $"This CLI version does not offer {model}: codex-cli {installation.Version} requires {CodexCliRelease.Gpt61MinimumVersion} or newer."));
+                }
+            }
         }
     }
 
