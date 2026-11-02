@@ -1138,6 +1138,7 @@ builder.Services.AddSingleton<ProjectIntegrationViewService>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchIndexes>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
 builder.Services.AddSingleton<ProjectSettingsService>();
+builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
 builder.Services.AddSingleton<AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService>();

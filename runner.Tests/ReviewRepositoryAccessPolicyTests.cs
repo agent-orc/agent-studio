@@ -39,6 +39,37 @@ public sealed class ReviewRepositoryAccessPolicyTests : IDisposable
     public void A_local_path_has_no_repository_read_key(string? url)
         => Assert.Null(ReviewRepositoryAccessPolicy.ReadCapability(url));
 
+    // AGT-3408: projectSetting, GitHub reports private (null = no adopted installation lists it), effective.
+    [Theory]
+    [InlineData(null, null, "public")]
+    [InlineData("public", null, "public")]
+    [InlineData("private", null, "private")]
+    [InlineData("PRIVATE ", null, "private")]
+    [InlineData("bogus", null, "public")]
+    [InlineData(null, true, "private")]
+    [InlineData("public", true, "private")]
+    [InlineData("private", true, "private")]
+    [InlineData(null, false, "public")]
+    [InlineData("public", false, "public")]
+    [InlineData("private", false, "private")]
+    public void Effective_visibility_matrix(string? projectSetting, bool? reportedPrivate, string expected)
+        => Assert.Equal(expected, ReviewRepositoryAccessPolicy.EffectiveVisibility(projectSetting, reportedPrivate));
+
+    // AGT-3408: sealedPrivate, current setting, GitHub reports private, the retry's visibility.
+    [Theory]
+    [InlineData(false, null, null, false)]
+    [InlineData(true, null, null, true)]
+    [InlineData(false, "private", null, true)]
+    [InlineData(true, "public", null, false)]
+    [InlineData(false, null, true, true)]
+    [InlineData(false, "public", true, true)]
+    [InlineData(true, null, false, false)]
+    [InlineData(true, "private", false, true)]
+    public void A_retry_takes_the_current_visibility(
+        bool sealedPrivate, string? currentSetting, bool? reportedPrivate, bool expected)
+        => Assert.Equal(expected,
+            ReviewRepositoryAccessPolicy.CurrentPrivateRepository(sealedPrivate, currentSetting, reportedPrivate));
+
     public static TheoryData<bool, bool, bool> ClaimMatrix => new()
     {
         // privateRepository, executorHoldsKey, claimable
