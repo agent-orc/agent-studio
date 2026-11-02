@@ -51,4 +51,17 @@ describe('GateSlotBoardComponent', () => {
       .toContain('slot 2 is kept for short gates');
     fixture.destroy();
   });
+
+  it('ignores a response without slot data', async () => {
+    const fixture = TestBed.createComponent(GateSlotBoardComponent);
+    fixture.componentRef.setInput('projectName', 'ai-patterns');
+    fixture.detectChanges();
+
+    http.expectOne('/api/system/gate-slots').flush([]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="gate-slot-board"]')).toBeNull();
+    fixture.destroy();
+  });
 });

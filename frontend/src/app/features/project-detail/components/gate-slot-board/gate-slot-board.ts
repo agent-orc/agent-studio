@@ -64,7 +64,10 @@ export class GateSlotBoardComponent implements OnDestroy {
 
   private refresh(): void {
     this.http.get<GateSlotBoard>('/api/system/gate-slots').subscribe({
-      next: board => this.board.set(board),
+      next: board => {
+        if (board && typeof board.total === 'number' && typeof board.rule === 'string'
+            && Array.isArray(board.slots) && Array.isArray(board.waiting)) this.board.set(board);
+      },
       error: () => { /* additive signal: keep the last known board */ },
     });
   }
