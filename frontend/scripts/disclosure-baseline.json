@@ -25,9 +25,14 @@
     "src/app/features/task-detail/components/parked-blocker/parked-blocker.component.html",
     "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.html",
     "src/app/features/task-detail/components/protocol-pane/protocol-verdict-banner/protocol-verdict-banner.component.html",
-    "src/app/features/usage-cockpit/components/usage-slot-chip/usage-slot-chip.html"
+    "src/app/features/usage-cockpit/components/usage-slot-chip/usage-slot-chip.html",
+    "src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html"
   ],
   "documented": {
+    "src/app/features/shell/components/account-control/account-control.html": {
+      "kind": "popup-trigger",
+      "reason": "The account control opens a text-only overlay menu for sign-out; it does not expand content in the titlebar."
+    },
     "src/app/components/cli-model-selector/cli-model-selector.component.html": {
       "kind": "popup-trigger",
       "reason": "Model picker trigger. The list opens as an overlay popover anchored to the control; the value chip is the affordance."

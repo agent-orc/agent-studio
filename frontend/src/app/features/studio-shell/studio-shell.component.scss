@@ -1,23 +1,9 @@
 @use '../../../styles/mixins' as m;
 @use '../../../styles/lane-tone';
 
-// =========================================================================
-// Studio shell — Agent Software Studio (VS-Code-inspired)
-//
-// Design tokens (--studio-*, --severity-*, --lane-*, --diff-*, --elevation-*)
-// live in `src/styles/_tokens-primitives.scss` (Tier 1, raw palette + shadow
-// scale) and `src/styles/_tokens-semantic.scss` (Tier 2, purpose aliases +
-// `[data-studio-theme='light']` overrides). Both files are loaded globally
-// via `styles.scss` so EVERY component reads from `var(--studio-*)` directly.
-//
-// See `docs/quality/frontend/audits/scss-quality.md` for the Tier-1 / Tier-2 contract and
-// the enforced stylelint rules.
-// =========================================================================
-
 .studio {
   display: grid;
-  // The header owns its rows: 44 + 40 px, 48 + 48 px on touch, 48 px on phone.
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   // Single-column track, but explicit minmax(0, 1fr) so the column does
   // NOT grow to the intrinsic min-content of its children. Without
   // this, the implicit `auto` single-column expanded to the
@@ -67,8 +53,7 @@
 // Titlebar
 // -------------------------------------------------------------------------
 .studio-titlebar {
-  // Row geometry, surface and hairline belong to <app-usage-cockpit-header>
-  // (HUC-S4); this block only styles the projected navigation controls.
+  // Navigation geometry belongs to the projected header.
   user-select: none;
 
   &__brand {
@@ -177,7 +162,8 @@
   &__actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--studio-spacing-1);
+    min-width: 0;
   }
 
   &__iconbtn {
@@ -329,14 +315,8 @@
   align-items: center;
   gap: 6px;
 }
-// F23: project picker dropdown content moved to the shared <app-menu>
-// component. The `.studio-titlebar__picker-menu` / `__picker-item` blocks
-// previously here are dead — the picker now renders through <app-menu>'s
-// styles in src/app/components/menu/menu.component.scss.
 
-// Auto-pickup toggle next to the project picker. The dot lights up
-// (brand-orange) when auto is enabled. Click cycles auto ⇄ paused via
-// the parent's onToggleAuto handler.
+// Auto-pickup toggle next to the project picker.
 .studio-auto-toggle {
   display: inline-flex;
   align-items: center;
@@ -2204,4 +2184,14 @@ app-workspace-deployment-dashboard { flex: 1; min-height: 0; }
 .studio-titlebar__stall-count {
   color: var(--studio-danger, #e74c3c);
   font-variant-numeric: tabular-nums;
+}
+@media (max-width: 720px) {
+  .studio-titlebar__actions [data-testid='studio-titlebar-settings'] {
+    width: var(--studio-target-coarse-min);
+    min-height: var(--studio-target-coarse-min);
+    justify-content: center;
+    padding-inline: 0;
+    background: transparent;
+  }
+  .studio-titlebar__actions [data-testid='studio-titlebar-settings'] span { display: none; }
 }

@@ -316,7 +316,7 @@ test.describe('Execution Hosts settings section', () => {
   });
 
   test('rail + overview expose the Execution Hosts section', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toBeVisible();
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toContainText('Environment');
@@ -379,7 +379,7 @@ test.describe('Execution Hosts settings section', () => {
       expect(fits.whiteSpace).toBe('nowrap');
       expect(fits.top).toBeGreaterThanOrEqual(fits.barTop - 1);
       expect(fits.bottom).toBeLessThanOrEqual(fits.barBottom + 1);
-      for (const id of ['status-bar-running', 'status-bar-usage', 'status-bar-settings']) {
+      for (const id of ['status-bar-running', 'footer-usage-cost', 'studio-titlebar-settings']) {
         const item = bar.getByTestId(id);
         await expect(item).toHaveCSS('white-space', 'nowrap');
       }
@@ -627,7 +627,7 @@ test.describe('Execution Hosts settings section', () => {
   });
 
   test('section lists one compact table row per host; summary reconciles to the rows (R3)', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await dismissDevErrorDialog(page);
     await page.getByTestId('workspace-settings-rail-remote-hosts').click();
 

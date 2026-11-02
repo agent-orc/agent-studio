@@ -14,7 +14,7 @@ test('captures light-theme screenshot of Settings Workspaces section', async ({ 
   await page.goto('/');
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(400);
-  await page.getByTestId('studio-ab-settings').click();
+  await page.getByTestId('studio-titlebar-settings').click();
   await page.getByTestId('workspace-settings-rail-workspaces').click({ timeout: 10_000 });
   await expect(page.getByTestId('settings-workspaces')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(
@@ -35,7 +35,7 @@ test('captures dark-theme screenshot of Settings Workspaces section', async ({ p
   await page.goto('/');
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(400);
-  await page.getByTestId('studio-ab-settings').click();
+  await page.getByTestId('studio-titlebar-settings').click();
   await page.getByTestId('workspace-settings-rail-workspaces').click({ timeout: 10_000 });
   await expect(page.getByTestId('settings-workspaces')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(

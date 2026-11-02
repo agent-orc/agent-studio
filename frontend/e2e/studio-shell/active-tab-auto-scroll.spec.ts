@@ -119,7 +119,7 @@ test.describe('studio-shell · active tab remains visible in the scrolling strip
     );
     await resetScrollCalls(page);
 
-    await page.getByTestId('studio-ab-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
 
     const active = page.getByTestId('studio-tab-workspace-settings');
     await expect(active).toHaveAttribute('aria-selected', 'true');

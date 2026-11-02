@@ -1,13 +1,7 @@
 <div class="harness" [style.width.px]="container" data-testid="harness-frame">
-  <app-usage-cockpit-header data-testid="studio-titlebar"
-                            [snapshot]="snapshot()"
-                            [selectedCliId]="selected()"
-                            [defaultCliId]="defaultCli"
+  <app-studio-navigation-header data-testid="studio-titlebar"
                             [navItems]="navItems"
-                            [now]="now"
-                            [openDetail]="openDetail()"
-                            (navSelect)="onNav($event)"
-                            (usageSelect)="onUsage($event)">
+                            (navSelect)="onNav($event)">
     <span class="nav-crumb" data-nav-inline-from="desktop">Demo workspace</span>
     <span class="nav-sep" data-nav-inline-from="desktop">/</span>
     <button type="button" class="nav-control" data-testid="nav-project" data-nav-inline-from="tablet"
@@ -19,7 +13,7 @@
             (click)="onNav('chat')">Project Chat</button>
     <button type="button" class="nav-control" data-testid="nav-theme" data-nav-inline-from="desktop"
             (click)="onNav('theme')">Theme</button>
-  </app-usage-cockpit-header>
+  </app-studio-navigation-header>
   <output class="harness__action" data-testid="harness-last-action">{{ lastAction() }}</output>
   <button type="button" data-testid="harness-load-large" (click)="setScenario('large')">Load large usage</button>
 </div>

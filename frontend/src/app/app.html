@@ -19,34 +19,22 @@
         projected into studio-shell's activity-bar "Filters" slot.
       -->
       <div class="app-shell" data-testid="app-shell">
-      <app-studio-shell data-testid="studio-shell-root"
+      <app-studio-shell #studioShell data-testid="studio-shell-root"
                         [knownProjectNames]="projectNames()"
                         [projectWatchPaths]="watchPaths()"
                         [filterBadgeCount]="filterBadgeCount()"
                         (projectDeleted)="loadWatchPaths()"
                         (chatToggle)="toggleOrchestratorChat()"
-                        (openUsageSheet)="toggleCliAdmin()"
                         (openCliAdmin)="toggleCliAdmin()"
                         (openWorkspaceScreenshots)="toggleWorkspaceScreenshots()"
                         (openOrchFeed)="toggleOrchFeed()"
                         (openOrchSettings)="openOrchestratorSettings()"
+                        (toggleSettings)="toggleWorkspaceSettings()"
+                        (defaultCliChange)="onDefaultCliChange($event)"
+                        (defaultModelChange)="onDefaultModelChange($event)"
                         (toggleAuto)="onToggleAuto($event)">
-        <app-status-bar studioStatusbar
-          [projectNames]="projectNames()"
-          [usageOpen]="cliAdminOpen()"
-          [orchestratorOpen]="orchSideSheet.open()" [orchestratorActiveChatCount]="orchSideSheet.activeChatCount()"
-          [feedOpen]="studioTabState.activeTab()?.kind === 'feed'"
-          [settingsOpen]="workspaceSettingsOpen()"
-          [showSignOut]="auth.networkedAuthenticated()"
-          [signedInLabel]="auth.status()?.user?.displayName ?? ''"
-          (toggleUsage)="toggleCliAdmin()"
-          (toggleOrchestrator)="toggleOrchestratorChat()"
-          (toggleFeed)="openWorkspaceFeed()"
-          (toggleSettings)="toggleWorkspaceSettings()"
-          (signOut)="auth.logout().subscribe()"
-          (openCliAdmin)="openCliAdmin()"
-          (defaultCliChange)="onDefaultCliChange($event)"
-          (defaultModelChange)="onDefaultModelChange($event)" />
+        <app-status-bar studioStatusbar [projectNames]="projectNames()"
+          (openUsageDetail)="studioShell.headerCockpit.onUsage($event)" />
         <!-- Orchestrator rail lives inside studio-shell now (right-edge
              column of studio-body) so the titlebar + statusbar + activity
              bar all wrap around it. Previously sat as a sibling of
@@ -411,6 +399,8 @@
           (toggleAuto)="onToggleAuto($event)"
           (openShell)="openProjectShell($event)" />
         <div class="header__actions">
+          <app-task-defaults-control (cliChange)="onDefaultCliChange($event)"
+                                     (modelChange)="onDefaultModelChange($event)" />
           @if (gitStateAgeLabel(); as age) {
             <span class="git-state-stamp"
                   data-testid="git-state-stamp"
@@ -464,6 +454,9 @@
               (itemClick)="onDevtoolsMenuItemClick($event)"
               (closeRequest)="devToolsMenuOpen.set(false)" />
           </div>
+          <button type="button" class="header-btn header__settings" data-testid="studio-titlebar-settings"
+                  (click)="toggleWorkspaceSettings()">Settings</button>
+          <app-account-control />
         </div>
       </header>
 
@@ -650,22 +643,7 @@
           (openSettings)="openOrchestratorSettings()" />
       </div>
 
-      <app-status-bar
-        [projectNames]="projectNames()"
-        [usageOpen]="cliAdminOpen()"
-        [orchestratorOpen]="orchSideSheet.open()" [orchestratorActiveChatCount]="orchSideSheet.activeChatCount()"
-        [feedOpen]="studioTabState.activeTab()?.kind === 'feed'"
-        [settingsOpen]="workspaceSettingsOpen()"
-        [showSignOut]="auth.networkedAuthenticated()"
-        [signedInLabel]="auth.status()?.user?.displayName ?? ''"
-        (toggleUsage)="toggleCliAdmin()"
-        (toggleOrchestrator)="toggleOrchestratorChat()"
-        (toggleFeed)="openWorkspaceFeed()"
-        (toggleSettings)="toggleWorkspaceSettings()"
-        (signOut)="auth.logout().subscribe()"
-        (openCliAdmin)="openCliAdmin()"
-        (defaultCliChange)="onDefaultCliChange($event)"
-        (defaultModelChange)="onDefaultModelChange($event)" />
+      <app-status-bar-usage-host [projectNames]="projectNames()" />
 
       @defer (when projectOverlays.anyOpen()) {
       <app-project-overlays

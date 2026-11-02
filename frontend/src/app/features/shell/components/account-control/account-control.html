@@ -1,0 +1,8 @@
+@if (auth.networkedAuthenticated()) {
+  <button #trigger type="button" class="account-control__trigger" data-testid="studio-titlebar-account"
+          aria-haspopup="menu" [attr.aria-expanded]="open()"
+          (click)="open.update(value => !value)">{{ auth.status()?.user?.displayName || auth.status()?.user?.username || 'Account' }}</button>
+  <app-menu [items]="items" [open]="open()" [anchorEl]="trigger"
+            placement="below" testIdPrefix="studio-account-menu" ariaLabel="Account"
+            (itemClick)="select($event)" (closeRequest)="open.set(false)" />
+}

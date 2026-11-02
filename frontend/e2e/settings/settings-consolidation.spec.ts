@@ -57,7 +57,7 @@ async function stub(page: Page) {
 }
 
 async function openSettings(page: Page) {
-  await page.getByTestId('studio-ab-settings').click();
+  await page.getByTestId('studio-titlebar-settings').click();
   await expect(page.getByTestId('workspace-settings-inline')).toBeVisible({ timeout: 10_000 });
 }
 

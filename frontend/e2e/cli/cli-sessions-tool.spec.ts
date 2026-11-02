@@ -20,7 +20,8 @@ const SHOT_DIR = process.env.SESS_SHOT_DIR ?? 'test-results';
 
 function openSessions(page: Page) {
   return (async () => {
-    await page.getByTestId('status-bar-usage').click();
+    await page.getByTestId('studio-titlebar-settings').click();
+    await page.getByTestId('workspace-settings-rail-caps').click();
     await expect(page.getByTestId('cli-admin-overlay')).toBeVisible();
     const sessions = page.getByTestId('cli-sessions-panel');
     await sessions.getByTestId('cli-admin-sessions').scrollIntoViewIfNeeded().catch(() => {});
