@@ -6,6 +6,7 @@ public enum ReviewReportSubmissionAction
     TerminalTaskMissing,
     TerminalSuperseded,
     TerminalRejected,
+    TerminalDeliveryExhausted,
 }
 
 /// <summary>
@@ -15,6 +16,10 @@ public enum ReviewReportSubmissionAction
 /// </summary>
 public static class ReviewReportSubmissionPolicy
 {
+    // The reduced payload is durable across host handoff. Give transient
+    // failures several chances, but do not renew a failed report indefinitely.
+    public const int MaxReducedReportTransientFailures = 5;
+
     public static ReviewReportSubmissionAction Decide(
         int? statusCode,
         string? errorCode,
@@ -42,8 +47,22 @@ public static class ReviewReportSubmissionPolicy
     {
         ReviewReportSubmissionAction.TerminalTaskMissing => "TaskNotFound",
         ReviewReportSubmissionAction.TerminalSuperseded => "Superseded",
+        ReviewReportSubmissionAction.TerminalDeliveryExhausted => "ReportDeliveryExhausted",
         _ => "ReportRejected",
     };
+
+    public static ReviewReportSubmissionAction DecideReduced(
+        int? statusCode,
+        string? errorCode,
+        bool transportFailure,
+        int consecutiveTransientFailures)
+    {
+        var action = Decide(statusCode, errorCode, transportFailure);
+        return action == ReviewReportSubmissionAction.Retry
+               && consecutiveTransientFailures >= MaxReducedReportTransientFailures
+            ? ReviewReportSubmissionAction.TerminalDeliveryExhausted
+            : action;
+    }
 
     /// <summary>Base delay for the first transport-failure retry; doubles per consecutive failure.</summary>
     public static readonly TimeSpan TransportRetryBaseDelay = TimeSpan.FromSeconds(1);

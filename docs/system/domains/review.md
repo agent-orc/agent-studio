@@ -15,7 +15,13 @@ A 413 response or three consecutive 502
 responses triggers one reduced resend with embedded artifact bytes omitted;
 the outcome, failure classification, and aspect verdicts are unchanged. The
 host persists this choice in the review slot so reattachment cannot restart
-the same oversized submission cycle.
+the same oversized submission cycle. Transient failures of the reduced report
+(including 502, 503, and timeouts) retry the same payload up to five times;
+exhaustion is recorded as `ReportDeliveryExhausted`. Another 413 or a permanent
+refusal ends delivery immediately. In-process
+backend test hosts keep full file logs but omit routine information and known
+fixture warnings from verification stdout. Unexpected warnings and all errors
+remain visible there.
 
 Remote Review materializes exact result SHAs through the runner host's bounded
 source object cache (D8 A, AGT-3319). A canonical remote fetch populates a

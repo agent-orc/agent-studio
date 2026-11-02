@@ -232,12 +232,20 @@ builder.Logging.AddProvider(new BackendFileLoggerProvider(fileLogSink));
 // to swap-and-freeze the one static bootstrap Log.Logger throw "The logger
 // is already frozen" (flaky full-suite failures). Production keeps the
 // in-place swap so DI-less callers (SilentCatch) share the configured logger.
-builder.Host.UseSerilog((context, services, configuration) => configuration
-    .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
-    .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
-    .Enrich.FromLogContext()
-    .WriteTo.Console(),
+builder.Host.UseSerilog((context, services, configuration) =>
+{
+    configuration
+        .MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+        .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
+        .Enrich.FromLogContext();
+    if (underTestHost)
+        configuration.WriteTo.Logger(console => console
+            .Filter.ByIncludingOnly(TestHostConsoleLogFilter.ShouldWrite)
+            .WriteTo.Console());
+    else
+        configuration.WriteTo.Console();
+},
     preserveStaticLogger: underTestHost,
     writeToProviders: true);
 

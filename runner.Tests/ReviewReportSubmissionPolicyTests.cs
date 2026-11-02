@@ -48,4 +48,19 @@ public sealed class ReviewReportSubmissionPolicyTests
         => Assert.Equal(
             TaskServerConnectivityMonitor.RetryDelay(pollSeconds: 5, consecutiveFailures: 3),
             ReviewReportSubmissionPolicy.RetryDelay(3, transportFailure: false, pollSeconds: 5));
+
+    [Theory]
+    [InlineData(502, false, 1, ReviewReportSubmissionAction.Retry)]
+    [InlineData(503, false, 2, ReviewReportSubmissionAction.Retry)]
+    [InlineData(null, true, 3, ReviewReportSubmissionAction.Retry)]
+    [InlineData(502, false, 5, ReviewReportSubmissionAction.TerminalDeliveryExhausted)]
+    [InlineData(413, false, 1, ReviewReportSubmissionAction.TerminalRejected)]
+    [InlineData(409, false, 1, ReviewReportSubmissionAction.TerminalRejected)]
+    public void Reduced_report_retries_transient_failures_with_a_bound(
+        int? statusCode,
+        bool transportFailure,
+        int failures,
+        ReviewReportSubmissionAction expected)
+        => Assert.Equal(expected, ReviewReportSubmissionPolicy.DecideReduced(
+            statusCode, null, transportFailure, failures));
 }
