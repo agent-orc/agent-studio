@@ -805,3 +805,15 @@ select option:hover {
 .studio .dashboard--studio:has(> app-delivery-section:not(.delivery--empty, .lane-group--hidden-by-focus)) {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
+
+.studio .dashboard--studio:has(> app-delivery-section.delivery--collapsed:not(.delivery--empty, .lane-group--hidden-by-focus)) {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) 72px;
+}
+
+.studio .dashboard--studio.dashboard--has-focus {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.studio .dashboard--studio > .lane-group.lane-group--hidden-by-focus {
+  display: none;
+}

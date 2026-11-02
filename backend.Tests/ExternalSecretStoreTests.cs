@@ -309,9 +309,12 @@ public sealed class ExternalSecretStoreTests
         new(store, new SecretAuditLog(Path.Combine(Path.GetTempPath(), "external-secret-" + Guid.NewGuid().ToString("N"))),
             new SecretValueScrubber(clock), clock, NullLogger<SecretProvider>.Instance);
 
-    private static Task<ResolvedSecret> Resolve(SecretProvider provider, string reference) =>
-        provider.GetForWorkloadAsync(SecretReference.Parse(reference),
-            new SecretWorkload(SecretWorkload.TaskRun, "runner", "project-a", null), "task:test");
+    private static Task<ResolvedSecret> Resolve(SecretProvider provider, string reference)
+    {
+        var parsed = SecretReference.Parse(reference);
+        return provider.GetForWorkloadAsync(parsed,
+            new SecretWorkload(SecretWorkload.TaskRun, "runner", "project-a", null, [parsed.Name]), "task:test");
+    }
 
     private sealed class SingleClientFactory(HttpClient client) : IHttpClientFactory
     {

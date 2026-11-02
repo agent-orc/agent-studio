@@ -68,6 +68,26 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public async Task Oversized_review_report_returns_typed_413_from_shared_limit()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new TaskServerFactory(temp.Path);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            TaskServerProtocol.HeaderName,
+            TaskServerProtocol.Current.ToString());
+        using var body = new StringContent(new string('x', (int)ReviewReportLimits.MaxRequestBodyBytes + 1));
+
+        var response = await client.PostAsync("/api/v1/reviews/attempts/attempt-1/report", body);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("review-report-too-large", problem.RootElement.GetProperty("type").GetString());
+        Assert.Equal(ReviewReportLimits.MaxRequestBodyBytes,
+            problem.RootElement.GetProperty("limitBytes").GetInt64());
+    }
+
+    [Fact]
     public async Task Artifact_larger_than_advertised_file_cap_returns_typed_413()
     {
         using var temp = new TempDirectory();

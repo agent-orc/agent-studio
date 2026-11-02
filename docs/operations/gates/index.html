@@ -882,6 +882,11 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   <strong>AGT-3070 · Batch gate measurement surface</strong>
   <span>Delivered: Added gate receipt wait and rung evidence plus the shared gate and lane Ops projection. The September Windows comparison resolves Q0 as seven backend and one runner test failure, median 51.2 minutes. The live batch report is 0 closed batches, 0 eligible members and 0 full runs; the first complete batch-flow week is pending.</span>
 </li>
+
+<li data-implementation-entry="" data-task-key="AGT-3414" data-delivered-at="2026-11-02" data-slice="Documentation-only gate level">
+  <strong>AGT-3414 · Documentation-only gate level</strong>
+  <span>Delivered: One pure rule, <code>BatchGatePolicy.GateTestLevel</code>, sets the test level of both the batch gate and the per-task fallback. A documentation-only subject runs the build-only level, which keeps the build and lint commands and drops every test command. Any code subject, a mixed gated diff, an unknown diff, or a plan with no build or lint command runs the complete suite. Before this change both paths requested the complete suite. The gated diff is classified again on the exact SHA, so a stale subject flag cannot skip a test. <code>DocsOnlyDeliveryPolicy</code> now fails closed on code, tests and fixtures, build files, templates, prompts, scripts and dot directories such as <code>.agent-studio/</code>, Markdown files included. Without a gate backlog or a red base verdict, a documentation-only set closes at once instead of waiting for its threshold or deadline; a backlogged queue keeps the AGT-3219 rules, and a red base keeps its hold. The look-ahead planner is unchanged.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>
