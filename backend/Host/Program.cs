@@ -522,6 +522,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.OperatorCandidateAuditRepair>
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.OperatorCandidateAuditRepair>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateDurationHistory>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.PullGateStore(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "pull-gates"),
