@@ -201,7 +201,8 @@ public static class RegistryEndpoints
             AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService definitionProposals,
             IProjectRepositoryProvisioner repositoryProvisioner,
             AgentStudio.Runner.BuildProfileValidationService profileValidation,
-            TaskMutationService taskMutations, ILoggerFactory loggerFactory, IConfiguration configuration,
+            TaskMutationService taskMutations, QualityStudioRegistrationReconciler qualityReconciler,
+            ILoggerFactory loggerFactory, IConfiguration configuration,
             HttpContext context, CancellationToken cancellationToken) =>
         {
             var onboardingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -446,13 +447,16 @@ public static class RegistryEndpoints
                 created.Id, created.WorkspaceId, created.StorageLocation,
                 created.RepositoryPath ?? repositoryUrl ?? "(none)", executionRunner ?? "local",
                 proposalTaskId ?? "unavailable", onboardingDurationMs, 0, 0);
+            // The hosted reconciler performs remote work after creation returns.
+            qualityReconciler.Queue(created.Id);
             return Results.Created($"/api/projects/{created.Id}", ProjectSummary.From(created));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapPut(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}", (string projId, UpdateProjectRequest body,
             ProjectRegistry projects, WorkspaceRegistry workspaces,
             AgentStudio.Projects.ProjectSettingsService projectSettings,
-            ClientIdentityStore clients, WikiContentCache wikiContentCache, ILoggerFactory loggerFactory,
+            ClientIdentityStore clients, WikiContentCache wikiContentCache, QualityStudioRegistrationReconciler qualityReconciler,
+            ILoggerFactory loggerFactory,
             IConfiguration configuration, HttpContext context) =>
         {
             if (body == null) return Results.BadRequest(new { error = "body required" });
@@ -538,6 +542,7 @@ public static class RegistryEndpoints
                             statusCode: StatusCodes.Status500InternalServerError);
                     }
                 }
+                if (result.Archived != previous.Archived) qualityReconciler.Queue(result.Id);
                 return Results.Ok(ProjectSummary.From(result));
             }
             catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
@@ -550,7 +555,37 @@ public static class RegistryEndpoints
             }
         });
 
-        // F46 — destructive project delete. Removes the on-disk project
+        app.MapGet("/api/projects/{projectName}/quality-studio", (
+            string projectName, ProjectRegistry projects, AgentStudio.Projects.ProjectSettingsService settings,
+            QualityStudioRegistrationService registration) =>
+        {
+            var project = projects.FindByIdOrDisplayName(projectName);
+            if (project is null) return Results.NotFound(new { error = "Project not found." });
+            var status = settings.Get(project.DisplayName).QualityStudio;
+            return Results.Ok(new
+            {
+                connected = registration.Connected,
+                repositoryId = status?.RepositoryId,
+                state = status?.State ?? "not-registered",
+                reason = status?.Reason ?? (registration.Connected ? "Registration is pending." : "Quality Studio is not connected."),
+            });
+        });
+
+        app.MapPost("/api/projects/{projectName}/quality-studio/reconcile", async (
+            string projectName, HttpContext context, IConfiguration configuration, ProjectRegistry projects,
+            QualityStudioRegistrationService registration, CancellationToken cancellationToken) =>
+        {
+            var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User;
+            if (SecurityProfiles.IsNetworked(configuration) && actor?.Role != StudioRoles.Owner)
+                return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden);
+            var project = projects.FindByIdOrDisplayName(projectName);
+            if (project is null)
+                return Results.NotFound(new { error = "Project not found." });
+            var status = await registration.ReconcileProjectAsync(project.Id, cancellationToken);
+            return Results.Ok(status);
+        }).RequirePermission(IamPermissions.ProjectSettingsWrite);
+
+        // F46 destructive project delete. Removes the on-disk project
         // storage (every lane + task), drops the matching WatchPaths entry so
         // no ghost picker row survives, then removes the registry record.
         // Storage is deleted first so a failure aborts before any metadata is
