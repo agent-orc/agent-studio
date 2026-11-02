@@ -3,12 +3,27 @@ using AgentStudio.Shared;
 
 namespace AgentStudio.Pipeline;
 
+/// <param name="FallbackTestedSha">
+/// The delivery (result SHA) whose per-task gate passed. Since AGT-3434 the gate
+/// tests the delivery merged onto <paramref name="FallbackBaseSha"/>; the
+/// candidate fields name that tree. Without a base the gate tested the
+/// delivery on its own base.
+/// </param>
+/// <param name="FallbackBaseSha">Integration tip the per-task candidate was merged onto.</param>
+/// <param name="FallbackCandidateSha">Commit the per-task gate tested.</param>
+/// <param name="FallbackCandidateTreeSha">Tree of that commit; the publish step compares its merge result with it.</param>
+/// <param name="FallbackOwnBase">
+/// The merged candidate failed on a tip that is red on its own, so the next
+/// gate tests the delivery on its own base.
+/// </param>
 public sealed record BatchGateOwnership(
     string ReviewAttemptId, BatchGateSubject Subject,
     string? BatchId = null, string? BatchRunId = null,
     string? FallbackTestedSha = null, string? FallbackEvidencePath = null,
     bool FallbackIntegrated = false, bool FallbackGateActive = false,
-    int FallbackGateStarts = 0, string? ContainedInSha = null);
+    int FallbackGateStarts = 0, string? ContainedInSha = null,
+    string? FallbackBaseSha = null, string? FallbackCandidateSha = null,
+    string? FallbackCandidateTreeSha = null, bool FallbackOwnBase = false);
 
 /// <summary>Card-local admission marker. Its presence makes lane release fail closed.</summary>
 public static class BatchGateOwnershipStore

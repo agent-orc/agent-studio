@@ -897,7 +897,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Git(_repo, "commit", "-qm", "integration conflict");
         Git(_repo, "push", "-q", "origin", "HEAD:develop");
         _gate.Batch = _ => throw new InvalidOperationException("An all-conflict batch reached the suite.");
-        _gate.Fallback = request => Red(request.ExpectedSha);
+        // AGT-3434: the per-task gate tests the delivery merged onto the tip,
+        // so a member that conflicts with the tip runs no gate at all. This
+        // fixture records no fenced result ref, so the merge round cannot
+        // start and every member escalates with its conflicted files.
+        _gate.Fallback = _ => throw new InvalidOperationException("A conflicting member reached a per-task gate.");
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
 
@@ -906,7 +910,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var manifest = Assert.Single(store.ListManifests());
         AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
         Assert.Equal(0, _gate.BatchRuns);
-        Assert.Equal(8, _gate.FallbackRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
         Assert.Empty(store.ListPending());
         foreach (var member in members)
         {
@@ -936,12 +940,25 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         _gate.Fallback = request => Green(request.ExpectedSha);
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
+        // AGT-3434: the per-task gate merges the member onto the current tip.
+        // develop reverts the conflicting line after the batch ejected the
+        // member, so its fallback merges cleanly and reaches integration.
+        pilot.AfterAssemblyForTesting = () =>
+        {
+            Git(_repo, "checkout", "-q", "--detach", "refs/remotes/origin/develop");
+            Git(_repo, "revert", "--no-edit", "HEAD");
+            Git(_repo, "push", "-q", "origin", "HEAD:develop");
+            Git(_repo, "fetch", "-q", "origin");
+        };
 
         await pilot.TickAsync(CancellationToken.None);
 
         Assert.Equal(1, _gate.FallbackRuns);
         Assert.Single(store.ListPending());
-        Assert.Equal(member.ResultSha, Ownership(member.Key)?.FallbackTestedSha);
+        var ownership = Ownership(member.Key)!;
+        Assert.Equal(member.ResultSha, ownership.FallbackTestedSha);
+        Assert.True(ownership.FallbackIntegrated);
+        // Human Review waits for the queued publication of the merge.
         AssertLane(member.Key, TaskStates.AutoReview);
     }
 
@@ -1285,13 +1302,13 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         var admitted = SeedMember(factory, "DOC-RECOVER-ADMITTED", "docs/admitted.md");
-        var ejected = SeedMember(factory, "DOC-RECOVER-EJECTED", "README.md");
-        var originalBase = RemoteTip();
-        Git(_repo, "checkout", "-q", "--detach", originalBase);
-        File.WriteAllText(Path.Combine(_repo, "README.md"), "Integration changed this line.\n");
-        Git(_repo, "add", "README.md");
-        Git(_repo, "commit", "-qm", "integration conflict");
-        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        var ejected = SeedMember(factory, "DOC-RECOVER-EJECTED", "docs/ejected.md");
+        // AGT-3434: a member ejected for a conflict also conflicts with the
+        // published tip and runs no per-task gate. An unattributable member
+        // still does: its result ref no longer resolves to the reviewed SHA,
+        // so replay ejects it and its gate keeps the delivery on its own base.
+        Git(_repo, "push", "-q", "--force", "origin",
+            $"{admitted.ResultSha}:refs/heads/agent-studio/results/{ejected.Key}");
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _gate.Batch = request => Green(request.ExpectedSha);
         _gate.FallbackAsync = async (request, ct) =>
@@ -3340,11 +3357,17 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             = request => Green(request.ExpectedSha);
         public Func<BuildTestGateRequest, BuildTestGateResult> Fallback { get; set; }
             = _ => throw new InvalidOperationException("No per-task gate result is scripted.");
+        /// <summary>
+        /// The merge-into-develop gate of the publish step. Unset, it counts as
+        /// a per-task gate as before.
+        /// </summary>
+        public Func<BuildTestGateRequest, BuildTestGateResult>? Merge { get; set; }
         public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? BatchAsync { get; set; }
         public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? FallbackAsync { get; set; }
         private int _batchRuns;
         private int _baseRuns;
         private int _fallbackRuns;
+        private int _mergeRuns;
         private readonly TaskCompletionSource _batchStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _fallbackStarted =
@@ -3352,6 +3375,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         public int BatchRuns => Volatile.Read(ref _batchRuns);
         public int BaseRuns => Volatile.Read(ref _baseRuns);
         public int FallbackRuns => Volatile.Read(ref _fallbackRuns);
+        public int MergeRuns => Volatile.Read(ref _mergeRuns);
         /// <summary>Completes when the first batch suite starts.</summary>
         public Task FirstBatchStarted => _batchStarted.Task.WaitAsync(HangGuard);
         /// <summary>Completes when the first per-task gate starts.</summary>
@@ -3371,6 +3395,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             {
                 Interlocked.Increment(ref _baseRuns);
                 return Task.FromResult(Base(request));
+            }
+            if (Merge is not null && request.Executor == "merge-into-develop-build-gate")
+            {
+                Interlocked.Increment(ref _mergeRuns);
+                return Task.FromResult(Merge(request));
             }
             Interlocked.Increment(ref _fallbackRuns);
             _fallbackStarted.TrySetResult();

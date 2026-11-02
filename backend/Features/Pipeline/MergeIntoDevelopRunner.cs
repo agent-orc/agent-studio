@@ -1251,6 +1251,33 @@ public sealed partial class MergeIntoDevelopRunner
                 missingAnchor);
         }
 
+        // AGT-3434: the batch per-task fallback ran the full suite on this
+        // delivery merged onto an integration tip. The same tree on the same
+        // tip stands on that verdict; anything else keeps the gate below.
+        var perTask = DecidePerTaskVerdictReuse(repoRoot, integrationBranch, jobFolderPath, gatedSha, preMergeTip);
+        if (perTask.Reused)
+        {
+            var reused = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 0, string.Empty,
+                "Reused the per-task gate verdict: " + perTask.Reason + ".", false, false)
+            {
+                VerdictSource = GateVerdictSource.CacheHit,
+                OriginEvidencePath = perTask.EvidencePath,
+                ExpectedSha = gatedSha,
+                TestedSha = gatedSha,
+            };
+            IntegrationGateReceipts.Record(
+                jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, reused, _timeline,
+                mergeLockWaitMs: _mergeLockWaitMs.Value);
+            IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
+                level: "per-task-verdict", durationMs: 0, outcome: reused.Verdict.ToString(),
+                reuseToken: "per-task-verdict", reason: perTask.Reason);
+            IntegrationGateJournal.ClearOwned(jobFolderPath, journalOwner);
+            _logger.LogInformation(
+                "merge-into-develop build gate reused the per-task verdict for project={Project} job={JobId} integration={Integration} merged={MergedSha} reason={Reason}",
+                project, jobId, integrationBranch, gatedSha, perTask.Reason);
+            return (result with { GateVerdictReused = true }, reused);
+        }
+
         var settings = ProjectSettingsFor(project);
         var postMergeMode = (_postMergeMode?.Resolve(project, settings)
             ?? IntegrationTestModes.Resolve(settings)) == IntegrationTestModes.PostMerge
@@ -1350,12 +1377,14 @@ public sealed partial class MergeIntoDevelopRunner
         // hold a newer attempt's journal, which must survive.
         IntegrationGateJournal.ClearOwned(gateEvidenceFolder, journalOwner);
 
+        var executed = gate.VerdictSource == GateVerdictSource.Executed
+            && gate.FailureKind is not (BuildTestGateFailureKind.MissingSource or BuildTestGateFailureKind.Cancellation);
         if (PreDevelopBuildGate.IsGreen(gate))
         {
             _logger.LogInformation(
-                "merge-into-develop build gate passed for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reuse={Reuse} reuseReason={ReuseReason}",
-                project, jobId, integrationBranch, gatedSha, gate.Verdict, reuse.Token, reuse.Reason);
-            return (result, gate);
+                "merge-into-develop build gate passed for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reuse={Reuse} reuseReason={ReuseReason} perTaskReuse={PerTaskReason}",
+                project, jobId, integrationBranch, gatedSha, gate.Verdict, reuse.Token, reuse.Reason, perTask.Reason);
+            return (result with { GateExecuted = executed }, gate);
         }
 
         // The merge was created by this invocation, so it owns an exact
@@ -1387,7 +1416,36 @@ public sealed partial class MergeIntoDevelopRunner
             : $"The build gate blocked the merge into {integrationBranch}: {gate.Reason}. " +
               $"Rolling {integrationBranch} back to {Short(preMergeTip!)} FAILED ({reset.Error ?? "unknown error"}); " +
               "the unverified merge is still on the local integration branch and needs manual repair.";
-        return (MergeIntoIntegrationResult.Of(outcome, error: error), gate);
+        return (MergeIntoIntegrationResult.Of(outcome, error: error) with { GateExecuted = executed }, gate);
+    }
+
+    /// <summary>
+    /// Whether this merge may stand on the per-task batch fallback verdict
+    /// (AGT-3434). Gathers the marker beside the card and the Git facts for the
+    /// pure <see cref="PerTaskGateVerdictReusePolicy"/>.
+    /// </summary>
+    private PerTaskGateVerdictReuseDecision DecidePerTaskVerdictReuse(
+        string repoRoot,
+        string integrationBranch,
+        string jobFolderPath,
+        string gatedSha,
+        string? preMergeTip)
+    {
+        BatchGateOwnership? ownership;
+        try { ownership = BatchGateOwnershipStore.Read(jobFolderPath); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+        {
+            SilentCatch.Note(ex, "MergeIntoDevelopRunner: an unreadable batch marker keeps the merge gate");
+            ownership = null;
+        }
+        var resultSha = ownership?.Subject.ResultSha;
+        return PerTaskGateVerdictReusePolicy.Decide(new PerTaskGateVerdictReuseInput(
+            ownership,
+            integrationBranch,
+            preMergeTip,
+            ReviewSubjectStore.IsValidResultSha(resultSha)
+                && _git.IsAncestor(repoRoot, resultSha!, gatedSha),
+            ownership?.FallbackCandidateTreeSha is null ? null : _git.GetCommitTree(repoRoot, gatedSha)));
     }
 
     /// <summary>
