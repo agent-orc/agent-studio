@@ -740,6 +740,10 @@
 </tbody></table>
 <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+<li data-implementation-entry="" data-task-key="AGT-3372" data-delivered-at="2026-11-02" data-slice="SM-1 Operator agent identity and audit trail">
+  <strong>AGT-3372 · SM-1 Operator agent identity and audit trail</strong>
+  <span>Delivered the operator-agent principal on the service-account model with Owner-started child sessions (own bearer, at most 8 hours, renewable only by the Owner), session attribution operator-agent:&lt;id&gt;/session:&lt;sid&gt; with delegatedBy human:&lt;owner id&gt; on every request, audit entry and card timeline event, one hash-chained control plane audit writer that now carries the IAM, service-account, API-token, secret and run audits, an HTTPS sink adapter with recorded forward position and queue-on-failure alerting, a verification job that compares the chain with the sink and raises acute alerts, the Owner's operator panel and activity view in Settings &gt; Access, and the operator agent setup guide. Implemented D1 option O3/O4 identity base (Studio identity, no owner keys), D4 option A2 and D11 option A; tiers, grants, approvals, host certificates and the kill switch stay with later slices.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
 </ol>
 </section>

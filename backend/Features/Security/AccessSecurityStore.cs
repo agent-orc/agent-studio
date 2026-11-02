@@ -57,10 +57,14 @@ public sealed partial class AccessSecurityStore
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
         _verifyPassword = verifyPassword;
+        ControlPlaneAudit = new ControlPlaneAuditLog(SecurityFolder, _clock, logger);
         _passwordHashSlots = new SemaphoreSlim(Math.Clamp(
             configuration.GetValue("Security:LoginThrottle:MaxConcurrentHashes", Math.Max(2, Environment.ProcessorCount)),
             1, Math.Max(2, Environment.ProcessorCount)));
     }
+
+    /// <summary>The control plane audit chain in <see cref="SecurityFolder"/> (security model SM-1).</summary>
+    public ControlPlaneAuditLog ControlPlaneAudit { get; }
 
     public string SecurityFolder => Path.Combine(
         string.IsNullOrWhiteSpace(_configuration["TaskRepository"])
@@ -713,6 +717,10 @@ public sealed partial class AccessSecurityStore
             };
             File.AppendAllText(Path.Combine(SecurityFolder, "run-audit.jsonl"), JsonSerializer.Serialize(sanitized) + Environment.NewLine);
             RestrictPermissions(Path.Combine(SecurityFolder, "run-audit.jsonl"));
+            ControlPlaneAudit.Append(new ControlPlaneAuditRecord(
+                ControlPlaneAuditStreams.Run, sanitized.InitiatingPrincipal, sanitized.Action, sanitized.Outcome ?? "recorded",
+                Target: string.IsNullOrWhiteSpace(sanitized.Project) ? $"task:{sanitized.TaskKey}" : $"project:{sanitized.Project}/task:{sanitized.TaskKey}",
+                Details: sanitized, At: sanitized.Timestamp));
         }
     }
 

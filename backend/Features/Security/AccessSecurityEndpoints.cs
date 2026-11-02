@@ -271,6 +271,7 @@ public static class AccessSecurityEndpoints
             }));
 
         app.MapIamEndpoints();
+        app.MapControlPlaneAuditEndpoints();
     }
 
     internal static IResult Execute(Func<IResult> operation)

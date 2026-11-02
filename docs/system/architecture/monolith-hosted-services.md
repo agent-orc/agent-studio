@@ -95,6 +95,8 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | ResultSummaryRetryScheduler | !PD | apply-recover | Authority |
 | AttemptArchiveIndexWarmupService | always | infra | Authority host |
 | RemoteQueueStarvationWatchdog | !PD | report | Authority host |
+| AuditSinkForwarder | always | infra | Authority host. Copies control plane audit entries to the configured off-host sink, records the forwarded position, and alerts when the sink stops accepting entries (security model SM-1). Idle without a sink. Makes no transition decision. |
+| ControlPlaneAuditVerifier | always | report | Authority host. Recomputes the control plane audit chain, compares it with the sink, and raises an acute alert on a change, gap, or mismatch (security model SM-1). Makes no transition decision. |
 | HostReleaseDriftWatchdog | !PD | report | Authority host |
 | AutoReviewQueueStagnationWatchdog | !PD | report | Authority host |
 | AdaptiveReviewParallelismAdvisor | !PD | report | Authority host (advisory) |

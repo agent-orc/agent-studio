@@ -77,7 +77,11 @@ internal sealed class BatchMoveJob
         ProjectNames = projectNames;
         Cause = cause;
         CreatedAt = DateTimeOffset.UtcNow;
+        Operator = OperatorActorScope.Current;
     }
+
+    /// <summary>The operator agent session that queued the job, so its moves stay attributed to it.</summary>
+    public OperatorActor? Operator { get; }
 
     public string Id { get; }
     public IReadOnlyList<BatchMoveItem> Items { get; }
@@ -284,6 +288,7 @@ public sealed class BatchMoveJobCoordinator : BackgroundService
 
     private async Task RunJobAsync(BatchMoveJob job, CancellationToken stoppingToken)
     {
+        using var operatorScope = job.Operator is { } operatorActor ? OperatorActorScope.Enter(operatorActor) : null;
         job.Start();
         var total = Stopwatch.StartNew();
         var itemMoveMs = 0.0;

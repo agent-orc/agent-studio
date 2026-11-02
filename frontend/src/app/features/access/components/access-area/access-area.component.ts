@@ -1,27 +1,37 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, effect, inject, signal } from '@angular/core';
 import { scopeLabel, type AccessUser } from '../../models/access.model';
+import { isOperatorAgentAccount } from '../../models/operator-agent.model';
 import { AccessService } from '../../services/access.service';
+import { OperatorAgentsService } from '../../services/operator-agents.service';
 import { AccessBindingsComponent } from '../access-bindings/access-bindings.component';
 import { AccessGroupsComponent } from '../access-groups/access-groups.component';
 import { AccessInviteFormComponent } from '../access-invite-form/access-invite-form.component';
+import { AccessOperatorActivityComponent } from '../access-operator-activity/access-operator-activity.component';
+import { AccessOperatorAgentsComponent } from '../access-operator-agents/access-operator-agents.component';
 import { AccessRunnersComponent } from '../access-runners/access-runners.component';
 import { AccessServiceAccountsComponent } from '../access-service-accounts/access-service-accounts.component';
 
 /**
  * The one Access area: users with their role bindings, groups, service
  * accounts (API tokens included), runner enrollments, and runners. A
- * single-user installation sees the same views with its one Owner.
+ * single-user installation sees the same views with its one Owner. The
+ * Owner also sees operator agents and their audit trail; the server refuses
+ * those reads for everyone else, which hides the two sections.
  */
 @Component({
   selector: 'app-access-area',
   standalone: true,
-  imports: [AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessRunnersComponent, AccessServiceAccountsComponent],
+  imports: [
+    AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
+    AccessOperatorAgentsComponent, AccessRunnersComponent, AccessServiceAccountsComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-area.component.html',
   styleUrl: './access-area.component.scss',
 })
 export class AccessAreaComponent implements OnInit {
   readonly access = inject(AccessService);
+  readonly operators = inject(OperatorAgentsService);
   readonly overview = this.access.overview;
   readonly temporaryPassword = signal<{ username: string; value: string } | null>(null);
 
@@ -36,7 +46,7 @@ export class AccessAreaComponent implements OnInit {
     return {
       users: overview?.users.length ?? 0,
       groups: overview?.groups.length ?? 0,
-      serviceAccounts: overview?.serviceAccounts.filter(account => !account.disabledAt).length ?? 0,
+      serviceAccounts: overview?.serviceAccounts.filter(account => !account.disabledAt && !isOperatorAgentAccount(account)).length ?? 0,
       bindings: overview?.bindings.length ?? 0,
     };
   });
@@ -54,6 +64,15 @@ export class AccessAreaComponent implements OnInit {
 
   ngOnInit(): void {
     void this.access.load();
+    void this.operators.load();
+  }
+
+  /** Reloads everything, including an open operator activity view. */
+  reload(): void {
+    void this.access.load();
+    void this.operators.load();
+    const activity = this.operators.activityState();
+    if (activity === 'ready' || activity === 'error') void this.operators.loadActivity();
   }
 
   /** Each scope the user holds a role in, directly or through a group. */
