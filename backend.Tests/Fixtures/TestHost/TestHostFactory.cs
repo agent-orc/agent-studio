@@ -22,10 +22,10 @@ namespace AgentStudio.Tests;
 ///   process survives. One signal to the xunit process therefore stops every
 ///   live test host at once while their tests are still sending requests. A
 ///   test host is stopped by its test, never by the process.</item>
-///   <item>Minimal-API endpoints are built lazily by the first request that
-///   reaches routing, and that build is the slowest step of the first request.
-///   They are built here while the host is starting, so no test request ever
-///   runs <c>InferMetadata</c>.</item>
+///   <item>Routing builds its own copy of the minimal-API endpoints lazily, on
+///   the first request that reaches it, and that build resolves services from
+///   the host. It runs here while the host is starting, so no test request
+///   ever builds endpoint metadata.</item>
 ///   <item>Nothing makes the host stop wait for requests still in the
 ///   pipeline. <see cref="InFlightRequestDrain"/> is the first hosted service
 ///   to stop and holds the stop until <see cref="InFlightRequestTracker"/> is
