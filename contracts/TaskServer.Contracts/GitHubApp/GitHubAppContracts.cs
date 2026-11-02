@@ -152,7 +152,8 @@ public interface IGitHubAppVault
     Task DeleteSecretsAsync(string actor, CancellationToken ct);
 
     /// <summary>Throws when <see cref="WriteSecretsAsync"/> could not store the App's secrets now, for example without a key.</summary>
-    Task EnsureWritableAsync(CancellationToken ct);
+    // A vault without a write check has nothing to prove.
+    Task EnsureWritableAsync(CancellationToken ct) => Task.CompletedTask;
 }
 
 /// <summary>

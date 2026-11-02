@@ -366,7 +366,6 @@ public sealed class GitHubAppEndpointTests(GitHubAppEndpointTests.LocalHost loca
             => Task.FromResult<GitHubAppSecrets?>(new GitHubAppSecrets(Key, "client-secret"));
         public Task WriteSecretsAsync(GitHubAppSecrets secrets, string actor, CancellationToken ct) => Task.CompletedTask;
         public Task DeleteSecretsAsync(string actor, CancellationToken ct) => Task.CompletedTask;
-        public Task EnsureWritableAsync(CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class FixedCatalog(string url) : IRegisteredRepositoryCatalog
