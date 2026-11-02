@@ -6,7 +6,11 @@ and tokens, the fixed token share f, the aspect share a, the Dossier wave
 census with the package size k, the batch census, the attribution of the
 full-suite runs, and the backward moves by cause.
 
-Captured on 2 November 2026 on `agent-studio-runner` (runner `agent-runner-01`).
+The measurement code ships with this card. The Agent Studio figures are
+read on the Studio server after deployment; the runner account that built this
+card has no access to the Studio's data. Every figure below is therefore
+marked `measured after deployment by the operator`, together with the route or
+command that produces it.
 
 ## Decisions implemented
 
@@ -22,7 +26,11 @@ Dossier's recommended options.
 ## Where the values are read
 
 All values are computed by the Studio backend from the task folders, so they
-are read where the data lives. Each read below needs an operator credential.
+are read where the data lives. Every route below is a `GET` that an Owner
+session can read (the Owner role holds every permission). The routes read the
+task folders and the published Git facts (`GitCardFactReader`); they start no
+Git process, per card or otherwise. A commit the fact store has not published
+yet leaves the material size unknown instead of starting Git.
 
 | Value | Request | Field |
 |---|---|---|
@@ -39,93 +47,55 @@ out of medians and totals. A fixed-share sample without a known material size
 counts in `unknownSamples`. A wave census member without a known size is
 marked `sizeUnknown` on its package.
 
-## Measured in this run
+## Agent Studio figures, 30 days
 
-### Batch census
+| Figure | Value | Produced by |
+|---|---|---|
+| a (catalogue-aspect share of reviewOther) | measured after deployment by the operator | `token-usage/reviews?days=30&detail=baseline`, `baseline.aspectShareOfReviewOther` |
+| f per package-tier aspect (code quality, documentation impact, tests and evidence, grade) | measured after deployment by the operator | same route, `baseline.fixedShare[]` (with `rSquared`, `samples`, `unknownSamples`) and `baseline.packageTierFixedShare` |
+| k (median package size under PK5 A) | measured after deployment by the operator | same route, `baseline.waves.medianPackageSize` |
+| Share of reviewed cards with `task.json.dossier.path` | measured after deployment by the operator | same route, `baseline.waves.dossierShare` (S5 stop rule below 0.30: `meetsWaveShareThreshold`) |
+| Full-suite runs of one 7-day window by origin | measured after deployment by the operator | `gate-economics?window=7d`, `fullSuiteBreakdown`: `batchCandidates`, `isolationProbes`, `perCardFallback`, `integrationGate`, `baseChecks`, `reviewFullSelections`; promotion is `null` there and is counted from the promotion host's `promotion-exec-*.log` files of the same window |
+| Backward moves by cause (review, gate, lease recovery, other) | measured after deployment by the operator | `cycle-time?window=30d`, `transitions.backwardCauseGroups` |
 
-`run-batch-census.sh` ran `batch-gate-census.py --project "Agent Studio"
---since 2026-10-13` on every instance folder of the runner account. Output:
-[batch-census-agent-studio-runner-summary.txt](batch-census-agent-studio-runner-summary.txt).
-None of the 71,240 instance folders has a `batch-gates` directory, so there is
-no per-instance output to commit from this account.
+## Batch census
 
-The Studio backend runs on this host in a Docker container (`studio.slice`,
-active since 20 October 2026 03:29 CEST) as uid 10001, with `HOME=/data/home`
-and `TaskRepository=/data/workspace` on volumes under `/srv/agent-studio/data`.
-Its batch store is therefore under
-`/srv/agent-studio/data/home/.local/share/agentstudio/instances/*/batch-gates`.
-That directory is not readable by the runner account (no sudo, no Docker
-socket), so its census is still open. An account with access runs:
+Status: measured after deployment by the operator.
+
+The Studio keeps its batch store under its own account's
+`${XDG_DATA_HOME:-$HOME/.local/share}/agentstudio/instances/*/batch-gates`
+(`BatchGateStorageRoot`). As the account that owns that store, from the
+repository root, run:
 
 ```bash
-sudo -u '#10001' CENSUS_SCRIPT=docs/review-gate-packages/batch-gate-census.py \
-  bash docs/review-gate-packages/measurements/run-batch-census.sh \
-  /srv/agent-studio/data/home/.local/share/agentstudio/instances \
-  docs/review-gate-packages/measurements
+bash docs/review-gate-packages/measurements/run-batch-census.sh \
+  <instances-root> docs/review-gate-packages/measurements
 ```
 
-### Promotion full-suite runs, 26 October to 1 November 2026
-
-Promotion runs on this host and leaves no evidence on the Studio side, so the
-endpoint reports `promotion: null` and the count comes from the promotion logs
-(`promotion-exec-*.log`). Each run executed the full `OrchestratorApi.Tests`
-suite.
-
-| Started (UTC) | OrchestratorApi.Tests | Duration |
-|---|---|---|
-| 2026-10-26 07:17 | 1 failed of 12,435 | 38 m 56 s |
-| 2026-10-26 08:03 | passed, 12,435 | 37 m 58 s |
-| 2026-10-26 10:56 | passed, 12,436 | 37 m 50 s |
-| 2026-10-29 07:53 | 1 failed of 12,971 | 40 m 23 s |
-| 2026-10-29 08:48 | passed, 12,971 | 39 m 39 s |
-| 2026-10-30 10:07 | passed, 12,981 | 38 m 8 s |
-| 2026-11-01 15:05 | passed, 13,150 | 47 m 39 s |
-| 2026-11-01 17:15 | passed, 13,162 | 46 m 56 s |
-
-Promotion: 8 full-suite runs in the window, 2 of them red and repeated.
-
-### Review runner on this host
-
-`journalctl -u agent-runner-review` from 10 October 2026 names a distinct review
-attempt on these days: 8, 31, 45, 15, 32, 30 and 34 attempts on 10 to 16
-October, 4 on 17 October, and none after that: no review attempt id appears
-in the journal after 17 October 01:44 CEST. From 25 October the unit logged
-14,160 "agent-host starting" lines and 14,148 "could not reach the task server
-at http://127.0.0.1:15031" lines (14,147 of them "Connection refused"); since
-10 October it logged 38,716 such lines.
+The script runs
+`python3 -I docs/review-gate-packages/batch-gate-census.py <folder> --project "Agent Studio" --since 2026-10-13`
+for every `instances/*/batch-gates` folder, writes one
+`batch-census-<host>-<instance>.txt` per folder and a
+`batch-census-<host>-summary.txt` into this directory. Commit those files.
 
 ## Why the batch count fell to "then none"
 
-The three hypotheses of the Dossier, against the evidence this run can read:
+Status: decided by the batch census above, measured after deployment by the
+operator. The code already settles which outcomes each hypothesis predicts:
 
-- **A new instance folder: supported.** The figures are labelled "before the
-  move". The Studio backend has run in the `studio.slice` container since
-  20 October 2026, with content root `/app` and task repository
-  `/data/workspace`. `BatchGateStorageRoot` hashes exactly these two paths, so
-  the containerised installation writes to a new, initially empty
-  `batch-gates` folder under its own `HOME`, and no runner-account instance
-  folder holds a batch store. A census of the old folder alone shows "none"
-  even if batches continued.
-- **No completed reviews: contributes, at least on this host.** The review
-  runner here named no review attempt after 17 October and has been unable to
-  reach its task server since. Reviews that ran on another review host are
-  not visible here.
-- **Fewer arrivals: not decidable here.** It needs the gate economics or the
-  new store's census.
-
-The census of the container store separates the first two: batches closed
-after 20 October in the new folder confirm the move, and an empty new folder
-with no completed reviews confirms the second.
-
-## Still open
-
-These values need the Studio data (the container volume or an operator
-credential) and are not reported here: a, f and k for Agent Studio over 30
-days, the wave share, the Studio-side full-suite origins of the 7-day window
-(batch candidates, isolation probes, per-card fallback, integration gate,
-review-side full selections), the backward moves by cause, and the census of
-the container's `batch-gates` folder. The requests in "Where the values are
-read" return them.
+- **A new instance folder.** `BatchGateStorageRoot` names the instance folder
+  after a hash of the content root and the task repository path. An
+  installation that moved (for example into a container with a different
+  content root or task repository) writes to a new, initially empty
+  `batch-gates` folder, and a census of the old folder alone shows "none" even
+  if batches continued. Confirmed when the census finds a second instance
+  folder whose batches start after the last batch of the old one.
+- **No completed reviews.** Confirmed when the new folder, or the only folder,
+  has no batch after the drop and the review baseline route shows no review
+  round completed after it (`baseline.steps[]` rounds by date).
+- **Fewer arrivals.** Confirmed when reviews completed after the drop but the
+  gate economics window shows few or no batch candidates and per-card
+  fallback gates instead.
 
 ## Method notes
 

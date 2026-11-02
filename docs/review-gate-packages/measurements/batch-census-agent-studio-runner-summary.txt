@@ -1,6 +1,0 @@
-host: agent-studio-runner
-captured: 2026-11-02T02:02:13Z
-instances root: /home/agent/.local/share/agentstudio/instances
-command: python3 -I batch-gate-census.py <folder> --project "Agent Studio" --since 2026-10-13
-instance folders: 71240
-instance folders with batch-gates: 0
