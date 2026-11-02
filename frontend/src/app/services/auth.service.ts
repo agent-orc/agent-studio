@@ -1,6 +1,17 @@
 import { computed, inject, Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, map, tap } from 'rxjs';
+import { PasskeyAssertion, PasskeyOptions, PasskeyRegistration } from './webauthn';
+
+export interface AuthSessionSummary {
+  id?: string;
+  sessionId?: string;
+  device?: string | null;
+  address?: string | null;
+  createdAt: string;
+  lastUseAt: string;
+  current: boolean;
+}
 
 export interface AuthUser {
   id: string;
@@ -19,6 +30,7 @@ export interface AuthStatus {
   /** The standalone Task Server arms an installer code for its first owner. */
   bootstrapCodeRequired?: boolean;
   user?: AuthUser | null;
+  secondFactorEnrollmentRequired?: boolean;
 }
 
 interface StandaloneAuthUser {
@@ -36,6 +48,7 @@ interface StandaloneAuthStatus {
   authenticated: boolean;
   bootstrapCodeRequired?: boolean;
   user?: StandaloneAuthUser | null;
+  secondFactorEnrollmentRequired?: boolean;
 }
 
 interface StandaloneAuthSession {
@@ -50,6 +63,7 @@ function normalizeStatus(response: AuthStatus | StandaloneAuthStatus): AuthStatu
     profile: 'networked', bootstrapRequired: response.bootstrapRequired,
     authenticated: response.authenticated,
     bootstrapCodeRequired: response.bootstrapRequired && response.bootstrapCodeRequired === true,
+    secondFactorEnrollmentRequired: response.secondFactorEnrollmentRequired === true,
     user: user ? {
       id: user.userId, username: user.username, displayName: user.displayName,
       role: user.role, projects: user.projectIds ?? [], disabled: user.disabled,
@@ -78,7 +92,7 @@ export class AuthSessionState {
     // place.
     return !this.ownerRecoveryCode() && (status?.profile === 'local'
       || status?.profile === 'public-demo-readonly'
-      || (status?.authenticated === true && !status.user?.mustChangePassword));
+      || (status?.authenticated === true && !status.user?.mustChangePassword && !status.secondFactorEnrollmentRequired));
   });
   readonly networkedAuthenticated = computed(() => {
     const status = this.status();
@@ -131,9 +145,53 @@ export class AuthService {
     });
   }
 
-  login(username: string, password: string): Observable<AuthStatus> {
-    return this.http.post<AuthStatus | StandaloneAuthSession>(`${this.authRoot}/login`, { username, password })
+  login(username: string, password: string, secondFactorCode?: string): Observable<AuthStatus> {
+    return this.http.post<AuthStatus | StandaloneAuthSession>(`${this.authRoot}/login`, { username, password, secondFactorCode })
       .pipe(map(normalizeSession), tap((status) => this.status.set(status)));
+  }
+
+  passkeyLoginOptions(username: string): Observable<PasskeyOptions> {
+    return this.http.post<PasskeyOptions>(`${this.authRoot}/passkeys/assertion-options`, { username });
+  }
+
+  loginWithPasskey(username: string, password: string, passkey: PasskeyAssertion): Observable<AuthStatus> {
+    return this.http.post<AuthStatus | StandaloneAuthSession>(`${this.authRoot}/login`, { username, password, passkey })
+      .pipe(map(normalizeSession), tap(status => this.status.set(status)));
+  }
+
+  passkeyRegistrationOptions(): Observable<PasskeyOptions> {
+    return this.http.post<PasskeyOptions>(`${this.authRoot}/passkeys/register-options`, {});
+  }
+
+  registerPasskey(passkey: PasskeyRegistration): Observable<{ recoveryCodes: string[] }> {
+    return this.http.post<{ recoveryCodes: string[] }>(`${this.authRoot}/passkeys/register`, passkey);
+  }
+
+  finishFactorEnrollment(): void {
+    this.status.update(status => status ? { ...status, secondFactorEnrollmentRequired: false } : status);
+  }
+
+  listSessions(userId?: string | null): Observable<AuthSessionSummary[]> {
+    const path = userId ? `/users/${encodeURIComponent(userId)}/sessions` : '/sessions';
+    return this.http.get<AuthSessionSummary[]>(`${this.authRoot}${path}`);
+  }
+
+  revokeSession(id: string, userId?: string | null): Observable<unknown> {
+    const path = userId ? `/users/${encodeURIComponent(userId)}/sessions` : '/sessions';
+    return this.http.delete(`${this.authRoot}${path}/${encodeURIComponent(id)}`);
+  }
+
+  revokeOtherSessions(userId?: string | null): Observable<unknown> {
+    const path = userId ? `/users/${encodeURIComponent(userId)}/sessions` : '/sessions';
+    return this.http.post(`${this.authRoot}${path}/revoke-others`, {});
+  }
+
+  beginTotp(): Observable<{ secret: string }> {
+    return this.http.post<{ secret: string }>(`${this.authRoot}/totp/start`, {});
+  }
+
+  confirmTotp(code: string): Observable<{ recoveryCodes: string[] }> {
+    return this.http.post<{ recoveryCodes: string[] }>(`${this.authRoot}/totp/confirm`, { code });
   }
 
   acceptInvitation(token: string, newPassword: string): Observable<AuthStatus> {

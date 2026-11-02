@@ -1,0 +1,44 @@
+<div class="session-manager">
+  <button type="button" class="session-manager__toggle" data-testid="session-manager-toggle"
+    [attr.aria-expanded]="open()" (click)="toggle()">Sessions</button>
+  @if (notice()) {
+    <span role="status" data-testid="new-session-notice">New session detected</span>
+    <button type="button" (click)="dismissNotice()">Dismiss</button>
+  }
+  @if (open()) {
+    <section class="session-manager__panel" aria-label="Active sessions" data-testid="session-manager-panel">
+      <header><h3>Active sessions</h3><button type="button" (click)="load()" [disabled]="busy()">Refresh</button></header>
+      @if (error()) { <p role="alert">{{ error() }}</p> }
+      <div class="session-manager__rows">
+        @for (session of sessions(); track sessionId(session)) {
+          <div class="session-manager__row" data-testid="session-row">
+            <div><strong>{{ session.device || 'Unknown device' }}</strong> @if (session.current) { <span>Current</span> }</div>
+            <div>{{ session.address || 'Address unavailable' }}</div>
+            <div>Created {{ session.createdAt | date:'medium' }} · Last use {{ session.lastUseAt | date:'medium' }}</div>
+            <button type="button" (click)="revoke(sessionId(session))" [disabled]="busy()">Revoke</button>
+          </div>
+        } @empty { <p>No active sessions.</p> }
+      </div>
+      <button type="button" (click)="revokeOthers()" [disabled]="busy()">Revoke all other sessions</button>
+      @if (!userId()) {
+        <section aria-label="Second factors">
+          <h3>Second factors</h3>
+          <button type="button" (click)="beginTotp()" [disabled]="busy()">Add authenticator</button>
+          <button type="button" (click)="addPasskey()" [disabled]="busy()">Add passkey</button>
+          @if (totpSecret()) {
+            <p>Add this secret to an authenticator app.</p>
+            <output data-testid="session-totp-secret">{{ totpSecret() }}</output>
+            <label>Authenticator code <input type="text" inputmode="numeric" [value]="totpCode()"
+              (input)="totpCode.set($any($event.target).value)"></label>
+            <button type="button" (click)="confirmTotp()" [disabled]="busy()">Verify authenticator</button>
+          }
+          @if (recoveryCodes().length) {
+            <p>Store these one-use recovery codes outside this browser.</p>
+            <output data-testid="session-recovery-codes">{{ recoveryCodes().join(' ') }}</output>
+            <button type="button" (click)="recoveryCodes.set([])">I stored the codes</button>
+          }
+        </section>
+      }
+    </section>
+  }
+</div>

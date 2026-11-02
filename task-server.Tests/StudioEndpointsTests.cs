@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Security;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -32,6 +33,14 @@ public sealed class StudioEndpointsTests
         Assert.NotNull(session);
         Assert.Equal(StudioUserRoles.Owner, session!.Status.User!.Role);
         Assert.True(session.Status.Authenticated);
+        using var enrollmentClient = Client(factory);
+        enrollmentClient.DefaultRequestHeaders.Add("X-Studio-Session-Token", session.SessionToken);
+        var totpSetup = await enrollmentClient.PostAsync("/api/v1/studio/auth/totp/start", null);
+        totpSetup.EnsureSuccessStatusCode();
+        var secret = (await totpSetup.Content.ReadFromJsonAsync<TotpSetup>())!.Secret;
+        var code = SecondFactorCodes.CurrentTotp(secret, DateTime.UtcNow);
+        (await enrollmentClient.PostAsJsonAsync("/api/v1/studio/auth/totp/confirm", new StudioConfirmTotpRequest(code)))
+            .EnsureSuccessStatusCode();
 
         var secondBootstrap = await client.PostAsJsonAsync(
             "/api/v1/studio/auth/bootstrap", new StudioBootstrapRequest("owner2", "another long enough password"));
@@ -44,7 +53,7 @@ public sealed class StudioEndpointsTests
         Assert.Equal("invalid-credentials", (await badLogin.Content.ReadFromJsonAsync<ApiError>())!.Code);
 
         var login = await client.PostAsJsonAsync(
-            "/api/v1/studio/auth/login", new StudioLoginRequest("owner", "correct horse battery staple"));
+            "/api/v1/studio/auth/login", new StudioLoginRequest("owner", "correct horse battery staple", code));
         login.EnsureSuccessStatusCode();
         var loginSession = (await login.Content.ReadFromJsonAsync<StudioAuthSessionDto>())!;
 
@@ -380,6 +389,8 @@ public sealed class StudioEndpointsTests
         client.DefaultRequestHeaders.Add("X-Client-Id", "studio-api-test");
         return client;
     }
+
+    private sealed record TotpSetup(string Secret);
 
     private sealed class StudioApiFactory(string dataDirectory) : WebApplicationFactory<Program>
     {

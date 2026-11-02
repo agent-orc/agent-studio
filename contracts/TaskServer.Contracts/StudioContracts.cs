@@ -1,3 +1,5 @@
+using AgentStudio.Security;
+
 namespace AgentStudio.TaskServer.Contracts;
 
 /// <summary>
@@ -23,7 +25,12 @@ public static class StudioUserRoles
 /// </summary>
 public sealed record StudioBootstrapRequest(
     string Username, string Password, string? DisplayName = null, string? BootstrapCode = null);
-public sealed record StudioLoginRequest(string Username, string Password);
+public sealed record StudioLoginRequest(string Username, string Password, string? SecondFactorCode = null,
+    PasskeyAssertionProof? Passkey = null);
+public sealed record StudioPasskeyLoginRequest(string Username);
+public sealed record StudioConfirmTotpRequest(string Code);
+public sealed record StudioStepUpRequest(string? Code = null, PasskeyAssertionProof? Passkey = null);
+public sealed record StudioSessionSummaryDto(string SessionId, string? Device, string? Address, DateTime CreatedAt, DateTime LastUseAt, bool Current);
 public sealed record StudioChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record StudioPreviewCommentRequest(string PreviewId, string Comment);
 
@@ -40,7 +47,8 @@ public sealed record StudioAuthStatusDto(
     bool BootstrapRequired,
     bool Authenticated,
     StudioAuthUserDto? User = null,
-    bool BootstrapCodeRequired = false);
+    bool BootstrapCodeRequired = false,
+    bool SecondFactorEnrollmentRequired = false);
 
 public sealed record StudioAuthSessionDto(
     string SessionToken,

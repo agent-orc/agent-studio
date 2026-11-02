@@ -172,6 +172,7 @@ public sealed class IdentityBootstrapTests
     public async Task First_login_requires_the_installer_code_and_bootstrap_closes_for_good()
     {
         using var temp = new TempDirectory();
+        string? loginFactorCode = null;
         await using (var factory = new IdentityFactory(temp.Path, OwnerCode))
         {
             using var edge = Client(factory, StudioToken);
@@ -189,6 +190,7 @@ public sealed class IdentityBootstrapTests
                 new StudioBootstrapRequest("owner", OwnerPassword, BootstrapCode: OtherOwnerCode)), HttpStatusCode.Unauthorized));
 
             var owner = await BootstrapOwnerAsync(edge);
+            loginFactorCode = await StudioFactorTestHelper.EnrollTotpAsync(edge);
             Assert.StartsWith("rcv_", owner.RecoveryCode, StringComparison.Ordinal);
             Assert.DoesNotContain("ats_", owner.SessionToken, StringComparison.Ordinal);
             var afterBootstrap = await edge.GetFromJsonAsync<StudioAuthStatusDto>("/api/v1/studio/auth/status");
@@ -212,7 +214,8 @@ public sealed class IdentityBootstrapTests
             Assert.Equal("studio-already-bootstrapped", await ErrorCodeAsync(await edge.PostAsJsonAsync(
                 "/api/v1/studio/auth/bootstrap",
                 new StudioBootstrapRequest("intruder", OwnerPassword, BootstrapCode: OtherOwnerCode)), HttpStatusCode.Conflict));
-            var login = await edge.PostAsJsonAsync("/api/v1/studio/auth/login", new StudioLoginRequest("owner", OwnerPassword));
+            var login = await edge.PostAsJsonAsync("/api/v1/studio/auth/login",
+                new StudioLoginRequest("owner", OwnerPassword, loginFactorCode));
             Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         }
     }
@@ -255,6 +258,7 @@ public sealed class IdentityBootstrapTests
         var login = await (await edge.PostAsJsonAsync("/api/v1/studio/auth/login",
             new StudioLoginRequest("alex", "operator password 1"))).Content.ReadFromJsonAsync<StudioAuthSessionDto>();
         using var operatorClient = Client(factory, StudioToken, login!.SessionToken);
+        await StudioFactorTestHelper.EnrollTotpAsync(operatorClient);
 
         // The operator keeps ordinary task access.
         Assert.Equal(HttpStatusCode.OK, (await operatorClient.GetAsync("/api/v1/studio/board")).StatusCode);
@@ -290,7 +294,7 @@ public sealed class IdentityBootstrapTests
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 25, 12, 0, 0, TimeSpan.Zero));
         await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
         using var edge = Client(factory, StudioToken);
-        var owner = await BootstrapOwnerAsync(edge);
+        var owner = await BootstrapOwnerAsync(edge, clock.GetUtcNow().UtcDateTime);
         using var ownerClient = Client(factory, StudioToken, owner.SessionToken);
         var installationId = (await edge.GetFromJsonAsync<InstallationIdentityDto>("/api/v1/installation"))!.InstallationId;
         using var anonymous = Client(factory, credential: null);
@@ -372,7 +376,7 @@ public sealed class IdentityBootstrapTests
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 25, 12, 0, 0, TimeSpan.Zero));
         await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
         using var edge = Client(factory, StudioToken);
-        var owner = await BootstrapOwnerAsync(edge);
+        var owner = await BootstrapOwnerAsync(edge, clock.GetUtcNow().UtcDateTime);
         using var ownerClient = Client(factory, StudioToken, owner.SessionToken);
         var installationId = (await edge.GetFromJsonAsync<InstallationIdentityDto>("/api/v1/installation"))!.InstallationId;
         using var anonymous = Client(factory, credential: null);
@@ -447,6 +451,7 @@ public sealed class IdentityBootstrapTests
         await using var factory = new IdentityFactory(temp.Path, OwnerCode);
         using var edge = Client(factory, StudioToken);
         var owner = await BootstrapOwnerAsync(edge);
+        var loginFactorCode = await StudioFactorTestHelper.EnrollTotpAsync(edge);
 
         Assert.Equal("invalid-recovery", await ErrorCodeAsync(await edge.PostAsJsonAsync("/api/v1/studio/auth/recover",
             new StudioRecoverRequest("owner", "rcv_wrong", "new owner password 1")), HttpStatusCode.Unauthorized));
@@ -463,7 +468,7 @@ public sealed class IdentityBootstrapTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await edge.PostAsJsonAsync("/api/v1/studio/auth/login",
             new StudioLoginRequest("owner", OwnerPassword))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await edge.PostAsJsonAsync("/api/v1/studio/auth/login",
-            new StudioLoginRequest("owner", "new owner password 1"))).StatusCode);
+            new StudioLoginRequest("owner", "new owner password 1", loginFactorCode))).StatusCode);
     }
 
     [Fact]
@@ -473,7 +478,7 @@ public sealed class IdentityBootstrapTests
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));
         await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
         using var edge = Client(factory, StudioToken);
-        var owner = await BootstrapOwnerAsync(edge);
+        var owner = await BootstrapOwnerAsync(edge, clock.GetUtcNow().UtcDateTime);
         using var ownerClient = Client(factory, StudioToken, owner.SessionToken);
         var workspace = (await (await ownerClient.PostAsJsonAsync("/api/v1/workspaces",
             new CreateWorkspaceRequest("Main"))).Content.ReadFromJsonAsync<WorkspaceDto>())!;
@@ -583,7 +588,8 @@ public sealed class IdentityBootstrapTests
         using var temp = new TempDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero));
         await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
-        using var session = await SignInProductAsync(factory);
+        using var session = await SignInProductAsync(factory, clock.GetUtcNow().UtcDateTime);
+        Assert.Equal(HttpStatusCode.OK, (await session.Product.GetAsync("/api/v1/studio/auth/sessions")).StatusCode);
         var wish = await CreateTaskAsync(session.Product, """{"title":"A product wish"}""");
 
         foreach (var (method, route) in new[] { (HttpMethod.Post, "move"), (HttpMethod.Put, "state") })
@@ -636,7 +642,7 @@ public sealed class IdentityBootstrapTests
         using var temp = new TempDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero));
         await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
-        using var session = await SignInProductAsync(factory);
+        using var session = await SignInProductAsync(factory, clock.GetUtcNow().UtcDateTime);
 
         foreach (var body in new[]
                  {
@@ -681,7 +687,7 @@ public sealed class IdentityBootstrapTests
         using var temp = new TempDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero));
         await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
-        using var session = await SignInProductAsync(factory);
+        using var session = await SignInProductAsync(factory, clock.GetUtcNow().UtcDateTime);
         var task = await CreateTaskAsync(session.Owner, """{"title":"A delivery","state":"2-ready"}""");
         const string runnerId = "host-product-results";
         using var edge = Client(factory, StudioToken);
@@ -901,12 +907,14 @@ public sealed class IdentityBootstrapTests
         string prefix = "ALPHA")
         => new(projectId, workspaceId, projectId, prefix, url, integrationRef, "main");
 
-    private static async Task<StudioOwnerBootstrapSessionDto> BootstrapOwnerAsync(HttpClient edge)
+    private static async Task<StudioOwnerBootstrapSessionDto> BootstrapOwnerAsync(HttpClient edge, DateTime? now = null)
     {
         var response = await edge.PostAsJsonAsync("/api/v1/studio/auth/bootstrap",
             new StudioBootstrapRequest("owner", OwnerPassword, BootstrapCode: OwnerCode));
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        return (await response.Content.ReadFromJsonAsync<StudioOwnerBootstrapSessionDto>())!;
+        var owner = (await response.Content.ReadFromJsonAsync<StudioOwnerBootstrapSessionDto>())!;
+        await StudioFactorTestHelper.EnrollTotpAsync(edge, now);
+        return owner;
     }
 
     private const string ProductTasksPath = "/api/v1/projects/prj-assigned/tasks";
@@ -921,10 +929,10 @@ public sealed class IdentityBootstrapTests
     }
 
     /// <summary>An owner session and a Product session assigned to <c>prj-assigned</c>.</summary>
-    private static async Task<ProductSession> SignInProductAsync(IdentityFactory factory)
+    private static async Task<ProductSession> SignInProductAsync(IdentityFactory factory, DateTime now)
     {
         using var edge = Client(factory, StudioToken);
-        var owner = await BootstrapOwnerAsync(edge);
+        var owner = await BootstrapOwnerAsync(edge, now);
         var ownerClient = Client(factory, StudioToken, owner.SessionToken);
         var workspace = (await (await ownerClient.PostAsJsonAsync("/api/v1/workspaces",
             new CreateWorkspaceRequest("Main"))).Content.ReadFromJsonAsync<WorkspaceDto>())!;

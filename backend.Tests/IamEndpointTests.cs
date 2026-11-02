@@ -167,7 +167,7 @@ public sealed class IamEndpointTests : IDisposable
         store.Bootstrap(new BootstrapRequest("first.owner", Password, null));
         using var owner = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = true });
-        var csrf = await LoginAsync(owner, "first.owner", Password);
+        var csrf = await LoginAsync(owner, "first.owner", Password, clock.GetUtcNow().UtcDateTime);
 
         var created = await SendAsync<JsonElement>(owner, HttpMethod.Post, "/api/auth/api-tokens", csrf, new
         {
@@ -190,12 +190,23 @@ public sealed class IamEndpointTests : IDisposable
             .GetProperty("revokedAt").GetString());
     }
 
-    private static async Task<string> LoginAsync(HttpClient client, string username, string password)
+    private static async Task<string> LoginAsync(HttpClient client, string username, string password, DateTime? now = null)
     {
         client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
         var response = await client.PostAsJsonAsync("/api/auth/login", new { username, password });
         response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<AuthStatusResponse>())!.CsrfToken!;
+        var status = (await response.Content.ReadFromJsonAsync<AuthStatusResponse>())!;
+        var csrf = status.CsrfToken!;
+        if (status.SecondFactorEnrollmentRequired)
+        {
+            var start = await SendRawAsync(client, HttpMethod.Post, "/api/auth/totp/start", csrf, new { });
+            start.EnsureSuccessStatusCode();
+            var secret = (await start.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("secret").GetString()!;
+            var code = SecondFactorCodes.CurrentTotp(secret, now ?? DateTime.UtcNow);
+            (await SendRawAsync(client, HttpMethod.Post, "/api/auth/totp/confirm", csrf, new { code }))
+                .EnsureSuccessStatusCode();
+        }
+        return csrf;
     }
 
     private static async Task<T> SendAsync<T>(HttpClient client, HttpMethod method, string path, string csrf, object? body)

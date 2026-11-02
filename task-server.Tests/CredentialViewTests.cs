@@ -395,8 +395,9 @@ public sealed class CredentialViewTests
         Assert.Equal(HttpStatusCode.Created, bootstrap.StatusCode);
         using var owner = Client(factory, studioToken,
             (await bootstrap.Content.ReadFromJsonAsync<StudioOwnerBootstrapSessionDto>())!.SessionToken);
-        var operatorSession = await UserSessionAsync(edge, owner, "alex", StudioUserRoles.Operator);
-        var viewerSession = await UserSessionAsync(edge, owner, "vera", StudioUserRoles.Viewer);
+        await StudioFactorTestHelper.EnrollTotpAsync(owner, clock.GetUtcNow().UtcDateTime);
+        var operatorSession = await UserSessionAsync(edge, owner, "alex", StudioUserRoles.Operator, clock.GetUtcNow().UtcDateTime);
+        var viewerSession = await UserSessionAsync(edge, owner, "vera", StudioUserRoles.Viewer, clock.GetUtcNow().UtcDateTime);
         using var operatorClient = Client(factory, studioToken, operatorSession);
         using var viewerClient = Client(factory, studioToken, viewerSession);
 
@@ -538,14 +539,17 @@ public sealed class CredentialViewTests
                 ServiceAvailability: "unavailable", CredentialHealth: outcome == "credential_invalid" ? "invalid" : "unknown")],
             CredentialHealthVersion: 2), "coding", default);
 
-    private static async Task<string> UserSessionAsync(HttpClient edge, HttpClient owner, string username, string role)
+    private static async Task<string> UserSessionAsync(HttpClient edge, HttpClient owner, string username, string role, DateTime now)
     {
         var password = username + " password 1234";
         Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync("/api/v1/studio/auth/users",
             new StudioCreateUserRequest(username, password, role))).StatusCode);
         var login = await edge.PostAsJsonAsync("/api/v1/studio/auth/login", new StudioLoginRequest(username, password));
         login.EnsureSuccessStatusCode();
-        return (await login.Content.ReadFromJsonAsync<StudioAuthSessionDto>())!.SessionToken;
+        var session = (await login.Content.ReadFromJsonAsync<StudioAuthSessionDto>())!;
+        if (role == StudioUserRoles.Operator)
+            await StudioFactorTestHelper.EnrollTotpAsync(edge, now);
+        return session.SessionToken;
     }
 
     private static async Task<string> ErrorCodeAsync(HttpResponseMessage response, HttpStatusCode expected)

@@ -118,6 +118,19 @@ that is already allowed to edit that project's checkout.
   session cookie and sends it with `Secure`, `Path=/`, and no `Domain` attribute.
   Studio exposes an explicit sign-out action; a logout or API 401 tears
   down browser polling and SignalR before returning to the login gate.
+- Owner and Admin sign-in requires an enrolled authenticator code, a one-use
+  recovery code, or a WebAuthn passkey assertion. An account without an enrolled
+  factor receives a limited session for factor setup. Every step-up requires a
+  registered second factor. TOTP enrollment returns recovery codes once; store them away from
+  the browser. Passkey ceremonies require user verification and bind the
+  challenge to the current origin and relying party. Each user can list active
+  sessions with device, address, creation, and last-use times, revoke one, or
+  revoke all other sessions. A signed-in browser shows a notice when it sees a
+  newer session. The Owner can do this for any user. Live hub
+  connections recheck their session every 15 seconds so revocation closes them.
+- The standalone Task Server Studio session uses the same 10-failure client
+  lockout, 20-failure username budget, 15-minute window, 8-hour idle expiry,
+  and 7-day absolute expiry as the networked monolith defaults.
 - Roles are intentionally small: owner manages identities and all projects,
   operator reads and mutates allowed projects, contributor (shown as Product)
   reads assigned projects, creates wishes and cards, edits Backlog and Ready

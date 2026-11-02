@@ -97,7 +97,12 @@ public sealed record StudioUser
     public bool MustChangePassword { get; init; }
     public DateTime CreatedAt { get; init; }
     public DateTime PasswordChangedAt { get; init; }
+    public string? TotpSecret { get; init; }
+    public List<string> RecoveryCodeHashes { get; init; } = [];
+    public List<StudioPasskey> Passkeys { get; init; } = [];
 }
+
+public sealed record StudioPasskey(string Id, string Name, string PublicKey, uint SignCount, DateTime CreatedAt);
 
 public sealed record StudioSession
 {
@@ -109,6 +114,9 @@ public sealed record StudioSession
     public required DateTime LastSeenAt { get; init; }
     public required DateTime ExpiresAt { get; init; }
     public required DateTime AbsoluteExpiresAt { get; init; }
+    public string? Device { get; init; }
+    public string? Address { get; init; }
+    public bool SecondFactorEnrollmentOnly { get; init; }
 }
 
 public sealed record RunnerCredential
@@ -235,10 +243,15 @@ public sealed record TelemetryIngestPrincipal(string TokenId, string Project, st
 public sealed record HumanPrincipal(StudioUser User, StudioSession Session);
 public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string CredentialId, IReadOnlySet<string> Scopes);
 
-public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null, bool BootstrapCodeRequired = false);
+public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null, bool BootstrapCodeRequired = false, bool SecondFactorEnrollmentRequired = false);
 public sealed record AuthUserResponse(string Id, string Username, string DisplayName, string Role, IReadOnlyList<string> Projects, bool Disabled, bool MustChangePassword, IReadOnlyList<string>? ProductionApprovalProjects = null);
 public sealed record BootstrapRequest(string Username, string Password, string? DisplayName, string? BootstrapCode = null);
-public sealed record LoginRequest(string Username, string Password);
+public sealed record LoginRequest(string Username, string Password, string? SecondFactorCode = null,
+    PasskeyAssertionProof? Passkey = null);
+public sealed record ConfirmTotpRequest(string Code);
+public sealed record PasskeyAssertionOptionsRequest(string Username);
+public sealed record StepUpRequest(string? Code = null, PasskeyAssertionProof? Passkey = null);
+public sealed record SessionResponse(string Id, string? Device, string? Address, DateTime CreatedAt, DateTime LastUseAt, bool Current);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record CreateUserRequest(string Username, string DisplayName, string Role, IReadOnlyList<string>? Projects, string? TemporaryPassword, IReadOnlyList<IamGrantRequest>? Bindings = null);
 public sealed record UpdateUserRequest(string? DisplayName, string? Role, IReadOnlyList<string>? Projects, bool? Disabled, IReadOnlyList<string>? ProductionApprovalProjects = null);

@@ -21,7 +21,8 @@ public static class AccessSecurityEndpoints
                 store.BootstrapRequired,
                 principal is not null,
                 principal is null ? null : ToResponse(principal.User),
-                BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration)));
+                BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration),
+                SecondFactorEnrollmentRequired: principal?.Session.SecondFactorEnrollmentOnly == true));
         });
 
         auth.MapPost("/bootstrap", (BootstrapRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration, ILoggerFactory loggers) =>
@@ -35,10 +36,11 @@ public static class AccessSecurityEndpoints
                     audit.LogWarning("Owner bootstrap without a valid installer code from client {ClientAddress}", context.Connection.RemoteIpAddress);
                     throw new SecurityOperationException(403, "bootstrap-code-required", "A valid installer owner code is required.");
                 }
-                var created = store.Bootstrap(request);
+                var created = store.Bootstrap(request, publicEntry: true);
                 audit.LogInformation("Owner {Username} bootstrapped from client {ClientAddress}", created.User.Username, context.Connection.RemoteIpAddress);
                 SetSessionCookies(context, created.SessionToken, created.CsrfToken);
-                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken));
+                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken,
+                    SecondFactorEnrollmentRequired: true));
             }));
 
         auth.MapPost("/login", async (HttpContext context, AccessSecurityStore store, IConfiguration configuration,
@@ -74,19 +76,25 @@ public static class AccessSecurityEndpoints
                         throw new SecurityOperationException(503, "login-client-address-invalid", "Login is temporarily unavailable.");
                 }
                 var key = ClientThrottleKey(context.Connection.RemoteIpAddress);
-                var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
+                var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key,
+                    request.SecondFactorCode, requireSecondFactor: true,
+                    device: context.Request.Headers.UserAgent.ToString()[..Math.Min(context.Request.Headers.UserAgent.ToString().Length, 160)],
+                    address: context.Connection.RemoteIpAddress?.ToString(), passkey: request.Passkey,
+                    origin: RequestOrigin(context), rpId: context.Request.Host.Host);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
-                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
+                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken,
+                    SecondFactorEnrollmentRequired: store.AuthenticateSession(result.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true));
             });
         });
 
         auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
             {
-                var accepted = store.AcceptInvitation(request);
+                var accepted = store.AcceptInvitation(request, publicEntry: true);
                 SetSessionCookies(context, accepted.SessionToken, accepted.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true,
-                    ToResponse(accepted.User), accepted.CsrfToken));
+                    ToResponse(accepted.User), accepted.CsrfToken,
+                    SecondFactorEnrollmentRequired: store.AuthenticateSession(accepted.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true));
             }));
 
         // The local profile treats X-Client-Id as attribution only, so it must not
@@ -106,7 +114,8 @@ public static class AccessSecurityEndpoints
                     },
                     statusCode: StatusCodes.Status401Unauthorized)
                 : Results.Ok(new AuthStatusResponse(
-                    SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(principal.User)));
+                    SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(principal.User),
+                    SecondFactorEnrollmentRequired: principal.Session.SecondFactorEnrollmentOnly));
         });
 
         auth.MapPost("/logout", (HttpContext context, AccessSecurityStore store) =>
@@ -119,6 +128,57 @@ public static class AccessSecurityEndpoints
                 context.Response.Cookies.Delete("agentstudio-csrf", CsrfCookieOptions(https: false));
                 return Results.NoContent();
             }));
+
+        auth.MapPost("/totp/start", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() => Results.Ok(new { secret = store.BeginTotpEnrollment(RequireHuman(context, store)) })));
+
+        auth.MapPost("/totp/confirm", (ConfirmTotpRequest request, HttpContext context, AccessSecurityStore store) =>
+            Execute(() => Results.Ok(new { recoveryCodes = store.ConfirmTotpEnrollment(RequireHuman(context, store), request.Code) })));
+
+        auth.MapPost("/passkeys/register-options", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                var principal = RequireHuman(context, store);
+                return Results.Ok(new { challenge = store.BeginPasskeyRegistration(principal),
+                    rpId = context.Request.Host.Host, userId = principal.User.Id, username = principal.User.Username });
+            }));
+        auth.MapPost("/passkeys/register", (PasskeyRegistrationProof proof, HttpContext context, AccessSecurityStore store) =>
+            Execute(() => Results.Ok(new { recoveryCodes = store.RegisterPasskey(RequireHuman(context, store), proof,
+                RequestOrigin(context), context.Request.Host.Host) })));
+        auth.MapPost("/passkeys/assertion-options", (PasskeyAssertionOptionsRequest request, HttpContext context, AccessSecurityStore store) =>
+            Execute(() => Results.Ok(new { challenge = store.BeginPasskeyAssertion(request.Username,
+                ClientThrottleKey(context.Connection.RemoteIpAddress)), rpId = context.Request.Host.Host })));
+        auth.MapPost("/passkeys/step-up-options", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() => Results.Ok(new { challenge = store.BeginPasskeyStepUp(RequireHuman(context, store)),
+                rpId = context.Request.Host.Host })));
+
+        auth.MapPost("/step-up", (StepUpRequest request, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                var principal = RequireHuman(context, store);
+                if (request.Passkey is not null)
+                    store.VerifyPasskeyStepUp(principal, request.Passkey, RequestOrigin(context), context.Request.Host.Host);
+                else store.VerifyStepUp(principal, request.Code);
+                return Results.NoContent();
+            }));
+
+        auth.MapGet("/sessions", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() => Results.Ok(store.ListSessions(RequireHuman(context, store)))));
+
+        auth.MapDelete("/sessions/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+            Execute(() => { store.RevokeSession(RequireHuman(context, store), id); return Results.NoContent(); }));
+
+        auth.MapPost("/sessions/revoke-others", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() => { store.RevokeOtherSessions(RequireHuman(context, store)); return Results.NoContent(); }));
+
+        auth.MapGet("/users/{id}/sessions", (string id, HttpContext context, AccessSecurityStore store) =>
+            Execute(() => Results.Ok(store.ListSessions(RequireOwner(context, store), id))));
+
+        auth.MapDelete("/users/{id}/sessions/{sessionId}", (string id, string sessionId, HttpContext context, AccessSecurityStore store) =>
+            Execute(() => { store.RevokeSession(RequireOwner(context, store), sessionId, id); return Results.NoContent(); }));
+
+        auth.MapPost("/users/{id}/sessions/revoke-others", (string id, HttpContext context, AccessSecurityStore store) =>
+            Execute(() => { store.RevokeOtherSessions(RequireOwner(context, store), id); return Results.NoContent(); }));
 
         auth.MapPost("/change-password", (ChangePasswordRequest request, HttpContext context, AccessSecurityStore store) =>
             Execute(() => Results.Ok(ToResponse(store.ChangePassword(RequireHuman(context, store), request)))));
@@ -311,6 +371,9 @@ public static class AccessSecurityEndpoints
             return secureToken;
         return secureToken ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName];
     }
+
+    private static string RequestOrigin(HttpContext context)
+        => context.Request.Scheme + "://" + context.Request.Host;
 
     internal static string ClientThrottleKey(IPAddress? address)
     {

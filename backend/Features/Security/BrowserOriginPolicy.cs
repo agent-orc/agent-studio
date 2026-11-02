@@ -23,6 +23,7 @@ public static class BrowserOriginPolicy
     /// <summary>Open endpoints that issue a browser session.</summary>
     public static bool IsBrowserSignIn(string path)
         => path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/auth/passkeys/assertion-options", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/bootstrap", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase);
 
