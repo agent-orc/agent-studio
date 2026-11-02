@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tags;
 
@@ -318,9 +319,7 @@ public sealed class TagRegistryService
         if (!string.IsNullOrWhiteSpace(taskRepo))
             return Path.Combine(taskRepo, FileName);
 
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrEmpty(local)) return null;
-        return Path.Combine(local, "agent-taskboard", FileName);
+        return LocalStateRoot.Combine("agent-taskboard", FileName);
     }
 
     private static string NormalizeColor(string? raw)

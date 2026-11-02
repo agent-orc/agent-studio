@@ -66,7 +66,7 @@ jobs:
           node-version-file: .nvmrc
       - name: Verify the Studio server move procedure
         run: |
-          node --test scripts/migration/move-studio-to-server.test.mjs scripts/migration/relocate-workspace-paths.test.mjs
+          node --test scripts/migration/move-studio-to-server.test.mjs scripts/migration/relocate-workspace-paths.test.mjs scripts/migration/readiness-report.test.mjs
           sh scripts/migration/move-studio-to-server.test.sh
       - name: Open the website board in Chromium
         env:

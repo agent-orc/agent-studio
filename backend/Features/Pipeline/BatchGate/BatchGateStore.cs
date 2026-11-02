@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts.BatchGate;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -72,6 +73,22 @@ public sealed record BatchGateReviewVerificationFact(
     string Outcome, double CandidateMinutes, double BaselineMinutes,
     int CountedCommands, DateTimeOffset RecordedAtUtc);
 
+/// <summary>
+/// AGT-3434: the suites one card ran in the per-task fallback path, written
+/// once per review generation when that path settles it. Per-task gates count
+/// every recorded execution of the generation (merged candidate, tip verdict
+/// it triggered, own-base retest); the publish gate counts when the merge into
+/// the integration branch ran its suite instead of reusing the per-task verdict.
+/// </summary>
+/// <param name="Outcome"><c>published</c>, <c>publish-failed</c>, <c>escalated</c> or <c>merge-round</c>.</param>
+public sealed record BatchGateFallbackSuiteFact(
+    string Project, string TaskKey, string ReviewAttemptId, string Outcome,
+    int PerTaskGateRuns, int PublishGateRuns, bool PublishVerdictReused,
+    DateTimeOffset RecordedAtUtc)
+{
+    public int Suites => PerTaskGateRuns + PublishGateRuns;
+}
+
 public sealed record BatchGateBaseVerdict(
     string Project, string BaseSha, string GateProfileDigest,
     string Outcome, string? FailureFingerprint, string Reason,
@@ -92,8 +109,7 @@ public sealed partial class BatchGateStore
 
     public BatchGateStore(string? root = null)
     {
-        var data = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        _root = root ?? Path.Combine(data, "agentstudio", "batch-gates");
+        _root = root ?? LocalStateRoot.Combine("agentstudio", "batch-gates");
     }
 
     public string BatchDirectory(string batchId)
@@ -309,6 +325,36 @@ public sealed partial class BatchGateStore
         return Directory.Exists(folder)
             ? Directory.EnumerateFiles(folder, "*.json")
                 .Select(Read<BatchGateExecutionFact>)
+                .ToArray()
+            : [];
+    }
+
+    /// <summary>Writes the review generation's fact once; false when it already exists.</summary>
+    public bool RecordFallbackSuites(BatchGateFallbackSuiteFact fact)
+    {
+        var folder = Path.Combine(_root, "fallback-suites");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, SafeName(fact.ReviewAttemptId) + ".json");
+        if (File.Exists(path)) return false;
+        try
+        {
+            WriteOnce(path, fact);
+            return true;
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            // A concurrent settlement of the same generation won the write.
+            return false;
+        }
+    }
+
+    public IReadOnlyList<BatchGateFallbackSuiteFact> ListFallbackSuites(string project)
+    {
+        var folder = Path.Combine(_root, "fallback-suites");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json")
+                .Select(Read<BatchGateFallbackSuiteFact>)
+                .Where(fact => string.Equals(fact.Project, project, StringComparison.Ordinal))
                 .ToArray()
             : [];
     }

@@ -55,6 +55,27 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+
+// AGT-3401: machine-local state (batch gates, gate cache, quota and routing
+// state) lives below an absolute local data directory. Resolve it before any
+// service touches it and stop here if it cannot be created; earlier versions
+// wrote it relative to the working directory, which a container recreate lost.
+try
+{
+    AgentStudio.State.LocalStateStartup.Prepare(
+        [Directory.GetCurrentDirectory(), AppContext.BaseDirectory, builder.Configuration["RemoteGate:InstallationRoot"]],
+        new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger)
+            .CreateLogger("AgentStudio.State.LocalStateStartup"));
+}
+catch (Exception exception) when (exception is AgentStudio.TaskServer.Contracts.LocalStateRootUnavailableException
+    or IOException or UnauthorizedAccessException)
+{
+    Log.Fatal("local-state-startup-failed {Reason}", exception.Message);
+    await Log.CloseAndFlushAsync();
+    Environment.ExitCode = 1;
+    return;
+}
+
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
 builder.Services.AddSingleton<AgentStudio.Review.ReviewObservationStore>();
@@ -1164,6 +1185,15 @@ builder.Services.AddSingleton<ProjectSettingsService>();
 builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
+// AGT-3412: the readiness report of the operations page and the move tool.
+builder.Services.AddSingleton<AgentStudio.Readiness.IReadinessGit, AgentStudio.Readiness.ProcessReadinessGit>();
+builder.Services.AddSingleton<AgentStudio.Readiness.ReadinessGitFacts>();
+builder.Services.AddSingleton<AgentStudio.Readiness.ServerReadinessCollector>();
+builder.Services.AddSingleton(sp => new AgentStudio.Readiness.ServerReadinessMonitor(
+    sp.GetRequiredService<AgentStudio.Readiness.ServerReadinessCollector>().CollectAsync,
+    sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<ILogger<AgentStudio.Readiness.ServerReadinessMonitor>>()));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Readiness.ServerReadinessMonitor>());
 builder.Services.AddSingleton<AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService>();
 builder.Services.AddSingleton<GitCleanupService>();
 builder.Services.AddSingleton<BranchRetentionEvidenceWriter>();

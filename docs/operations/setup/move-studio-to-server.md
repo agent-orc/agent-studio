@@ -35,6 +35,23 @@ The inventory classifies every workspace file by area (`.metadata` attempt autho
 
 Staging on the server (`<server-root>/move-staging`) always holds the raw transferred state. Relocation only ever runs on copies of it, so the delta logic stays valid across passes.
 
+## Local state outside the workspace
+
+The API also keeps machine-local state in its local data directory: `%LOCALAPPDATA%` on the workstation, `~/.local/share` (or `$XDG_DATA_HOME`) on Linux. In the server stack that is `/data/home/.local/share`, which is `<data>/home/.local/share` on the host. `setup.sh` creates it, and the API creates it at startup if it is missing. If the API cannot create it, it refuses to start and logs `local-state-startup-failed` with the path. Releases before AGT-3401 could write this state below `/app` in the container layer when the folder was missing. The first start of a newer release moves such state into `<data>/home/.local/share` once and logs `local-state-migrated` for each entry. An entry that already exists at the new location is kept and the old copy stays in place.
+
+The move script does not transfer this directory. Most of it is bound to the instance or is a cache:
+
+| Folder below the local data directory | Holds | On a move |
+|---|---|---|
+| `agentstudio/instances/<instance id>/` | Batch gate store and leases, pull gates, batch push reservations, claimed gate canary ledger | Not carried. Let open batch gates and pull gates finish before `--apply`. |
+| `agentstudio/remote-gate-runs/<installation hash>/` | Remote gate run records | Not carried. They are scoped by the installation directory, which also changes. |
+| `agentstudio/post-merge/` | Post-merge run state and incidents per project | Copy it into `<data>/home/.local/share/agentstudio/post-merge` before the first server start to keep open post-merge incidents. Otherwise the server starts without them. |
+| `agentstudio/gate-results/` | Gate result cache | Optional. Without it, the first gate on each SHA runs again. |
+| `agentstudio/batch-gates/`, `batch-gate-leases/`, `ref-mutation-leases/`, `source/cache/` | Default stores, leases, and the pull gate source cache | Not carried. Leases expire, and caches rebuild. |
+| `agent-taskboard/` | Claude and Codex model catalog caches. Without a `TaskRepository`, it also holds quota caps, fallback preferences, and model routing state. | Not carried. The server sets `TaskRepository`, so those settings travel with the workspace. |
+
+The instance id is the first 20 hex characters of a SHA-256 digest. The digest covers the API content root and the task repository path. A move changes both (the workstation's Stable checkout and workspace become `/app` and `/data/workspace`), so the server gets a new, empty instance folder. Copying the workstation's `instances/<old id>` folder would not be read. This is why in-flight batch gate state must reach a terminal state before the switch and is never carried across. A later change of the content root or the `TaskRepository` path on the server has the same effect.
+
 ## Credentials
 
 The move never copies a login. The inventory reports which of these exist on the workstation and the replacement for each:
@@ -108,7 +125,29 @@ For a forced apply, the script also prints the server snapshot names `<data>/wor
 
 ## After the move
 
-Sign in at `https://robert.omgai.dev`, complete the credential replacements, point remote runners at the new URL, and keep the state directory until the old setup is retired. Backups, updates, and stopping the stack follow [studio-website.md](./studio-website.md).
+Sign in at `https://robert.omgai.dev`, complete the credential replacements, point remote runners at the new URL, and keep the state directory until the old setup is retired. Check that `<data>/home/.local/share` exists on the host and that `docker compose logs api` reports `local-state-root /data/home/.local/share`. Backups, updates, and stopping the stack follow [studio-website.md](./studio-website.md). The backup scope there includes `<data>/home` and so the local state.
+
+### Readiness report
+
+The server checks itself shortly after start, every five minutes, and on **Recheck** (AGT-3412). The report is the first section of the Environment view (Operations / Live environment): one line per check, with its state, what it means, and the exact remedy. Passing lines are hidden behind **Show N passing**. The checks:
+
+| Check | Line per | Fails or warns when |
+|---|---|---|
+| `git-identity` | server | `user.name` or `user.email` is missing for the service user. The API image sets both in `/etc/gitconfig` (`Agent Studio`, `studio@agent-studio.invalid`); a `--global` identity in `/data/home` wins. |
+| `committer-identity` | server | a real `git commit-tree` in a scratch repository fails, the way direct merges failed with `Committer identity unknown` on 1 November 2026. |
+| `data-volume` | workspace, home, each checkout | the folder is missing or lies in the container layer instead of a mount (`/proc/self/mountinfo`). |
+| `state-writable` | workspace, home | Studio cannot create and remove a probe file. |
+| `git-locks` | workspace, each checkout | a Git lock file is older than 10 minutes. |
+| `gate-worker` | server | no pull gate worker sent a heartbeat in the last 2 minutes and the SSH gate host is unreachable or not configured. |
+| `execution-host` | each enrolled host | the host never contacted the server or was not seen for 10 minutes; a warning when no host is enrolled. |
+| `repository-visibility` | project | the visibility is not recorded. |
+| `app-coverage` | project | the GitHub App is not connected, not installed on the repository, or its installation is not adopted. |
+| `integration-branch` | project | the checkout is missing, no integration branch is set and `origin/HEAD` is unknown, or `origin/<branch>` is absent. |
+| `integration-lane` | project | `refs/agent-studio/integration/<branch>` is missing, as in a fresh clone. |
+
+Reads never start Git: the page and the move tool read the last computed report, and every Git fact stays cached for a minute per repository, so a recheck runs Git at most once per repository per minute. Operators read the report at `GET /api/system/readiness` and recheck with `POST /api/system/readiness/refresh`. Inside the API container, `curl -H "Host: $STUDIO_DOMAIN" http://127.0.0.1:5031/healthz/readiness` returns the same report; that route answers loopback callers only.
+
+`--apply` reads this report after the switch and prints every line that is not ready, failing lines first, each with its remedy. It keeps the report in `<server-root>/move-bin/readiness.json`. A failing check does not undo the move. `--rehearse` prints the report of the rehearsal stack the same way; there, missing hosts and disabled pushes are expected.
 
 ## Tests
 
@@ -125,5 +164,8 @@ Sign in at `https://robert.omgai.dev`, complete the credential replacements, poi
 - a failed switch that stops the server stack again, a refused re-run after it without `--force`, and the printed rollback;
 - a successful apply, with `api.sh` refusing through the guard the script wrote and nothing written beside the workspace;
 - refusal of a second apply, `--force` with a blocking final inventory that keeps Stable stopped, and a successful `--force`.
+- the readiness report after the rehearsal and after the switch, with the failing check and its remedy listed and the passing one left out.
+
+`node --test scripts/migration/readiness-report.test.mjs` covers the report formatting.
 
 No real host is contacted.

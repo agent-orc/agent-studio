@@ -129,6 +129,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | IntakeHostedService | !PD, per project | decide, operator | AI Operator decider `intake-routing` (`IntakeRoutingPolicy`): an already-done card goes to a person in Human Review. Effect: `IntakeRoutingEffect`. |
 | GitInventoryRefreshHostedService | !PD | infra | Authority host |
 | ProjectRepositoryVisibilitySync | always | infra | Authority host. Copies project visibility settings to registered Task Server repositories. |
+| ServerReadinessMonitor | always | report | Authority host. Computes the server readiness report (AGT-3412) after start, every five minutes and on recheck; no lane move. |
 | GitStateIndexService | !PD | infra | Authority host |
 | GitBranchRetentionHostedService | !PD | infra | Authority host |
 | CompletedPushWorker | !PD | infra | Authority host |

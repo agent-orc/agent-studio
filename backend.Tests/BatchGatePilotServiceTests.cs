@@ -951,7 +951,6 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         _gate.Fallback = _ => throw new InvalidOperationException("A conflicted member ran a per-task gate.");
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
-
         await pilot.TickAsync(CancellationToken.None);
 
         Assert.Equal(0, _gate.FallbackRuns);
@@ -3512,11 +3511,17 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             = request => Green(request.ExpectedSha);
         public Func<BuildTestGateRequest, BuildTestGateResult> Fallback { get; set; }
             = _ => throw new InvalidOperationException("No per-task gate result is scripted.");
+        /// <summary>
+        /// The merge-into-develop gate of the publish step. Unset, it counts as
+        /// a per-task gate as before.
+        /// </summary>
+        public Func<BuildTestGateRequest, BuildTestGateResult>? Merge { get; set; }
         public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? BatchAsync { get; set; }
         public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? FallbackAsync { get; set; }
         private int _batchRuns;
         private int _baseRuns;
         private int _fallbackRuns;
+        private int _mergeRuns;
         private readonly TaskCompletionSource _batchStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _fallbackStarted =
@@ -3524,6 +3529,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         public int BatchRuns => Volatile.Read(ref _batchRuns);
         public int BaseRuns => Volatile.Read(ref _baseRuns);
         public int FallbackRuns => Volatile.Read(ref _fallbackRuns);
+        public int MergeRuns => Volatile.Read(ref _mergeRuns);
         /// <summary>Completes when the first batch suite starts.</summary>
         public Task FirstBatchStarted => _batchStarted.Task.WaitAsync(HangGuard);
         /// <summary>Completes when the first per-task gate starts.</summary>
@@ -3547,6 +3553,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             {
                 Interlocked.Increment(ref _baseRuns);
                 return Task.FromResult(Base(request));
+            }
+            if (Merge is not null && request.Executor == "merge-into-develop-build-gate")
+            {
+                Interlocked.Increment(ref _mergeRuns);
+                return Task.FromResult(Merge(request));
             }
             Interlocked.Increment(ref _fallbackRuns);
             _fallbackStarted.TrySetResult();
