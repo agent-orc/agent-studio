@@ -518,6 +518,7 @@ Keep every affected origin in `references.followUpOf`. Resolve the underlying to
         => c.FailureClass switch
         {
             "ReviewInfra/ToolUnavailable" => "review toolchain unavailable",
+            "ReviewConfig/ModelUnknownToCli" => "review model does not match its CLI",
             "ReviewInfra/PreparationFailed" => "review preparation failed",
             "gate/MissingSource" => "gate source unavailable",
             "gate/build-gate-failed" => "build gate failed",

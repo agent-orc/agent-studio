@@ -142,6 +142,9 @@ public sealed class TaskCoreCacheTests : IDisposable
         cache.Invalidate(TaskIndexCache.InvalidationSource.External);
         Assert.Equal(2, cache.GetMatchingCoreFacts("shared-id").Count);
         Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
+        // Captured while held: once released, the finished refresh clears this property.
+        var refresh = cache.RefreshInFlight;
+        Assert.NotNull(refresh);
         try
         {
             var trace = TaskSwitchTrace.Begin(null, null);
@@ -156,7 +159,7 @@ public sealed class TaskCoreCacheTests : IDisposable
             finally { trace.Restore(); }
         }
         finally { release.Set(); }
-        await cache.RefreshInFlight!.WaitAsync(TimeSpan.FromSeconds(5));
+        await refresh.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Fact]

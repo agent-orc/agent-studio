@@ -1,10 +1,10 @@
-<header class="delivery__head" [attr.title]="copy.groupSentence">
-  <span class="delivery__label">{{ group().label }}</span>
+<header class="lane-group__head" [attr.title]="copy.groupSentence">
+  <span class="lane-group__label">{{ group().label }}</span>
   <span class="delivery__count" data-testid="delivery-group-count">{{ group().count }}</span>
   <label class="delivery__option">
-    <input type="checkbox" data-testid="delivery-furthest-only"
+    <input type="checkbox" data-testid="delivery-furthest-only" [attr.aria-label]="copy.furthestOnly"
            [checked]="furthestOnly()" (change)="toggleFurthestOnly()" />
-    {{ copy.furthestOnly }}
+    <span class="delivery__option-text">{{ copy.furthestOnly }}</span>
   </label>
 </header>
 @if (error()) {

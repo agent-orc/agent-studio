@@ -31,6 +31,8 @@ SSH
 cat >"$work/bin/docker" <<'DOCKER'
 #!/bin/sh
 printf '%s\n' "$*" >>"$FAKE_LOG"
+# The check after the switch asks the API from the frontend container.
+case "$*" in *' exec -T frontend wget '*) printf '{"bootstrapRequired":%s}\n' "$FAKE_BOOTSTRAP"; exit 0 ;; esac
 case "$*" in *' ps --status '*' --quiet') [ -z "${FAKE_DOCKER_RUNNING:-}" ] || echo "$FAKE_DOCKER_RUNNING" ;; esac
 case "$*" in
   *'-p studio-move-rehearsal '*' down --remove-orphans'*)

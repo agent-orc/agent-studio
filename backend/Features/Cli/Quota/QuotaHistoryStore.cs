@@ -8,7 +8,8 @@ namespace AgentStudio.Cli;
 /// One recorded reading of one quota window (AGT-3001). <see cref="At"/> is the
 /// probe time of the snapshot the reading came from, not the time it was stored.
 /// </summary>
-public sealed record QuotaHistoryPoint(DateTime At, string Window, double UsedPct, DateTime? ResetAt);
+public sealed record QuotaHistoryPoint(DateTime At, string Window, double UsedPct, DateTime? ResetAt,
+    string? SubscriptionKey = null);
 
 /// <summary>
 /// Durable per-CLI series of quota readings behind
@@ -72,14 +73,18 @@ public sealed class QuotaHistoryStore
         var points = snapshot.Windows
             .Where(window => window.UsedPct is not null && !string.IsNullOrWhiteSpace(window.Label))
             .Select(window => new QuotaHistoryPoint(
-                at, window.Label.Trim(), window.UsedPct!.Value, window.ResetAt is { } reset ? ToUtc(reset) : null))
+                at, window.Label.Trim(), window.UsedPct!.Value,
+                window.ResetAt is { } reset ? ToUtc(reset) : null, snapshot.SubscriptionKey))
             .ToList();
         if (points.Count == 0) return 0;
 
         lock (_lock)
         {
             var series = Load(cli);
-            if (series.Points.Count > 0 && series.Points[^1].At >= at) return 0;
+            points = points.Where(point => !series.Points.Any(prior =>
+                prior.Window == point.Window && prior.SubscriptionKey == point.SubscriptionKey
+                && prior.At >= at)).ToList();
+            if (points.Count == 0) return 0;
             try
             {
                 Directory.CreateDirectory(_dir);
@@ -93,6 +98,7 @@ public sealed class QuotaHistoryStore
                 return 0;
             }
             series.Points.AddRange(points);
+            series.Points.Sort((a, b) => a.At.CompareTo(b.At));
             series.OldestOnDisk ??= at;
             Prune(cli, series);
             return points.Count;

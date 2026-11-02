@@ -86,7 +86,8 @@ export function stripUrlCredentials(value) {
 
 function isTransient(relative) {
   const lower = relative.toLowerCase();
-  return lower.endsWith('.tmp') || /\.relocate-\d+$/.test(lower) || lower.split('/').includes('.migration-backups');
+  return lower.endsWith('.tmp') || /\.relocate-\d+$/.test(lower) || lower.split('/').includes('.migration-backups')
+    || /^\.metadata\/[^/]*\.corrupt-[^/]*$/.test(lower);
 }
 
 /** Workspace area of one relative path, independent of its Git state. */
@@ -126,13 +127,14 @@ export function classifyPath(relative, { tracked = false, dirty = false, present
   return { area, state, transfer: 'archive' };
 }
 
-/** Lists every file and symlink below the workspace except Git internals and dependency folders. */
-export function scanWorkspace(root) {
+/** Lists every file and symlink below the workspace except Git internals, dependency folders and `skip` folders. */
+export function scanWorkspace(root, { skip = [] } = {}) {
   const found = [];
   const walk = relative => {
     for (const item of readdirSync(path.join(root, relative), { withFileTypes: true })) {
       if (item.isDirectory() && skippedDirectories.has(item.name)) continue;
       const child = relative ? `${relative}/${item.name}` : item.name;
+      if (item.isDirectory() && skip.includes(child)) continue;
       if (item.isDirectory()) { walk(child); continue; }
       if (!item.isFile() && !item.isSymbolicLink()) continue;
       const stats = lstatSync(path.join(root, child));
@@ -193,17 +195,30 @@ export function fileTokenPattern(file) {
  * Moves archive entries that contain a known token shape to the exclusions.
  * The access state is exempt: it is the account store the move must carry.
  * Scan every candidate on every pass. Size and modification time do not prove
- * content stayed unchanged, including for modified tracked files.
+ * content stayed unchanged, including for modified tracked files. `accepted`
+ * holds `<shape>\t<prefix><path>` lines an operator reviewed and found harmless,
+ * such as test fixtures in a delivered task's log. A new shape in the same file
+ * still counts, because the line names the shape found.
  */
-export function screenTokens(entries, { scan }) {
+export function screenTokens(entries, { scan, accepted = new Set(), prefix = '' }) {
   return entries.map(entry => {
     if (entry.transfer !== 'archive') return entry;
     const result = scan(entry.path);
     const { hash, token } = typeof result === 'string' || result === null ? { token: result } : result;
     const screened = { ...entry, ...(hash ? { hash } : {}) };
-    return token && entry.area !== 'access-state'
+    return token && entry.area !== 'access-state' && !accepted.has(`${token}\t${prefix}${entry.path}`)
       ? { ...screened, transfer: 'exclude', reason: 'token-pattern', token } : screened;
   });
+}
+
+/** Workspace folders to leave out, from `MOVE_SKIP_DIRS` (colon-separated relative paths). */
+export function skippedFolders(value = process.env.MOVE_SKIP_DIRS) {
+  return (value ?? '').split(':').map(item => item.trim()).filter(Boolean).map(normalized);
+}
+
+/** The operator's reviewed token hits, from the file `MOVE_ACCEPTED_TOKEN_HITS` names. */
+export function acceptedTokenHits(file = process.env.MOVE_ACCEPTED_TOKEN_HITS) {
+  return new Set(file ? readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean) : []);
 }
 
 export function summarize(entries) {
@@ -468,7 +483,7 @@ export function buildInventory({
   scanTokens = null, storageSnapshots = [],
 }) {
   const classified = classifyWorkspace({ files, tracked, dirty });
-  const entries = scanTokens ? screenTokens(classified, { scan: scanTokens }) : classified;
+  const entries = scanTokens ? screenTokens(classified, { scan: scanTokens, accepted: acceptedTokenHits() }) : classified;
   const plan = generateMapping({ workspace, projects, remotes, extra });
   return {
     generatedAt: now().toISOString(),
@@ -584,6 +599,8 @@ export function runCli(argv, {
         const classified = classifyWorkspace({ files: scanWorkspace(root.source) });
         const entries = screenTokens(classified, {
           scan: relative => scanFileContent(path.join(root.source, ...relative.split('/'))),
+          accepted: acceptedTokenHits(),
+          prefix: `${root.source}/`,
         });
         return { ...root, entries, summary: summarize(entries), issues: entries
           .filter(entry => entry.reason === 'token-pattern')
@@ -595,7 +612,7 @@ export function runCli(argv, {
     const inventory = buildInventory({
       // The registry records the workspace in its Windows form; Git Bash may hand a different spelling to --workspace.
       workspace: options['source-workspace'] ?? options.workspace,
-      files: scanWorkspace(options.workspace),
+      files: scanWorkspace(options.workspace, { skip: skippedFolders() }),
       tracked: readList(options.tracked),
       dirty: readList(options.dirty),
       projects: registry,

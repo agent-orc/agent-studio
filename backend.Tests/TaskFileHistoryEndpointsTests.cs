@@ -123,7 +123,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
     }
 
     [Fact]
-    public async Task ResultArtifactRoute_ServesNestedHtmlInline_AndKeepsUnknownFilesAsDownloads()
+    public async Task ResultArtifactRoute_ServesNestedHtmlInlineToStudioFrames_AndKeepsUnknownFilesAsDownloads()
     {
         var job = WriteJob("ASS-RESULT-HTML");
         var nested = Path.Combine(job, "results", "reports");
@@ -134,15 +134,34 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         using var factory = CreateFactory();
         using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
-        using var html = await client.GetAsync(
-            $"/api/tasks/ASS-RESULT-HTML/results/reports/concept%20report.html?watchPath={watchPath}");
+        var htmlUrl = $"/api/tasks/ASS-RESULT-HTML/results/reports/concept%20report.html?watchPath={watchPath}";
+        using var framedRequest = new HttpRequestMessage(HttpMethod.Get, htmlUrl);
+        framedRequest.Headers.Add("Sec-Fetch-Dest", "iframe");
+        framedRequest.Headers.Add("Sec-Fetch-Site", "same-origin");
+        using var html = await client.SendAsync(framedRequest);
 
         html.EnsureSuccessStatusCode();
         Assert.Equal("text/html", html.Content.Headers.ContentType?.MediaType);
         Assert.Equal("utf-8", html.Content.Headers.ContentType?.CharSet?.ToLowerInvariant());
         Assert.Equal("inline", html.Content.Headers.ContentDisposition?.DispositionType);
         Assert.Contains("sandbox allow-scripts", html.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Contains("Sec-Fetch-Dest", html.Headers.Vary);
         Assert.Equal("<h1>Concept report</h1>", await html.Content.ReadAsStringAsync());
+
+        foreach (var (dest, site) in new (string?, string?)[] { ("document", "same-origin"), ("iframe", "cross-site"), (null, null) })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, htmlUrl);
+            if (dest is not null) request.Headers.Add("Sec-Fetch-Dest", dest);
+            if (site is not null) request.Headers.Add("Sec-Fetch-Site", site);
+            using var download = await client.SendAsync(request);
+
+            download.EnsureSuccessStatusCode();
+            Assert.Equal("text/html", download.Content.Headers.ContentType?.MediaType);
+            Assert.Equal("attachment", download.Content.Headers.ContentDisposition?.DispositionType);
+            Assert.Equal("concept report.html", download.Content.Headers.ContentDisposition?.FileNameStar);
+            Assert.Contains("sandbox allow-scripts", download.Headers.GetValues("Content-Security-Policy").Single());
+            Assert.Equal("nosniff", download.Headers.GetValues("X-Content-Type-Options").Single());
+        }
 
         using var binary = await client.GetAsync(
             $"/api/tasks/ASS-RESULT-HTML/results/reports/evidence.bin?watchPath={watchPath}");

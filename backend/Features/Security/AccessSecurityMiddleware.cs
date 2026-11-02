@@ -311,9 +311,8 @@ public sealed class AccessSecurityMiddleware
         // original versioned route as a fallback so only those client reads
         // gain a Runner scope, not other legacy /api/tasks/{id} reads.
         var originalPath = context.Items[AgentStudio.Host.StudioV1LegacyRouteAlias.OriginalPathItem] as string;
-        var productTaskFileRead = human is not null
-            && ContributorAccessPolicy.IsProductSession(human.User)
-            && IsRunnerTaskFileRead(context.Request.Method, path);
+        var humanTaskFileRead = human is not null && IsRunnerTaskFileRead(context.Request.Method, path);
+        var productTaskFileRead = humanTaskFileRead && ContributorAccessPolicy.IsProductSession(human!.User);
         if (productTaskFileRead
             && !ContributorAccessPolicy.Allows(context.Request.Method, path, null, false))
         {
@@ -323,7 +322,7 @@ public sealed class AccessSecurityMiddleware
         var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path)
             ?? (originalPath is null ? null : RequiredRunnerScope(context.Request.Method, NormalizePath(originalPath)));
         if (requiredRunnerScope is not null
-            && (human is null || !(productTaskFileRead || IsHumanSessionRead(context.Request.Method, path)
+            && (human is null || !(humanTaskFileRead || IsHumanSessionRead(context.Request.Method, path)
                 || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
             if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
@@ -792,6 +791,8 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPost(method) && path.EndsWith("/capability-failures", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.EndsWith("/cli-update/result", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.Contains("/provider-canary/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/quota/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+            if (HttpMethods.IsPut(method) && path.EndsWith("/quota/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsGet(method) && (path.EndsWith("/cli-update", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith("/provider-comparison", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
         }
@@ -854,6 +855,8 @@ public sealed class AccessSecurityMiddleware
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/clients/", StringComparison.OrdinalIgnoreCase)
             && path.EndsWith("/runner-git-capability", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+        if (path.StartsWith("/api/runner/post-merge/projects/", StringComparison.OrdinalIgnoreCase))
+            return HttpMethods.IsGet(method) ? RunnerScopes.Claim : RunnerScopes.Completion;
         return GateRunnerScope(method, path);
     }
 

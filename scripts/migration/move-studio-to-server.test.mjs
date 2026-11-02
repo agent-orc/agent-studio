@@ -6,10 +6,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  buildInventory, classifyPath, classifyWorkspace, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
-  readProjectRegistry, runCli, scanFileContent, scanWorkspace, screenTokens, selectDelta, stripUrlCredentials, taskRoots, tokenStateIssues,
+  acceptedTokenHits, buildInventory, classifyPath, classifyWorkspace, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
+  readProjectRegistry, runCli, scanFileContent, scanWorkspace, screenTokens, selectDelta, skippedFolders, stripUrlCredentials, taskRoots, tokenStateIssues,
 } from './move-studio-to-server.mjs';
-import { relocate } from './relocate-workspace-paths.mjs';
+import { inventory as relocateInventory, relocate } from './relocate-workspace-paths.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/move-studio-workspace.json', import.meta.url), 'utf8'));
 const fixedClock = () => new Date('2026-10-19T08:30:00.000Z');
@@ -624,3 +624,71 @@ function readRegistryFromFixture() {
     urls: project.Urls.map(url => ({ id: url.Id, label: url.Label, url: url.Url })),
   }));
 }
+
+test('an operator-reviewed token hit travels, and a new shape in that file still blocks', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'move-accepted-'));
+  const file = path.join(dir, 'accepted.tsv');
+  await writeFile(file, 'github-token\tprojects/demo/results/test.log\n');
+  const entry = { path: 'projects/demo/results/test.log', size: 1, mtimeMs: 1, transfer: 'archive', area: 'results' };
+  const accepted = acceptedTokenHits(file);
+
+  const fixture = screenTokens([entry], { scan: () => ({ hash: 'h', token: 'github-token' }), accepted });
+  assert.equal(fixture[0].transfer, 'archive');
+  const other = screenTokens([entry], { scan: () => ({ hash: 'h', token: 'private-key' }), accepted });
+  assert.equal(other[0].reason, 'token-pattern');
+  assert.equal(acceptedTokenHits(undefined).size, 0);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('skipped folders stay out of the workspace scan', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-skip-'));
+  await mkdir(path.join(root, '.claude/worktrees/old'), { recursive: true });
+  await mkdir(path.join(root, 'projects/demo'), { recursive: true });
+  await writeFile(path.join(root, '.claude/worktrees/old/copy.md'), 'x');
+  await writeFile(path.join(root, 'projects/demo/keep.md'), 'x');
+
+  const skip = skippedFolders('.claude/worktrees: :');
+  assert.deepEqual(skip, ['.claude/worktrees']);
+  assert.deepEqual(scanWorkspace(root, { skip }).map(item => item.path), ['projects/demo/keep.md']);
+  await rm(root, { recursive: true, force: true });
+});
+
+test('a JSON file with a byte order mark is relocated and keeps its mark', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-bom-'));
+  const workspace = path.join(root, 'workspace');
+  await mkdir(path.join(workspace, '.metadata'), { recursive: true });
+  await writeFile(path.join(workspace, '.metadata', 'session.json'), '\uFEFF{"root":"C:\\\\Projects\\\\demo"}');
+  const mapping = path.join(root, 'map.json');
+  await writeFile(mapping, JSON.stringify({ 'C:\\Projects\\demo': '/data/projects/demo' }));
+
+  const report = await relocateInventory({ workspace, mapping, apply: true });
+
+  assert.equal(report.unresolved?.length ?? 0, 0);
+  const written = await readFile(path.join(workspace, '.metadata', 'session.json'), 'utf8');
+  assert.ok(written.startsWith('\uFEFF'));
+  assert.ok(written.includes('/data/projects/demo'));
+  await rm(root, { recursive: true, force: true });
+});
+
+test('a store set aside after a crash stays behind', () => {
+  assert.equal(classifyPath('.metadata/attempt-authority.corrupt-20261011-1647.json').transfer, 'exclude');
+  assert.equal(classifyPath('.metadata/attempt-authority.json').transfer, 'archive');
+});
+
+test('a Windows path inside stored message text is history and does not stop the apply', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-text-'));
+  const workspace = path.join(root, 'workspace');
+  await mkdir(path.join(workspace, '.metadata'), { recursive: true });
+  const summary = 'finished failed=0 report=C:\\Users\\someone\\report.json';
+  await writeFile(path.join(workspace, '.metadata', 'attempts.json'), JSON.stringify({ root: 'C:\\Projects\\demo', summary }));
+  const mapping = path.join(root, 'map.json');
+  await writeFile(mapping, JSON.stringify({ 'C:\\Projects\\demo': '/data/projects/demo' }));
+
+  const report = await relocateInventory({ workspace, mapping, apply: true });
+
+  assert.equal(report.unresolved, 0);
+  const written = JSON.parse(await readFile(path.join(workspace, '.metadata', 'attempts.json'), 'utf8'));
+  assert.equal(written.root, '/data/projects/demo');
+  assert.equal(written.summary, summary);
+  await rm(root, { recursive: true, force: true });
+});

@@ -48,6 +48,9 @@ safe_path() {
 
 env_value() { sed -n "s/^$1=//p" "$2" | tail -n 1; }
 
+# An installation's own additions to the release stack, as plain `docker compose` in the stack directory reads them.
+stack_override() { [ ! -f "$1/compose.override.yaml" ] || printf -- '-f %s/compose.override.yaml' "$1"; }
+
 json_field() {
   node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s)[process.argv[1]];process.stdout.write(v===undefined||v===null?"":String(v));});' "$1"
 }
@@ -138,7 +141,7 @@ server_clone_checkout() {
   mkdir -p "$(dirname "$dir")"
   if [ -d "$dir/.git" ]; then
     git -C "$dir" remote set-url origin "$url"
-    git -C "$dir" fetch -q --prune origin
+    git -C "$dir" fetch -q --prune origin || printf 'warning: cannot fetch %s yet; the checkout keeps its seeded state\n' "$url" >&2
   else
     git clone -q "$url" "$dir" || fail "cannot clone $url on the server"
   fi
@@ -254,7 +257,7 @@ server_rehearse() {
   rehearsal_project=studio-move-rehearsal
   host=move-rehearsal.studio.test
   [ -d "$root/move-staging/workspace/.git" ] || fail 'staging is empty; the transfer pass did not run'
-  compose() { docker compose -p "$rehearsal_project" -f "$stack/compose.yaml" -f "$rehearsal/compose.override.yaml" --env-file "$rehearsal/.env" "$@"; }
+  compose() { docker compose -p "$rehearsal_project" --project-directory "$stack" -f "$stack/compose.yaml" $(stack_override "$stack") -f "$rehearsal/compose.override.yaml" --env-file "$rehearsal/.env" "$@"; }
   stop_rehearsal() {
     compose down --remove-orphans >/dev/null 2>&1 || return 1
     remaining=$(compose ps --status running --status restarting --status paused --quiet) || return 1
@@ -347,7 +350,7 @@ server_apply() {
   marker="$root/moved-to-server"
   data_dir=$(env_value STUDIO_DATA_DIR "$stack/.env")
   domain=$(env_value STUDIO_DOMAIN "$stack/.env")
-  live() { docker compose --project-directory "$stack" -f "$stack/compose.yaml" --env-file "$stack/.env" "$@"; }
+  live() { docker compose --project-directory "$stack" -f "$stack/compose.yaml" $(stack_override "$stack") --env-file "$stack/.env" "$@"; }
   if [ -f "$marker" ] && [ "$force" != force ]; then
     refuse "Studio already moved here ($(tr '\n' ' ' <"$marker")); another apply would replace the live server data with the workstation snapshot"
   fi
@@ -396,7 +399,7 @@ server_apply() {
   as_service_owner 10001:10001 "$data_dir" /site/workspace /site/projects /site/home
   live up -d --quiet-pull >/dev/null
   attempt=0
-  until curl --silent --fail --insecure --max-time 10 --resolve "$domain:443:127.0.0.1" "https://$domain/api/auth/status" >"$root/move-bin/status.json" 2>/dev/null; do
+  until live exec -T frontend wget -q -T 10 -O - --header "Host: $domain" --header 'X-Forwarded-Proto: https' http://api:5031/api/auth/status >"$root/move-bin/status.json" 2>/dev/null; do
     attempt=$((attempt + 1))
     [ "$attempt" -lt 90 ] || fail "the server stack did not answer https://$domain/api/auth/status"
     sleep 2
@@ -430,7 +433,7 @@ if [ "${1:-}" = --server-side ]; then
     sync-workspace) server_sync_workspace "$@" ;;
     receive-archive) server_receive_archive "$@" ;;
     ensure-dir) if [ -d "$1" ]; then echo existing; else private_dir "$1"; echo created; fi ;;
-    remove-paths) cd "$1" && xargs -0 rm -f -- ;;
+    remove-paths) cd "$1" && xargs -0 rm -rf -- ;;
     clone-checkout) server_clone_checkout "$@" ;;
     rehearse) server_rehearse "$@" ;;
     apply) server_apply "$@" ;;

@@ -523,7 +523,12 @@ runner picked up again still verifies. The engine batch plan intent and the
 gate dispatch receipt are files, so a restart inside the canary window keeps
 both. The batch tick claims an intent by an atomic rename; an intent it cannot
 read stays as an `.unreadable` file for an operator instead of being deleted
-without a receipt.
+without a receipt. Every batch plan names the waiting cards it `considered`.
+`BatchPlanDecisionPolicy.Admissible` refuses a per-task intent when two or more
+cards are eligible and one of them is missing from that list, so the tick plans
+again instead of starting a lone gate next to a possible batch partner
+(AGT-3407). The applier fills the list from the occurrence payload when an
+older engine leaves it out.
 
 The contract tests (`BatchGateEngineApplierContractTests`, partial
 `BatchGatePilotServiceTests`) run the real applier on an engine-completed

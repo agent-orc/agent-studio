@@ -57,6 +57,19 @@ public class ReviewFollowUpPolicyTests
     }
 
     [Fact]
+    public void Concern_that_lists_read_files_but_names_no_gap_does_not_start_a_round()
+    {
+        var finding = new ReviewFollowUpFinding(
+            "code-quality", "concerns", "Pricing and gating changes are correct",
+            "ModelPriceCatalog.cs, ModelPrice.cs", "none");
+
+        Assert.False(ReviewFollowUpPolicy.IsActionableConcern(finding));
+        Assert.Equal(
+            ReviewFollowUpAction.Accept,
+            ReviewFollowUpPolicy.Decide([finding], concernRoundsUsed: 0, maxConcernRounds: 1).Action);
+    }
+
+    [Fact]
     public void Setting_zero_disables_concern_round()
         => Assert.Equal(
             ReviewFollowUpAction.Accept,

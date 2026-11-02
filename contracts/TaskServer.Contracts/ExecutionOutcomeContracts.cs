@@ -417,7 +417,11 @@ public static class ExecutionOutcomeAdapter
             .Select(model => model.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (observed.Length == 0 || observed.All(model => ModelsEquivalent(pinnedModel.Trim(), model)))
+        // A run that used the pinned model may also call other models (a CLI
+        // side call, a subagent on a smaller model). Those stay visible in
+        // RawFacts.ObservedModels; only a run that never used the pinned model
+        // is a mismatch.
+        if (observed.Length == 0 || observed.Any(model => ModelsEquivalent(pinnedModel.Trim(), model)))
             return false;
         mismatch = new ModelUsageMismatch(pinnedModel.Trim(), observed);
         return true;

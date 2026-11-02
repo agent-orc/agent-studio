@@ -17,8 +17,16 @@ export interface BatchGateSettings {
   advisor: { mode: 'off' | 'advise' | 'enforce'; cliType: string; model?: string; timeoutSeconds: number };
 }
 
+/** The advisor mode that applies on this host; `reason` explains a configured advisor the host cannot run. */
+export interface BatchGateAdvisorEffective {
+  effectiveMode: 'off' | 'advise' | 'enforce';
+  carrier: 'monolith' | 'engine' | 'none';
+  reason: string | null;
+}
+
 export interface BatchGateConfiguration {
   settings: BatchGateSettings;
+  advisorEffective?: BatchGateAdvisorEffective | null;
   limits: { hardMaximumSize: number };
 }
 

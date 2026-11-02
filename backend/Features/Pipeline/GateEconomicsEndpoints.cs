@@ -74,13 +74,17 @@ public static class GateEconomicsEndpoints
         IReadOnlyList<(string Name, IReadOnlyList<string> Folders, GateRetestReport Retest,
             string? ShortCode, string? Color)> projects,
         IReadOnlyList<BatchGateMetric> batchSamples,
-        DateTimeOffset since, DateTimeOffset now, Func<string, bool>? allowed)
+        DateTimeOffset since, DateTimeOffset now, Func<string, bool>? allowed,
+        IReadOnlyList<BatchGateExecutionFact>? gateFacts = null)
     {
         var names = projects.Select(project => project.Name).ToArray();
         IEnumerable<BatchGateMetric> For(string name) => batchSamples.Where(sample =>
             string.Equals(sample.Project, name, StringComparison.OrdinalIgnoreCase));
+        IEnumerable<BatchGateExecutionFact> FactsFor(IEnumerable<string> names) => (gateFacts ?? []).Where(fact =>
+            names.Contains(fact.Project, StringComparer.OrdinalIgnoreCase));
         var rows = projects.Select(project => ProjectRow(project.Name, project.Folders,
-            since, now, project.Retest, For(project.Name), project.ShortCode, project.Color)).ToList();
+            since, now, project.Retest, For(project.Name), project.ShortCode, project.Color,
+            FactsFor([project.Name]))).ToList();
         var executed = projects.Sum(project => project.Retest.Executed);
         var retests = projects.Sum(project => project.Retest.SameShaRetests);
         var allReport = new GateRetestReport(executed, retests,
@@ -88,7 +92,7 @@ public static class GateEconomicsEndpoints
             projects.Sum(project => project.Retest.CacheHits), GateResultCache.RetestWindowSize);
         var all = ProjectRow(AllProjects, projects.SelectMany(project => project.Folders),
             since, now, allReport, batchSamples.Where(sample =>
-                names.Contains(sample.Project, StringComparer.OrdinalIgnoreCase)));
+                names.Contains(sample.Project, StringComparer.OrdinalIgnoreCase)), gateFacts: FactsFor(names));
         return [.. new[] { all }.Concat(rows).Select(row => row.GateHoldingProject is { } holder
             && allowed is not null && !allowed(holder)
                 ? row with { GateHoldingProject = OtherProject } : row)];
@@ -97,7 +101,8 @@ public static class GateEconomicsEndpoints
     internal static GateEconomicsRow ProjectRow(string name, IEnumerable<string> folders,
         DateTimeOffset since, DateTimeOffset now, GateRetestReport? retest,
         IEnumerable<BatchGateMetric>? batchMetrics = null,
-        string? shortCode = null, string? color = null)
+        string? shortCode = null, string? color = null,
+        IEnumerable<BatchGateExecutionFact>? gateFacts = null)
     {
         var receipts = new List<GateReceiptMetric>();
         var events = new List<IntegrationLaneEvent>();
@@ -149,7 +154,8 @@ public static class GateEconomicsEndpoints
         // Every batch attempt stays in the gate outcome counts. Published
         // members receive only the final successful attempt's minutes.
         var batches = (batchMetrics ?? []).ToArray();
-        var baseline = PipelineBaselineMetrics.Compute(baselineFolders, batches, since, now);
+        var baseline = PipelineBaselineMetrics.Compute(baselineFolders, batches, since, now,
+            (gateFacts ?? []).Where(fact => fact.CompletedAtUtc >= since && fact.CompletedAtUtc <= now).ToArray());
         // Economics per merge uses the final gate that actually integrated the
         // delivery. Red attempts remain gate runs in the outcome counts below.
         var publishedBatches = batches.Where(sample => sample.Published)
@@ -276,9 +282,12 @@ public static class GateEconomicsEndpoints
         => PipelineBaselineMetrics.Percentile(numbers, fraction);
 }
 
-/// <summary>One batch gate run; <paramref name="Published"/> when that run's candidate was published.</summary>
+/// <summary>
+/// One batch gate run; <paramref name="Published"/> when that run's candidate was published,
+/// <paramref name="Isolation"/> when it gated a diagnostic manifest split from a red batch.
+/// </summary>
 internal sealed record BatchGateMetric(string Project, int Members, BatchGateExecutionFact Fact,
-    bool Published = false);
+    bool Published = false, bool Isolation = false);
 
 internal sealed record GateReceiptMetric(long? DurationMs, long? GateQueueWaitMs,
     long? MergeLockWaitMs, string? Rung, string? TestLevel,

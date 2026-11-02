@@ -77,6 +77,16 @@ failure that repeats for more than 15 minutes raises the
 `evidence-flush-stalled` pipeline health alarm. See
 [stale-git-lock](common-problems/stale-git-lock/README.md) (AGT-3000).
 
+When the server kills a git command it started (timeout or cancellation), it
+removes the locks that command wrote right away, unless another git process may
+still hold them (`git-killed-command-lock-cleared`). A `git add` and its commit
+get 30 seconds plus the bytes to hash at `WorkspaceEvidence:GitAddBytesPerSecond`
+(default 2 MiB/s), capped at `WorkspaceEvidence:GitAddMaxTimeoutSeconds`
+(default 600), so one large log file no longer hits the old fixed 30-second
+limit. A run-boundary or upload commit that git refuses on a lock is reported
+as deferred and retried in the background; it never fails or escalates the
+card (AGT-3409).
+
 ## Object maintenance
 
 `WorkspaceRepositoryMaintenanceWorker` is the scheduler. It runs at boot and
@@ -97,6 +107,10 @@ because Git cannot create a multi-pack index without a pack. `core.fsmonitor`
 is enabled by default on native Windows, where the workspace has many paths. It
 is left unchanged on other platforms. Set `WorkspaceRepository:CoreFsMonitor`
 to `false` if a Windows filesystem or Git build proves incompatible.
+
+Do not enable `feature.manyFiles` or `index.skipHash` on the workspace
+repository: with a split index, Git 2.43 reads the shared index as absent, and
+the index then looks empty.
 
 Defaults are in `backend/appsettings.json` under `WorkspaceArtifacts` and
 `WorkspaceRepository`. Local overrides belong in the normal gitignored local

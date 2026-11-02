@@ -1,14 +1,28 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable, Signal, WritableSignal, inject, signal } from '@angular/core';
+import { Injectable, Pipe, PipeTransform, Signal, WritableSignal, inject, signal } from '@angular/core';
 
-export type ProjectUrlStatus = 'running' | 'offline' | 'failed' | 'blocked' | 'unknown';
+export type ProjectUrlStatus = 'running' | 'offline' | 'failed' | 'blocked' | 'local-only' | 'unknown';
 export type ProjectUrlReadinessKind =
   | 'healthy'
   | 'http-error'
   | 'offline'
   | 'timeout'
   | 'frame-blocked'
+  | 'local-only'
   | 'unknown';
+
+/** Display text of a URL status; `local-only` is a loopback URL a networked server does not request. */
+export function projectUrlStatusLabel(status: string): string {
+  return status === 'local-only' ? 'local only' : status;
+}
+
+/** Template form of {@link projectUrlStatusLabel}, shared by every URL status pill. */
+@Pipe({ name: 'projectUrlStatusLabel', standalone: true })
+export class ProjectUrlStatusLabelPipe implements PipeTransform {
+  transform(status: string): string {
+    return projectUrlStatusLabel(status);
+  }
+}
 
 export interface ProjectUrlReadiness {
   kind: ProjectUrlReadinessKind;
@@ -45,6 +59,7 @@ export class ProjectUrlProbeService {
       case 'healthy': return 'running';
       case 'http-error': return 'failed';
       case 'frame-blocked': return 'blocked';
+      case 'local-only': return 'local-only';
       case 'offline':
       case 'timeout': return 'offline';
       default: return 'unknown';
