@@ -50,6 +50,7 @@ namespace AgentStudio.Tests;
 /// </list>
 /// </para>
 /// </remarks>
+[Trait("Category", "Guard")]
 public class TaskFolderAccessIsolationTest
 {
     /// <summary>
@@ -132,6 +133,12 @@ public class TaskFolderAccessIsolationTest
                 "Deletes only its GUID-named agent-studio-git-proof clone under OS temp, never task storage.",
             ["backend/Features/Registry/LocalFirstRunGitSetup.cs"] =
                 "Deletes only a failed fresh clone under the AgentStudio first-run-git checkouts root, never task storage.",
+
+            // The readiness commit-tree probe creates a GUID-named repository
+            // under OS temp and removes it after each cached probe. It cannot
+            // use task access because the directory is outside task storage.
+            ["backend/Features/Readiness/ReadinessGitFacts.cs"] =
+                "Deletes only its GUID-named OS-temp commit-tree probe repository, never task storage.",
 
             // Tier 2 (boot): the crash-recovery sweep walks 3-progress
             // before the in-memory store boots. Explicitly carved out in

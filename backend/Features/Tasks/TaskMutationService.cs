@@ -608,6 +608,7 @@ public class TaskMutationService
 
         var chain = new List<TaskCommitInfo>(persisted.Count + replacementByOriginal.Count);
         var derived = new List<TaskCommitInfo>();
+        var derivedShas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var matched = 0;
         foreach (var commit in persisted)
         {
@@ -622,7 +623,8 @@ public class TaskMutationService
             if (persisted.Any(existing => string.Equals(
                     existing.Sha,
                     replacement.RebasedSha,
-                    StringComparison.OrdinalIgnoreCase)))
+                    StringComparison.OrdinalIgnoreCase))
+                || !derivedShas.Add(replacement.RebasedSha))
             {
                 continue;
             }

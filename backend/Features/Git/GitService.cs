@@ -261,6 +261,15 @@ public record MergeIntoIntegrationResult(
     /// </summary>
     public bool VerificationPending { get; init; }
 
+    /// <summary>AGT-3434: the merge gate ran its suite on this merge result.</summary>
+    public bool GateExecuted { get; init; }
+
+    /// <summary>
+    /// AGT-3434: the merge gate stood on the per-task batch fallback verdict for
+    /// the same tree on the same integration tip and ran no suite.
+    /// </summary>
+    public bool GateVerdictReused { get; init; }
+
     /// <summary>
     /// Typed cause of an <see cref="MergeIntoIntegrationOutcome.Error"/> result
     /// (<see cref="AcceptedIntegrationFailureCodes"/>). Every Error names one, so
@@ -5041,7 +5050,7 @@ public partial class GitService
         var synchronized = SynchronizeIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!synchronized.Success)
             return MergeIntoIntegrationResult.Failed(
-                AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                 synchronized.Error);
         return MergeRefIntoIntegration(repoRoot, taskBranch, integrationBranch);
     }
@@ -5323,7 +5332,7 @@ public partial class GitService
         var synchronized = SynchronizeIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!synchronized.Success)
             return MergeIntoIntegrationResult.Failed(
-                AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                 synchronized.Error);
 
         var remoteRef = $"refs/remotes/origin/{deliveryBranch}";
@@ -5987,6 +5996,41 @@ public partial class GitService
                 error: $"Could not resolve the exact delivery tip of '{sourceRef}'.");
         }
 
+        // Merge rounds can put integration commits inside the delivery range.
+        // Replay its final tree as one change while the current tip is pinned;
+        // commit-by-commit rebase cannot attribute those merge commits.
+        var (mergeBaseRaw, _, mergeBaseCode) = RunGitArgs(
+            repoRoot, "merge-base", sourceRef, integrationTip);
+        var mergeBase = mergeBaseCode == 0 ? mergeBaseRaw.Trim() : null;
+        if (mergeBase is not null)
+        {
+            var (merges, mergeCountError, mergeCountCode) = RunGitArgs(repoRoot,
+                "rev-list", "--count", "--merges", $"{mergeBase}..{sourceRef}", RevisionsOnly);
+            if (mergeCountCode != 0 || !int.TryParse(merges.Trim(), out var mergeCount))
+                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                    error: $"Could not inspect delivery history: {mergeCountError.Trim()}");
+            if (mergeCount > 0 && !IsAncestor(repoRoot, integrationTip, sourceRef))
+            {
+                var net = TryMechanicalNetChange(repoRoot, sourceRef, integrationTip, mergeBase);
+                if (!net.Success)
+                    return net.FailureKind == MechanicalRebaseFailureKind.Conflict
+                        ? MergeIntoIntegrationResult.RequiresAgentRound(net.ConflictedFiles,
+                            $"Net-change replay conflicted: {string.Join(", ", net.ConflictedFiles)}.")
+                        : MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: net.Error);
+                if (!string.Equals(GetBranchTip(repoRoot, integrationLine), integrationTip,
+                        StringComparison.OrdinalIgnoreCase))
+                    return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                        error: $"Integration branch '{integrationBranch}' moved during net-change replay.");
+                var (_, fastForwardError, fastForwardCode) = RunGitArgs(
+                    repoRoot, "merge", "--ff-only", net.RebasedTip!);
+                if (fastForwardCode != 0)
+                    return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                        error: $"Net-change candidate could not advance the integration tip: {fastForwardError.Trim()}");
+                return MergeIntoIntegrationResult.MergedAfterRebase(
+                    net.RebasedTip!, integrationTip, net.Replacements);
+            }
+        }
+
         var (_, directMergeError, directMergeCode) = RunGitArgs(
             repoRoot,
             "-c",
@@ -6093,14 +6137,10 @@ public partial class GitService
                 error: $"Integration branch '{integrationBranch}' moved during the isolated mechanical rebase; retry against its current tip.");
         }
 
-        var (_, mergeErr, mergeCode) = RunGitArgs(
-            repoRoot,
-            "-c",
-            "rerere.enabled=false",
-            "merge",
-            "--no-ff",
-            "--no-edit",
-            recovery.RebasedTip!);
+        var netChange = recovery.Outcome == "net-change";
+        var (_, mergeErr, mergeCode) = netChange
+            ? RunGitArgs(repoRoot, "merge", "--ff-only", recovery.RebasedTip!)
+            : RunGitArgs(repoRoot, "-c", "rerere.enabled=false", "merge", "--no-ff", "--no-edit", recovery.RebasedTip!);
         if (mergeCode != 0)
         {
             var conflicted = ListUnmergedFiles(repoRoot);
@@ -6198,21 +6238,8 @@ public partial class GitService
     public BatchReplayResult ReplayBatchMember(
         string repoRoot, string immutableResultRef, string expectedResultSha, string batchTip)
     {
-        var (resolved, error, code) = RunGitArgs(
-            repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
-        if (code != 0
-            && immutableResultRef.StartsWith("refs/heads/agent-studio/results/", StringComparison.Ordinal))
-        {
-            var (_, fetchError, fetchCode) = RunGitArgs(
-                repoRoot, "fetch", "origin", $"{immutableResultRef}:{immutableResultRef}");
-            if (fetchCode != 0)
-                return BatchReplayResult.Infrastructure(fetchError.Trim());
-            (resolved, error, code) = RunGitArgs(
-                repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
-        }
-        if (code != 0 || !string.Equals(resolved.Trim(), expectedResultSha, StringComparison.OrdinalIgnoreCase))
-            return BatchReplayResult.Unattributable(
-                code == 0 ? "Immutable result ref does not resolve to the expected SHA." : error.Trim());
+        if (ResolveImmutableResult(repoRoot, immutableResultRef, expectedResultSha) is { } unresolved)
+            return unresolved;
         var (_, _, containedCode) = RunGitArgs(
             repoRoot, "merge-base", "--is-ancestor", expectedResultSha, batchTip);
         var (_, _, descendantCode) = RunGitArgs(
@@ -6269,6 +6296,77 @@ public partial class GitService
                 => MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip),
             _ => BatchReplayResult.Infrastructure(replay.Error ?? "Mechanical rebase failed."),
         };
+    }
+
+    /// <summary>
+    /// Null when the immutable result ref resolves to the expected SHA. The
+    /// Studio checkout holds result commits only under refs/remotes/origin, so
+    /// a missing local result ref is fetched once.
+    /// </summary>
+    private BatchReplayResult? ResolveImmutableResult(
+        string repoRoot, string immutableResultRef, string expectedResultSha)
+    {
+        var (resolved, error, code) = RunGitArgs(
+            repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
+        if (code != 0
+            && immutableResultRef.StartsWith("refs/heads/agent-studio/results/", StringComparison.Ordinal))
+        {
+            var (_, fetchError, fetchCode) = RunGitArgs(
+                repoRoot, "fetch", "origin", $"{immutableResultRef}:{immutableResultRef}");
+            if (fetchCode != 0)
+                return BatchReplayResult.Infrastructure(fetchError.Trim());
+            (resolved, error, code) = RunGitArgs(
+                repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
+        }
+        return code != 0 || !string.Equals(resolved.Trim(), expectedResultSha, StringComparison.OrdinalIgnoreCase)
+            ? BatchReplayResult.Unattributable(
+                code == 0 ? "Immutable result ref does not resolve to the expected SHA." : error.Trim())
+            : null;
+    }
+
+    /// <summary>
+    /// The tree the per-task batch fallback gate tests (AGT-3434): the
+    /// immutable delivery merged onto the integration tip. A delivery already
+    /// based on the tip is its own candidate. Any other delivery is merged
+    /// without fast-forward in a disposable worktree, keeping the integration
+    /// version of a conflict confined to declared report paths, as the merge
+    /// runner does; both therefore produce the same tree. Another conflict
+    /// names its files. No canonical ref moves.
+    /// </summary>
+    public BatchReplayResult MergeDeliveryOntoTip(
+        string repoRoot, string immutableResultRef, string expectedResultSha, string integrationTip)
+    {
+        if (ResolveImmutableResult(repoRoot, immutableResultRef, expectedResultSha) is { } unresolved)
+            return unresolved;
+        var (_, _, containedCode) = RunGitArgs(
+            repoRoot, "merge-base", "--is-ancestor", expectedResultSha, integrationTip);
+        var (_, _, descendantCode) = RunGitArgs(
+            repoRoot, "merge-base", "--is-ancestor", integrationTip, expectedResultSha);
+        if (containedCode is not (0 or 1) || descendantCode is not (0 or 1))
+            return BatchReplayResult.Infrastructure("Integration tip ancestry could not be verified.");
+        if (containedCode == 0)
+            return BatchReplayResult.Unattributable(
+                "The integration tip already contains the result SHA.", BatchReplayRoute.AlreadyContained);
+        if (descendantCode == 0)
+            return new BatchReplayResult(true, expectedResultSha,
+                [new RebasedCommitReplacement(expectedResultSha, expectedResultSha)], [], null);
+        return MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, integrationTip);
+    }
+
+    /// <summary>
+    /// Keeps a per-task fallback candidate reachable while its gate runs, so a
+    /// remote gate can bundle it and garbage collection cannot drop it. Null
+    /// <paramref name="sha"/> removes the pin.
+    /// </summary>
+    public bool PinFallbackCandidate(string repoRoot, string reviewAttemptId, string? sha)
+    {
+        var safe = Regex.Replace(reviewAttemptId, "[^A-Za-z0-9_-]", "-", RegexOptions.CultureInvariant);
+        if (safe.Length == 0) return false;
+        var candidateRef = $"refs/agent-studio/fallback-candidates/{safe}";
+        if (sha is null)
+            return RunGitArgs(repoRoot, "update-ref", "-d", candidateRef).Code == 0;
+        if (!Regex.IsMatch(sha, "^[a-fA-F0-9]{40,64}$", RegexOptions.CultureInvariant)) return false;
+        return RunGitArgs(repoRoot, "update-ref", candidateRef, sha).Code == 0;
     }
 
     /// <summary>
@@ -6413,6 +6511,9 @@ public partial class GitService
     public string? FetchBatchIntegrationTip(string repoRoot, string branch, CancellationToken ct)
     {
         if (!IsLikelyBranchName(branch)) return null;
+        // Fallbacks for different cards can fetch the same repository together.
+        // They share FETCH_HEAD and remote-tracking refs, so serialize the fetch.
+        using var remoteGate = EnterIntegrationRemoteGate(repoRoot, ct);
         var (_, _, code) = RunGitArgs(repoRoot, ct, "fetch", "origin", branch);
         return code == 0 ? GetBranchTip(repoRoot, $"origin/{branch}") : null;
     }
@@ -6482,8 +6583,7 @@ public partial class GitService
         }
         if (mergeCommitCount > 0)
         {
-            return MechanicalRebaseAttempt.AttributionAmbiguous(
-                "Mechanical rebase found a non-linear delivery history; refusing ambiguous SHA attribution.");
+            return TryMechanicalNetChange(repoRoot, sourceRef, integrationTip, mergeBase);
         }
 
         var originalCommits = ReadFirstParentRange(
@@ -6599,6 +6699,60 @@ public partial class GitService
             _logger.LogWarning("Mechanical rebase cleanup deferred at {Path}: {Error}", worktreePath, cleanupError);
 
         return attempt;
+    }
+
+    /// <summary>
+    /// Fold a delivery containing merge commits into one commit on the current
+    /// integration tip. The explicit merge base makes the candidate tree the
+    /// delivery's net change, without replaying either side of a merge round.
+    /// Every delivery commit absent from the tip maps to the one published SHA.
+    /// </summary>
+    private MechanicalRebaseAttempt TryMechanicalNetChange(
+        string repoRoot, string sourceRef, string integrationTip, string mergeBase)
+    {
+        var (range, rangeError, rangeCode) = RunGitArgs(
+            repoRoot, "rev-list", "--reverse", $"{integrationTip}..{sourceRef}", RevisionsOnly);
+        if (rangeCode != 0)
+            return MechanicalRebaseAttempt.Failed($"Net-change replay could not enumerate delivery commits: {rangeError.Trim()}");
+        var originals = range.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (originals.Length == 0)
+            return MechanicalRebaseAttempt.Failed("Net-change replay found no delivery commits to attribute.");
+
+        var (merged, mergeError, mergeCode) = RunGitArgs(repoRoot,
+            "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z",
+            "--merge-base=" + mergeBase, integrationTip, sourceRef);
+        if (mergeCode == 1)
+        {
+            var files = merged.Split('\0', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+            return files.Length > 0
+                ? MechanicalRebaseAttempt.Conflict(files, "Net-change replay conflicted.",
+                    sourceRef, originals.Length, originals.Length)
+                : MechanicalRebaseAttempt.Failed($"Net-change replay failed: {mergeError.Trim()}");
+        }
+        if (mergeCode != 0)
+            return MechanicalRebaseAttempt.Failed($"Net-change replay failed: {mergeError.Trim()}");
+
+        var tree = merged.Split('\0', 2)[0].Trim();
+        var (metadata, metadataError, metadataCode) = RunGitArgs(repoRoot,
+            "show", "-s", "--format=%an%x00%ae%x00%aI", sourceRef);
+        var author = metadata.TrimEnd('\r', '\n').Split('\0');
+        if (metadataCode != 0 || author.Length != 3)
+            return MechanicalRebaseAttempt.Failed($"Net-change replay could not read delivery author: {metadataError.Trim()}");
+        var environment = new Dictionary<string, string?>
+        {
+            ["GIT_AUTHOR_NAME"] = author[0],
+            ["GIT_AUTHOR_EMAIL"] = author[1],
+            ["GIT_AUTHOR_DATE"] = author[2],
+        };
+        var (candidate, commitError, commitCode) = RunGitArgs(repoRoot,
+            ["commit-tree", tree, "-p", integrationTip, "-F", "-"],
+            $"Integrate net change from {AbbreviateSha(sourceRef)}", environment);
+        if (commitCode != 0)
+            return MechanicalRebaseAttempt.Failed($"Net-change replay could not write a commit: {commitError.Trim()}");
+        var sha = candidate.Trim();
+        return MechanicalRebaseAttempt.Applied(sha,
+            originals.Select(original => new RebasedCommitReplacement(original, sha)).ToArray(),
+            originals.Length) with { Outcome = "net-change" };
     }
 
     private static IntegrationConflictReport BuildIntegrationConflictReport(

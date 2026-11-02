@@ -175,7 +175,7 @@ public sealed class RunnerCapabilityProbeTests
     [Theory]
     [InlineData("Selected model is at capacity. Please try a different model.")]
     [InlineData("The model is at capacity right now.")]
-    public void Provider_capacity_is_a_bounded_rate_limit_not_authentication_failure(string message)
+    public void Provider_capacity_is_transient_without_a_provider_hold(string message)
     {
         var observedAt = new DateTimeOffset(2026, 8, 31, 6, 45, 42, TimeSpan.Zero);
 
@@ -185,8 +185,8 @@ public sealed class RunnerCapabilityProbeTests
             stderr: message,
             observedAt: observedAt);
 
-        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, evidence.Kind);
-        Assert.Equal(observedAt.Add(ProviderAccessClassifier.UnknownLimitRetry), evidence.LimitedUntil);
+        Assert.Equal(ProviderAccessEvidenceKind.ModelCapacity, evidence.Kind);
+        Assert.Null(evidence.LimitedUntil);
         Assert.False(evidence.ResetTimeReported);
         Assert.False(RunnerCapabilityProbe.IsProviderAuthenticationFailure(
             new ProcessResult(1, "", message)));

@@ -16,8 +16,14 @@ internal sealed class MachineGateSlots
         _clock = clock ?? TimeProvider.System;
     }
 
+    /// <summary>
+    /// Waits for a slot that <see cref="GateSlotFairnessPolicy"/> opens to a
+    /// gate of <paramref name="durationClass"/>. The eligible slots are read
+    /// again on every pass, so a long gate's wait ages it into the short slot.
+    /// </summary>
     internal async Task<Lease?> AcquireAsync(int count, TimeSpan timeout,
-        Action<int, int>? waiting, CancellationToken ct)
+        Action<int, int>? waiting, CancellationToken ct,
+        GateDurationClass durationClass = GateDurationClass.Unknown)
     {
         if (count is < 1 or > 64) throw new ArgumentOutOfRangeException(nameof(count));
         var started = _clock.GetTimestamp();
@@ -31,7 +37,9 @@ internal sealed class MachineGateSlots
             {
                 bounded.Token.ThrowIfCancellationRequested();
                 var busy = 0;
-                for (var slot = 0; slot < count; slot++)
+                var eligible = GateSlotFairnessPolicy.Eligible(count, durationClass,
+                    _clock.GetElapsedTime(started)).Slots;
+                foreach (var slot in eligible)
                 {
                     var lease = await TryTakeAsync(slot, count, started, collision, bounded.Token).ConfigureAwait(false);
                     if (lease is not null) return lease;
@@ -53,15 +61,18 @@ internal sealed class MachineGateSlots
     /// One pass over the slots without waiting (AGT-3232): up to
     /// <paramref name="wanted"/> slots that are free right now. A gate that
     /// already holds a slot borrows these as extra test-shard lanes; each slot
-    /// stands for the processors one gate suite is budgeted.
+    /// stands for the processors one gate suite is budgeted. A long gate
+    /// never borrows the short slot.
     /// </summary>
-    internal async Task<IReadOnlyList<Lease>> TryAcquireFreeAsync(int count, int wanted, CancellationToken ct)
+    internal async Task<IReadOnlyList<Lease>> TryAcquireFreeAsync(int count, int wanted, CancellationToken ct,
+        GateDurationClass durationClass = GateDurationClass.Unknown)
     {
         if (count is < 1 or > 64) throw new ArgumentOutOfRangeException(nameof(count));
         var started = _clock.GetTimestamp();
         var leases = new List<Lease>();
-        for (var slot = 0; slot < count && leases.Count < wanted; slot++)
+        foreach (var slot in GateSlotFairnessPolicy.Eligible(count, durationClass, TimeSpan.Zero).Slots)
         {
+            if (leases.Count >= wanted) break;
             var lease = await TryTakeAsync(slot, count, started, collision: false, ct).ConfigureAwait(false);
             if (lease is not null) leases.Add(lease);
         }

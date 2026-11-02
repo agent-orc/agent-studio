@@ -16,6 +16,7 @@ import { TokenAnalysisViewComponent } from '../../../token-analysis';
 import { ProjectObservabilityPanelComponent } from '../project-observability/project-observability-panel.component';
 import { ProjectEnvironmentOverviewComponent } from '../project-environment-overview/project-environment-overview.component';
 import { ProjectProductRuntimePanelComponent } from '../project-product-runtime/project-product-runtime-panel.component';
+import { ApiStallPanelComponent } from '../api-stall-panel/api-stall-panel.component';
 import { ProjectTestRunsPanelComponent } from '../project-test-runs-panel/project-test-runs-panel';
 import { ProjectSteeringDocsSectionComponent } from '../project-steering-docs-section/project-steering-docs-section';
 import { ProjectWikiSectionComponent } from '../project-wiki-section/project-wiki-section';
@@ -57,6 +58,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     ProjectObservabilityPanelComponent,
     ProjectEnvironmentOverviewComponent,
     ProjectProductRuntimePanelComponent,
+    ApiStallPanelComponent,
     ProjectTestRunsPanelComponent,
     ProjectSteeringDocsSectionComponent,
     ProjectWikiSectionComponent,

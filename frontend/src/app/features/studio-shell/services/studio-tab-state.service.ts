@@ -487,6 +487,8 @@ export class StudioTabStateService {
         return { kind: 'workspace-settings' };
       case 'deployment-dashboard':
         return { kind: 'deployment-dashboard' };
+      case 'structure':
+        return { kind: 'structure', projectName: tab.projectName };
       case 'welcome':
         return { kind: 'welcome' };
     }

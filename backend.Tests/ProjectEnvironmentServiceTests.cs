@@ -50,6 +50,16 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_does_not_create_or_rewrite_deployment_state()
+    {
+        var (service, _, _) = Build();
+        var statePath = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        Assert.False(File.Exists(statePath));
+        Assert.NotNull(service.Read("demo"));
+        Assert.False(File.Exists(statePath));
+    }
+
+    [Fact]
     public async Task ScheduledVolumeBackup_UsesInjectedClock_AndRestoreIsAudited()
     {
         var (environments, repo, _) = Build();

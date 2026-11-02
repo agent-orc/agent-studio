@@ -407,6 +407,13 @@
           <td><code>ReviewAspectModelPolicy</code> resolves the default aspect model from the review CLI through the model metadata registry. A rejected host pair is logged as a planning error naming the setting, a rejected project step pair falls back to the valid default, and the settings route refuses the pair. A CLI that refuses its model is reported as <code>ModelConfigurationFault</code>, which drains no host capability.</td>
         </tr>
         <tr>
+          <td>2026-11-02</td>
+          <td><code>AGT-3422</code><br><span class="small">planned-restart-parks</span></td>
+          <td>No CLI crashed. Two planned restarts of the API parked ten healthy cards. Four escalated with <code>GateInfra: per-task gate interrupted 2 times</code>, several were parked with <code>branch-sync-failed ... could not read Username</code>, and one passed card in Human Review moved to Escalated with the legacy reason <code>no automated review ran</code>. Terminal at discovery: Escalated.</td>
+          <td>Each stop interrupted the running per-task gate and kept its charged start, so two stops spent the budget meant for gates that keep failing; the integration gate ladder likewise cut a stop-interrupted gate to one rung. Directly after the start, merge-into-develop fetched private repositories before <code>GitHubAppHostCredentialService</code> had written the App tokens, and the delivery chain escalated any typed integration failure on its first pass. The verdict-less Human Review boot repair matched every card without a decision-journal record, not only the pre-funnel parks it was written for.</td>
+          <td>The service's own stop refunds the gate start (<code>GateCancellationPolicy.ChargedStartsAfterCancellation</code>); a crash keeps it charged. A stop-interrupted integration gate resumes without spending a ladder rung. The credential service begins its first refresh in the background so host startup remains free; merge-into-develop waits on readiness with a log line per retry. A fetch refused for a missing credential gets the typed code <code>git-credential-unavailable</code> and the bounded gate-environment ladder, and parks with a credential reason only when the ladder is spent. The boot repair only touches cards that entered Human Review before 2 June 2026 and carry no review subject.</td>
+        </tr>
+        <tr>
           <td>2026-10-20</td>
           <td><code>AGT-3245</code>, <code>AGT-3246</code>, <code>AGT-3227</code><br><span class="small">salvage-base-delivery-refusal (fix <code>AGT-3257</code>)</span></td>
           <td>Codex attempts ended Unknown or were interrupted after publishing salvage. Their next deliveries were refused because the fenced base was the earlier salvage commit but the result did not contain it. Terminal at discovery: delivery refused, with the cards escalated and the good new work stranded.</td>
@@ -3099,6 +3106,13 @@
           <td>No CLI crashed. In three hours the closing Result summary failed 259 times with <code>decision-input-incomplete:oversize-orchestrator-prompt</code>, on most cards with long runs. Each card spent three identical finalization attempts, then queued remote retries with the same input.</td>
           <td>The summary step is an orchestrator step, so its prompt must stay under the 32 KB boundary limit, but it carried a 60,000-character log tail. Measured on six cards, that tail alone was 34 to 61 KB, 70 to 85 percent of it tool-call JSON. The refusal was retried like a transient failure.</td>
           <td>The observed terminal was a degraded Result: the card kept the scaffold <code>status.md</code> and no summary. <code>SummaryPromptFit</code> now fits the log slot into the bytes the rest of the prompt leaves. It keeps the task prompt head, the run status, the deliverables and the final agent messages, shortens the run log before them, and names every omission in the prompt. A boundary refusal ends finalization after one attempt and queues no retry. <code>Summary prompt shortened</code> and <code>Result finalization degraded</code> log the prompt size and running counts.</td>
+        </tr>
+        <tr id="case-codex-model-capacity-quota-hold">
+          <td>2026-11-02</td>
+          <td><code>AGT-3389 / AGT-3385 / QS-135</code><br><span class="small">Codex model capacity misclassified as quota exhaustion</span></td>
+          <td>Three Codex turns failed with "Selected model is at capacity" and <code>turn.failed</code>. The runner classified them as <code>QuotaExceeded</code>, held <code>provider-auth:codex</code> limited, and stopped claiming Codex cards. The cards ended Unknown or escalated; an operator restarted the runner and salvaged the work.</td>
+          <td>The shared provider-access classifier listed "at capacity" among rate-limit signals. The typed outcome therefore selected <code>WaitForCapabilityRecovery</code>, and the provider-auth probe applied a host-wide hold. The completion planes had no distinct transient capacity terminal.</td>
+          <td>The observed terminal was Unknown or Escalated. Model capacity now has its own typed outcome and three bounded same-session retries at 30 seconds, 2 minutes, and 5 minutes. Exhaustion returns the card to Ready with its salvage as the next starting point. The provider login stays available; explicit usage limits and HTTP 429 reset refusals retain their existing hold.</td>
         </tr>
       </tbody>
     </table>

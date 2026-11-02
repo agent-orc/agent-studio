@@ -838,6 +838,7 @@
   <!-- agent-studio:implementation-section:start -->
   <section id="implementation" data-document-section="implementation">
     <h2>Implementation</h2>
+    <p><b>S4 working decision, AGT-3392:</b> D1 through D9 use recommended option A; no recorded operator override applies. A workspace System is stored through the workspace application API and names units by project and unit id. The installation manifest owns shared placement, while each instance keeps its project owner. A project partial picture includes its instances, directly shared placement and link neighbours, and direct externals. Externals are terminal for inclusion. The diagram and outline label faded neighbours as another project's objects. Registry lookups and scale work remain in S5 and S6.</p>
     <p>Six bounded slices are defined in <a href="workbench.json">workbench.json</a>. No product code is changed by this Dossier.</p>
     <table>
       <thead><tr><th>Slice</th><th>Delivers</th><th>Acceptance target</th></tr></thead>

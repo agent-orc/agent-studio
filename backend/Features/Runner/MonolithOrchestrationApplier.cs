@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Tasks;
 using AgentStudio.Pipeline;
@@ -29,6 +30,8 @@ public sealed class MonolithOrchestrationApplier(
     OrchestratorLog operatorLog) : IMonolithOrchestrationApplier, IOrchestrationSupersessionAudit
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private static readonly ConcurrentDictionary<string, object> FollowUpGates =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public void RecordSuperseded(MonolithOrchestrationOccurrence occurrence, string? observedState)
     {
@@ -457,20 +460,39 @@ public sealed class MonolithOrchestrationApplier(
         scanner.InvalidateCache();
     }
 
-    private void EnsureLinkedFollowUp(AgentStudio.Shared.TaskInfo task,
+    internal void EnsureLinkedFollowUp(AgentStudio.Shared.TaskInfo task,
+        MonolithOrchestrationOccurrence occurrence, TransitionDecision decision)
+    {
+        lock (FollowUpGates.GetOrAdd($"{task.ProjectName}:{task.Id}", _ => new object()))
+            EnsureLinkedFollowUpCore(task, occurrence, decision);
+    }
+
+    private void EnsureLinkedFollowUpCore(AgentStudio.Shared.TaskInfo task,
         MonolithOrchestrationOccurrence occurrence, TransitionDecision decision)
     {
         var marker = $"engine-follow-up:{occurrence.Run.RunId}";
-        var existing = scanner.ScanAllJobs().FirstOrDefault(candidate =>
-            candidate.CreationSource == marker);
+        var sourceKey = task.Key ?? task.Id;
+        var title = $"Follow-up: review findings in {sourceKey}";
+        var candidates = scanner.ScanAllJobs().Where(candidate =>
+            candidate.ProjectName == task.ProjectName
+            && candidate.CreationSource?.StartsWith("engine-follow-up:", StringComparison.Ordinal) == true)
+            .ToArray();
+        // The exact run marker also recovers a creation interrupted before references were written.
+        var existing = candidates.FirstOrDefault(candidate => candidate.CreationSource == marker)
+            ?? candidates.FirstOrDefault(candidate =>
+                candidate.State is not (TaskStates.Completed or TaskStates.Archive)
+                && (candidate.References.FollowUpOf.Contains(sourceKey, StringComparer.OrdinalIgnoreCase)
+                    || candidate.References.FollowUpOf.Contains(task.Id, StringComparer.OrdinalIgnoreCase)
+                    || candidate.Title == title));
         if (existing is null)
         {
-            var prompt = $"Fix the remaining review findings from {task.Key ?? task.Id}.\n\n"
-                + string.Join("\n", decision.Findings.Select(item => $"- {item.Aspect}: {item.Summary}"))
-                + $"\n\nSource card: {task.Key ?? task.Id}.";
+            var prompt = $"Fix the remaining review findings from {sourceKey}.\n\n"
+                + string.Join("\n", decision.Findings.Select(item => $"- {item.Aspect}: {item.Summary}")
+                    .Distinct(StringComparer.Ordinal))
+                + $"\n\nSource card: {sourceKey}.";
             var createdId = mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
             {
-                Title = $"Follow-up: review findings in {task.Key ?? task.Id}",
+                Title = title,
                 Agent = task.Agent,
                 CliType = task.CliType,
                 Model = task.Model,
@@ -486,15 +508,41 @@ public sealed class MonolithOrchestrationApplier(
             existing = scanner.FindJob(createdId, task.WatchPath)
                 ?? throw new IOException("The engine follow-up could not be read.");
         }
-        var sourceKey = task.Key ?? task.Id;
-        var followUpKey = existing.Key ?? existing.Id;
-        mutations.SetTaskReferences(existing.Id, (existing.References ?? new AgentStudio.Shared.TaskReferences()) with
-        { FollowUpOf = [sourceKey] }, existing.WatchPath);
-        mutations.SetTaskReferences(task.Id, (task.References ?? new AgentStudio.Shared.TaskReferences()) with
+        else if (existing.State is not (TaskStates.Completed or TaskStates.Archive))
         {
-            RaisedFollowUps = (task.References?.RaisedFollowUps ?? [])
+            var promptPath = Path.Combine(existing.FolderPath, "prompt.md");
+            var listed = (File.Exists(promptPath) ? File.ReadAllLines(promptPath) : [])
+                .Select(line => line.Trim()).ToHashSet(StringComparer.Ordinal);
+            var newFindings = decision.Findings.Select(item => $"- {item.Aspect}: {item.Summary}")
+                .Where(line => listed.Add(line)).ToArray();
+            if (newFindings.Length > 0 && !mutations.AppendContinuationNote(existing.Id,
+                    $"Additional review findings from {sourceKey}:\n{string.Join("\n", newFindings)}",
+                    existing.WatchPath))
+                throw new IOException("The engine follow-up findings could not be appended.");
+        }
+        var followUpKey = existing.Key ?? existing.Id;
+        if (!mutations.SetTaskReferences(existing.Id,
+                (existing.References ?? new AgentStudio.Shared.TaskReferences()) with
+                { FollowUpOf = [sourceKey] }, existing.WatchPath))
+            throw new IOException("The engine follow-up source link could not be written.");
+        var latestSource = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+        if (!mutations.SetTaskReferences(task.Id, (latestSource.References ?? new AgentStudio.Shared.TaskReferences()) with
+        {
+            RaisedFollowUps = (latestSource.References?.RaisedFollowUps ?? [])
                 .Append(followUpKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-        }, task.WatchPath);
+        }, task.WatchPath))
+            throw new IOException("The engine source follow-up link could not be written.");
+        if (!timeline.ReadAll(task.FolderPath).Any(entry =>
+                entry.Kind == TimelineEventKinds.ReviewFollowUpRouted
+                && entry.Details?.GetValueOrDefault("orchestrationRunId") == occurrence.Run.RunId)
+            && !timeline.Append(task.FolderPath, TimelineEventKinds.ReviewFollowUpRouted,
+                TimelineActors.System, $"Review findings routed to follow-up {followUpKey}.",
+                occurrence.Run.RunId, details: new Dictionary<string, string>
+                {
+                    ["orchestrationRunId"] = occurrence.Run.RunId,
+                    ["followUpTaskKey"] = followUpKey,
+                }))
+            throw new IOException("The engine follow-up routing receipt could not be written.");
     }
 
     private async Task ApplySweepAsync(AgentStudio.Shared.TaskInfo task,

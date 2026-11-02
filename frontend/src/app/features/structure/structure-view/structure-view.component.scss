@@ -1,0 +1,67 @@
+@use '../../../../styles/mixins' as m;
+:host { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.structure-view { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; color: var(--studio-fg); background: var(--studio-bg-editor); }
+.structure-header { display: flex; justify-content: space-between; align-items: center; gap: var(--studio-spacing-4); padding: var(--studio-spacing-5); border-bottom: 1px solid var(--studio-border); }
+.structure-header h1 { margin: 0; color: var(--studio-fg-strong); font-size: 22px; }
+.structure-header p { margin: 0; color: var(--studio-fg-muted); }
+.structure-header .structure-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.structure-controls { display: flex; gap: var(--studio-spacing-2); }
+.structure-body { display: grid; grid-template-columns: minmax(0, 1fr) 220px; flex: 1; min-height: 0; }
+.structure-main { min-width: 0; overflow: auto; padding: var(--studio-spacing-4); }
+
+// Boxes are placed by the layout (structure-layout.ts); CSS only draws them.
+.structure-canvas { position: relative; min-height: 120px; }
+.structure-box { position: absolute; box-sizing: border-box; background: var(--studio-bg-surface); border: 1px solid var(--studio-border-strong); border-radius: 8px; }
+.structure-box[data-kind='boundary'], .structure-box[data-kind='system'] { background: transparent; border-style: dashed; border-color: var(--studio-fg-muted); border-radius: 14px; }
+.structure-box[data-kind='environment'], .structure-box[data-kind='location'], .structure-box[data-kind='region'] { background: var(--studio-bg-elevated); border-color: var(--studio-border); border-radius: 10px; }
+.structure-box[data-kind='vm'][data-opaque='false'] { outline: 1px solid var(--studio-border); outline-offset: -4px; }
+.structure-box[data-kind='namespace'] { border-style: dashed; }
+.structure-box[data-kind='group'] { background: var(--studio-bg-elevated); }
+.structure-box[data-kind='container'] { border-radius: 9px; }
+.structure-box[data-kind='process'] { border-radius: 22px; }
+.structure-box[data-kind='process'] .structure-node { padding-inline: var(--studio-spacing-4); }
+.structure-box[data-kind='external'] { background: transparent; border-style: dashed; }
+// Managed services sit inside the boundary but the platform cannot enter them: dashed, cylinder-like ends.
+.structure-box[data-kind='managed'] { background: var(--studio-bg-elevated); border-style: dashed; border-radius: 12px / 9px; }
+.structure-box[data-collapsed='true'] { box-shadow: 0 3px 0 -1px var(--studio-bg-surface), 0 3px 0 0 var(--studio-border-strong); }
+.structure-box[data-selected='true'] { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+.structure-box[data-other-project='true'] { opacity: .72; border-style: dashed; }
+.structure-node { @include m.disclosure-control; box-sizing: border-box; flex-wrap: wrap; align-content: center; align-items: baseline; column-gap: var(--studio-spacing-2); row-gap: 0; overflow: hidden; padding: 0 var(--studio-spacing-3); color: var(--studio-fg); text-align: left; }
+.structure-node strong { max-width: 100%; overflow: hidden; color: var(--studio-fg-strong); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.structure-node small { overflow: hidden; color: var(--studio-fg-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.structure-box[data-opaque='true'] .structure-node { border-radius: inherit; }
+.structure-box[data-opaque='true'] .structure-node small { flex-basis: 100%; }
+.structure-node:hover { background: var(--studio-bg-hover); }
+.structure-node:focus-visible, .structure-outline button:focus-visible, .structure-controls button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+.structure-summary { flex-basis: 100%; overflow: hidden; color: var(--studio-fg-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.structure-replicas { color: var(--studio-fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.structure-status { flex: none; align-self: center; width: 12px; height: 12px; fill: none; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.structure-status[data-status='ok'] { stroke: var(--studio-success); }
+.structure-status[data-status='warn'] { stroke: var(--studio-warn); }
+.structure-status[data-status='down'] { stroke: var(--studio-error); }
+.structure-status[data-status='unknown'] { stroke: var(--studio-fg-muted); }
+.structure-outside-label { position: absolute; margin: 0; color: var(--studio-fg-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+
+// Link kinds: solid with arrow for calls, long dash for tunnels, short dash for SSH, dotted bold for artifacts.
+.structure-links { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.structure-links marker path { fill: var(--studio-accent-3); }
+.structure-link { fill: none; stroke: var(--studio-accent-3); stroke-width: 1.5; }
+.structure-link[data-kind='tunnel'] { stroke-dasharray: 8 4; }
+.structure-link[data-kind='ssh'] { stroke-dasharray: 3 3; }
+.structure-link[data-kind='artifact'], .structure-link[data-kind='publish'], .structure-link[data-kind='consume'] { stroke-width: 2.2; stroke-dasharray: 1 3; stroke-linecap: round; }
+.structure-link-halo { fill: none; stroke: var(--studio-bg-editor); stroke-width: 5; opacity: .8; }
+.structure-link-key-marker circle { fill: var(--studio-bg-elevated); stroke: var(--studio-border-strong); }
+.structure-link-key-marker text { fill: var(--studio-fg-strong); font-size: 10px; font-variant-numeric: tabular-nums; }
+.structure-link-key { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2) var(--studio-spacing-4); margin: 0; padding: var(--studio-spacing-4) 0 0; font-size: 11px; list-style: none; }
+.structure-link-key > li { display: flex; align-items: center; gap: var(--studio-spacing-2); }
+.structure-link-number { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--studio-border-strong); border-radius: 50%; font-variant-numeric: tabular-nums; }
+.structure-link-sample { flex: none; overflow: visible; }
+
+.structure-outline { overflow: auto; padding: var(--studio-spacing-4); border-left: 1px solid var(--studio-border); }
+.structure-outline h2 { margin: 0 0 var(--studio-spacing-3); color: var(--studio-fg-strong); font-size: 13px; }
+.structure-outline button { display: flex; justify-content: space-between; gap: var(--studio-spacing-2); width: 100%; padding: var(--studio-spacing-2); color: var(--studio-fg); text-align: left; background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
+.structure-outline button:hover { background: var(--studio-bg-hover); }
+.structure-outline small { color: var(--studio-fg-muted); }
+.structure-shortcuts { margin: 0; padding: var(--studio-spacing-2) var(--studio-spacing-5); color: var(--studio-fg-muted); border-top: 1px solid var(--studio-border); font-size: 11px; }
+@media (max-width: 1000px) { .structure-body { grid-template-columns: minmax(0, 1fr); } .structure-outline { max-height: 160px; border-left: 0; border-top: 1px solid var(--studio-border); } }
+@media (prefers-reduced-motion: reduce) { .structure-view *, .structure-view *::before, .structure-view *::after { animation-duration: 0s !important; transition-duration: 0s !important; } }

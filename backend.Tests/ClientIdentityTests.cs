@@ -319,7 +319,7 @@ public class ClientIdentityTests : IDisposable
     }
 
     [Fact]
-    public void RecordSeen_PersistsAtMostOncePerThirtySecondWindow()
+    public void RecordSeen_PersistsOnlyWhenFlushed()
     {
         var config = BuildConfig();
         var identities = Path.Combine(_root, "identities");
@@ -341,6 +341,8 @@ public class ClientIdentityTests : IDisposable
         store.RecordSeen(record.Id);
         store.RecordSeen(record.Id);
 
+        Assert.Equal(0, writer.WritesFor(path));
+        store.FlushLastSeen();
         Assert.Equal(1, writer.WritesFor(path));
         Assert.True(BuildStore(config).Find(record.Id)?.LastSeenAt > record.LastSeenAt);
     }

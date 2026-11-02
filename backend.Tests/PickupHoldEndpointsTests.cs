@@ -1,8 +1,5 @@
 using System.Text.Json;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Configuration;
 
 using Xunit;
 
@@ -23,74 +20,28 @@ namespace AgentStudio.Tests;
 ///   projects.</item>
 /// </list>
 /// </summary>
-public sealed class PickupHoldEndpointsTests : IDisposable
+public sealed class PickupHoldEndpointsTests : IClassFixture<PickupHoldEndpointsTests.Host>
 {
-    private const string App = "hold-app";
-    private const string Lib = "hold-lib";
+    internal const string App = "hold-app";
+    internal const string Lib = "hold-lib";
 
-    private readonly string _workspace;
+    private readonly Host _host;
     private readonly string _appWatch;
     private readonly string _libWatch;
 
-    public PickupHoldEndpointsTests()
+    public PickupHoldEndpointsTests(Host host)
     {
-        _workspace = Path.Combine(Path.GetTempPath(), "atp-pickup-hold-http-" + Guid.NewGuid().ToString("N"));
-        _appWatch = Path.Combine(_workspace, "projects", App);
-        _libWatch = Path.Combine(_workspace, "projects", Lib);
-        foreach (var watch in new[] { _appWatch, _libWatch })
-            foreach (var state in TaskStates.All)
-                Directory.CreateDirectory(Path.Combine(watch, state));
+        _host = host;
+        _host.Reset();
+        _appWatch = host.WatchPath(App);
+        _libWatch = host.WatchPath(Lib);
     }
 
-    public void Dispose()
+    /// <summary>The two projects every test of this class reads, with local coding allowed.</summary>
+    public sealed class Host() : BoardTestHost("atp-pickup-hold-http-", App, Lib)
     {
-        try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task LocalCodingDenial_ReachesDetailAndBoardWithRoutingHint(bool deliveryUnderReview)
-    {
-        WriteJob(_appWatch, TaskStates.Ready, "local-coding", "APP-1");
-        if (deliveryUnderReview)
-        {
-            var path = Path.Combine(_appWatch, TaskStates.Ready, "local-coding", "task.json");
-            var task = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
-            task["phase"] = LifecyclePhases.AwaitingReview;
-            File.WriteAllText(path, task.ToJsonString());
-        }
-
-        using var factory = BuildFactory(allowLocalCoding: false);
-        using var client = factory.CreateClient();
-        var watchPath = Uri.EscapeDataString(_appWatch);
-        using var detail = JsonDocument.Parse(
-            await client.GetStringAsync($"/api/tasks/local-coding?watchPath={watchPath}"));
-        var hold = detail.RootElement.GetProperty("info").GetProperty("pickupHold");
-        Assert.Equal(PickupHoldMechanisms.ExecutionPlacement, hold.GetProperty("mechanism").GetString());
-        Assert.Equal(PickupHoldClassifications.Unsatisfiable, hold.GetProperty("classification").GetString());
-        Assert.Contains("local agent execution is disabled", hold.GetProperty("reason").GetString());
-        var resolution = Assert.Single(hold.GetProperty("resolutions").EnumerateArray());
-        Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, resolution.GetProperty("kind").GetString());
-        Assert.Contains("PUT /api/projects/hold-app/execution-runner", resolution.GetProperty("detail").GetString());
-
-        using var grouped = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
-        var card = FindCard(grouped.RootElement.GetProperty("ready"), "local-coding");
-        Assert.Equal(PickupHoldMechanisms.ExecutionPlacement,
-            card.GetProperty("pickupHold").GetProperty("mechanism").GetString());
-
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post, $"/api/tasks/local-coding/start?watchPath={watchPath}")
-        {
-            Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json"),
-        };
-        request.Headers.Add("X-Client-Id", "local-default");
-        using var start = await client.SendAsync(request);
-        Assert.False(start.IsSuccessStatusCode);
-        using var startBody = JsonDocument.Parse(await start.Content.ReadAsStringAsync());
-        Assert.True(startBody.RootElement.TryGetProperty("code", out var code), startBody.RootElement.ToString());
-        Assert.Equal(RemoteExecutionRequirement.Code, code.GetString());
-        Assert.Contains("local agent execution is disabled", startBody.RootElement.GetProperty("error").GetString());
+        protected override void ConfigureServices(IServiceCollection services)
+            => services.AddSingleton<ILocalCodingAdmissionPolicy>(AllowLocalCodingForTests.Instance);
     }
 
     [Fact]
@@ -100,8 +51,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "duplicate-cli-paths", "AGT-2373",
             dependsOn: "AGT-2372", releaseGate: true, enteredLaneAt: "2026-08-11T09:00:00Z");
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         var watchPath = Uri.EscapeDataString(_appWatch);
 
         using var doc = JsonDocument.Parse(
@@ -139,8 +89,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
              "rejectedAtUtc":"2026-09-06T19:47:45Z"}
             """);
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         using var doc = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
 
         var card = FindCard(doc.RootElement.GetProperty("ready"), "installer-one-executable");
@@ -166,8 +115,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
     {
         WriteJob(_appWatch, TaskStates.Ready, "workable", "APP-9");
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         using var doc = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
 
         var card = FindCard(doc.RootElement.GetProperty("ready"), "workable");
@@ -182,8 +130,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
             dependsOn: "AGT-2372", releaseGate: true, enteredLaneAt: "2026-08-11T09:00:00Z");
         WriteJob(_appWatch, TaskStates.Ready, "workable", "APP-9");
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         using var doc = JsonDocument.Parse(await client.GetStringAsync("/api/pickup-holds"));
 
         Assert.Equal(1, doc.RootElement.GetProperty("total").GetInt32());
@@ -207,8 +154,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "waiter-one", "AGT-2738", dependsOn: "AGT-2736");
         WriteJob(_appWatch, TaskStates.Ready, "waiter-two", "AGT-2739", dependsOn: "AGT-2736");
 
-        using var factory = BuildFactory();
-        using var client = factory.CreateClient();
+        using var client = _host.CreateClient();
         using var doc = JsonDocument.Parse(await client.GetStringAsync("/api/pickup-holds"));
 
         var attention = Assert.Single(doc.RootElement.GetProperty("attention").EnumerateArray());
@@ -221,7 +167,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
             attention.GetProperty("sinceUtc").GetDateTime().ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"));
     }
 
-    private static JsonElement FindCard(JsonElement lane, string id)
+    internal static JsonElement FindCard(JsonElement lane, string id)
     {
         foreach (var card in lane.EnumerateArray())
             if (card.TryGetProperty("id", out var cid) && cid.GetString() == id)
@@ -230,7 +176,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
         return default; // unreachable
     }
 
-    private static void WriteJob(
+    internal static void WriteJob(
         string watchPath,
         string state,
         string slug,
@@ -255,27 +201,72 @@ public sealed class PickupHoldEndpointsTests : IDisposable
             $"{edge}}}";
         File.WriteAllText(Path.Combine(dir, "task.json"), json);
     }
+}
 
-    private WebApplicationFactory<Program> BuildFactory(bool allowLocalCoding = true) =>
-        new WebApplicationFactory<Program>()
-            .WithWebHostBuilder(builder =>
-            {
-                builder.UseEnvironment("Test");
-                if (allowLocalCoding)
-                    builder.ConfigureServices(services =>
-                        services.AddSingleton<ILocalCodingAdmissionPolicy>(AllowLocalCodingForTests.Instance));
-                builder.ConfigureAppConfiguration((_, cfg) =>
-                {
-                    cfg.AddInMemoryCollection(new Dictionary<string, string?>
-                    {
-                        ["TaskRepository"] = _workspace,
-                        ["WatchPaths:0:Name"] = App,
-                        ["WatchPaths:0:Path"] = _appWatch,
-                        ["WatchPaths:0:RootPath"] = _appWatch,
-                        ["WatchPaths:1:Name"] = Lib,
-                        ["WatchPaths:1:Path"] = _libWatch,
-                        ["WatchPaths:1:RootPath"] = _libWatch,
-                    });
-                });
-            });
+/// <summary>
+/// The <see cref="PickupHoldEndpointsTests"/> wire shape on a host that does
+/// not allow local coding, so a card in a pickup lane is held by its execution
+/// placement. Its own class because that is a different host configuration.
+/// </summary>
+public sealed class PickupHoldLocalCodingDenialTests : IClassFixture<PickupHoldLocalCodingDenialTests.Host>
+{
+    private const string App = PickupHoldEndpointsTests.App;
+
+    private readonly Host _host;
+    private readonly string _appWatch;
+
+    public PickupHoldLocalCodingDenialTests(Host host)
+    {
+        _host = host;
+        _host.Reset();
+        _appWatch = host.WatchPath(App);
+    }
+
+    /// <summary>The projects of <see cref="PickupHoldEndpointsTests"/>, with the host's own admission policy.</summary>
+    public sealed class Host() : BoardTestHost("atp-pickup-hold-denial-", App, PickupHoldEndpointsTests.Lib);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LocalCodingDenial_ReachesDetailAndBoardWithRoutingHint(bool deliveryUnderReview)
+    {
+        PickupHoldEndpointsTests.WriteJob(_appWatch, TaskStates.Ready, "local-coding", "APP-1");
+        if (deliveryUnderReview)
+        {
+            var path = Path.Combine(_appWatch, TaskStates.Ready, "local-coding", "task.json");
+            var task = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+            task["phase"] = LifecyclePhases.AwaitingReview;
+            File.WriteAllText(path, task.ToJsonString());
+        }
+
+        using var client = _host.CreateClient();
+        var watchPath = Uri.EscapeDataString(_appWatch);
+        using var detail = JsonDocument.Parse(
+            await client.GetStringAsync($"/api/tasks/local-coding?watchPath={watchPath}"));
+        var hold = detail.RootElement.GetProperty("info").GetProperty("pickupHold");
+        Assert.Equal(PickupHoldMechanisms.ExecutionPlacement, hold.GetProperty("mechanism").GetString());
+        Assert.Equal(PickupHoldClassifications.Unsatisfiable, hold.GetProperty("classification").GetString());
+        Assert.Contains("local agent execution is disabled", hold.GetProperty("reason").GetString());
+        var resolution = Assert.Single(hold.GetProperty("resolutions").EnumerateArray());
+        Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, resolution.GetProperty("kind").GetString());
+        Assert.Contains("PUT /api/projects/hold-app/execution-runner", resolution.GetProperty("detail").GetString());
+
+        using var grouped = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
+        var card = PickupHoldEndpointsTests.FindCard(grouped.RootElement.GetProperty("ready"), "local-coding");
+        Assert.Equal(PickupHoldMechanisms.ExecutionPlacement,
+            card.GetProperty("pickupHold").GetProperty("mechanism").GetString());
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/tasks/local-coding/start?watchPath={watchPath}")
+        {
+            Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("X-Client-Id", "local-default");
+        using var start = await client.SendAsync(request);
+        Assert.False(start.IsSuccessStatusCode);
+        using var startBody = JsonDocument.Parse(await start.Content.ReadAsStringAsync());
+        Assert.True(startBody.RootElement.TryGetProperty("code", out var code), startBody.RootElement.ToString());
+        Assert.Equal(RemoteExecutionRequirement.Code, code.GetString());
+        Assert.Contains("local agent execution is disabled", startBody.RootElement.GetProperty("error").GetString());
+    }
 }

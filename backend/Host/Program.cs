@@ -31,6 +31,12 @@ if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
     return;
 }
 
+// Twelve processors were also the pool minimum during the live stall. A scan
+// and synchronous filesystem work can occupy that many workers at once; keep
+// 64 ready so health checks and reads can still run while the pool is blocked.
+ThreadPool.GetMinThreads(out var workerMinimum, out var completionPortMinimum);
+ThreadPool.SetMinThreads(Math.Max(64, workerMinimum), completionPortMinimum);
+
 // Host timeline (AGT-3107): read the clock before anything else so the
 // opt-in timeline can report the time from entry to Build().
 var hostEntryTimestamp = TimeProvider.System.GetTimestamp();
@@ -213,6 +219,10 @@ var fileLogSink = new BackendFileLogSink(fileLoggerOptions);
 var crashRecorder = new CrashRecorder(fileLoggerOptions, fileLogSink);
 builder.Services.AddSingleton(fileLogSink);
 builder.Services.AddSingleton(crashRecorder);
+// AGT-3369: a timer tick that runs late is the API's own view of a GC pause
+// or a starved thread pool; Operations reads the stalls it records.
+builder.Services.AddSingleton<ApiStallDetector>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiStallDetector>());
 // Drop the default MEL providers (Console/Debug/EventSource) so the operator
 // sees a single Serilog-formatted console stream rather than two. The rolling
 // backend file logger is re-added explicitly and kept alive via Serilog's
@@ -232,12 +242,20 @@ builder.Logging.AddProvider(new BackendFileLoggerProvider(fileLogSink));
 // to swap-and-freeze the one static bootstrap Log.Logger throw "The logger
 // is already frozen" (flaky full-suite failures). Production keeps the
 // in-place swap so DI-less callers (SilentCatch) share the configured logger.
-builder.Host.UseSerilog((context, services, configuration) => configuration
-    .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
-    .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
-    .Enrich.FromLogContext()
-    .WriteTo.Console(),
+builder.Host.UseSerilog((context, services, configuration) =>
+{
+    configuration
+        .MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+        .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
+        .Enrich.FromLogContext();
+    if (underTestHost)
+        configuration.WriteTo.Logger(console => console
+            .Filter.ByIncludingOnly(TestHostConsoleLogFilter.ShouldWrite)
+            .WriteTo.Console());
+    else
+        configuration.WriteTo.Console();
+},
     preserveStaticLogger: underTestHost,
     writeToProviders: true);
 
@@ -365,6 +383,7 @@ if (!underTestHost)
 
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
+builder.Services.AddHostedService<AgentStudio.Diagnostics.LastSeenPersistenceService>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
 builder.Services.AddHttpClient("secret-external", client => client.Timeout = TimeSpan.FromSeconds(10))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
@@ -391,6 +410,9 @@ builder.Services.AddSingleton(sp => new AgentStudio.TaskServer.Contracts.GitHubA
     sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.GitHubAppHostKeys(
     sp.GetRequiredService<AccessSecurityStore>().SecurityFolder));
+// Registered before every Git-using hosted service. Its background loop writes
+// the first App tokens; integration waits on the readiness without holding startup.
+builder.Services.AddSingleton<AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness>();
 builder.Services.AddHostedService<AgentStudio.GitHubApp.GitHubAppHostCredentialService>();
 builder.Services.AddSingleton<ProjectSecretBindings>();
 builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
@@ -503,6 +525,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.OperatorCandidateAuditRepair>
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.OperatorCandidateAuditRepair>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateDurationHistory>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.PullGateStore(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "pull-gates"),
@@ -1141,6 +1164,15 @@ builder.Services.AddSingleton<ProjectSettingsService>();
 builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
+// AGT-3412: the readiness report of the operations page and the move tool.
+builder.Services.AddSingleton<AgentStudio.Readiness.IReadinessGit, AgentStudio.Readiness.ProcessReadinessGit>();
+builder.Services.AddSingleton<AgentStudio.Readiness.ReadinessGitFacts>();
+builder.Services.AddSingleton<AgentStudio.Readiness.ServerReadinessCollector>();
+builder.Services.AddSingleton(sp => new AgentStudio.Readiness.ServerReadinessMonitor(
+    sp.GetRequiredService<AgentStudio.Readiness.ServerReadinessCollector>().CollectAsync,
+    sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<ILogger<AgentStudio.Readiness.ServerReadinessMonitor>>()));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Readiness.ServerReadinessMonitor>());
 builder.Services.AddSingleton<AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService>();
 builder.Services.AddSingleton<GitCleanupService>();
 builder.Services.AddSingleton<BranchRetentionEvidenceWriter>();

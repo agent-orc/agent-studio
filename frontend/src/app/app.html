@@ -120,7 +120,7 @@
             (triagePrimary)="onStudioTriagePrimary()"
             (triageMenuItem)="onStudioTriageMenuItemClick($event)" />
         </div>
-        <div studioContent class="studio-projected-content">
+        <div studioContent class="studio-projected-content" [class.studio-projected-content--hidden]="studioTabState.activeTab()?.kind === 'structure'">
           <app-workspace-banner [projects]="bannerProjects()" />
           @switch (studioTabState.activeTab()?.kind) {
             @case ('feed') {

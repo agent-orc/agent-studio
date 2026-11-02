@@ -184,6 +184,8 @@ export function buildComposerLocationContext(
       return { project: null, surface: 'Workspace Settings' };
     case 'deployment-dashboard':
       return { project: null, surface: 'Deployment dashboard' };
+    case 'structure':
+      return { project: null, surface: 'Structure' };
     case 'welcome':
       return { project: null, surface: 'Welcome' };
   }

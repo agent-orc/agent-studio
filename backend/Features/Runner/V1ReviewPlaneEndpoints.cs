@@ -2826,7 +2826,22 @@ public static class V1ReviewPlaneEndpoints
         IReadOnlyList<string>? changedFiles = null,
         VerifyPlan? verifyOverride = null)
     {
-        var verify = verifyOverride ?? VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
+        var declared = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
+        var verify = verifyOverride ?? declared;
+        if (changedFiles?.Any(path => path.Replace('\\', '/').StartsWith("backend/", StringComparison.OrdinalIgnoreCase)) == true)
+        {
+            // Class selection can omit every inventory test, or all test commands.
+            // Review always runs the declared .NET guards for a backend change.
+            var guards = GuardFirstGatePlan.Apply(declared.Commands)
+                .Where(GuardFirstGatePlan.IsGuardStep).ToArray();
+            var firstTest = verify.Commands.ToList().FindIndex(command => command.Kind == VerifyCommandKind.Test);
+            if (firstTest < 0) firstTest = verify.Commands.Count;
+            verify = verify with
+            {
+                Commands = verify.Commands.Take(firstTest).Concat(guards)
+                    .Concat(verify.Commands.Skip(firstTest)).ToArray(),
+            };
+        }
         var preparation = GatePreparationPlanner.Plan(
                 repositoryPath ?? string.Empty,
                 profile,

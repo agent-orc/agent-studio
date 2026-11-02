@@ -67,12 +67,16 @@ Git integration lives in `backend/Features/Git/GitService.cs` and
    fast-forwards a stale local branch. A local-ahead branch is left alone;
    genuine divergence returns `Diverged` and fails closed rather than
    overwriting either tip.
-5. Canonical integration preserves delivery SHAs first. A direct
+5. Linear canonical integration preserves delivery SHAs first. A direct
    `git merge --no-ff --no-edit` is attempted before any history rewrite.
-6. A history rewrite is admissible only with an exact one-to-one replacement
-   map. The fallback rebase refuses on a non-linear delivery
-   (`rev-list --count --merges` greater than zero) or on changed commit
-   cardinality, and reports `AgentRoundRequired` instead of guessing.
+   A non-linear delivery behind the current tip is folded by its net tree
+   change against the merge base into one commit on that tip. The gate tests
+   this commit, and every delivery commit absent from the tip maps to it.
+6. Linear history rewrites require an exact one-to-one replacement map. A
+   changed commit cardinality reports `AgentRoundRequired` instead of guessing.
+   A non-linear net-change replay uses the explicit many-to-one map to the
+   published commit; a real tree conflict names the files and requests an
+   agent round.
 7. A rewrite that cannot be persisted is rolled back. If
    `TaskMutationService.RecordMechanicalRebaseOnFolder` fails after a
    `MergedAfterRebase`, `MergeIntoDevelopRunner` hard-resets the integration
