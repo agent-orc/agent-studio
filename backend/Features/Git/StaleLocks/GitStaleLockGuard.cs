@@ -34,9 +34,9 @@ public sealed record GitLockGuardResult(
 /// <summary>
 /// Runs before a git write on a repository the Task Server owns (workspace
 /// repository, integration worktrees, gate worktrees). It removes a lock file
-/// that is older than the threshold and held by no git process, waits once for
-/// a young or owned lock, and then lets the write proceed so git fails exactly
-/// as before when the lock is still there (AGT-3000).
+/// that is older than the threshold (one minute by default) and held by no git
+/// process, waits once for a young or owned lock, and then lets the write
+/// proceed so git fails exactly as before when the lock is still there (AGT-3000).
 ///
 /// <para>Order: resolve the git directories from the filesystem (no git
 /// spawn: a git spawn is what the lock is blocking), observe each lock's age,
@@ -212,7 +212,7 @@ public sealed class GitStaleLockGuard
             // child or OS git process that started before the lock was written
             // (plus clock slack) may hold it.
             var ownerships = _probe.ProbeMany(scope, candidates
-                .Select(item => item.Identity.LastWriteTimeUtc + GitStaleLockPolicy.KilledCommandClockSlack)
+                .Select(item => GitStaleLockPolicy.OwnerStartedBefore(item.Identity.LastWriteTimeUtc))
                 .ToArray());
             var cleared = new List<GitLockFinding>();
             var remaining = new List<GitLockFinding>();
@@ -302,10 +302,11 @@ public sealed class GitStaleLockGuard
             var agedLocks = observedLocks
                 .Where(item => GitStaleLockPolicy.NeedsOwnershipProbe(item.Age, _threshold, item.Killed))
                 .ToList();
+            // With a short threshold the probe also runs for a lock written a
+            // minute ago, whose writer may have started within clock precision
+            // of that write; the slack keeps such a writer a possible holder.
             var ownerships = _probe.ProbeMany(scope, agedLocks
-                .Select(item => item.Killed
-                    ? item.Identity.LastWriteTimeUtc + GitStaleLockPolicy.KilledCommandClockSlack
-                    : item.Identity.LastWriteTimeUtc)
+                .Select(item => GitStaleLockPolicy.OwnerStartedBefore(item.Identity.LastWriteTimeUtc))
                 .ToArray());
             var ownershipByPath = agedLocks.Select((item, index) => (item.Path, Ownership: ownerships[index]))
                 .ToDictionary(item => item.Path, item => item.Ownership);

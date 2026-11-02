@@ -48,11 +48,19 @@ public sealed class WatcherActivityProjector
         Append(watcherCase, OrchestratorLogKinds.Alert, "watcher-finding-raised", watcherCase.LastSummary,
             reasoning: OperationalReasoning(watcherCase));
         Emit("observation", "watcher-finding-raised", watcherCase, watcherCase.LastSummary,
-            watcherCase.Severity == "critical" ? "Error" : "Warn",
+            FindingBusSeverity(watcherCase.Severity),
             new { caseId = watcherCase.Id, watcherCase.Fingerprint, watcherCase.DetectorClass, watcherCase.Subject,
                 watcherCase.Severity, watcherCase.SinceUtc, watcherCase.BlockedCount, watcherCase.SuggestedAction,
                 watcherCase.LastDetails, evidenceDigest = pack.DigestSha256 });
     }
+
+    /// <summary>
+    /// Bus severity for a raised finding. The agent-message contract allows only
+    /// Info, Warn and High (<see cref="AgentMessageValidator.Severities"/>), so a
+    /// critical finding maps to High.
+    /// </summary>
+    public static string FindingBusSeverity(string? watcherSeverity)
+        => string.Equals(watcherSeverity, "critical", StringComparison.OrdinalIgnoreCase) ? "High" : "Warn";
 
     public void ProjectAnalysisComplete(WatcherCase watcherCase, WatcherAnalysisReceipt analysis)
     {
