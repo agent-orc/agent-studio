@@ -5,8 +5,6 @@ namespace AgentStudio.TaskServer.Contracts;
 public sealed record ProjectRegistryDeclaration(string Artifact, string Provider, string Package,
     string? Repository, string? SecretRef, string? BaseUrl);
 
-public sealed record ProjectStructureDefinition(IReadOnlyList<ProjectRegistryDeclaration> Registries);
-
 public sealed record ProjectArtifactDefinition(string Name, string Type, string? Path, string? Dockerfile)
 {
     /// <summary>Registry repository a container artifact is pushed to and pulled from.</summary>
@@ -82,6 +80,8 @@ public sealed record ProjectDeploymentDefinition(
     public IReadOnlyList<ProjectRunbookDefinition> Runbooks { get; init; } = [];
     public IReadOnlyList<ProjectTenantDefinition> Tenants { get; init; } = [];
     public IReadOnlyList<ProjectChannelDefinition> Channels { get; init; } = [];
+    /// <summary>Regions, placements and managed services for the structure view (AGT-3349 S5).</summary>
+    public ProjectStructureDefinition Structure { get; init; } = ProjectStructureDefinition.Empty;
     public IReadOnlyDictionary<string, IReadOnlyList<ProjectLifecyclePhase>> Lifecycles { get; init; }
         = new Dictionary<string, IReadOnlyList<ProjectLifecyclePhase>>(StringComparer.Ordinal);
     /// <summary>True when the file omits environments and the P1 default applies.</summary>
@@ -90,7 +90,8 @@ public sealed record ProjectDeploymentDefinition(
     public bool LifecycleDefaulted { get; init; }
 
     public bool IsConfigured => Artifacts.Count > 0 || Environments.Count > 0
-        || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0 || Tenants.Count > 0 || Channels.Count > 0 || Runbooks.Count > 0;
+        || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0 || Tenants.Count > 0 || Channels.Count > 0 || Runbooks.Count > 0
+        || Structure.IsConfigured;
 }
 
 /// <summary>
@@ -100,7 +101,7 @@ public sealed record ProjectDeploymentDefinition(
 public static class ProjectDeploymentVocabulary
 {
     public static readonly IReadOnlyList<string> Sections =
-        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables", "tenants", "channels", "runbooks"];
+        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables", "tenants", "channels", "runbooks", "structure"];
     public static readonly IReadOnlyList<string> ArtifactTypes = ["static", "container"];
     public static readonly IReadOnlyList<string> ArtifactKeys = ["name", "type", "path", "dockerfile", "image"];
     public static readonly IReadOnlyList<string> EnvironmentNames = ["staging", "production"];
@@ -193,36 +194,9 @@ public static class ProjectDeploymentVocabulary
 
 public static partial class ProjectDefinitionReader
 {
-    private static ProjectStructureDefinition? ParseStructure(IReadOnlyList<YamlLine> lines,
-        List<ProjectDefinitionIssue> issues)
-    {
-        if (!lines.Any(line => line.Indent == 0 && KeyValue(line.Text).Key == "structure")) return null;
-        CheckKeys(Section(lines, "structure"), 2, ["registries"], "structure", issues);
-        var rows = SequenceMaps(lines, "structure.registries", 4, 6, issues);
-        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var registries = rows.Select((row, index) =>
-        {
-            CheckMapKeys(row, ["artifact", "provider", "package", "repository", "secretRef", "baseUrl"],
-                $"structure.registries[{index}]", issues);
-            var declaration = new ProjectRegistryDeclaration(Get(row, "artifact") ?? "",
-                Get(row, "provider") ?? "", Get(row, "package") ?? "",
-                Get(row, "repository"), Get(row, "secretRef"), Get(row, "baseUrl"));
-            if (string.IsNullOrWhiteSpace(declaration.Artifact) || string.IsNullOrWhiteSpace(declaration.Package)
-                || declaration.Provider is not ("npm" or "nuget" or "docker-hub" or "github" or "jfrog" or "internal"))
-                issues.Add(new($"structure.registries[{index}]", "registry-invalid",
-                    "Registry needs an artifact, package and supported provider."));
-            if (declaration.SecretRef is { } secret && !secret.StartsWith("secret://", StringComparison.Ordinal))
-                issues.Add(new($"structure.registries[{index}].secretRef", "registry-secret-invalid",
-                    "Registry credentials must use a secret reference."));
-            if (!keys.Add($"{declaration.Artifact}|{declaration.Provider}|{declaration.Package}|{declaration.Repository}"))
-                issues.Add(new($"structure.registries[{index}]", "registry-duplicate",
-                    "Registry declarations for an artifact must be unique."));
-            return declaration;
-        }).ToArray();
-        return new ProjectStructureDefinition(registries);
-    }
     private static ProjectDeploymentDefinition? ParseDeployment(
-        IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues)
+        IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues,
+        ProjectStructureDefinition structure)
     {
         bool Declared(string section) => lines.Any(line => line.Indent == 0 && KeyValue(line.Text).Key == section);
         if (!ProjectDeploymentVocabulary.Sections.Any(Declared))
@@ -310,7 +284,7 @@ public static partial class ProjectDefinitionReader
         // Staging and Production with the standard lifecycle are the P1 default
         // once the file starts describing a deployment.
         var deploying = artifacts.Length > 0 || steps.Length > 0 || phases.Length > 0 || variables.Length > 0 || tenants.Length > 0 || channels.Length > 0 || runbooks.Length > 0
-            || Declared("environments");
+            || structure.IsConfigured || Declared("environments");
         var defaultEnvironments = deploying && !Declared("environments");
         var defaultLifecycle = deploying && !Declared("lifecycles");
         return new(NestedStringList(lines, "pipeline", "build"),
@@ -324,6 +298,7 @@ public static partial class ProjectDefinitionReader
             Tenants = tenants,
             Channels = channels,
             Lifecycles = lifecycles,
+            Structure = structure,
             EnvironmentsDefaulted = defaultEnvironments,
             LifecycleDefaulted = defaultLifecycle,
         };
@@ -384,18 +359,12 @@ public static partial class ProjectDefinitionReader
         List<ProjectDefinitionIssue> issues)
     {
         IReadOnlyList<YamlLine> content;
-        if (section == "structure.registries")
+        // A dotted section (lifecycles.standard, structure.placements) is a list under a second-level key.
+        if (section.IndexOf('.') is var dot and > 0)
         {
-            var start = Section(lines, "structure").FirstOrDefault(line =>
-                line.Indent == 2 && KeyValue(line.Text).Key == "registries");
-            content = start is null ? [] : lines.Skip(lines.IndexOf(start) + 1)
-                .TakeWhile(line => line.Indent > 2).ToArray();
-        }
-        else if (section.StartsWith("lifecycles.", StringComparison.Ordinal))
-        {
-            var lifecycle = section["lifecycles.".Length..];
-            var start = Section(lines, "lifecycles").FirstOrDefault(line =>
-                line.Indent == 2 && KeyValue(line.Text).Key == lifecycle);
+            var child = section[(dot + 1)..];
+            var start = Section(lines, section[..dot]).FirstOrDefault(line =>
+                line.Indent == 2 && KeyValue(line.Text).Key == child);
             content = start is null ? [] : lines.Skip(lines.IndexOf(start) + 1)
                 .TakeWhile(line => line.Indent > 2).ToArray();
         }
@@ -473,6 +442,7 @@ public static partial class ProjectDefinitionValidator
             ValidateStep(value, value.Deploy[i], $"deploy[{i}]", environments, names, hosts, issues);
         ValidateTenants(value.Tenants, environments, issues);
         ValidateVariables(value.Variables, value.Tenants, environments, value.Channels, issues);
+        ValidateStructure(value.Structure, environments, names, issues);
         var runbookNames = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < value.Runbooks.Count; i++)
         {

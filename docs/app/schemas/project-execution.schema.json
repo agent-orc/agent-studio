@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-taskboard.local/schemas/project-execution.schema.json",
   "title": "Repository project execution definition",
-  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds deployments, environments, lifecycle, tenants, scoped variables and operational runbooks. Secrets are references, never values.",
+  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds deployments, environments, lifecycle, tenants, scoped variables, operational runbooks and the deployment structure. Secrets are references, never values.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -884,10 +884,131 @@
       }
     },
     "structure": {
-      "description": "Declared registry destinations for artifacts. Credentials are secret references only.",
+      "description": "Deployment structure for the Operations structure view: regions, placements (clusters, namespaces, VMs, servers or runner deploy target kinds) and managed services. Declares shape only; addresses and credentials stay in environment declarations and the operator inventory. Artifact registry destinations are declared per artifact, with secret references for private registries.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "regions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/identifier"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              }
+            }
+          }
+        },
+        "placements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/identifier"
+              },
+              "kind": {
+                "description": "Placement kind, or a runner deploy target kind: ssh-docker draws as a server, kubernetes as a cluster, cloud-run as a managed runtime.",
+                "enum": [
+                  "server",
+                  "vm",
+                  "cluster",
+                  "namespace",
+                  "ssh-docker",
+                  "kubernetes",
+                  "cloud-run"
+                ]
+              },
+              "parent": {
+                "$ref": "#/$defs/identifier"
+              },
+              "region": {
+                "$ref": "#/$defs/identifier"
+              },
+              "environments": {
+                "$ref": "#/$defs/environmentScope"
+              },
+              "artifacts": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/identifier"
+                }
+              },
+              "replicas": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "namespace"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "parent"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "managedServices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/identifier"
+              },
+              "kind": {
+                "enum": [
+                  "database",
+                  "queue",
+                  "object-storage",
+                  "cache",
+                  "search",
+                  "other"
+                ]
+              },
+              "region": {
+                "$ref": "#/$defs/identifier"
+              },
+              "environments": {
+                "$ref": "#/$defs/environmentScope"
+              },
+              "healthCheck": {
+                "description": "Id of an environment health check (healthChecks in the environment declaration). Its control-plane probe observes the service; without it the service is declared, not observed.",
+                "$ref": "#/$defs/identifier"
+              }
+            }
+          }
+        },
         "registries": {
           "type": "array",
           "items": {
@@ -1120,6 +1241,11 @@
               "required": [
                 "tenants",
                 "channels"
+              ]
+            },
+            {
+              "required": [
+                "structure"
               ]
             }
           ]

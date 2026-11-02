@@ -556,8 +556,34 @@ gate the tree again. An uncontained delivery remains blocked. A failed acceptanc
 Verified members also
 receive an idempotent integration bookkeeping
 record with their mapped SHA set and tested remote tip. A disabled project and
-a lone aged member use the ordinary per-card
-gate on the same immutable result subject. Within one backend process that
+a lone aged member use the per-card gate on the same immutable delivery.
+Since AGT-3434 that gate tests the delivery merged onto the freshly fetched
+integration tip. AGT-3408 spent 56
+minutes there and escalated on tests develop had already fixed; the merge
+path then ran a second gate on the merged tree. The candidate is a `--no-ff`
+merge commit with the tip and the result SHA as parents, or the result SHA
+when it already descends from the tip. It is pinned under
+`refs/agent-studio/fallback-candidates/` only while its gate runs. The card
+marker keeps `fallbackTestedSha` as the delivery SHA that passed, so lane
+release and acceptance compare it with the result SHA as before. The marker
+also records the tip, candidate and tree it tested. A resumed gate keeps that
+candidate while the tip stands, so the exact-SHA verdict cache still applies.
+A merge conflict runs no gate: the card returns to its agent for one
+automatic merge round whose prompt names the conflicted files, or escalates
+with those files when that round cannot start. The old base protected one
+thing, which the change keeps: a red integration branch must not escalate a
+delivery that is green on its own. A deterministic red on a merged candidate
+therefore reads the durable base verdict of that tip, which it shares with
+batches and runs only once per tip. When the tip is red on its own, the same
+flight retests the delivery on its own base and records `fallbackOwnBase`.
+A tip that cannot be fetched or merged for a reason other than a conflict
+also keeps the own-base subject.
+The publish step stands on that verdict instead of running the merge gate
+when the merge lands on the recorded tip with the recorded tree
+(`PerTaskGateVerdictReusePolicy`). Its receipt reads `verdictSource=CacheHit`
+and the lane event level is `per-task-verdict`. A moved tip, another tree, or
+an own-base verdict keeps today's merge gate on the merged tree.
+Within one backend process that
 per-card gate runs at most once at a time per review generation: a retried
 review report or a tick that meets a running fallback waits for it instead of
 starting a second gate. The card marker records that per-card gate as active
@@ -601,7 +627,11 @@ that separate target remains described in the [Gates Dossier](../../operations/g
 including `integrationBranchRedBatches` and the correctness floor; comparable baseline and cost fields remain null
 until measured on the same window. `fullSuiteRuns` and `fullSuiteHostMinutes`
 count every gate execution, including emergency per-task fallbacks run at
-review settlement. `reviewVerificationRuns`, `reviewVerificationHostMinutes`
+review settlement. `perTaskFallbackCards`, `perTaskFallbackSuiteRuns`,
+`perTaskFallbackSuitesPerCard` and `perTaskPublishVerdictReuses` (AGT-3434)
+count, once per review generation the per-task path settled, the suites that
+card ran: its per-task gates, the tip verdict it triggered, and the merge gate
+when the publish step ran it instead of reusing the per-task verdict. `reviewVerificationRuns`, `reviewVerificationHostMinutes`
 and `reviewVerificationBaselineMinutes` count the builds and selected tests a
 batch-deferred review ran itself (`review-verification` tool commands,
 candidate and clean-repeat plus non-cached baseline workspaces), recorded once
@@ -2977,7 +3007,8 @@ green delivery can replace an expired preview; the same SHA cannot recreate it.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
-`environments`, `lifecycles.standard`, `deploy`, `tenants`, and `variables`. Existing
+`environments`, `lifecycles.standard`, `deploy`, `tenants`, `variables`, and
+`structure`. Existing
 `commands` and `testSuites` remain the execution source until the pipeline
 engine is extended.
 Each release hashes these sections at its commit into its process and
@@ -3053,6 +3084,24 @@ in
   parameter (`?token=`, `api_key=`, `password=`), a connection-string
   `Password=`, a PEM private key, a `Bearer` or `Basic` authorization value, a
   JWT, or a common provider key prefix.
+- `structure` (AGT-3349 S5) declares the deployment shape the Operations
+  structure view draws; it does not enter the release process or variables
+  versions. `regions` have a lower-case `name` and an optional `label`.
+  `placements` have a `name`, a `kind`, an optional `parent` placement, a
+  declared `region`, `environments`, the `artifacts` that run there, and
+  `replicas` (1 to 1000). A kind is `server`, `vm`, `cluster`, `namespace`, or a
+  runner deploy target kind, which maps to a placement kind
+  (`ProjectStructureVocabulary.PlacementKindFor`): `ssh-docker` is drawn as a
+  server, `kubernetes` as a cluster, `cloud-run` as a managed runtime. A
+  namespace needs a cluster or Kubernetes parent; a nested placement inherits
+  environments and stays in its parent's region; parents must not form a
+  cycle. `managedServices` have a `name`, a `kind` (`database`, `queue`,
+  `object-storage`, `cache`, `search`, `other`), a `region`, `environments`,
+  and an optional `healthCheck`: the id of a health check in that
+  environment's declaration. The control-plane health worker already probes
+  those checks, so `GET /api/v1/operations/structure` reports the service as
+  probed via that check's kind with its status; without one it is declared,
+  not observed. Addresses and credentials never appear in this section.
 
 Unknown keys are refused per section and per step kind. Every issue carries its
 definition path and, when the path resolves, the 1-based `line` in project.yml.
@@ -3060,7 +3109,8 @@ The editor contract is
 [`project-execution.schema.json`](../../app/schemas/project-execution.schema.json);
 `ProjectDefinitionSchemaTwoTests` keeps its step kinds, step keys, artifact types,
 variable keys, and its remote path, compose suffix, artifact path, identifier,
-and secret name patterns equal to `ProjectDeploymentVocabulary`.
+and secret name patterns equal to `ProjectDeploymentVocabulary`;
+`ProjectStructureDefinitionTests` does the same for `ProjectStructureVocabulary`.
 
 Release card attribution first matches archived integration-verification SHAs
 against the commits added since the previous release. A retained card key in

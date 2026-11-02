@@ -401,12 +401,13 @@ public static partial class ProjectDefinitionReader
                 "delivery.fullSuite must be required, optional, or off."));
 
         if (!int.TryParse(schemaVersion, out var version)) version = 0;
+        var structure = ParseStructure(lines, issues);
         var definition = new ProjectExecutionDefinition(
             version, stack, tools, commands, suites, caches, capabilities,
             environment, devServer, NullIfBlank(image), release, project, quality)
         {
-            Deployment = ParseDeployment(lines, issues),
-            Structure = ParseStructure(lines, issues),
+            Deployment = ParseDeployment(lines, issues, structure),
+            Structure = structure,
             DeliveryFullSuite = fullSuite,
         };
         issues.AddRange(ProjectDefinitionValidator.Validate(definition, repositoryFileExists, hosts));
@@ -895,7 +896,7 @@ public static partial class ProjectDefinitionValidator
             issues.Add(new("quality", "v1-does-not-support-quality", "schemaVersion 1 does not support the quality section. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 1 && definition.Deployment is not null)
-            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, channels, runbooks, deploy, variables, or tenants. Use schemaVersion 2."));
+            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, channels, runbooks, deploy, variables, tenants, or structure. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 1 && definition.Structure is not null)
             issues.Add(new("structure", "v1-does-not-support-structure", "schemaVersion 1 does not support structure declarations. Use schemaVersion 2."));

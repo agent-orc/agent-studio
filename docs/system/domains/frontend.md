@@ -110,6 +110,26 @@ refreshes every six hours. Lookup failures preserve the last known channel
 data and show unavailable or stale state. Endpoints expose only whether a
 registry is private, never its credential value.
 
+Layout and link routing are a pure module, `features/structure/structure-layout.ts`
+(AGT-3349 S5, Dossier D2 option A). It computes a deterministic nested flow
+layout for the measured canvas width: boxes are absolutely positioned and
+externals sit in an "Outside the boundary" column, or a row on narrow
+canvases. Links attach to the nearest visible placement (host view) or function
+group (container view). They are routed through 10 px gutters, preferring
+gutter, around and approach-from-above candidates, with a gutter-grid
+Dijkstra search as the fallback. Merged links carry one number in the
+connection key. Level 1 closes placements and function groups. In the
+container view the same unit in one environment merges across placements
+("2 placements", replicas summed). Regions and managed runtimes come from the
+project.yml `structure` section. Managed services render dashed, labelled
+"declared · probed via TLS" or "declared · not observed". `linkCrossings()` is
+the geometry check: `structure-layout.spec.ts` and
+`e2e/workspace/structure-scale.spec.ts` require zero links across an
+instance or collapsed box at levels 1 and 2 for the complex (60 services,
+two regions, staging, development), AGT and workspace fixtures in
+`structure.fixtures.ts`. The same specs hold the complex level-1 layout under
+50 ms and inside one 1440 px screen. The ELK.js fallback router was not needed.
+
 The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.
 It lists projects against Staging and Production, with release version, deploy
 age and state, health, pending approval, and newer release. Project group and
