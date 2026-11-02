@@ -514,10 +514,22 @@ now a no-op integration:
   tree (still `GateFailed`, still no rerun); then a **carried tree**. A carried
   tree is an earlier verified tree that the published tip still carries and
   that already contained every delivery commit: the card's own verified record,
-  an `integrated-verified` record that names its `integrationSha`, or a passed
-  batch run verdict with an admitted replay for this delivery (see below).
+  an `integrated-verified` record that names its `integrationSha`, a passed
+  gate another card published (see below), or a passed batch run verdict with
+  an admitted replay for this delivery (see below).
   A carried verdict is recorded against that earlier tree (evidence `carried-tree`). This is the
   same carry the board projection applies after the tip moves on.
+- **Published gate evidence (AGT-3436).** After a push publishes a tree whose
+  own gate returned `Ok` (evidence `merge-gate`, `gate-run`, or
+  `gate-receipt` on the pushing card), the lane appends that gate to
+  `published-gate-evidence.json` in the project folder: project, branch, tree
+  SHA, gate step, source card, verdict, published tip, and time. A no-op card
+  whose delivery that tree contains, on a branch that still carries the tree,
+  is verified by it and names the gate in its own record. The board and the
+  acceptance rail apply the same lookup (evidence `published-gate`) when the
+  card has no record of its own. A red gate is never recorded, a rewritten
+  branch that no longer carries the tree drops the evidence, and containment
+  alone still never verifies. The file keeps the newest 200 entries per branch.
 - **Batch candidate evidence.** The operator fast path pushes a batch
   candidate to the branch before its members' reviews settle. The batch gate
   already tested the candidate and wrote a run verdict (`outcome: pass`,

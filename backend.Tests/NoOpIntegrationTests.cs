@@ -299,6 +299,165 @@ public sealed class NoOpIntegrationTests : IDisposable
             IntegrationVerificationStore.Read(harness.JobFolder)!.State);
     }
 
+    [Fact]
+    public async Task NoOpCarriedByAnotherCardsPublishedGate_IsVerifiedAndNamesThatGate()
+    {
+        // 2 November 2026: CAR-26's merge carried CAR-25, its gate passed and
+        // was published, but CAR-25's no-op found no evidence of its own.
+        var (repo, remote) = SeedRepoWithOrigin("published-gate");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "push -q -u origin develop");
+        RunGit(repo, "checkout -q -b task/72");
+        Directory.CreateDirectory(Path.Combine(repo, "backend"));
+        File.WriteAllText(Path.Combine(repo, "backend", "Earlier.cs"), "public class Earlier {}\n");
+        Commit(repo, "feat: the carried delivery");
+        RunGit(repo, "checkout -q -b task/71");
+        File.WriteAllText(Path.Combine(repo, "backend", "Later.cs"), "public class Later {}\n");
+        Commit(repo, "feat: the delivery that carries it");
+        RunGit(repo, "checkout -q develop");
+
+        // The project folder, apart from the checkout root the push releases.
+        var projectFolder = Path.Combine(repo, ".orchestrator", "jobs");
+        var carrier = Harness(repo, "71");
+        var merged = await carrier.Runner.RunAsync(
+            "Fixture", "71", carrier.JobFolder, projectFolder, "develop", CancellationToken.None);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, merged.Outcome);
+        Assert.True(carrier.Queue.Reader.TryRead(out var request));
+        var pushed = await carrier.Runner.PushIntegrationBranchAsync(
+            "Fixture", "71", carrier.JobFolder, projectFolder, "develop", approvedSha: request!.ApprovedSha);
+        Assert.True(pushed.Success, pushed.Error);
+        var recorded = Assert.Single(PublishedGateEvidenceStore.Read(projectFolder));
+        Assert.Equal(merged.MergedSha, recorded.TreeSha);
+        Assert.Equal("71", recorded.SourceJobId);
+        Assert.Equal(IntegrationGateJournal.PreDevelopBuildGateStep, recorded.GateStep);
+        Assert.Equal(nameof(BuildTestGateVerdict.Ok), recorded.GateVerdict);
+
+        // The tip moves on; the gated tree stays carried.
+        RunGit(repo, "checkout -q -b task/later develop");
+        File.WriteAllText(Path.Combine(repo, "later.txt"), "another card\n");
+        Commit(repo, "feat: a later card moved the tip");
+        RunGit(repo, "push -q origin task/later:develop");
+        RunGit(repo, "fetch -q origin");
+        RunGit(repo, "checkout -q develop");
+
+        var carried = Harness(repo, "72");
+        var outcome = await carried.Runner.RunAsync(
+            "Fixture", "72", carried.JobFolder, projectFolder, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
+        Assert.Equal(0, carried.Gate.Invocations);
+        Assert.False(outcome.VerificationPending);
+        Assert.Equal(RemoteSha(remote, "develop"), outcome.ContainmentSha);
+        var verification = IntegrationVerificationStore.Read(carried.JobFolder);
+        Assert.Equal(IntegrationVerificationStates.Verified, verification!.State);
+        Assert.Equal(IntegrationVerificationEvidence.CarriedTree, verification.Evidence);
+        Assert.Equal(merged.MergedSha, verification.Sha);
+        Assert.Contains($"Gate {IntegrationGateJournal.PreDevelopBuildGateStep} of 71 returned Ok", verification.Reason);
+        var delivery = RunGit(repo, "rev-parse task/72").Out.Trim();
+        Assert.Equal([delivery], verification.DeliveryShas);
+        // The board keeps the verdict while develop carries the gated tree.
+        Assert.True(IntegrationVerificationProjection.CarriesVerifiedDelivery(
+            verification, "develop", delivery, _ => true));
+    }
+
+    [Fact]
+    public async Task NoOpWhosePublishedGateTreeLacksTheDelivery_StaysUnverified()
+    {
+        var (repo, _) = SeedRepoWithOrigin("published-gate-without-delivery");
+        RunGit(repo, "checkout -q -b develop");
+        File.WriteAllText(Path.Combine(repo, "before.txt"), "gated before the delivery\n");
+        Commit(repo, "feat: an earlier card");
+        var gatedTree = RunGit(repo, "rev-parse develop").Out.Trim();
+        RunGit(repo, "checkout -q -b task/73");
+        Directory.CreateDirectory(Path.Combine(repo, "backend"));
+        File.WriteAllText(Path.Combine(repo, "backend", "Rule.cs"), "public class Rule {}\n");
+        Commit(repo, "feat: delivered code");
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge -q --no-ff -m \"merge: operator fast path\" task/73");
+        RunGit(repo, "push -q -u origin develop");
+        RecordPublishedGate(repo, gatedTree);
+
+        var harness = Harness(repo, "73");
+        var outcome = await harness.Runner.RunAsync(
+            "Fixture", "73", harness.JobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
+        Assert.Equal(0, harness.Gate.Invocations);
+        Assert.True(outcome.VerificationPending);
+        Assert.Equal(IntegrationVerificationStates.Unverified,
+            IntegrationVerificationStore.Read(harness.JobFolder)!.State);
+    }
+
+    [Fact]
+    public async Task NoOpWhosePublishedGateTreeWasRewrittenAway_StaysUnverified()
+    {
+        var (repo, _) = SeedRepoWithOrigin("published-gate-rewritten");
+        RunGit(repo, "checkout -q -b develop");
+        var baseSha = RunGit(repo, "rev-parse develop").Out.Trim();
+        RunGit(repo, "checkout -q -b task/74");
+        Directory.CreateDirectory(Path.Combine(repo, "backend"));
+        File.WriteAllText(Path.Combine(repo, "backend", "Rule.cs"), "public class Rule {}\n");
+        Commit(repo, "feat: delivered code");
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge -q --no-ff -m \"merge: gated, later rewritten\" task/74");
+        var gatedTree = RunGit(repo, "rev-parse develop").Out.Trim();
+        RunGit(repo, "push -q -u origin develop");
+        RecordPublishedGate(repo, gatedTree);
+        // The branch is rewritten: the delivery comes back in a different merge.
+        RunGit(repo, $"reset -q --hard {baseSha}");
+        RunGit(repo, "merge -q --no-ff -m \"merge: rewritten history\" task/74");
+        RunGit(repo, "push -q -f origin develop");
+        Assert.NotEqual(gatedTree, RunGit(repo, "rev-parse develop").Out.Trim());
+
+        var harness = Harness(repo, "74");
+        var outcome = await harness.Runner.RunAsync(
+            "Fixture", "74", harness.JobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
+        Assert.Equal(0, harness.Gate.Invocations);
+        Assert.True(outcome.VerificationPending);
+        Assert.Equal(IntegrationVerificationStates.Unverified,
+            IntegrationVerificationStore.Read(harness.JobFolder)!.State);
+    }
+
+    [Fact]
+    public async Task NoOpWhosePublishedTreeGateWasRed_StaysUnverified()
+    {
+        var (repo, _) = SeedRepoWithOrigin("published-gate-red");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/75");
+        Directory.CreateDirectory(Path.Combine(repo, "backend"));
+        File.WriteAllText(Path.Combine(repo, "backend", "Rule.cs"), "public class Rule {}\n");
+        Commit(repo, "feat: delivered code");
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge -q --no-ff -m \"merge: red gate\" task/75");
+        var gatedTree = RunGit(repo, "rev-parse develop").Out.Trim();
+        RunGit(repo, "push -q -u origin develop");
+        // The store refuses a red gate; a hand-edited entry is ignored as well.
+        Assert.False(PublishedGateEvidenceStore.Append(repo, PublishedGate(gatedTree, nameof(BuildTestGateVerdict.Fail))));
+        File.WriteAllText(Path.Combine(repo, PublishedGateEvidenceStore.FileName),
+            System.Text.Json.JsonSerializer.Serialize(
+                new[] { PublishedGate(gatedTree, nameof(BuildTestGateVerdict.Fail)) },
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+
+        var harness = Harness(repo, "75");
+        var outcome = await harness.Runner.RunAsync(
+            "Fixture", "75", harness.JobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
+        Assert.Equal(0, harness.Gate.Invocations);
+        Assert.True(outcome.VerificationPending);
+        Assert.Equal(IntegrationVerificationStates.Unverified,
+            IntegrationVerificationStore.Read(harness.JobFolder)!.State);
+    }
+
+    private static void RecordPublishedGate(string repo, string tree)
+        => Assert.True(PublishedGateEvidenceStore.Append(repo, PublishedGate(tree, nameof(BuildTestGateVerdict.Ok))));
+
+    private static PublishedGateEvidence PublishedGate(string tree, string verdict) => new(
+        "Fixture", "develop", tree, IntegrationGateJournal.PreDevelopBuildGateStep, "CAR-26", verdict,
+        $"The integration lane created this merge and its gate returned {verdict}.", tree, RecordedAt);
+
     /// <summary>
     /// Writes the batch gate's durable evidence for one passed member through
     /// the store's own validation: manifest, assembled state, run, verdict,
@@ -431,6 +590,8 @@ public sealed class NoOpIntegrationTests : IDisposable
         RunGit(repo, "init -q -b main");
         RunGit(repo, "config user.email test@example.com");
         RunGit(repo, "config user.name test");
+        // The fixture repository doubles as the project folder.
+        File.AppendAllText(Path.Combine(repo, ".git", "info", "exclude"), PublishedGateEvidenceStore.FileName + "\n");
         File.WriteAllText(Path.Combine(repo, "README.md"), "seed");
         Commit(repo, "seed");
         return repo;

@@ -493,13 +493,24 @@ public sealed class TaskIntegrationStatusService
                 .FirstOrDefault(record => IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, currentIntegrationBranch)
                     && branchHistory(record.CandidateSha)
                     && _git.IsAncestor(root, currentDeliverySha!, record.CandidateSha));
-            return external is null ? projected : new TaskIntegrationVerification
-            {
-                State = IntegrationVerificationStates.Verified,
-                Sha = external.CandidateSha,
-                Evidence = IntegrationVerificationEvidence.IntegrationRecord,
-                Reason = $"External suite verification on {external.VerificationHost} covered published tree {external.CandidateSha}.",
-            };
+            if (external is not null)
+                return new TaskIntegrationVerification
+                {
+                    State = IntegrationVerificationStates.Verified,
+                    Sha = external.CandidateSha,
+                    Evidence = IntegrationVerificationEvidence.IntegrationRecord,
+                    Reason = $"External suite verification on {external.VerificationHost} covered published tree {external.CandidateSha}.",
+                };
+            // AGT-3436: another card's gate passed on a published tree that
+            // still carries this delivery.
+            var publishedGate = IntegrationVerificationProjection.FindPublishedGate(
+                PublishedGateEvidenceStore.Read(job.WatchPath),
+                currentIntegrationBranch,
+                branchHistory,
+                tree => _git.IsAncestor(root, currentDeliverySha!, tree));
+            return publishedGate is null
+                ? projected
+                : IntegrationVerificationProjection.FromPublishedGate(publishedGate, currentIntegrationBranch, currentIntegrationSha);
         }
         catch (Exception ex)
         {
