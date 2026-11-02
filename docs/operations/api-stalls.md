@@ -10,6 +10,57 @@ With `mem_limit: 8g` the API sat at about 6.5 GB and logged nothing for up to
 61 seconds at a time. Users saw the backend go offline and online. The process
 had about 1500 threads. Raising the limit to 20 GB was the immediate relief.
 
+## Live operator evidence and follow-up (2 November 2026)
+
+The operator sampled the live API on version `e00a40663` after the first
+synthetic investigation. These measurements supersede the synthetic run's
+cause attribution for the real incident. The live process was starved of
+thread-pool workers; GC pauses were too short to explain the stalls.
+
+| Measure | Live before this follow-up | After this follow-up |
+|---|---:|---:|
+| Health probe, once per second for 280 s | p50 < 1 ms; two stalls of 17 s and 20 s | Live replay pending |
+| Thread-pool queue during a stall | +69 in 14 s; drained when worker count jumped by 13 | Live replay pending |
+| Pool minimum / scan worker cap | 12 / 12 | 64 / 4 (configured limits) |
+| Concurrent full workspace scans | Several; 3,190 folders took 6 to 16 s each | One (code limit) |
+| `git-index-run` scans | 21 in 28 min; Agent Studio mean 10 s | One project folder per index run |
+| GC pause | < 0.2 s per 2 s window | No new live measurement |
+| RSS | About 3.5 GB | No new live measurement |
+| Shared ext4 4 KB durable write | p50 54 ms; p99 0.93 s; max 1.17 s | No new live measurement |
+
+`dotnet-stack` found 15 blocked pool workers. One waited for the PLINQ scan;
+11 waited for `AttemptAuthorityService` or `ClientIdentityStore` monitors;
+lock holders were doing filesystem calls from `RecordSeen`, runner
+authentication, deployment column reads, and CLI log ingestion. This is why
+limiting scans alone is insufficient. The pool minimum of 64 leaves at least
+52 workers beyond a 12-processor scan or equivalent blocked group for health
+and read requests. It is a reserve, not a concurrency target.
+
+The first delivery added the detector, Operations panel, synthetic load harness,
+30-minute before/after measurements, and allocation reductions described below.
+This follow-up caps and serializes full scans, restricts Git index runs and
+project-specific request paths to one watch path, raises the pool minimum,
+coalesces identity and authentication last-seen writes onto a 30-second timer,
+and verifies runner secrets outside the security store lock. Its source changes
+have not yet been measured on the live production workspace. The synthetic
+30-minute result below establishes the earlier implementation's result, not a
+post-follow-up live result.
+
+### Raw scan callers
+
+| Caller | Trigger | Scope after follow-up |
+|---|---|---|
+| `TaskIndexCache` refresh | Watcher, mutation, safety TTL | Full scan; serialized |
+| `GitStateIndexService.ReadTasks` | Repository index run | One watch path |
+| `GitStateIndexService.SweepAsync` | Periodic safety sweep | Full scan once for all repositories |
+| `AcceptedIntegrationBackstopHostedService` | Periodic reconciliation | Full scan; requires cross-project candidates |
+| `HistoricalIntegrationVerificationSweep` | One-time migration | Full scan; requires terminal cards and duplicates |
+| `TaskIntegrationRecordAddressResolver` | Request | One watch path when supplied; global only for unscoped ambiguity check; single-folder refresh |
+| `OperatorCandidateVerificationEndpoints` | Request | One watch path |
+| `DeployService` failure-card reconciliation | Deployment event | One watch path |
+| `PublishActionService.GetPanel` | Request | Cached archive-inclusive snapshot |
+| `TaskScannerService` uncached fallback methods | Test or recovery | Full scan only without the production cache |
+
 ## How it was measured
 
 The production API runs in a container this host cannot attach to, so the
@@ -46,10 +97,10 @@ in any synthetic run; see [Open points](#open-points).
 
 ## What the measurement showed
 
-- **No thread explosion and no starved pool in the reproduction.** The API ran
+- **No thread explosion and no starved pool in the synthetic reproduction.** The API ran
   with 33 to 48 OS threads. In the stack snapshots most pool threads waited
   idle in the pool's semaphore; one thread sat in a synchronous Git call.
-- **The pauses were garbage collection.** Before the change the API spent
+- **The synthetic run's pauses were garbage collection.** Before the change the API spent
   341 of 1,800 seconds in GC pauses (19 percent), up to 3.7 seconds in one
   five-second window. A 60-second allocation trace counted 14.6 GB allocated
   while the live heap stayed at 130 MB: almost everything allocated was
@@ -118,7 +169,7 @@ trace reports are in the task's `results/measure/` folder.
 | RSS mean / max | 766 / 1,042 MB | 751 / 1,036 MB |
 | Live heap (gcdump) | 129 MB | 130 MB |
 
-The after build served almost twice the requests in the same time, which is
+The first delivery's after build served almost twice the requests in the same time, which is
 why its CPU and allocation per second are higher; per request it allocates a
 third less, and the process no longer pauses for more than four seconds.
 

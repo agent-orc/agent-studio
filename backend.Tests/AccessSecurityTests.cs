@@ -52,6 +52,21 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
+    public void Authentication_stamps_are_persisted_by_flush_not_by_reads()
+    {
+        var (store, _, _) = NewStore();
+        var enrollment = store.CreateEnrollment(new RunnerEnrollmentRequest("reader", null, null, null));
+        var runner = store.EnrollRunner(enrollment.Code);
+        var path = Path.Combine(store.SecurityFolder, "access-state.json");
+        var before = File.ReadAllText(path);
+
+        Assert.NotNull(store.AuthenticateRunner(runner.Secret));
+        Assert.Equal(before, File.ReadAllText(path));
+        store.FlushLastSeen();
+        Assert.NotEqual(before, File.ReadAllText(path));
+    }
+
+    [Fact]
     public void Runner_rotation_overlaps_then_individual_and_identity_revoke_fail_closed()
     {
         var (store, _, _) = NewStore();

@@ -37,6 +37,16 @@ public sealed class DeployServiceTests : IDisposable
     private ProjectSettingsService? _settings;
 
     [Fact]
+    public void Delivery_columns_read_does_not_write_environment_state()
+    {
+        var (deploy, _, _) = Build();
+        var path = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        Assert.False(File.Exists(path));
+        Assert.NotNull(deploy.DeliveryColumns("demo"));
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
     public void QueuedJobAfterRestart_BindsItsRunAndRefusesAnUnlinkedDigest()
     {
         var (deploy, environments, store) = Build();
