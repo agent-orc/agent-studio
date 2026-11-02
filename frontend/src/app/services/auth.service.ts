@@ -167,6 +167,14 @@ export class AuthService {
     return this.http.post<{ recoveryCodes: string[] }>(`${this.authRoot}/passkeys/register`, passkey);
   }
 
+  passkeyStepUpOptions(): Observable<PasskeyOptions> {
+    return this.http.post<PasskeyOptions>(`${this.authRoot}/passkeys/step-up-options`, {});
+  }
+
+  stepUp(code?: string, passkey?: PasskeyAssertion): Observable<unknown> {
+    return this.http.post(`${this.authRoot}/step-up`, passkey ? { passkey } : { code });
+  }
+
   finishFactorEnrollment(): void {
     this.status.update(status => status ? { ...status, secondFactorEnrollmentRequired: false } : status);
   }

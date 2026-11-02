@@ -12,6 +12,30 @@ namespace TaskServer.Tests;
 public sealed class StudioSecondFactorTests
 {
     [Fact]
+    public async Task Owner_session_administration_consumes_a_second_factor_step_up()
+    {
+        using var temp = new TempDirectory();
+        var clock = new MutableClock(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }), clock);
+        await store.InitializeAsync();
+        var password = "owner pass phrase " + Guid.NewGuid().ToString("N");
+        var bootstrap = await store.BootstrapStudioAuthAsync(new StudioBootstrapRequest("owner", password), false, default);
+        var secret = await store.BeginStudioTotpAsync(bootstrap.SessionToken, default);
+        await store.ConfirmStudioTotpAsync(bootstrap.SessionToken, SecondFactorCodes.CurrentTotp(secret, clock.Now.UtcDateTime), default);
+        var ownerId = bootstrap.Status.User!.UserId;
+        Assert.Equal("step-up-required", (await Assert.ThrowsAsync<StudioAuthenticationException>(() =>
+            store.RevokeStudioSessionsAsync(bootstrap.SessionToken, ownerId, null, default))).Code);
+        await store.VerifyStudioStepUpAsync(bootstrap.SessionToken, SecondFactorCodes.CurrentTotp(secret, clock.Now.UtcDateTime), default);
+        clock.Now = clock.Now.AddMinutes(6);
+        Assert.Equal("step-up-required", (await Assert.ThrowsAsync<StudioAuthenticationException>(() =>
+            store.RevokeStudioSessionsAsync(bootstrap.SessionToken, ownerId, null, default))).Code);
+        await store.VerifyStudioStepUpAsync(bootstrap.SessionToken, SecondFactorCodes.CurrentTotp(secret, clock.Now.UtcDateTime), default);
+        await store.RevokeStudioSessionsAsync(bootstrap.SessionToken, ownerId, null, default);
+        Assert.Equal("step-up-required", (await Assert.ThrowsAsync<StudioAuthenticationException>(() =>
+            store.RevokeStudioSessionsAsync(bootstrap.SessionToken, ownerId, null, default))).Code);
+    }
+
+    [Fact]
     public async Task Passkey_registration_login_and_step_up_verify_signed_challenges()
     {
         using var temp = new TempDirectory();
@@ -38,6 +62,9 @@ public sealed class StudioSecondFactorTests
         var stepChallenge = await store.BeginStudioPasskeyStepUpAsync(login.SessionToken, default);
         await store.VerifyStudioPasskeyStepUpAsync(login.SessionToken,
             Assertion(key, credentialId, stepChallenge, origin, rpId, 2), origin, rpId, default);
+        await store.RevokeStudioSessionsAsync(login.SessionToken, bootstrap.Status.User!.UserId, null, default);
+        Assert.Equal("step-up-required", (await Assert.ThrowsAsync<StudioAuthenticationException>(() =>
+            store.RevokeStudioSessionsAsync(login.SessionToken, bootstrap.Status.User!.UserId, null, default))).Code);
     }
 
     [Fact]

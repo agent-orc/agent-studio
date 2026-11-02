@@ -4701,6 +4701,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "studio_sessions", "enrollment_only", "INTEGER NOT NULL DEFAULT 0", ct);
         await EnsureColumnAsync(connection, "studio_sessions", "device", "TEXT", ct);
         await EnsureColumnAsync(connection, "studio_sessions", "address", "TEXT", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "step_up_verified_at", "TEXT", ct);
         await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS studio_factors(
                 user_id TEXT PRIMARY KEY REFERENCES studio_users(id),

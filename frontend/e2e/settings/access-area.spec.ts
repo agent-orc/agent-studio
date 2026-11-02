@@ -60,6 +60,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
     });
   });
   await page.route('**/api/auth/status', route => json(route, status));
+  await page.route('**/api/auth/sessions', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, status));
   await page.route('**/api/projects', route => route.request().method() === 'GET'
     ? json(route, [
@@ -122,6 +123,42 @@ test('owner sees users, groups, service accounts with API tokens, runners, and r
     await access.getByTestId('access-bindings').scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(resultDir, `access-area-1440-${theme}-bindings.png`) });
   }
+});
+
+test('owner verifies a second factor before revoking another user session', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stubNetworkedOwner(page);
+  let stepUpCount = 0;
+  let revokeCount = 0;
+  await page.route('**/api/auth/users/usr_product/sessions', route => json(route, [{
+    id: 'session-product', device: 'Product browser', address: 'Example address',
+    createdAt: created, lastUseAt: created, current: false,
+  }]));
+  await page.route('**/api/auth/step-up', route => {
+    expect(route.request().postDataJSON()).toEqual({ code: '123456' });
+    stepUpCount++;
+    return json(route, { verified: true });
+  });
+  await page.route('**/api/auth/users/usr_product/sessions/revoke-others', route => {
+    revokeCount++;
+    return json(route, { revoked: true });
+  });
+  const access = await openAccess(page);
+  await access.getByTestId('access-user-product.lead').getByTestId('session-manager-toggle').click();
+  await access.getByTestId('access-user-product.lead').getByRole('button', { name: 'Revoke all other sessions' }).click();
+  const challenge = access.getByTestId('session-step-up');
+  await expect(challenge).toBeVisible();
+  expect(revokeCount).toBe(0);
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(resultDir, `session-step-up-${theme}--mocked.png`) });
+  }
+  await challenge.getByLabel('Authenticator or recovery code').fill('123456');
+  await challenge.getByRole('button', { name: 'Verify and revoke' }).click();
+  await expect(challenge).toHaveCount(0);
+  expect(stepUpCount).toBe(1);
+  expect(revokeCount).toBe(1);
 });
 
 test('owner invites a developer through the invitation flow and issues a service-account token once', async ({ page }) => {

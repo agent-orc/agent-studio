@@ -87,6 +87,28 @@ public sealed class SecondFactorSecurityTests
     }
 
     [Fact]
+    public void Owner_session_administration_requires_a_fresh_second_factor_for_each_action()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = NewStore(root);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
+            var secret = store.BeginTotpEnrollment(owner);
+            store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
+            Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
+                () => store.RevokeOtherSessions(owner, owner.User.Id)).Code);
+            store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
+            store.RevokeOtherSessions(owner, owner.User.Id);
+            Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
+                () => store.RevokeOtherSessions(owner, owner.User.Id)).Code);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void Every_step_up_requires_a_registered_factor_even_for_a_viewer()
     {
         var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
@@ -139,6 +161,9 @@ public sealed class SecondFactorSecurityTests
             store.VerifyPasskeyStepUp(store.AuthenticateSession(login.SessionToken)!,
                 new PasskeyAssertionProof(idEncoded, stepClientData, WebAuthnProofs.Encode(stepAuthenticatorData),
                     WebAuthnProofs.Encode(stepSignature)), origin, rpId);
+            store.RevokeOtherSessions(store.AuthenticateSession(login.SessionToken)!, login.User.Id);
+            Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
+                () => store.RevokeOtherSessions(store.AuthenticateSession(login.SessionToken)!, login.User.Id)).Code);
             Assert.Equal("passkey-challenge-expired", Assert.Throws<SecurityOperationException>(
                 () => store.Login("owner", password, "client", requireSecondFactor: true, passkey: proof, origin: origin, rpId: rpId)).Code);
         }

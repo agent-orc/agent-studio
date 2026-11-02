@@ -2,7 +2,7 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject, input, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { AuthService, type AuthSessionSummary } from '../../../../services/auth.service';
-import { createPasskey } from '../../../../services/webauthn';
+import { createPasskey, getPasskey } from '../../../../services/webauthn';
 
 @Component({
   selector: 'app-session-manager',
@@ -24,6 +24,8 @@ export class SessionManagerComponent implements OnInit, OnDestroy {
   readonly totpCode = signal('');
   readonly recoveryCodes = signal<string[]>([]);
   readonly notice = signal(false);
+  readonly stepUpCode = signal('');
+  readonly pendingRevocation = signal<{ id?: string } | null>(null);
   private readonly noticed = new Set<string>();
   private poll: ReturnType<typeof setInterval> | null = null;
 
@@ -67,20 +69,39 @@ export class SessionManagerComponent implements OnInit, OnDestroy {
   }
 
   async revoke(id: string): Promise<void> {
+    if (this.userId()) { this.pendingRevocation.set({ id }); return; }
+    await this.performRevocation(id);
+  }
+
+  private async performRevocation(id?: string): Promise<void> {
     this.busy.set(true);
     try {
-      await firstValueFrom(this.auth.revokeSession(id, this.userId()));
+      if (id) await firstValueFrom(this.auth.revokeSession(id, this.userId()));
+      else await firstValueFrom(this.auth.revokeOtherSessions(this.userId()));
+      this.pendingRevocation.set(null);
+      this.stepUpCode.set('');
       await this.load();
-    } catch { this.error.set('Session could not be revoked.'); }
+    } catch { this.error.set('Sessions could not be revoked. Verify again and retry.'); }
     finally { this.busy.set(false); }
   }
 
   async revokeOthers(): Promise<void> {
+    if (this.userId()) { this.pendingRevocation.set({}); return; }
+    await this.performRevocation();
+  }
+
+  async confirmStepUp(usePasskey = false): Promise<void> {
+    const action = this.pendingRevocation();
+    if (!action) return;
     this.busy.set(true);
+    this.error.set('');
     try {
-      await firstValueFrom(this.auth.revokeOtherSessions(this.userId()));
-      await this.load();
-    } catch { this.error.set('Other sessions could not be revoked.'); }
+      if (usePasskey) {
+        const options = await firstValueFrom(this.auth.passkeyStepUpOptions());
+        await firstValueFrom(this.auth.stepUp(undefined, await getPasskey(options)));
+      } else await firstValueFrom(this.auth.stepUp(this.stepUpCode()));
+      await this.performRevocation(action.id);
+    } catch { this.error.set('Second factor could not be verified.'); }
     finally { this.busy.set(false); }
   }
 

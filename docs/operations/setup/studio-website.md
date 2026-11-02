@@ -2,6 +2,10 @@
 
 The operator owns the host, DNS, TLS, backups, and access to it. Studio users need the HTTPS URL and a password. Owner and Admin users also need an authenticator code or a WebAuthn passkey. The monolith, static frontend, and Caddy edge run in one Compose stack. The release workflow publishes `agent-studio-api` and `agent-studio-web` images with matching `v<version>` tags. Application lifecycle D15 selected option B: Studio runs on the designated runner host with repository-managed resource containment.
 
+In Settings > Access, the Owner verifies a second factor before revoking a
+user's sessions. Each verification permits one revocation action within five
+minutes. A user can revoke their own sessions from the Sessions control.
+
 ## Install
 
 1. Point the hostname at the VM. Allow inbound TCP 80 and 443. Install Docker Compose, Git, OpenSSL, and iptables on the VM. Use an operator account with Docker access. Clone or extract the matching release's `deploy/compose/monolith-networked` directory.

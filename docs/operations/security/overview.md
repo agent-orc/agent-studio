@@ -128,6 +128,10 @@ that is already allowed to edit that project's checkout.
   revoke all other sessions. A signed-in browser shows a notice when it sees a
   newer session. The Owner can do this for any user. Live hub
   connections recheck their session every 15 seconds so revocation closes them.
+  Revoking sessions from a user's Access row requires a fresh
+  authenticator code, recovery code, or passkey assertion. Verification grants
+  one session administration action and expires after five minutes. Sign-in
+  itself does not grant step-up authority.
 - The standalone Task Server Studio session uses the same 10-failure client
   lockout, 20-failure username budget, 15-minute window, 8-hour idle expiry,
   and 7-day absolute expiry as the networked monolith defaults.

@@ -112,6 +112,7 @@ public sealed partial class TaskServerStore
                 ?? throw new StudioAuthenticationException("authentication-required", "A studio session is required.");
             await VerifyStudioPasskeyAsync(connection, transaction, session.User.Id, proof,
                 "step-up:" + session.SessionId, origin, rpId, ct);
+            await MarkStudioStepUpAsync(connection, transaction, session.SessionId, ct);
         }, ct);
     }
 
@@ -201,7 +202,34 @@ public sealed partial class TaskServerStore
             var session = await ResolveStudioSessionAsync(connection, transaction, sessionToken, ct)
                 ?? throw new StudioAuthenticationException("authentication-required", "A studio session is required.");
             await VerifyStudioFactorAsync(connection, transaction, session.User.Id, code, ct);
+            await MarkStudioStepUpAsync(connection, transaction, session.SessionId, ct);
         }, ct);
+    }
+
+    private async Task MarkStudioStepUpAsync(SqliteConnection connection, SqliteTransaction transaction,
+        string sessionId, CancellationToken ct)
+    {
+        var updated = await ExecuteAsync(connection, """
+            UPDATE studio_sessions SET step_up_verified_at = $now
+             WHERE id = $id AND revoked_at IS NULL AND enrollment_only = 0
+               AND (expires_at IS NULL OR expires_at > $now)
+               AND (absolute_expires_at IS NULL OR absolute_expires_at > $now);
+            """, ct, transaction, ("$now", Iso(UtcNow)), ("$id", sessionId));
+        if (updated != 1)
+            throw new StudioAuthenticationException("authentication-required", "Sign in again.");
+    }
+
+    private async Task ConsumeStudioStepUpAsync(SqliteConnection connection, SqliteTransaction transaction,
+        string sessionId, CancellationToken ct)
+    {
+        var consumed = await ExecuteAsync(connection, """
+            UPDATE studio_sessions SET step_up_verified_at = NULL
+             WHERE id = $id AND revoked_at IS NULL AND enrollment_only = 0
+               AND step_up_verified_at >= $minimum AND step_up_verified_at <= $now;
+            """, ct, transaction, ("$id", sessionId), ("$minimum", Iso(UtcNow.AddMinutes(-5))),
+            ("$now", Iso(UtcNow)));
+        if (consumed != 1)
+            throw new StudioAuthenticationException("step-up-required", "Verify a second factor before managing sessions.");
     }
 
     private async Task VerifyStudioFactorAsync(SqliteConnection connection, SqliteTransaction transaction,
@@ -261,6 +289,8 @@ public sealed partial class TaskServerStore
             var userId = targetUserId ?? session.User.Id;
             if (userId != session.User.Id && session.User.Role != StudioUserRoles.Owner)
                 throw new StudioAuthorizationException("owner-required", "Owner role is required.");
+            if (targetUserId is not null)
+                await ConsumeStudioStepUpAsync(connection, transaction, session.SessionId, ct);
             await ExecuteAsync(connection, """
                 UPDATE studio_sessions SET revoked_at = $now
                  WHERE user_id = $user AND revoked_at IS NULL

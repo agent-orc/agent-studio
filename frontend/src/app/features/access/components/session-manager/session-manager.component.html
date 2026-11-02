@@ -1,4 +1,4 @@
-<div class="session-manager">
+<div class="session-manager" [class.session-manager--access]="!!userId()">
   <button type="button" class="session-manager__toggle" data-testid="session-manager-toggle"
     [attr.aria-expanded]="open()" (click)="toggle()">Sessions</button>
   @if (notice()) {
@@ -20,6 +20,20 @@
         } @empty { <p>No active sessions.</p> }
       </div>
       <button type="button" (click)="revokeOthers()" [disabled]="busy()">Revoke all other sessions</button>
+      @if (pendingRevocation()) {
+        <section class="session-manager__step-up" aria-label="Verify session action" data-testid="session-step-up">
+          <p>Verify a second factor to revoke these sessions.</p>
+          <label>Authenticator or recovery code
+            <input type="text" autocomplete="one-time-code" [value]="stepUpCode()"
+              (input)="stepUpCode.set($any($event.target).value)">
+          </label>
+          <div class="session-manager__step-up-actions">
+            <button type="button" (click)="confirmStepUp()" [disabled]="busy() || !stepUpCode().trim()">Verify and revoke</button>
+            <button type="button" (click)="confirmStepUp(true)" [disabled]="busy()">Use passkey</button>
+            <button type="button" (click)="pendingRevocation.set(null)" [disabled]="busy()">Cancel</button>
+          </div>
+        </section>
+      }
       @if (!userId()) {
         <section aria-label="Second factors">
           <h3>Second factors</h3>

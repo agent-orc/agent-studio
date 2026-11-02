@@ -372,6 +372,7 @@ public sealed partial class AccessSecurityStore
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
             VerifySecondFactorLocked(state, user, code);
+            MarkStepUpLocked(state, principal);
             SaveLocked(state);
         }
     }
@@ -455,6 +456,7 @@ public sealed partial class AccessSecurityStore
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
             VerifyPasskeyLocked(state, user, proof, "step-up:" + principal.Session.Id, origin, rpId);
+            MarkStepUpLocked(state, principal);
             SaveLocked(state);
         }
     }
@@ -513,8 +515,10 @@ public sealed partial class AccessSecurityStore
             if (target != principal.User.Id && principal.User.Role != StudioRoles.Owner)
                 throw new SecurityOperationException(403, "owner-required", "Owner role is required.");
             var state = StateLocked();
-            if (state.Sessions.RemoveAll(x => x.UserId == target && x.Id == sessionId) == 0)
+            if (!state.Sessions.Any(x => x.UserId == target && x.Id == sessionId))
                 throw new SecurityOperationException(404, "session-not-found", "Session not found.");
+            if (userId is not null) ConsumeStepUpLocked(state, principal);
+            state.Sessions.RemoveAll(x => x.UserId == target && x.Id == sessionId);
             SaveLocked(state);
         }
     }
@@ -527,9 +531,29 @@ public sealed partial class AccessSecurityStore
             if (target != principal.User.Id && principal.User.Role != StudioRoles.Owner)
                 throw new SecurityOperationException(403, "owner-required", "Owner role is required.");
             var state = StateLocked();
+            if (userId is not null) ConsumeStepUpLocked(state, principal);
             state.Sessions.RemoveAll(x => x.UserId == target && x.Id != principal.Session.Id);
             SaveLocked(state);
         }
+    }
+
+    private void MarkStepUpLocked(SecurityState state, HumanPrincipal principal)
+    {
+        var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id && x.UserId == principal.User.Id)
+            ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+        if (session.SecondFactorEnrollmentOnly || session.ExpiresAt <= Now || session.AbsoluteExpiresAt <= Now)
+            throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+        state.Sessions[state.Sessions.IndexOf(session)] = session with { StepUpVerifiedAt = Now };
+    }
+
+    private void ConsumeStepUpLocked(SecurityState state, HumanPrincipal principal)
+    {
+        var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id && x.UserId == principal.User.Id);
+        if (session?.StepUpVerifiedAt is not { } verifiedAt || session.SecondFactorEnrollmentOnly
+            || session.ExpiresAt <= Now || session.AbsoluteExpiresAt <= Now
+            || verifiedAt > Now || Now - verifiedAt > TimeSpan.FromMinutes(5))
+            throw new SecurityOperationException(403, "step-up-required", "Verify a second factor before managing sessions.");
+        state.Sessions[state.Sessions.IndexOf(session)] = session with { StepUpVerifiedAt = null };
     }
 
     private void VerifySecondFactorLocked(SecurityState state, StudioUser user, string? code)

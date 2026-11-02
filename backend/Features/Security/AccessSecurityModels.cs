@@ -117,6 +117,7 @@ public sealed record StudioSession
     public string? Device { get; init; }
     public string? Address { get; init; }
     public bool SecondFactorEnrollmentOnly { get; init; }
+    public DateTime? StepUpVerifiedAt { get; init; }
 }
 
 public sealed record RunnerCredential
