@@ -120,6 +120,22 @@ describe('RemoteHostCardComponent', () => {
       .toContain('release-20260811.1');
   });
 
+  it('shows the runner link state with a tone, icon, and readable text', () => {
+    const fixture = mount({ ...HOST, runnerLink: {
+      runnerId: 'runner-1', kind: 'ssh-reverse', state: 'up',
+      since: '2026-07-10T11:59:00Z', lastHeartbeatAt: null, lastProbe: null,
+      lastError: null, attempt: 0, nextRetryAt: null, childPid: null,
+      notificationRaisedAt: null,
+    } });
+    const indicator = fixture.nativeElement.querySelector(
+      '[data-testid="remote-host-link-state-detail"] [data-testid="status-indicator"]',
+    ) as HTMLElement;
+    expect(indicator.dataset['tone']).toBe('success');
+    expect(indicator.dataset['icon']).toBe('check');
+    expect(indicator.textContent).toContain('up');
+    expect(indicator.querySelector('[aria-hidden="true"]')).not.toBeNull();
+  });
+
   it('opens to compact one-line section summaries before revealing internals', () => {
     const fixture = mount(HOST, true, false);
     const el: HTMLElement = fixture.nativeElement;

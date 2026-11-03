@@ -68,7 +68,7 @@
             <div><dt>Task inflow</dt><dd>{{ taskInflowLabel() }}</dd></div>
             <div><dt>Daemon</dt><dd>{{ daemonLabel() }}</dd></div>
             <div data-testid="remote-host-task-server-route"><dt>Task Server route</dt><dd>{{ taskServerRouteLabel() }}</dd></div>
-            <div data-testid="remote-host-link-state-detail"><dt>Runner link</dt><dd>{{ h.runnerLink?.state || 'not configured' }} since {{ h.runnerLink?.since || 'unknown' }}</dd></div>
+            <div data-testid="remote-host-link-state-detail"><dt>Runner link</dt><dd><app-status-indicator [tone]="linkIndicatorTone()" [label]="h.runnerLink?.state || 'not configured'" [detail]="linkTooltip()" [compact]="true" /> since {{ h.runnerLink?.since || 'unknown' }}</dd></div>
             <div><dt>Last link probe</dt><dd>{{ h.runnerLink?.lastProbe?.detail || 'Never' }}</dd></div>
             <div><dt>SSH child</dt><dd>{{ h.runnerLink?.childPid || 'Not running' }}</dd></div>
             <div><dt>Last claim</dt><dd>{{ h.lastClaimAt ? (h.lastClaimAt | date:'short') : 'None' }}</dd></div>
