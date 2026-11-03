@@ -974,7 +974,13 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
 
     private static readonly HttpClient Http = new();
 
-    private static TaskServerOptions Options(string directory) => new() { DataDirectory = directory };
+    // Capture advances 31 days to age cold evidence; keep the drill runner
+    // credential live so resume must still fence it after restore.
+    private static TaskServerOptions Options(string directory) => new()
+    {
+        DataDirectory = directory,
+        RunnerCredentialLifetimeDays = 60,
+    };
 
     private static TaskServerStore Store(string directory, TimeProvider clock)
         => new(Microsoft.Extensions.Options.Options.Create(Options(directory)), clock);

@@ -286,6 +286,7 @@ public sealed record ProjectExecutionDefinition(
     QualityDefinition? Quality)
 {
     public ProjectDeploymentDefinition? Deployment { get; init; }
+    public ProjectStructureDefinition? Structure { get; init; }
     public string? DeliveryFullSuite { get; init; }
 }
 
@@ -356,7 +357,7 @@ public static partial class ProjectDefinitionReader
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
             "cachePaths", "capabilities", "environment", "devServer", "image", "release",
             "project", "quality", "pipeline", "artifacts", "environments", "lifecycles", "deploy",
-            "variables", "tenants", "channels", "runbooks", "structure", "delivery",
+            "variables", "tenants", "channels", "runbooks", "delivery", "structure",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
@@ -397,11 +398,15 @@ public static partial class ProjectDefinitionReader
                 "delivery.fullSuite must be required, optional, or off."));
 
         if (!int.TryParse(schemaVersion, out var version)) version = 0;
+        var structure = lines.Any(line => line.Indent == 0 && KeyValue(line.Text).Key == "structure")
+            ? ParseStructure(lines, issues)
+            : null;
         var definition = new ProjectExecutionDefinition(
             version, stack, tools, commands, suites, caches, capabilities,
             environment, devServer, NullIfBlank(image), release, project, quality)
         {
-            Deployment = ParseDeployment(lines, issues),
+            Deployment = ParseDeployment(lines, issues, structure ?? ProjectStructureDefinition.Empty),
+            Structure = structure,
             DeliveryFullSuite = fullSuite,
         };
         issues.AddRange(ProjectDefinitionValidator.Validate(definition, repositoryFileExists, hosts));
@@ -891,6 +896,9 @@ public static partial class ProjectDefinitionValidator
 
         if (definition.SchemaVersion == 1 && definition.Deployment is not null)
             issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, channels, runbooks, deploy, variables, tenants, or structure. Use schemaVersion 2."));
+
+        if (definition.SchemaVersion == 1 && definition.Structure is not null)
+            issues.Add(new("structure", "v1-does-not-support-structure", "schemaVersion 1 does not support structure declarations. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 2 && definition.Project is null)
             issues.Add(new("project", "v2-project-required", "schemaVersion 2 requires a project section."));

@@ -677,8 +677,19 @@ base. Red on the base is `pre-existing-base-red`, green is
 never recorded as a passing base; a narrow red is recorded. The answer only
 chooses whom to blame and when to split: a green base sends the batch to
 isolation, where every subset is gated again. The candidate verdict records
-`baseCheck` (which source answered) and `baseCheckMinutes`. It does not claim an independently claimable remote `GateAttempt`;
+`baseCheck` (which source answered) and `baseCheckMinutes`. A contended base
+may run again. It does not claim an independently claimable remote `GateAttempt`;
 that separate target remains described in the [Gates Dossier](../../operations/gates/index.html#sect4).
+When a base red reports a gate collision or at least 25% average external CPU,
+its verdict is provisional and the service retries the exact SHA. A later red
+can retry a still provisional base; only an uncontended red can hold the batch.
+If both candidate and base report failing test names with no overlap, the
+candidate enters member isolation. A confirmed deterministic candidate red
+also enters isolation when another test was quarantined as flaky. Per-task
+fallback gates admit at most one fewer concurrent request than configured gate
+slots, leaving a slot for a batch. The pilot reconciles a current passed review
+in Auto Review with a missing pending record back into the batch queue.
+
 `GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
 including `integrationBranchRedBatches` and the correctness floor; comparable baseline and cost fields remain null
 until measured on the same window. `fullSuiteRuns` counts every full gate
@@ -840,6 +851,11 @@ For SSH gates, the slot line and idle-capacity detector use the same recent
 gate-host slot report when available. A process-local count does not include
 workers left by an earlier Studio process. The idle detector requires a fresh
 host report. Pull gate wait age comes only from jobs still in the queued state.
+Its `taskServer` field names where the Task Server runs: `remote Task Server`
+when `TaskServer:BaseUrl` is set, otherwise `local monolith` in the `local`
+security profile and `server monolith` in every other profile (for example
+`networked`). The value reads the same `Security:Profile` the checkpoints read,
+so a monolith on a server is never reported as local.
 Size slots times processors below host online cores; see the
 [execution hosts runbook](../../operations/remote-hosts.md#remote-buildtest-gate-capacity).
 

@@ -396,6 +396,7 @@
 /api/v1/management/runner-infrastructure-failures	free	-	-	-
 /api/v1/management/status	free	-	-	-
 /api/v1/operations/structure	reachable	gap	Structure projection	Resolve project repository roots without Git in the declared structure read path
+/api/v1/operations/structure/library	reachable	gap	Structure projection	Resolve library project repository roots without Git in the registry inventory read path
 /api/v1/orchestration/decision-grounds/pending	free	-	-	-
 /api/v1/orchestration/decision-jobs/{jobId}	free	-	-	-
 /api/v1/orchestration/runs	free	-	-	-

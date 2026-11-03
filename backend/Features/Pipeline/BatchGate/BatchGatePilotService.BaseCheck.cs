@@ -57,16 +57,39 @@ public sealed partial class BatchGatePilotService
         var recorded = _store.ReadBaseVerdict(manifest.Scope.Project,
                 manifest.BaseSha, run.GateProfileDigest)
             ?? CarriedBaseVerdict(manifest, run.GateProfileDigest, repo);
-        if (recorded is not null)
-            return new BaseAnswer(recorded.Outcome == "fail",
+        if (recorded is { Outcome: "fail", Provisional: false }
+            && File.Exists(recorded.EvidencePath))
+        {
+            try
+            {
+                var saved = JsonSerializer.Deserialize<BuildTestGateResult>(
+                    File.ReadAllText(recorded.EvidencePath));
+                if (saved is not null)
+                {
+                    recorded = recorded with { FailedTests = BatchBaseRedPolicy.FailedTests(saved) };
+                    if (BatchBaseRedPolicy.Provisional(saved))
+                    {
+                        _store.MarkBaseVerdictProvisional(recorded);
+                        recorded = recorded with { Provisional = true };
+                    }
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "batch-base-evidence-unreadable base={BaseSha} path={Path}",
+                    manifest.BaseSha, recorded.EvidencePath);
+            }
+        }
+        if (recorded is { Provisional: false })
+            return new BaseAnswer(BatchBaseRedPolicy.HoldsCandidate(candidate, recorded),
                 recorded.Source is BatchGateBaseCheckSources.PublishedBatch
                     or BatchGateBaseCheckSources.VerifiedAncestor
                     ? recorded.Source : BatchGateBaseCheckSources.RecordedVerdict, 0);
         if (BatchGateBaseCheckPolicy.Narrow(candidate) is { } narrow
-            && await RunBaseCheckAsync(manifest, run, repo, narrow, ct)
+            && await RunBaseCheckAsync(manifest, run, candidate, repo, narrow, ct)
                 .ConfigureAwait(false) is { } narrowed)
             return narrowed;
-        return await RunBaseCheckAsync(manifest, run, repo, null, ct).ConfigureAwait(false)
+        return await RunBaseCheckAsync(manifest, run, candidate, repo, null, ct).ConfigureAwait(false)
             ?? throw new IOException("The base verification produced no verdict.");
     }
 
@@ -115,7 +138,9 @@ public sealed partial class BatchGatePilotService
     /// found nothing to repeat on the base.
     /// </summary>
     private async Task<BaseAnswer?> RunBaseCheckAsync(BatchGateManifest manifest,
-        BatchGateRunRecord run, string repo, GateNarrowCheck? narrow, CancellationToken ct)
+        BatchGateRunRecord run, BuildTestGateResult candidate, string repo,
+        GateNarrowCheck? narrow, CancellationToken ct,
+        int attempt = 0)
     {
         var settings = _settings.Get(manifest.Scope.Project);
         if (GateProfile(settings.BuildProfile, repo) != run.GateProfileDigest)
@@ -151,22 +176,114 @@ public sealed partial class BatchGatePilotService
             throw new IOException("The base verification did not produce an exact-SHA verdict.");
         var source = narrow?.Kind ?? BatchGateBaseCheckSources.FullSuite;
         var evidencePath = Path.Combine(_store.BatchDirectory(manifest.BatchId),
-            "base-" + manifest.BaseSha + (narrow is null ? "" : "-" + narrow.Kind) + ".json");
+            "base-" + manifest.BaseSha + (narrow is null ? "" : "-" + narrow.Kind)
+            + (attempt == 0 ? "" : "-retry") + ".json");
         File.WriteAllText(evidencePath, JsonSerializer.Serialize(result));
         var red = result.Verdict != BuildTestGateVerdict.Ok;
         var minutes = result.DurationMs / 60_000d;
-        if (narrow is null || red)
-            _store.RecordBaseVerdict(new BatchGateBaseVerdict(manifest.Scope.Project,
+        var verdict = new BatchGateBaseVerdict(manifest.Scope.Project,
                 manifest.BaseSha, run.GateProfileDigest,
                 red ? "fail" : "pass",
                 result.Verdict == BuildTestGateVerdict.Fail
                     ? BuildTestGateRunner.DiagnosticFingerprint(result) : null,
-                result.Reason, evidencePath, _time.GetUtcNow(), source, minutes));
+                result.Reason, evidencePath, _time.GetUtcNow(), source, minutes,
+                Provisional: red && BatchBaseRedPolicy.Provisional(result),
+                FailedTests: BatchBaseRedPolicy.FailedTests(result));
+        if (narrow is null || red)
+            _store.RecordBaseVerdict(verdict);
         _store.RecordExecution(new BatchGateExecutionFact(
             manifest.Scope.Project, manifest.BatchId, null, manifest.BaseSha,
             result.Verdict.ToString(), Environment.MachineName,
             started, _time.GetUtcNow(), result.GateQueueWaitMs, 0, evidencePath,
             result.DurationMs, NarrowCheck: narrow?.Kind));
-        return new BaseAnswer(red, source, minutes);
+        if (verdict.Provisional && attempt == 0)
+        {
+            var retry = await RunBaseCheckAsync(manifest, run, candidate, repo, narrow, ct, 1)
+                .ConfigureAwait(false);
+            if (retry is not null)
+                return retry with { Minutes = minutes + retry.Minutes };
+        }
+        return new BaseAnswer(red && BatchBaseRedPolicy.HoldsCandidate(candidate, verdict),
+            source, minutes);
     }
+    /// <summary>
+    /// The durable full-suite verdict of one integration base and gate
+    /// profile. The first caller runs it; batches and per-task fallbacks on the
+    /// same base share it.
+    /// </summary>
+    private async Task<BatchGateBaseVerdict> BaseVerdictAsync(string project, string baseSha,
+        string gateProfileDigest, string repo, string evidencePath, string? batchId,
+        CancellationToken ct)
+    {
+        var baseline = _store.ReadBaseVerdict(project, baseSha, gateProfileDigest);
+        if (baseline is { Provisional: false }
+            && File.Exists(baseline.EvidencePath))
+        {
+            try
+            {
+                var saved = JsonSerializer.Deserialize<BuildTestGateResult>(
+                    File.ReadAllText(baseline.EvidencePath));
+                if (saved is not null)
+                {
+                    baseline = baseline with { FailedTests = BatchBaseRedPolicy.FailedTests(saved) };
+                    if (BatchBaseRedPolicy.Provisional(saved))
+                    {
+                        _store.MarkBaseVerdictProvisional(baseline);
+                        baseline = baseline with { Provisional = true };
+                    }
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "batch-base-evidence-unreadable base={BaseSha} path={Path}",
+                    baseSha, baseline.EvidencePath);
+            }
+        }
+        if (baseline is { Provisional: false }) return baseline;
+        var settings = _settings.Get(project);
+        if (GateProfile(settings.BuildProfile, repo) != gateProfileDigest)
+            throw new InvalidDataException("Batch gate profile changed before base verification.");
+        var maxAttempts = baseline is null ? 2 : 1;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            var started = _time.GetUtcNow();
+            var result = await _gate.RunAsync(new BuildTestGateRequest(
+                    repo, baseSha, "batch-base")
+                {
+                    Project = project,
+                    GateId = "batch-base",
+                    SubjectRef = baseSha,
+                    IntegrationRef = baseSha,
+                    RequiredTestLevel = TestExecutionLevels.Full,
+                    TestExecution = settings.TestExecution,
+                    DisableVerdictCache = true,
+                }, null, settings.BuildProfile, PostStepMode.Fail,
+                TimeSpan.FromMinutes(settings.BatchGate.GateTimeoutMinutes), ct)
+                .ConfigureAwait(false);
+            if (GateProfile(_settings.Get(project).BuildProfile, repo) != gateProfileDigest)
+                throw new InvalidDataException("Batch gate profile changed during base verification.");
+            if (!string.Equals(result.TestedSha, baseSha, StringComparison.OrdinalIgnoreCase)
+                || result.IsInfrastructureFailure)
+                throw new IOException("The base verification did not produce an exact-SHA verdict.");
+            Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+            var attemptEvidence = attempt == 0 ? evidencePath : evidencePath + ".retry";
+            File.WriteAllText(attemptEvidence, JsonSerializer.Serialize(result));
+            baseline = new BatchGateBaseVerdict(project, baseSha, gateProfileDigest,
+                result.Verdict == BuildTestGateVerdict.Ok ? "pass" : "fail",
+                result.Verdict == BuildTestGateVerdict.Fail
+                    ? BuildTestGateRunner.DiagnosticFingerprint(result) : null,
+                result.Reason, attemptEvidence, _time.GetUtcNow(),
+                BatchGateBaseCheckSources.FullSuite, result.DurationMs / 60_000d,
+                Provisional: BatchBaseRedPolicy.Provisional(result),
+                FailedTests: BatchBaseRedPolicy.FailedTests(result));
+            _store.RecordBaseVerdict(baseline);
+            _store.RecordExecution(new BatchGateExecutionFact(
+                project, batchId, null, baseSha,
+                result.Verdict.ToString(), Environment.MachineName,
+                started, _time.GetUtcNow(), result.GateQueueWaitMs, 0, attemptEvidence));
+            if (!baseline.Provisional) break;
+        }
+        return baseline;
+    }
+
 }

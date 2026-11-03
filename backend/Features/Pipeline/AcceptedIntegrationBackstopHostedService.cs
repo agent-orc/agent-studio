@@ -226,6 +226,8 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                 Detail = recovery.LastMergeAttempt?.Reason
                          ?? recovery.LastMergeAttempt?.VerdictSummary
                          ?? status?.Detail,
+                AttributedCommitCount = TaskIntegrationStatusService.AttributedCommits(job).Count,
+                IntegrationBranch = status?.IntegrationBranch,
             };
             if (AcceptedIntegrationBackstopPolicy.IsAlertCandidate(candidate))
                 policyCandidates.Add(candidate);

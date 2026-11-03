@@ -25,8 +25,9 @@ public sealed record ProjectStructureDefinition(
     IReadOnlyList<ProjectStructurePlacement> Placements,
     IReadOnlyList<ProjectManagedService> ManagedServices)
 {
+    public IReadOnlyList<ProjectRegistryDeclaration> Registries { get; init; } = [];
     public static readonly ProjectStructureDefinition Empty = new([], [], []);
-    public bool IsConfigured => Regions.Count > 0 || Placements.Count > 0 || ManagedServices.Count > 0;
+    public bool IsConfigured => Regions.Count > 0 || Placements.Count > 0 || ManagedServices.Count > 0 || Registries.Count > 0;
 }
 
 /// <summary>
@@ -35,7 +36,7 @@ public sealed record ProjectStructureDefinition(
 /// </summary>
 public static class ProjectStructureVocabulary
 {
-    public static readonly IReadOnlyList<string> Sections = ["regions", "placements", "managedServices"];
+    public static readonly IReadOnlyList<string> Sections = ["regions", "placements", "managedServices", "registries"];
     public static readonly IReadOnlyList<string> RegionKeys = ["name", "label"];
     public static readonly IReadOnlyList<string> PlacementKeys =
         ["name", "kind", "parent", "region", "environments", "artifacts", "replicas"];
@@ -114,7 +115,28 @@ public static partial class ProjectDefinitionReader
                 return new ProjectManagedService(Get(item, "name") ?? "", Get(item, "kind") ?? "",
                     Get(item, "region"), List(item, "environments"), Get(item, "healthCheck"));
             }).ToArray();
-        return new(regions, placements, managed);
+        var registryKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var registries = SequenceMaps(lines, "structure.registries", 4, 6, issues)
+            .Select((row, index) =>
+            {
+                CheckMapKeys(row, ["artifact", "provider", "package", "repository", "secretRef", "baseUrl"],
+                    $"structure.registries[{index}]", issues);
+                var declaration = new ProjectRegistryDeclaration(Get(row, "artifact") ?? "",
+                    Get(row, "provider") ?? "", Get(row, "package") ?? "",
+                    Get(row, "repository"), Get(row, "secretRef"), Get(row, "baseUrl"));
+                if (string.IsNullOrWhiteSpace(declaration.Artifact) || string.IsNullOrWhiteSpace(declaration.Package)
+                    || declaration.Provider is not ("npm" or "nuget" or "docker-hub" or "github" or "jfrog" or "internal"))
+                    issues.Add(new($"structure.registries[{index}]", "registry-invalid",
+                        "Registry needs an artifact, package and supported provider."));
+                if (declaration.SecretRef is { } secret && !secret.StartsWith("secret://", StringComparison.Ordinal))
+                    issues.Add(new($"structure.registries[{index}].secretRef", "registry-secret-invalid",
+                        "Registry credentials must use a secret reference."));
+                if (!registryKeys.Add($"{declaration.Artifact}|{declaration.Provider}|{declaration.Package}|{declaration.Repository}"))
+                    issues.Add(new($"structure.registries[{index}]", "registry-duplicate",
+                        "Registry declarations for an artifact must be unique."));
+                return declaration;
+            }).ToArray();
+        return new(regions, placements, managed) { Registries = registries };
     }
 }
 
