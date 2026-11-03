@@ -807,7 +807,9 @@ public sealed partial class AccessSecurityStore
         var enrollment = new RunnerEnrollment
         {
             Id = id, Name = request.Name.Trim(), CodeHash = PasswordSecretHasher.HashSecret(code), Scopes = scopes,
-            CreatedAt = now, ExpiresAt = expires, CredentialExpiresAt = request.CredentialExpiresAt
+            CreatedAt = now, ExpiresAt = expires, CredentialExpiresAt = request.CredentialExpiresAt,
+            // SM-9: an explicit project set; none named means none granted.
+            Projects = NormalizeProjects(request.Projects)
         };
         lock (_gate) { var state = StateLocked(); state.Enrollments.Add(enrollment); SaveLocked(state); }
         return (enrollment, code);
@@ -843,8 +845,13 @@ public sealed partial class AccessSecurityStore
             var runnerId = enrollment.Scopes.Contains(RunnerScopes.Orchestration, StringComparer.Ordinal)
                 ? "engine_" + Guid.NewGuid().ToString("N")
                 : "runner_" + Guid.NewGuid().ToString("N");
-            var made = NewRunnerCredential(runnerId, enrollment.Scopes, enrollment.CredentialExpiresAt);
-            var runner = new RunnerServiceIdentity { Id = runnerId, Name = enrollment.Name, CreatedAt = Now, Credentials = [made.Credential] };
+            var made = NewRunnerCredential(runnerId, enrollment.Scopes,
+                enrollment.CredentialExpiresAt ?? DefaultRunnerCredentialExpiry());
+            var runner = new RunnerServiceIdentity
+            {
+                Id = runnerId, Name = enrollment.Name, CreatedAt = Now, Credentials = [made.Credential],
+                Projects = enrollment.Projects
+            };
             state.Runners.Add(runner);
             state.Enrollments[state.Enrollments.IndexOf(enrollment)] = enrollment with { UsedAt = Now };
             SaveLocked(state);
@@ -887,7 +894,11 @@ public sealed partial class AccessSecurityStore
                 _lastSeenDirty = true;
             }
             return new RunnerPrincipal(runner.Id, runner.Name, credential.Id,
-                new HashSet<string>(credential.Scopes, StringComparer.Ordinal));
+                new HashSet<string>(credential.Scopes, StringComparer.Ordinal))
+            {
+                Projects = runner.Projects ?? [RunnerProjectBinding.AllProjects],
+                CredentialExpiresAt = credential.ExpiresAt,
+            };
         }
     }
 
@@ -975,13 +986,36 @@ public sealed partial class AccessSecurityStore
             if (engineIdentity != scopes.Contains(RunnerScopes.Orchestration, StringComparer.Ordinal))
                 throw new SecurityOperationException(400, "invalid-scope",
                     "Credential rotation cannot change a service principal's kind.");
-            var made = NewRunnerCredential(runnerId, scopes, request.ExpiresAt);
+            // Rotation keeps the previous credential until the Owner revokes it (overlap);
+            // the new one starts the default lifetime unless the request names one.
+            var made = NewRunnerCredential(runnerId, scopes, request.ExpiresAt ?? DefaultRunnerCredentialExpiry());
             var updated = runner with { Credentials = [.. runner.Credentials, made.Credential] };
             state.Runners[state.Runners.IndexOf(runner)] = updated;
             SaveLocked(state);
             return (updated, made.Credential, made.Secret);
         }
     }
+
+    /// <summary>Replaces the projects a runner is bound to; this also ends a pre-binding notice.</summary>
+    public RunnerServiceIdentity UpdateRunnerProjects(string runnerId, IReadOnlyList<string>? projects)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var runner = state.Runners.FirstOrDefault(x => x.Id == runnerId && x.RevokedAt is null)
+                ?? throw new SecurityOperationException(404, "runner-not-found", "Runner not found.");
+            var updated = runner with { Projects = NormalizeProjects(projects) };
+            state.Runners[state.Runners.IndexOf(runner)] = updated;
+            SaveLocked(state);
+            return updated;
+        }
+    }
+
+    /// <summary>SM-9, D7 A: a new runner credential lives 30 days unless configured otherwise.</summary>
+    public TimeSpan RunnerCredentialLifetime
+        => TimeSpan.FromDays(Math.Clamp(_configuration.GetValue("Security:RunnerCredentialLifetimeDays", 30), 1, 365));
+
+    private DateTime DefaultRunnerCredentialExpiry() => Now + RunnerCredentialLifetime;
 
     public void RevokeCredential(string runnerId, string credentialId)
     {

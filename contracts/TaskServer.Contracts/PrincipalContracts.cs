@@ -59,6 +59,11 @@ public sealed record PrincipalRotationReceipt(
 
 public sealed record PrincipalRotationAcknowledgement(string ConsumerId);
 
+/// <summary>
+/// <paramref name="Role"/> and <paramref name="BoundHostId"/> are the SM-9
+/// binding of a runner credential: its coding or review role and the host its
+/// first registration (or the host enrolment) pinned.
+/// </summary>
 public sealed record PrincipalDto(
     string PrincipalId,
     string Kind,
@@ -66,7 +71,9 @@ public sealed record PrincipalDto(
     string? RunnerId,
     DateTime CreatedAt,
     DateTime? RevokedAt,
-    DateTime? LastSeenAt);
+    DateTime? LastSeenAt,
+    string? Role = null,
+    string? BoundHostId = null);
 
 public sealed record IssuedPrincipalCredential(
     PrincipalDto Principal,
@@ -74,4 +81,5 @@ public sealed record IssuedPrincipalCredential(
     DateTime CreatedAt,
     DateTime? PreviousCredentialValidUntil = null,
     PrincipalRotationReceipt? Rotation = null,
-    string? ConsumerProof = null);
+    string? ConsumerProof = null,
+    DateTime? ExpiresAt = null);

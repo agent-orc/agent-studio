@@ -47,7 +47,9 @@ issue_body() {
         "$operation" "$overlap_seconds" "$consumer" "$required_scope"
 }
 deliver_path() { printf '/api/v1/principal-rotations/%s/delivered' "$operation"; }
-prove_path() { printf '/api/v1/workspaces'; }
+# Installation metadata every principal may read; a runner credential reads no
+# Studio data such as the workspace list (SM-9).
+prove_path() { printf '/api/v1/artifact-limits'; }
 acknowledge_path() { printf '/api/v1/principal-rotations/%s/ack' "$operation"; }
 acknowledge_body() { printf '{"consumerId":"%s"}' "$consumer"; }
 
