@@ -636,6 +636,9 @@ builder.Services.AddSingleton<OperatorReviewRequeueService>();
 builder.Services.AddSingleton<PublishTargetService>();
 builder.Services.AddSingleton<TaskPublishableService>();
 builder.Services.AddSingleton<PublishActionService>();
+builder.Services.AddHttpClient("structure-registry", client => client.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddSingleton<AgentStudio.Management.StructureLibraryService>();
+builder.Services.AddHostedService<AgentStudio.Management.StructureRegistryRefreshService>();
 builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconciler>(sp =>
     sp.GetRequiredService<PublishActionService>());
 builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();

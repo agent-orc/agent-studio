@@ -214,7 +214,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // The local-only PTY _probe route is absent from the public-demo route set.
         // AGT-3247 added three Runbooks routes (one Start, two Continue).
         // AGT-3313 added the release suite verdict record on PostStep.
-        Assert.Equal(150, routes.Count);
+        // AGT-3394 adds the structure library refresh on Preview.
+        Assert.Equal(151, routes.Count);
         Assert.DoesNotContain(allRoutes, route => route.RoutePattern.RawText == "/api/cli/_probe/{cliType}");
         foreach (var (method, suffix) in new[]
         {
@@ -313,7 +314,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Continue] = 33,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
-                [ExecutionAdmissionPath.Preview] = 31,
+                [ExecutionAdmissionPath.Preview] = 32,
                 [ExecutionAdmissionPath.PostStep] = 22,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
