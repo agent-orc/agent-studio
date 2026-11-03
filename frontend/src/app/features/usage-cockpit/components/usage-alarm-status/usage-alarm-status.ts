@@ -4,7 +4,7 @@ import { UsageAlarmStateService } from '../../state/usage-alarm-state.service';
 
 /**
  * Polite status region for usage alarm transitions (HUC-S5). Mount it once,
- * next to the usage strip, before the first snapshot arrives so assistive
+ * next to the footer usage entries, before the first snapshot arrives so assistive
  * technology registers the region. It renders no visible content.
  */
 @Component({

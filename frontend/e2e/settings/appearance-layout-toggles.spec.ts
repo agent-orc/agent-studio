@@ -83,7 +83,7 @@ test.describe('Settings — Appearance/Layout segmented toggles', () => {
     await page.waitForLoadState('domcontentloaded');
     // AGT-2035: the gear opens the consolidated Settings view; Theme lives in
     // the Appearance section (Global group).
-    await page.getByTestId('studio-ab-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-appearance').click({ timeout: 10_000 });
 
     const themeGroup = page.getByRole('group', { name: 'Theme' });
@@ -110,7 +110,7 @@ test.describe('Settings — Appearance/Layout segmented toggles', () => {
     });
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
-    await page.getByTestId('studio-ab-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-appearance').click({ timeout: 10_000 });
 
     const abGroup = page.getByRole('group', { name: 'Activity bar' });

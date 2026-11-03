@@ -6,7 +6,6 @@ const screenshotDir = path.join(process.env.JOB_RESULTS_DIR ?? path.resolve(__di
 
 test('networked Studio gates the workspace behind same-origin login', async ({ page }) => {
   mkdirSync(screenshotDir, { recursive: true });
-  await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
     status: 200, contentType: 'application/json', body: '[]',
   }));
@@ -47,7 +46,9 @@ test('networked Studio gates the workspace behind same-origin login', async ({ p
   expect(stored).not.toContain('not-stored-password');
   expect(stored).not.toMatch(/rnr\.|ssn\./);
 
-  await page.getByTestId('status-bar-sign-out').click();
+  await expect(page.getByTestId('studio-titlebar-account')).toContainText('Owner');
+  await page.getByTestId('studio-titlebar-account').click();
+  await page.getByTestId('studio-account-menu-item-sign-out').click();
   await expect(page.getByTestId('auth-gate')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
 });
@@ -72,6 +73,7 @@ test('standalone owner form uses the armed code only while bootstrap is open', a
   }));
   await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({
+      profile: 'networked',
       bootstrapRequired: bootstrapOpen,
       bootstrapCodeRequired: bootstrapOpen,
       authenticated: false,
@@ -93,7 +95,7 @@ test('standalone owner form uses the armed code only while bootstrap is open', a
     await route.fulfill({
       status: 201, contentType: 'application/json', body: JSON.stringify({
         recoveryCode: 'rcv_once',
-        status: { bootstrapRequired: false, bootstrapCodeRequired: false, authenticated: false, user: null },
+        status: { profile: 'networked', bootstrapRequired: false, bootstrapCodeRequired: false, authenticated: false, user: null },
       }),
     });
   });

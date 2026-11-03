@@ -84,7 +84,7 @@ async function stubAggregate(page: import('@playwright/test').Page, project: str
  *  usage-detail displays out of "Usage caps" into the single "Token usage"
  *  section, so the by-project rows now live there. */
 async function openUsageDetail(page: import('@playwright/test').Page) {
-  await page.getByTestId('status-bar-settings').click();
+  await page.getByTestId('studio-titlebar-settings').click();
   await page.getByTestId('workspace-settings-rail-tokens').click();
   await expect(page.getByTestId('token-usage-section')).toBeVisible();
   await expect(page.getByTestId('cli-usage-detail')).toBeVisible();

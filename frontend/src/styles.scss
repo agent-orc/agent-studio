@@ -817,3 +817,11 @@ select option:hover {
 .studio .dashboard--studio > .lane-group.lane-group--hidden-by-focus {
   display: none;
 }
+// The legacy header shares the Studio action placement while its broader
+// visual migration remains outside this scoped bar change.
+.app .header__settings {
+  min-height: var(--studio-row-min-h-interactive-compact);
+  background: var(--studio-bg-elevated);
+  border-color: var(--studio-border);
+  color: var(--studio-text-primary);
+}
