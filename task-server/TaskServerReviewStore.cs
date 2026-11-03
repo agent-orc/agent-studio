@@ -334,6 +334,15 @@ public sealed partial class TaskServerStore
                     with { AdmissionReason = envelopeAdmission.Reason };
                 return;
             }
+            if (RequiresHostProjectPolicy
+                && await ReadHostProjectPolicyAsync(connection, transaction, executor.HostId, ct) is null)
+            {
+                response = ReviewClaimEmptyResponses.Empty(
+                    ReviewClaimEmptyReasons.CapabilityAdmission,
+                    HostProjectPolicyMissingMessage(executor.HostId))
+                    with { AdmissionReason = HostProjectPolicyMissingReason };
+                return;
+            }
 
             ReviewAttemptDto? attempt = null;
             ReviewSubjectDto? subject = null;
@@ -367,10 +376,23 @@ public sealed partial class TaskServerStore
                              OR (a.status = 'leased' AND a.expires_at <= $now)
                            )
                        AND t.state = '4-auto-review'
+                       AND (
+                           ($requirePolicy = 0 AND NOT EXISTS (
+                               SELECT 1 FROM host_project_policies policy
+                                WHERE policy.host_id = $host))
+                           OR EXISTS (
+                               SELECT 1 FROM host_project_policies policy
+                                WHERE policy.host_id = $host
+                                  AND policy.allow_all_projects = 1)
+                           OR EXISTS (
+                               SELECT 1 FROM host_allowed_projects allowed
+                                WHERE allowed.host_id = $host
+                                  AND allowed.project_id = t.project_id))
                      ORDER BY a.created_at, a.attempt_number, a.id
                      LIMIT $limit OFFSET $offset;
                     """, transaction, ("$now", Iso(UtcNow)),
-                    ("$limit", ClaimCandidatePageSize), ("$offset", offset));
+                    ("$limit", ClaimCandidatePageSize), ("$offset", offset),
+                    ("$host", executor.HostId), ("$requirePolicy", RequiresHostProjectPolicy ? 1 : 0));
                 await using var reader = await command.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
                 {

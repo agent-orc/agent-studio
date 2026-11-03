@@ -750,6 +750,19 @@
 <li><b>2026-11-02 · AGT-3374 · SM-3.</b> Implemented SM-D5 option C at Stage 0: public edge authorization through an MFA-backed access provider, digest-pinned and restricted website containers, encrypted backup and scratch restore scripts, monitored access and restore signals, and a baseline checker with named failures. In-product second factor remains the SM-8 slice.</li>
 <li><b>2026-11-02 · AGT-3374 · SM-3 review repair.</b> Kept SM-D5 option C. The website smoke now resolves the Caddy digest it uses for the installer ownership handoff and edge container. Both Caddy containers explicitly write state under mounted paths, the private Caddyfile skips system trust-store installation, and the baseline checks these startup settings.</li>
 <li><b>2026-11-03 · AGT-3374 · SM-3 develop integration.</b> Kept SM-D5 option C. Reapplied the access-layer and container baseline on current develop, preserving its scheduled encrypted off-host backup and host-move guidance alongside the manual encrypted scratch-restore check.</li>
+<li><b>2 November 2026, AGT-3380 (SM-9).</b> Runner credentials are bound to their host, role and
+an explicit project set, with D7 option A lifetimes. On the Task Server a runner credential is pinned
+to the host of its first registration (or of its host enrolment), enrolment codes record the coding
+or review role, and an authenticated installation treats a host without a project policy as holding
+no project; already registered hosts migrate to an explicit all-projects policy. Card reads need a
+live lease, run, review-attempt and gate routes need the caller's own claim, every other shared read
+is refused for runner credentials, review, review package and publication claims stay inside the bound projects, and
+repository tokens cover only the repositories of bound projects. New runner credentials expire after
+30 days in both authorities and rotation keeps its overlap; responses name the end and hosts warn in
+the last week. Existing credentials keep working with a notice. Settings &gt; Access binds projects
+at enrollment and edits them per runner. Gate claim admission, per-attempt container tokens (SM-11)
+and a lifecycle-only card read in the monolith remain open. See
+<a href="../operations/security/overview.md#runner-credential-binding-sm-9">Security overview</a>.</li>
 <!-- agent-studio:implementation-log:end -->
 </ol>
 </section>

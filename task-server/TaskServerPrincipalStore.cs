@@ -49,7 +49,8 @@ public sealed partial class TaskServerStore
         string? credential,
         string? runnerId,
         CancellationToken ct,
-        bool repositoryWrite = false)
+        bool repositoryWrite = false,
+        string? role = null)
     {
         var scopes = DefaultScopes(kind, repositoryWrite);
         await _writeGate.WaitAsync(ct);
@@ -69,6 +70,8 @@ public sealed partial class TaskServerStore
             var now = UtcNow;
             await using var transaction =
                 (SqliteTransaction)await connection.BeginTransactionAsync(ct);
+            // A configured bootstrap secret lives in a host file the operator
+            // rotates; it carries no expiry of its own.
             await InsertPrincipalAsync(
                 connection,
                 transaction,
@@ -78,11 +81,13 @@ public sealed partial class TaskServerStore
                 runnerId,
                 issued,
                 now,
-                ct);
+                ct,
+                role: role,
+                expiresAt: null);
             await transaction.CommitAsync(ct);
             return string.IsNullOrWhiteSpace(credential)
                 ? new IssuedPrincipalCredential(
-                    ToDto(principalId, kind, scopes, runnerId, now, null, null),
+                    ToDto(principalId, kind, scopes, runnerId, now, null, null, role),
                     issued,
                     now)
                 : null;
@@ -126,7 +131,8 @@ public sealed partial class TaskServerStore
             DeserializeScopes(reader.GetString(2)),
             reader.IsDBNull(3) ? null : reader.GetString(3),
             credentialId,
-            reader.IsDBNull(8) ? null : reader.GetString(8));
+            reader.IsDBNull(8) ? null : reader.GetString(8),
+            reader.IsDBNull(7) ? null : Parse(reader.GetString(7)));
         await reader.DisposeAsync();
         await ExecuteAsync(
             connection,
@@ -141,7 +147,8 @@ public sealed partial class TaskServerStore
     {
         await using var connection = await OpenReadyAsync(ct);
         await using var command = Command(connection, """
-            SELECT principal_id, kind, scopes_json, runner_id, created_at, revoked_at, last_seen_at
+            SELECT principal_id, kind, scopes_json, runner_id, created_at, revoked_at, last_seen_at,
+                   role, bound_host_id
               FROM principals
              ORDER BY created_at, principal_id;
             """);
@@ -188,7 +195,8 @@ public sealed partial class TaskServerStore
                 runnerId,
                 credential,
                 now,
-                ct);
+                ct,
+                expiresAt: RunnerCredentialExpiry(kind, now));
             await AuditAsync(
                 connection,
                 transaction,
@@ -196,13 +204,14 @@ public sealed partial class TaskServerStore
                 "principal.created",
                 "principal",
                 principalId,
-                JsonSerializer.Serialize(new { kind, runnerId, scopes }),
+                JsonSerializer.Serialize(new { kind, runnerId, scopes, expiresAt = RunnerCredentialExpiry(kind, now) }),
                 ct);
         }, ct);
         return new IssuedPrincipalCredential(
             ToDto(principalId, kind, scopes, runnerId, now, null, null),
             credential,
-            now);
+            now,
+            ExpiresAt: RunnerCredentialExpiry(kind, now));
     }
 
     public async Task<IssuedPrincipalCredential> RotatePrincipalAsync(
@@ -351,7 +360,9 @@ public sealed partial class TaskServerStore
             reader.IsDBNull(3) ? null : reader.GetString(3),
             Parse(reader.GetString(4)),
             reader.IsDBNull(5) ? null : Parse(reader.GetString(5)),
-            reader.IsDBNull(6) ? null : Parse(reader.GetString(6)));
+            reader.IsDBNull(6) ? null : Parse(reader.GetString(6)),
+            reader.FieldCount > 7 && !reader.IsDBNull(7) ? reader.GetString(7) : null,
+            reader.FieldCount > 8 && !reader.IsDBNull(8) ? reader.GetString(8) : null);
 
     private static PrincipalDto ToDto(
         string principalId,
@@ -360,7 +371,9 @@ public sealed partial class TaskServerStore
         string? runnerId,
         DateTime createdAt,
         DateTime? revokedAt,
-        DateTime? lastSeenAt)
+        DateTime? lastSeenAt,
+        string? role = null,
+        string? boundHostId = null)
         => new(
             principalId,
             kind,
@@ -368,7 +381,9 @@ public sealed partial class TaskServerStore
             runnerId,
             createdAt,
             revokedAt,
-            lastSeenAt);
+            lastSeenAt,
+            role,
+            boundHostId);
 
     private static async Task InsertPrincipalAsync(
         SqliteConnection connection,
@@ -379,19 +394,22 @@ public sealed partial class TaskServerStore
         string? runnerId,
         string credential,
         DateTime now,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? role = null,
+        DateTime? expiresAt = null)
     {
         await ExecuteAsync(connection, """
             INSERT INTO principals(
-                principal_id, kind, scopes_json, runner_id, created_at, revoked_at, last_seen_at)
-            VALUES ($id, $kind, $scopes, $runner, $now, NULL, NULL);
+                principal_id, kind, scopes_json, runner_id, created_at, revoked_at, last_seen_at, role)
+            VALUES ($id, $kind, $scopes, $runner, $now, NULL, NULL, $role);
             """, ct, transaction,
             ("$id", principalId),
             ("$kind", kind),
             ("$scopes", JsonSerializer.Serialize(scopes.Order(StringComparer.Ordinal))),
             ("$runner", runnerId),
-            ("$now", Iso(now)));
-        await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct);
+            ("$now", Iso(now)),
+            ("$role", role));
+        await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct, expiresAt);
     }
 
     private static async Task InsertCredentialAsync(
@@ -400,19 +418,21 @@ public sealed partial class TaskServerStore
         string principalId,
         string credential,
         DateTime now,
-        CancellationToken ct)
+        CancellationToken ct,
+        DateTime? expiresAt = null)
     {
         if (!TryCredentialId(credential, out var credentialId))
             throw new InvalidOperationException("Generated principal credential is malformed.");
         await ExecuteAsync(connection, """
             INSERT INTO principal_credentials(
                 credential_id, principal_id, secret_hash, created_at, expires_at, revoked_at)
-            VALUES ($credential_id, $principal_id, $secret_hash, $now, NULL, NULL);
+            VALUES ($credential_id, $principal_id, $secret_hash, $now, $expires, NULL);
             """, ct, transaction,
             ("$credential_id", credentialId),
             ("$principal_id", principalId),
             ("$secret_hash", HashCredential(credential)),
-            ("$now", Iso(now)));
+            ("$now", Iso(now)),
+            ("$expires", expiresAt is { } expiry ? Iso(expiry) : null));
     }
 
     private static async Task<PrincipalDto?> ReadPrincipalAsync(
@@ -422,7 +442,8 @@ public sealed partial class TaskServerStore
         CancellationToken ct)
     {
         await using var command = Command(connection, """
-            SELECT principal_id, kind, scopes_json, runner_id, created_at, revoked_at, last_seen_at
+            SELECT principal_id, kind, scopes_json, runner_id, created_at, revoked_at, last_seen_at,
+                   role, bound_host_id
               FROM principals WHERE principal_id = $id;
             """, transaction, ("$id", principalId));
         await using var reader = await command.ExecuteReaderAsync(ct);

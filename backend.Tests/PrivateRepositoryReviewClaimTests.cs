@@ -295,6 +295,47 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
     }
 
     [Fact]
+    public async Task A_review_credential_claims_and_reads_only_reviews_of_its_bound_projects()
+    {
+        var otherWatch = Path.Combine(_workspace, "projects", OtherProject);
+        foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(otherWatch, state));
+        SeedTask("AGT-1");
+        SeedTask("OTH-1", otherWatch);
+        // SM-9: this review credential is bound to the other project only.
+        var reviewer = new AgentStudio.Security.RunnerPrincipal(RunnerId, RunnerId, "cred-review",
+            new HashSet<string>([AgentStudio.Security.RunnerScopes.Claim], StringComparer.Ordinal))
+        {
+            Projects = [OtherProject],
+        };
+        using var factory = BuildFactory(otherWatch, reviewer);
+        using var http = factory.CreateClient();
+        await RegisterAsync(http, Registration(credentialsFile: null));
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace();
+        var projects = services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        if (projects.FindByIdOrDisplayName(ProjectName) is null)
+            projects.EnsureProjectForStorage(_watchPath, ProjectName, workspace.Id);
+        if (projects.FindByIdOrDisplayName(OtherProject) is null)
+            projects.EnsureProjectForStorage(otherWatch, OtherProject, workspace.Id);
+        var authority = services.GetRequiredService<AttemptAuthorityService>();
+        var foreign = CreatePendingReviewAttempt(authority, "AGT-1", new string('1', 40), Plan(privateRepository: false));
+        CreatePendingReviewAttempt(authority, "OTH-1", new string('2', 40), Plan(privateRepository: false),
+            project: OtherProject);
+
+        var first = await ClaimAsync(http);
+        var second = await ClaimAsync(http);
+        var read = await http.GetAsync($"/api/v1/reviews/attempts/{foreign}");
+
+        Assert.Equal("claimed", first.Status);
+        Assert.Equal("OTH-1", first.Attempt!.TaskId);
+        Assert.Equal("empty", second.Status);
+        Assert.Equal(AttemptLifecycleState.Pending, authority.GetReview(foreign)!.State);
+        Assert.Equal(HttpStatusCode.Forbidden, read.StatusCode);
+        Assert.Contains("runner-not-claimant", await read.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"/api/v1/reviews/attempts/{first.Attempt.AttemptId}")).StatusCode);
+    }
+
+    [Fact]
     public async Task Workspace_quota_skips_a_blocked_project_and_claims_a_younger_review_of_another_project()
     {
         var otherWatch = Path.Combine(_workspace, "projects", OtherProject);
@@ -633,11 +674,15 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
                 clock));
         }));
 
-    private WebApplicationFactory<Program> BuildFactory(string? otherWatchPath = null) =>
+    private WebApplicationFactory<Program> BuildFactory(string? otherWatchPath = null,
+        AgentStudio.Security.RunnerPrincipal? runner = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
+                if (runner is not null)
+                    builder.ConfigureServices(services => services.AddSingleton<Microsoft.AspNetCore.Hosting.IStartupFilter>(
+                        new RunnerPrincipalInjection(runner, "/api/v1/runners", "/api/v1/reviews")));
                 var settings = new Dictionary<string, string?>
                 {
                     ["TaskRepository"] = _workspace,

@@ -199,7 +199,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var owner = store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
         var enrolled = store.EnrollRunner(store.CreateEnrollment(
-            new RunnerEnrollmentRequest("existing-board-name", null, null, null)).Code);
+            new RunnerEnrollmentRequest("existing-board-name", null, null, null, [project])).Code);
         var logsOnly = store.EnrollRunner(store.CreateEnrollment(
             new RunnerEnrollmentRequest("logs-only", [RunnerScopes.Logs], null, null)).Code);
         factory.Services.GetRequiredService<ClientIdentityStore>()
@@ -214,7 +214,9 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
                      $"/api/v1/projects/{project}/tasks/{taskKey}",
                  })
         {
-            Assert.Equal(HttpStatusCode.OK, await ReadStatusAsync(path, bearer: enrolled.Secret));
+            // A card read needs a live lease; the project listing remains available.
+            Assert.Equal(path == "/api/v1/projects" ? HttpStatusCode.OK : HttpStatusCode.Forbidden,
+                await ReadStatusAsync(path, bearer: enrolled.Secret));
             Assert.Equal(HttpStatusCode.OK, await ReadStatusAsync(path, session: owner.SessionToken));
             Assert.Equal(HttpStatusCode.Forbidden, await ReadStatusAsync(path, bearer: logsOnly.Secret));
             Assert.Equal(HttpStatusCode.Unauthorized, await ReadStatusAsync(path));
@@ -236,6 +238,8 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         var lease = await runner.AcquireLeaseAsync(
             new RAcquire(taskKey, enrolled.Runner.Id, enrolled.Runner.Name, "smoke-host", 42, "codex"), CancellationToken.None);
         Assert.True(lease.Granted);
+        Assert.Equal(HttpStatusCode.OK, await ReadStatusAsync(
+            $"/api/v1/projects/{project}/tasks/{taskKey}", bearer: enrolled.Secret));
         var completion = await runner.CompleteRunAsync(new RComplete(
             taskKey, lease.Lease!.LeaseId, lease.Lease.FencingToken,
             enrolled.Runner.Id, "Blocked", Reason: "networked fixture completed",
