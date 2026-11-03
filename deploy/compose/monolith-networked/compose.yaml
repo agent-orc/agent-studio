@@ -12,11 +12,11 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    tmpfs: [/tmp]
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
     <<: *hardening
-    # Writable workspace, projects, and home are mounted explicitly. Temporary
-    # files use tmpfs so the root file system can remain read-only.
+    # Writable workspace, projects, home, and /tmp are mounted explicitly so the
+    # root file system can remain read-only. Agent CLIs and build gates write
+    # scratch files to /tmp; a disk-backed directory keeps them out of mem_limit.
     pids_limit: 8192
     # .NET caps its heap at 75 % of this limit; 8g stalled on a real workspace.
     mem_limit: ${STUDIO_API_MEMORY_LIMIT:-20g}
@@ -37,6 +37,7 @@ services:
       - ${STUDIO_DATA_DIR:?Run setup.sh}/workspace:/data/workspace
       - ${STUDIO_DATA_DIR}/projects:/data/projects
       - ${STUDIO_DATA_DIR}/home:/data/home
+      - ${STUDIO_DATA_DIR}/api-tmp:/tmp
     networks:
       website:
         ipv4_address: 172.30.83.4
