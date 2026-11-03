@@ -113,6 +113,11 @@ public sealed record BatchGateFallbackSuiteFact(
 }
 
 
+public sealed record BatchGateIsolationFinding(
+    string Project, string ParentBatchId, string TaskKey, string RunAttempt,
+    string ResultSha, string BaseSha, string Status, string EvidencePath,
+    DateTimeOffset RecordedAtUtc);
+
 /// <summary>
 /// Durable batch authority. A closed manifest is written once before assembly;
 /// all later facts are append-only files carrying its digest. CreateNew and
@@ -125,6 +130,26 @@ public sealed partial class BatchGateStore
         WriteIndented = true,
     };
     private readonly string _root;
+
+    public void RecordIsolationFinding(BatchGateIsolationFinding finding)
+    {
+        var folder = Path.Combine(_root, "isolation-findings", SafeName(finding.Project));
+        Directory.CreateDirectory(folder);
+        var identity = string.Join("\n", finding.ParentBatchId, finding.TaskKey,
+            finding.RunAttempt, finding.ResultSha, finding.BaseSha, finding.Status);
+        var name = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+        var path = Path.Combine(folder, name + ".json");
+        if (!File.Exists(path)) WriteOnce(path, finding);
+    }
+
+    public IReadOnlyList<BatchGateIsolationFinding> ListIsolationFindings(string project)
+    {
+        var folder = Path.Combine(_root, "isolation-findings", SafeName(project));
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json").Select(Read<BatchGateIsolationFinding>)
+                .OrderBy(finding => finding.RecordedAtUtc).ToArray()
+            : [];
+    }
 
     public BatchGateStore(string? root = null)
     {
@@ -552,7 +577,7 @@ public sealed partial class BatchGateStore
             || publication.PreTipSha != run.BaseSha
             || publication.TestedCandidateSha != run.CandidateSha
             || publication.VerifiedRemoteSha != run.CandidateSha
-            || publication.CoordinatorFence != run.CoordinatorFence
+            || publication.CoordinatorFence < run.CoordinatorFence
             || publication.RefMutationFence <= 0 || verdict.Outcome != "pass")
             throw new InvalidDataException("Untested or unverified batch publication.");
         WriteOnce(Path.Combine(BatchDirectory(publication.BatchId), "publication.json"), publication);

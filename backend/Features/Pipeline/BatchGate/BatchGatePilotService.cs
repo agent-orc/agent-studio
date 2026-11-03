@@ -385,7 +385,11 @@ public sealed partial class BatchGatePilotService
                             "batch-gate push wait exceeded age limit project={Project} job={JobId} approvedSha={ApprovedSha} since={SinceUtc}",
                             project, wait.JobId, wait.ApprovedSha, wait.SinceUtc);
                 }
+            await RecoverGreenIsolationChildrenAsync(ct).ConfigureAwait(false);
             RecoverInterrupted();
+            foreach (var project in _store.ListPending().Select(item => item.Subject.Project)
+                         .Distinct(StringComparer.Ordinal))
+                await HandOffProvenRedsAsync(project, ct).ConfigureAwait(false);
             await ResolvePausedAsync(fetchedBases, ct).ConfigureAwait(false);
             await RecoverPublishedAsync(ct).ConfigureAwait(false);
             foreach (var manifest in _store.ListManifests().Where(item =>
@@ -492,7 +496,14 @@ public sealed partial class BatchGatePilotService
                         .ToArray();
                 foreach (var item in contained)
                     ScheduleFallback(item, ct, containedInSha: baseSha);
-                var current = group.Except(contained).ToArray();
+                var current = group.Except(contained)
+                    .Where(item => ProvenRed(item) is null)
+                    .OrderByDescending(item => baseSha is not null && ProvenGreen(item, baseSha))
+                    .ThenBy(item => item.Subject.EnqueueSequence).ToArray();
+                var provenGreenKeys = baseSha is null ? new HashSet<string>(StringComparer.Ordinal)
+                    : current.Where(item => ProvenGreen(item, baseSha))
+                        .Select(item => item.Subject.TaskKey)
+                        .ToHashSet(StringComparer.Ordinal);
                 var gateBacklog = GateBacklogged(first.Subject.Project, waiting);
                 if (options.EffectiveScope == "documentation")
                     foreach (var item in current.Where(item => !item.Subject.DocumentationOnly
@@ -518,7 +529,11 @@ public sealed partial class BatchGatePilotService
                     formed = decision.Decision switch
                     {
                         "close" => BatchGatePolicy.Close(current.Select(item => item.Subject),
-                            scope, baseSha, options, decision.ProposedMembers, _time.GetUtcNow()),
+                            scope, baseSha, options,
+                            current.Where(item => provenGreenKeys.Contains(item.Subject.TaskKey))
+                                .Select(item => item.Subject.TaskKey)
+                                .Concat(decision.ProposedMembers).Distinct(StringComparer.Ordinal).ToArray(),
+                            _time.GetUtcNow()),
                         "per-task" => new BatchGateFormation(null, [],
                             decision.ProposedMembers, true),
                         _ => new BatchGateFormation(null, [], [], false),
@@ -530,7 +545,6 @@ public sealed partial class BatchGatePilotService
                     {
                         var eligible = current.Where(item => BatchGatePolicy.Exclusion(
                                 item.Subject, scope, options) is null)
-                            .OrderBy(item => item.Subject.EnqueueSequence)
                             .Select(item => item.Subject.TaskKey).ToArray();
                         formed = BatchGatePolicy.Close(current.Select(item => item.Subject),
                             scope, baseSha, options, eligible, _time.GetUtcNow());
@@ -545,7 +559,8 @@ public sealed partial class BatchGatePilotService
                                     first.Subject.Project, StringComparison.OrdinalIgnoreCase)),
                             _load?.Current.Throttle == true, gateBacklog,
                             _store.ReadBaseVerdict(first.Subject.Project, baseSha,
-                                first.Subject.GateProfileDigest)?.Outcome == "fail");
+                                first.Subject.GateProfileDigest)?.Outcome == "fail",
+                            provenGreenKeys);
                     }
                     _store.AppendPlanDecision(first.Subject.Project,
                         new BatchPlanDecision(
@@ -648,6 +663,8 @@ public sealed partial class BatchGatePilotService
 
     private void RecoverInterrupted()
     {
+        foreach (var parent in _store.ListManifests().Where(item => item.ParentBatchId is null))
+            DeriveIsolationFindings(parent);
         foreach (var manifest in _store.ListRecoverableManifests())
         {
             if (_store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
@@ -658,6 +675,8 @@ public sealed partial class BatchGatePilotService
             if (recovery is null) continue;
             try
             {
+                if (manifest.ParentBatchId is { } parentId)
+                    DeriveIsolationFindings(_store.ReadManifest(parentId));
                 State(manifest, BatchPhase.Abandoned, null, recovery.Fence,
                     "interrupted before a publishable verdict; reconstruct from the closed snapshot");
                 ReturnToPending(manifest);
@@ -1680,12 +1699,37 @@ public sealed partial class BatchGatePilotService
                     lease.Fence, repo, _settings.Get(diagnostic.Scope.Project).BuildProfile);
                 _store.RecordRun(probeRun);
                 State(diagnostic, BatchPhase.Running, candidate.CandidateSha, lease.Fence);
-                var gate = await RunGateAsync(probeRun, repo, token,
-                    () => BatchRouteEnabled(diagnostic)
-                        && subset.All(member =>
-                        Refresh(pending[member.TaskKey]).Subject.CurrentGeneration),
-                    subset.Select(member => pending[member.TaskKey]).ToArray())
-                    .ConfigureAwait(false);
+                BuildTestGateResult gate;
+                try
+                {
+                    gate = await RunGateAsync(probeRun, repo, token,
+                        () => BatchRouteEnabled(diagnostic)
+                            && subset.All(member =>
+                                Refresh(pending[member.TaskKey]).Subject.CurrentGeneration),
+                        subset.Select(member => pending[member.TaskKey]).ToArray())
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested
+                    && subset.Any(member => !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+                {
+                    foreach (var stale in subset.Where(member =>
+                                 !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+                        RecordIsolationSuperseded(failedManifest, stale);
+                    State(diagnostic, BatchPhase.Abandoned, candidate.CandidateSha,
+                        lease.Fence, "member superseded during isolation");
+                    return new BatchGateProbeResult(BatchGateFailureClass.Superseded,
+                        candidate.CandidateSha, probeRun.EvidencePath);
+                }
+                if (subset.Any(member => !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+                {
+                    foreach (var stale in subset.Where(member =>
+                                 !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+                        RecordIsolationSuperseded(failedManifest, stale);
+                    State(diagnostic, BatchPhase.Abandoned, candidate.CandidateSha,
+                        lease.Fence, "member superseded during isolation");
+                    return new BatchGateProbeResult(BatchGateFailureClass.Superseded,
+                        candidate.CandidateSha, probeRun.EvidencePath);
+                }
                 var classification = gate.IsInfrastructureFailure
                     ? BatchGateFailureClass.InfrastructureRed
                     : gate.Verdict == BuildTestGateVerdict.Ok
@@ -1699,11 +1743,31 @@ public sealed partial class BatchGatePilotService
                 State(diagnostic, classification == BatchGateFailureClass.Pass
                         ? BatchPhase.Green : BatchPhase.Red,
                     candidate.CandidateSha, lease.Fence, classification.ToString());
+                DeriveIsolationFindings(failedManifest);
                 if (classification == BatchGateFailureClass.Pass)
                     green[candidate.CandidateSha] = (diagnostic, candidate, probeRun, verdict);
                 return new BatchGateProbeResult(classification,
                     candidate.CandidateSha, probeRun.EvidencePath);
-            }, budget, ct).ConfigureAwait(false);
+            }, budget, ct,
+            member => Refresh(pending[member.TaskKey]).Subject.CurrentGeneration,
+            async (subset, result, token) =>
+            {
+                if (!green.TryGetValue(result.TestedSha, out var prepared)
+                    || subset.Any(member => !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+                    return false;
+                await PublishGreenAsync(prepared.Manifest, prepared.Assembly,
+                    prepared.Run, prepared.Verdict, lease, pending, repo, fallbackKeys, token)
+                    .ConfigureAwait(false);
+                return _store.LatestState(prepared.Manifest.BatchId).Phase == BatchPhase.Published;
+            }).ConfigureAwait(false);
+        foreach (var member in ordered.Where(member =>
+                     !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+        {
+            RecordIsolationSuperseded(failedManifest, member);
+            ResolveSuperseded(pending[member.TaskKey], "superseded");
+        }
+        DeriveIsolationFindings(failedManifest);
+        await HandOffProvenRedsAsync(failedManifest.Scope.Project, ct).ConfigureAwait(false);
         if (isolated.SurvivorVerdict is not { Classification: BatchGateFailureClass.Pass } survivor
             || !green.TryGetValue(survivor.TestedSha, out var prepared))
         {
@@ -1714,17 +1778,21 @@ public sealed partial class BatchGatePilotService
                          .Concat(isolated.EjectedKeys)
                          .Concat(failedAssembly.EjectedKeys)
                          .Distinct(StringComparer.Ordinal))
-                fallbackKeys.Add(key);
+                if (ProvenRed(pending[key]) is null
+                    && Refresh(pending[key]).Subject.CurrentGeneration)
+                    fallbackKeys.Add(key);
             return;
         }
-        await PublishGreenAsync(prepared.Manifest, prepared.Assembly,
-            prepared.Run, prepared.Verdict, lease, pending, repo, fallbackKeys, ct).ConfigureAwait(false);
+        if (_store.LatestState(prepared.Manifest.BatchId).Phase == BatchPhase.Green)
+            await PublishGreenAsync(prepared.Manifest, prepared.Assembly,
+                prepared.Run, prepared.Verdict, lease, pending, repo, fallbackKeys, ct).ConfigureAwait(false);
         if (_store.LatestState(prepared.Manifest.BatchId).Phase == BatchPhase.Published)
         {
             foreach (var key in isolated.EjectedKeys
                          .Concat(failedAssembly.EjectedKeys)
                          .Distinct(StringComparer.Ordinal))
-                fallbackKeys.Add(key);
+                if (ProvenRed(pending[key]) is null)
+                    fallbackKeys.Add(key);
         }
     }
 
