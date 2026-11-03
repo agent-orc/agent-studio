@@ -665,4 +665,32 @@ public sealed class TagMaintenanceTests : IDisposable
             return true;
         }
     }
+    [Theory]
+    [InlineData("", "batch-gate")]
+    [InlineData("Batch gate", "batch-gate")]
+    [InlineData("batch-gate", "batch-gate")]
+    public void CardTitle_Add_UsesLabelRegardlessOfSource(string source, string target)
+    {
+        var title = TagMaintenancePolicy.CardTitle(new() { Kind = "add", Source = source, Target = target, Label = "Batch  gate " });
+        Assert.Equal("Tag maintenance: add tag \"Batch gate\" (batch-gate)", title);
+    }
+
+    [Fact]
+    public void CardTitle_Merge_Retire_Glossary()
+    {
+        Assert.Equal("Tag maintenance: merge fix-round into fix-rounds",
+            TagMaintenancePolicy.CardTitle(new() { Kind = "merge", Source = " fix-round", Target = "fix-rounds\n" }));
+        Assert.Equal("Tag maintenance: retire old-tag",
+            TagMaintenancePolicy.CardTitle(new() { Kind = "retire", Source = "old-tag" }));
+        Assert.Equal("Tag maintenance: glossary terms for execution-and-runner",
+            TagMaintenancePolicy.CardTitle(new() { Kind = "glossary", Area = "execution-and-runner" }));
+    }
+
+    [Fact]
+    public void CardTitle_IsCappedAtMaxLength()
+    {
+        var title = TagMaintenancePolicy.CardTitle(new() { Kind = "add", Target = "x", Label = new string('a', 500) });
+        Assert.Equal(TagMaintenancePolicy.MaxCardTitleLength, title.Length);
+        Assert.EndsWith("…", title);
+    }
 }
