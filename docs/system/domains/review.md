@@ -946,14 +946,13 @@ Three rules keep a hit honest:
 - **Entries expire.** A result older than 24 hours is dropped and re-executed,
   and every baseline SHA the freshly fetched integration ref no longer contains
   is pruned before the first lookup of an attempt.
-- **Only a measured baseline is stored.** A `test-failures` baseline that
-  exits non-zero without a parsed failure name never ran its suite (for
-  example "The argument ... is invalid" from a `--no-build` run in an unbuilt
-  worktree). It ends the attempt as `ReviewInfra/BaselineUnavailable`, naming
-  the step, the exit code and the first output line, and is not cached. Reuse
-  rejects such an entry as well, and an entry recorded under another baseline
-  mode. Parser version 4 (AGT-3089) turned every older entry into a one-time
-  miss. `exit-status` entries with a non-zero exit stay reusable.
+- **Only a measured baseline is stored.** A `test-failures` baseline must
+  report at least one test result. A nonzero exit also needs a parsed failure
+  name for comparison. A run with no test result, such as an unbuilt
+  `--no-build` invocation or a green exit that ran no tests, ends as
+  `ReviewInfra/BaselineUnavailable` and is not cached. Reuse checks the same
+  evidence, including for entries written by older workers. `exit-status`
+  entries carry their result in the exit code and remain reusable.
 - **Reuse is visible.** The verdict summary, the Markdown grade
   (`baselineReused`/`baselineReuse` frontmatter plus a `Baseline` column in the
   command evidence table), and `ReviewProjectionView.Attempts[].BaselineReused`
@@ -1037,7 +1036,10 @@ that verdict.
 | Evidence | Diagnosis | Card charge |
 |---|---|---|
 | Baseline green, candidate and clean repeat both have ordinary nonzero exits | `product` | yes |
-| Baseline red or same fingerprint on the baseline or other cards | `environment` | no |
+| Baseline test result red, clean repeat has only failures named on the baseline | `IntegrationBranchDefect` with the pre-existing names | no |
+| Baseline test result red, clean repeat has new failures | `product` with the new and pre-existing names | yes |
+| Baseline test command cannot produce a test result | `ReviewInfra/BaselineUnavailable` | no |
+| Same fingerprint on another card with a green baseline | `environment` | no |
 | Clean repeat green and fingerprint has known intermittent pattern or prior occurrence | `intermittent` | no |
 | Clean repeat green without history, or required evidence unavailable | `unclassified-first-occurrence` | no |
 | Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
@@ -1057,8 +1059,8 @@ AGT-3429, reran over the restored directories) or
 `BaselineResultCacheDefect` (the red result was reused), records the clean
 baseline's exit code 0 as the candidate's `BaselineExitCode`, evicts the stored
 baseline result, the baseline dependency-cache entry and the candidate entry,
-and does not charge the card. Red keeps today's attribution
-(`IntegrationBranchDefect` for a build, `environment` otherwise). A clean
+and does not charge the card. Red keeps the measured baseline's attribution
+(`IntegrationBranchDefect` for a build or a test with no new failures). A clean
 baseline that times out, is killed, or runs no test settles
 `ReviewInfra/BaselineUnavailable`. At most one such repeat runs per attempt;
 the recorded evidence carries the bound across a resumed worker.
@@ -1343,6 +1345,12 @@ failure remains in the review evidence and the baseline comparison still
 determines attribution. For a planned `--no-build` test, fresh baseline
 worktrees and clean-repeat clones replay the preceding frozen build after
 dependency preparation so the test assembly exists.
+When the clean repeat has no new failures against a baseline that reported
+failed tests, the verification aspect passes and names the pre-existing
+failures in its verdict summary and card review evidence. The review reaches
+`IntegrationBranchDefect`; the batch gate remains the authority for the full
+suite. New failures reproduced on the candidate charge the card even when
+the baseline was red.
 
 ## No-change results skip the tool gates (AGT-3079)
 
