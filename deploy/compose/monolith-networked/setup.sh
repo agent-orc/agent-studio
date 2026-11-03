@@ -69,9 +69,9 @@ case "$key_file" in /*) ;; *) echo 'STUDIO_SECRETS_KEY_FILE must be absolute' >&
 case "$key_file" in *[!0-9A-Za-z._/-]*) echo 'STUDIO_SECRETS_KEY_FILE contains unsupported characters' >&2; exit 2;; esac
 case "${key_file%/}/" in "${data_dir%/}"/*) echo 'STUDIO_SECRETS_KEY_FILE must lie outside the data directory' >&2; exit 2;; esac
 if [ -e .env ]; then echo '.env already exists; keep its owner code and edit the version for an update.' >&2; exit 2; fi
-mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home/.local/share" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$data_dir/origin-pull"
+mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home/.local/share" "$data_dir/api-tmp" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$data_dir/origin-pull"
 chmod 711 "$data_dir"
-chmod 700 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home"
+chmod 700 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/api-tmp"
 chmod 700 "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config"
 chmod 755 "$data_dir/origin-pull"
 if [ ! -d "$data_dir/workspace/.git" ]; then
@@ -93,10 +93,10 @@ else
 fi
 chmod 600 "$key_file"
 if [ "$(id -u)" -eq 0 ]; then
-  chown -R 10001:10001 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$key_file"
+  chown -R 10001:10001 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/api-tmp" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$key_file"
 else
   docker run --rm --user 0 -v "$data_dir:/site" -v "$key_dir:/keys" --entrypoint sh "caddy@sha256:$STUDIO_EDGE_DIGEST" -c \
-    'chown -R 10001:10001 /site/workspace /site/projects /site/home /site/caddy-data /site/caddy-config /site/frontend-data /site/frontend-config "/keys/$1"' \
+    'chown -R 10001:10001 /site/workspace /site/projects /site/home /site/api-tmp /site/caddy-data /site/caddy-config /site/frontend-data /site/frontend-config "/keys/$1"' \
     sh "$(basename "$key_file")"
 fi
 code="$(openssl rand -hex 24)"
