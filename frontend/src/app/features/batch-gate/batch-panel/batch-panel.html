@@ -10,6 +10,12 @@
       @if (data.gateSlots; as slots) {
         <p data-testid="batch-gate-slot-usage">Gate slots: {{ slots.busy }}/{{ slots.total }} busy</p>
       }
+      @if (data.pushWait; as wait) {
+        <p data-testid="batch-integration-push-wait" role="status">
+          Approved integration push pending for {{ wait.ageMinutes.toFixed(1) }} min.
+          {{ wait.reason }}
+        </p>
+      }
       <section aria-labelledby="batch-plan-title">
         <h3 id="batch-plan-title">Current plan</h3>
         <p><strong>{{ data.plan.decision }}</strong> · {{ data.plan.reason }}</p>

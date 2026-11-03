@@ -20,6 +20,14 @@ describe('BatchDetailComponent', () => {
     await fixture.whenStable();
     expect(fixture.nativeElement.textContent).toContain('Batch batch-8');
     expect(fixture.nativeElement.textContent).toContain('Phase: running');
+    state.set({ ...redHalvingState, pushWait: {
+      jobId: 'AGT-2', approvedSha: 'a'.repeat(40),
+      sinceUtc: '2026-11-03T01:05:36Z', ageMinutes: 4.5, ageAlert: true,
+      reason: 'Approved integration push awaits restart recovery.',
+    } });
+    await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-integration-push-wait"]').textContent)
+      .toContain('pending for 4.5 min');
     state.set({ ...redHalvingState, plan: { ...redHalvingState.plan, decision: 'disabled' } });
     await fixture.whenStable();
     expect(fixture.nativeElement.querySelector('[data-testid="task-batch-verification"]')).toBeNull();

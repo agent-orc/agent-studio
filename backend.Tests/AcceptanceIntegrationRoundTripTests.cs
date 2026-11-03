@@ -2070,6 +2070,44 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Fact]
+    public async Task PersistedPendingPush_RecoversAutoReviewCard_WithAutoPushNever_AndReleasesBatch()
+    {
+        var deliverySha = PublishDelivery("pending-push-restart.txt", "approved delivery\n");
+        var markerRoot = Path.Combine(_tempDir, "pending-pushes");
+        var reservations = new BatchIntegrationReservationService(markerRoot);
+        var lostQueue = new IntegrationPushQueue();
+        var deps = Build(deliverySha, pushQueue: lostQueue,
+            initialState: TaskStates.AutoReview, reservations: reservations);
+        var folder = deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath;
+        var merged = await deps.Merge.RunAsync(Project, Slug, folder, _watchPath,
+            "develop", CancellationToken.None, IntegrationStrategies.DirectMerge,
+            PipelineTypes.Task);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, merged.Outcome);
+        Assert.True(lostQueue.Reader.TryRead(out _));
+        Assert.NotNull(reservations.GetWait(Project));
+
+        var restarted = new BatchIntegrationReservationService(markerRoot);
+        var waitingBatch = restarted.AcquireBatchAsync(Project, CancellationToken.None);
+        Assert.False(waitingBatch.IsCompleted);
+        var recoveredRunner = new MergeIntoDevelopRunner(
+            new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration),
+            deps.Pipeline, NullLogger<MergeIntoDevelopRunner>.Instance,
+            batchReservations: restarted);
+        var backstop = new IntegrationPushBackstopHostedService(deps.Scanner,
+            deps.Settings, deps.Pipeline, recoveredRunner, deps.Configuration,
+            NullLogger<IntegrationPushBackstopHostedService>.Instance,
+            reservations: restarted);
+
+        Assert.Equal(1, await backstop.RunOnceAsync());
+        using var grant = await waitingBatch.WaitAsync(AsyncTestDeadline);
+        Assert.Null(restarted.GetWait(Project));
+        Assert.Equal(merged.MergedSha,
+            Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim());
+        Assert.Equal(PipelineStepStatus.Passed, deps.Pipeline.Read(folder)!.Steps.Last(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopPushStepId).Status);
+    }
+
+    [Fact]
     public async Task IntegrationPushQueue_DroppedByRestart_IsRecoveredFromDurablePipelineFacts()
     {
         var deliverySha = PublishDelivery("restart.txt", "survives restart\n");
@@ -3494,6 +3532,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         IBuildTestGateRunner? gateRunner = null,
         bool writeReviewSubject = true,
         IntegrationPushQueue? pushQueue = null,
+        BatchIntegrationReservationService? reservations = null,
         bool configureIntegrationBranch = true,
         string? recordedIntegrationBranch = null,
         string initialState = TaskStates.HumanReview,
@@ -3574,6 +3613,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             pipeline,
             NullLogger<MergeIntoDevelopRunner>.Instance,
             pushQueue: pushQueue,
+            batchReservations: reservations,
             attemptAuthority: authority,
             projectSettings: settings,
             preMainTestGate: gateRunner == null ? null : new PreMainTestGate(gateRunner),

@@ -1958,14 +1958,6 @@ public sealed partial class MergeIntoDevelopRunner
         string pipelineType)
     {
         if (_pushQueue == null) return;
-        var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
-            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
-        if (_batchReservations is not null && !string.IsNullOrWhiteSpace(reservationRepo)
-            && !IsDocumentationDelivery(reservationRepo, integrationBranch,
-                ReviewSubjectStore.Read(jobFolderPath)))
-            _batchReservations.MarkPushPending(project, jobId, approvedSha,
-                jobFolderPath, reservationRepo, integrationBranch, watchPath);
-
         if (!IntegrationPushEnabled(project, pipelineType))
         {
             _logger.LogInformation(
@@ -1973,6 +1965,13 @@ public sealed partial class MergeIntoDevelopRunner
                 project, jobId);
             return;
         }
+        var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
+            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+        if (_batchReservations is not null && !string.IsNullOrWhiteSpace(reservationRepo)
+            && !IsDocumentationDelivery(reservationRepo, integrationBranch,
+                ReviewSubjectStore.Read(jobFolderPath)))
+            _batchReservations.MarkPushPending(project, jobId, approvedSha,
+                jobFolderPath, reservationRepo, integrationBranch, watchPath);
 
         var sequence = IntegrationLaneEvents.CurrentSequence;
         IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "publication-queued",
@@ -2080,7 +2079,10 @@ public sealed partial class MergeIntoDevelopRunner
                     ct,
                     recordSuccessfulStep: false);
                 if (!developPush.Success)
+                {
+                    _batchReservations?.MarkPushVerified(project, jobId, approvedSha);
                     return developPush;
+                }
 
                 var decision = ImmediateIntegrationLineagePolicy.Decide(
                     integrationBranch,
@@ -2097,6 +2099,7 @@ public sealed partial class MergeIntoDevelopRunner
                         "lineage-blocked",
                         decision.Reason);
                     RecordPushStep(jobFolderPath, project, jobId, blocked, DateTime.UtcNow, environmentalRetries: 0);
+                    _batchReservations?.MarkPushVerified(project, jobId, approvedSha);
                     _logger.LogWarning(
                         "merge-into-develop push: develop published to origin but {Branch} is blocked project={Project} job={JobId}; {Reason}",
                         integrationBranch, project, jobId, decision.Reason);
@@ -2118,6 +2121,8 @@ public sealed partial class MergeIntoDevelopRunner
                 IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "published",
                     sequence: deliverySequence, outcome: pushed.Status, receipt: pushed.Sha);
             }
+            else
+                _batchReservations?.MarkPushVerified(project, jobId, approvedSha);
             return pushed;
         }
         finally

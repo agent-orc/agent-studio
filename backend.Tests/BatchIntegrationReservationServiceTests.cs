@@ -45,27 +45,33 @@ public sealed class BatchIntegrationReservationServiceTests
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 12, 10, 0, 0,
             TimeSpan.Zero));
-        var reservation = new BatchIntegrationReservationService(timeProvider: clock,
-            alertAfter: TimeSpan.FromMinutes(15));
+        var reservation = new BatchIntegrationReservationService(timeProvider: clock);
         reservation.MarkPushPending("project", "AGT-42", "abc");
-        clock.Advance(TimeSpan.FromMinutes(16));
+        clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.False(reservation.GetWait("project")!.AgeAlert);
+        clock.Advance(TimeSpan.FromMinutes(2));
         var wait = reservation.GetWait("project");
         Assert.NotNull(wait);
         Assert.True(wait.AgeAlert);
-        Assert.Contains("waiting on push AGT-42@abc since", wait.Reason);
+        Assert.Contains("waiting on approved integration push AGT-42@abc since", wait.Reason);
+        Assert.Equal(4, wait.AgeMinutes);
+        reservation.MarkPushPending("project", "AGT-43", "def");
 
         var root = Path.Combine(Path.GetTempPath(), "batch-state-" + Guid.NewGuid().ToString("N"));
         try
         {
             var state = BatchGateStateSnapshotReader.Read(new BatchGateStore(root),
                 "project", new BatchGateFormationOptions(Enabled: true),
-                pushWait: wait);
+                pushWait: wait, pushWaits: reservation.GetWaits("project"));
             using var json = JsonDocument.Parse(JsonSerializer.Serialize(state,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-            Assert.Contains("waiting on push AGT-42@abc since",
+            Assert.Contains("waiting on approved integration push AGT-42@abc since",
                 json.RootElement.GetProperty("plan").GetProperty("reason").GetString());
             Assert.True(json.RootElement.GetProperty("pushWait")
                 .GetProperty("ageAlert").GetBoolean());
+            Assert.Equal(4, json.RootElement.GetProperty("pushWait")
+                .GetProperty("ageMinutes").GetDouble());
+            Assert.Equal(2, json.RootElement.GetProperty("pushWaits").GetArrayLength());
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
     }

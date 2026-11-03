@@ -32,9 +32,8 @@ public sealed record IntegrationPushRequest(
 /// released SHA here after merge + gate. <see cref="IntegrationPushWorker"/>
 /// drains it and performs the push (with the AGT-1944 environmental retry) on a
 /// background thread.
-/// <see cref="IntegrationPushBackstopHostedService"/> re-drives a successful
-/// merge whose channel item was lost during shutdown from the durable pipeline
-/// step facts after restart.
+/// <see cref="IntegrationPushBackstopHostedService"/> re-drives a lost channel
+/// item from its persisted pending-push marker and approved merge step.
 /// <para>
 /// Unbounded and single-reader by design: volume is one item per accepted task,
 /// and the reader is serialized so two pushes of the same integration branch can

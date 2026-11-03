@@ -17,6 +17,12 @@ export class BatchMemberComponent {
   readonly taskId = input<string | null | undefined>(null);
   private readonly gate = inject(BatchGateService);
   readonly member = computed(() => batchMemberFor(this.gate.state(this.project())(), this.taskKey(), this.referenceKey(), this.displayKey(), this.taskId()));
+  readonly pushWait = computed(() => {
+    const state = this.gate.state(this.project())();
+    if (!state) return null;
+    return state.pushWaits?.find(wait => wait.jobId === this.taskId())
+      ?? (state.pushWait?.jobId === this.taskId() ? state.pushWait : null);
+  });
   readonly ejection = computed(() => batchEjectionLabel(this.member()?.reason));
   constructor() {
     effect(onCleanup => {

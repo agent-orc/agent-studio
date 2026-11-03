@@ -20,6 +20,12 @@ export class BatchDetailComponent {
   private readonly gate = inject(BatchGateService);
   readonly project = computed(() => this.task().projectName);
   readonly state = computed(() => this.gate.state(this.project())());
+  readonly pushWait = computed(() => {
+    const state = this.state();
+    if (!state) return null;
+    return state.pushWaits?.find(wait => wait.jobId === this.task().id)
+      ?? (state.pushWait?.jobId === this.task().id ? state.pushWait : null);
+  });
   readonly unavailable = computed(() => this.gate.unavailable(this.project())());
   readonly member = computed(() => batchMemberFor(this.state(), this.task().taskKey, this.task().key, this.task().displayKey, this.task().id));
   readonly record = computed(() => {

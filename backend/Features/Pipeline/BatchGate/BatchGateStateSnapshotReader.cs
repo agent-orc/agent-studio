@@ -8,7 +8,8 @@ public static class BatchGateStateSnapshotReader
         BatchGateFormationOptions settings, int history = 10,
         IReadOnlyDictionary<string, double>? risks = null,
         PendingIntegrationPushWait? pushWait = null,
-        GateSlotUsage? gateSlots = null)
+        GateSlotUsage? gateSlots = null,
+        IReadOnlyList<PendingIntegrationPushWait>? pushWaits = null)
     {
         var now = DateTimeOffset.UtcNow;
         var pending = store.ListPending().Where(item =>
@@ -112,6 +113,8 @@ public static class BatchGateStateSnapshotReader
             batches,
             members,
             pushWait,
+            pushWaits = pushWaits ?? (pushWait is null
+                ? Array.Empty<PendingIntegrationPushWait>() : [pushWait]),
             gateSlots,
         };
     }

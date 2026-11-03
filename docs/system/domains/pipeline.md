@@ -599,12 +599,15 @@ candidate suite stopped early, so the batch remains unpublished with members
 pending. It is reconstructed only after the base SHA moves; a red run never
 validates the build profile. An operator eject reconstructs a held batch and
 sends only the requested member to per-card fallback. Code integrations also
-keep batches waiting from the local merge until their queued origin push
-succeeds. A durable pending-push marker preserves that wait across backend
-restarts. Batch acquisition and the planning tick reconcile markers already
-published on origin, superseded or rolled-back merges, terminal blocked pushes,
-and cards that left the integration path. State and report expose the oldest wait and an age alert,
-defaulting to 15 minutes.
+keep batches waiting from the local merge until its approved SHA reaches origin.
+The persisted pending-push marker is also the restart recovery job: the integration
+push backstop processes it even while its card is in Auto Review and regardless of
+the project's automatic artifact-push strategy. A terminal push failure is recorded
+on the card and releases the reservation. Batch acquisition and the planning tick
+reconcile markers already published on origin, superseded or rolled-back merges,
+and cards that left the integration path. State exposes every pending push and
+uses the oldest as the plan reason; each matching card shows its age and why
+publication is pending. The age alert starts after three minutes.
 
 The default local store is scoped by the backend content root and task data
 root under `<LocalApplicationData>/agentstudio/instances/`: `pending/` holds durable
