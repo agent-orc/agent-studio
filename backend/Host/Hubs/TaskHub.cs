@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
+using AgentStudio.Diagnostics;
 
 namespace AgentStudio.Host;
 
@@ -49,7 +50,34 @@ public class TaskHub : Hub
             if (principal is null || CanReadProject(principal, project.Id))
                 await Groups.AddToGroupAsync(Context.ConnectionId, ProjectGroup(project.Id, _projects));
         }
+        if (SecurityProfiles.IsNetworked(_configuration))
+            _ = MonitorLiveSessionAsync();
         await base.OnConnectedAsync();
+    }
+
+    private async Task MonitorLiveSessionAsync()
+    {
+        var connection = Context;
+        var token = connection.GetHttpContext()?.Request.Cookies[AccessSecurityStore.SessionCookieName];
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+            while (await timer.WaitForNextTickAsync(connection.ConnectionAborted))
+            {
+                if (_security.AuthenticateSession(token, touch: false) is not null) continue;
+                connection.Abort();
+                return;
+            }
+        }
+        catch (OperationCanceledException exception) when (connection.ConnectionAborted.IsCancellationRequested)
+        {
+            SilentCatch.Note(exception, "TaskHub session monitor disconnected");
+        }
+        catch (Exception exception)
+        {
+            SilentCatch.Note(exception, "TaskHub session monitor failed");
+            connection.Abort();
+        }
     }
 
     private bool HasLiveDemoViewerSession()

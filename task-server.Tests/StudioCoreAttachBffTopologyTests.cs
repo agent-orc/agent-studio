@@ -57,8 +57,9 @@ public sealed class StudioCoreAttachBffTopologyTests
         const string password = "correct horse battery staple through the bff";
         var bootstrap = await studio.PostAsJsonAsync("/api/v1/studio/auth/bootstrap", new StudioBootstrapRequest("bff-owner", password));
         Assert.Equal(HttpStatusCode.Created, bootstrap.StatusCode);
+        var factorCode = await StudioFactorTestHelper.EnrollTotpAsync(studio);
         var login = await ReadAsync<StudioAuthSessionDto>(
-            await studio.PostAsJsonAsync("/api/v1/studio/auth/login", new StudioLoginRequest("bff-owner", password)));
+            await studio.PostAsJsonAsync("/api/v1/studio/auth/login", new StudioLoginRequest("bff-owner", password, factorCode)));
         Assert.True(login.Status.Authenticated);
         // The BFF relays the caller's HttpOnly human session cookie to the
         // Task Server. The pooled upstream handler must not keep a session

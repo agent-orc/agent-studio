@@ -61,7 +61,7 @@ public sealed partial class TaskServerStore
     // remains the retired-schema downgrade guard for older binaries.
     // 40 adds post-work subjects, attempts, events and cohorts, and records one-use
     // attempt credential exchange and redacted teardown receipts (both additive).
-    public const int CurrentSchemaVersion = 41;
+    public const int CurrentSchemaVersion = 42;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4717,6 +4717,20 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "review_attempts", "required_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "review_attempts", "canary_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "tasks", "rank", "INTEGER NOT NULL DEFAULT 0", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "expires_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "absolute_expires_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "enrollment_only", "INTEGER NOT NULL DEFAULT 0", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "device", "TEXT", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "address", "TEXT", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "step_up_verified_at", "TEXT", ct);
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS studio_factors(
+                user_id TEXT PRIMARY KEY REFERENCES studio_users(id),
+                totp_secret TEXT,
+                recovery_hashes_json TEXT NOT NULL DEFAULT '[]',
+                passkeys_json TEXT NOT NULL DEFAULT '[]'
+            );
+            """, ct);
         await ExecuteAsync(connection, """
             CREATE INDEX IF NOT EXISTS ix_tasks_project_state_rank ON tasks(project_id, state, rank);
             CREATE INDEX IF NOT EXISTS ix_studio_sessions_user ON studio_sessions(user_id, revoked_at);

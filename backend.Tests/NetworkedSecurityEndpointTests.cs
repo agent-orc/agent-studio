@@ -248,7 +248,8 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [Fact]
     public async Task Real_endpoints_bootstrap_session_csrf_and_runner_enrollment_fail_closed()
     {
-        using var factory = BuildFactory();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
+        using var factory = BuildFactory(clock: clock);
         using var anonymous = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/tasks")).StatusCode);
@@ -277,6 +278,23 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
             value.Contains("HttpOnly", StringComparison.OrdinalIgnoreCase)
             && value.Contains("Secure", StringComparison.OrdinalIgnoreCase)
             && value.Contains("SameSite=Strict", StringComparison.OrdinalIgnoreCase));
+        using (var start = new HttpRequestMessage(HttpMethod.Post, "/api/auth/totp/start")
+        {
+            Content = JsonContent.Create(new { })
+        })
+        {
+            start.Headers.Add("X-CSRF-Token", auth!.CsrfToken);
+            var startResponse = await browser.SendAsync(start);
+            startResponse.EnsureSuccessStatusCode();
+            var secret = (await startResponse.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>())
+                .GetProperty("secret").GetString()!;
+            using var confirm = new HttpRequestMessage(HttpMethod.Post, "/api/auth/totp/confirm")
+            {
+                Content = JsonContent.Create(new { code = SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime) })
+            };
+            confirm.Headers.Add("X-CSRF-Token", auth.CsrfToken);
+            (await browser.SendAsync(confirm)).EnsureSuccessStatusCode();
+        }
         (await browser.GetAsync("/api/v1/management/status")).EnsureSuccessStatusCode();
 
         var missingCsrf = await browser.PostAsJsonAsync("/api/auth/runner-enrollments", new { name = "runner-01" });
@@ -520,11 +538,14 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory(string? remoteIp = null, string? projectPath = null,
-        bool publicCloudflareEdge = false) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        bool publicCloudflareEdge = false, TimeProvider? clock = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         if (remoteIp is not null)
             builder.ConfigureServices(services => services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(IPAddress.Parse(remoteIp))));
+        if (clock is not null)
+            builder.ConfigureServices(services => services.AddSingleton(provider => new AccessSecurityStore(
+                provider.GetRequiredService<IConfiguration>(), NullLogger<AccessSecurityStore>.Instance, clock)));
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,

@@ -368,6 +368,14 @@ public sealed class AccessSecurityMiddleware
                 loginUrl: managementRequest ? "/api/auth/login" : null);
             return;
         }
+        if (human.Session.SecondFactorEnrollmentOnly
+            && path is not "/api/auth/session" and not "/api/auth/logout" and not "/api/auth/change-password"
+            && !path.StartsWith("/api/auth/totp/", StringComparison.Ordinal)
+            && !path.StartsWith("/api/auth/passkeys/", StringComparison.Ordinal))
+        {
+            await Reject(context, 403, "second-factor-enrollment-required", "Register a second factor before continuing.");
+            return;
+        }
         if (human.User.MustChangePassword && path is not "/api/auth/change-password" and not "/api/auth/logout" and not "/api/auth/session")
         {
             await Reject(context, 403, "password-change-required", "Change the temporary password before continuing.");
@@ -751,7 +759,10 @@ public sealed class AccessSecurityMiddleware
            || IsReadOnlyPost(method, path);
 
     private static bool IsSelfServiceAuth(string path)
-        => path is "/api/auth/logout" or "/api/auth/change-password" or "/api/auth/session";
+        => path is "/api/auth/logout" or "/api/auth/change-password" or "/api/auth/session" or "/api/auth/step-up"
+           || path.StartsWith("/api/auth/sessions", StringComparison.Ordinal)
+           || path.StartsWith("/api/auth/totp/", StringComparison.Ordinal)
+           || path.StartsWith("/api/auth/passkeys/", StringComparison.Ordinal);
 
     private bool SameProject(string bound, string requested)
         => ProjectAccessAuthorization.SameProject(bound, requested, _projects);
@@ -910,6 +921,7 @@ public sealed class AccessSecurityMiddleware
         => path.Equals("/api/auth/status", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/bootstrap", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/auth/passkeys/assertion-options", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/runner-enroll", StringComparison.OrdinalIgnoreCase);
 

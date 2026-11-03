@@ -9,6 +9,8 @@ app-status-bar {
   display: block;
   flex: 1 1 auto;
   min-width: 0;
+  position: relative;
+  z-index: 20;
   // Stretch across the projected studio-statusbar footer so the right
   // dock can anchor to the actual edge. ViewEncapsulation.None leaves
   // `:host` untransformed, so target the element explicitly.
@@ -38,7 +40,7 @@ app-status-bar {
   line-height: 1;
   color: var(--studio-fg-dim, rgba(255, 255, 255, 0.70));
   letter-spacing: 0;
-  overflow: hidden;
+  overflow: visible;
   white-space: nowrap;
 }
 

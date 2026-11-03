@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, firstValueFrom } from 'rxjs';
 import { AuthService } from '../../services/auth.service';
+import { createPasskey, getPasskey } from '../../services/webauthn';
 export { AuthService } from '../../services/auth.service';
 
 @Component({
@@ -20,11 +21,18 @@ export class AuthGateComponent {
   password = '';
   bootstrapCode = '';
   newPassword = '';
+  secondFactorCode = '';
+  readonly totpSecret = signal('');
+  readonly recoveryCodes = signal<string[]>([]);
   readonly submitting = signal(false);
   readonly error = signal('');
 
   submit(): void {
     const status = this.auth.status();
+    if (status?.secondFactorEnrollmentRequired && !status.user?.mustChangePassword) {
+      this.confirmTotp();
+      return;
+    }
     this.submitting.set(true);
     this.error.set('');
     const request: Observable<unknown> = this.inviteToken
@@ -33,17 +41,66 @@ export class AuthGateComponent {
       ? this.auth.bootstrap(this.username, this.password, this.displayName, this.bootstrapCode)
       : status?.user?.mustChangePassword
         ? this.auth.changePassword(this.password, this.newPassword)
-        : this.auth.login(this.username, this.password);
+        : this.auth.login(this.username, this.password, this.secondFactorCode);
     request.subscribe({
       next: () => {
         if (this.inviteToken) window.history.replaceState(null, '', window.location.pathname);
-        this.password = ''; this.newPassword = ''; this.bootstrapCode = ''; this.submitting.set(false);
+        this.password = ''; this.newPassword = ''; this.bootstrapCode = ''; this.secondFactorCode = ''; this.submitting.set(false);
       },
       error: (error: HttpErrorResponse) => {
         this.error.set(error?.error?.message ?? 'Sign-in failed.');
         this.submitting.set(false);
       },
     });
+  }
+
+  beginTotp(): void {
+    this.submitting.set(true);
+    this.auth.beginTotp().subscribe({
+      next: result => { this.totpSecret.set(result.secret); this.submitting.set(false); },
+      error: (error: HttpErrorResponse) => { this.error.set(error?.error?.message ?? 'Authenticator setup failed.'); this.submitting.set(false); },
+    });
+  }
+
+  private confirmTotp(): void {
+    this.submitting.set(true);
+    this.auth.confirmTotp(this.secondFactorCode).subscribe({
+      next: result => { this.recoveryCodes.set(result.recoveryCodes); this.secondFactorCode = ''; this.submitting.set(false); },
+      error: (error: HttpErrorResponse) => { this.error.set(error?.error?.message ?? 'Authenticator code is invalid.'); this.submitting.set(false); },
+    });
+  }
+
+  acknowledgeFactorRecoveryCodes(): void {
+    this.recoveryCodes.set([]);
+    this.auth.finishFactorEnrollment();
+  }
+
+  async registerPasskey(): Promise<void> {
+    this.submitting.set(true);
+    this.error.set('');
+    try {
+      const options = await firstValueFrom(this.auth.passkeyRegistrationOptions());
+      const proof = await createPasskey(options);
+      const result = await firstValueFrom(this.auth.registerPasskey(proof));
+      this.recoveryCodes.set(result.recoveryCodes);
+    } catch (error) {
+      this.error.set(error instanceof HttpErrorResponse ? error.error?.message ?? 'Passkey setup failed.'
+        : error instanceof Error ? error.message : 'Passkey setup failed.');
+    } finally { this.submitting.set(false); }
+  }
+
+  async signInWithPasskey(): Promise<void> {
+    this.submitting.set(true);
+    this.error.set('');
+    try {
+      const options = await firstValueFrom(this.auth.passkeyLoginOptions(this.username));
+      const proof = await getPasskey(options);
+      await firstValueFrom(this.auth.loginWithPasskey(this.username, this.password, proof));
+      this.password = '';
+    } catch (error) {
+      this.error.set(error instanceof HttpErrorResponse ? error.error?.message ?? 'Passkey sign-in failed.'
+        : error instanceof Error ? error.message : 'Passkey sign-in failed.');
+    } finally { this.submitting.set(false); }
   }
 
   acknowledgeRecoveryCode(): void { this.auth.acknowledgeRecoveryCode(); }

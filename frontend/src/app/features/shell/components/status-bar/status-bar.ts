@@ -31,6 +31,7 @@ import { CrashRecoveryPromptComponent } from '../crash-recovery-prompt/crash-rec
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { summarizeStatusBarHostLoad, summarizeStatusBarSlotsByRole } from './status-bar-host-load';
 import { withRouteSegment } from '../../../../services/url-hash.util';
+import { SessionManagerComponent } from '../../../access';
 
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
 const STORAGE_DEFAULT_MODEL_PREFIX = 'defaultModel:';
@@ -56,7 +57,7 @@ export function formatRunningLabel(
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
-  imports: [UsageHoverPanelComponent, StatusbarItemComponent, CliModelSelectorComponent, CrashRecoveryPromptComponent],
+  imports: [UsageHoverPanelComponent, StatusbarItemComponent, CliModelSelectorComponent, CrashRecoveryPromptComponent, SessionManagerComponent],
   templateUrl: './status-bar.html',
   styleUrl: './status-bar.scss',
 })
