@@ -1,7 +1,19 @@
 # Review Domain Map
 
-Version: 2026-11-02
+Version: 2026-11-03
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Aspect prompt cache
+
+The four stock Claude aspects freeze a common review-context prefix containing
+the brief, delivery acceptance scope, project and card context, diff summary,
+and results inventory. The review host inserts the authoritative merge-base diff
+at the end of that prefix, before aspect-specific instructions. The first
+Claude aspect completes before the remaining aspects start in parallel, so its
+cache write can serve their reads. Custom prompt overrides and Codex aspects
+retain their existing prompt layout and scheduling. The frozen prompt bytes
+version this layout for review-plan digests. Each grade report shows cache
+creation and read tokens by aspect and as a review total.
 
 ## Review report transport budget
 

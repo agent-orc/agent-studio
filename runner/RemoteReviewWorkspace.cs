@@ -925,9 +925,28 @@ public sealed class RemoteReviewWorkspace
         async Task RunAspectsAsync(IReadOnlyList<ReviewCommandDto> aspects)
         {
             using var ledgerGate = new SemaphoreSlim(1, 1);
+            var parallelism = _options.ReviewAspectParallelism;
             try
             {
-                await ReviewAspectFanOut.RunAsync(aspects, _options.ReviewAspectParallelism, RunAspectAsync, ct);
+                var remaining = aspects;
+                if (aspects.Count > 1
+                    && string.Equals(aspects[0].CliType, "claude", StringComparison.OrdinalIgnoreCase)
+                    && aspects[0].Prompt?.Contains("<!-- remote-review-shared-material-v1 -->", StringComparison.Ordinal) == true)
+                {
+                    // A completed Claude call has written the shared prefix to
+                    // the provider cache before its siblings start reading it.
+                    await RunAspectAsync(aspects[0], ct);
+                    remaining = aspects.Skip(1).ToArray();
+                    var seed = commands.LastOrDefault(command => command.StepId == aspects[0].StepId);
+                    if (seed is null || seed.CacheCreationTokens == 0 && seed.CacheReadTokens == 0)
+                    {
+                        // No observable cache entry was written or read. Avoid
+                        // simultaneous cold writes while subsequent calls try.
+                        parallelism = 1;
+                        _log($"review-aspect-cache-unconfirmed step={aspects[0].StepId}; remaining aspects run serially");
+                    }
+                }
+                await ReviewAspectFanOut.RunAsync(remaining, parallelism, RunAspectAsync, ct);
             }
             catch (ReviewInfrastructureException exception) when (exception.Evidence is not null)
             {
@@ -2979,7 +2998,14 @@ public sealed class RemoteReviewWorkspace
     }
 
     private static string AppendReviewMaterial(string prompt, string reviewMaterial)
-        => prompt.TrimEnd() + PromptText.NewLine + PromptText.NewLine + reviewMaterial;
+    {
+        const string marker = "<!-- remote-review-shared-material-v1 -->";
+        var markerAt = prompt.IndexOf(marker, StringComparison.Ordinal);
+        if (markerAt < 0)
+            return prompt.TrimEnd() + PromptText.NewLine + PromptText.NewLine + reviewMaterial;
+        return prompt[..markerAt] + reviewMaterial + PromptText.NewLine + PromptText.NewLine
+               + prompt[(markerAt + marker.Length)..].TrimStart();
+    }
 
     /// <summary>
     /// Renders the prompt section from a diff object. The text depends only on
