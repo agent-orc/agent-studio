@@ -835,6 +835,13 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPut(method) && path.EndsWith("/quota/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsGet(method) && (path.EndsWith("/cli-update", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith("/provider-comparison", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
+            // Device sign-in and Git setup (HostSetupEndpoints): the host claims a session and reports on it.
+            var segments = path.Split('/');
+            if (segments.Length >= 7 && segments[5].Equals("device-login", StringComparison.OrdinalIgnoreCase)
+                && (HttpMethods.IsGet(method) || HttpMethods.IsPost(method))) return RunnerScopes.Claim;
+            if (segments.Length >= 7 && segments[5].Equals("git-setups", StringComparison.OrdinalIgnoreCase)
+                && HttpMethods.IsPost(method))
+                return segments.Length == 7 ? RunnerScopes.Claim : RunnerScopes.Events;
         }
         if (HttpMethods.IsGet(method) && (path is "/api/v1/projects" or "/api/v1/artifact-limits"
             || path.StartsWith("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;

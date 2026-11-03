@@ -1,6 +1,6 @@
-
 using AgentStudio.Deploy;
 using AgentStudio.GitHubApp;
+using AgentStudio.HostSetup;
 using AgentStudio.Search;
 using AgentStudio.Proposals;
 using AgentStudio.Quota;
@@ -77,6 +77,7 @@ public static class EndpointMapping
             app.MapMonolithOrchestrationEndpoints();
             app.MapMonolithGateEndpoints();
             app.MapGitHubAppEndpoints();
+            app.MapHostSetupEndpoints();
         }
         // Studio keeps the decision receipt plane in both profiles. With a
         // standalone Task Server, rule and host-occurrence routes refuse with 409.

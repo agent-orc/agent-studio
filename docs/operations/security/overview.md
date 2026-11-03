@@ -480,8 +480,21 @@ the task's live lease. Lease requests bind the wire `runnerId` to the
 authenticated service identity. A Runner credential on a route this server
 does not map, such as a standalone Task Server feature route called against
 the monolith, gets `404` with code `route-not-mapped`; the host then pauses
-that poll loop for an hour and logs it once. Anonymous callers still get `401`.
+that poll loop for an hour and logs it once. The device sign-in and Git setup
+claim loops instead stop for the life of the host process. Anonymous callers
+still get `401`.
 `HostRouteClassificationTests` classifies every route the host client calls.
+
+The monolith maps the device sign-in (`/api/v1/management/device-logins`,
+`/api/v1/runners/{id}/device-login/*`) and Git setup
+(`/api/v1/management/runner-git-setups`, `/api/v1/runners/{id}/git-setups/*`)
+routes itself (AGT-3432). The management routes are Owner-only. A host claims
+with its own credential: `runner.claim` for the claims and the device sign-in
+reports, `runner.events` for the Git setup reports. An empty queue answers
+`204`. While a claim poll fails, the host backs off from 2 seconds up to
+1 minute. It logs the status and refusal code once for each distinct failure,
+logs the repeat count when the failure changes or the poll recovers, and goes
+back to 2 seconds after an answer.
 
 ### Runner credential binding (SM-9)
 

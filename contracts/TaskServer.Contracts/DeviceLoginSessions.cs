@@ -1,12 +1,12 @@
 using System.Security.Cryptography;
-using AgentStudio.TaskServer.Contracts;
 
-namespace AgentStudio.TaskServer;
+namespace AgentStudio.TaskServer.Contracts;
 
 /// <summary>
 /// The single device sign-in service for the first-run checklist and the Access and
-/// Execution Hosts actions. Device instructions are volatile; the Task Server persists
-/// only the code-free audit.
+/// Execution Hosts actions. Device instructions are volatile; the server that maps the
+/// device-login routes (the standalone Task Server, or the networked monolith) persists
+/// only the code-free audit through <c>audit</c>.
 /// </summary>
 public sealed class DeviceLoginSessions
 {
@@ -21,10 +21,6 @@ public sealed class DeviceLoginSessions
     private readonly object _gate = new();
     private readonly Dictionary<string, Session> _sessions = new(StringComparer.Ordinal);
     private readonly Queue<(Session Session, string Result)> _pendingAudits = new();
-
-    public DeviceLoginSessions(TimeProvider clock, TaskServerStore store)
-        : this(clock, async (request, actor, ct) =>
-            _ = await store.RecordStudioProviderAuthEventAsync(request, actor, ct)) { }
 
     public DeviceLoginSessions(TimeProvider clock,
         Func<StudioProviderAuthEventRequest, string, CancellationToken, Task> audit)
@@ -254,22 +250,5 @@ public sealed class DeviceLoginSessions
         public string? VerificationUrl { get; set; }
         public string? UserCode { get; set; }
         public string? Detail { get; set; }
-    }
-}
-
-public sealed class DeviceLoginAuditSweep(DeviceLoginSessions sessions, TimeProvider clock,
-    ILogger<DeviceLoginAuditSweep> logger) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), clock);
-        while (await timer.WaitForNextTickAsync(stoppingToken))
-        {
-            try { await sessions.SweepAsync(stoppingToken); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "Device login timeout audit failed; retrying next sweep.");
-            }
-        }
     }
 }
