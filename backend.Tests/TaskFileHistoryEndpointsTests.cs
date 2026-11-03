@@ -527,15 +527,23 @@ public sealed class TaskFileHistoryOwnHostTests : TaskFileHistoryTestBase, IDisp
         contentResponse.EnsureSuccessStatusCode();
         Assert.Equal("text/markdown", contentResponse.Content.Headers.ContentType?.MediaType);
         Assert.Equal("run 1 review\n", await contentResponse.Content.ReadAsStringAsync());
-        for (var attempt = 0; attempt < 400; attempt++)
+        using var historyDeadline = new CancellationTokenSource(ClientTimeout);
+        try
         {
-            using var missing = await client.GetAsync(
-                $"/api/tasks/ASS-853/files/code-review.md?watchPath={watchPath}&scope=workspace&at={beforeFile}");
-            if (missing.StatusCode == HttpStatusCode.NotFound) return;
-            Assert.Equal(HttpStatusCode.Accepted, missing.StatusCode);
-            await Task.Delay(50);
+            while (true)
+            {
+                using var missing = await client.GetAsync(
+                    $"/api/tasks/ASS-853/files/code-review.md?watchPath={watchPath}&scope=workspace&at={beforeFile}",
+                    historyDeadline.Token);
+                if (missing.StatusCode == HttpStatusCode.NotFound) return;
+                Assert.Equal(HttpStatusCode.Accepted, missing.StatusCode);
+                await Task.Delay(50, historyDeadline.Token);
+            }
         }
-        throw new Xunit.Sdk.XunitException("The missing historical object was not indexed.");
+        catch (OperationCanceledException) when (historyDeadline.IsCancellationRequested)
+        {
+            throw new Xunit.Sdk.XunitException("The missing historical object was not indexed before the client deadline.");
+        }
     }
 
     [Fact]
@@ -822,8 +830,9 @@ public sealed class TaskFileHistoryOwnHostTests : TaskFileHistoryTestBase, IDisp
         var backfill = factory.Services.GetRequiredService<LegacyResultHistoryBackfill>();
         var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(id, _workspaceProjectRoot)!;
         backfill.Observe(task, id, _workspaceProjectRoot);
-        for (var attempt = 0; attempt < 200 && !backfill.IsImportComplete(task); attempt++)
-            await Task.Delay(10);
+        using var importDeadline = new CancellationTokenSource(ClientTimeout);
+        while (!backfill.IsImportComplete(task))
+            await Task.Delay(10, importDeadline.Token);
         Assert.True(backfill.IsImportComplete(task));
         using var listResponse = await client.GetAsync($"/api/tasks/{id}/result-history?watchPath={watchPath}");
         listResponse.EnsureSuccessStatusCode();
@@ -1068,16 +1077,23 @@ public abstract class TaskFileHistoryTestBase
 
     protected static async Task<HttpResponseMessage> GetReadyHistoryAsync(HttpClient client, string url)
     {
-        for (var attempt = 0; attempt < 400; attempt++)
+        using var deadline = new CancellationTokenSource(ClientTimeout);
+        try
         {
-            var response = await client.GetAsync(url);
-            if (response.Headers.TryGetValues(TaskFilesEndpoints.SourceFactsStateHeader, out var values)
-                && values.Single() == AgentStudio.Git.SourceFactStates.Ready)
-                return response;
-            response.Dispose();
-            await Task.Delay(50);
+            while (true)
+            {
+                var response = await client.GetAsync(url, deadline.Token);
+                if (response.Headers.TryGetValues(TaskFilesEndpoints.SourceFactsStateHeader, out var values)
+                    && values.Single() == AgentStudio.Git.SourceFactStates.Ready)
+                    return response;
+                response.Dispose();
+                await Task.Delay(50, deadline.Token);
+            }
         }
-        throw new Xunit.Sdk.XunitException("The repository fact producer did not publish file history.");
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            throw new Xunit.Sdk.XunitException("The repository fact producer did not publish file history before the client deadline.");
+        }
     }
 
     protected string WriteJob(string id)
