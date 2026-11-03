@@ -75,6 +75,18 @@ public sealed class BatchGatePolicyTests
             Sha, Scope, first.Members.Select(x => x.TaskKey == "a" ? x with { DeliveryEpoch = 2 } : x).ToArray()));
     }
 
+    [Fact]
+    public void Proven_green_member_is_selected_first_on_its_tested_base()
+    {
+        var options = Enabled with { CloseSize = 2, MaximumSize = 2 };
+        var members = new[] { Subject("old", -3), Subject("middle", -2), Subject("green", -1) };
+
+        var formed = BatchGatePolicy.Form(members, Scope, Sha, options, Now,
+            priorityKeys: new HashSet<string>(["green"], StringComparer.Ordinal));
+
+        Assert.Equal(["green", "old"], formed.Manifest!.Members.Select(member => member.TaskKey));
+    }
+
     [Theory]
     [InlineData(8, 2, 0, false)]
     [InlineData(8, 3, 0, true)]

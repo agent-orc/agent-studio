@@ -41,7 +41,8 @@ public sealed record BatchGatePilotSnapshot(
     int PerTaskFallbackCards = 0,
     int PerTaskFallbackSuiteRuns = 0,
     double? PerTaskFallbackSuitesPerCard = null,
-    int PerTaskPublishVerdictReuses = 0);
+    int PerTaskPublishVerdictReuses = 0,
+    IReadOnlyList<BatchGateIsolationFinding>? IsolationFindings = null);
 
 /// <summary>One red candidate's base answer: its classification, the source that answered, and the minutes it cost.</summary>
 public sealed record BatchGateBaseCheckView(
@@ -153,7 +154,8 @@ public static class BatchGatePilotSnapshotReader
             PerTaskFallbackCards: fallbackCards.Count,
             PerTaskFallbackSuiteRuns: fallbackSuites,
             PerTaskFallbackSuitesPerCard: Ratio(fallbackSuites, fallbackCards.Count),
-            PerTaskPublishVerdictReuses: fallbackCards.Count(item => item.PublishVerdictReused));
+            PerTaskPublishVerdictReuses: fallbackCards.Count(item => item.PublishVerdictReused),
+            IsolationFindings: store.ListIsolationFindings(project));
     }
 
     private static double? Ratio(double numerator, double denominator)

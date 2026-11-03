@@ -148,7 +148,8 @@ public static class BatchGatePolicy
         IEnumerable<BatchGateSubject> candidates, BatchGateScope scope,
         string baseSha, BatchGateFormationOptions options,
         DateTimeOffset now, int reviewQueueLength = 0, bool loadThrottled = false,
-        bool gateBacklog = false, bool baseRed = false)
+        bool gateBacklog = false, bool baseRed = false,
+        IReadOnlySet<string>? priorityKeys = null)
     {
         if (!options.IsValid) throw new ArgumentOutOfRangeException(nameof(options));
         var eligible = new List<BatchGateSubject>();
@@ -159,7 +160,12 @@ public static class BatchGatePolicy
             if (reason is { } excluded) exclusions.Add(new(subject.TaskKey, excluded));
             else eligible.Add(subject);
         }
-        eligible.Sort(Compare);
+        eligible.Sort((a, b) =>
+        {
+            var priority = (priorityKeys?.Contains(b.TaskKey) == true).CompareTo(
+                priorityKeys?.Contains(a.TaskKey) == true);
+            return priority != 0 ? priority : Compare(a, b);
+        });
         var keys = eligible.Select(x => x.TaskKey).ToArray();
         if (!options.Enabled || eligible.Count == 0)
             return new(null, exclusions, keys, UsePerTaskGate: !options.Enabled);

@@ -58,4 +58,60 @@ public sealed class BatchGateIsolationTests
         Assert.Empty(result.EjectedKeys);
         Assert.Equal(4, result.UnresolvedCohortKeys.Count);
     }
+
+    [Fact]
+    public async Task Superseded_member_leaves_complement_without_discarding_green_child()
+    {
+        var members = Enumerable.Range(0, 3).Select(Member).ToArray();
+        var current = new HashSet<string>(members.Select(member => member.TaskKey));
+        var probed = new List<string>();
+        var published = new List<string>();
+        var result = await BatchGateIsolation.RunAsync(members,
+            (subset, _) =>
+            {
+                var keys = string.Join(',', subset.Select(member => member.TaskKey));
+                probed.Add(keys);
+                if (keys == "task-1,task-2")
+                {
+                    current.Remove("task-1");
+                    return Task.FromResult(new BatchGateProbeResult(
+                        BatchGateFailureClass.Superseded, Sha, "cancelled"));
+                }
+                return Task.FromResult(new BatchGateProbeResult(
+                    BatchGateFailureClass.Pass, Sha, "evidence"));
+            }, 4, CancellationToken.None,
+            member => current.Contains(member.TaskKey),
+            (subset, _, _) =>
+            {
+                published.AddRange(subset.Select(member => member.TaskKey));
+                return Task.FromResult(true);
+            });
+
+        Assert.Contains("task-0", published);
+        Assert.Contains("task-2", published);
+        Assert.DoesNotContain("task-1", published);
+        Assert.Contains("task-1,task-2", probed);
+        Assert.Contains("task-2", probed);
+        Assert.Empty(result.EjectedKeys);
+    }
+
+    [Fact]
+    public async Task Red_pair_and_green_singleton_prove_the_other_member_red()
+    {
+        var members = Enumerable.Range(0, 4).Select(Member).ToArray();
+        var result = await BatchGateIsolation.RunAsync(members,
+            (subset, _) => Task.FromResult(new BatchGateProbeResult(
+                subset.Any(member => member.TaskKey == "task-1")
+                    ? BatchGateFailureClass.DeterministicSuiteRed
+                    : BatchGateFailureClass.Pass, Sha, "evidence")),
+            4, CancellationToken.None);
+
+        Assert.Contains(result.Diagnostics, diagnostic =>
+            diagnostic.MemberKeys.SequenceEqual(["task-0", "task-1"])
+            && diagnostic.Result.Classification == BatchGateFailureClass.DeterministicSuiteRed);
+        Assert.Contains(result.Diagnostics, diagnostic =>
+            diagnostic.MemberKeys.SequenceEqual(["task-0"])
+            && diagnostic.Result.Classification == BatchGateFailureClass.Pass);
+        Assert.Contains("task-1", result.EjectedKeys);
+    }
 }

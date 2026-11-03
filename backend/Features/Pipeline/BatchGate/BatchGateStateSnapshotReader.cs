@@ -112,6 +112,7 @@ public static class BatchGateStateSnapshotReader
             }).ToArray(),
             batches,
             members,
+            isolationFindings = store.ListIsolationFindings(project),
             pushWait,
             pushWaits = pushWaits ?? (pushWait is null
                 ? Array.Empty<PendingIntegrationPushWait>() : [pushWait]),
