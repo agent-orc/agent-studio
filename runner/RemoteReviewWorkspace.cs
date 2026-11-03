@@ -1027,7 +1027,7 @@ public sealed class RemoteReviewWorkspace
                 var remaining = aspects;
                 if (aspects.Count > 1
                     && string.Equals(aspects[0].CliType, "claude", StringComparison.OrdinalIgnoreCase)
-                    && aspects[0].Prompt?.Contains("<!-- remote-review-shared-material-v1 -->", StringComparison.Ordinal) == true)
+                    && aspects[0].Prompt?.Contains(SharedMaterialMarker, StringComparison.Ordinal) == true)
                 {
                     // A completed Claude call has written the shared prefix to
                     // the provider cache before its siblings start reading it.
@@ -3095,14 +3095,19 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
+    /// <summary>
+    /// Ends the shared aspect prefix composed by the backend's
+    /// <c>ReviewAspectCachePrompt</c>; the review material replaces it.
+    /// </summary>
+    internal const string SharedMaterialMarker = "<!-- remote-review-shared-material-v1 -->";
+
     private static string AppendReviewMaterial(string prompt, string reviewMaterial)
     {
-        const string marker = "<!-- remote-review-shared-material-v1 -->";
-        var markerAt = prompt.IndexOf(marker, StringComparison.Ordinal);
+        var markerAt = prompt.IndexOf(SharedMaterialMarker, StringComparison.Ordinal);
         if (markerAt < 0)
             return prompt.TrimEnd() + PromptText.NewLine + PromptText.NewLine + reviewMaterial;
         return prompt[..markerAt] + reviewMaterial + PromptText.NewLine + PromptText.NewLine
-               + prompt[(markerAt + marker.Length)..].TrimStart();
+               + prompt[(markerAt + SharedMaterialMarker.Length)..].TrimStart();
     }
 
     /// <summary>
