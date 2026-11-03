@@ -6,12 +6,13 @@ public static class BatchGateStateSnapshotReader
 {
     public static object Read(BatchGateStore store, string project,
         BatchGateFormationOptions settings, int history = 10,
-        IReadOnlyDictionary<string, double>? risks = null,
+        IReadOnlyDictionary<string, BatchGateCachedRisk>? risks = null,
         PendingIntegrationPushWait? pushWait = null,
         GateSlotUsage? gateSlots = null,
-        IReadOnlyList<PendingIntegrationPushWait>? pushWaits = null)
+        IReadOnlyList<PendingIntegrationPushWait>? pushWaits = null,
+        DateTimeOffset? now = null)
     {
-        var now = DateTimeOffset.UtcNow;
+        var at = now ?? DateTimeOffset.UtcNow;
         var pending = store.ListPending().Where(item =>
                 string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.Subject.EnqueueSequence).ToArray();
@@ -100,15 +101,22 @@ public static class BatchGateStateSnapshotReader
         return new
         {
             plan,
-            pending = pending.Select(item => new
+            pending = pending.Select(item =>
             {
-                item.Subject.TaskKey,
-                item.ReviewAttemptId,
-                item.Subject.ResultSha,
-                waitMinutes = Math.Max(0, (now - item.EnqueuedAtUtc).TotalMinutes),
-                risk = risks?.GetValueOrDefault(item.Subject.TaskKey)
-                    ?? (item.Subject.DocumentationOnly ? .08 : .2),
-                exclusion = (string?)null,
+                // A card the planner tick has not read yet keeps the lane estimate.
+                var cached = risks?.GetValueOrDefault(item.Subject.TaskKey);
+                return new
+                {
+                    item.Subject.TaskKey,
+                    item.ReviewAttemptId,
+                    item.Subject.ResultSha,
+                    waitMinutes = Math.Max(0, (at - item.EnqueuedAtUtc).TotalMinutes),
+                    risk = cached?.Risk ?? (item.Subject.DocumentationOnly ? .08 : .2),
+                    paths = cached?.Paths ?? [],
+                    riskAgeMinutes = cached is null
+                        ? (double?)null : Math.Max(0, (at - cached.ReadAtUtc).TotalMinutes),
+                    exclusion = (string?)null,
+                };
             }).ToArray(),
             batches,
             members,
