@@ -1,0 +1,281 @@
+{
+  "schemaVersion": 1,
+  "id": "style-rule-delivery",
+  "title": "Style rules in the card",
+  "summary": "Measured on 178 cards with run transcripts on agent-runner-01 (21 October to 3 November 2026): the frontend area of the prompt-enrichment selector fires on 97% of cards with 35% precision, the frontend-styling guide reached 1 of 45 frontend cards because two optional slots are filled in id order, 19 of 45 frontend cards opened none of the style sources, projects without docs/quality received no style rule, and review verdicts cannot cite rule ids. Recommended: rule packs in skill format under docs/quality/rules plus product-shipped workspace packs; deterministic selection from pins, source-card inheritance, prompt paths and word-boundary keywords inside pre-prompt-enrichment; a tiered budget with visible overflow; delivery as binding rules in the prompt, a selected-rules document in the card Docs and packs materialized into the per-card CLI skill root; a rule-fit review aspect citing rule ids plus deterministic guards; a rule ledger that proposes sharper or new rules. Pilot: the header-zone pack from AGT-3464. Nine implementation slices.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-03T14:00:00Z",
+  "sourceTaskKeys": [
+    "AGT-3465"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3464",
+    "AGT-3356",
+    "AGT-3458",
+    "QS-107",
+    "TE-58"
+  ],
+  "openDecisions": [
+    {
+      "id": "D1",
+      "title": "Rule unit and location",
+      "recommended": "B",
+      "options": {
+        "A": "Extended guide files",
+        "B": "Skill-format rule packs in docs/quality/rules plus workspace packs",
+        "C": "Rules as application data"
+      }
+    },
+    {
+      "id": "D2",
+      "title": "Selection signals",
+      "recommended": "B",
+      "options": {
+        "A": "Tuned needles",
+        "B": "Deterministic pins, inheritance, paths, keywords, mode",
+        "C": "Claude Haiku 5.5 classifier (about $0.00045 per card)"
+      }
+    },
+    {
+      "id": "D3",
+      "title": "Budget",
+      "recommended": "B",
+      "options": {
+        "A": "Two optional blocks",
+        "B": "Tiered character budget with visible overflow",
+        "C": "Full packs in the prompt"
+      }
+    },
+    {
+      "id": "D4",
+      "title": "Delivery",
+      "recommended": "C",
+      "options": {
+        "A": "Card Docs only",
+        "B": "Native skills in the worktree",
+        "C": "Prompt plus card Docs plus clean-context skill root"
+      }
+    },
+    {
+      "id": "D5",
+      "title": "Phase",
+      "recommended": "A",
+      "options": {
+        "A": "Extend pre-prompt-enrichment",
+        "B": "New pre-rule-selection step"
+      }
+    },
+    {
+      "id": "D6",
+      "title": "Verification",
+      "recommended": "B",
+      "options": {
+        "A": "Inside code-quality",
+        "B": "Dedicated rule-fit aspect plus guards",
+        "C": "Guards only"
+      }
+    },
+    {
+      "id": "D7",
+      "title": "Feedback loop",
+      "recommended": "B",
+      "options": {
+        "A": "Manual",
+        "B": "Rule ledger proposing cards"
+      }
+    },
+    {
+      "id": "D8",
+      "title": "Measurement",
+      "recommended": "B",
+      "options": {
+        "A": "Brief metrics",
+        "B": "Brief metrics plus selection quality"
+      }
+    },
+    {
+      "id": "D9",
+      "title": "Concept-mode cards",
+      "recommended": "B",
+      "options": {
+        "A": "No rules",
+        "B": "Pointer index only, binding rules for pinned packs",
+        "C": "Same as coding"
+      }
+    },
+    {
+      "id": "D10",
+      "title": "Workspace pack override",
+      "recommended": "A",
+      "options": {
+        "A": "Project may disable a workspace pack",
+        "B": "Project may also replace it under the same id"
+      }
+    }
+  ],
+  "implementationTasks": [
+    {
+      "id": "SR-S1",
+      "title": "Rule-pack format and catalogue",
+      "dependsOn": [],
+      "promptMarkdown": "Read docs/style-rule-delivery/index.html and workbench.json, AGENTS.md, frontend/AGENTS.md when UI is involved, docs/quality/README.md, docs/quality/adding-a-rule.md and docs/start/contribution-and-style-guide.html. This is one bounded implementation slice of the AGT-3465 Dossier (style rules in the card). Use the Dossier's recommended option for every decision (D1-B, D2-B, D3-B, D4-C, D5-A, D6-B, D7-B, D8-B, D9-B, D10-A) unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Git handling stays with the platform: do not commit, push or manage worktrees yourself.\n\nDependencies: none. Resolve slice ids to promoted task keys before starting dependent work.\n\n## Goal\nMake rule packs in skill format a first-class catalogue source next to the existing style guides, without changing selection yet.\n\n## Scope\n- Discover project packs at `docs/quality/rules/<pack>/SKILL.md` (bounded: at most 64 packs, 32 KiB per SKILL.md, deterministic path order, no symbolic or reparse paths) and workspace packs from a product-shipped `rule-packs/<pack>/SKILL.md` folder.\n- Frontmatter: `name` (pack id, lowercase letters, digits, hyphens, at most 64), `description` (at most 600), and a `metadata` map with string values: `pack-version`, `tier` (`binding` or `guidance`), `applies-to` (inline JSON with `projects`, `technologies`, `surfaces`, `paths` globs, `taskKinds`, same OR semantics and explicit `*` as `appliesTo` today), optional `keywords`.\n- Body: a `## Binding rules` list where each item starts with a rule id (`[A-Z]{2,5}-[0-9]+`) and ends with `Check: <lint:id | test:Name | review>`. Rule ids are unique across the catalogue; a duplicate id, a duplicate pack id between workspace and project, an invalid glob, or more than 12 binding rules excludes the pack with a relative-path warning.\n- Expose packs, rules and warnings in the existing style-guide catalogue snapshot and API with the same snapshot id semantics. Existing top-level guides keep loading unchanged.\n- Document the format in docs/quality/README.md and docs/quality/adding-a-rule.md, and add the rule-pack folder row to docs/start/README.md.\n\n## Out of scope\nSelection, prompt rendering, delivery, review.\n\n## Acceptance criteria\n- Fixture packs (project and workspace) parse into packs with rules, tiers, globs and checks; unit tests cover each rejection reason.\n- The three existing guides still load with unchanged ids and snapshot behaviour.\n- The catalogue API returns packs and warnings without repository roots.\n- docs/quality/README.md, adding-a-rule.md and docs/start/README.md describe the format.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Rule-pack format and catalogue",
+        "criteria": [
+          "Fixture project and workspace packs parse into packs with rules, tiers, globs and checks; each rejection reason has a unit test.",
+          "The three existing guides still load with unchanged ids and snapshot behaviour.",
+          "The catalogue API returns packs and warnings without repository roots.",
+          "docs/quality/README.md, adding-a-rule.md and docs/start/README.md describe the pack format."
+        ]
+      }
+    },
+    {
+      "id": "SR-S2",
+      "title": "Header-zone pilot rule pack",
+      "dependsOn": [
+        "SR-S1",
+        "AGT-3464"
+      ],
+      "promptMarkdown": "Read docs/style-rule-delivery/index.html and workbench.json, AGENTS.md, frontend/AGENTS.md when UI is involved, docs/quality/README.md, docs/quality/adding-a-rule.md and docs/start/contribution-and-style-guide.html. This is one bounded implementation slice of the AGT-3465 Dossier (style rules in the card). Use the Dossier's recommended option for every decision (D1-B, D2-B, D3-B, D4-C, D5-A, D6-B, D7-B, D8-B, D9-B, D10-A) unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Git handling stays with the platform: do not commit, push or manage worktrees yourself.\n\nDependencies: S1, AGT-3464. Resolve slice ids to promoted task keys before starting dependent work.\n\n## Goal\nPublish the header rule set from AGT-3464 as the first rule pack, `header-zone`.\n\n## Scope\n- Create `docs/quality/rules/header-zone/SKILL.md` with the frontmatter shown in the Dossier (projects PROJ-002, technology angular, surfaces app-header and task-header, path globs for usage-cockpit-header, studio-shell.header-cockpit.ts, quota/header-quota and task-detail detail-header, task kinds coding and review-fix, keywords).\n- Binding rules: take the rule text and order from AGT-3464 and number them HDR-1 onward. Reconcile the two candidates in the Dossier (one render per destination at every shell width, from the AGT-3458 finding; usage and session statistics in the footer only, from the AGT-3356 operator wording) with AGT-3464; keep only rules AGT-3464 accepts.\n- Each rule names its check. The slot-registry guard from AGT-3464 is the check of the slot rule; layout rules use `review`.\n- `references/` holds the slot registry explanation and compliant and rejected examples; the `## Evidence` section links AGT-3464, AGT-3356 and AGT-3458.\n\n## Acceptance criteria\n- The pack passes the S1 catalogue validation with no warning.\n- Every binding rule has a check; the slot-registry rule points at a test that passes on develop.\n- The Wiki shows the pack under docs/quality/rules.\n- The pack's description is at most 300 characters and names the header surfaces, so a CLI skill listing is meaningful.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Header-zone pilot rule pack",
+        "criteria": [
+          "The header-zone pack passes S1 catalogue validation with no warning.",
+          "Every binding rule has a check; the slot-registry rule points at a test that passes on develop.",
+          "The Wiki shows the pack under docs/quality/rules.",
+          "The pack description is at most 300 characters and names the header surfaces."
+        ]
+      }
+    },
+    {
+      "id": "SR-S3",
+      "title": "Rule selection v5 and tiered budget in pre-prompt-enrichment",
+      "dependsOn": [
+        "SR-S1"
+      ],
+      "promptMarkdown": "Read docs/style-rule-delivery/index.html and workbench.json, AGENTS.md, frontend/AGENTS.md when UI is involved, docs/quality/README.md, docs/quality/adding-a-rule.md and docs/start/contribution-and-style-guide.html. This is one bounded implementation slice of the AGT-3465 Dossier (style rules in the card). Use the Dossier's recommended option for every decision (D1-B, D2-B, D3-B, D4-C, D5-A, D6-B, D7-B, D8-B, D9-B, D10-A) unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Git handling stays with the platform: do not commit, push or manage worktrees yourself.\n\nDependencies: S1. Resolve slice ids to promoted task keys before starting dependent work.\n\n## Goal\nSelect rule packs from strong deterministic signals and render binding rules in full inside the existing Prompt enrichment step, with every omission visible.\n\n## Scope\n- Signals in order of strength: (1) pins: new card field `rulePacks`, orchestrator pins, and the existing pipeline-type `EnrichmentBlockIds`; (2) inheritance: a review-fix or continuation card takes the source card's delivered packs and the packs matched by the source card's diff file list (source facts); (3) repository paths and Angular component selectors named in the authored prompt and in referenced Dossiers and cards, matched against pack `paths` globs (build a selector-to-path index from `selector: 'app-...'` declarations); (4) earlier-attempt diff for reissues; (5) pack keywords with word boundaries, at least two distinct hits; (6) card mode gate: coding and review-fix receive binding rules, concept cards receive the pointer index only unless a pack is pinned.\n- Tiered budget inside the existing 6,000-character ceiling: tier 0 mandatory platform blocks; tier 1 binding rules in full (at most 12 rules and 1,200 characters per pack, 4,000 characters total); tier 2 guidance packs as one-line pointers (at most 6). Order by signal strength, then by narrowest glob; never by id. Overflow drops pointers before binding rules.\n- The launch context and `intake/enriched-context.md` list omitted packs with the reason; `enrichment-report.json` gains a `rulePacks` section (pack id, version, digest, signal, rule ids delivered, omitted rule ids, reason) and keeps the existing fields. The pipeline step summary reads `<n> packs, <m> binding rules, <k> omitted`.\n- Keep `AreaNeedles` and the C# blocks for non-pack candidates until S6. Selector tokens stay zero.\n\n## Acceptance criteria\n- Replay tests from the Dossier: a card naming `frontend/src/app/features/quota/components/header-quota/...` receives `header-zone`; a review-fix card of that card inherits it; a backend-only prompt containing the words card, lane and build receives no Angular pack; with angular-components, dotnet-backend and frontend-styling all eligible, frontend-styling is no longer dropped by id order.\n- An overflow fixture shows the omitted pack in the prompt, the context file and the report.\n- Report and step record zero selector tokens; the enriched prompt stays at or below 6,000 characters.\n- docs/system/domains/pipeline.md and docs/quality/README.md describe the selection order and budget.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Rule selection v5 and tiered budget in pre-prompt-enrichment",
+        "criteria": [
+          "A card naming header-quota paths receives header-zone; a review-fix card of that card inherits it; a backend-only prompt with the words card, lane and build receives no Angular pack.",
+          "With angular-components, dotnet-backend and frontend-styling all eligible, frontend-styling is not dropped by id order.",
+          "An overflow fixture lists the omitted pack in the prompt, intake/enriched-context.md and enrichment-report.json.",
+          "Selector tokens stay zero and the enriched prompt stays within 6,000 characters; pipeline and quality docs describe the order and budget."
+        ]
+      }
+    },
+    {
+      "id": "SR-S4",
+      "title": "Rule delivery to card Docs, remote runs and CLI skill roots",
+      "dependsOn": [
+        "SR-S3"
+      ],
+      "promptMarkdown": "Read docs/style-rule-delivery/index.html and workbench.json, AGENTS.md, frontend/AGENTS.md when UI is involved, docs/quality/README.md, docs/quality/adding-a-rule.md and docs/start/contribution-and-style-guide.html. This is one bounded implementation slice of the AGT-3465 Dossier (style rules in the card). Use the Dossier's recommended option for every decision (D1-B, D2-B, D3-B, D4-C, D5-A, D6-B, D7-B, D8-B, D9-B, D10-A) unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Git handling stays with the platform: do not commit, push or manage worktrees yourself.\n\nDependencies: S3. Resolve slice ids to promoted task keys before starting dependent work.\n\n## Goal\nMake the selected rules visible in the card's Docs and present for local and remote runs, including the full pack references, without writing into the worktree.\n\n## Scope\n- Write `rules/selected-rules.md` into the task folder in the same atomic sequence as the enrichment report (context, document, then report as commit marker). It lists delivered packs with their binding rules, pointers, omitted packs with reasons, and the snapshot id. The Docs tab (prompt-pane, tab id `description`) lists it.\n- Add an additive `RuleDelivery` object to `RunSpecDto` on the monolith and the standalone Task Server claim paths: document markdown plus the selected pack files (SKILL.md and references), each with path and SHA-256, bounded to 64 KiB in total; older runners ignore it.\n- The runner materializes the packs into the per-card clean-context skill root before CLI start: `$CODEX_HOME/skills/<pack>/` for Codex and `$CLAUDE_CONFIG_DIR/skills/<pack>/` for Claude Code, replacing packs from an earlier round of the same card and leaving the `.system` and plugin skills untouched. It also writes the document to the run's job-docs location used for local runs.\n- Never write pack files into the worktree.\n\n## Verification\nThe CLI behaviour changes, so run a live probe per installed CLI on a runner (Claude Code and Codex at their installed versions) that asks the CLI to list its skills with a materialized probe pack, and record the result in results/. Claude Code `.claude/skills` and `$CLAUDE_CONFIG_DIR/skills` discovery was not verifiable during the concept run (authentication), so this probe is required.\n\n## Acceptance criteria\n- The Docs tab of a task lists rules/selected-rules.md; a Playwright spec covers it with light and dark screenshots.\n- A remote run receives RuleDelivery and the materialized packs; an older runner without support still runs with the prompt-only rules.\n- The live probes show the probe pack in the skill listing of both installed CLIs; results/ holds the transcripts.\n- `git status --porcelain` in the run worktree shows no pack file after materialization.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Rule delivery to card Docs, remote runs and CLI skill roots",
+        "criteria": [
+          "The Docs tab lists rules/selected-rules.md; a Playwright spec covers it with light and dark screenshots.",
+          "A remote run receives RuleDelivery and the materialized packs; an older runner still runs with prompt-only rules.",
+          "Live probes show the probe pack in the skill listing of both installed CLIs, with transcripts in results/.",
+          "git status --porcelain in the run worktree shows no pack file after materialization."
+        ]
+      }
+    },
+    {
+      "id": "SR-S5",
+      "title": "Rule-fit review aspect with rule citations",
+      "dependsOn": [
+        "SR-S3"
+      ],
+      "promptMarkdown": "Read docs/style-rule-delivery/index.html and workbench.json, AGENTS.md, frontend/AGENTS.md when UI is involved, docs/quality/README.md, docs/quality/adding-a-rule.md and docs/start/contribution-and-style-guide.html. This is one bounded implementation slice of the AGT-3465 Dossier (style rules in the card). Use the Dossier's recommended option for every decision (D1-B, D2-B, D3-B, D4-C, D5-A, D6-B, D7-B, D8-B, D9-B, D10-A) unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Git handling stays with the platform: do not commit, push or manage worktrees yourself.\n\nDependencies: S3. Resolve slice ids to promoted task keys before starting dependent work.\n\n## Goal\nCheck each delivery against exactly the rules the agent received, cite rule ids, and record selection misses.\n\n## Scope\n- New aspect step `aspect-rule-fit` in the review library with the standard pipeline-step settings (enabled state, prompt override, CLI, model, thinking level; default the bounded support aspect route). Schedule it only when the delivered packs from `enrichment-report.json` or the packs matched by the merge-base diff paths contain rules with `Check: review`.\n- Frozen prompt: the delivered binding rules with ids, the diff-matched packs that were not delivered (marked as such), and the authoritative diff material. It reuses the cached common prefix of the stock aspects.\n- Extend the verdict sentinel with `rules_cited=<comma-separated rule ids>`; a block without a rule id and a diff location becomes concerns under the existing citation policy. Rules with a deterministic check are not judged by the model; when their gate failed, the aspect cites the failed gate.\n- Record per card: delivered rules, cited rules, verdict per rule, and selection misses (diff-matched pack not delivered).\n- Update docs/system/domains/review.md (aspect list, sentinel, scheduling).\n\n## Acceptance criteria\n- A fixture delivery that renders a header destination twice yields a block citing the matching HDR rule and a file and line.\n- An uncited block is downgraded to concerns; a guard-checked rule is not judged by the model.\n- A diff touching header-zone paths on a card without the pack records a selection miss and still reviews the pack.\n- The grade report shows cache read tokens for the new aspect on the shared prefix.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Rule-fit review aspect with rule citations",
+        "criteria": [
+          "A fixture delivery rendering a header destination twice yields a block citing the matching HDR rule with file and line.",
+          "An uncited block is downgraded to concerns; a guard-checked rule is not judged by the model.",
+          "A header-zone diff on a card without the pack records a selection miss and still reviews the pack.",
+          "The grade report shows cache read tokens for the rule-fit aspect on the shared prefix."
+        ]
+      }
+    },
+    {
+      "id": "SR-S6",
+      "title": "Migrate style guides and built-in C# blocks into rule packs",
+      "dependsOn": [
+        "SR-S1",
+        "SR-S3"
+      ],
+      "promptMarkdown": "Read docs/style-rule-delivery/index.html and workbench.json, AGENTS.md, frontend/AGENTS.md when UI is involved, docs/quality/README.md, docs/quality/adding-a-rule.md and docs/start/contribution-and-style-guide.html. This is one bounded implementation slice of the AGT-3465 Dossier (style rules in the card). Use the Dossier's recommended option for every decision (D1-B, D2-B, D3-B, D4-C, D5-A, D6-B, D7-B, D8-B, D9-B, D10-A) unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Git handling stays with the platform: do not commit, push or manage worktrees yourself.\n\nDependencies: S1, S3. Resolve slice ids to promoted task keys before starting dependent work.\n\n## Goal\nMove the remaining rule sources into packs so there is one rule unit.\n\n## Scope\n- Convert angular-components, frontend-styling and dotnet-backend into packs with rule ids (ANG-n, FES-n, NET-n); each current promptSummary clause becomes one binding rule; the long-form content moves to references/. Keep the old style-guide ids as aliases in reports for one release.\n- Merge `frontend-design-tokens-components` into angular-components. Move `git-handling-api-not-cli`, `task-state-api-first`, `orchestrator-state-machine-authority`, `stable-namespaces-on-splits` and `delegation-economy` into the Agent Studio pack `studio-architecture`. Turn docs/quality/design/style-guide-hard-rules.md R1 to R9 into the pack `studio-ui-hard-rules`, keeping the ids R1 to R9 and adding a check per rule (lint:structure, stylelint, review).\n- Remove pack selection from `AreaNeedles`; keep `repo-instructions-source` as the only C# block. Pipeline-type `EnrichmentBlockIds` resolve former block ids to pack rules.\n- Update docs/quality/README.md, adding-a-rule.md, frontend/AGENTS.md pointers and the hard-rules page header.\n\n## Acceptance criteria\n- Only `repo-instructions-source` remains in `IntakeRunner.ConstraintRules`; a test maps every former block id to a pack rule.\n- A replay of the Dossier's 163-card set shows the per-pack selection precision and the tokens added per card, recorded in results/.\n- The documentation describes packs as the only rule unit.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Migrate style guides and built-in C# blocks into rule packs",
+        "criteria": [
+          "Only repo-instructions-source remains in IntakeRunner.ConstraintRules; a test maps every former block id to a pack rule.",
+          "A replay of the 163-card evidence set records per-pack selection precision and tokens added per card in results/.",
+          "docs/quality/README.md, adding-a-rule.md and frontend/AGENTS.md describe packs as the only rule unit."
+        ]
+      }
+    },
+    {
+      "id": "SR-S7",
+      "title": "Rule ledger and proposed rule cards",
+      "dependsOn": [
+        "SR-S5"
+      ],
+      "promptMarkdown": "Read docs/style-rule-delivery/index.html and workbench.json, AGENTS.md, frontend/AGENTS.md when UI is involved, docs/quality/README.md, docs/quality/adding-a-rule.md and docs/start/contribution-and-style-guide.html. This is one bounded implementation slice of the AGT-3465 Dossier (style rules in the card). Use the Dossier's recommended option for every decision (D1-B, D2-B, D3-B, D4-C, D5-A, D6-B, D7-B, D8-B, D9-B, D10-A) unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Git handling stays with the platform: do not commit, push or manage worktrees yourself.\n\nDependencies: S5. Resolve slice ids to promoted task keys before starting dependent work.\n\n## Goal\nTurn rule-cited findings and repeated uncited findings into proposed rule work.\n\n## Scope\n- Ledger on the Task Server: one entry per rule-fit verdict per rule (rule id, pack version, card, verdict, delivered or not, finding summary, diff location).\n- Triggers, evaluated after each settled review: a delivered rule cited on two cards within 14 days proposes a sharpen-rule card; a cited rule that was not delivered proposes a surface-map card for the pack globs; two uncited findings in one pack's paths within 14 days propose a new-rule card; a rule cited three times whose finding is mechanical proposes a guard card.\n- Proposed cards land in the project backlog through the Task API, carry the ledger evidence and link docs/quality/adding-a-rule.md; a trigger never proposes a second open card for the same rule.\n- Show the ledger per pack on the pack's Wiki page or the Deck quality view (read-only).\n\n## Acceptance criteria\n- Two seeded citations of one delivered rule within 14 days propose exactly one sharpen-rule card.\n- A cited undelivered rule proposes one surface-map card; an existing open card suppresses a duplicate.\n- The ledger is visible read-only per pack.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Rule ledger and proposed rule cards",
+        "criteria": [
+          "Two seeded citations of one delivered rule within 14 days propose exactly one sharpen-rule card.",
+          "A cited undelivered rule proposes one surface-map card and an open card suppresses duplicates.",
+          "The ledger is visible read-only per pack."
+        ]
+      }
+    },
+    {
+      "id": "SR-S8",
+      "title": "Rule delivery measurement",
+      "dependsOn": [
+        "SR-S3",
+        "SR-S5"
+      ],
+      "promptMarkdown": "Read docs/style-rule-delivery/index.html and workbench.json, AGENTS.md, frontend/AGENTS.md when UI is involved, docs/quality/README.md, docs/quality/adding-a-rule.md and docs/start/contribution-and-style-guide.html. This is one bounded implementation slice of the AGT-3465 Dossier (style rules in the card). Use the Dossier's recommended option for every decision (D1-B, D2-B, D3-B, D4-C, D5-A, D6-B, D7-B, D8-B, D9-B, D10-A) unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Git handling stays with the platform: do not commit, push or manage worktrees yourself.\n\nDependencies: S3, S5. Resolve slice ids to promoted task keys before starting dependent work.\n\n## Goal\nReport whether rules arrive and whether they work, weekly per project and pack.\n\n## Scope\n- Metrics: rule-cited findings per card; header-zone regressions per ISO week (review-fix or bug cards whose diff touches header-zone pack paths, plus header-zone rule-fit blocks); tokens added per card from `enrichment-report.json`; selection precision per pack (delivered packs whose globs the diff touched); selection misses; pointer open rate (runs that opened a pointer-only pack).\n- A read-only view in the Deck quality area and an API endpoint. Use the Dossier's baselines as the first data points and document the definitions in docs/quality/README.md.\n\n## Acceptance criteria\n- On the replay set the metrics reproduce the Dossier baselines (median 346 appended tokens, angular-components precision 33%, header-zone cards per week).\n- The view renders in both themes with Playwright screenshots; numbers use tabular figures.\n- Definitions are documented.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Rule delivery measurement",
+        "criteria": [
+          "On the replay set the metrics reproduce the Dossier baselines (346 median tokens, 33% angular-components precision, header-zone cards per week).",
+          "The view renders in both themes with Playwright screenshots and tabular figures.",
+          "Metric definitions are documented in docs/quality/README.md."
+        ]
+      }
+    },
+    {
+      "id": "SR-S9",
+      "title": "Workspace rule packs for every project",
+      "dependsOn": [
+        "SR-S1",
+        "SR-S3"
+      ],
+      "promptMarkdown": "Read docs/style-rule-delivery/index.html and workbench.json, AGENTS.md, frontend/AGENTS.md when UI is involved, docs/quality/README.md, docs/quality/adding-a-rule.md and docs/start/contribution-and-style-guide.html. This is one bounded implementation slice of the AGT-3465 Dossier (style rules in the card). Use the Dossier's recommended option for every decision (D1-B, D2-B, D3-B, D4-C, D5-A, D6-B, D7-B, D8-B, D9-B, D10-A) unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Git handling stays with the platform: do not commit, push or manage worktrees yourself.\n\nDependencies: S1, S3. Resolve slice ids to promoted task keys before starting dependent work.\n\n## Goal\nGive projects without a docs/quality catalogue a baseline of rules.\n\n## Scope\n- Ship workspace packs in the product `rule-packs/` folder: a generic `delivery-hygiene` pack (results directory, no CLI git, evidence labelling from agent-rules/core.md) and a generic `web-ui-baseline` pack (both themes, reduced motion, no decorative left accent bars, tokens over literals) with `projects: [\"*\"]`.\n- A per-project setting disables a workspace pack (decision D10-A); a project pack with the same id is rejected.\n- Selection treats workspace packs like project packs.\n\n## Acceptance criteria\n- A fixture project without AGENTS.md or docs/quality receives the workspace packs; the TE-58 replay prompt yields a non-empty enrichment.\n- Disabling a workspace pack for one project removes it from that project's selection only.\n- docs/quality/README.md documents workspace packs and the switch.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Workspace rule packs for every project",
+        "criteria": [
+          "A fixture project without AGENTS.md or docs/quality receives the workspace packs; the TE-58 replay prompt yields a non-empty enrichment.",
+          "Disabling a workspace pack for one project removes it from that project only.",
+          "docs/quality/README.md documents workspace packs and the switch."
+        ]
+      }
+    }
+  ]
+}
