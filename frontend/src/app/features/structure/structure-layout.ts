@@ -1,4 +1,4 @@
-import { isGroup, isPlacement, kindText, observationText, summaryText,
+import { isGroup, isPlacement, kindText, observationText, observationWord, summaryText,
   type StructureBox, type StructureData, type StructureNode } from './structure.model';
 
 export type Point = readonly [number, number];
@@ -58,14 +58,27 @@ function measure(box: StructureBox, avail: number, view: 'host' | 'container'): 
   const { pad, gap, header } = LAYOUT;
   if (box.children.length === 0 && !isGroup(box)) {
     const replicas = box.replicas > 1 ? ` ×${box.replicas}` : '';
-    const w = clamp(Math.max(textWidth(box.label + replicas, 12, true) + 30, textWidth(leafDetail(box, view), 10) + 40), 128, 240);
-    return { box, w: Math.min(w, avail), h: LAYOUT.leaf, x: 0, y: 0, opaque: true, children: [] };
+    if (!box.observation) {
+      const w = clamp(Math.max(textWidth(box.label + replicas, 12, true) + 30,
+        textWidth(leafDetail(box, view), 10) + 40), 128, 240);
+      return { box, w: Math.min(w, avail), h: LAYOUT.leaf, x: 0, y: 0, opaque: true, children: [] };
+    }
+    const version = box.observation?.version
+      ? `${box.observation.behind ? '↓ behind · ' : ''}${box.observation.version}${box.observation.expectedVersion ? ` · expected ${box.observation.expectedVersion}` : ''}`
+      : '';
+    const w = clamp(Math.max(textWidth(box.label + replicas, 12, true) + textWidth(observationWord(box.observation), 10) + 42,
+      textWidth(leafDetail(box, view), 10) + 40, textWidth(version, 10) + 36), 240, 320);
+    return { box, w: Math.min(w, avail), h: box.observation?.difference === 'undeclared' ? 72 : 60,
+      x: 0, y: 0, opaque: true, children: [] };
   }
   if (box.collapsed || box.children.length === 0) {
     const summary = box.children.length ? summaryText(box) : '';
     const w = clamp(Math.max(textWidth(box.label, 12, true) + 48, textWidth(kindText(box), 10) + 32,
-      textWidth(summary, 11) + 32), 160, 280);
-    return { box, w: Math.min(w, avail), h: summary ? LAYOUT.summary : LAYOUT.opaque, x: 0, y: 0, opaque: true, children: [] };
+      textWidth(summary, 11) + 32,
+      box.observation ? textWidth(box.label, 12, true) + textWidth(observationWord(box.observation), 10) + 42 : 0),
+      box.observation ? 220 : 160, box.observation ? 320 : 280);
+    return { box, w: Math.min(w, avail), h: box.observation ? summary ? 72 : 60 : summary ? LAYOUT.summary : LAYOUT.opaque,
+      x: 0, y: 0, opaque: true, children: [] };
   }
   const inner = Math.max(avail - pad * 2, 120);
   const children = box.children.map(child => measure(child, inner, view));
@@ -78,7 +91,8 @@ function measure(box: StructureBox, avail: number, view: 'host' | 'container'): 
     rowHeight = Math.max(rowHeight, child.h);
     contentWidth = Math.max(contentWidth, x - gap);
   }
-  const headerWidth = textWidth(box.label, 12, true) + textWidth(kindText(box), 10) + 56;
+  const headerWidth = textWidth(box.label, 12, true) + textWidth(kindText(box), 10) +
+    (box.observation ? textWidth(observationWord(box.observation), 10) : 0) + 56;
   return { box, w: Math.max(contentWidth + pad * 2, Math.min(headerWidth, avail)), h: y + rowHeight + pad,
     x: 0, y: 0, opaque: false, children };
 }
