@@ -1,0 +1,84 @@
+<div class="activity" data-testid="access-operator-activity">
+  @if (operators.activityError(); as message) { <p class="access-error" role="alert" data-testid="access-operator-activity-error">{{ message }}</p> }
+  @if (activity(); as data) {
+    <div class="activity__status" data-testid="access-audit-status">
+      <p class="activity__line" data-testid="access-audit-integrity" [attr.data-state]="data.integrity.state" [attr.data-tone]="data.integrity.alert ? 'alert' : null" [attr.role]="data.integrity.alert ? 'alert' : null">
+        <span class="activity__dot" [attr.data-tone]="tone(data.integrity.alert, data.integrity.state === 'verified')" aria-hidden="true"></span>
+        <strong class="access-numeric">{{ integrityLabel(data.integrity) }}</strong>
+        @if (data.integrity.checkedAt) { <span class="activity__meta access-numeric">Checked {{ shortTime(data.integrity.checkedAt) }}</span> }
+        @if (data.integrity.message) { <span class="activity__meta">{{ data.integrity.message }}</span> }
+        <button type="button" class="access-secondary activity__action" data-testid="access-audit-verify" [disabled]="operators.verifying()" (click)="verify()">{{ operators.verifying() ? 'Verifying' : 'Verify now' }}</button>
+      </p>
+      <p class="activity__line" data-testid="access-audit-forwarding" [attr.data-configured]="data.forwarding.configured" [attr.data-tone]="data.forwarding.alert ? 'alert' : null" [attr.role]="data.forwarding.alert ? 'alert' : null">
+        <span class="activity__dot" [attr.data-tone]="tone(data.forwarding.alert, data.forwarding.configured && data.forwarding.pending === 0)" aria-hidden="true"></span>
+        <strong class="access-numeric">{{ forwardingLabel(data.forwarding) }}</strong>
+        @if (data.forwarding.configured) {
+          <span class="activity__meta access-numeric">{{ data.forwarding.pending }} pending@if (data.forwarding.oldestPendingAt) {, oldest {{ shortTime(data.forwarding.oldestPendingAt) }}}</span>
+          @if (data.forwarding.lastForwardedAt) { <span class="activity__meta access-numeric">Last forwarded {{ shortTime(data.forwarding.lastForwardedAt) }}</span> }
+          @if (data.forwarding.lastError) { <span class="activity__meta" data-testid="access-audit-forwarding-error">Last error: {{ data.forwarding.lastError }}</span> }
+        } @else {
+          <span class="activity__meta">Entries stay in the local chain on this host.</span>
+        }
+      </p>
+    </div>
+
+    <div class="activity__body">
+      <nav class="activity__sessions" aria-label="Operator sessions" data-testid="access-operator-activity-sessions">
+        <button type="button" class="activity__session" data-testid="access-activity-session-all" [attr.aria-current]="selected() ? null : 'true'" (click)="select(null)">All sessions</button>
+        @for (agent of agents(); track agent.id) {
+          <h4 class="activity__agent">{{ agent.name }} @if (agent.disabledAt) { <span class="access-badge" data-tone="muted">Disabled</span> }</h4>
+          @for (session of sessions(agent); track session.id) {
+            <button type="button" class="activity__session" [attr.data-testid]="'access-activity-session-' + session.id" [attr.aria-current]="selected() === session.id ? 'true' : null" [attr.title]="session.actor" (click)="select(session.id)">
+              <span class="activity__session-name">{{ session.name || session.id }}</span>
+              <span class="access-badge" [attr.data-tone]="session.state === 'active' ? 'active' : 'muted'">{{ stateLabel(session.state) }}</span>
+            </button>
+          } @empty {
+            <p class="access-hint">No sessions</p>
+          }
+        } @empty {
+          <p class="access-hint">No operator agents</p>
+        }
+      </nav>
+
+      <div class="activity__entries">
+        <p class="access-hint access-numeric" data-testid="access-audit-entries-caption">
+          @if (selectedSession(); as session) { {{ data.entries.length }} {{ data.entries.length === 1 ? 'entry' : 'entries' }} of <code>{{ session.actor }}</code> }
+          @else { Newest {{ data.entries.length }} {{ data.entries.length === 1 ? 'entry' : 'entries' }} of every operator session }
+        </p>
+        <div class="activity__scroll">
+          <table data-testid="access-audit-entries">
+            <thead>
+              <tr>
+                <th scope="col" class="access-numeric">#</th><th scope="col">Time</th><th scope="col">Stream</th><th scope="col">Actor</th><th scope="col">Session</th>
+                <th scope="col">Delegated by</th><th scope="col">Operation</th><th scope="col">Target</th><th scope="col">Outcome</th><th scope="col">Parameters</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (entry of data.entries; track entry.sequence) {
+                <tr [attr.data-testid]="'access-audit-entry-' + entry.sequence">
+                  <td class="access-numeric">{{ entry.sequence }}</td>
+                  <td class="access-numeric activity__nowrap">{{ time(entry.at) }}</td>
+                  <td>{{ entry.stream }}</td>
+                  <td><code class="activity__code">{{ entry.actor }}</code></td>
+                  <td>@if (entry.session) { <code class="activity__code">{{ entry.session }}</code> } @else { <span class="activity__none">–</span> }</td>
+                  <td>@if (entry.delegatedBy) { {{ entry.delegatedBy }} } @else { <span class="activity__none">–</span> }</td>
+                  <td>{{ entry.operation }}</td>
+                  <td>@if (entry.target) { {{ entry.target }} } @else { <span class="activity__none">–</span> }</td>
+                  <td>{{ entry.outcome }}</td>
+                  <td>
+                    @if (entry.parameterDigest) { <code class="activity__code" [attr.title]="entry.parameterDigest">{{ digest(entry.parameterDigest) }}</code> }
+                    @else { <span class="activity__none">–</span> }
+                  </td>
+                </tr>
+              } @empty {
+                <tr><td colspan="10" class="access-hint" data-testid="access-audit-entries-empty">No audit entries for this selection.</td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  } @else if (operators.activityState() === 'loading') {
+    <p class="access-hint">Loading operator activity…</p>
+  }
+</div>

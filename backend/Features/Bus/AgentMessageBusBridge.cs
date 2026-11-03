@@ -797,6 +797,28 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// Emits one acute operator-feed alarm of the control plane audit trail
+    /// (security model SM-1): a chain that no longer verifies, a gap or
+    /// mismatch against the off-host sink, or a sink that stopped accepting
+    /// entries. The caller de-duplicates, so one condition is one event.
+    /// </summary>
+    public Task EmitControlPlaneAuditAlertAsync(string code, string message, long? sequence, CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "action",
+            severity: "High",
+            project: null,
+            jobId: null,
+            topic: "control_plane_audit_alert",
+            summary: TruncateSummary($"Audit trail: {message}"),
+            payload: new { code, message, sequence },
+            tags: new[] { "control-plane-audit", $"alert:{code}" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Emits one operator-feed alarm for an execution host whose agent-host
     /// release has been older than the Stable release for longer than the grace
     /// window (AGT-2826). The caller de-duplicates, so one drift is one event.

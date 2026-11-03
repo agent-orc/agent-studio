@@ -94,10 +94,14 @@ public sealed partial class AccessSecurityStore
         return PermissionEvaluator.Evaluate(permission, subject, bindings, target, sameProject);
     }
 
-    /// <summary>True for a bearer this store issues to service accounts: <c>sat.*</c> or a Studio API token <c>api.*</c>.</summary>
+    /// <summary>
+    /// True for a bearer this store issues to service accounts: <c>sat.*</c>, a
+    /// Studio API token <c>api.*</c>, or an operator agent session <c>oas.*</c>.
+    /// </summary>
     public static bool IsServiceAccountBearer(string? bearer)
         => bearer is not null
-           && (bearer.StartsWith("sat.", StringComparison.Ordinal) || bearer.StartsWith("api.", StringComparison.Ordinal));
+           && (bearer.StartsWith("sat.", StringComparison.Ordinal) || bearer.StartsWith("api.", StringComparison.Ordinal)
+               || bearer.StartsWith(OperatorSessionTokenPrefix + ".", StringComparison.Ordinal));
 
     /// <summary>
     /// Authenticates a <c>sat.*</c> service-account token or an <c>api.*</c>
@@ -106,6 +110,8 @@ public sealed partial class AccessSecurityStore
     /// </summary>
     public ServiceAccountPrincipal? AuthenticateServiceAccount(string? bearer)
     {
+        if (bearer?.StartsWith(OperatorSessionTokenPrefix + ".", StringComparison.Ordinal) == true)
+            return AuthenticateOperatorSession(bearer);
         var prefix = bearer?.StartsWith("api.", StringComparison.Ordinal) == true ? "api" : "sat";
         if (!TryTokenParts(bearer, prefix, out var tokenId)) return null;
         lock (_gate)
@@ -117,7 +123,7 @@ public sealed partial class AccessSecurityStore
             if (account is null || token is null || account.DisabledAt is not null || token.RevokedAt is not null
                 || token.ExpiresAt <= now || !PasswordSecretHasher.VerifySecret(bearer!, token.SecretHash)) return null;
             var apiToken = account.Origin == ServiceAccountOrigins.ApiToken;
-            if (apiToken != (prefix == "api")) return null;
+            if (apiToken != (prefix == "api") || IsOperatorAgent(account)) return null;
             if (apiToken && !state.Users.Any(user => user.Id == account.CreatedBy && !user.Disabled)) return null;
             if (token.LastUsedAt is null || now - token.LastUsedAt >= TimeSpan.FromMinutes(1))
             {
@@ -132,21 +138,42 @@ public sealed partial class AccessSecurityStore
         }
     }
 
-    /// <summary>One line per service-account or API-token request, refused requests included.</summary>
-    public void AppendServiceAccountAudit(ServiceAccountPrincipal principal, string method, string path, int status)
+    /// <summary>
+    /// One line per service-account, API-token, or operator session request,
+    /// refused requests included, in the legacy per-stream file and in the
+    /// control plane audit chain with the addressed target and the digest of
+    /// the request parameters.
+    /// </summary>
+    public void AppendServiceAccountAudit(ServiceAccountPrincipal principal, string method, string path, int status,
+        string? target = null, string? parameterDigest = null)
     {
         lock (_gate)
         {
             Directory.CreateDirectory(SecurityFolder);
             var file = Path.Combine(SecurityFolder,
                 principal.Origin == ServiceAccountOrigins.ApiToken ? ApiTokenAuditFileName : ServiceAccountAuditFileName);
-            File.AppendAllText(file, JsonSerializer.Serialize(new
-            {
-                timestamp = Now, serviceAccountId = principal.AccountId, tokenId = principal.TokenId,
-                tokenName = principal.AccountName, actor = principal.ActorId, createdBy = principal.CreatedBy,
-                method, path, status,
-            }) + Environment.NewLine);
+            var timestamp = Now;
+            object legacy = principal.Operator is { } op
+                ? new
+                {
+                    timestamp, serviceAccountId = principal.AccountId, tokenId = principal.TokenId,
+                    tokenName = principal.AccountName, actor = principal.ActorId, createdBy = principal.CreatedBy,
+                    method, path, status, sessionId = op.SessionId, delegatedBy = op.DelegatedBy,
+                }
+                : new
+                {
+                    timestamp, serviceAccountId = principal.AccountId, tokenId = principal.TokenId,
+                    tokenName = principal.AccountName, actor = principal.ActorId, createdBy = principal.CreatedBy,
+                    method, path, status,
+                };
+            File.AppendAllText(file, JsonSerializer.Serialize(legacy) + Environment.NewLine);
             RestrictPermissions(file);
+            ControlPlaneAudit.Append(new ControlPlaneAuditRecord(
+                principal.Operator is not null ? ControlPlaneAuditStreams.OperatorAgent
+                    : principal.Origin == ServiceAccountOrigins.ApiToken ? ControlPlaneAuditStreams.ApiToken
+                    : ControlPlaneAuditStreams.ServiceAccount,
+                principal.ActorId, $"{method} {path}", status.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                target, principal.Operator?.SessionId, principal.Operator?.DelegatedBy, parameterDigest, legacy, timestamp));
         }
     }
 
@@ -288,6 +315,9 @@ public sealed partial class AccessSecurityStore
             var next = Copy(StateLocked());
             var account = next.ServiceAccounts.FirstOrDefault(candidate => candidate.Id == id && candidate.DisabledAt is null)
                 ?? throw new SecurityOperationException(404, "service-account-not-found", "Service account not found or disabled.");
+            if (IsOperatorAgent(account))
+                throw new SecurityOperationException(409, "operator-agent-account",
+                    "An operator agent holds only Owner-started sessions; start a session instead.");
             if (account.Origin == ServiceAccountOrigins.ApiToken)
                 throw new SecurityOperationException(409, "api-token-account",
                     "A migrated API token keeps its single token; issue a new API token instead.");
@@ -330,12 +360,7 @@ public sealed partial class AccessSecurityStore
             var next = Copy(StateLocked());
             var account = next.ServiceAccounts.FirstOrDefault(candidate => candidate.Id == id)
                 ?? throw new SecurityOperationException(404, "service-account-not-found", "Service account not found.");
-            var now = Now;
-            next.ServiceAccounts[next.ServiceAccounts.IndexOf(account)] = account with
-            {
-                DisabledAt = account.DisabledAt ?? now,
-                Tokens = account.Tokens.Select(token => token with { RevokedAt = token.RevokedAt ?? now }).ToList(),
-            };
+            next.ServiceAccounts[next.ServiceAccounts.IndexOf(account)] = DisabledLocked(account, Now, actingUserId);
             SaveLocked(next);
             AppendIamAudit(actingUserId, "service-account.disable", "service-account", id, null);
         }
@@ -646,11 +671,14 @@ public sealed partial class AccessSecurityStore
     {
         Directory.CreateDirectory(SecurityFolder);
         var file = Path.Combine(SecurityFolder, IamAuditFileName);
-        File.AppendAllText(file, JsonSerializer.Serialize(new
-        {
-            timestamp = Now, actor = actingUserId ?? "system", action, targetKind, targetId, details,
-        }) + Environment.NewLine);
+        var timestamp = Now;
+        var legacy = new { timestamp, actor = actingUserId ?? "system", action, targetKind, targetId, details };
+        File.AppendAllText(file, JsonSerializer.Serialize(legacy) + Environment.NewLine);
         RestrictPermissions(file);
+        ControlPlaneAudit.Append(new ControlPlaneAuditRecord(
+            ControlPlaneAuditStreams.Iam, actingUserId is null ? "system" : AgentStudio.Shared.TimelineActors.Human(actingUserId),
+            action, "ok", $"{targetKind}:{targetId}", Details: legacy, At: timestamp,
+            ParameterDigest: details is null ? null : ControlPlaneAuditLog.Sha256Hex(JsonSerializer.Serialize(details))));
     }
 
     /// <summary>Validates a role and scope for a principal kind and returns the normalized grant.</summary>

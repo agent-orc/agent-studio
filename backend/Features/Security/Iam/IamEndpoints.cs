@@ -99,10 +99,12 @@ public static class IamEndpoints
                 store.DisableServiceAccount(id, Require(context, store, IamPermissions.AccessManage));
                 return Results.NoContent();
             })).RequirePermission(IamPermissions.AccessManage);
+
+        iam.MapOperatorAgentEndpoints();
     }
 
     /// <summary>Returns the acting user's id once the workspace-level permission holds.</summary>
-    private static string Require(HttpContext context, AccessSecurityStore store, string permission)
+    internal static string Require(HttpContext context, AccessSecurityStore store, string permission)
     {
         var human = AccessSecurityEndpoints.RequireHuman(context, store);
         var decision = store.AuthorizeUser(human.User.Id, permission, PermissionTarget.WorkspaceWide);
