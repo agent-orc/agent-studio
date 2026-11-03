@@ -11,18 +11,27 @@ public sealed class RunnerProjectRepositoryProbe(
     private static readonly TimeSpan ReadOnlyHostProbeInterval = TimeSpan.FromMinutes(30);
     private readonly Dictionary<string, DateTime> _lastReadOnlyProbe = new(StringComparer.Ordinal);
 
+    internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(60);
+
     public async Task PollAsync(CancellationToken shutdown)
     {
+        // A monolith maps neither the project repository status nor the probe report.
+        var absence = new FeatureRouteAbsence("repository origin probe", log);
         while (!shutdown.IsCancellationRequested)
         {
-            try { await RunOnceAsync(shutdown); }
+            try
+            {
+                await RunOnceAsync(shutdown);
+                absence.RecordAnswered();
+            }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
+            catch (Exception exception) when (absence.TryRecordAbsent(exception)) { }
             catch (Exception exception)
             {
                 // Git and HTTP failures can contain credential-bearing remote text.
                 log($"repository origin probe deferred type={exception.GetType().Name}");
             }
-            try { await Task.Delay(TimeSpan.FromSeconds(60), shutdown); }
+            try { await Task.Delay(absence.NextDelay(PollInterval), shutdown); }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
         }
     }
