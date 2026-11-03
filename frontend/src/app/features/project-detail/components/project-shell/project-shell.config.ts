@@ -23,6 +23,7 @@ export type ProjectRailKey =
   | 'drift'
   | 'uxui'
   | 'test-quality'
+  | 'quality-studio'
   | 'token-usage'
   | 'cycle-time'
   | 'agent-activity'
@@ -168,6 +169,16 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
 
   // ---- QUALITY: what guards the project ----
   // Per mockup order: Security · Test Quality · Audits & Checks.
+  {
+    key: 'quality-studio',
+    group: 'quality',
+    label: 'Quality Studio',
+    panelTitle: 'Quality Studio',
+    description: 'Repository registration and Quality Studio connection',
+    empty: 'Repository registration is pending.',
+    icon: '✓',
+    railIcon: 'check',
+  },
   {
     key: 'security',
     group: 'quality',

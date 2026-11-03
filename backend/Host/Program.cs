@@ -1203,6 +1203,10 @@ builder.Services.AddSingleton<ProjectIntegrationViewService>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchIndexes>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
 builder.Services.AddSingleton<ProjectSettingsService>();
+builder.Services.AddHttpClient<AgentStudio.Registry.QualityStudioRegistrationService>(client =>
+    client.Timeout = TimeSpan.FromSeconds(8));
+builder.Services.AddSingleton<AgentStudio.Registry.QualityStudioRegistrationReconciler>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Registry.QualityStudioRegistrationReconciler>());
 builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());

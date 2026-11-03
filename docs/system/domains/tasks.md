@@ -22,6 +22,21 @@ repository-owned build and test contract. Studio validates the initial local
 build profile before offering the "Hello world change" card. Registration
 failures compensate the registry, task storage and newly created repository.
 
+When `QualityStudio:BaseUrl` is set, a separate registration attempt follows
+project creation. Its failure never rolls back the project. The 15-minute
+reconciler retries unregistered projects, adopts a repository found by
+`agent-studio:<projectId>`, backfills projects when the connection appears,
+and removes the Quality Studio registration for an archived project. The
+mapping and its last state and reason live in the project setting
+`qualityStudio` (`repositoryId`, `state`, `reason`). The canonical Quality
+Studio checkout path comes from `QualityStudio:CheckoutPathTemplate`, default
+`${RUNNER_WORKDIR}/{projectId}/repo`; `QualityStudio:RunnerWorkdir` may supply
+the runner root when the backend does not inherit that environment variable.
+The service token is `secret://workspace/quality-studio-api-token` by default;
+`QualityStudio:ApiTokenReference` may point to another platform secret.
+`POST /api/projects/{projectName}/quality-studio/reconcile` runs one Owner retry;
+the matching GET supplies the Deck status panel.
+
 ## Board read contract
 
 `GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.
