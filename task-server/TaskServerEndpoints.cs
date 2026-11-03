@@ -484,6 +484,16 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.RecordRunnerCliUpdateResultAsync(
                 runnerId, request, Actor(context), ct)));
+        runners.MapPost("/{runnerId}/review-package-claims", async (
+            HttpContext context, string runnerId, ReviewPackageClaimRequest request, TaskServerStore store,
+            CancellationToken ct) =>
+        {
+            if (!string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
+                return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request review executor ids differ."));
+            return RunnerIdentityMismatch(context, request.ExecutorId)
+                ?? await InvokeAsync(() => store.ClaimReviewPackageAsync(request, Actor(context), ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
         runners.MapPost("/{runnerId}/review-claims", async (
             HttpContext context, string runnerId, ReviewClaimRequest request, TaskServerStore store, CancellationToken ct) =>
         {
@@ -937,6 +947,37 @@ public static class TaskServerEndpoints
             HttpContext context, string attemptId, ReviewCleanupRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.CleanupReviewAsync(attemptId, request, Actor(context), ct)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        // AGT-3400 S4: review subject kind "package", shadow only. The
+        // orchestrator creates and reads packages; a review runner claims,
+        // renews and reports package attempts. No package route moves a task.
+        var reviewPackages = api.MapGroup("/review-packages")
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        reviewPackages.MapPost("", async (
+            HttpContext context, CreateReviewPackageSubjectRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.CreateReviewPackageSubjectAsync(request, Actor(context), ct),
+                StatusCodes.Status201Created))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        reviewPackages.MapGet("", async (string project, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListReviewPackagesAsync(project, ct)));
+        reviewPackages.MapGet("/members/{taskKey}/{runAttemptId}", async (
+            string taskKey, string runAttemptId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetReviewPackageMembershipAsync(taskKey, runAttemptId, ct)));
+        var reviewPackageAttempts = api.MapGroup("/review-packages/attempts")
+            .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
+        reviewPackageAttempts.MapPost("/{attemptId}/lease/renew", async (
+            HttpContext context, string attemptId, ReviewPackageRenewRequest request, TaskServerStore store,
+            CancellationToken ct)
+            => RunnerIdentityMismatch(context, request.ExecutorId)
+                ?? await InvokeAsync(() => store.RenewReviewPackageAsync(attemptId, request, ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
+        reviewPackageAttempts.MapPost("/{attemptId}/report", async (
+            HttpContext context, string attemptId, ReviewPackageReportRequest request, TaskServerStore store,
+            CancellationToken ct)
+            => RunnerIdentityMismatch(context, request.ExecutorId)
+                ?? await InvokeAsync(() => store.ReportReviewPackageAsync(attemptId, request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
 
         // AGT-3061: an accepted delivery is published by a runner host that
         // holds the project's publication lease; the report applies the lane.
@@ -1455,6 +1496,14 @@ public static class TaskServerEndpoints
         }
     }
 
+    /// <summary>A Runner principal may act only for its bound Runner identity.</summary>
+    private static IResult? RunnerIdentityMismatch(HttpContext context, string executorId)
+        => context.TaskServerPrincipal() is { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } runnerId }
+           && !string.Equals(runnerId, executorId, StringComparison.Ordinal)
+            ? Results.Json(new ApiError("runner-identity-mismatch",
+                "A Runner principal may act only for its bound Runner identity."), statusCode: StatusCodes.Status403Forbidden)
+            : null;
+
     internal static IResult MapError(Exception exception) => exception switch
     {
         StudioThrottledException throttled => Results.Json(
@@ -1484,6 +1533,7 @@ public static class TaskServerEndpoints
         TaskServerProtocolException protocol => Results.Json(
             new ApiError("protocol-unsupported", protocol.Message), statusCode: StatusCodes.Status426UpgradeRequired),
         TaskServerConflictException conflict => Results.Conflict(new ApiError(conflict.Code, conflict.Message)),
+        ReviewPackageConflictException conflict => Results.Conflict(new ApiError(conflict.Code, conflict.Message)),
         KeyNotFoundException => Results.NotFound(new ApiError("not-found", exception.Message)),
         ArgumentException or FormatException => Results.BadRequest(new ApiError("invalid-request", exception.Message)),
         DirectoryNotFoundException => Results.BadRequest(new ApiError("legacy-root-not-found", exception.Message)),

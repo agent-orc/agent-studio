@@ -203,6 +203,9 @@
 /api/projects/{projectName}/quota-wait-policy	free	-	-	-
 /api/projects/{projectName}/regression-radar	reachable	gap	Pipeline	Pipeline reads from the Git fact store
 /api/projects/{projectName}/review-decisions-pending	free	-	-	-
+/api/projects/{projectName}/review-packages	free	-	-	-
+/api/projects/{projectName}/review-packages/formation	free	-	-	-
+/api/projects/{projectName}/review-packages/shadow-report	free	-	-	-
 /api/projects/{projectName}/security	free	-	-	-
 /api/projects/{projectName}/security/baseline	free	-	-	-
 /api/projects/{projectName}/security/files/{**relPath}	free	-	-	-

@@ -130,6 +130,14 @@ internal static class PromptUsageCatalog
         {
             new PromptUsageRef("AspectRunnerService", "RenderAspectPrompt", "Documentation-impact review aspect."),
         },
+        ["review-aspect-cross-card-consistency.md"] = new[]
+        {
+            new PromptUsageRef("ReviewPackagePlanBuilder", "Build", "Cross-card consistency of a Dossier wave package."),
+        },
+        ["review-package-aspect.md"] = new[]
+        {
+            new PromptUsageRef("ReviewPackagePlanBuilder", "Build", "Package-tier aspect frame with per-member verdicts."),
+        },
         ["post-abort-review.md"] = new[]
         {
             new PromptUsageRef("PostAbortReviewStepService", "BuildPrompt", "Verdict step after a non-clean run end."),

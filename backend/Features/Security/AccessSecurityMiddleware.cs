@@ -812,7 +812,8 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPut(method) && path.EndsWith("/capabilities", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPut(method) && path.Split('/').Length == 5) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && (path.EndsWith("/claims", StringComparison.OrdinalIgnoreCase)
-                || path.EndsWith("/review-claims", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
+                || path.EndsWith("/review-claims", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith("/review-package-claims", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && path.EndsWith("/repository-credentials", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && path.EndsWith("/reports", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.EndsWith("/capability-failures", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
@@ -839,6 +840,12 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPost(method) && path.EndsWith("/reclaim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && path.EndsWith("/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
             if (HttpMethods.IsPost(method) && path.EndsWith("/cleanup", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
+        }
+        // AGT-3400 S4: shadow review package attempts.
+        if (path.StartsWith("/api/v1/review-packages/attempts/", StringComparison.OrdinalIgnoreCase))
+        {
+            if (HttpMethods.IsPost(method) && path.EndsWith("/lease/renew", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         }
         if (path.StartsWith("/api/v1/integrations/", StringComparison.OrdinalIgnoreCase))
         {
