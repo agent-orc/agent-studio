@@ -22,7 +22,7 @@ const QUOTA_POLL_MS = 60_000;
 /**
  * Destinations of the header More menu. The inline controls with the same
  * meaning carry `data-nav-inline-from` in the shell template; `null` rows are
- * menu-only. Notifications has no destination yet and stays inline-only.
+ * menu-only. Usage is offered in More only when its Details control is absent.
  */
 export const STUDIO_HEADER_NAV_ITEMS: readonly CockpitNavItem[] = [
   { id: 'project', label: 'Switch project', inlineFrom: 'tablet' },
@@ -30,7 +30,7 @@ export const STUDIO_HEADER_NAV_ITEMS: readonly CockpitNavItem[] = [
   { id: 'chat', label: 'Project chat', inlineFrom: 'tablet' },
   { id: 'theme', label: 'Switch theme', inlineFrom: 'desktop' },
   { id: 'usage', label: 'Usage details', inlineFrom: null },
-  { id: 'feed', label: 'Orchestrator feed', inlineFrom: null },
+  { id: 'feed', label: 'Orchestrator feed', inlineFrom: 'desktop' },
   { id: 'environment', label: 'Environment', inlineFrom: 'tablet' },
   { id: 'settings', label: 'Orchestrator settings', inlineFrom: null },
 ];
