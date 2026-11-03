@@ -34,10 +34,47 @@ if [ "${WEBSITE_REUSE_WEBSITE_IMAGES:-0}" != 1 ]; then
   docker build -f "$repo_root/frontend/Dockerfile" --build-arg VERSION="$version" -t "$web_image" "$repo_root"
 fi
 
+# setup.sh uses the edge image for its root-owned directory handoff. Pull the
+# smoke edge image and resolve its registry digest before setup.
+docker pull caddy:2-alpine > /dev/null
+edge_reference="$(docker image inspect --format '{{index .RepoDigests 0}}' caddy:2-alpine)"
+edge_digest="${edge_reference##*@sha256:}"
+if [[ ! "$edge_digest" =~ ^[0-9a-f]{64}$ ]]; then
+  echo 'The pulled Caddy image has no usable registry digest' >&2
+  exit 1
+fi
+
 cd "$stack"
+export STUDIO_API_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_WEB_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_EDGE_DIGEST="$edge_digest"
+export STUDIO_ACCESS_AUTH_URL=https://access.example.test
+export STUDIO_ACCESS_MFA_ENFORCED=true
 STUDIO_SECRETS_KEY_FILE="$smoke_root/keys/secrets.kek" bash setup.sh --private "$version" studio.test "$smoke_root/data" >/dev/null
+cat > "$smoke_root/local-images.yaml" <<EOF
+services:
+  api:
+    image: $api_image
+  frontend:
+    image: $web_image
+EOF
+export COMPOSE_FILE="$stack/compose.yaml:$smoke_root/local-images.yaml"
 code="$(sed -n 's/^STUDIO_BOOTSTRAP_CODE=//p' .env)"
 docker compose up -d --no-build
+for service in frontend edge; do
+  container="$(docker compose ps -q "$service")"
+  [ -n "$container" ] || { echo "$service Caddy container did not start" >&2; exit 1; }
+  runtime="$(docker inspect --format '{{.State.Running}} {{.HostConfig.ReadonlyRootfs}} {{.Config.User}}' "$container")"
+  [ "$runtime" = 'true true 10001:10001' ] || {
+    echo "$service Caddy container is not running with the read-only, non-root baseline: $runtime" >&2
+    exit 1
+  }
+  docker compose exec -T "$service" sh -c \
+    'test "$(id -u)" -eq 10001 && test -w /data && test -w /config && test -w /tmp' || {
+    echo "$service Caddy writable mounts are unavailable to UID 10001" >&2
+    exit 1
+  }
+done
 url=https://studio.test
 curl_args=(--silent --show-error --insecure --resolve studio.test:443:127.0.0.1)
 for attempt in $(seq 1 90); do
@@ -85,12 +122,26 @@ test -d "$local_state" || { echo "Local state is not on the data directory: $loc
 api_log="$(docker compose logs --no-color api)"
 grep -q 'local-state-root "\{0,1\}/data/home/.local/share' <<< "$api_log" \
   || { echo 'API did not report /data/home/.local/share as its local state root' >&2; exit 1; }
+# Exercise migration from an older writable-root release, then restore the
+# hardened reference service before checking persistence across recreation.
+base_compose_file="$COMPOSE_FILE"
+cat > "$smoke_root/legacy-api.yaml" <<'EOF'
+services:
+  api:
+    read_only: false
+EOF
+export COMPOSE_FILE="$base_compose_file:$smoke_root/legacy-api.yaml"
+docker compose up -d --no-build --no-deps --force-recreate api >/dev/null
+wait_for_api 'the legacy writable-root recreate'
 # State an older release wrote relative to /app moves once on the next start.
 docker compose exec -T api sh -ec 'mkdir -p /app/agentstudio/smoke-legacy && printf "legacy\n" > /app/agentstudio/smoke-legacy/marker'
 docker compose restart api >/dev/null
 wait_for_api 'the legacy state restart'
 docker compose exec -T api sh -ec 'test "$(cat /data/home/.local/share/agentstudio/smoke-legacy/marker)" = legacy && test ! -e /app/agentstudio' \
   || { echo 'Legacy local state below /app was not moved to /data/home/.local/share' >&2; exit 1; }
+export COMPOSE_FILE="$base_compose_file"
+docker compose up -d --no-build --no-deps --force-recreate api >/dev/null
+wait_for_api 'the hardened API recreate'
 marker="recreate-$(openssl rand -hex 8)"
 docker compose exec -T api sh -ec "printf '%s\n' '$marker' > /data/home/.local/share/agentstudio/smoke-recreate-marker"
 before="$(docker compose ps -q api)"

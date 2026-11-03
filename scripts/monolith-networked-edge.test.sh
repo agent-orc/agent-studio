@@ -16,12 +16,12 @@ chmod 755 "$work"
 finish() {
   result=$?
   if [ "$result" -ne 0 ]; then
-    for name in edge frontend api; do
+    for name in edge frontend api auth; do
       echo "--- $name log" >&2
       docker logs --tail 40 "$run_id-$name" >&2 2>&1 || true
     done
   fi
-  docker rm -f "$run_id-edge" "$run_id-frontend" "$run_id-api" > /dev/null 2>&1 || true
+  docker rm -f "$run_id-edge" "$run_id-frontend" "$run_id-api" "$run_id-auth" > /dev/null 2>&1 || true
   docker network rm "$net" > /dev/null 2>&1 || true
   rm -rf "$work"
   exit "$result"
@@ -74,6 +74,15 @@ docker run -d --name "$run_id-api" --network "$net" --ip "$prefix.4" --network-a
 docker run -d --name "$run_id-frontend" --network "$net" --ip "$prefix.3" --network-alias frontend \
   -v "$work/Caddyfile.frontend:/etc/caddy/Caddyfile:ro" -v "$work/studio:/srv/studio:ro" \
   "$caddy_image" > /dev/null
+cat > "$work/Caddyfile.auth" <<'CADDY'
+:9000 {
+    @verified header Cookie access=verified
+    respond @verified 200
+    respond 401
+}
+CADDY
+docker run -d --name "$run_id-auth" --network "$net" --network-alias auth \
+  -v "$work/Caddyfile.auth:/etc/caddy/Caddyfile:ro" "$caddy_image" > /dev/null
 
 start_edge() {
   local caddyfile="$stack/$1"
@@ -81,6 +90,7 @@ start_edge() {
   docker rm -f "$run_id-edge" > /dev/null 2>&1 || true
   docker run -d --name "$run_id-edge" --network "$net" --ip "$edge_ip" \
     -e STUDIO_DOMAIN=studio.localhost -e STUDIO_CLOUDFLARE_ALLOW_DIRECT="$2" \
+    -e STUDIO_ACCESS_AUTH_URL=http://auth:9000 \
     -v "$caddyfile:/etc/caddy/Caddyfile:ro" \
     -v "$work/cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro" \
     -v "$work/origin-pull:/etc/caddy/origin-pull:ro" \
@@ -95,7 +105,16 @@ request() {
     -v "$work/origin-pull:/origin-pull:ro" "$caddy_image" \
     curl --silent --show-error --insecure --max-time 10 --dump-header - \
     --cert /origin-pull/client.pem --key /origin-pull/client.key \
-    --resolve "studio.localhost:443:$edge_ip" "$@" "https://studio.localhost$path"
+    --resolve "studio.localhost:443:$edge_ip" -H 'Cookie: access=verified' "$@" "https://studio.localhost$path"
+}
+
+request_unauthed() {
+  local peer="$1" path="$2"
+  docker run --rm --network "$net" --ip "$peer" \
+    -v "$work/origin-pull:/origin-pull:ro" "$caddy_image" \
+    curl --silent --show-error --insecure --max-time 10 --dump-header - \
+    --cert /origin-pull/client.pem --key /origin-pull/client.key \
+    --resolve "studio.localhost:443:$edge_ip" "https://studio.localhost$path"
 }
 
 # wait_ready <peer address> [curl arguments...]
@@ -132,6 +151,9 @@ spoof=(-H 'CF-Connecting-IP: 198.51.100.7' -H 'X-Forwarded-For: 192.0.2.66')
 # rejects a direct peer unless direct access is explicitly enabled.
 start_edge Caddyfile.cloudflare false
 wait_ready "$cloudflare_peer"
+response="$(request_unauthed "$cloudflare_peer" /api/whoami)"
+expect 'Access layer without a verified session' "$response" '^HTTP/[0-9.]* 401'
+reject 'Access layer without a verified session' "$response" 'client='
 if docker run --rm --network "$net" --ip "$cloudflare_peer" "$caddy_image" \
   curl --silent --show-error --insecure --max-time 10 \
   --resolve "studio.localhost:443:$edge_ip" https://studio.localhost/api/whoami > /dev/null 2>&1; then
@@ -182,6 +204,9 @@ echo 'Cloudflare mode with direct access allowed: the direct peer is the client 
 # Public mode ignores headers from the fake peer, which is outside the published ranges.
 start_edge Caddyfile.public false
 wait_ready "$cloudflare_peer"
+response="$(request_unauthed "$cloudflare_peer" /api/whoami)"
+expect 'Public access layer without a verified session' "$response" '^HTTP/[0-9.]* 401'
+reject 'Public access layer without a verified session' "$response" 'client='
 response="$(request "$cloudflare_peer" /api/whoami "${spoof[@]}")"
 expect 'Public mode' "$response" "^client=${cloudflare_peer//./\\.} proto=https\$"
 echo 'Public mode: untrusted peer headers are ignored.'
