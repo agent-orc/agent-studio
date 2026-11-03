@@ -303,16 +303,13 @@
                 <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-skip-hint">{{ row.skipHint }}</span>
               }
               @if (row.reviewRoundStatus) { <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-review-round-status">{{ row.reviewRoundStatus }}</span> }
-              <app-pipeline-step-details
-                class="ov-pl-step__details"
-                [stepId]="row.id"
-                [label]="row.label"
-                [docs]="row.explanation.body"
-                [promptMarkdown]="stepPromptMarkdown(row.id)"
-                [jobId]="job().id"
-                [watchPath]="job().watchPath"
-                [resultFile]="resultForRow(row)?.fileName ?? null"
-                [resultHeader]="resultForRow(row)?.header ?? null"
+              @if (row.batchGateSummary) { <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-batch-gate">{{ row.batchGateSummary }}</span> }
+              @else if (row.reviewAttemptId && row.kind !== 'aspect' && row.remoteReviewDetail) { <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-review-summary">{{ row.remoteReviewDetail }}</span> }
+              @if (row.reviewAttemptId) { <button type="button" class="ov-pl-step__review-link" data-testid="overview-pipeline-review-attempt" (click)="reviewAttemptRequested.emit(row.reviewAttemptId)">Review attempt@if (row.reviewAttemptNumber && row.reviewAttemptNumber > 1) { #{{ row.reviewAttemptNumber }} }</button> }
+              <app-pipeline-step-details class="ov-pl-step__details" [stepId]="row.id" [label]="row.label"
+                [docs]="row.explanation.body" [promptMarkdown]="stepPromptMarkdown(row.id)"
+                [jobId]="job().id" [watchPath]="job().watchPath"
+                [resultFile]="resultForRow(row)?.fileName ?? null" [resultHeader]="resultForRow(row)?.header ?? null"
                 [concernTitle]="row.concernTooltip?.title ?? null"
                 [concernBody]="row.concernTooltip?.body ?? null" [aspectEvidence]="row.aspectEvidence" (documentRequested)="documentRequested.emit($event)" />
               @if (selectedPipelineIsCurrent() && canConfigurePendingPipelineSteps() && row.canDisable && !row.hasExecution) {
@@ -377,6 +374,7 @@
                     [attr.data-model-resolved]="row.modelIsResolved ? 'true' : null"
                     [cacTooltip]="row.concernTooltip ?? row.modelTooltip">{{ row.model }}@if (row.thinkingLevel) {<span> · {{ row.thinkingLevel }}</span>}</span>
             }
+            @if (row.reviewAttemptId && row.cliType) { <span class="ov-pl-step__model" data-testid="overview-pipeline-review-cli">{{ row.cliType }}</span> }
             @if (row.modelEditable && row.kind !== 'aspect') {
               <app-cli-model-selector
                 class="ov-pl-step__agent-select"

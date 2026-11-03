@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-10-27
+Version: 2026-11-03
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -1530,6 +1530,13 @@ comparison before Quality Studio's verdict contract can decide a review.
   accepted, fenced command evidence back into the ordinary
   `pipeline-execution.json`, aspect Markdown/JSON, file provenance, and
   timeline contracts. The projection does not execute work or decide a lane.
+  The pipeline read endpoint also joins the latest current-run settlement journal
+  to fill aspect verdict, grade, skipped-reason, attempt, and usage fields when
+  an older or interrupted evidence projection left a pending row. A deferred
+  build/test row reads the batch gate's manifest, verdict, phase, and publication
+  SHA. These additions are optional fields on the existing pipeline row wire
+  format, so earlier records still deserialize. The Overview opens the
+  linked review attempt in the protocol pane's run history.
 - `backend/Features/Runner/ReviewBaselineBranchPolicy.cs`: which integration
   line the baseline merge-base is taken from. Project truth outranks the card:
   configured project integration branch, then the registered checkout's

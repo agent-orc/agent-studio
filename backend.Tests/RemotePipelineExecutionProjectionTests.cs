@@ -1,4 +1,7 @@
 using System.Text;
+using System.Text.Json;
+using AgentStudio.Runner;
+using Contract = AgentStudio.TaskServer.Contracts;
 
 using Xunit;
 
@@ -6,6 +9,184 @@ namespace AgentStudio.Tests;
 
 public sealed class RemotePipelineExecutionProjectionTests
 {
+    [Theory]
+    [InlineData("pass", PipelineStepStatus.Passed)]
+    [InlineData("concerns", PipelineStepStatus.Passed)]
+    [InlineData("blocked", PipelineStepStatus.Failed)]
+    [InlineData("failed", PipelineStepStatus.Failed)]
+    [InlineData("infrastructure", PipelineStepStatus.Failed)]
+    public void Project_SettledRemoteReview_ShowsAspectsGradeUsageAndSkippedReason(
+        string verdictStatus, PipelineStepStatus expectedStatus)
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "remote-settlement-pipeline-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var report = ReviewReport(verdictStatus);
+            var entry = new RemoteReviewSettlementEntry
+            {
+                AttemptId = "review_2", TaskKey = "AGT-3457", IdempotencyKey = report.IdempotencyKey,
+                Report = report, ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+                ReceivedAtUtc = Utc(8, 20),
+            };
+            RemoteReviewSettlementJournal.Write(folder, entry with
+            {
+                AttemptId = "review_1", ReceivedAtUtc = Utc(8, 12),
+            });
+            RemoteReviewSettlementJournal.Write(folder, entry);
+            var usage = new TaskTokenSummary
+            {
+                TotalTokens = 100, InputTokens = 90, OutputTokens = 10,
+                Entries = [Call(Utc(8, 16),
+                    "support:remote-review:review_2:step:aspect-code-quality:usage:review_2:0",
+                    90, 10, 0.01m)],
+            };
+            var result = RemotePipelineExecutionProjection.Project(null, PipelineCatalogue.Standard,
+                RemoteTask(folder), RemoteSessions(), RemoteCompletion(), usage);
+            var aspect = Step(result.Execution!, "aspect-code-quality");
+            Assert.Equal(expectedStatus, aspect.Status);
+            Assert.Equal(verdictStatus, aspect.Verdict);
+            Assert.Equal("The review checked the diff.", aspect.VerdictSummary);
+            Assert.Equal("gpt-6", aspect.Model);
+            Assert.Equal("codex", aspect.ReviewCli);
+            Assert.Equal(90, aspect.InputTokens);
+            Assert.Equal(10, aspect.OutputTokens);
+            Assert.Equal(60_000, aspect.DurationMs);
+            Assert.Equal("review_2", aspect.ExecutionAttemptId);
+            Assert.Equal(2, aspect.ReviewAttemptNumber);
+            Assert.Equal("remote-review-grade-review_2.md", aspect.EvidenceRef);
+            Assert.Equal("No requirement review was needed.",
+                Step(result.Execution!, "aspect-requirement-fit").Reason);
+            var grade = Step(result.Execution!, PipelineCatalogue.OrchestratorDecisionStepId);
+            Assert.Equal(PipelineStepStatus.Passed, grade.Status);
+            Assert.Equal("review_2", grade.ExecutionAttemptId);
+            Assert.Equal("Review completed.", grade.VerdictSummary);
+            Assert.Equal("codex", grade.ReviewCli);
+            Assert.Equal("gpt-6", grade.Model);
+            Assert.Equal(60_000, grade.DurationMs);
+            var codeReviewGrade = Step(result.Execution!, PipelineCatalogue.CodeReviewGradeStepId);
+            Assert.Equal(PipelineStepStatus.Passed, codeReviewGrade.Status);
+            Assert.Equal("review_2", codeReviewGrade.ExecutionAttemptId);
+            Assert.Equal("codex", codeReviewGrade.ReviewCli);
+            Assert.Equal("gpt-6", codeReviewGrade.Model);
+            Assert.Equal("This Remote Review did not run build or test commands.",
+                Step(result.Execution!, PipelineCatalogue.BuildTestGateStepId).Reason);
+            Assert.Equal(100, new PipelineCostCalculator(TokenTestServices.Pricing())
+                .SummarizeWithLedger(result.Execution, result.LedgerCalls).TotalTokens);
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    [Fact]
+    public void Project_PublishedBatch_ShowsGateIdentityVerdictAndPublishedSha()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "remote-batch-pipeline-" + Guid.NewGuid().ToString("N"));
+        var gateRoot = Path.Combine(folder, "gate-store");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var report = ReviewReport("pass") with
+            {
+                Verdicts = [new Contract.ReviewVerdictDto("build-tests", "pass", "DeferredToBatch",
+                    "Build and tests deferred to the batch.")],
+            };
+            RemoteReviewSettlementJournal.Write(folder, new RemoteReviewSettlementEntry
+            {
+                AttemptId = "review_2", TaskKey = "AGT-3457", IdempotencyKey = report.IdempotencyKey,
+                Report = report, ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+                ReceivedAtUtc = Utc(8, 20),
+            });
+            var store = new BatchGateStore(gateRoot);
+            var batch = store.BatchDirectory("batch-1");
+            Directory.CreateDirectory(Path.Combine(batch, "state"));
+            Directory.CreateDirectory(Path.Combine(batch, "runs"));
+            WriteJson(Path.Combine(batch, "manifest.json"), new
+            {
+                batchId = "batch-1", scope = new { project = "Agent Taskboard", repository = "repo",
+                    integrationBranch = "develop", gateProfile = "full", gateProfileDigest = "profile",
+                    platformVersion = "1" }, baseSha = "base", membershipDigest = "digest",
+                closedAtUtc = Utc(8, 21), members = new[] { new { taskKey = "AGT-3457" } },
+                exclusions = Array.Empty<object>(), eligibleKeys = new[] { "AGT-3457" },
+            });
+            WriteJson(Path.Combine(batch, "state", "00000001.json"), new
+            {
+                batchId = "batch-1", membershipDigest = "digest", phase = 6,
+                candidateSha = "candidate", coordinatorFence = 1, recordedAtUtc = Utc(8, 30),
+                batchRunId = "run-1",
+            });
+            var runName = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes("run-1")));
+            WriteJson(Path.Combine(batch, "runs", runName + ".verdict.json"), new
+            {
+                batchRunId = "run-1", batchId = "batch-1", membershipDigest = "digest",
+                testedCandidateSha = "candidate", gateProfileDigest = "profile",
+                outcome = "pass", classification = "green", evidencePath = "gate.log",
+                completedAtUtc = Utc(8, 29),
+            });
+            WriteJson(Path.Combine(batch, "publication.json"), new
+            {
+                batchId = "batch-1", membershipDigest = "digest", batchRunId = "run-1",
+                preTipSha = "base", testedCandidateSha = "candidate",
+                verifiedRemoteSha = new string('a', 40), coordinatorFence = 1,
+                refMutationFence = 1, verifiedAtUtc = Utc(8, 30),
+            });
+            var taskName = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes("AGT-3457")));
+            var members = Directory.CreateDirectory(Path.Combine(batch, "members", taskName)).FullName;
+            WriteJson(Path.Combine(members, runName + ".json"), new BatchGateMemberRecord(
+                "AGT-3457", "run", 1, new string('a', 40), [new string('a', 40)],
+                "batch-1", "digest", "base", "candidate", "profile", "run-1",
+                "pass", "gate.log", Utc(8, 30)));
+            var result = RemotePipelineExecutionProjection.Project(null, PipelineCatalogue.Standard,
+                RemoteTask(folder), RemoteSessions(), RemoteCompletion(), null,
+                store);
+            var gate = Step(result.Execution!, PipelineCatalogue.BuildTestGateStepId);
+            Assert.Equal(PipelineStepStatus.Passed, gate.Status);
+            Assert.Equal("batch-1", gate.BatchGate?.BatchId);
+            Assert.Equal("published", gate.BatchGate?.Phase);
+            Assert.Equal("pass", gate.BatchGate?.Verdict);
+            Assert.Equal(new string('a', 40), gate.BatchGate?.PublishedSha);
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    private static void WriteJson(string path, object value)
+        => File.WriteAllText(path, JsonSerializer.Serialize(value));
+
+    private static TaskInfo RemoteTask(string folder) => new()
+    {
+        Id = "AGT-3457", TaskKey = "AGT-3457", FolderPath = folder,
+        CreatedAt = Utc(8, 0), State = TaskStates.HumanReview,
+    };
+
+    private static SessionEvent[] RemoteSessions() =>
+        [new() { Ts = Utc(8, 0), Kind = "start", Cli = "remote-runner" }];
+
+    private static TimelineEvent[] RemoteCompletion() =>
+        [new() { Ts = Utc(8, 10), Kind = TimelineEventKinds.AgentRunFinished,
+            Summary = "remote run done", Details = new Dictionary<string, string>
+            { ["cli"] = "remote-runner", ["status"] = "done" } }];
+
+    private static Contract.ReviewReportRequest ReviewReport(string status)
+    {
+        var sha = new string('a', 40);
+        return new Contract.ReviewReportRequest(
+            "executor", "instance", "lease", 1, "report-key", "Pass", null,
+            "Review completed.",
+            new Contract.ReviewWorkspaceProofDto("repository", sha, sha, sha, false, false,
+                "workspace", "review_2"),
+            new Contract.ReviewEnvironmentDto("host", "executor", "instance", "linux", "x64", "10",
+                new Dictionary<string, string>(), new Dictionary<string, string>()),
+            [new Contract.ReviewCommandEvidenceDto("aspect-code-quality", "code-quality", "codex", [],
+                sha, sha, sha, Utc(8, 15), Utc(8, 16), 0, null, sha, sha,
+                ExecutionKind: Contract.ReviewCommandKinds.AgentAspect, Model: "gpt-6",
+                InputTokens: 90, OutputTokens: 10)],
+            [],
+            [new Contract.ReviewVerdictDto("code-quality", status, "RemoteAspectVerdict",
+                "The review checked the diff.")],
+            SkippedAspects: [new Contract.ReviewSkippedAspectDto("requirement-fit",
+                "No requirement review was needed.")]);
+    }
     [Fact]
     public void Project_LegacyRemoteFailedConcern_RepairsReadModelWithoutMigration()
     {

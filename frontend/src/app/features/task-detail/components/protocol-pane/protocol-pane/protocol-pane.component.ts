@@ -156,6 +156,7 @@ export class ProtocolPaneComponent implements OnDestroy {
   readonly isActiveJob = input<boolean>(false);
 
   readonly activeInspectorTab = model<InspectorTab>('protocol');
+  readonly reviewAttemptFocus = input<string | null>(null);
   readonly followupPrompt = input<string>('');
   readonly canSendChat = input(false);
   readonly chatSendLabel = input<string>('Send');
@@ -219,6 +220,9 @@ export class ProtocolPaneComponent implements OnDestroy {
   readonly nextGenChatEvents = signal<ConversationEvent[]>([]);
 
   constructor() {
+    effect(() => {
+      if (this.reviewAttemptFocus()) this.runsModalOpen.set(true);
+    });
     // A fresh task opens at its readable Activity stream. Clearing the
     // explicit pick when the job changes keeps a Trace
     // choice made on one task from leaking into the next.
