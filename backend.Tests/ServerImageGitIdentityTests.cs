@@ -47,7 +47,11 @@ public sealed partial class ServerImageGitIdentityTests : IDisposable
         Assert.Equal("*", config["safe.directory"]);
     }
 
-    /// <summary>Git as the service user sees it: only the given system file, no global file, no identity variables.</summary>
+    /// <summary>
+    /// Git as the service user sees it: only the given system file, no global file, no identity variables.
+    /// Inherited Git variables are removed, so the probe behaves the same on a developer machine, the gate
+    /// host and a review host, whose hermetic step environment sets <c>GIT_CONFIG_NOSYSTEM=1</c>.
+    /// </summary>
     private sealed class IsolatedGit(string systemConfig, string home) : IReadinessGit
     {
         private readonly ProcessReadinessGit _git = new();
@@ -60,6 +64,13 @@ public sealed partial class ServerImageGitIdentityTests : IDisposable
                 ["GIT_CONFIG_SYSTEM"] = systemConfig,
                 ["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null",
                 ["HOME"] = home,
+                ["XDG_CONFIG_HOME"] = null,
+                ["GIT_CONFIG_NOSYSTEM"] = null,
+                ["GIT_CONFIG"] = null,
+                ["GIT_CONFIG_COUNT"] = null,
+                ["GIT_CONFIG_PARAMETERS"] = null,
+                ["GIT_AUTHOR_NAME"] = null,
+                ["GIT_AUTHOR_EMAIL"] = null,
                 ["GIT_COMMITTER_NAME"] = null,
                 ["GIT_COMMITTER_EMAIL"] = null,
                 ["EMAIL"] = null,
