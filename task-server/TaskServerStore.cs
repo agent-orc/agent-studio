@@ -61,7 +61,9 @@ public sealed partial class TaskServerStore
     // remains the retired-schema downgrade guard for older binaries.
     // 40 adds post-work subjects, attempts, events and cohorts, and records one-use
     // attempt credential exchange and redacted teardown receipts (both additive).
-    public const int CurrentSchemaVersion = 42;
+    // 43 adds runner host, role and project binding after the independent
+    // schema 42 changes were integrated.
+    public const int CurrentSchemaVersion = 43;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
