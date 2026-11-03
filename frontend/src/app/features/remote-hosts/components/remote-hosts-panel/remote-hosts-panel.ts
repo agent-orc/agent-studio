@@ -29,8 +29,9 @@ import {
 import { stableReleaseLabel } from '../../models/host-release-drift';
 import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
 import { ExecutionInfrastructureComponent } from '../execution-infrastructure/execution-infrastructure';
+import { HttpClient } from '@angular/common/http';
 import { AuthSessionState } from '../../../../services/auth.service';
-import { StructureViewComponent } from '../../../structure/structure-view/structure-view.component';
+import { EnvironmentMapComponent } from '../environment-map/environment-map';
 import { EnvironmentHeaderComponent } from '../environment-header/environment-header';
 import { OperationalStallsComponent } from '../operational-stalls/operational-stalls';
 import { EnvironmentHostListComponent } from '../environment-host-list/environment-host-list';
@@ -38,6 +39,8 @@ import { EnvironmentAttentionComponent } from '../environment-attention/environm
 import { buildEnvironmentAttention } from '../../models/environment-attention';
 import { OrchestratorFeedStore } from '../../../orchestrator/state/orchestrator-feed.store';
 import { hostReadiness } from '../../models/host-readiness';
+import { CredentialInventoryService } from '../../../credentials/credential-inventory.service';
+import { buildEnvironmentMap, type EnvironmentSnapshot } from '../../models/environment-map';
 
 /**
  * Execution Hosts settings page (AGT-1921). The local
@@ -57,7 +60,7 @@ import { hostReadiness } from '../../models/host-readiness';
     PurgeRetiredHostsDialogComponent,
     DeploymentCheckpointsComponent,
     ExecutionInfrastructureComponent,
-    StructureViewComponent,
+    EnvironmentMapComponent,
     EnvironmentHeaderComponent,
     OperationalStallsComponent,
     EnvironmentHostListComponent,
@@ -71,6 +74,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   private readonly service = inject(RemoteHostsService);
   private readonly tasks = inject(TaskService);
   private readonly reviewQueue = inject(ReviewQueueService);
+  private readonly http = inject(HttpClient);
   private readonly auth = inject(AuthSessionState);
   private readonly credentials = inject(CredentialInventoryService);
   private readonly feed = inject(OrchestratorFeedStore);
@@ -128,6 +132,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.linkedHostId.set(group.id);
     this.linkedSection.set(params.get('view') === 'telemetry' ? 'load' : params.has('link') ? 'connection' : null);
     this.view.set('list');
+    this.selectedId.set(group.id);
     this.setExpanded(group.id, true);
   });
 
@@ -202,6 +207,8 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     }
     catch { this.view.set('list'); }
     this.service.ensureLoaded();
+    this.credentials.ensureLoaded();
+    this.loadEnvironment();
     this.service.refreshInteractiveUsage();
     this.reviewQueue.refresh();
     this.tickHandle = setInterval(() => this.now.set(Date.now()), 30_000);
@@ -215,6 +222,14 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   reload(): void {
     this.service.reload();
     this.infrastructureReload.update(value => value + 1);
+    this.loadEnvironment();
+    this.credentials.load();
+  }
+  private loadEnvironment(): void {
+    this.http.get<EnvironmentSnapshot>('/api/v1/management/environment').subscribe({
+      next: snapshot => this.environment.set(snapshot),
+      error: () => this.environment.set(null),
+    });
   }
   private viewStorageKey(): string {
     return `atp.environment.view.v1.${this.auth.status()?.user?.id ?? 'local'}`;

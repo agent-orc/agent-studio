@@ -482,12 +482,9 @@ test.describe('Execution Hosts settings section', () => {
     }
   });
 
-  test('Environment Map embeds the installation structure and List retains host controls', async ({ page }) => {
+  test('Environment map shows configured machines, connections, details, and narrow fallback', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.route('**/api/auth/status', route => route.fulfill({
-      contentType: 'application/json', body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true }),
-    }));
     await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
       contentType: 'application/json', body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [
         { id: 'write', category: 'repository', hostId: 'agent-runner-01', kind: 'github_deploy_key',
@@ -529,13 +526,12 @@ test.describe('Execution Hosts settings section', () => {
         engine: { state: 'ready', lastContact: new Date().toISOString(), engineId: 'engine-1' },
       }),
     }));
-    // The shared setup already loaded a local session. Reload after changing
-    // the auth route so this networked inventory fixture is actually fetched.
+    // Reload so the replacement inventory and host fixtures are fetched.
     await page.reload();
     await page.goto('/#/workspace/settings/environment');
     await dismissDevErrorDialog(page);
     await page.getByTestId('environment-map-toggle').click();
-    const map = page.getByTestId('structure-view');
+    const map = page.getByTestId('environment-map');
     await expect(map).toBeVisible();
     await expect(map.getByTestId('environment-topology-point').filter({ hasText: 'TUFI2' })).toBeVisible();
     await expect(map.getByTestId('environment-topology-point').filter({ hasText: 'KORI' })).toContainText('Unknown · gate');
@@ -547,6 +543,7 @@ test.describe('Execution Hosts settings section', () => {
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
         await expect(map).toBeVisible();
+        await page.screenshot({ path: join(SHOT_DIR, `environment-map-${width}-${theme}--mocked.png`), animations: 'disabled' });
       }
     }
     await page.reload();
@@ -702,6 +699,12 @@ test.describe('Execution Hosts settings section', () => {
       requiredCapabilities: ['platform:linux'], pinnedRunnerId: null, maxParallelism: 1,
     }));
     await page.route('**/api/v1/management/backups/full', json({ backups: [] }));
+    await page.route('**/api/v1/management/environment', json({
+      controlHost: 'studio', installationId: 'ins_demo_01', mode: 'networked',
+      routes: [], machines: [], gateHost: null, gateSlots: null,
+      taskServer: { version: null, commit: null }, engine: null,
+    }));
+    await page.route('**/api/auth/sessions', json({ sessions: [] }));
     const networkedAuth = {
       profile: 'networked', bootstrapRequired: false, authenticated: true,
       user: { id: 'demo-operator', username: 'demo-operator', displayName: 'Demo Operator',

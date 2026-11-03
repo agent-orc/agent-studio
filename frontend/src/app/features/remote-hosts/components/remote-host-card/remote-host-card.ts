@@ -50,6 +50,7 @@ import {
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
 import { HostCredentialBadgeComponent } from '../../../credentials/host-credential-badge/host-credential-badge.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { hostReadiness } from '../../models/host-readiness';
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {

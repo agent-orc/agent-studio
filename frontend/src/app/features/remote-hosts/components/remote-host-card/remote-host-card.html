@@ -21,9 +21,8 @@
       }
     </div>
   </header>
-  <div class="host-detail__state" [attr.data-tone]="tone()" data-testid="remote-host-status">
-    <span class="host__dot" [attr.data-tone]="tone()" aria-hidden="true"></span>
-    <strong>{{ statusLabel() }}</strong>
+  <div class="host-detail__state" [attr.data-tone]="tone()">
+    <app-status-indicator [tone]="indicatorTone()" [label]="statusLabel()" testId="remote-host-status" />
     @if (h.taskServerConnection?.lastError; as reason) { <span>{{ reason }}</span> }
     @else if (statusReason(); as reason) { <span>{{ reason }}</span> }
   </div>

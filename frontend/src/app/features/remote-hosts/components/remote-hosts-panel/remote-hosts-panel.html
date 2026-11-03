@@ -42,6 +42,7 @@
               [now]="now()" [boardActiveSlots]="selectedSlots()"
               [projectSlots]="projectSlots(host)" [allChatUsage]="interactiveUsage()"
               [stableRelease]="stableRelease()" [expanded]="true"
+              [linkedSection]="linkedHostId() === selectedId() ? linkedSection() : null"
               (action)="onAction($event)" (capacityChange)="onCapacityChange($event)"
               (projectPolicyChange)="onProjectPolicyChange($event)" (setup)="openSetup($event)" />
           } @else if (selectedGate(); as gate) {
@@ -55,7 +56,7 @@
     }
   }
   @if (view() === 'map') {
-    <app-structure-view [embedded]="true" [hostOnly]="true" />
+    <app-environment-map [map]="environmentMap()" (selectHost)="selectMapHost($event)" />
   }
   @if (view() === 'installation') {
     <app-deployment-checkpoints [hosts]="hosts()" [stableRelease]="stableRelease()" [now]="now()" />
