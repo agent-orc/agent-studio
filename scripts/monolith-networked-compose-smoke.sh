@@ -122,12 +122,26 @@ test -d "$local_state" || { echo "Local state is not on the data directory: $loc
 api_log="$(docker compose logs --no-color api)"
 grep -q 'local-state-root "\{0,1\}/data/home/.local/share' <<< "$api_log" \
   || { echo 'API did not report /data/home/.local/share as its local state root' >&2; exit 1; }
+# Exercise migration from an older writable-root release, then restore the
+# hardened reference service before checking persistence across recreation.
+base_compose_file="$COMPOSE_FILE"
+cat > "$smoke_root/legacy-api.yaml" <<'EOF'
+services:
+  api:
+    read_only: false
+EOF
+export COMPOSE_FILE="$base_compose_file:$smoke_root/legacy-api.yaml"
+docker compose up -d --no-build --no-deps --force-recreate api >/dev/null
+wait_for_api 'the legacy writable-root recreate'
 # State an older release wrote relative to /app moves once on the next start.
 docker compose exec -T api sh -ec 'mkdir -p /app/agentstudio/smoke-legacy && printf "legacy\n" > /app/agentstudio/smoke-legacy/marker'
 docker compose restart api >/dev/null
 wait_for_api 'the legacy state restart'
 docker compose exec -T api sh -ec 'test "$(cat /data/home/.local/share/agentstudio/smoke-legacy/marker)" = legacy && test ! -e /app/agentstudio' \
   || { echo 'Legacy local state below /app was not moved to /data/home/.local/share' >&2; exit 1; }
+export COMPOSE_FILE="$base_compose_file"
+docker compose up -d --no-build --no-deps --force-recreate api >/dev/null
+wait_for_api 'the hardened API recreate'
 marker="recreate-$(openssl rand -hex 8)"
 docker compose exec -T api sh -ec "printf '%s\n' '$marker' > /data/home/.local/share/agentstudio/smoke-recreate-marker"
 before="$(docker compose ps -q api)"

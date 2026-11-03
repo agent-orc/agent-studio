@@ -51,10 +51,7 @@ services:
     tmpfs: [/tmp]
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
     <<: *hardening
-    # The image's caddy binary carries this file capability and cannot start
-    # without it in the bounding set; the server listens on 8080.
-    cap_add: [NET_BIND_SERVICE]
-    read_only: true
+    # The frontend listens on unprivileged port 8080.
     pids_limit: 512
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
