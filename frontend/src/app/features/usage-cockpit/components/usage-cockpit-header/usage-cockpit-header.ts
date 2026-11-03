@@ -35,8 +35,9 @@ import { UsageCostChipComponent } from '../usage-cost-chip/usage-cost-chip';
 
 /**
  * One header destination. Inline from `inlineFrom` upward (the host renders
- * it with `data-nav-inline-from`); below that tier, or always when
- * `inlineFrom` is null, it is a text-only row in the More menu.
+ * it with `data-nav-inline-from`); below that tier, or when
+ * `inlineFrom` is null, it is a text-only row in the More menu. Usage
+ * is omitted while the header's own Details control is visible.
  */
 export interface CockpitNavItem {
   id: string;
@@ -65,7 +66,8 @@ const FITS: readonly UsageChipFit[] = ['full', 'compact', 'abbreviated', 'bare']
  *
  * The host projects its navigation controls and marks each optional one with
  * `data-nav-inline-from="tablet|desktop"`; the same ids listed in `navItems`
- * appear in the More menu whenever they are hidden inline.
+ * appear in the More menu whenever they are hidden inline. Usage instead
+ * follows the visibility of the header's Details control.
  */
 @Component({
   selector: 'app-usage-cockpit-header',
@@ -175,7 +177,8 @@ export class UsageCockpitHeaderComponent {
   readonly menuItems = computed<MenuItem[]>(() => {
     const tier = this.navTier();
     return this.navItems()
-      .filter(item => item.inlineFrom == null || !tierAtLeast(tier, item.inlineFrom))
+      .filter(item => (item.id !== 'usage' || !this.plan().showDetails)
+        && (item.inlineFrom == null || !tierAtLeast(tier, item.inlineFrom)))
       .map(item => ({ kind: 'row' as const, id: item.id, label: item.label }));
   });
 
