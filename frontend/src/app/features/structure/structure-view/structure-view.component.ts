@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, afterNextRender, computed, effect, inject, input, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
@@ -7,6 +8,17 @@ import { LAYOUT, layoutStructure, leafDetail, type LayoutBox } from '../structur
 import { isGroup, kindText, observationText, projectStructure, summaryText, visibleBoxes,
   type StructureBox, type StructureData } from '../structure.model';
 
+interface LibraryChannel { name: string; version: string; publishedAt: string | null; }
+interface LibraryRegistry {
+  projectId: string; artifact: string; provider: string; package: string; repository: string | null;
+  private: boolean; state: 'current' | 'unavailable' | 'stale'; checkedAt: string | null;
+  lastPublishAt: string | null; channels: LibraryChannel[];
+}
+interface LibraryConsumer {
+  projectId: string; project: string; package: string; version: string; source: string;
+  latestStable: string | null; releasesBehind: number | null; ownershipMapped: boolean;
+}
+interface StructureLibrary { registries: LibraryRegistry[]; consumers: LibraryConsumer[]; }
 const STATUS: Record<string, { tone: 'ok' | 'warn' | 'down' | 'unknown'; word: string }> = {
   up: { tone: 'ok', word: 'Healthy' }, degraded: { tone: 'warn', word: 'Degraded' },
   down: { tone: 'down', word: 'Down' }, invalid: { tone: 'down', word: 'Check invalid' },
@@ -17,7 +29,7 @@ let instances = 0;
 @Component({
   selector: 'app-structure-view',
   standalone: true,
-  imports: [DisclosureMarkerComponent, SegmentedControlComponent],
+  imports: [DatePipe, DisclosureMarkerComponent, SegmentedControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './structure-view.component.html',
   styleUrl: './structure-view.component.scss',
@@ -30,6 +42,9 @@ export class StructureViewComponent {
   readonly viewOptions = [{ value: 'host', label: 'Host' }, { value: 'container', label: 'Container' }] as const;
   readonly levelOptions = [{ value: 1, label: '1' }, { value: 2, label: '2' }, { value: 3, label: '3' }] as const;
   readonly error = signal<string | null>(null);
+  readonly library = signal<StructureLibrary>({ registries: [], consumers: [] });
+  readonly libraryError = signal<string | null>(null);
+  readonly refreshing = signal(false);
   readonly view = signal<'host' | 'container'>('host');
   readonly level = signal<1 | 2 | 3>(2);
   readonly toggles = signal<Record<string, boolean>>({});
@@ -86,11 +101,28 @@ export class StructureViewComponent {
       observer.observe(main);
       destroyRef.onDestroy(() => observer.disconnect());
     });
+    void this.loadLibrary(false);
     effect(() => {
       const projectName = this.projectName();
       this.readPreference(projectName);
       void this.load(projectName);
     });
+  }
+
+  async loadLibrary(refresh: boolean): Promise<void> {
+    this.refreshing.set(refresh);
+    try {
+      this.library.set(await firstValueFrom(refresh
+        ? this.http.post<StructureLibrary>('/api/v1/operations/structure/library/refresh', {})
+        : this.http.get<StructureLibrary>('/api/v1/operations/structure/library')));
+      this.libraryError.set(null);
+    } catch { this.libraryError.set('Registry inventory is unavailable.'); }
+    finally { this.refreshing.set(false); }
+  }
+
+  registryLabel(provider: string): string {
+    return ({ npm: 'npm', nuget: 'NuGet', 'docker-hub': 'Docker Hub', github: 'GitHub',
+      jfrog: 'JFrog', internal: 'Internal registry' } as Record<string, string>)[provider] ?? provider;
   }
 
   private measureWidth(main: HTMLElement): void {

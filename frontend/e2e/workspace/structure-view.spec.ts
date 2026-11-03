@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const results = process.env['JOB_RESULTS_DIR'] ?? path.join(process.cwd(), 'test-results');
+const chatVersion = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'))
+  .dependencies['coding-agent-chat'] as string;
 const makeNode = (id: string, kind: string, label: string, parentId: string | null, role?: string) => ({
   id, kind, label, parentId, unitId: null, environmentId: null, project: null,
   provenance: 'declared', sourceRef: 'role fixture', role,
@@ -60,6 +62,25 @@ test('declared structure is accessible in both projections, widths and themes', 
   await page.context().route('**/api/**', route => {
     const url = route.request().url();
     const json = (body: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    if (url.includes('/api/v1/operations/structure/library')) return json({
+      registries: [
+        { projectId: 'library', artifact: 'chat-package', provider: 'jfrog', package: 'coding-agent-chat', repository: 'npm-internal', private: true,
+          state: 'current', checkedAt: '2026-11-02T00:00:00Z', lastPublishAt: '2026-11-01T00:00:00Z',
+          channels: [{ name: 'latest', version: '0.4.1', publishedAt: null }, { name: 'next', version: '0.5.0-rc.2', publishedAt: null }] },
+        { projectId: 'library', artifact: 'chat-package', provider: 'npm', package: 'coding-agent-chat', repository: null, private: false,
+          state: 'current', checkedAt: '2026-11-02T00:00:00Z', lastPublishAt: '2026-10-15T00:00:00Z',
+          channels: [{ name: 'latest', version: '0.4.1', publishedAt: null }, { name: 'next', version: '0.5.0-rc.1', publishedAt: null }] },
+        { projectId: 'library', artifact: 'demo-image', provider: 'docker-hub', package: 'chat-demo', repository: null, private: false,
+          state: 'unavailable', checkedAt: '2026-11-01T21:00:00Z', lastPublishAt: '2026-10-15T00:00:00Z',
+          channels: [{ name: 'latest', version: '0.4.1', publishedAt: null }] },
+      ],
+      consumers: [
+        { projectId: 'studio', project: 'Agent Studio frontend', package: 'coding-agent-chat', version: chatVersion,
+          source: 'frontend/package-lock.json', latestStable: '0.4.1', releasesBehind: 0, ownershipMapped: true },
+        { projectId: 'website', project: 'Website', package: 'coding-agent-chat', version: '0.3.2',
+          source: 'package-lock.json', latestStable: '0.4.1', releasesBehind: 2, ownershipMapped: true },
+      ],
+    });
     if (url.includes('/api/v1/operations/structure')) return json(new URL(url).searchParams.get('scope') === 'project:Website'
       ? { nodes: partialNodes, links: partialLinks } : { nodes, links });
     if (url.includes('/api/v1/studio/auth/status')) return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
@@ -79,6 +100,13 @@ test('declared structure is accessible in both projections, widths and themes', 
   await page.goto('/#/workspace/operations/structure');
   const view = page.getByTestId('structure-view');
   await expect(view).toBeVisible();
+  const library = page.getByTestId('structure-library');
+  await expect(library.getByTestId('structure-registry')).toHaveCount(3);
+  await expect(library.getByText('0.5.0-rc.2')).toBeVisible();
+  await expect(library.getByText('0.5.0-rc.1')).toBeVisible();
+  await expect(library.getByText('Lookup unavailable')).toBeVisible();
+  await expect(library.getByText('2 releases behind')).toBeVisible();
+  await expect(library.getByText(`coding-agent-chat ${chatVersion}`)).toBeVisible();
   await expect(view.locator('[data-node-id]')).toHaveCount(17);
   await expect(view.locator('[data-outline-id]')).toHaveCount(17);
   await view.locator('[data-node-id="vm"]').focus();
@@ -94,6 +122,8 @@ test('declared structure is accessible in both projections, widths and themes', 
       for (const theme of ['light', 'dark'] as const) {
         await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
         await view.screenshot({ path: path.join(results, `structure-${projection}-${width}-${theme}.png`) });
+        if (projection === 'host' && width === 1440)
+          await library.screenshot({ path: path.join(results, `library-${theme}.png`) });
       }
     }
   }

@@ -2,6 +2,9 @@ using System.Text.RegularExpressions;
 
 namespace AgentStudio.TaskServer.Contracts;
 
+public sealed record ProjectRegistryDeclaration(string Artifact, string Provider, string Package,
+    string? Repository, string? SecretRef, string? BaseUrl);
+
 public sealed record ProjectArtifactDefinition(string Name, string Type, string? Path, string? Dockerfile)
 {
     /// <summary>Registry repository a container artifact is pushed to and pulled from.</summary>
@@ -192,7 +195,8 @@ public static class ProjectDeploymentVocabulary
 public static partial class ProjectDefinitionReader
 {
     private static ProjectDeploymentDefinition? ParseDeployment(
-        IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues)
+        IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues,
+        ProjectStructureDefinition structure)
     {
         bool Declared(string section) => lines.Any(line => line.Indent == 0 && KeyValue(line.Text).Key == section);
         if (!ProjectDeploymentVocabulary.Sections.Any(Declared))
@@ -276,8 +280,6 @@ public static partial class ProjectDefinitionReader
                 return new ProjectRunbookDefinition(Get(item, "name") ?? "", List(item, "steps"),
                     List(item, "environments"));
             }).ToArray();
-
-        var structure = ParseStructure(lines, issues);
 
         // Staging and Production with the standard lifecycle are the P1 default
         // once the file starts describing a deployment.

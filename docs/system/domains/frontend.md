@@ -100,6 +100,16 @@ health, version and drift overlays belong to later slices of the deployment
 structure Dossier. Its role-named manifest example is in
 `deploy/connectivity/one-box.json`.
 
+The same view lists library registries declared in schema 2
+`structure.registries` (artifact, provider, package, optional repository and
+private registry `secretRef`). `GET /api/v1/operations/structure/library` returns
+cached channel versions, publish times, lookup state and workspace consumers
+from npm and NuGet lock files. The on-demand refresh endpoint is
+`POST /api/v1/operations/structure/library/refresh`; a control-plane timer also
+refreshes every six hours. Lookup failures preserve the last known channel
+data and show unavailable or stale state. Endpoints expose only whether a
+registry is private, never its credential value.
+
 Layout and link routing are a pure module, `features/structure/structure-layout.ts`
 (AGT-3349 S5, Dossier D2 option A). It computes a deterministic nested flow
 layout for the measured canvas width: boxes are absolutely positioned and
