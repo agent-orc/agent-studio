@@ -746,6 +746,8 @@
   <span>Review follow-up: factor verification now records a five-minute, single-use step-up grant on the active session. Owner session revocation from Access consumes that grant in both sign-in stacks; the UI asks for an authenticator code, recovery code, or passkey before the action.</span>
   <span>Replay gate follow-up: the compromise suite now enrolls its bootstrap Owner's TOTP factor before minting a replay credential. Its scope, frame, and simulation assertions remain unchanged.</span>
 </li>
+<li><b>2026-11-02 · AGT-3374 · SM-3.</b> Implemented SM-D5 option C at Stage 0: public edge authorization through an MFA-backed access provider, digest-pinned and restricted website containers, encrypted backup and scratch restore scripts, monitored access and restore signals, and a baseline checker with named failures. In-product second factor remains the SM-8 slice.</li>
+<li><b>2026-11-02 · AGT-3374 · SM-3 review repair.</b> Kept SM-D5 option C. The website smoke now resolves the Caddy digest it uses for the installer ownership handoff and edge container. Both Caddy containers explicitly write state under mounted paths, the private Caddyfile skips system trust-store installation, and the baseline checks these startup settings.</li>
 <!-- agent-studio:implementation-log:end -->
 </ol>
 </section>

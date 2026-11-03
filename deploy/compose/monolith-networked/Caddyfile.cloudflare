@@ -34,6 +34,10 @@
         >Referrer-Policy same-origin
         -Server
     }
+    # Require an MFA-backed access session on every path.
+    forward_auth {$STUDIO_ACCESS_AUTH_URL} {
+        uri /verify
+    }
 
     @bypass {
         vars {http.vars.trusted_proxy} false
