@@ -4692,6 +4692,22 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 ? registration.InstanceId : null;
     }
 
+    /// <summary>The host a registered runner identity reported, or null for an unregistered runner.</summary>
+    public string? HostIdOf(string runnerId)
+    {
+        lock (_gate)
+            return _registrations.TryGetValue(runnerId, out var registration)
+                ? registration.HostId : null;
+    }
+
+    /// <summary>True when at least one registered runner identity runs on <paramref name="hostId"/>.</summary>
+    public bool HasHost(string hostId)
+    {
+        lock (_gate)
+            return _registrations.Values.Any(registration =>
+                string.Equals(registration.HostId, hostId, StringComparison.Ordinal));
+    }
+
     private readonly Dictionary<string, Contract.ModelRejectionAcknowledgement> _rejectedModels = new(StringComparer.Ordinal);
 
     public void MarkModelRejected(string runnerId, string cliType, string model)

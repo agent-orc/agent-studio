@@ -237,6 +237,10 @@ public static class RoutePermissionCatalog
         // The App key can reach every repository; connecting it is the Owner's.
         Add("*", IamPermissions.WorkspaceAdminister, "/api/v1/management/github-app", "/api/v1/management/github-app/**");
         Add("GET", IamPermissions.WorkspaceAdminister, "/api/v1/management/credential-inventory");
+        // A device sign-in authorizes a host's provider account; a Git setup hands a host a repository credential.
+        Add("*", IamPermissions.WorkspaceAdminister,
+            "/api/v1/management/device-logins", "/api/v1/management/device-logins/**",
+            "/api/v1/management/runner-git-setups", "/api/v1/management/runner-git-setups/**");
         Add("*", IamPermissions.WorkspaceOperate, "/api/v1/management/**");
         // Studio's browser reads installation-wide declared topology, even when
         // a project scope is requested. Runner credentials do not call it.
