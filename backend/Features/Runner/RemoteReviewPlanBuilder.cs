@@ -10,6 +10,7 @@ using AgentStudio.Registry;
 using Microsoft.Extensions.Logging;
 using Contract = AgentStudio.TaskServer.Contracts;
 using AgentStudio.Review;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Runner;
 
@@ -483,6 +484,7 @@ public sealed class RemoteReviewPlanBuilder
                 integrationRef,
                 expectedResultSha,
                 requireFullReview);
+        plan = ApplyEquivalentDeliveryReview(plan, task, repositoryPath, integrationRef, resultSha);
         // A scoped review drops carried-over agent commands. A no-change plan
         // has no tool command left to keep it non-empty, so it falls back to
         // the completion-only command the Task Server can admit.
@@ -497,6 +499,101 @@ public sealed class RemoteReviewPlanBuilder
             }
             : plan;
     }
+
+    private static Contract.ReviewPlanDto ApplyEquivalentDeliveryReview(
+        Contract.ReviewPlanDto plan, TaskInfo task, string? repositoryPath,
+        string? integrationRef, string? resultSha)
+    {
+        if (plan.CarriedVerdicts is { Count: > 0 }
+            || string.IsNullOrWhiteSpace(repositoryPath)
+            || string.IsNullOrWhiteSpace(integrationRef)
+            || !ReviewSubjectStore.IsValidResultSha(resultSha)
+            || string.IsNullOrWhiteSpace(plan.BriefSha256))
+            return plan;
+
+        var logs = TaskPaths.LogsDir(task.FolderPath);
+        if (!Directory.Exists(logs)) return plan;
+        var previous = Directory.EnumerateFiles(logs, "remote-review-settlement-*.json")
+            .Select(path => Path.GetFileNameWithoutExtension(path)["remote-review-settlement-".Length..])
+            .Select(id => RemoteReviewSettlementJournal.Read(task.FolderPath, id).Entry)
+            .Where(entry => entry is not null
+                && string.Equals(entry.Report.Outcome, "Pass", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(entry.Report.BriefSha256, plan.BriefSha256, StringComparison.OrdinalIgnoreCase)
+                && ReviewSubjectStore.IsValidResultSha(entry.Report.Workspace.ExpectedResultSha)
+                && ReviewSubjectStore.IsValidResultSha(entry.Report.Workspace.MergeBaseSha))
+            .OrderByDescending(entry => entry!.ReceivedAtUtc)
+            .FirstOrDefault();
+        if (previous is null) return plan;
+
+        var currentBase = Git(repositoryPath, "merge-base", integrationRef, resultSha!);
+        if (!ReviewSubjectStore.IsValidResultSha(currentBase)) return plan;
+        var priorDiff = OwnChangeDiff(repositoryPath, previous.Report.Workspace.MergeBaseSha!,
+            previous.Report.Workspace.ExpectedResultSha);
+        var currentDiff = OwnChangeDiff(repositoryPath, currentBase!, resultSha!);
+        if (priorDiff is null || currentDiff is null) return plan;
+
+        var ordinaryEqual = DiffForPaths(priorDiff, OrdinaryPath) == DiffForPaths(currentDiff, OrdinaryPath);
+        if (!ordinaryEqual) return plan;
+        var evidenceEqual = DiffForPaths(priorDiff, EvidencePath) == DiffForPaths(currentDiff, EvidencePath);
+        var carryAspects = evidenceEqual
+            ? DefaultAspectIds
+            : ["code-quality", "documentation-impact"];
+        var previousVerdicts = previous.Report.Verdicts
+            .Where(verdict => string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(verdict => verdict.Aspect, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+        var carry = new List<Contract.ReviewVerdictDto>();
+        foreach (var aspect in carryAspects)
+        {
+            if (!plan.Commands.Any(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                    && string.Equals(command.Aspect, aspect, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            if (!previousVerdicts.TryGetValue(aspect, out var verdict)) return plan;
+            carry.Add(verdict with
+            {
+                Classification = "carried-over",
+                CarriedOverFrom = previous.AttemptId,
+            });
+        }
+        if (carry.Count == 0) return plan;
+        return plan with
+        {
+            Commands = plan.Commands.Where(command => !carry.Any(verdict =>
+                string.Equals(command.Aspect, verdict.Aspect, StringComparison.OrdinalIgnoreCase))).ToArray(),
+            CarriedOverFrom = previous.AttemptId,
+            CarriedVerdicts = carry,
+        };
+    }
+
+    private static bool EvidencePath(string path)
+        => string.Equals(Path.GetFileName(path), "status.md", StringComparison.OrdinalIgnoreCase)
+           || path.StartsWith("results/", StringComparison.OrdinalIgnoreCase)
+           || path.Contains("/results/", StringComparison.OrdinalIgnoreCase);
+
+    private static bool OrdinaryPath(string path) => !EvidencePath(path);
+
+    private static Dictionary<string, string>? OwnChangeDiff(string repositoryPath, string baseSha, string resultSha)
+    {
+        var paths = Git(repositoryPath, "diff", "--name-only", "-z", baseSha, resultSha);
+        if (paths is null) return null;
+        var diffs = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var path in paths.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var diff = Git(repositoryPath, "diff", "--no-ext-diff", "--no-textconv", "--binary",
+                "--unified=0", baseSha, resultSha, "--", path);
+            if (diff is null) return null;
+            diffs[path] = string.Join('\n', diff.Split('\n')
+                .Where(line => !line.StartsWith("index ", StringComparison.Ordinal))
+                .Select(line => line.StartsWith("@@ ", StringComparison.Ordinal)
+                    ? "@@" : line));
+        }
+        return diffs;
+    }
+
+    private static string DiffForPaths(Dictionary<string, string> diffs, Func<string, bool> predicate)
+        => string.Join("\n", diffs.Where(item => predicate(item.Key))
+            .OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Select(item => item.Key + "\n" + item.Value));
 
     private DeepReviewDecision DecideDeepReview(TaskInfo task, string taskBody, ProjectSettings? settings,
         IReadOnlyList<string>? changedPaths, int changedLines, string resultSha)

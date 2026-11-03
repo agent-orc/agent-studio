@@ -117,6 +117,76 @@ public sealed class PerCardReviewPlanTests : IDisposable
             + "\"(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)\""));
     }
 
+    [Theory]
+    [InlineData("merge", 0, 4)]
+    [InlineData("code", 4, 0)]
+    [InlineData("status", 2, 2)]
+    public void PassedDeliveryOwnChangeControlsContentReview(
+        string round, int expectedAgentCommands, int expectedCarriedVerdicts)
+    {
+        var previousSha = Commit("backend/FooService.cs");
+        var previousBase = Git("merge-base", "develop", previousSha).Trim();
+        RecordPassedReview(previousSha, previousBase);
+
+        Write("backend/Unrelated.cs", "namespace AgentStudio; public class Unrelated { }\n");
+        Git("add", ".");
+        Git("commit", "-qm", "integration change");
+        Git("switch", "-q", "agent-studio/results/task");
+        Git("merge", "-q", "develop");
+        if (round == "code")
+        {
+            File.AppendAllText(Path.Combine(_repo, "backend/FooService.cs"), "// another line\n");
+            Git("add", ".");
+            Git("commit", "-qm", "change card code");
+        }
+        else if (round == "status")
+        {
+            Write("status.md", "Delivery evidence updated.\n");
+            Git("add", ".");
+            Git("commit", "-qm", "update status");
+        }
+        var resultSha = Git("rev-parse", "HEAD").Trim();
+        Git("switch", "-q", "develop");
+
+        var plan = Builder().Build(new TaskInfo
+        {
+            Id = "task", TaskKey = "task", ProjectName = "project",
+            WatchPath = _repo, FolderPath = _folder, State = TaskStates.AutoReview,
+        }, _repo, new ProjectSettings(), "develop", resultSha, null, ResultRef);
+
+        var agents = plan.Commands.Where(command =>
+            Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)).ToArray();
+        Assert.Equal(expectedAgentCommands, agents.Length);
+        Assert.Equal(expectedCarriedVerdicts, plan.CarriedVerdicts?.Count ?? 0);
+        if (round == "status")
+            Assert.Equal(["requirement-fit", "tests-and-evidence"],
+                agents.Select(command => command.Aspect).Order(StringComparer.Ordinal).ToArray());
+        if (round == "merge")
+            Assert.All(plan.CarriedVerdicts!, verdict => Assert.Equal("review-1", verdict.CarriedOverFrom));
+        Assert.Contains(plan.Commands, command => command.Aspect == "build-tests");
+    }
+
+    private void RecordPassedReview(string resultSha, string mergeBase)
+    {
+        var report = new Contract.ReviewReportRequest(
+            "executor", "instance", "lease", 1, "report-1", "Pass", null, null,
+            new Contract.ReviewWorkspaceProofDto("repo", resultSha, resultSha, resultSha,
+                false, false, "workspace", "namespace", MergeBaseSha: mergeBase),
+            new Contract.ReviewEnvironmentDto("host", "executor", "instance", "linux", "x64", "test",
+                new Dictionary<string, string>(), new Dictionary<string, string>()),
+            [], [],
+            new[] { "requirement-fit", "code-quality", "documentation-impact", "tests-and-evidence" }
+                .Select(aspect => new Contract.ReviewVerdictDto(aspect, "pass", "clean", "Passed."))
+                .ToArray(),
+            BriefSha256: BriefVersionStore.ReadOrCreate(_folder));
+        RemoteReviewSettlementJournal.Write(_folder, new RemoteReviewSettlementEntry
+        {
+            AttemptId = "review-1", TaskKey = "task", IdempotencyKey = "report-1",
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report), Report = report,
+            ReceivedAtUtc = new DateTime(2026, 11, 2, 12, 0, 0, DateTimeKind.Utc),
+        });
+    }
+
     [Fact]
     public void AgentStudioTestOnlyDiffRunsTheChangedClassAndBuild()
     {
