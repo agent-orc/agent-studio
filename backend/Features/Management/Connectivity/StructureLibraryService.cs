@@ -25,9 +25,7 @@ public sealed class StructureLibraryService(ProjectRegistry projects, GitService
     private readonly Dictionary<string, LibraryRegistry> _cache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _attempted = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _publish = new(StringComparer.Ordinal);
-    private readonly string _publishPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "AgentStudio", "registry-publishes.jsonl");
+    private readonly string _publishPath = LocalStateRoot.Combine("AgentStudio", "registry-publishes.jsonl");
     private bool _publishLoaded;
 
     public void RecordPublish(string projectName, string package, string provider, string version, DateTime at)
