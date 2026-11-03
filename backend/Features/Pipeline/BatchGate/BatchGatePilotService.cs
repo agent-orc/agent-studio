@@ -2995,17 +2995,20 @@ public sealed partial class BatchGatePilotService
 public sealed class BatchGatePilotHostedService : BackgroundService
 {
     private readonly BatchGatePilotService _pilot;
+    private readonly TaskScannerService _scanner;
     private readonly ILogger<BatchGatePilotHostedService> _logger;
 
-    public BatchGatePilotHostedService(BatchGatePilotService pilot,
+    public BatchGatePilotHostedService(BatchGatePilotService pilot, TaskScannerService scanner,
         ILogger<BatchGatePilotHostedService> logger)
     {
         _pilot = pilot;
+        _scanner = scanner;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         while (!stoppingToken.IsCancellationRequested)
         {
