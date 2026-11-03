@@ -1055,7 +1055,7 @@ export class App implements OnInit, OnDestroy {
       const fromHistory = event?.type === 'popstate' || event?.type === 'hashchange';
       this.workspaceOverlays.syncFromHash();
       if (this.featureFlags.vsCodeLayout() && this.workspaceOverlays.settingsOpen()) {
-        this.openWorkspaceSettingsInStudio(this.workspaceOverlays.section());
+        this.studioTabState.open({ kind: 'workspace-settings' });
       }
       const studioHandled = this.syncStudioRouteFromHash(fromHistory);
       if (!studioHandled) this.applyProjectShellHash(fromHistory);
@@ -1850,7 +1850,7 @@ export class App implements OnInit, OnDestroy {
         this.studioTabState.open({ kind: 'deployment-dashboard' });
         break;
       case 'structure':
-        this.studioTabState.open({ kind: 'structure', projectName: projectName ?? undefined });
+        this.studioTabState.open({ kind: 'structure', ...(projectName ? { projectName } : {}) });
         break;
       case 'task':
         this.routeDetailTab.set(route.tab);

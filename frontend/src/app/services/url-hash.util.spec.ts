@@ -36,6 +36,9 @@ describe('url-hash.util', () => {
 
     it('does not mistake a route query for a kv segment', () => {
       expect(kvValueOf('#/projects/x/wiki?page=a', 'page')).toBeNull();
+      expect(routeSegmentOf('#/workspace/operations/structure?view=host&level=2&overlay=health&env=production&focus=host&filters=a'))
+        .toBe('/workspace/operations/structure?view=host&level=2&overlay=health&env=production&focus=host');
+      expect(kvValueOf('#/workspace/operations/structure?view=host&level=2&filters=a', 'level')).toBeNull();
     });
   });
 
@@ -53,6 +56,12 @@ describe('url-hash.util', () => {
     it('removes the route and keeps the rest', () => {
       expect(withRouteSegment('#/workspace/settings&filters=a&diff', null))
         .toBe('#filters=a&diff');
+    });
+
+    it('replaces the whole queried route without retaining stale query fields', () => {
+      expect(withRouteSegment('#/workspace/operations/structure?view=host&level=1&focus=old&filters=a',
+        '/workspace/operations/structure?view=container&level=3&focus=new'))
+        .toBe('#/workspace/operations/structure?view=container&level=3&focus=new&filters=a');
     });
 
     it('returns the empty string when nothing remains', () => {

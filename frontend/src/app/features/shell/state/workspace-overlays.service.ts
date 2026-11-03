@@ -187,7 +187,8 @@ export class WorkspaceOverlaysService {
   syncFromHash(): void {
     this.tokenLedgerScope.set(ledgerScopeFromHash(window.location.hash));
     const route = routeSegmentOf(window.location.hash) ?? '';
-    const section = this.sectionForRoute(route);
+    const routePath = route.split('?')[0];
+    const section = this.sectionForRoute(routePath);
     if (section) {
       this.tokenUsagePage.set(this.tokenUsagePageForRoute(route));
       if (this.section() !== section) this.section.set(section);
@@ -197,8 +198,8 @@ export class WorkspaceOverlaysService {
       const canonicalRoute = section === 'tokens' && tokenPage !== 'workspace'
         ? `/workspace/settings/tokens/${tokenPage}`
         : this.routeForSection(section);
-      if (route !== canonicalRoute) {
-        this.writeRoute(canonicalRoute);
+      if (routePath !== canonicalRoute) {
+        this.writeRoute(canonicalRoute + route.slice(routePath.length));
       }
     } else if (this.settingsOpen() && this.openedViaHash) {
       this.settingsOpen.set(false);
@@ -314,7 +315,7 @@ export class WorkspaceOverlaysService {
   /** Remove an own route segment, keeping foreign segments (e.g. filters). */
   private clearOwnHash(): void {
     const route = routeSegmentOf(window.location.hash);
-    if (route && (this.ownRoutes.has(route)
+    if (route && (this.ownRoutes.has(route.split('?')[0])
       || route === TOKEN_ANALYSIS_ROUTE || TOKEN_USAGE_ROUTE.test(route))) {
       const target = withRouteSegment(window.location.hash, null);
       try {

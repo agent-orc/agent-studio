@@ -1,6 +1,6 @@
 @use '../../../../styles/mixins' as m;
 :host { display: flex; flex: 1; min-width: 0; min-height: 0; }
-.structure-view { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; color: var(--studio-fg); background: var(--studio-bg-editor); }
+.structure-view { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; container-type: inline-size; color: var(--studio-fg); background: var(--studio-bg-editor); }
 .structure-header { display: flex; justify-content: space-between; align-items: center; gap: var(--studio-spacing-4); padding: var(--studio-spacing-5); border-bottom: 1px solid var(--studio-border); }
 .structure-header h1 { margin: 0; color: var(--studio-fg-strong); font-size: 22px; }
 .structure-header p { margin: 0; color: var(--studio-fg-muted); }
@@ -64,4 +64,19 @@
 .structure-outline small { color: var(--studio-fg-muted); }
 .structure-shortcuts { margin: 0; padding: var(--studio-spacing-2) var(--studio-spacing-5); color: var(--studio-fg-muted); border-top: 1px solid var(--studio-border); font-size: 11px; }
 @media (max-width: 1000px) { .structure-body { grid-template-columns: minmax(0, 1fr); } .structure-outline { max-height: 160px; border-left: 0; border-top: 1px solid var(--studio-border); } }
+@container (max-width: 900px) {
+  .structure-header { flex-wrap: wrap; }
+  .structure-body { grid-template-columns: minmax(0, 1fr); }
+  .structure-canvas { min-width: 0; }
+  .structure-outline { max-height: 160px; border-left: 0; border-top: 1px solid var(--studio-border); }
+}
 @media (prefers-reduced-motion: reduce) { .structure-view *, .structure-view *::before, .structure-view *::after { animation-duration: 0s !important; transition-duration: 0s !important; } }
+
+.structure-view--embedded { min-height: 520px; border: 1px solid var(--studio-border); border-radius: 8px; }
+.structure-view--embedded .structure-body { min-height: 400px; }
+.structure-controls { flex-wrap: wrap; align-items: center; }
+.structure-controls label { display: flex; align-items: center; gap: var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: 11px; }
+.structure-controls select { color: var(--studio-fg); background: var(--studio-bg-surface); border: 1px solid var(--studio-border); border-radius: 4px; }
+.structure-targets { display: grid; gap: var(--studio-spacing-2); padding: var(--studio-spacing-3); background: var(--studio-bg-surface); border: 1px solid var(--studio-border); border-radius: 6px; }
+.structure-targets h3 { margin: 0; font-size: 13px; }
+.structure-targets a { color: var(--studio-accent); }

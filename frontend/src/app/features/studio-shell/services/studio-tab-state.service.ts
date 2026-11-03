@@ -332,6 +332,7 @@ export class StudioTabStateService {
     const after = before.filter(t => {
       if (t.kind === 'board' && t.projectName !== ALL_PROJECTS) return validNames.has(t.projectName);
       if (t.kind === 'hub') return validNames.has(t.projectName);
+      if (t.kind === 'structure' && t.projectName) return validNames.has(t.projectName);
       if (t.kind === 'workbenches' && t.projectName !== null) return validNames.has(t.projectName);
       if (t.kind === 'workbench') return validNames.has(t.projectName);
       if (t.kind === 'url-preview') return validNames.has(t.projectName);
@@ -360,6 +361,7 @@ export class StudioTabStateService {
         case 'workbench':
           return tab.projectName === previousName ? { ...tab, projectName: currentName } : tab;
         case 'url-preview':
+        case 'structure':
           return tab.projectName === previousName ? { ...tab, projectName: currentName } : tab;
         default:
           return tab;
@@ -488,7 +490,7 @@ export class StudioTabStateService {
       case 'deployment-dashboard':
         return { kind: 'deployment-dashboard' };
       case 'structure':
-        return { kind: 'structure', projectName: tab.projectName };
+        return { kind: 'structure', ...(tab.projectName ? { projectName: tab.projectName } : {}) };
       case 'welcome':
         return { kind: 'welcome' };
     }

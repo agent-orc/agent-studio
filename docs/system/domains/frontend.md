@@ -89,9 +89,12 @@ secret masking before stored log lines are returned.
 
 ## Workspace deployment dashboard
 
-The read-only Structure view opens at `#/workspace/operations/structure` from
-the Explorer's workspace Operations entries. Its standalone component is
-loaded with a dynamic import and `@defer`. It reads
+The Structure view opens at `#/workspace/operations/structure` from
+the Explorer's workspace Operations entries and at `#/projects/{slug}/operations/structure`
+for a project. The project Operations area embeds it before environment cards;
+Settings › Environment Map embeds the same installation host view. The standalone workspace and project tab component is
+loaded with a dynamic import and `@defer`. Its hash query restores view, level,
+overlay, environment and selected node; Settings List keeps host controls. It reads
 `GET /api/v1/operations/structure?scope=workspace` and projects the same
 declared nodes as a placement-focused host view or a function-grouped container
 view. Detail levels 1 to 3 and node overrides control collapse; the outline

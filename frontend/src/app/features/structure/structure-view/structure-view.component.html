@@ -1,12 +1,21 @@
-<section class="structure-view" data-testid="structure-view" aria-label="Declared structure">
+<section class="structure-view" [class.structure-view--embedded]="embedded()" data-testid="structure-view" aria-label="Declared structure">
   <header class="structure-header">
     <div><p class="structure-eyebrow">Operations</p><h1>Structure</h1>
       <p>{{ projectName() ? projectName() + ' partial picture' : 'Workspace whole picture' }}</p></div>
     <div class="structure-controls" aria-label="Structure controls">
-      <app-segmented-control [options]="viewOptions" [value]="view()" ariaLabel="Projection"
-                             (valueChange)="setView($event)" />
+      @if (!hostOnly()) {
+        <app-segmented-control [options]="viewOptions" [value]="view()" ariaLabel="Projection"
+                               (valueChange)="setView($event)" />
+      }
       <app-segmented-control [options]="levelOptions" [value]="level()" ariaLabel="Detail level"
                              (valueChange)="setLevel($event)" />
+      <label>Overlay <select data-testid="structure-overlay" [value]="overlay()" (change)="setOverlay($any($event.target).value)">
+        <option value="health">Health</option><option value="version">Version</option><option value="drift">Drift</option><option value="load">Load</option>
+      </select></label>
+      <label>Environment <select data-testid="structure-environment" [value]="environment()" (change)="setEnvironment($any($event.target).value)">
+        <option value="" [selected]="!environment()">All environments</option>
+        @for (item of environments(); track item.id) { <option [value]="item.environmentId || item.id" [selected]="environment() === (item.environmentId || item.id)">{{ item.label }}</option> }
+      </select></label>
     </div>
   </header>
   @if (error()) { <p role="alert">{{ error() }}</p> }
@@ -80,9 +89,43 @@
               {{ link.fromLabel }} → {{ link.toLabel }}</span></li>
         }
       </ol>
+      <ul class="structure-link-key" aria-label="Connection actions">
+        @for (link of data().links; track $index) {
+          <li><a [href]="'#/workspace/settings/environment?host=' + linkHost(link.from) + '&link=' + link.kind"
+                 [attr.data-testid]="'structure-link-' + $index">{{ link.label }} · {{ link.kind }} health and actions</a></li>
+        }
+      </ul>
     </div>
     <aside class="structure-outline" aria-label="Structure outline">
       <h2>Outline</h2>
+      @if (selectedNode(); as node) {
+        <section class="structure-targets" data-testid="structure-targets" aria-label="Node destinations">
+          <h3>{{ node.label }}</h3>
+          @if (node.kind === 'physical' || node.kind === 'cloud-server' || node.kind === 'vm' || node.kind === 'host' || node.kind === 'server') {
+            <a [href]="'#/workspace/settings/environment?host=' + node.id">Host row</a>
+            <a [href]="'#/workspace/settings/environment?host=' + node.id + '&view=telemetry'">Host telemetry</a>
+          } @else if (node.kind === 'container' || node.kind === 'process') {
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=history&focus=' + node.id">Deploy runs</a>
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=operations&focus=' + node.id">Logs</a>
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=runbooks&focus=' + node.id">Runbooks</a>
+          } @else if (node.kind === 'boundary' || node.kind === 'system' || node.kind === 'environment' || node.kind === 'location') {
+            <a [href]="'#/workspace/deployments?env=' + (node.environmentId || node.label)">Deployment dashboard</a>
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=releases'">Release page</a>
+          } @else if (node.kind === 'registry' || node.kind === 'package' || node.kind === 'unit') {
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '?focus=publish'">Publish panel</a>
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=releases'">Release page</a>
+            @if (node.sourceRef.startsWith('https://')) { <a [href]="node.sourceRef">Registry page</a> }
+          } @else if (node.kind === 'managed' || node.kind === 'external') {
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=overview&focus=' + node.id">Health checks</a>
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/settings?focus=declaration&node=' + node.id">Declaration</a>
+          }
+          @if (selectedLinks().length) {
+            @for (link of selectedLinks(); track $index) {
+              <a [href]="'#/workspace/settings/environment?host=' + linkHost(link.from) + '&link=' + link.kind">{{ link.label }} health and actions</a>
+            }
+          }
+        </section>
+      }
       @for (box of visible(); track box.id) {
         <button type="button" [attr.data-outline-id]="box.id" [attr.data-other-project]="box.otherProject || null"
                 [attr.aria-label]="accessibleLabel(box)"

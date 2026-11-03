@@ -161,7 +161,7 @@ export class ProjectHubUrlService {
       const query = section === 'wiki'
         ? wikiTargetQuery(tab.wikiTarget)
         : section === 'deploy'
-          ? (deployView === 'steps' ? DEPLOY_STEPS_QUERY : '')
+          ? (deployView === 'steps' ? DEPLOY_STEPS_QUERY : (sameDestination ? current.query : ''))
           : (sameDestination ? current.query : '');
       const sameTarget = sameDestination && current?.query === query;
       const next = withProjectHubRoute(window.location.hash, project.id, section, query);

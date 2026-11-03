@@ -52,25 +52,44 @@ export function isRouteSegment(segment: string): boolean {
   return segment.startsWith('/');
 }
 
-/** The hash's single route segment (leading `/` included), or null. */
-export function routeSegmentOf(hash: string): string | null {
-  return hashSegments(hash).find(isRouteSegment) ?? null;
+const ROUTE_QUERY_KEYS = new Set(['view', 'level', 'overlay', 'env', 'focus', 'page', 'folder', 'host', 'link', 'node']);
+
+function routeParts(segments: readonly string[]): { route: string; start: number; end: number } | null {
+  const start = segments.findIndex(isRouteSegment);
+  if (start < 0) return null;
+  let end = start + 1;
+  let route = segments[start];
+  if (route.includes('?')) {
+    while (end < segments.length && !isRouteSegment(segments[end]) &&
+      ROUTE_QUERY_KEYS.has(segments[end].split('=', 1)[0]) && segments[end].includes('=')) {
+      route += `&${segments[end]}`;
+      end++;
+    }
+  }
+  return { route, start, end };
 }
 
-/** The (still encoded) value of the `key=` segment, or null when absent. */
+/** The hash's single route segment, including its query, or null. */
+export function routeSegmentOf(hash: string): string | null {
+  return routeParts(hashSegments(hash))?.route ?? null;
+}
+
+/** The (still encoded) value of a sibling key-value segment, or null. */
 export function kvValueOf(hash: string, key: string): string | null {
+  const segments = hashSegments(hash);
+  const route = routeParts(segments);
   const prefix = `${key}=`;
-  const seg = hashSegments(hash).find(s => !isRouteSegment(s) && s.startsWith(prefix));
+  const seg = segments.find((part, index) =>
+    (!route || index < route.start || index >= route.end) && !isRouteSegment(part) && part.startsWith(prefix));
   return seg != null ? seg.slice(prefix.length) : null;
 }
 
-/**
- * Replace (or with `route = null` remove) the hash's route segment, keeping
- * every non-route segment. Returns the full hash including `#`, or '' when no
- * segment remains - ready for `pathname + search + result`.
- */
+/** Replace the route while preserving independent sibling segments. */
 export function withRouteSegment(hash: string, route: string | null): string {
-  const rest = hashSegments(hash).filter(s => !isRouteSegment(s));
+  const segments = hashSegments(hash);
+  const current = routeParts(segments);
+  const rest = segments.filter((part, index) =>
+    !isRouteSegment(part) && (!current || index < current.start || index >= current.end));
   return joinSegments(route ? [route, ...rest] : rest);
 }
 
@@ -88,11 +107,12 @@ export function withKvSegment(
 ): string {
   const removed = new Set([key, ...dropKeys].map(k => `${k}=`));
   const segments = hashSegments(hash);
-  const route = segments.find(isRouteSegment) ?? null;
-  const rest = segments.filter(s =>
-    !isRouteSegment(s) && ![...removed].some(prefix => s.startsWith(prefix)));
+  const route = routeParts(segments);
+  const rest = segments.filter((part, index) =>
+    (!route || index < route.start || index >= route.end) &&
+    !isRouteSegment(part) && ![...removed].some(prefix => part.startsWith(prefix)));
   const next: string[] = [];
-  if (route) next.push(route);
+  if (route) next.push(route.route);
   if (value != null) next.push(`${key}=${value}`);
   next.push(...rest);
   return joinSegments(next);

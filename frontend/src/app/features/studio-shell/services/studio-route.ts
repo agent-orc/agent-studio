@@ -141,9 +141,7 @@ export function studioRouteForTab(
     case 'deployment-dashboard':
       return '/workspace/deployments';
     case 'structure':
-      return tab.projectName
-        ? `/projects/${studioProjectSlug(tab.projectName)}/operations/structure`
-        : '/workspace/operations/structure';
+      return tab.projectName ? `/projects/${studioProjectSlug(tab.projectName)}/operations/structure` : '/workspace/operations/structure';
     default:
       return null;
   }
