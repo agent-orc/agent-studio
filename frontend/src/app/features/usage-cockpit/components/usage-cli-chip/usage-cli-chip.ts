@@ -4,8 +4,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import type { UsageCli } from '../../models/usage-cockpit.model';
 import type { UsageAlarm } from '../../usage-alarm.policy';
-import { buildCliChipView } from '../../usage-chip.util';
-import { cliAbbreviation, type UsageChipFit } from '../../usage-header-layout';
+import { buildCliChipView, cliAbbreviation, type UsageChipFit } from '../../usage-chip.util';
 import { injectUsageClock } from '../../usage-clock';
 
 /**

@@ -9,9 +9,9 @@ import type { UsageCockpitResponse } from '../models/usage-cockpit.model';
 export const USAGE_COCKPIT_REFRESH_MS = 30_000;
 
 /**
- * One shared `GET /api/usage/cockpit` reader for the header (HUC-S4). Polls
+ * One shared `GET /api/usage/cockpit` reader for footer usage and detail. Polls
  * every 30 seconds while visible, refreshes on return, keeps the last good
- * snapshot on failure (the chips turn stale from each source's own TTL) and
+ * snapshot on failure (the entries turn stale from each source's own TTL) and
  * drops responses for a workspace that is no longer selected.
  */
 @Injectable({ providedIn: 'root' })

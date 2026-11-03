@@ -15,6 +15,7 @@ import {
   costStateReason,
   formatUsdExact,
   formatUsedPct,
+  findWindow,
   NOT_AVAILABLE,
   stateWording,
   type UsageChipState,
@@ -235,7 +236,7 @@ function windowDetail(window: UsageCliWindow, timeZone: string, now: number): Us
   return {
     id: window.id,
     label: window.label,
-    value: pct ? `${pct} used` : 'Not reported',
+    value: pct ? `${pct} used` : NOT_AVAILABLE,
     reported: pct != null,
     reset: instantView(window.resetAtUtc, timeZone),
     resetLabel: window.resetAtUtc ? null : window.resetLabel,
@@ -317,7 +318,10 @@ export function buildCliDetailView(
     stateLabel: chip.stateLabel,
     stateReason: cliStateReason(cli, chip.state),
     updated: instantView(cli.fetchedAt, zone),
-    windows: cli.windows.map(w => windowDetail(w, zone, now)),
+    windows: [...cli.windows, ...(cli.windows.length && !findWindow(cli.windows, 'session')
+      ? [{ id: `${cli.cliId}/session-unreported`, label: 'Current session', usedPct: null,
+        resetAtUtc: null, resetLabel: 'Not reported by provider', suspiciousReason: null }]
+      : [])].map(w => windowDetail(w, zone, now)),
     modelGroups: groupRunsByModel(runsForCli(snapshot.runs, cli.cliId), projectNames),
     ledgerHref: calendar ? ledgerHref(rangeScope(snapshot.workspaceId, calendar, 'week'), cli.cliId) : null,
   };
