@@ -15,6 +15,7 @@ public static class BatchGateStateSnapshotReader
         var pending = store.ListPending().Where(item =>
                 string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.Subject.EnqueueSequence).ToArray();
+        var preChecks = store.ListPreChecks(project).OrderByDescending(item => item.CompletedAtUtc).ToArray();
         var plan = !settings.Enabled
             ? new BatchPlanDecision("disabled", "batch gate disabled", null, [], 0, [])
             : store.LatestPlanDecision(project)
@@ -62,9 +63,15 @@ public static class BatchGateStateSnapshotReader
             };
         }).ToArray();
         var members = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (var check in preChecks.Where(check => check.Outcome == "red"))
+            members.TryAdd(check.TaskKey, new { status = "pre-check-red", batchId = (string?)null,
+                phase = (string?)null, position = (int?)null, size = (int?)null,
+                preCheck = check });
         foreach (var item in pending)
             members[item.Subject.TaskKey] = new { status = "pending", batchId = (string?)null,
-                phase = (string?)null, position = (int?)null, size = (int?)null };
+                phase = (string?)null, position = (int?)null, size = (int?)null,
+                preCheck = preChecks.FirstOrDefault(check => check.ResultSha == item.Subject.ResultSha
+                    && check.GateProfileDigest == item.Subject.GateProfileDigest) };
         foreach (var manifest in manifests.Reverse())
         {
             var phase = store.LatestState(manifest.BatchId).Phase;
@@ -94,6 +101,9 @@ public static class BatchGateStateSnapshotReader
                     size = (int?)manifest.Members.Count,
                     reason = ejected ? replay!.Outcome : null,
                     reasonDetail = ejected ? EjectionDetail(replay!) : null,
+                    preCheck = preChecks.FirstOrDefault(check => check.ResultSha == member.ResultSha
+                        && check.BaseSha == manifest.BaseSha
+                        && check.GateProfileDigest == member.GateProfileDigest),
                 };
             }
         }
@@ -105,6 +115,8 @@ public static class BatchGateStateSnapshotReader
                 item.Subject.TaskKey,
                 item.ReviewAttemptId,
                 item.Subject.ResultSha,
+                preCheck = preChecks.FirstOrDefault(check => check.ResultSha == item.Subject.ResultSha
+                    && check.GateProfileDigest == item.Subject.GateProfileDigest),
                 waitMinutes = Math.Max(0, (now - item.EnqueuedAtUtc).TotalMinutes),
                 risk = risks?.GetValueOrDefault(item.Subject.TaskKey)
                     ?? (item.Subject.DocumentationOnly ? .08 : .2),
@@ -116,6 +128,9 @@ public static class BatchGateStateSnapshotReader
             pushWaits = pushWaits ?? (pushWait is null
                 ? Array.Empty<PendingIntegrationPushWait>() : [pushWait]),
             gateSlots,
+            preChecksRun = preChecks.Length,
+            preChecksRed = preChecks.Count(check => check.Outcome == "red"),
+            preCheckMinutesSaved = preChecks.Sum(check => check.MinutesSaved),
         };
     }
 

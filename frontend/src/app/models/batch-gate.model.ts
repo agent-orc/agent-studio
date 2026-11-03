@@ -1,5 +1,5 @@
 export type BatchDecision = 'wait' | 'close' | 'per-task' | 'idle' | 'disabled';
-export type BatchMemberStatus = 'pending' | 'in-batch' | 'published' | 'fallback';
+export type BatchMemberStatus = 'pending' | 'in-batch' | 'published' | 'fallback' | 'pre-check-red';
 
 export interface BatchGateSettings {
   enabled: boolean;
@@ -14,6 +14,7 @@ export interface BatchGateSettings {
   overlap: 'adjacent' | 'separate';
   reviewTestLevel: 'work-package' | 'build-only';
   gateTimeoutMinutes: number;
+  preCheckEnabled: boolean;
   advisor: { mode: 'off' | 'advise' | 'enforce'; cliType: string; model?: string; timeoutSeconds: number };
 }
 
@@ -31,6 +32,9 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  preChecksRun?: number;
+  preChecksRed?: number;
+  preCheckMinutesSaved?: number;
   gateSlots?: { busy: number; total: number } | null;
   pushWait?: BatchGatePushWait | null;
   pushWaits?: BatchGatePushWait[];
@@ -43,7 +47,7 @@ export interface BatchGateState {
     upcoming: { taskKey: string; stage: string; etaUtc?: string | null; risk: BatchRisk; overlapsWith: string[] }[];
     advisor?: { mode: string; verdict: string; reasons: string[]; model: string; atUtc: string } | null;
   };
-  pending: { taskKey: string; reviewAttemptId: string; resultSha: string; waitMinutes: number; risk: BatchRisk; exclusion?: string | null }[];
+  pending: { taskKey: string; reviewAttemptId: string; resultSha: string; waitMinutes: number; risk: BatchRisk; exclusion?: string | null; preCheck?: BatchPreCheck | null }[];
   batches: {
     batchId: string;
     parentBatchId?: string | null;
@@ -80,6 +84,17 @@ export interface BatchMemberState {
   size?: number | null;
   reason?: string | null;
   reasonDetail?: string | null;
+  preCheck?: BatchPreCheck | null;
+}
+
+export interface BatchPreCheck {
+  outcome: 'green' | 'red';
+  resultSha: string;
+  baseSha: string;
+  gateProfileDigest: string;
+  reason: string;
+  failedTests: string[];
+  completedAtUtc: string;
 }
 
 /** The backend reports risk as a probability between 0 and 1. */

@@ -16,6 +16,7 @@
           {{ wait.reason }}
         </p>
       }
+      <p class="batch-panel__pre-check-counters" data-testid="batch-pre-check-counters">Pre-checks: {{ data.preChecksRun ?? 0 }} run · {{ data.preChecksRed ?? 0 }} red · {{ data.preCheckMinutesSaved ?? 0 }} estimated gate minutes saved</p>
       <section aria-labelledby="batch-plan-title">
         <h3 id="batch-plan-title">Current plan</h3>
         <p><strong>{{ data.plan.decision }}</strong> · {{ data.plan.reason }}</p>
@@ -47,6 +48,7 @@
         @if (data.pending.length) {
           <ul>@for (item of data.pending; track item.taskKey) {
             <li class="batch-panel__row"><span><strong>{{ item.taskKey }}</strong> · {{ item.waitMinutes }} min · {{ riskLabel(item.risk) }} risk
+              @if (item.preCheck; as check) { · pre-check {{ check.outcome }} }
               @if (item.exclusion) { · {{ item.exclusion }} }</span>
               <button type="button" [attr.aria-label]="'Eject ' + item.taskKey" (click)="showConfirm(item.taskKey)">Eject</button>
             </li>

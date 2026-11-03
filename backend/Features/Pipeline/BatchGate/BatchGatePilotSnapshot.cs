@@ -36,7 +36,8 @@ public sealed record BatchGatePilotSnapshot(
     int PerTaskFallbackCards = 0,
     int PerTaskFallbackSuiteRuns = 0,
     double? PerTaskFallbackSuitesPerCard = null,
-    int PerTaskPublishVerdictReuses = 0);
+    int PerTaskPublishVerdictReuses = 0,
+    int PreChecksRun = 0, int PreChecksRed = 0, double PreCheckMinutesSaved = 0);
 
 public static class BatchGatePilotSnapshotReader
 {
@@ -113,6 +114,7 @@ public static class BatchGatePilotSnapshotReader
             item.CandidateMinutes + item.BaselineMinutes);
         var fallbackCards = store.ListFallbackSuites(project);
         var fallbackSuites = fallbackCards.Sum(item => item.Suites);
+        var preChecks = store.ListPreChecks(project);
         return new BatchGatePilotSnapshot(
             project, primary.Length, eligible, executions.Count,
             Ratio(executions.Count, eligible), Ratio(attempted, primary.Length),
@@ -133,7 +135,10 @@ public static class BatchGatePilotSnapshotReader
             PerTaskFallbackCards: fallbackCards.Count,
             PerTaskFallbackSuiteRuns: fallbackSuites,
             PerTaskFallbackSuitesPerCard: Ratio(fallbackSuites, fallbackCards.Count),
-            PerTaskPublishVerdictReuses: fallbackCards.Count(item => item.PublishVerdictReused));
+            PerTaskPublishVerdictReuses: fallbackCards.Count(item => item.PublishVerdictReused),
+            PreChecksRun: preChecks.Count,
+            PreChecksRed: preChecks.Count(item => item.Outcome == "red"),
+            PreCheckMinutesSaved: preChecks.Sum(item => item.MinutesSaved));
     }
 
     private static double? Ratio(double numerator, double denominator)
