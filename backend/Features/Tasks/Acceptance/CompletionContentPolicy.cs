@@ -14,7 +14,31 @@ public sealed record CompletionContentFacts(
     string? OverrideReason = null,
     string? ContentSummary = null,
     string? EvidenceChecked = null,
-    string? Missing = null);
+    string? Missing = null,
+    CompletionSettlementProblem? Settlement = null);
+
+/// <summary>
+/// Why no settled remote review report backs the content check (AGT-3467):
+/// no review, a review for another run, an unsettled review, or a settlement
+/// journal that is missing or reads as repair.
+/// </summary>
+public sealed record CompletionSettlementProblem(string? ReviewAttemptId, string Kind, string? Reason)
+{
+    public const string NoReview = "no-review";
+    public const string ReviewForOtherRun = "review-for-other-run";
+    public const string ReviewNotSettled = "review-not-settled";
+    public const string JournalMissing = "settlement-missing";
+    public const string JournalRepair = "settlement-repair";
+
+    public string Describe() => Kind switch
+    {
+        NoReview => "the current run has no review",
+        ReviewForOtherRun => $"the current review {ReviewAttemptId} belongs to another run",
+        ReviewNotSettled => $"the current review {ReviewAttemptId} has not settled",
+        JournalMissing => $"the settlement of review {ReviewAttemptId} is missing",
+        _ => $"the settlement of review {ReviewAttemptId} needs repair ({Reason ?? "no reason recorded"})",
+    };
+}
 
 public sealed record CompletionContentDecision(bool Accepted, bool Overridden, string Message);
 
@@ -47,7 +71,9 @@ public static class CompletionContentPolicy
             gaps.Add($"delivered against brief {Label(facts.DeliveryBriefVersion)}, current {Label(facts.CurrentBriefVersion)}");
 
         if (string.IsNullOrWhiteSpace(facts.ContentStatus))
-            gaps.Add($"no content verdict ({facts.RequiredAspect}); only {Aspects(facts.RanAspects)} ran");
+            gaps.Add(facts.Settlement is { } settlement
+                ? $"no content verdict ({facts.RequiredAspect}); {settlement.Describe()}"
+                : $"no content verdict ({facts.RequiredAspect}); only {Aspects(facts.RanAspects)} ran");
         else if (!string.Equals(facts.ContentStatus, "pass", StringComparison.OrdinalIgnoreCase))
             gaps.Add($"{facts.RequiredAspect} verdict was {facts.ContentStatus}");
 
