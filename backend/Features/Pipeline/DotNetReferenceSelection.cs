@@ -66,7 +66,8 @@ internal sealed record DotNetIndexedFile(
     IReadOnlyList<string> TestClasses,
     IReadOnlySet<string> Tokens,
     IReadOnlyDictionary<string, IReadOnlyList<string>> ProcessReferences,
-    IReadOnlySet<string> MachineBoundTypes);
+    IReadOnlySet<string> MachineBoundTypes,
+    IReadOnlySet<string> AttributedTestClasses);
 
 /// <summary>Per test project evidence of a reference selection.</summary>
 public sealed record DotNetReferenceSelectionAudit
@@ -180,7 +181,8 @@ internal static class DotNetSourceScanner
             declarations
                 .Where(declaration => MachineBoundAttribute.IsMatch(declaration.Attributes))
                 .Select(declaration => declaration.Name)
-                .ToHashSet(StringComparer.Ordinal));
+                .ToHashSet(StringComparer.Ordinal),
+            attributed);
     }
 
     /// <summary>
@@ -381,6 +383,7 @@ internal sealed class DotNetReferenceSelectionPlanner
             return Whole(testProject, $"repository-level build input changed: {_buildInput}");
 
         var seeds = new SortedSet<string>(StringComparer.Ordinal);
+        var changedTestClasses = new SortedSet<string>(StringComparer.Ordinal);
         var seedFiles = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         var testChanges = new Dictionary<string, DotNetIndexedFile>(StringComparer.OrdinalIgnoreCase);
 
@@ -404,7 +407,14 @@ internal sealed class DotNetReferenceSelectionPlanner
         {
             if (ReadChanged(path, out var scanned) is { } reason)
                 return Whole(testProject, reason);
+            // A test file is itself the evidence target. Reference closure alone
+            // can miss a renamed or otherwise isolated class. Shared fixtures,
+            // base types and helpers can affect any test in this project.
+            if (scanned!.TestClasses.Count == 0
+                || scanned.DeclaredTypes.Except(scanned.AttributedTestClasses, StringComparer.Ordinal).Any())
+                return Whole(testProject, $"shared test infrastructure changed: {path}");
             foreach (var name in scanned!.DeclaredTypes) seeds.Add(name);
+            changedTestClasses.UnionWith(scanned.TestClasses);
             seedFiles.Add(path);
             testChanges[path] = scanned;
         }
@@ -437,6 +447,7 @@ internal sealed class DotNetReferenceSelectionPlanner
             .ToList();
         var classes = new SortedSet<string>(
             selectedFiles.SelectMany(file => file.TestClasses), StringComparer.Ordinal);
+        classes.UnionWith(changedTestClasses);
 
         var processLines = new List<string>();
         foreach (var project in processLevelChanges

@@ -2827,7 +2827,8 @@ public static class V1ReviewPlaneEndpoints
         VerifyPlan? verifyOverride = null)
     {
         var declared = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
-        var verify = verifyOverride ?? declared;
+        var verify = VerifyCommandPlanner.WithCompiledBuild(repositoryPath ?? string.Empty,
+            verifyOverride ?? declared, changedFiles);
         if (changedFiles?.Any(path => path.Replace('\\', '/').StartsWith("backend/", StringComparison.OrdinalIgnoreCase)) == true)
         {
             // Class selection can omit every inventory test, or all test commands.
