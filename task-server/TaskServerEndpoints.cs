@@ -137,6 +137,9 @@ public static class TaskServerEndpoints
             => await InvokeAsync(async () =>
             {
                 var projects = await store.ListProjectsAsync(workspaceId, ct);
+                // A runner credential sees the projects its host is bound to (SM-9).
+                if (await RunnerRouteAuthorization.RunnerBindingAsync(context, store) is { } binding)
+                    return projects.Where(project => binding.Projects.Allows(project.ProjectId)).ToArray();
                 var status = await store.GetStudioAuthStatusAsync(StudioEndpoints.StudioSessionToken(context), ct);
                 return status.User?.Role == StudioUserRoles.Contributor
                     ? projects.Where(project => status.User.ProjectIds.Contains(project.ProjectId, StringComparer.Ordinal)).ToArray()
@@ -329,8 +332,15 @@ public static class TaskServerEndpoints
 
         api.MapGet("/projects/{projectId}/tasks", async (string projectId, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListTasksAsync(projectId, ct)));
-        api.MapGet("/projects/{projectId}/tasks/{taskIdentity}", async (string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct)
-            => await InvokeNullableAsync(() => store.GetTaskAsync(projectId, taskIdentity, ct)));
+        api.MapGet("/projects/{projectId}/tasks/{taskIdentity}", async (
+            HttpContext context, string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(async () =>
+            {
+                var task = await store.GetTaskAsync(projectId, taskIdentity, ct);
+                return task is not null && RunnerRouteAuthorization.CardLifecycleOnly(context)
+                    ? RunnerRouteAuthorization.LifecycleOnly(task)
+                    : task;
+            }));
         api.MapGet("/projects/{projectId}/tasks/{taskIdentity}/attempts", async (
             string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListAttemptsAsync(projectId, taskIdentity, ct)));
@@ -357,8 +367,14 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.ListHostProjectionsAsync(ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
         runners.MapPut("/{runnerId}", async (
-            HttpContext context, string runnerId, RegisterRunnerRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.RegisterRunnerAsync(runnerId, request, Actor(context), ct)));
+            HttpContext context, string runnerId, RegisterRunnerRequest request, TaskServerStore store, CancellationToken ct) =>
+        {
+            // SM-9: the first registration pins the credential's host; a copy elsewhere is refused.
+            if (context.TaskServerPrincipal() is { Kind: TaskServerPrincipalKinds.Runner } principal
+                && await store.BindRunnerHostAsync(principal, request.HostId?.Trim() ?? string.Empty, ct) is { } refusal)
+                return Results.Json(new ApiError(refusal.Code, refusal.Message), statusCode: refusal.Status);
+            return await InvokeAsync(() => store.RegisterRunnerAsync(runnerId, request, Actor(context), ct));
+        });
         runners.MapPut("/{runnerId}/capabilities", async (
             HttpContext context,
             string runnerId,
@@ -459,6 +475,8 @@ public static class TaskServerEndpoints
         {
             if (!string.Equals(runnerId, request.RunnerId, StringComparison.Ordinal))
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request runner ids differ."));
+            if (await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Coding) is { } refused)
+                return refused;
             return await InvokeAsync(() => store.ClaimAsync(request, Actor(context), ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.RunsClaim);
@@ -490,8 +508,12 @@ public static class TaskServerEndpoints
         {
             if (!string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request review executor ids differ."));
-            return RunnerIdentityMismatch(context, request.ExecutorId)
-                ?? await InvokeAsync(() => store.ClaimReviewPackageAsync(request, Actor(context), ct));
+            if (await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Review) is { } refused)
+                return refused;
+            if (RunnerIdentityMismatch(context, request.ExecutorId) is { } mismatch) return mismatch;
+            var binding = await RunnerRouteAuthorization.RunnerBindingAsync(context, store);
+            return await InvokeAsync(() => store.ClaimReviewPackageAsync(request, Actor(context), ct,
+                binding?.Projects));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
         runners.MapPost("/{runnerId}/review-claims", async (
@@ -499,6 +521,8 @@ public static class TaskServerEndpoints
         {
             if (!string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request review executor ids differ."));
+            if (await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Review) is { } refused)
+                return refused;
             return await InvokeAsync(() => store.ClaimReviewAsync(request, Actor(context), ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
@@ -511,7 +535,8 @@ public static class TaskServerEndpoints
             WorkPermitAcceptRequest request,
             TaskServerStore store,
             CancellationToken ct)
-            => await InvokeAsync(() => store.AcceptWorkPermitAsync(
+            => await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Coding)
+               ?? await InvokeAsync(() => store.AcceptWorkPermitAsync(
                 permitId,
                 request,
                 Actor(context),
@@ -969,13 +994,15 @@ public static class TaskServerEndpoints
         reviewPackageAttempts.MapPost("/{attemptId}/lease/renew", async (
             HttpContext context, string attemptId, ReviewPackageRenewRequest request, TaskServerStore store,
             CancellationToken ct)
-            => RunnerIdentityMismatch(context, request.ExecutorId)
+            => await RunnerRouteAuthorization.ReviewPackageAttemptRefusalAsync(context, store, attemptId)
+                ?? RunnerIdentityMismatch(context, request.ExecutorId)
                 ?? await InvokeAsync(() => store.RenewReviewPackageAsync(attemptId, request, ct)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
         reviewPackageAttempts.MapPost("/{attemptId}/report", async (
             HttpContext context, string attemptId, ReviewPackageReportRequest request, TaskServerStore store,
             CancellationToken ct)
-            => RunnerIdentityMismatch(context, request.ExecutorId)
+            => await RunnerRouteAuthorization.ReviewPackageAttemptRefusalAsync(context, store, attemptId)
+                ?? RunnerIdentityMismatch(context, request.ExecutorId)
                 ?? await InvokeAsync(() => store.ReportReviewPackageAsync(attemptId, request, Actor(context), ct)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
 

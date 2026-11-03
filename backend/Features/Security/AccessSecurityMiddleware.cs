@@ -14,6 +14,7 @@ public sealed class AccessSecurityMiddleware
 {
     public const string HumanPrincipalItem = "AccessSecurity.HumanPrincipal";
     public const string RunnerPrincipalItem = "AccessSecurity.RunnerPrincipal";
+    public const string RunnerCredentialExpiresHeader = "X-Principal-Credential-Expires-At";
     public const string ServiceAccountPrincipalItem = "AccessSecurity.ServiceAccountPrincipal";
     /// <summary>The <see cref="RequestAccess"/> captured with the request's permission decision.</summary>
     public const string RequestAccessItem = "AccessSecurity.RequestAccess";
@@ -213,6 +214,10 @@ public sealed class AccessSecurityMiddleware
         {
             context.Items[RunnerPrincipalItem] = runner;
             context.Items["ClientId"] = runner.RunnerId;
+            // SM-9: every answer names the credential's end so the host warns ahead of it.
+            if (runner.CredentialExpiresAt is { } credentialExpiresAt)
+                context.Response.Headers[RunnerCredentialExpiresHeader] =
+                    credentialExpiresAt.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture);
         }
         if (serviceAccount is null)
         {
@@ -342,6 +347,13 @@ public sealed class AccessSecurityMiddleware
             {
                 await Reject(context, 403, "runner-task-denied",
                     "A Runner may read prompt.md and the card's attachments only while it holds that task's live lease.");
+                return;
+            }
+            // SM-9: a card is read only by the runner that holds its lease.
+            if (RunnerCardReadKey(context.Request.Method, originalPath is null ? path : NormalizePath(originalPath)) is { } cardKey
+                && !RunnerHoldsLease(cardKey, runner.RunnerId))
+            {
+                await Reject(context, 403, "runner-card-not-leased", "A runner may read a card only while it holds that card's lease.");
                 return;
             }
             await _next(context);
@@ -990,6 +1002,20 @@ public sealed class AccessSecurityMiddleware
         var lease = _leases.Peek(taskKey).Lease;
         return lease is not null && string.Equals(lease.RunnerId, runnerId, StringComparison.Ordinal);
     }
+
+    /// <summary>The task key of a versioned card read, <c>GET /api/v1/projects/{project}/tasks/{task}</c>.</summary>
+    internal static string? RunnerCardReadKey(string method, string path)
+    {
+        if (!HttpMethods.IsGet(method) || !path.StartsWith("/api/v1/projects/", StringComparison.OrdinalIgnoreCase))
+            return null;
+        var parts = path.Split('/');
+        return parts.Length == 7 && parts[5].Equals("tasks", StringComparison.OrdinalIgnoreCase)
+            ? Uri.UnescapeDataString(parts[6])
+            : null;
+    }
+
+    private bool RunnerHoldsLease(string taskKey, string runnerId)
+        => _leases?.Peek(taskKey).Lease is { } lease && string.Equals(lease.RunnerId, runnerId, StringComparison.Ordinal);
 
     private static string NormalizePath(string? value)
     {

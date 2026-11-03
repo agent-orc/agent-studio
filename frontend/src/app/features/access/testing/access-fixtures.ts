@@ -72,5 +72,6 @@ export function fakeAccessService(overview: AccessOverview | null = accessOvervi
     createEnrollment: vi.fn(() => Promise.resolve({ enrollmentCode: ENROLLMENT_CODE })),
     revokeEnrollment: vi.fn(() => Promise.resolve({})),
     revokeRunner: vi.fn(() => Promise.resolve({})),
+    updateRunnerProjects: vi.fn(() => Promise.resolve({})),
   };
 }
