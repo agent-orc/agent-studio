@@ -4,11 +4,11 @@
     <ul>
       @for (item of cases(); track item.id) {
         <li [attr.data-severity]="item.severity">
-          <span class="operational-stalls__dot" aria-hidden="true"></span>
+          <app-status-indicator [tone]="item.severity === 'warning' ? 'warning' : 'danger'" [label]="item.severity" [compact]="true" />
           <div>
             <strong>{{ subjectLabel(item.subject) }}</strong>
             <span>{{ item.lastSummary }}</span>
-            <small>{{ item.severity }} · {{ item.blockedCount ?? item.affectedCards.length }} affected cards
+            <small>{{ item.blockedCount ?? item.affectedCards.length }} affected cards
               @if (item.sinceUtc) { · since <time [attr.datetime]="item.sinceUtc">{{ timeLabel(item.sinceUtc) }}</time> }
             </small>
             @if (item.suggestedAction) { <p>Suggested action: {{ item.suggestedAction }}</p> }

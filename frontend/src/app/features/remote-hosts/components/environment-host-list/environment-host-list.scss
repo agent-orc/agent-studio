@@ -9,7 +9,3 @@
 .host-list__row strong { font-size: var(--studio-font-size-lg); }
 .host-list__row--role { padding-left: var(--studio-spacing-5); }
 .host-list__slots { margin-left: auto; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
-.host-list__dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--studio-fg-dim); }
-.host-list__dot[data-status='online'], .host-list__dot[data-status='idle'] { background: var(--severity-pass); }
-.host-list__dot[data-status='degraded'], .host-list__dot[data-status='draining'] { background: var(--severity-warn); }
-.host-list__dot[data-status='offline'] { background: var(--severity-high); }

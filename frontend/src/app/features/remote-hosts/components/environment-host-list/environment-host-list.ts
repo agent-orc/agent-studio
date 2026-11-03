@@ -2,13 +2,18 @@ import { ChangeDetectionStrategy, Component, ElementRef, input, output, viewChil
 import type { PhysicalHostGroup } from '../../models/physical-host-group';
 import type { RemoteHost } from '../../models/remote-host.model';
 import { roleSlotTotal } from '../../models/role-slots';
+import { hostStatusIndicatorTone, hostStatusLabel } from '../../models/remote-host.model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-environment-host-list', standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './environment-host-list.html', styleUrl: './environment-host-list.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class EnvironmentHostListComponent {
+  readonly statusTone = hostStatusIndicatorTone;
+  readonly statusLabel = hostStatusLabel;
   readonly groups = input.required<readonly PhysicalHostGroup[]>();
   readonly gates = input<readonly { id: string; name: string; busy: number; slots: number; lastHeartbeat: string }[]>([]);
   readonly selected = input<string | null>(null);
