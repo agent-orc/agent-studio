@@ -34,7 +34,7 @@ public static class TaskReviewEvidenceEndpoints
                 || string.IsNullOrWhiteSpace(body.PreviewId) || body.PreviewId.Length > 200)
                 return Results.BadRequest(new { error = "A preview id and a comment of up to 4000 characters are required." });
             var actor = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account
-                ? TimelineActors.ServiceAccount(account.AccountId)
+                ? account.ActorId
                 : context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 ? TimelineActors.Human(human.User.Id)
                 : TimelineActors.Human(context.Items["ClientId"] as string ?? string.Empty);

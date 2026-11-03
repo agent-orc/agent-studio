@@ -1,0 +1,55 @@
+@use '../../access-controls' as access;
+
+:host { display: block; min-width: 0; }
+@include access.controls;
+@include access.table;
+.activity { display: flex; flex-direction: column; gap: var(--studio-spacing-3); }
+
+// Status strip: one flat line per fact. A whole-row tint marks an alert (R1, R4); otherwise it stays quiet.
+.activity__status { display: flex; flex-direction: column; }
+.activity__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  min-height: var(--studio-row-min-h-interactive);
+  padding: var(--studio-row-pad-block) var(--studio-row-pad-inline);
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg);
+  font-size: 0.78rem;
+}
+.activity__line + .activity__line { border-top: 1px solid var(--studio-border); }
+.activity__line[data-tone='alert'] { background: color-mix(in srgb, var(--severity-high) 14%, var(--studio-bg-surface)); }
+.activity__line strong { color: var(--studio-fg-strong); font-weight: 600; }
+.activity__meta { color: var(--studio-fg-dim); }
+.activity__action { margin-left: auto; }
+.activity__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--studio-fg-dim); }
+.activity__dot[data-tone='ok'] { background: var(--studio-success); }
+.activity__dot[data-tone='alert'] { background: var(--severity-high); }
+
+.activity__body { display: grid; grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr); gap: var(--studio-spacing-4); align-items: start; }
+.activity__sessions { display: flex; flex-direction: column; gap: var(--studio-spacing-1); min-width: 0; }
+.activity__agent { display: flex; align-items: center; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-2); color: var(--studio-fg-dim); font-size: 0.72rem; font-weight: 600; }
+button.activity__session {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--studio-spacing-2);
+  border-color: transparent;
+  background: transparent;
+  color: var(--studio-fg);
+  text-align: left;
+}
+button.activity__session:hover:not(:disabled) { background: var(--studio-bg-hover); }
+button.activity__session[aria-current='true'] { background: var(--studio-nav-active-bg); color: var(--studio-nav-active-fg); }
+button.activity__session:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
+.activity__session-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.activity__entries { display: flex; flex-direction: column; gap: var(--studio-spacing-1); min-width: 0; }
+.activity__scroll { overflow-x: auto; }
+.activity__code { color: var(--studio-mono); font-family: var(--font-mono); font-size: 0.72rem; white-space: nowrap; }
+.activity__nowrap { white-space: nowrap; }
+.activity__none { color: var(--studio-fg-dim); }
+code { font-family: var(--font-mono); }
+
+@media (max-width: 900px) { .activity__body { grid-template-columns: minmax(0, 1fr); } }

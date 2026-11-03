@@ -7,6 +7,7 @@ import {
   type ServiceAccount,
   type ServiceAccountToken,
 } from '../../models/access.model';
+import { isOperatorAgentAccount } from '../../models/operator-agent.model';
 import { ACCESS_CLOCK } from '../../services/access-clock';
 import { AccessService } from '../../services/access.service';
 import { AccessGrantFormComponent } from '../access-grant-form/access-grant-form.component';
@@ -36,7 +37,8 @@ export class AccessServiceAccountsComponent {
   readonly grant = signal<IamGrant | null>(null);
   readonly tokenDays = signal(90);
   readonly issued = signal<OneTimeServiceAccountToken | null>(null);
-  readonly accounts = computed(() => this.access.overview()?.serviceAccounts ?? []);
+  /** Operator agents are service accounts too, but they are managed only in the operator panel. */
+  readonly accounts = computed(() => (this.access.overview()?.serviceAccounts ?? []).filter(account => !isOperatorAgentAccount(account)));
   readonly lifetimes: readonly number[] = [30, 90, 365];
   readonly time = formatAccessTime;
 

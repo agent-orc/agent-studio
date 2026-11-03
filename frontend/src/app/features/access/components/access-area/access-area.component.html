@@ -4,7 +4,7 @@
       <h2>Access</h2>
       <p>Users, groups, and service accounts hold roles in a scope: the workspace, one project, or one environment. Effective access is the union of those role bindings; Owner is the break-glass role.</p>
     </div>
-    <button type="button" class="access-secondary" data-testid="access-reload" [disabled]="access.state() === 'loading' || access.busy()" (click)="access.load()">Reload</button>
+    <button type="button" class="access-secondary" data-testid="access-reload" [disabled]="access.state() === 'loading' || access.busy()" (click)="reload()">Reload</button>
   </header>
 
   @if (access.error(); as message) { <p class="access-error" role="alert" data-testid="access-error">{{ message }}</p> }
@@ -67,6 +67,18 @@
       <header><h3 id="access-accounts-title">Service accounts and API tokens</h3><p class="access-hint">Scripts and jobs use a service account with its own tokens, expiry, and revocation. API tokens are service accounts with one token.</p></header>
       <app-access-service-accounts />
     </section>
+
+    @if (operators.available()) {
+      <section class="access__section" aria-labelledby="access-operators-title">
+        <header><h3 id="access-operators-title">Operator agents</h3><p class="access-hint">Automations that act for the Owner through sessions of at most 8 hours. Each call is audited with the agent, the session, and the Owner who delegated it.</p></header>
+        @defer (on immediate) { <app-access-operator-agents /> }
+      </section>
+
+      <section class="access__section" aria-labelledby="access-operator-activity-title">
+        <header><h3 id="access-operator-activity-title">Operator activity</h3><p class="access-hint">Audit entries of operator sessions in a hash chain, with its verification and off-host forwarding.</p></header>
+        @defer (on immediate) { <app-access-operator-activity /> }
+      </section>
+    }
 
     <section class="access__section" aria-labelledby="access-runners-title">
       <header><h3 id="access-runners-title">Runner enrollments and runners</h3><p class="access-hint">Runners and the engine enroll with a one-time code and keep their own credentials and Runner scopes.</p></header>
