@@ -2135,6 +2135,11 @@ test.describe('Execution Hosts settings section', () => {
     await page.goto('/#/workspace/settings/remote-hosts');
     const attention = page.getByTestId('environment-attention');
     await expect(attention).toBeVisible();
+    await page.getByTestId('remote-host-detail-toggle-connection').click();
+    const linkStatus = page.getByTestId('remote-host-link-state-detail').getByTestId('status-indicator');
+    await expect(linkStatus).toHaveAttribute('data-tone', 'warning');
+    await expect(linkStatus).toHaveAttribute('data-icon', 'warn');
+    await expect(linkStatus).toContainText('reconnecting');
     await attention.getByRole('button').first().click();
     await expect(attention).toContainText('ssh route probe exited with code 255');
     await setTheme(page, 'light');
