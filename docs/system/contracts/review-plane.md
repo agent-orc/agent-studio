@@ -32,6 +32,9 @@ and the Task Server validates and records the resulting intent and receipt.
 | `POST /api/v1/reviews/attempts/{attemptId}/report` | Settle the attempt with a terminal outcome. Two-phase (below). |
 | `POST /api/v1/reviews/attempts/{attemptId}/cleanup` | Report workspace teardown after a terminal report. |
 | `GET /api/v1/reviews/attempts/{attemptId}` | Read the current attempt state. |
+| `POST /api/v1/runners/{runnerId}/review-package-claims` | Claim a queued shadow review package (AGT-3400 S4). |
+| `POST /api/v1/review-packages/attempts/{attemptId}/lease/renew` | Extend a package attempt lease. |
+| `POST /api/v1/review-packages/attempts/{attemptId}/report` | Report per-member verdicts and attributed findings of a package attempt. |
 
 Every write carries `AttemptId`, `Fence`, `AuthorityEpoch`, and `IdempotencyKey`
 (`AttemptWriteReference`). The attempt authority (`AttemptAuthorityService` in
@@ -39,6 +42,23 @@ the monolith; `review_attempts` in the standalone store) is the single writer;
 a request whose fence or epoch does not match the current record fails closed
 (`StaleFence`, `AuthorityEpochMismatch`, `Superseded`) rather than silently
 applying.
+
+## Package subjects (AGT-3400 S4)
+
+`contracts/TaskServer.Contracts/ReviewPackageContracts.cs` pins review subject
+kind `package`: the members of one Dossier wave reviewed together in shadow.
+The orchestrator creates one with `POST /api/v1/review-packages` (scope
+`orchestration:write`, idempotent by membership digest), lists them with
+`GET /api/v1/review-packages?project=` and asks which package holds a member
+delivery with `GET /api/v1/review-packages/members/{taskKey}/{runAttemptId}`.
+The monolith creates packages in its own store when it serves the v1 plane.
+A package attempt is leased, renewed and reported under
+`ReviewPackageLeasePolicy`: a report must carry the current lease, fence,
+executor and instance, a replay with the same key and payload is a duplicate,
+and a package gets at most two leases before it is abandoned. Admission
+applies `ReviewPackageReportPolicy`. A package report never changes a task
+state, review attempt or settlement; the domain rules are in
+[review.md](../domains/review.md#package-review-in-shadow-agt-3400-s4).
 
 ## Concept brief and aspect coverage
 
