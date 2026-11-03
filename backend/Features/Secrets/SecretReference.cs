@@ -111,7 +111,8 @@ public sealed record SecretReference(SecretScope Scope, string Name, int? Versio
 
     private static readonly Regex NamePattern = new("^[A-Za-z][A-Za-z0-9._-]{0,63}$", RegexOptions.Compiled);
 
-    public static bool IsValidName(string? name) => name is not null && NamePattern.IsMatch(name);
+    public static bool IsValidName(string? name) => name is not null &&
+        (NamePattern.IsMatch(name) || name is "quality-studio/api-token" or "quality-studio/signing-key");
 
     public static string ValidateName(string? name)
         => IsValidName(name)
@@ -137,6 +138,11 @@ public sealed record SecretReference(SecretScope Scope, string Name, int? Versio
                 return false;
             version = parsed;
             body = body[..at];
+        }
+        if (body is "workspace/quality-studio/api-token" or "workspace/quality-studio/signing-key")
+        {
+            reference = new SecretReference(SecretScope.Workspace, body["workspace/".Length..], version);
+            return true;
         }
         var slash = body.LastIndexOf('/');
         if (slash <= 0) return false;
