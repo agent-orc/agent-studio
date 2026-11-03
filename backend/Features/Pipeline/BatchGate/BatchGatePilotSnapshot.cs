@@ -10,6 +10,9 @@ namespace AgentStudio.Pipeline;
 /// They are counted from the deploy that introduced them onward; reviews
 /// settled earlier have no fact and are not reconstructed from evidence.
 /// <c>TotalVerificationHostMinutes</c> is the sum of both sides.
+/// <c>BaseChecks</c> lists, per red candidate, what answered whether its base
+/// was red and what that cost (AGT-3433); <c>BaseCheckMinutes</c> sums it.
+/// A narrow base check counts in the host minutes, not as a full-suite run.
 /// The per-task fallback fields (AGT-3434) count the cards that path settled,
 /// the suites they ran (per-task gates plus publish gates), the mean per card,
 /// and the publish steps that reused the per-task verdict instead of a suite.
@@ -33,11 +36,18 @@ public sealed record BatchGatePilotSnapshot(
     double ReviewVerificationHostMinutes = 0,
     double ReviewVerificationBaselineMinutes = 0,
     double TotalVerificationHostMinutes = 0,
+    IReadOnlyList<BatchGateBaseCheckView>? BaseChecks = null,
+    double BaseCheckMinutes = 0,
     int PerTaskFallbackCards = 0,
     int PerTaskFallbackSuiteRuns = 0,
     double? PerTaskFallbackSuitesPerCard = null,
     int PerTaskPublishVerdictReuses = 0,
     int PreChecksRun = 0, int PreChecksRed = 0, double PreCheckMinutesSaved = 0);
+
+/// <summary>One red candidate's base answer: its classification, the source that answered, and the minutes it cost.</summary>
+public sealed record BatchGateBaseCheckView(
+    string BatchId, string BaseSha, string Classification, string AnsweredBy,
+    double Minutes, DateTimeOffset RecordedAtUtc);
 
 public static class BatchGatePilotSnapshotReader
 {
@@ -49,6 +59,8 @@ public static class BatchGatePilotSnapshotReader
             .ToArray();
         var primary = all.Where(item => item.ParentBatchId is null).ToArray();
         var executions = store.ListExecutions(project);
+        var fullSuiteRuns = executions.Count(item => item.NarrowCheck is null);
+        var baseChecks = new List<BatchGateBaseCheckView>();
         var eligible = primary.SelectMany(item => item.Members)
             .Select(item => item.TaskKey + "\n" + item.RunAttempt)
             .Distinct(StringComparer.Ordinal).Count();
@@ -59,6 +71,12 @@ public static class BatchGatePilotSnapshotReader
         var stale = 0;
         foreach (var manifest in all)
         {
+            foreach (var answered in store.ListRuns(manifest.BatchId)
+                         .Select(item => store.ReadVerdict(manifest.BatchId, item.BatchRunId))
+                         .Where(item => item?.BaseCheck is not null))
+                baseChecks.Add(new BatchGateBaseCheckView(manifest.BatchId, manifest.BaseSha,
+                    answered!.Classification, answered.BaseCheck!, answered.BaseCheckMinutes ?? 0,
+                    answered.CompletedAtUtc));
             var publication = store.ReadPublication(manifest.BatchId);
             if (publication is null) continue;
             var run = store.ListRuns(manifest.BatchId)
@@ -116,8 +134,8 @@ public static class BatchGatePilotSnapshotReader
         var fallbackSuites = fallbackCards.Sum(item => item.Suites);
         var preChecks = store.ListPreChecks(project);
         return new BatchGatePilotSnapshot(
-            project, primary.Length, eligible, executions.Count,
-            Ratio(executions.Count, eligible), Ratio(attempted, primary.Length),
+            project, primary.Length, eligible, fullSuiteRuns,
+            Ratio(fullSuiteRuns, eligible), Ratio(attempted, primary.Length),
             overload, null, null,
             queueDrain.Count > 0 ? queueDrain.Average() : null,
             null, null, Percentile(sortedLatency, .5),
@@ -132,6 +150,8 @@ public static class BatchGatePilotSnapshotReader
             ReviewVerificationHostMinutes: reviewMinutes,
             ReviewVerificationBaselineMinutes: reviewVerifications.Sum(item => item.BaselineMinutes),
             TotalVerificationHostMinutes: hostMinutes + reviewMinutes,
+            BaseChecks: baseChecks.OrderByDescending(item => item.RecordedAtUtc).ToArray(),
+            BaseCheckMinutes: baseChecks.Sum(item => item.Minutes),
             PerTaskFallbackCards: fallbackCards.Count,
             PerTaskFallbackSuiteRuns: fallbackSuites,
             PerTaskFallbackSuitesPerCard: Ratio(fallbackSuites, fallbackCards.Count),
