@@ -187,7 +187,7 @@ for (const theme of ['dark', 'light'] as const) {
       await expect(page.getByTestId('cockpit-header-details')).toBeVisible();
       await expect(page.getByTestId('cockpit-header-details-count')).toHaveCount(0);
       for (const id of ['nav-project', 'nav-search', 'nav-chat', 'nav-theme']) await expect(page.getByTestId(id)).toBeVisible();
-      expect(await moreMenuLabels(page)).toEqual(['Usage details', 'Orchestrator feed', 'Orchestrator settings']);
+      expect(await moreMenuLabels(page)).toEqual(['Orchestrator feed', 'Orchestrator settings']);
       expect((await fitReport(page)).problems).toEqual([]);
       await shot(page, `header-1728-${theme}`);
       expect(errors).toEqual([]);
@@ -205,7 +205,7 @@ for (const theme of ['dark', 'light'] as const) {
       await expect(page.getByTestId('cockpit-header-details')).toHaveAttribute('aria-label', /Gemini/);
       await expect(page.getByTestId('nav-theme')).toBeHidden();
       await expect(page.getByTestId('nav-chat')).toBeVisible();
-      expect(await moreMenuLabels(page)).toEqual(['Switch theme', 'Usage details', 'Orchestrator feed', 'Orchestrator settings']);
+      expect(await moreMenuLabels(page)).toEqual(['Switch theme', 'Orchestrator feed', 'Orchestrator settings']);
       expect((await fitReport(page)).problems).toEqual([]);
       await shot(page, `header-1024-${theme}`);
       expect(errors).toEqual([]);
@@ -311,11 +311,22 @@ test.describe('@mockup header usage cockpit: priority and container rules', () =
     await open(page, { width: 1728, query: { scenario: 'three', container: '700' } });
     await expect(header(page)).toHaveAttribute('data-layout', 'single');
     expect(await visibleUsageValues(page)).toEqual(['15%', '$12.48']);
+    for (const id of ['nav-project', 'nav-search', 'nav-chat', 'nav-theme']) {
+      await expect(page.getByTestId(id)).toBeHidden();
+    }
+    expect(await moreMenuLabels(page)).toEqual([
+      'Switch project', 'Search', 'Project chat', 'Switch theme',
+      'Usage details', 'Orchestrator feed', 'Orchestrator settings',
+    ]);
     await shot(page, 'container-700-in-1728');
 
     await open(page, { width: 1728, query: { scenario: 'three', container: '1024' } });
     await expect(header(page)).toHaveAttribute('data-tier', 'tablet');
     await expect(page.getByTestId('nav-theme')).toBeHidden();
+    for (const id of ['nav-project', 'nav-search', 'nav-chat']) await expect(page.getByTestId(id)).toBeVisible();
+    expect(await moreMenuLabels(page)).toEqual([
+      'Switch theme', 'Orchestrator feed', 'Orchestrator settings',
+    ]);
     await expect(usageRow(page).getByTestId('usage-cli-chip-gemini')).toHaveCount(0);
     expect((await fitReport(page)).problems).toEqual([]);
   });

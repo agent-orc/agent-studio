@@ -128,6 +128,33 @@ test('product after-state matrix and expanded usage evidence', async ({ page, de
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await dismissDevErrorDialog(page);
   await selectDemo(page);
+  // The shell may be constrained without changing the browser viewport. Each
+  // destination must then live either inline or in More, never in both.
+  const shell = page.getByTestId('app-root');
+  for (const [width, tier, visible, menu] of [
+    [1728, 'wide', ['studio-project-picker-trigger', 'studio-global-search-trigger', 'studio-titlebar-chat', 'studio-titlebar-theme', 'studio-titlebar-environment', 'studio-open-stalls', 'cockpit-header-details'], ['Orchestrator settings']],
+    [1024, 'tablet', ['studio-project-picker-trigger', 'studio-global-search-trigger', 'studio-titlebar-chat', 'studio-titlebar-environment', 'cockpit-header-details'], ['Switch theme', 'Orchestrator feed', 'Orchestrator settings']],
+    [700, 'phone', [], ['Switch project', 'Search', 'Project chat', 'Switch theme', 'Usage details', 'Orchestrator feed', 'Environment', 'Orchestrator settings']],
+  ] as const) {
+    await shell.evaluate((el, value) => { el.style.width = `${value}px`; }, width);
+    await expect(page.getByTestId('studio-titlebar')).toHaveAttribute('data-nav-tier', tier);
+    const visibleIds: readonly string[] = visible;
+    for (const id of ['studio-project-picker-trigger', 'studio-global-search-trigger', 'studio-titlebar-chat', 'studio-titlebar-theme', 'studio-titlebar-environment', 'studio-open-stalls', 'cockpit-header-details']) {
+      if (visibleIds.includes(id)) await expect(page.getByTestId(id)).toBeVisible();
+      else await expect(page.getByTestId(id)).toBeHidden();
+    }
+    await page.getByTestId('cockpit-header-more').click();
+    await expect(page.locator('[data-testid^="cockpit-header-more-menu-item-"]')).toHaveText([...menu]);
+    await page.keyboard.press('Escape');
+    if (width !== 1728) {
+      for (const theme of THEMES) {
+        await setTheme(page, theme);
+        await shot(page, `shell-${width}-in-1728-${theme}`, true);
+      }
+    }
+  }
+  await shell.evaluate(el => { el.style.width = ''; });
+  await expect(page.getByTestId('studio-titlebar')).toHaveAttribute('data-nav-tier', 'wide');
   for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: 850 });
     const sidebar = page.getByTestId('studio-sidebar');
