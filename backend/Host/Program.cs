@@ -2100,10 +2100,6 @@ IClientProxy TaskEventClients(string jobId)
 // transition service's move event. See backend/Hubs/TaskHubBroadcaster.cs.
 var jobHubBroadcaster = app.Services.GetRequiredService<AgentStudio.Host.TaskHubBroadcaster>();
 jobHubBroadcaster.AttachMoveSource(app.Services.GetRequiredService<TaskTransitionService>());
-var workbenchHubBroadcaster = app.Services.GetRequiredService<AgentStudio.Host.WorkbenchHubBroadcaster>();
-workbenchHubBroadcaster.Attach(
-    watcher,
-    app.Services.GetRequiredService<WorkbenchChangeNotifier>());
 // gitStateChanged push (AGT-2726): resolving the singleton attaches it to
 // GitStateIndexService.RepositoryIndexed. See backend/Host/Hubs/GitStateHubBroadcaster.cs.
 app.Services.GetRequiredService<AgentStudio.Host.GitStateHubBroadcaster>();
@@ -2151,6 +2147,13 @@ projectDocs.SetWikiContentCache(wikiContentCache);
 app.Services.GetRequiredService<WikiPublicationService>().SetWikiContentCache(wikiContentCache);
 watcher.OnWikiChanged += (projectName, _) =>
     wikiContentCache.Invalidate(projectName, WikiContentCache.InvalidationSource.Watcher);
+// Dossier events follow the synchronous cache refresh, so a client reload
+// after the event reads the new catalogue. Initial hub snapshots load in the
+// background because catalogue discovery may wait for the first task scan.
+var workbenchHubBroadcaster = app.Services.GetRequiredService<AgentStudio.Host.WorkbenchHubBroadcaster>();
+workbenchHubBroadcaster.Attach(
+    watcher,
+    app.Services.GetRequiredService<WorkbenchChangeNotifier>());
 
 // TaskAccess layer (ADR-0024): the first index publication starts at boot so
 // boot-time disk problems surface early. With a persisted board (Git facts
@@ -2160,6 +2163,7 @@ watcher.OnWikiChanged += (projectName, _) =>
 // the typed interface and used by callers, not at startup.
 _ = hostTimeline.Sweep("TaskAccessHost.Boot", () => app.Services.GetRequiredService<AgentStudio.TaskAccess.ITaskAccessHost>()
     .BootAsync());
+workbenchHubBroadcaster.InitializeSnapshotsAfterBoot(jobIndexCache);
 
 // Pre-warm AgentMessageBusStore projections for every watched project
 // BEFORE the HTTP listener starts. The grouped-jobs endpoint folds in
