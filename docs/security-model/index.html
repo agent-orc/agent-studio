@@ -740,6 +740,8 @@
 </tbody></table>
 <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+<li><b>2026-11-02 · AGT-3374 · SM-3.</b> Implemented SM-D5 option C at Stage 0: public edge authorization through an MFA-backed access provider, digest-pinned and restricted website containers, encrypted backup and scratch restore scripts, monitored access and restore signals, and a baseline checker with named failures. In-product second factor remains the SM-8 slice.</li>
+<li><b>2026-11-02 · AGT-3374 · SM-3 review repair.</b> Kept SM-D5 option C. The website smoke now resolves the Caddy digest it uses for the installer ownership handoff and edge container. Both Caddy containers explicitly write state under mounted paths, the private Caddyfile skips system trust-store installation, and the baseline checks these startup settings.</li>
 <!-- agent-studio:implementation-log:end -->
 </ol>
 </section>
