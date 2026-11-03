@@ -38,11 +38,9 @@
 }
 .role__readiness {
   grid-column: 2 / -1;
-  color: var(--studio-fg-muted);
+  justify-self: start;
   white-space: nowrap;
 }
-.role__readiness[data-state='capability-ready'] { color: var(--severity-pass); }
-.role__readiness[data-state='connected'] { color: var(--severity-warn); }
 .role__readiness-detail {
   grid-column: 2 / -1;
   color: var(--studio-fg-dim);
@@ -74,17 +72,6 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.role__dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--studio-fg-muted);
-}
-.role__dot[data-tone='ok'] { background: var(--severity-pass); }
-.role__dot[data-tone='warn'] { background: var(--severity-warn); }
-.role__dot[data-tone='error'] { background: var(--severity-high); }
-.role__dot[data-tone='idle'] { background: var(--studio-fg-dim); }
 
 .role__number {
   font-family: var(--font-mono, monospace);

@@ -7,6 +7,7 @@ import { AccessInviteFormComponent } from '../access-invite-form/access-invite-f
 import { AccessRunnersComponent } from '../access-runners/access-runners.component';
 import { AccessServiceAccountsComponent } from '../access-service-accounts/access-service-accounts.component';
 import { SessionManagerComponent } from '../session-manager/session-manager.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 /**
  * The one Access area: users with their role bindings, groups, service
@@ -16,7 +17,7 @@ import { SessionManagerComponent } from '../session-manager/session-manager.comp
 @Component({
   selector: 'app-access-area',
   standalone: true,
-  imports: [AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessRunnersComponent, AccessServiceAccountsComponent, SessionManagerComponent],
+  imports: [AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessRunnersComponent, AccessServiceAccountsComponent, SessionManagerComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-area.component.html',
   styleUrl: './access-area.component.scss',
@@ -67,6 +68,12 @@ export class AccessAreaComponent implements OnInit {
         || (binding.principalKind === 'group' && groups.has(binding.principalId)))
       .map(binding => `${this.roleName(binding.role)} · ${scopeLabel(binding.scope, this.access.projects())}`
         + (binding.principalKind === 'group' ? ' (group)' : ''));
+  }
+
+  /** Account state on the shared indicator: Active succeeds, Invited waits, Disabled is settled. */
+  statusTone(user: AccessUser): StatusTone {
+    const status = this.status(user);
+    return status === 'Active' ? 'success' : status === 'Invited' ? 'info' : 'neutral';
   }
 
   status(user: AccessUser): 'Disabled' | 'Invited' | 'Active' {

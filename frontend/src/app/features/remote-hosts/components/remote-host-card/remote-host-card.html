@@ -14,10 +14,7 @@
     <span class="host__role-count">{{ roles().length }} {{ roles().length === 1 ? 'role' : 'roles' }}</span><app-host-credential-badge [host]="h" />
   </td>
   <td>
-    <span class="host__status" data-testid="remote-host-status" [attr.title]="statusReason()">
-      <span class="host__dot" [attr.data-tone]="tone()" aria-hidden="true"></span>
-      <span>{{ statusLabel() }}</span>
-    </span>
+    <app-status-indicator class="host__status" [tone]="indicatorTone()" [label]="statusLabel()" [detail]="statusReason()" testId="remote-host-status" />
   </td>
   <td class="host__link" data-testid="remote-host-link-state" [attr.title]="linkTooltip()">@if (!h.runnerLink && h.role === 'remote') { Not configured <button class="host__btn" type="button" (click)="requestSetup()">Set up</button> } @else { {{ linkLabel() }} }</td>
   <td class="host__number" data-testid="remote-host-machine-slots">{{ totalActiveSlots() }} / {{ roleSlotCapacity() ?? 'n/a' }}</td>
@@ -122,9 +119,7 @@
                       [attr.data-state]="auth.state"
                       [attr.data-testid]="'remote-host-provider-auth-' + auth.provider"
                       [appTooltip]="auth.detail + ' Last checked: ' + (auth.advertisedAt || 'not checked')">
-                  <span class="provider-auth__dot" aria-hidden="true"></span>
-                  <strong>{{ auth.providerLabel }}</strong>
-                  <span>{{ providerLoginStateLabel(auth) }}</span>
+                  <app-status-indicator [tone]="providerAuthTone(auth.state)" [label]="auth.providerLabel + ': ' + providerLoginStateLabel(auth)" />
                 </span>
                 @if (signInLabel(auth); as label) { <button type="button" class="provider-auth__sign-in"
                   [attr.data-testid]="'remote-host-' + auth.provider + '-sign-in'" (click)="openSignIn(auth)">{{ label }}</button> }

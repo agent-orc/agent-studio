@@ -108,6 +108,8 @@ describe('RemoteHostCardComponent', () => {
     const el: HTMLElement = mount(HOST).nativeElement;
     expect(el.querySelector('[data-testid="remote-host-name"]')?.textContent).toContain('agent-runner');
     expect(el.querySelector('[data-testid="remote-host-status"]')?.textContent).toContain('Online');
+    expect(el.querySelector<HTMLElement>('[data-testid="remote-host-status"]')?.dataset['tone']).toBe('success');
+    expect(el.querySelector<HTMLElement>('[data-testid="remote-host-status"]')?.dataset['icon']).toBe('check');
     expect(el.querySelector('.host__role')?.textContent).toContain('Remote');
     expect(el.querySelectorAll('.meter').length).toBe(3);
     // RAM 24/62 GB used => 39%
@@ -125,6 +127,7 @@ describe('RemoteHostCardComponent', () => {
       stats: null,
     }).nativeElement;
     expect(el.querySelector('[data-testid="remote-host-status"]')?.textContent).toContain('Loading live status');
+    expect(el.querySelector<HTMLElement>('[data-testid="remote-host-status"]')?.dataset['tone']).toBe('running');
     expect(el.querySelector('[data-testid="remote-host-run-pool"]')?.textContent).toContain('Loading daemon telemetry');
     expect(el.textContent).not.toContain('Daemonstopped');
     expect(el.querySelector('[data-testid="remote-host-stale"]')).toBeNull();
@@ -135,6 +138,7 @@ describe('RemoteHostCardComponent', () => {
     // The host binding lands on the component host element itself.
     expect(el.getAttribute('data-tone')).toBe('error');
     expect(el.querySelector('[data-testid="remote-host-status"]')?.textContent).toContain('Offline');
+    expect(el.querySelector<HTMLElement>('[data-testid="remote-host-status"]')?.dataset['icon']).toBe('close');
   });
 
   it('shows the independent read-only badge when the startup push probe fails', () => {
@@ -150,7 +154,7 @@ describe('RemoteHostCardComponent', () => {
       .query(By.css('[data-testid="remote-host-git-status"]'))
       .injector.get(AppTooltipDirective);
     expect(tooltip.appTooltip()).toContain('permission denied');
-    expect(badge?.getAttribute('data-tone')).toBe('error');
+    expect(badge?.getAttribute('data-tone')).toBe('danger');
     expect(el.querySelector('[data-testid="remote-host-activity"]')?.textContent)
       .toContain('Task inflowopen');
   });
@@ -267,7 +271,7 @@ describe('RemoteHostCardComponent', () => {
       .toContain('Fallback repo: ok');
     const workflow = el.querySelector('[data-testid="remote-host-workflow-status"]');
     expect(workflow?.textContent).toContain('Fallback workflow: permission missing');
-    expect(workflow?.getAttribute('data-tone')).toBe('warn');
+    expect(workflow?.getAttribute('data-tone')).toBe('warning');
     const fix = el.querySelector('[data-testid="remote-host-token-scope-fix"]');
     expect(fix?.textContent).toContain('Grant the token');
     expect(fix?.querySelector('a')?.getAttribute('href'))

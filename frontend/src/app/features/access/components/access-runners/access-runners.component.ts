@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { formatAccessTime, type EnrolledRunner, type RunnerEnrollment } from '../../models/access.model';
 import { ACCESS_CLOCK } from '../../services/access-clock';
 import { AccessService } from '../../services/access.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 /**
  * Runner enrollment codes and enrolled runners (AGT-3186). Runners and the
@@ -11,6 +12,7 @@ import { AccessService } from '../../services/access.service';
 @Component({
   selector: 'app-access-runners',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-runners.component.html',
   styleUrl: './access-runners.component.scss',
@@ -35,6 +37,12 @@ export class AccessRunnersComponent {
 
   setKind(value: string): void {
     this.kind.set(value === 'orchestrator' ? 'orchestrator' : 'runner');
+  }
+
+  /** Enrollment state on the shared indicator: an open code waits, a used one succeeded. */
+  statusTone(enrollment: RunnerEnrollment): StatusTone {
+    const status = this.status(enrollment);
+    return status === 'Used' ? 'success' : status === 'Open' ? 'info' : 'neutral';
   }
 
   status(enrollment: RunnerEnrollment): 'Used' | 'Open' | 'Expired or revoked' {

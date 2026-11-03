@@ -27,7 +27,7 @@
           <tr>
             <td>{{ enrollment.name }}</td>
             <td class="access-numeric">{{ time(enrollment.expiresAt) }}</td>
-            <td><span class="access-badge" [attr.data-tone]="open(enrollment) ? null : 'muted'">{{ status(enrollment) }}</span></td>
+            <td><app-status-indicator [tone]="statusTone(enrollment)" [label]="status(enrollment)" testId="access-enrollment-status" /></td>
             <td class="access-actions">
               @if (open(enrollment)) { <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="revokeEnrollment(enrollment)">Revoke code</button> }
             </td>
@@ -45,7 +45,7 @@
           <td>{{ runner.name }}</td>
           <td class="access-hint">{{ runner.id }}</td>
           <td class="access-numeric">{{ activeCredentials(runner) }}</td>
-          <td><span class="access-badge" [attr.data-tone]="runner.revokedAt ? 'muted' : null">{{ runner.revokedAt ? 'Revoked' : 'Active' }}</span></td>
+          <td><app-status-indicator [tone]="runner.revokedAt ? 'neutral' : 'success'" [label]="runner.revokedAt ? 'Revoked' : 'Active'" testId="access-runner-status" /></td>
           <td class="access-actions">
             @if (!runner.revokedAt) { <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="revokeRunner(runner)">Revoke runner</button> }
           </td>

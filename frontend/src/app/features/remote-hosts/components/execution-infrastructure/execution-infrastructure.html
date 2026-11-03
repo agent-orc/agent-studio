@@ -4,14 +4,16 @@
     <div class="infrastructure__grid">
       <p><strong>Workstation</strong><span>Local execution role in the table below. API process: {{ infrastructure.workstation }}</span></p>
       <p><strong>Task Server</strong><span>{{ infrastructure.taskServer }} · {{ infrastructure.taskServer === 'local monolith' ? 'this API is responding' : 'check installation checkpoints for route health' }}</span></p>
-      <p><strong>Engine</strong><span>{{ infrastructure.taskServer === 'remote Task Server' ? 'observed by Task Server' : infrastructure.engine.state }}
+      <p><strong>Engine</strong><span>@if (infrastructure.taskServer === 'remote Task Server') { observed by Task Server } @else {
+          <app-status-indicator [tone]="engineTone(infrastructure.engine.state)" [label]="infrastructure.engine.state" [compact]="true" testId="execution-engine-state" /> }
         @if (infrastructure.engine.lastEngineId) { · {{ infrastructure.engine.lastEngineId }} }
         @if (infrastructure.engine.state === 'engine-not-live') { · restore Engine contact and check orchestration rollout settings }
         @if (infrastructure.engine.state === 'not-required' && infrastructure.taskServer === 'local monolith') { · no transition currently requires Engine contact }
       </span></p>
       @if (infrastructure.gate.host) {
         <p data-testid="remote-gate-host"><strong>Gate · {{ infrastructure.gate.host }}</strong>
-          <span>{{ infrastructure.gate.busy }} / {{ infrastructure.gate.total }} slots · {{ infrastructure.gate.reachability }}
+          <span>{{ infrastructure.gate.busy }} / {{ infrastructure.gate.total }} slots ·
+            <app-status-indicator [tone]="gateTone(infrastructure.gate.reachability)" [label]="infrastructure.gate.reachability" [compact]="true" testId="remote-gate-reachability" />
             @if (infrastructure.gate.transport === 'pull') { · outbound pull worker }
             @if (infrastructure.gate.reachability === 'unverified') { · no recent gate contact }
             @if (infrastructure.gate.reachability === 'unreachable') { · check the gate worker }

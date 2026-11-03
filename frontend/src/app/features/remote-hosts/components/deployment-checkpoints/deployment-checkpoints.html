@@ -45,17 +45,15 @@
               <span class="deployment__project-detail" [title]="status.registration.repositoryUrl + ' · integration ' + status.registration.integrationRef">
                 {{ status.registration.repositoryUrl }}
               </span>
-              <span [class.deployment__action]="!latestProbes(status).length"
-                    [title]="latestProbes(status).length ? proofLabel(latestProbes(status)[0]) : 'Run the repository probe from an enrolled host.'">
-                {{ latestProbes(status).length ? (latestProbes(status)[0].admitted ? 'Proof admitted' : 'Proof failed') : 'No host proof' }}
-              </span>
+              <app-status-indicator [compact]="true" testId="deployment-project-proof"
+                [tone]="latestProbes(status).length ? (latestProbes(status)[0].admitted ? 'success' : 'danger') : 'warning'"
+                [label]="latestProbes(status).length ? (latestProbes(status)[0].admitted ? 'Proof admitted' : 'Proof failed') : 'No host proof'"
+                [detail]="latestProbes(status).length ? proofLabel(latestProbes(status)[0]) : 'Run the repository probe from an enrolled host.'" />
             } @else {
               <span class="deployment__action">{{ row.error }}</span>
             }
-            <span [class.deployment__action]="!row.placement"
-                  [title]="placementTooltip(row)">
-              {{ row.placement ? 'Placement set' : 'Placement missing' }}
-            </span>
+            <app-status-indicator [compact]="true" testId="deployment-project-placement" [tone]="row.placement ? 'success' : 'warning'"
+              [label]="row.placement ? 'Placement set' : 'Placement missing'" [detail]="placementTooltip(row)" />
           </div>
         }
         @if (missingRepositories().length) {

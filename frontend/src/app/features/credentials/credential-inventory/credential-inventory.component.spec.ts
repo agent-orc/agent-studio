@@ -40,6 +40,11 @@ describe('CredentialInventoryComponent', () => {
     const element: HTMLElement = fixture.nativeElement;
     expect(element.querySelectorAll('.credentials__row')).toHaveLength(2);
     expect(element.textContent).toContain('Affected cards: AGT-1');
+    const missing = element.querySelector<HTMLElement>('[data-testid="credential-state-one"]')!;
+    expect([missing.dataset['tone'], missing.dataset['icon'], missing.textContent?.trim()]).toEqual(['danger', 'close', 'Missing']);
+    const ok = element.querySelector<HTMLElement>('[data-testid="credential-state-two"]')!;
+    expect([ok.dataset['tone'], ok.dataset['icon'], ok.textContent?.trim()]).toEqual(['success', 'check', 'OK']);
+    expect(element.querySelector<HTMLElement>('[data-testid="access-codex-login-indicator"]')?.dataset['tone']).toBe('warning');
     expect(element.querySelector('[data-testid="access-codex-login-state"]')?.textContent)
       .toContain('rate limited');
     element.querySelector<HTMLButtonElement>('[data-testid="access-codex-sign-in"]')?.click();

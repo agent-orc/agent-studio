@@ -1,0 +1,12 @@
+<span class="status-indicator"
+      [class.status-indicator--compact]="compact()"
+      [attr.data-tone]="tone()"
+      [attr.data-icon]="icon()"
+      [attr.data-testid]="testId()"
+      [attr.tabindex]="tooltip() ? 0 : null"
+      [appTooltip]="tooltip()">
+  <span class="status-indicator__icon" aria-hidden="true">
+    <app-studio-icon [name]="icon()" [size]="compact() ? 12 : 13" [strokeWidth]="2.25" />
+  </span>
+  <span class="status-indicator__label">{{ label() }}</span>
+</span>

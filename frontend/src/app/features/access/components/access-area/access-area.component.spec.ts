@@ -25,6 +25,8 @@ describe('AccessAreaComponent', () => {
     expect(developer).toContain('Developer · Website');
     expect(developer).toContain('Approver · Website · production (group)');
     expect(developer).toContain('Invited');
+    const invited = element.querySelector<HTMLElement>('[data-testid="access-user-status-dev.user"]')!;
+    expect([invited.dataset['tone'], invited.dataset['icon'], invited.textContent?.trim()]).toEqual(['info', 'info', 'Invited']);
     expect(element.querySelector('[data-testid="access-single-user"]')).toBeNull();
     for (const section of ['access-users', 'access-bindings', 'access-groups', 'access-service-accounts', 'access-invite-form', 'access-runners'])
       expect(element.querySelector(`[data-testid="${section}"]`)).toBeTruthy();

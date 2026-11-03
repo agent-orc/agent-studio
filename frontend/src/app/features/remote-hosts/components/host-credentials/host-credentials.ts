@@ -1,10 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { RemoteHostDetailSummaryComponent } from '../remote-host-detail-summary/remote-host-detail-summary';
 import {
   credentialDocHref,
   credentialDueLabel,
   credentialDueTone,
+  credentialIndicatorTone,
   credentialEvidenceQualityLabel,
   credentialKindLabel,
   credentialLastVerifiedLabel,
@@ -34,7 +36,7 @@ import { CredentialViewService } from '../../services/credential-view.service';
   // eslint-disable-next-line @angular-eslint/component-selector -- The host card owns the native section and its detail styling.
   selector: 'section[appHostCredentials]',
   standalone: true,
-  imports: [DisclosureMarkerComponent, RemoteHostDetailSummaryComponent],
+  imports: [DisclosureMarkerComponent, RemoteHostDetailSummaryComponent, StatusIndicatorComponent],
   templateUrl: './host-credentials.html',
   styleUrl: './host-credentials.scss',
   host: { 'data-testid': 'remote-host-detail-section-credentials' },
@@ -44,6 +46,7 @@ export class HostCredentialsComponent {
   private readonly claudeSignIn = inject(ClaudeSignInDialogService);
   private readonly codexSignIn = inject(CodexSignInDialogService);
   private readonly credentials = inject(CredentialViewService);
+  readonly indicatorTone = credentialIndicatorTone;
 
   readonly host = input.required<RemoteHost>();
   readonly now = input(Date.now());

@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   clientKindLabel,
+  clientStateTone,
   formatRelativeTime,
   type TaskServerClient,
   type TaskServerClientKind,
@@ -21,6 +23,7 @@ import {
 @Component({
   selector: 'app-task-server-clients-card',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './task-server-clients-card.html',
   styleUrl: './task-server-clients-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -42,6 +45,7 @@ export class TaskServerClientsCardComponent {
   readonly now = input<number>(Date.now());
 
   kindLabel(kind: TaskServerClientKind): string { return clientKindLabel(kind); }
+  stateTone(state: string | undefined): StatusTone { return clientStateTone(state); }
   lastSeen(client: TaskServerClient): string { return formatRelativeTime(client.lastSeenAt, this.now()); }
   retired(client: TaskServerClient): boolean { return client.kind === 'retired'; }
   manageable(client: TaskServerClient): boolean {

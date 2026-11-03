@@ -40,6 +40,9 @@ describe('AccessRunnersComponent', () => {
     const runner = element.querySelector('[data-testid="access-runner-runner_1"]')?.textContent ?? '';
     expect(runner).toContain('coding-host');
     expect(runner).toContain('Active');
+    const tones = Array.from(element.querySelectorAll<HTMLElement>('[data-testid="access-enrollment-status"]')).map(node => node.dataset['tone']);
+    expect(tones).toEqual(['info', 'neutral']);
+    expect(element.querySelector<HTMLElement>('[data-testid="access-runner-runner_1"] [data-testid="access-runner-status"]')?.dataset['tone']).toBe('success');
   });
 
   it('shows an error state when the runner lists could not be loaded', () => {

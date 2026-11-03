@@ -6,6 +6,7 @@ import { AuthSessionState } from '../../../services/auth.service';
 import type { WatchPathEntry } from '../../../models/task.model';
 import { SecretsService, type SecretMetadata, type SecretScopeKey } from '../secrets.service';
 import { SecretBackendSettingsComponent } from '../secret-backend-settings/secret-backend-settings.component';
+import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
 
 /**
  * Secrets section of the Access area in Settings. People pick a scope
@@ -16,7 +17,7 @@ import { SecretBackendSettingsComponent } from '../secret-backend-settings/secre
 @Component({
   selector: 'app-secrets-panel',
   standalone: true,
-  imports: [DatePipe, SecretBackendSettingsComponent],
+  imports: [DatePipe, SecretBackendSettingsComponent, StatusIndicatorComponent],
   templateUrl: './secrets-panel.component.html',
   styleUrl: './secrets-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

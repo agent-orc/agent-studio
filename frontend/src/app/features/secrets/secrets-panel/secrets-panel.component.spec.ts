@@ -72,6 +72,9 @@ describe('SecretsPanelComponent', () => {
     const { fixture, service, element } = await setup();
     expect(element.querySelectorAll('[data-testid="secrets-row"]')).toHaveLength(1);
     expect(element.textContent).toContain('secret://workspace/MAIL_KEY');
+    const active = element.querySelector<HTMLElement>('[data-testid="secrets-row-status"]')!;
+    expect([active.dataset['tone'], active.dataset['icon']]).toEqual(['success', 'check']);
+    expect(active.textContent?.trim()).toMatch(/^Active · v\d+$/);
 
     fixture.componentInstance.selectProject('memowikis');
     fixture.detectChanges();
@@ -81,6 +84,8 @@ describe('SecretsPanelComponent', () => {
     fixture.detectChanges();
     const row = element.querySelector('[data-testid="secrets-row"]')!;
     expect(row.getAttribute('data-status')).toBe('revoked');
+    const revoked = row.querySelector<HTMLElement>('[data-testid="secrets-row-status"]')!;
+    expect([revoked.dataset['tone'], revoked.dataset['icon'], revoked.textContent?.trim()]).toEqual(['neutral', 'circle', 'Revoked']);
     expect(row.querySelectorAll('.secrets__versions li')).toHaveLength(2);
   });
 
@@ -145,7 +150,8 @@ describe('SecretsPanelComponent', () => {
     const [backendBlock] = await fixture.getDeferBlocks();
     await backendBlock.render(DeferBlockState.Complete);
     fixture.detectChanges();
-    expect(element.querySelector('[data-testid="secret-backend-health"]')?.textContent).toContain('healthy');
+    const health = element.querySelector<HTMLElement>('[data-testid="secret-backend-health"]')!;
+    expect([health.dataset['tone'], health.dataset['icon'], health.textContent?.trim()]).toEqual(['success', 'check', 'Healthy']);
     const settings = fixture.debugElement.query(By.directive(SecretBackendSettingsComponent))
       .componentInstance as SecretBackendSettingsComponent;
     settings.kind.set('onepassword');
