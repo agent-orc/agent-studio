@@ -162,6 +162,11 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         }
 
         var read = RemoteReviewSettlementJournal.Read(task.FolderPath, review.AttemptId);
+        if (read.Status == RemoteReviewSettlementReadStatus.Repair && _timeline is not null
+            && RemoteReviewSettlementDiagnostics.RecordRepairOnce(
+                _timeline, task.FolderPath, review.AttemptId, read.Reason))
+            _logger.LogWarning("remote-review-settlement-journal-repair task={TaskKey} attempt={AttemptId} reason={Reason}",
+                review.TaskKey, review.AttemptId, read.Reason);
         if (read.Status != RemoteReviewSettlementReadStatus.Ready || read.Entry is null)
         {
             // Older reports can have fully projected evidence without this new

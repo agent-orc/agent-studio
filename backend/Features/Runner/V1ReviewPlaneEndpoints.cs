@@ -948,7 +948,8 @@ public static class V1ReviewPlaneEndpoints
             var priorReport = acceptedReplay && reviewTask is not null
                 ? RemoteReviewSettlementJournal.Read(reviewTask.FolderPath, attemptId).Entry
                 : null;
-            if (priorReport?.SubmittedReportSha256 is { } originalHash)
+            if (priorReport is not null
+                && RemoteReviewSettlementJournal.SubmittedReportHash(priorReport) is { } originalHash)
             {
                 if (!string.Equals(originalHash, submittedReportHash, StringComparison.Ordinal))
                     return Results.Conflict(new Contract.ApiError(
@@ -1266,7 +1267,7 @@ public static class V1ReviewPlaneEndpoints
                     return Results.Json(new Contract.ApiError("review-settlement-repair-required",
                         replayJournal.Reason ?? "The settled report has no recoverable journal or evidence."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
-                if (replayJournal.Entry is { } prior && prior.ReportSha256 != preparedHash)
+                if (replayJournal.Entry is { } prior && RemoteReviewSettlementJournal.ReportHash(prior) != preparedHash)
                     return Results.Conflict(new Contract.ApiError("idempotency-conflict",
                         "The review report key is bound to a different payload."));
             }
