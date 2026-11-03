@@ -142,6 +142,8 @@
       <div class="proj-shell__panel-content">
         @if (hasCustomPanel()) {
           <ng-content></ng-content>
+        } @else if (activeRail() === 'quality-studio') {
+          <app-quality-studio-panel />
         } @else {
           <header class="proj-shell__panel-head">
             <h2 class="proj-shell__panel-title" data-testid="project-shell-panel-title">

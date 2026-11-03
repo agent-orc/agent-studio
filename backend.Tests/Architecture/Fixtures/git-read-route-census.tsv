@@ -200,6 +200,7 @@
 /api/projects/{projectName}/proposals	free	-	-	-
 /api/projects/{projectName}/proposals/evidence/{**relPath}	free	-	-	-
 /api/projects/{projectName}/proposals/{id}	free	-	-	-
+/api/projects/{projectName}/quality-studio	free	-	-	-
 /api/projects/{projectName}/quota-wait-policy	free	-	-	-
 /api/projects/{projectName}/regression-radar	reachable	gap	Pipeline	Pipeline reads from the Git fact store
 /api/projects/{projectName}/review-decisions-pending	free	-	-	-

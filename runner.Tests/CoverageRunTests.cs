@@ -144,6 +144,24 @@ public sealed class CoverageRunTests : IDisposable
     }
 
     [Fact]
+    public void Options_prefer_the_stored_mapping_over_the_legacy_repository_id()
+    {
+        var path = Path.Combine(_root, "project-settings.json");
+        File.WriteAllText(path, """{"Agent Studio":{"qualityStudio":{"RepositoryId":"mapped-repo","State":"registered"}}}""");
+        var options = CoverageRunOptions.Parse([], new Dictionary<string, string?>
+        {
+            ["COVERAGE_RUN_CHECKOUT"] = _root,
+            ["QUALITY_STUDIO_BASE_URL"] = "http://quality.test",
+            ["QUALITY_STUDIO_SETTINGS_PATH"] = path,
+            ["QUALITY_STUDIO_PROJECT_NAME"] = "Agent Studio",
+            ["QUALITY_STUDIO_REPO_ID"] = "old-repo",
+        });
+
+        Assert.Equal("mapped-repo", options.QualityStudioRepositoryId);
+        Assert.False(options.LegacyQualityStudioRepositoryId);
+    }
+
+    [Fact]
     public void Options_default_state_directories_to_the_runner_state_dir()
     {
         var options = CoverageRunOptions.Parse([], new Dictionary<string, string?>
