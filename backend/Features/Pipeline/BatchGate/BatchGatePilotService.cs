@@ -38,6 +38,7 @@ public sealed partial class BatchGatePilotService
     private readonly PipelineExecutionLog _pipelineLog;
     private readonly GateSlotUsageTracker? _gateSlots;
     private readonly PipelineHealthDetector? _pipelineHealth;
+    private readonly PipelineHealthService? _healthAlerts;
     private readonly ConcurrentDictionary<string, string> _activeBatchGates = new(StringComparer.Ordinal);
     private readonly IServiceProvider? _services;
     private readonly IConfiguration? _configuration;
@@ -79,7 +80,8 @@ public sealed partial class BatchGatePilotService
         GateSlotUsageTracker? gateSlots = null,
         PipelineHealthDetector? pipelineHealth = null,
         IServiceProvider? services = null, IConfiguration? configuration = null,
-        TimelineLog? timeline = null, PostMergeModeService? postMergeMode = null)
+        TimelineLog? timeline = null, PostMergeModeService? postMergeMode = null,
+        PipelineHealthService? healthAlerts = null)
     {
         _store = store;
         _timeline = timeline;
@@ -108,6 +110,7 @@ public sealed partial class BatchGatePilotService
             NullLogger<PipelineExecutionLog>.Instance);
         _gateSlots = gateSlots;
         _pipelineHealth = pipelineHealth;
+        _healthAlerts = healthAlerts;
         _services = services;
         _configuration = configuration;
         _fallbackGateSlots = new SemaphoreSlim(Math.Max(1, ConfiguredGateSlots() - 1));
@@ -149,6 +152,16 @@ public sealed partial class BatchGatePilotService
         await RunPerTaskFallbackAsync(pending, ct, recordInStore: false).ConfigureAwait(false);
     }
 
+    public void ReportAdmissionFailure(TaskInfo task, ReviewAttemptDto review, string reason)
+        => _healthAlerts?.BatchAdmissionFailed(task.ProjectName, task.WatchPath,
+            task.Key ?? task.Id, review.AttemptId, reason);
+
+    public void ClearAdmissionFailure(TaskInfo task, ReviewAttemptDto review)
+        => _healthAlerts?.BatchAdmissionRecovered(task.ProjectName,
+            task.Key ?? task.Id, review.AttemptId);
+
+    public bool IsPerTaskGateRunning(string reviewAttemptId) => FallbackInFlight(reviewAttemptId);
+
     /// <summary>
     /// Records the review-side verification minutes of a settled batch-deferred
     /// review once per review attempt, whatever its outcome. Replays find the
@@ -180,8 +193,7 @@ public sealed partial class BatchGatePilotService
         RunAttemptDto sourceRun, DateTimeOffset reviewedAtUtc)
     {
         var project = _settings.Get(task.ProjectName);
-        if (review.Subject.Plan?.Commands.Any(command =>
-                AgentStudio.TaskServer.Contracts.ReviewCommandKinds.IsAgent(command.ExecutionKind)) != true)
+        if (!HasPerCardModelReview(review.Subject.Plan))
             throw new InvalidDataException("Batch admission requires a passed per-card model review.");
         var repo = _git.ResolveRepoRootForWatchPath(task.WatchPath)
             ?? throw new InvalidDataException("Batch repository is unavailable.");
@@ -215,6 +227,26 @@ public sealed partial class BatchGatePilotService
         return new BatchGatePendingRecord(
             review.AttemptId, subject, repo, task.WatchPath, task.FolderPath,
             project.IntegrationStrategy, PipelineTypes.Resolve(task), _time.GetUtcNow());
+    }
+
+    internal static bool HasPerCardModelReview(AgentStudio.TaskServer.Contracts.ReviewPlanDto? plan)
+    {
+        if (plan is null) return false;
+        var agentAspects = plan.Commands
+            .Where(command => AgentStudio.TaskServer.Contracts.ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            .Select(command => command.Aspect).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var carried = plan.CarriedVerdicts ?? [];
+        var carriedAspects = carried.Select(verdict => verdict.Aspect)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (agentAspects.Count == 0 && carriedAspects.Count == 0) return false;
+        var plannedAspects = plan.Commands.Select(command => command.Aspect)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return carried.All(verdict => string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(verdict.Classification, "carried-over", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(verdict.CarriedOverFrom)
+                && plan.RequiredAspects.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase))
+            && plan.RequiredAspects.All(aspect => plannedAspects.Contains(aspect)
+                || carriedAspects.Contains(aspect));
     }
 
     // The attempt authority keys a card by its reference key in the flat task

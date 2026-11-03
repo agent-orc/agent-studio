@@ -689,6 +689,13 @@ also enters isolation when another test was quarantined as flaky. Per-task
 fallback gates admit at most one fewer concurrent request than configured gate
 slots, leaving a slot for a batch. The pilot reconciles a current passed review
 in Auto Review with a missing pending record back into the batch queue.
+Admission accepts a passed per-card model review whose required agent aspects
+were carried from a passed equivalent-delivery review. A plan with no agent
+aspect command or carried verdict remains ineligible. If queue admission and
+the emergency per-task gate both fail, pipeline health emits one alarm for the
+card and review attempt with the failure reason. Startup recovery retries a
+current settled deferred review in Auto Review when it has neither a pending
+batch entry nor a running gate, and clears the alarm after admission succeeds.
 
 `GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
 including `integrationBranchRedBatches` and the correctness floor; comparable baseline and cost fields remain null
