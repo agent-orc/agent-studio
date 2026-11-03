@@ -186,9 +186,9 @@ public sealed class StructureProjectionTests
                 Node("placement:PROJ-004:staging:preview").Detail));
             var database = Node("managed:PROJ-004:production:postgresql");
             Assert.Equal(("managed", "database", "probed", "tls", "up", "region:PROJ-004:production:eu"),
-                (database.Kind, database.Detail, database.Observation, database.Probe, database.Status, database.ParentId));
+                (database.Kind, database.Detail, database.ProbeObservation, database.Probe, database.Status, database.ParentId));
             var queue = Node("managed:PROJ-004:production:message-queue");
-            Assert.Equal(("not-observed", null, null), (queue.Observation, queue.Probe, queue.Status));
+            Assert.Equal(("not-observed", null, null), (queue.ProbeObservation, queue.Probe, queue.Status));
             Assert.Equal([("production", "postgres-tls")], probed);
             Assert.DoesNotContain(result.Nodes, node => node.Id.StartsWith("placement:PROJ-004:staging:prod-", StringComparison.Ordinal));
             Assert.All(result.Nodes, node => Assert.Equal("declared", node.Provenance));

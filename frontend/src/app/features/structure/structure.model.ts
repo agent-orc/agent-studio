@@ -6,9 +6,10 @@ export interface StructureNode {
   unitId: string | null;
   environmentId: string | null;
   project: string | null;
-  provenance: 'declared';
+  provenance: 'declared' | 'observed';
   sourceRef: string;
   role?: string | null;
+  observation?: StructureObservation | null;
   ownerLabel?: string | null;
   otherProject?: boolean;
   systemBoundaryId?: string | null;
@@ -17,11 +18,25 @@ export interface StructureNode {
   /** Declared replica count of one deployment. */
   replicas?: number | null;
   /** Managed services: observed through a control-plane health check, or declared only. */
-  observation?: 'probed' | 'not-observed' | null;
+  probeObservation?: 'probed' | 'not-observed' | null;
   /** Health check kind that observes a managed service (http, tcp, tls). */
   probe?: string | null;
   /** Health check status: up, degraded, down, unknown or invalid. */
   status?: string | null;
+}
+
+export interface StructureObservation {
+  difference: 'matched' | 'declared-only' | 'undeclared' | 'differs' | 'stale' | 'unreachable-by-design';
+  health: 'up' | 'down' | 'degraded' | 'stale' | 'not observed' | string;
+  observedAt?: string | null;
+  version?: string | null;
+  expectedVersion?: string | null;
+  behind?: boolean;
+  cpuPercent?: number | null;
+  memoryUsedBytes?: number | null;
+  memoryTotalBytes?: number | null;
+  activeGates?: number | null;
+  detail?: string | null;
 }
 
 export interface StructureLink {
@@ -30,6 +45,7 @@ export interface StructureLink {
   kind: string;
   label: string;
   sourceRef: string;
+  observation?: StructureObservation | null;
 }
 
 export interface StructureData { nodes: StructureNode[]; links: StructureLink[]; }
@@ -180,13 +196,30 @@ export function kindText(box: Pick<StructureNode, 'kind' | 'detail'>): string {
 const PROBE_LABEL: Record<string, string> = { tls: 'TLS', tcp: 'TCP', http: 'HTTP' };
 
 /** Managed services are unreachable by design: probed from the control plane, or not observed. */
-export function observationText(box: Pick<StructureNode, 'observation' | 'probe'>): string | null {
-  if (box.observation === 'probed') return `probed via ${PROBE_LABEL[box.probe ?? ''] ?? box.probe ?? 'health check'}`;
-  return box.observation === 'not-observed' ? 'not observed' : null;
+export function observationText(box: Pick<StructureNode, 'probeObservation' | 'probe'>): string | null {
+  if (box.probeObservation === 'probed') return `probed via ${PROBE_LABEL[box.probe ?? ''] ?? box.probe ?? 'health check'}`;
+  return box.probeObservation === 'not-observed' ? 'not observed' : null;
 }
 
 export function nearestVisible(id: string, visible: ReadonlySet<string>, source: ReadonlyMap<string, StructureNode>): string | null {
   let node = source.get(id);
   while (node && !visible.has(node.id)) node = node.parentId ? source.get(node.parentId) : undefined;
   return node?.id ?? null;
+}
+
+export function observationWord(observation?: StructureObservation | null): string {
+  if (!observation) return 'Not observed';
+  if (observation.difference === 'undeclared') return 'Not declared';
+  if (observation.difference === 'unreachable-by-design') return 'Unreachable by design';
+  if (observation.difference === 'stale') return 'Stale';
+  if (observation.health === 'down') return 'Down';
+  if (observation.health === 'degraded') return 'Degraded';
+  if (observation.difference === 'declared-only' || observation.health === 'not observed') return 'Not observed';
+  if (observation.difference === 'differs') return 'Differs';
+  return observation.health === 'up' || observation.health === 'healthy' ? 'Up' : 'Not observed';
+}
+
+export function observationGlyph(observation?: StructureObservation | null): string {
+  const word = observationWord(observation);
+  return word === 'Up' ? '●' : word === 'Down' ? '■' : word === 'Degraded' || word === 'Differs' ? '▲' : '○';
 }

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, afterNextRender, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, OnDestroy, afterNextRender, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
@@ -6,9 +6,9 @@ import { studioProjectSlug } from '../../../services/studio-project-slug.util';
 import { replaceStudioRouteQuery } from '../../studio-shell/services/studio-route';
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
 import { SegmentedControlComponent } from '../../../components/segmented-control/segmented-control.component';
-import { LAYOUT, layoutStructure, leafDetail, type LayoutBox } from '../structure-layout';
-import { isGroup, kindText, observationText, projectStructure, summaryText, visibleBoxes,
-  type StructureBox, type StructureData } from '../structure.model';
+import { LAYOUT, layoutStructure, leafDetail, type LayoutBox, type RoutedLink } from '../structure-layout';
+import { isGroup, kindText, observationGlyph, observationText, observationWord, projectStructure, summaryText, visibleBoxes,
+  type StructureBox, type StructureData, type StructureObservation } from '../structure.model';
 
 const STATUS: Record<string, { tone: 'ok' | 'warn' | 'down' | 'unknown'; word: string }> = {
   up: { tone: 'ok', word: 'Healthy' }, degraded: { tone: 'warn', word: 'Degraded' },
@@ -25,7 +25,7 @@ let instances = 0;
   templateUrl: './structure-view.component.html',
   styleUrl: './structure-view.component.scss',
 })
-export class StructureViewComponent {
+export class StructureViewComponent implements OnDestroy {
   private readonly http = inject(HttpClient);
   private readonly auth = inject(AuthSessionState);
   private readonly element = inject(ElementRef) as ElementRef<HTMLElement>;
@@ -36,12 +36,16 @@ export class StructureViewComponent {
   readonly data = signal<StructureData>({ nodes: [], links: [] });
   readonly viewOptions = [{ value: 'host', label: 'Host' }, { value: 'container', label: 'Container' }] as const;
   readonly levelOptions = [{ value: 1, label: '1' }, { value: 2, label: '2' }, { value: 3, label: '3' }] as const;
+  readonly overlayOptions = [
+    { value: 'health', label: 'Health' }, { value: 'version', label: 'Version' },
+    { value: 'drift', label: 'Drift' }, { value: 'load', label: 'Load' },
+  ] as const;
   readonly error = signal<string | null>(null);
   readonly view = signal<'host' | 'container'>('host');
   readonly level = signal<1 | 2 | 3>(2);
+  readonly overlay = signal<'health' | 'version' | 'drift' | 'load'>('health');
   readonly toggles = signal<Record<string, boolean>>({});
   readonly selected = signal<string | null>(null);
-  readonly overlay = signal<'health' | 'version' | 'drift' | 'load'>('health');
   readonly environment = signal('');
   readonly environments = computed(() => this.data().nodes.filter(node => node.kind === 'environment'));
   readonly selectedNode = computed(() => this.data().nodes.find(node => node.id === this.selected()) ?? null);
@@ -59,18 +63,37 @@ export class StructureViewComponent {
   readonly arrowId = `structure-arrow-${++instances}`;
   readonly summaryText = summaryText;
   readonly kindText = kindText;
+  readonly stateWord = observationWord;
+  readonly stateGlyph = observationGlyph;
   private readGeneration = 0;
+  private refreshTimer?: ReturnType<typeof setInterval>;
 
   ownerDescription(box: StructureBox): string {
     return box.otherProject ? `other project · ${box.ownerLabel ?? box.project}` : kindText(box);
   }
   /** Second line of a box: instances say how they are observed or placed, groups their kind. */
-  detail(item: LayoutBox): string {
+  placementDetail(item: LayoutBox): string {
     return item.opaque && !isGroup(item.box) ? leafDetail(item.box, this.view()) : this.ownerDescription(item.box);
+  }
+  overlayDetail(item: LayoutBox): string {
+    const observation = item.box.observation;
+    if (this.overlay() === 'version') return observation?.version
+      ? `${observation.behind ? '↓ behind · ' : ''}${observation.version}${observation.expectedVersion ? ` · expected ${observation.expectedVersion}` : ''}`
+      : 'Version not observed';
+    if (this.overlay() === 'drift') return observation?.difference === 'differs'
+      ? `≠ declared${observation.version ? ` · ${observation.version}` : ''}${observation.expectedVersion ? ` / ${observation.expectedVersion}` : ''}`
+      : (observation?.difference ?? 'declared-only').replaceAll('-', ' ');
+    if (this.overlay() === 'load') return observation?.cpuPercent != null || observation?.memoryUsedBytes != null || observation?.activeGates != null
+      ? `${observation.cpuPercent != null ? `${observation.cpuPercent.toFixed(0)}% CPU` : 'CPU not observed'} · ${observation.memoryUsedBytes != null ? `${(observation.memoryUsedBytes / 1024 ** 3).toFixed(1)} GiB memory` : 'Memory not observed'}${observation.activeGates != null ? ` · ${observation.activeGates} active gates` : ''}`
+      : 'Load not observed';
+    return observation?.detail ?? this.placementDetail(item);
   }
   /** Calls and artifact flows carry an arrow; tunnels and transports are symmetric. */
   arrowFor(kind: string): string | null {
     return kind === 'call' || kind === 'artifact' || kind === 'publish' ? `url(#${this.arrowId})` : null;
+  }
+  linkObservation(link: RoutedLink): StructureObservation | null {
+    return this.data().links.find(item => item.kind === link.kind && item.label === link.label)?.observation ?? null;
   }
   status(box: StructureBox): { tone: string; word: string } | null {
     return box.status ? STATUS[box.status] ?? STATUS['unknown'] : null;
@@ -80,6 +103,7 @@ export class StructureViewComponent {
     return `${box.label}, ${kindText(box)}` +
       (observed ? `, declared, ${observed}` : '') +
       (this.status(box) ? `, ${this.status(box)!.word}` : '') +
+      `, ${observationWord(box.observation)}` +
       (box.replicas > 1 ? `, ${box.replicas} replicas` : '') +
       (box.placements > 1 ? `, ${box.placements} placements` : '') +
       (box.otherProject ? `, other project, ${box.ownerLabel ?? box.project}` : '') +
@@ -88,6 +112,7 @@ export class StructureViewComponent {
 
   constructor() {
     const destroyRef = inject(DestroyRef);
+    destroyRef.onDestroy(() => this.ngOnDestroy());
     afterNextRender(() => {
       const main = this.element.nativeElement.querySelector<HTMLElement>('.structure-main');
       main?.focus();
@@ -121,6 +146,22 @@ export class StructureViewComponent {
         void this.load();
       });
     });
+    this.startRefresh();
+  }
+
+  ngOnDestroy(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+  }
+
+  private startRefresh(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (document.visibilityState !== 'visible') return;
+    this.refreshTimer = setInterval(() => void this.load(), 15_000);
+  }
+
+  @HostListener('document:visibilitychange') onVisibilityChange(): void {
+    this.startRefresh();
+    if (document.visibilityState === 'visible') void this.load();
   }
 
   private measureWidth(main: HTMLElement): void {
@@ -137,7 +178,7 @@ export class StructureViewComponent {
       if (generation !== this.readGeneration) return;
       this.data.set(data);
       this.error.set(null);
-    } catch { if (generation === this.readGeneration) this.error.set('Structure declarations could not be loaded.'); }
+    } catch { if (generation === this.readGeneration) this.error.set('Structure observations could not be loaded.'); }
   }
 
   setView(view: 'host' | 'container'): void {
@@ -145,11 +186,17 @@ export class StructureViewComponent {
     this.view.set(view);
     this.remember();
   }
-  setOverlay(value: 'health' | 'version' | 'drift' | 'load'): void { this.overlay.set(value); this.remember(); }
   setEnvironment(value: string): void { this.environment.set(value); this.remember(); void this.load(); }
   setLevel(level: 1 | 2 | 3): void {
     this.level.set(level);
     this.remember();
+  }
+  setOverlay(overlay: 'health' | 'version' | 'drift' | 'load'): void {
+    this.overlay.set(overlay);
+    this.remember();
+  }
+  lastObserved(observation?: StructureObservation | null): string {
+    return observation?.observedAt ? `Last observed ${new Date(observation.observedAt).toLocaleString('en-US')}` : 'No report';
   }
   toggle(box: StructureBox): void {
     this.selected.set(box.id);

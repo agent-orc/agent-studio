@@ -490,7 +490,6 @@ fixed-date runner.Tests/TaskServerConnectivityMonitorTests.cs
 fixed-date runner.Tests/WorkstationProfileTests.cs
 fixed-date setup.Tests/SetupContractTests.cs
 fixed-date task-server.Tests/ProtocolTests.cs
-fixed-date task-server.Tests/RunnerReleaseIdentityStoreTests.cs
 fixed-date task-server.Tests/StudioP2SupervisorEndpointsTests.cs
 fixed-date task-server.Tests/StudioRunnerOrchestratorTests.cs
 fixed-date task-server.Tests/StudioWorkspaceTests.cs

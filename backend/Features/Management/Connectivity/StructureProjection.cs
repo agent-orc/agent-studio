@@ -9,8 +9,14 @@ public sealed record StructureNode(string Id, string Kind, string Label, string?
     string? UnitId, string? EnvironmentId, string? Project, string Provenance, string SourceRef,
     string? Role = null, string? OwnerLabel = null, bool OtherProject = false,
     string? SystemBoundaryId = null, string? Detail = null, int? Replicas = null,
-    string? Observation = null, string? Probe = null, string? Status = null);
-public sealed record StructureLink(string From, string To, string Kind, string Label, string SourceRef);
+    string? ProbeObservation = null, string? Probe = null, string? Status = null,
+    StructureObservation? Observation = null);
+public sealed record StructureLink(string From, string To, string Kind, string Label, string SourceRef,
+    StructureObservation? Observation = null);
+public sealed record StructureObservation(string Difference, string Health, DateTime? ObservedAt = null,
+    string? Version = null, string? ExpectedVersion = null, bool Behind = false,
+    double? CpuPercent = null, long? MemoryUsedBytes = null, long? MemoryTotalBytes = null,
+    int? ActiveGates = null, string? Detail = null);
 public sealed record StructureResponse(IReadOnlyList<StructureNode> Nodes, IReadOnlyList<StructureLink> Links);
 /// <summary>The control-plane health check that observes a managed service: its kind and current status.</summary>
 public sealed record StructureProbe(string Kind, string Status);
@@ -269,7 +275,7 @@ public static class StructureProjection
                     Region(environment, service.Region), null, environment, project.Id, "declared",
                     $"{source}/managedServices/{service.Name}",
                     Detail: ProjectStructureVocabulary.ManagedServiceDetail(service.Kind),
-                    Observation: probe is null ? "not-observed" : "probed", Probe: probe?.Kind, Status: probe?.Status));
+                    ProbeObservation: probe is null ? "not-observed" : "probed", Probe: probe?.Kind, Status: probe?.Status));
             }
     }
 }

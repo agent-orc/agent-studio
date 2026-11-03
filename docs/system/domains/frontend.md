@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-10-20
+Version: 2026-11-02
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
@@ -98,9 +98,13 @@ overlay, environment and selected node; Settings List keeps host controls. It re
 `GET /api/v1/operations/structure?scope=workspace` and projects the same
 declared nodes as a placement-focused host view or a function-grouped container
 view. Detail levels 1 to 3 and node overrides control collapse; the outline
-mirrors visible boxes. This first slice has declared provenance only; observed
-health, version and drift overlays belong to later slices of the deployment
-structure Dossier. Its role-named manifest example is in
+mirrors visible boxes. Observed health, version, drift and load join by host id,
+runner id, project and environment id. The view refreshes every 15 seconds
+while visible and labels missing values as not observed. Host capability
+reports may include an optional container summary. This exposes undeclared
+containers without requiring older hosts to upgrade. Health uses host
+heartbeats (90 seconds), each check's own
+interval, and gate heartbeats (two minutes). The role-named manifest example is in
 `deploy/connectivity/one-box.json`.
 
 Layout and link routing are a pure module, `features/structure/structure-layout.ts`
