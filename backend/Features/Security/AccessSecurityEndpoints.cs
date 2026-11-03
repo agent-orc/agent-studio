@@ -226,12 +226,15 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new PasswordResetResponse(reset.User.Id, reset.TemporaryPassword, true));
             }));
 
-        auth.MapPost("/runner-enrollments", (RunnerEnrollmentRequest request, HttpContext context, AccessSecurityStore store) =>
+        auth.MapPost("/runner-enrollments", (RunnerEnrollmentRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.Registry.ProjectRegistry projects) =>
             Execute(() =>
             {
                 RequireOwner(context, store);
+                RequireKnownProjects(request.Projects, projects);
                 var created = store.CreateEnrollment(request);
-                return Results.Ok(new OneTimeEnrollmentResponse(created.Code, created.Enrollment.Name, created.Enrollment.Scopes, created.Enrollment.ExpiresAt));
+                return Results.Ok(new OneTimeEnrollmentResponse(created.Code, created.Enrollment.Name, created.Enrollment.Scopes,
+                    created.Enrollment.ExpiresAt, created.Enrollment.Projects));
             }));
 
         auth.MapGet("/runner-enrollments", (HttpContext context, AccessSecurityStore store) =>
@@ -239,7 +242,7 @@ public static class AccessSecurityEndpoints
             {
                 RequireOwner(context, store);
                 return Results.Ok(store.ListEnrollments().Select(x =>
-                    new RunnerEnrollmentResponse(x.Id, x.Name, x.Scopes, x.CreatedAt, x.ExpiresAt, x.UsedAt)));
+                    new RunnerEnrollmentResponse(x.Id, x.Name, x.Scopes, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Projects)));
             }));
 
         auth.MapDelete("/runner-enrollments/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
@@ -312,6 +315,15 @@ public static class AccessSecurityEndpoints
                 var rotated = store.RotateRunner(id, request);
                 return Results.Ok(new OneTimeSecretResponse(rotated.Runner.Id, rotated.Runner.Name, rotated.Credential.Id,
                     rotated.Secret, rotated.Credential.Scopes, rotated.Credential.ExpiresAt));
+            }));
+
+        auth.MapPut("/runners/{id}/projects", (string id, RunnerProjectsRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.Registry.ProjectRegistry projects) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                RequireKnownProjects(request.Projects, projects);
+                return Results.Ok(ToRunnerResponse(store.UpdateRunnerProjects(id, request.Projects)));
             }));
 
         auth.MapDelete("/runners/{id}/credentials/{credentialId}", (string id, string credentialId, HttpContext context, AccessSecurityStore store) =>
@@ -404,13 +416,37 @@ public static class AccessSecurityEndpoints
         => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword,
             user.ProductionApprovalProjects);
 
+    /// <summary>
+    /// SM-9 notices: a runner enrolled before project binding keeps all projects,
+    /// and a credential issued before the default lifetime keeps no expiry. Both
+    /// keep working; the Owner sees why and what to do.
+    /// </summary>
+    internal const string RunnerProjectsNotice = "Enrolled before project binding: holds all projects until you choose its projects.";
+    internal const string RunnerExpiryNotice = "No expiry: issued before the 30-day default. Rotate it to adopt the default.";
+
     private static object ToRunnerResponse(RunnerServiceIdentity runner) => new
     {
         runner.Id, runner.Name, runner.CreatedAt, runner.RevokedAt,
         runner.DrainRequestedAt, runner.RetireRequestedAt, runner.RetiredAt,
         runner.LastSeenAt, runner.LastClaimAt, runner.ActiveSlots, runner.AvailableSlots,
-        credentials = runner.Credentials.Select(x => new { x.Id, x.Scopes, x.CreatedAt, x.ExpiresAt, x.LastUsedAt, x.RevokedAt })
+        projects = runner.Projects ?? [RunnerProjectBinding.AllProjects],
+        projectsNotice = runner.Projects is null ? RunnerProjectsNotice : null,
+        credentials = runner.Credentials.Select(x => new
+        {
+            x.Id, x.Scopes, x.CreatedAt, x.ExpiresAt, x.LastUsedAt, x.RevokedAt,
+            expiryNotice = x.ExpiresAt is null && x.RevokedAt is null ? RunnerExpiryNotice : null,
+        })
     };
+
+    private static void RequireKnownProjects(IReadOnlyList<string>? requested, AgentStudio.Registry.ProjectRegistry projects)
+    {
+        var unknown = (requested ?? [])
+            .Where(name => !string.IsNullOrWhiteSpace(name) && name.Trim() != RunnerProjectBinding.AllProjects
+                           && projects.FindByIdOrDisplayName(name.Trim()) is null)
+            .ToArray();
+        if (unknown.Length > 0)
+            throw new SecurityOperationException(400, "unknown-project", $"Unknown project: {string.Join(", ", unknown)}.");
+    }
 
     private static void SetSessionCookies(HttpContext context, string token, string csrfToken)
     {

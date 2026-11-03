@@ -195,9 +195,10 @@ that is already allowed to edit that project's checkout.
   (`networked-registry`).
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
-  Credentials carry explicit scopes, optional expiry, last-use time, and
-  independent revocation. Rotation creates an overlapping credential so the
-  old one can remain valid until the new daemon is proven.
+  Credentials carry explicit scopes, an expiry (30 days by default, see
+  [Runner credential binding](#runner-credential-binding-sm-9)), last-use
+  time, and independent revocation. Rotation creates an overlapping credential
+  so the old one can remain valid until the new daemon is proven.
 - Settings > Access lets the owner invite, update, reset, or disable users;
   manage role bindings, groups, and service accounts; create and revoke named
   API tokens; create, list, and revoke runner enrollment codes; and revoke
@@ -481,6 +482,69 @@ does not map, such as a standalone Task Server feature route called against
 the monolith, gets `404` with code `route-not-mapped`; the host then pauses
 that poll loop for an hour and logs it once. Anonymous callers still get `401`.
 `HostRouteClassificationTests` classifies every route the host client calls.
+
+### Runner credential binding (SM-9)
+
+Every runner credential is bound to its host, its role, and an explicit
+project set (security-model Dossier SM-9, decision D7 option A). Scopes still
+decide the route family; the binding decides which work inside it.
+
+- **Projects.** In the monolith, the enrollment code names the projects
+  (`POST /api/auth/runner-enrollments` with `projects`; `*` grants all, an
+  empty list grants none). The Owner changes them with
+  `PUT /api/auth/runners/{id}/projects` or in Settings > Access. On the Task
+  Server the projects are the host's project policy
+  (`PUT /api/v1/hosts/{hostId}/project-policy`). With authentication on, a host
+  without a policy holds no project; an empty claim names
+  `host-project-policy-missing`.
+- **Host.** A Task Server runner credential is pinned to the host id of its
+  first registration, or to the host its enrolment names. A registration from
+  another host id is refused with `runner-host-mismatch` (a copied credential).
+  A monolith runner identity is one enrolled host. The deprecated shared
+  `RunnerBearerToken` names no runner and is therefore bound to nothing.
+- **Role.** A Task Server enrolment code records `coding` or `review`
+  (host join tokens set it from the host role). A coding credential cannot
+  claim reviews and a review credential cannot claim coding work
+  (`runner-role-mismatch`). Without a recorded role, a credential that can
+  claim only one kind of work has that role. In the monolith the exclusive
+  scopes (`orchestration.write`, `runner.deploy`, `runner.release`,
+  `gate.execute`) remain the role.
+- **Card reads.** A runner reads a card only while it holds that card's live
+  coding lease or review attempt (`runner-card-not-leased`). On the Task Server
+  a runner that ran an earlier attempt of a finished card may read its
+  lifecycle (key, lane, archive state, timestamps) with title and body withheld,
+  which salvage retention needs. The monolith refuses that read; salvage then
+  keeps the entry.
+- **Claims and reports.** Coding, review, review package and publication claims select only
+  work of bound projects. Run, review-attempt, review-package-attempt and gate routes act only on the
+  caller's own claim (`runner-not-claimant`), reads included; a reviewer may
+  read the source run of the attempt it holds.
+- **Other reads.** On the Task Server every route a runner credential reaches
+  only through `tasks:read` is refused (`runner-route-denied`) unless
+  `RunnerRoutePolicy` lists it: installation metadata such as
+  `/api/v1/artifact-limits`, its own host's capacity, the bound projects and
+  their repositories and source facts, and the claimed card, run, review or
+  gate. Studio, board, workspace and management reads are not runner reads.
+- **Repository tokens.** `POST /api/v1/runners/{runnerId}/repository-credentials`
+  mints GitHub App tokens only for the repositories of bound projects; a
+  credential without projects receives none.
+- **Lifetime.** A new runner credential expires 30 days after issue
+  (`TaskServer:RunnerCredentialLifetimeDays`, `Security:RunnerCredentialLifetimeDays`).
+  Rotation keeps the existing overlap: the new credential starts its own 30
+  days and the previous one stays valid until its overlap deadline (Task
+  Server) or until the Owner revokes it (monolith). Every authenticated answer
+  to an expiring runner credential carries `X-Principal-Credential-Expires-At`,
+  and the host logs a warning once a day in its last 7 days. Settings > Access
+  and the credential inventory mark a credential as expiring within 14 days. A
+  configured bootstrap secret file carries no expiry; rotate it through the
+  file.
+- **Migration.** Existing credentials keep working: a runner enrolled before
+  this binding keeps all projects and its credentials keep no expiry. The
+  Owner sees a notice for each ("Before binding", "No expiry"); the Task Server
+  writes one `principal.expiry-migration-notice` audit entry and turns every
+  already registered host into an explicit all-projects policy
+  (`host-project-policy.migrated`). Narrow the projects and rotate each such
+  credential to adopt the default.
 
 ## Transport and exposed surfaces
 

@@ -28,6 +28,8 @@ public sealed class IdentityBootstrapTests
     private const string OtherOwnerCode = "owner-code-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private const string OwnerPassword = "owner password long enough";
     private static readonly DateTimeOffset DefaultNow = new(2026, 11, 2, 12, 0, 0, TimeSpan.Zero);
+    /// <summary>An authenticated read every principal may make; a runner reads no Studio data (SM-9).</summary>
+    private const string RunnerProbePath = "/api/v1/artifact-limits";
 
     // ---- Pure policy matrices -------------------------------------------------
 
@@ -306,7 +308,7 @@ public sealed class IdentityBootstrapTests
 
         // The code is not a bearer.
         Assert.Equal(HttpStatusCode.Unauthorized,
-            (await Client(factory, runnerA.EnrolmentCode).GetAsync("/api/v1/workspaces")).StatusCode);
+            (await Client(factory, runnerA.EnrolmentCode).GetAsync(RunnerProbePath)).StatusCode);
 
         var exchanged = await anonymous.PostAsJsonAsync("/api/v1/enrolments/exchange",
             new ExchangeEnrolmentRequest(runnerA.EnrolmentCode, installationId));
@@ -314,7 +316,7 @@ public sealed class IdentityBootstrapTests
         var hostA = (await exchanged.Content.ReadFromJsonAsync<ExchangedEnrolment>())!.Issued;
         Assert.Equal("host-a", hostA.Principal.RunnerId);
         using var hostAClient = Client(factory, hostA.Credential);
-        Assert.Equal(HttpStatusCode.OK, (await hostAClient.GetAsync("/api/v1/workspaces")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await hostAClient.GetAsync(RunnerProbePath)).StatusCode);
 
         // A stolen, already-consumed code is denied and the denial is audited.
         Assert.Equal("enrolment-denied", await ErrorCodeAsync(await anonymous.PostAsJsonAsync(
@@ -353,17 +355,17 @@ public sealed class IdentityBootstrapTests
         using var rotatedClient = Client(factory, rotated!.Credential);
         (await rotatedClient.PostAsync("/api/v1/principal-rotations/host-a-rotation/delivered", null))
             .EnsureSuccessStatusCode();
-        Assert.Equal(HttpStatusCode.OK, (await rotatedClient.GetAsync("/api/v1/workspaces")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await rotatedClient.GetAsync(RunnerProbePath)).StatusCode);
         (await rotatedClient.PostAsJsonAsync("/api/v1/principal-rotations/host-a-rotation/ack",
             new PrincipalRotationAcknowledgement("host-a"))).EnsureSuccessStatusCode();
         clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.Equal(HttpStatusCode.Unauthorized, (await hostAClient.GetAsync("/api/v1/workspaces")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await rotatedClient.GetAsync("/api/v1/workspaces")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await hostAClient.GetAsync(RunnerProbePath)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await rotatedClient.GetAsync(RunnerProbePath)).StatusCode);
 
         // Loss of host A: revoke only its identity; host C keeps working.
         Assert.Equal(HttpStatusCode.OK, (await ownerClient.PostAsync(
             "/api/v1/management/principals/runner:host-a/revoke", null)).StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await Client(factory, rotated.Credential).GetAsync("/api/v1/workspaces")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Client(factory, rotated.Credential).GetAsync(RunnerProbePath)).StatusCode);
         var audit = await ownerClient.GetFromJsonAsync<List<AuditRecordDto>>("/api/v1/management/audit");
         Assert.Contains(audit!, record => record.Action == "enrolment.denied");
         Assert.DoesNotContain(audit!, record => record.DetailJson.Contains("enr_", StringComparison.Ordinal)
@@ -391,7 +393,7 @@ public sealed class IdentityBootstrapTests
         // Setup lost the credential before it could save it. The owner issues a fresh code.
         var replacement = await EnrolAsync(ownerClient, "runner:host-a", "host-a");
         Assert.Equal(HttpStatusCode.OK,
-            (await Client(factory, oldCredential).GetAsync("/api/v1/workspaces")).StatusCode);
+            (await Client(factory, oldCredential).GetAsync(RunnerProbePath)).StatusCode);
         Assert.Equal("runner-identity-exists", await ErrorCodeAsync(await ownerClient.PostAsJsonAsync(
             "/api/v1/management/enrolments",
             new CreateEnrolmentRequest("runner:other-id", TaskServerPrincipalKinds.Runner, "host-a")),
@@ -402,9 +404,9 @@ public sealed class IdentityBootstrapTests
         var newCredential = (await replacementExchange.Content.ReadFromJsonAsync<ExchangedEnrolment>())!.Issued.Credential;
         Assert.NotEqual(oldCredential, newCredential);
         Assert.Equal(HttpStatusCode.Unauthorized,
-            (await Client(factory, oldCredential).GetAsync("/api/v1/workspaces")).StatusCode);
+            (await Client(factory, oldCredential).GetAsync(RunnerProbePath)).StatusCode);
         Assert.Equal(HttpStatusCode.OK,
-            (await Client(factory, newCredential).GetAsync("/api/v1/workspaces")).StatusCode);
+            (await Client(factory, newCredential).GetAsync(RunnerProbePath)).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync(
             "/api/v1/enrolments/exchange", new ExchangeEnrolmentRequest(replacement.EnrolmentCode, installationId)))
             .StatusCode);
@@ -439,7 +441,7 @@ public sealed class IdentityBootstrapTests
 
         var issuedA = (await (await Client(a, null).PostAsJsonAsync("/api/v1/enrolments/exchange",
             new ExchangeEnrolmentRequest(enrolmentA.EnrolmentCode, idA))).Content.ReadFromJsonAsync<ExchangedEnrolment>())!;
-        Assert.Equal(HttpStatusCode.Unauthorized, (await Client(b, issuedA.Issued.Credential).GetAsync("/api/v1/workspaces")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Client(b, issuedA.Issued.Credential).GetAsync(RunnerProbePath)).StatusCode);
         // Owner sessions do not cross installations either.
         using var crossed = Client(b, StudioToken, ownerA.SessionToken);
         Assert.Equal(HttpStatusCode.Unauthorized, (await crossed.GetAsync("/api/v1/studio/auth/users")).StatusCode);
@@ -701,6 +703,9 @@ public sealed class IdentityBootstrapTests
         (await engine.PutAsJsonAsync($"/api/v1/runners/{runnerId}", new RegisterRunnerRequest(
             "runner", "host-" + runnerId, "instance-" + runnerId, "1.0.0", TaskServerProtocol.Current,
             [ReviewCapabilities.CodingExecutor]))).EnsureSuccessStatusCode();
+        // SM-9: an authenticated host claims only for the projects its policy names.
+        await factory.Services.GetRequiredService<TaskServerStore>().UpdateHostProjectPolicyAsync(
+            "host-" + runnerId, new UpdateHostProjectPolicyRequest(true, [], 0), "owner", default);
         var claimed = await engine.PostAsJsonAsync($"/api/v1/runners/{runnerId}/claims",
             new ClaimRequest(runnerId, "instance-" + runnerId));
         var claim = (await claimed.Content.ReadFromJsonAsync<ClaimResponse>())!;

@@ -14,7 +14,8 @@ public sealed record TaskServerPrincipal(
     IReadOnlySet<string> Scopes,
     string? RunnerId,
     string? CredentialId = null,
-    string? RotationOperationId = null);
+    string? RotationOperationId = null,
+    DateTime? CredentialExpiresAt = null);
 
 public static class TaskServerScopeExtensions
 {

@@ -119,7 +119,10 @@ public sealed partial class TaskServerStore
                  WHERE principal_id = $id AND revoked_at IS NULL
                    AND (expires_at IS NULL OR expires_at > $deadline);
                 """, ct, transaction, ("$deadline", Iso(deadline)), ("$id", principalId));
-            await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct);
+            // The overlap keeps the previous credential until its deadline; the new
+            // runner credential starts its own default lifetime (SM-9).
+            await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct,
+                RunnerCredentialExpiry(principal.Kind, now));
             await ExecuteAsync(connection, """
                 INSERT INTO principal_rotations(operation_id, principal_id, credential_id,
                     previous_ids_json, previous_generation, consumers_json, acknowledged_json,
@@ -145,7 +148,8 @@ public sealed partial class TaskServerStore
         return new IssuedPrincipalCredential(principal!, credential, receipt!.IssuedAt,
             receipt.PreviousCredentialValidUntil, receipt,
             credential is not null
-                ? DeriveConsumerProof(principalId, operationId, deliveryConsumerId) : null);
+                ? DeriveConsumerProof(principalId, operationId, deliveryConsumerId) : null,
+            RunnerCredentialExpiry(principal!.Kind, receipt.IssuedAt));
     }
 
     public async Task<PrincipalRotationReceipt?> GetPrincipalRotationAsync(
