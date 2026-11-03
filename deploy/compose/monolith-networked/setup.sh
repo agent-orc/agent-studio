@@ -102,9 +102,11 @@ STUDIO_CADDYFILE=./Caddyfile.$edge
 STUDIO_CLOUDFLARE_ALLOW_DIRECT=$allow_direct
 STUDIO_PUBLIC_CLOUDFLARE_EDGE=$public_edge
 STUDIO_RESTART_POLICY=$restart_policy
+STUDIO_BACKUP_DESTINATION=
 EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
 printf 'Secret store key: %s\nCopy it to a safe place outside the data backups; a restore needs it.\n' "$key_file"
+echo 'Backups are off until STUDIO_BACKUP_DESTINATION is set; see docs/operations/setup/studio-backup-restore.md.'
 if [ "$edge" = cloudflare ]; then
   echo 'Cloudflare mode: create an A record only (no AAAA) and set SSL/TLS mode Full (strict).'
   echo 'Install the account-specific origin-pull CA and Docker firewall before starting the stack.'
