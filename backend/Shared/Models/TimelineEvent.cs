@@ -61,6 +61,13 @@ public sealed record TimelineEvent
     /// than a one-liner. The dictionary is a JSON object on the wire.
     /// </summary>
     public Dictionary<string, string>? Details { get; init; }
+
+    /// <summary>
+    /// The person an operator agent session acts for, <c>human:&lt;owner id&gt;</c>,
+    /// when <see cref="Actor"/> is <c>operator-agent:&lt;id&gt;/session:&lt;sid&gt;</c>
+    /// (security model SM-1). Null for every other actor.
+    /// </summary>
+    public string? DelegatedBy { get; init; }
 }
 
 /// <summary>
@@ -183,13 +190,30 @@ public static class TimelineActors
     /// filter chips can tell externally produced results from runner activity.
     /// </summary>
     public const string External = "external";
-    public static string Human(string email) => string.IsNullOrWhiteSpace(email) ? "human" : $"human:{email}";
+    public static string Human(string email) => string.IsNullOrWhiteSpace(email) ? "human"
+        // A caller that passes the request's client id for an operator session
+        // already holds the session actor; it never becomes a person.
+        : IsOperatorAgent(email) ? email.Trim()
+        : $"human:{email}";
 
     /// <summary>
     /// A service account or API token acting through the Studio API. It is
     /// never a human actor, so guards that need a person do not accept it.
     /// </summary>
     public static string ServiceAccount(string accountId) => $"service-account:{accountId}";
+
+    /// <summary>
+    /// One session of an operator agent (security model SM-1). The Owner who
+    /// started the session travels as <see cref="TimelineEvent.DelegatedBy"/>,
+    /// never as the actor.
+    /// </summary>
+    public static string OperatorAgent(string operatorAgentId, string sessionId)
+        => $"{OperatorAgentPrefix}{operatorAgentId}/session:{sessionId}";
+
+    public const string OperatorAgentPrefix = "operator-agent:";
+
+    public static bool IsOperatorAgent(string? actor)
+        => actor?.Trim().StartsWith(OperatorAgentPrefix, StringComparison.Ordinal) == true;
 
     /// <summary>
     /// True when an actor or lane-change cause names a person rather than an
