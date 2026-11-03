@@ -15,6 +15,31 @@ retain their existing prompt layout and scheduling. The frozen prompt bytes
 version this layout for review-plan digests. Each grade report shows cache
 creation and read tokens by aspect and as a review total.
 
+If the first aspect reports neither cache creation nor cache read tokens, the
+runner logs `review-aspect-cache-unconfirmed` and runs the remaining aspects
+serially (parallelism 1) instead of in parallel, so they do not issue
+simultaneous cold cache writes.
+
+To measure the effect, open the grade report `remote-review-grade-<attempt>.md`
+in the card's job folder (also linked from the review timeline) for at least
+five Claude-aspect reviews that ran after the deploy. Its "Aspect cache usage"
+table lists `Cache creation tokens` and `Cache read tokens` per aspect and a
+`Review total` row. Compare per review:
+
+- the first aspect (`requirement-fit` in the stock order) against the three
+  later aspects, and
+- the review totals against the baseline from the review settlements of
+  2 November 2026: about 60,000 cache creation tokens per aspect run, about
+  240,000 per review, with cache reads near zero.
+
+The shared prefix works when the first aspect carries most of the review's
+cache creation tokens and each later aspect shows cache read tokens of about
+the first aspect's creation size with only a small creation count of its own
+(its aspect instructions), so the review total of creation tokens drops to
+roughly one prefix plus four small suffixes. A later aspect that again creates
+about the full prefix, or a runner log line `review-aspect-cache-unconfirmed`,
+means the cache was not shared for that review.
+
 ## Review report transport budget
 
 The review host caps embedded evidence at 8 MiB per artifact and the serialized
