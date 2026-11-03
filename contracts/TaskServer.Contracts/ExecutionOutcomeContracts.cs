@@ -267,10 +267,11 @@ public static class ExecutionOutcomeAdapter
             // include a request body or credential-bearing metadata.
             return BuildProviderRejection(facts, providerRejection, modelMismatch: null);
         }
-        var providerAccess = ProviderAccessClassifier.Classify(
+        var providerAccess = ProviderAccessClassifier.ClassifyRun(
             facts.ExitCode ?? (providerFailed ? 1 : 0),
-            failedStdOut,
-            Join(providerFailureEvent, facts.StdErr));
+            Join(providerFailureEvent, facts.StdOut),
+            facts.StdErr,
+            completedSuccessfully: honestTerminal);
         if (!honestTerminal
             && facts.Signal is null
             && providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited)

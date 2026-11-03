@@ -1535,6 +1535,12 @@ unreported claim expires with its lease and is queued again.
   distinct API, audit action, persisted field, and UI label. Capability failure
   reports must bind the active coding or review claim and fence; stale and
   duplicate deliveries fail closed or replay idempotently.
+- Run-level provider access classification reads CLI error events, CLI stderr,
+  and exit status. Tool output and agent messages in the JSON stream do not
+  diagnose provider login. A zero-exit completed turn confirms working access.
+  Unauthorized capability reports include a bounded, redacted matching line
+  in both the runner log and the report reason. Status probes still classify
+  their own command output directly.
 - Credential observations use capability schema 2 only after protocol
   compatibility advertises `credential-observation-v2`. A legacy peer receives
   schema 1; a new peer also receives `credentialHealthVersion: 1`.

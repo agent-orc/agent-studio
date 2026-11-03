@@ -219,6 +219,30 @@ public sealed class RunnerCapabilityProbeTests
         Assert.Equal(ProviderAccessEvidenceKind.RequestRejected, evidence.Kind);
     }
 
+    [Fact]
+    public void Failed_run_does_not_treat_tool_output_as_provider_access_evidence()
+    {
+        const string stdout = """
+            {"type":"item.completed","item":{"type":"command_execution","aggregated_output":"401 Unauthorized; not logged in; usage limit"}}
+            {"type":"turn.failed","error":{"message":"The agent stopped after a tool failure."}}
+            """;
+
+        var evidence = ProviderAccessClassifier.ClassifyRun(1, stdout, null);
+
+        Assert.Equal(ProviderAccessEvidenceKind.IndeterminateFailure, evidence.Kind);
+    }
+
+    [Theory]
+    [InlineData("401 Unauthorized", ProviderAccessEvidenceKind.AuthenticationFailure)]
+    [InlineData("not logged in", ProviderAccessEvidenceKind.AuthenticationFailure)]
+    [InlineData("access token expired", ProviderAccessEvidenceKind.AuthenticationFailure)]
+    [InlineData("usage limit reached", ProviderAccessEvidenceKind.RateLimited)]
+    [InlineData("selected model is at capacity", ProviderAccessEvidenceKind.ModelCapacity)]
+    public void Run_stderr_retains_provider_failure_classification(
+        string stderr,
+        ProviderAccessEvidenceKind expected)
+        => Assert.Equal(expected, ProviderAccessClassifier.ClassifyRun(1, null, stderr).Kind);
+
     [Theory]
     [InlineData("/usr/local/bin/codex", "codex")]
     [InlineData("claude.exe", "claude")]
