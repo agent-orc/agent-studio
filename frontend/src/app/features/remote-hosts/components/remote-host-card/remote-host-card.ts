@@ -159,6 +159,10 @@ export class RemoteHostCardComponent {
       : age < 3_600_000 ? `${Math.floor(age / 60_000)}m` : `${Math.floor(age / 3_600_000)}h`;
     return `${link.state[0].toUpperCase()}${link.state.slice(1)} · ${ageLabel} ago`;
   });
+  readonly linkIndicatorTone = computed<StatusTone>(() => {
+    const state = this.host().runnerLink?.state;
+    return state === 'up' ? 'success' : state === 'paused' || !state ? 'neutral' : 'warning';
+  });
   readonly linkTooltip = computed(() => {
     const link = this.host().runnerLink;
     if (!link) return this.host().role === 'local' ? 'Local process; no runner link needed.'
@@ -277,6 +281,8 @@ export class RemoteHostCardComponent {
   readonly cliDriftCount = computed(() => this.host().installedClis?.filter(cli => cli.isBelowTarget).length ?? 0);
   readonly cliUpdateActive = computed(() => ['draining', 'ready', 'upgrading', 'probing']
     .includes(this.host().cliUpdate?.state ?? ''));
+  readonly cliUpdateTone = computed<StatusTone>(() => this.cliUpdateActive() ? 'running'
+    : this.host().cliUpdate?.state === 'failed' ? 'danger' : 'neutral');
   readonly cliUpdateLabel = computed(() => {
     const update = this.host().cliUpdate;
     if (!update) return null;

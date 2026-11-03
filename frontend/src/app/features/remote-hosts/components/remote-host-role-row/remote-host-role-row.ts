@@ -60,6 +60,10 @@ export class RemoteHostRoleRowComponent {
   readonly slotTotal = computed(() => roleSlotTotal(this.host()));
   readonly readiness = computed(() => hostReadiness(this.host(), this.now()));
   readonly linkLabel = computed(() => runnerLinkLabel(this.host(), this.now()));
+  readonly linkIndicatorTone = computed<StatusTone>(() => {
+    const state = this.host().runnerLink?.state;
+    return state === 'up' ? 'success' : state === 'paused' || !state ? 'neutral' : 'warning';
+  });
   readonly linkTooltip = computed(() => runnerLinkTooltip(this.host()));
   readonly releaseTooltip = computed(() =>
     releaseDriftTooltip(this.host().releaseDrift, this.stableRelease())

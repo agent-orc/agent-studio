@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject } from
 import { OrchestratorFeedStore } from '../../../orchestrator';
 import { StallInterventionsService } from '../../services/stall-interventions.service';
 import { StallInterventionReceiptComponent } from '../stall-intervention-receipt/stall-intervention-receipt';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 const RECENT_INTERVENTIONS = 5;
 const REFRESH_MS = 30_000;
@@ -9,7 +10,7 @@ const REFRESH_MS = 30_000;
 @Component({
   selector: 'app-operational-stalls',
   standalone: true,
-  imports: [StallInterventionReceiptComponent],
+  imports: [StallInterventionReceiptComponent, StatusIndicatorComponent],
   templateUrl: './operational-stalls.html',
   styleUrl: './operational-stalls.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

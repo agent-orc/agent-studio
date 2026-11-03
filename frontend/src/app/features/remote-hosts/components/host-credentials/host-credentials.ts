@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { RemoteHostDetailSummaryComponent } from '../remote-host-detail-summary/remote-host-detail-summary';
 import {
   credentialDocHref,
@@ -43,6 +43,14 @@ import { CredentialViewService } from '../../services/credential-view.service';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class HostCredentialsComponent {
+  readonly serviceTone = (availability: string | null): StatusTone => {
+    switch (availability) {
+      case 'available': return 'success';
+      case 'limited': return 'warning';
+      case 'unavailable': return 'danger';
+      default: return 'neutral';
+    }
+  };
   private readonly claudeSignIn = inject(ClaudeSignInDialogService);
   private readonly codexSignIn = inject(CodexSignInDialogService);
   private readonly credentials = inject(CredentialViewService);

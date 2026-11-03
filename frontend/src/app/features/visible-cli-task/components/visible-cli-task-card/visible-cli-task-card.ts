@@ -1,12 +1,13 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import type { VisibleCliTaskCreated, VisibleCliTaskRequest, VisibleCliTaskWorkspace } from '../../models/visible-cli-task.model';
 import { VisibleCliTaskService } from '../../services/visible-cli-task.service';
 
 @Component({
   selector: 'app-visible-cli-task-card',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, StatusIndicatorComponent],
   templateUrl: './visible-cli-task-card.html',
   styleUrl: './visible-cli-task-card.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

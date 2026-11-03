@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { Subscription } from 'rxjs';
 import {
   VisibleCliTaskCardComponent,
@@ -21,7 +22,7 @@ type ProvisioningPhase = 'idle' | 'provisioning' | 'waiting' | 'ok' | 'unavailab
 @Component({
   selector: 'app-runner-setup-dialog',
   standalone: true,
-  imports: [FormsModule, VisibleCliTaskCardComponent],
+  imports: [FormsModule, VisibleCliTaskCardComponent, StatusIndicatorComponent],
   templateUrl: './runner-setup-dialog.html',
   styleUrl: './runner-setup-dialog.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -41,6 +42,16 @@ export class RunnerSetupDialogComponent implements OnInit, OnDestroy {
   readonly providerAuthEnvironmentVariable = signal<ProviderAuthEnvironmentVariable>('CLAUDE_CODE_OAUTH_TOKEN');
   readonly providerAuthSecret = signal('');
   readonly providerAuthPhase = signal<ProvisioningPhase>('idle');
+  readonly providerAuthIndicatorTone = computed<StatusTone>(() => {
+    if (this.providerAuthVerified()) return 'success';
+    switch (this.providerAuthPhase()) {
+      case 'provisioning':
+      case 'waiting': return 'running';
+      case 'error':
+      case 'unavailable': return 'danger';
+      default: return 'neutral';
+    }
+  });
   readonly providerAuthDetail = signal('No credential has been sent from this dialog.');
   readonly providerAuthBootstrapReady = signal(false);
   private readonly providerAuth = inject(ProviderAuthStatusService);

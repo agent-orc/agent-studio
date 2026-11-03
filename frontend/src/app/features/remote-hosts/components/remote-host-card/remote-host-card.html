@@ -16,7 +16,7 @@
   <td>
     <app-status-indicator class="host__status" [tone]="indicatorTone()" [label]="statusLabel()" [detail]="statusReason()" testId="remote-host-status" />
   </td>
-  <td class="host__link" data-testid="remote-host-link-state" [attr.title]="linkTooltip()">@if (!h.runnerLink && h.role === 'remote') { Not configured <button class="host__btn" type="button" (click)="requestSetup()">Set up</button> } @else { {{ linkLabel() }} }</td>
+  <td class="host__link" data-testid="remote-host-link-state"><app-status-indicator [tone]="linkIndicatorTone()" [label]="linkLabel()" [detail]="linkTooltip()" [compact]="true" /> @if (!h.runnerLink && h.role === 'remote') { <button class="host__btn" type="button" (click)="requestSetup()">Set up</button> }</td>
   <td class="host__number" data-testid="remote-host-machine-slots">{{ totalActiveSlots() }} / {{ roleSlotCapacity() ?? 'n/a' }}</td>
   <td class="host__load" data-testid="remote-host-load">
     @if (loadPct() !== null) {
@@ -166,7 +166,7 @@
               }
             </div>
             @if (cliUpdateLabel(); as updateLabel) {
-              <p class="cli-update" data-testid="remote-host-cli-update-status">{{ updateLabel }}. {{ h.cliUpdate?.detail }}</p>
+              <p class="cli-update" data-testid="remote-host-cli-update-status"><app-status-indicator [tone]="cliUpdateTone()" [label]="updateLabel" [compact]="true" /> {{ h.cliUpdate?.detail }}</p>
             }
             <div class="detail__actions">
               @if (!cliUpdateActive()) {

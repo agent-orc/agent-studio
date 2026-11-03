@@ -2,7 +2,7 @@
 <div class="receipt" [attr.data-status]="receipt.status" data-testid="stall-intervention-receipt">
   <div class="receipt__head">
     <span class="receipt__badge">AI Operator · {{ receipt.autonomy }}</span>
-    <span class="receipt__status">{{ statusLabel(receipt.status) }}</span>
+    <span class="receipt__status"><app-status-indicator [tone]="statusTone(receipt.status)" [label]="statusLabel(receipt.status)" [compact]="true" /></span>
     <time [attr.datetime]="row().decidedAtUtc">{{ timeLabel(row().decidedAtUtc) }}</time>
   </div>
   <p><strong>Observed:</strong> {{ receipt.observed }}</p>

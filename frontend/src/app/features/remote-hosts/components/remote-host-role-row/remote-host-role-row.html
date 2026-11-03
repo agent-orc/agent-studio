@@ -22,9 +22,8 @@
       </span>
     }
     @if (h.reviewPlane?.sustainedThrottling) {
-      <span class="role__alarm" data-testid="remote-host-review-plane-alarm"
-            [attr.title]="h.reviewPlane?.alarmSuggestion">
-        CPU throttling sustained. {{ h.reviewPlane?.alarmSuggestion }}
+      <span class="role__alarm" data-testid="remote-host-review-plane-alarm">
+        <app-status-indicator tone="warning" label="CPU throttling sustained" [detail]="h.reviewPlane?.alarmSuggestion" [compact]="true" /> {{ h.reviewPlane?.alarmSuggestion }}
       </span>
     }
   </span>
@@ -35,9 +34,9 @@
 </td>
 <td>
   @if (linkLabel(); as link) {
-    <span class="role__link" data-testid="remote-host-link-state" [attr.title]="linkTooltip()">{{ link }}</span>
+    <span class="role__link" data-testid="remote-host-link-state"><app-status-indicator [tone]="linkIndicatorTone()" [label]="link" [detail]="linkTooltip()" [compact]="true" /></span>
   } @else {
-    <span class="role__placeholder" [attr.title]="linkTooltip()">{{ h.role === 'local' ? 'Local' : 'Not configured' }}</span>
+    <span class="role__placeholder"><app-status-indicator tone="neutral" [label]="h.role === 'local' ? 'Local' : 'Not configured'" [detail]="linkTooltip()" [compact]="true" /></span>
   }
 </td>
 <td class="role__number" data-testid="remote-host-slots-summary">

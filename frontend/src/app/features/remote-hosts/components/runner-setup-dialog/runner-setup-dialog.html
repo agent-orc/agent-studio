@@ -139,8 +139,8 @@
           <span class="setup__auth-status"
                 data-testid="runner-setup-provider-auth-status"
                 [attr.data-state]="providerAuthVerified() ? 'ok' : providerAuthPhase()">
-            <span class="setup__auth-dot" aria-hidden="true"></span>
-            {{ providerAuthVerified() ? 'Latest runner probe: OK' : providerAuthPhase() === 'idle' ? 'Not provisioned' : providerAuthPhase() }}
+            <app-status-indicator [tone]="providerAuthIndicatorTone()"
+              [label]="providerAuthVerified() ? 'Latest runner probe: OK' : providerAuthPhase() === 'idle' ? 'Not provisioned' : providerAuthPhase()" [compact]="true" />
           </span>
         </div>
         <p class="setup__auth-detail">{{ providerAuthVerified() ? currentProviderAuth()?.detail : providerAuthDetail() }}</p>

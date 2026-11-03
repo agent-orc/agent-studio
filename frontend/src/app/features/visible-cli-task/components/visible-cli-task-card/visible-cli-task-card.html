@@ -26,7 +26,7 @@
     </label>
     <code>{{ request().command }}</code>
     @if (created()) {
-      <span class="visible-task__state" data-testid="visible-cli-task-created"><span aria-hidden="true"></span>Task queued</span>
+      <span class="visible-task__state" data-testid="visible-cli-task-created"><app-status-indicator tone="success" label="Task queued" [compact]="true" /></span>
       <button type="button" class="visible-task__button" data-testid="visible-cli-task-open" (click)="openTask()">Open task</button>
     } @else {
       <button type="button" class="visible-task__button" data-testid="visible-cli-task-start" [disabled]="running() || !selectedWatchPath()" (click)="start()">
