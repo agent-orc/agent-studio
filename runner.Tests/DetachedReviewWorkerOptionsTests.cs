@@ -95,7 +95,8 @@ public sealed class DetachedReviewWorkerOptionsTests
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    private static DetachedReviewSpec Spec(int? commandSilenceWatchdogSeconds, int? reviewNoCpuProgressSeconds)
+    internal static DetachedReviewSpec Spec(
+        int? commandSilenceWatchdogSeconds, int? reviewNoCpuProgressSeconds, string? stateDir = null)
     {
         var createdAt = new DateTime(2026, 9, 16, 15, 0, 0, DateTimeKind.Utc);
         var subject = new ReviewSubjectDto(
@@ -133,6 +134,6 @@ public sealed class DetachedReviewWorkerOptionsTests
             [],
             CommandSilenceWatchdogSeconds: commandSilenceWatchdogSeconds,
             ReviewNoCpuProgressSeconds: reviewNoCpuProgressSeconds,
-            StateDir: Path.Combine(Path.GetTempPath(), "review-state"));
+            StateDir: stateDir ?? Path.Combine(Path.GetTempPath(), "review-state"));
     }
 }

@@ -149,7 +149,10 @@ public sealed record RunnerClaimRequest(
     // ceiling on first contact; afterwards the server value wins.
     int? BootstrapMaxParallelism = null,
     string? CapabilityInstanceId = null,
-    IReadOnlyList<string>? RequiredCapabilities = null);
+    IReadOnlyList<string>? RequiredCapabilities = null,
+    // Changes whenever the host's repository credential files change. A failed
+    // delivery preflight from another generation no longer refuses the claim.
+    string? RepositoryCredentialGeneration = null);
 
 /// <summary>Host result for the unleased project offered by the previous claim poll.</summary>
 public sealed record RunnerProjectPreflightReport(

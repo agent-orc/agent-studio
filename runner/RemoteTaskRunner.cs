@@ -2689,7 +2689,8 @@ public sealed class RemoteTaskRunner
         }
         var remediation = GitPushProbe.IsWorkflowScopeFailure(failure)
             ? GitPushProbe.WorkflowScopeFix()
-            : "Restore origin push access, publish the retained HEAD to a new ref, then requeue.";
+            : "Restore origin push access, then requeue. The card's next round on this host continues " +
+              "from the retained worktree; a round on another host needs the retained HEAD published to a new ref first.";
         return $"worktree-blocked: host={hostname}; worktree={ex.WorktreePath}; branch={ex.Branch}; " +
                $"{refs}; failure={failure}. No ref was overwritten. Recovery recipe: {remediation}";
     }

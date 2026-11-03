@@ -17,7 +17,8 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "repository-credential-sync-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 11, 1, 10, 0, 0, TimeSpan.Zero));
     private string StateDir => Path.Combine(_root, "state");
-    private string GitStore => RepositoryCredentialPaths.GitStore(StateDir);
+    private string GitStore => RepositoryCredentialPaths.GitStore(StateDir, "coding");
+    private string ReviewGitStore => RepositoryCredentialPaths.GitStore(StateDir, "review");
     private string ReviewStore => RepositoryCredentialPaths.ReviewStore(StateDir);
 
     public RepositoryCredentialSyncTests() => Directory.CreateDirectory(StateDir);
@@ -115,7 +116,7 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
         Assert.Contains($"https://x-access-token:{token}@github.com/Owner/Site", store);
         Assert.Contains($"https://x-access-token:{token}@github.com/owner/site.git", store);
         Assert.False(File.Exists(ReviewStore));
-        var config = File.ReadAllText(RepositoryCredentialPaths.GitConfig(StateDir));
+        var config = File.ReadAllText(RepositoryCredentialPaths.GitConfig(StateDir, "coding"));
         Assert.Contains("[credential \"https://github.com/Owner/Site.git\"]", config, StringComparison.Ordinal);
         Assert.DoesNotContain(token, config, StringComparison.Ordinal);
         if (!OperatingSystem.IsWindows())
@@ -176,14 +177,14 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
         var (sync, server) = Build("review");
         server.Respond([Credential("https://github.com/owner/site.git", NewToken(), RepositoryAccess.Read)]);
         await sync.SyncOnceAsync(default);
-        Assert.True(File.Exists(GitStore));
+        Assert.True(File.Exists(ReviewGitStore));
         Assert.True(File.Exists(ReviewStore));
 
         server.Respond(status);
         await sync.SyncOnceAsync(default);
 
-        Assert.False(File.Exists(GitStore));
-        Assert.False(File.Exists(RepositoryCredentialPaths.GitConfig(StateDir)));
+        Assert.False(File.Exists(ReviewGitStore));
+        Assert.False(File.Exists(RepositoryCredentialPaths.GitConfig(StateDir, "review")));
         Assert.False(File.Exists(ReviewStore));
     }
 
@@ -332,8 +333,8 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
     [Fact]
     public void A_relative_state_directory_still_yields_an_absolute_include()
     {
-        Assert.True(Path.IsPathFullyQualified(RepositoryCredentialPaths.GitConfig("relative/state")));
-        Assert.True(Path.IsPathFullyQualified(RepositoryCredentialPaths.GitStore("relative/state")));
+        Assert.True(Path.IsPathFullyQualified(RepositoryCredentialPaths.GitConfig("relative/state", "coding")));
+        Assert.True(Path.IsPathFullyQualified(RepositoryCredentialPaths.GitStore("relative/state", "coding")));
     }
 
     [Fact]
@@ -375,6 +376,122 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
         var environment = Installed(folder, [], Credential("https://github.com/owner/site.git", token));
 
         Assert.Contains("password=" + token, (await Fill("owner/site.git", environment)).StdOut);
+    }
+
+    [Fact]
+    public async Task A_coding_and_a_review_role_on_one_state_folder_keep_their_own_access_level()
+    {
+        // 1 November 2026: both roles wrote one store, and the review role's read
+        // token replaced the coding role's write token a second later.
+        var writeToken = NewToken();
+        var readToken = NewToken();
+        var (coding, codingServer) = Build("coding");
+        var (review, reviewServer) = Build("review");
+        codingServer.Respond([Credential("https://github.com/owner/site.git", writeToken)]);
+        reviewServer.Respond([Credential("https://github.com/owner/site.git", readToken, RepositoryAccess.Read)]);
+
+        await coding.SyncOnceAsync(default);
+        await review.SyncOnceAsync(default);
+
+        var codingGit = HostGit(RepositoryCredentialPaths.GitConfig(StateDir, "coding"));
+        var reviewGit = HostGit(RepositoryCredentialPaths.GitConfig(StateDir, "review"));
+        var codingFill = (await Fill("owner/site.git", codingGit)).StdOut;
+        Assert.Contains("password=" + writeToken, codingFill);
+        Assert.DoesNotContain(readToken, codingFill, StringComparison.Ordinal);
+        Assert.Contains("password=" + readToken, (await Fill("owner/site.git", reviewGit)).StdOut);
+        Assert.DoesNotContain(readToken, File.ReadAllText(GitStore), StringComparison.Ordinal);
+        Assert.DoesNotContain(writeToken, File.ReadAllText(ReviewGitStore), StringComparison.Ordinal);
+
+        // A detached review worker finds the review role's tokens from its spec alone.
+        var worker = DurableReviewProcess.WorkerOptions(DetachedReviewWorkerOptionsTests.Spec(null, null, StateDir));
+        var effective = ReviewRepositoryCredentials.LoadForHost(worker.StateDir, worker.ReviewGitCredentialsFile);
+        Assert.Equal(readToken, effective.Find("https://github.com/owner/site.git")!.Password);
+
+        // A later coding round leaves the review role's files alone, and the other way round.
+        var renewed = NewToken();
+        codingServer.Respond([Credential("https://github.com/owner/site.git", renewed)]);
+        await coding.SyncOnceAsync(default);
+        reviewServer.Respond(HttpStatusCode.NoContent);
+        await review.SyncOnceAsync(default);
+        Assert.Contains("password=" + renewed, (await Fill("owner/site.git", codingGit)).StdOut);
+        Assert.False(File.Exists(ReviewStore));
+    }
+
+    [Fact]
+    public void The_process_routing_reads_only_its_own_roles_folder()
+    {
+        Assert.NotEqual(RepositoryCredentialPaths.GitConfig(StateDir, "coding"),
+            RepositoryCredentialPaths.GitConfig(StateDir, "review"));
+        Assert.NotEqual(RepositoryCredentialPaths.GitConfig(StateDir, "coding"),
+            RepositoryCredentialPaths.GitConfig(StateDir, "integration"));
+        Assert.StartsWith(RepositoryCredentialPaths.Folder(StateDir, "review"), ReviewStore, StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() => RepositoryCredentialPaths.Folder(StateDir, "../coding"));
+    }
+
+    [Fact]
+    public async Task The_shared_files_of_an_older_release_are_removed()
+    {
+        var legacy = RepositoryCredentialPaths.Legacy(StateDir);
+        foreach (var path in legacy) RepositoryGitCredentialFiles.WriteProtected(path, "stale");
+        var (sync, server) = Build("coding");
+        server.Respond([Credential("https://github.com/owner/site.git", NewToken())]);
+
+        await sync.SyncOnceAsync(default);
+
+        Assert.All(legacy, path => Assert.False(File.Exists(path)));
+        Assert.True(File.Exists(GitStore));
+    }
+
+    [Fact]
+    public void A_second_process_for_the_same_role_on_one_state_folder_is_refused_with_a_clear_message()
+    {
+        using var first = RepositoryCredentialOwnership.Claim(StateDir, "coding", "coding-1");
+        using var review = RepositoryCredentialOwnership.Claim(StateDir, "review", "review-1");
+
+        var refused = Assert.Throws<RepositoryCredentialCollisionException>(
+            () => RepositoryCredentialOwnership.Claim(StateDir, "coding", "coding-2"));
+
+        Assert.Contains("runner=coding-1", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("RUNNER_STATE_DIR", refused.Message, StringComparison.Ordinal);
+        first.Dispose();
+        using var replacement = RepositoryCredentialOwnership.Claim(StateDir, "coding", "coding-2");
+    }
+
+    [Fact]
+    public async Task The_generation_changes_with_the_files_and_not_with_an_unchanged_round()
+    {
+        var (sync, server) = Build("coding");
+        var credential = Credential("https://github.com/owner/site.git", NewToken());
+        server.Respond([credential]);
+        await sync.SyncOnceAsync(default);
+        var first = sync.Generation;
+
+        await sync.SyncOnceAsync(default);
+        Assert.Equal(first, sync.Generation);
+
+        server.Respond([Credential("https://github.com/owner/site.git", NewToken())]);
+        Assert.True(await sync.RefreshAsync(default));
+        Assert.NotEqual(first, sync.Generation);
+
+        server.Respond(HttpStatusCode.NoContent);
+        var renewed = sync.Generation;
+        Assert.False(await sync.RefreshAsync(default));
+        Assert.NotEqual(renewed, sync.Generation);
+    }
+
+    private Dictionary<string, string?> HostGit(string config)
+    {
+        var global = Path.Combine(_root, "empty.gitconfig");
+        File.WriteAllText(global, "");
+        var environment = new Dictionary<string, string?>
+        {
+            ["GIT_CONFIG_SYSTEM"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null",
+            ["GIT_CONFIG_GLOBAL"] = global,
+            ["GIT_TERMINAL_PROMPT"] = "0",
+            ["HOME"] = _root,
+        };
+        RepositoryGitCredentialFiles.Include(environment, config);
+        return environment;
     }
 
     private Dictionary<string, string?> Installed(params RepositoryCredential[] credentials)

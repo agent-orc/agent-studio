@@ -1046,7 +1046,7 @@ public static class LeaseEndpoints
                         if (cached is not null
                             && string.Equals(cached.RegistrationFingerprint,
                                 ProjectDeliveryPreflightFingerprint.Create(repository), StringComparison.Ordinal)
-                            && ProjectDeliveryPreflightPolicy.IsFresh(cached, now)
+                            && ProjectDeliveryPreflightPolicy.Applies(cached, now, req.RepositoryCredentialGeneration)
                             && !string.Equals(cached.Status, "ready", StringComparison.OrdinalIgnoreCase))
                         {
                             RecordRejection(
@@ -1170,6 +1170,7 @@ public static class LeaseEndpoints
                         // Server receipt time is the cache authority. A host
                         // clock cannot make a stale proof live indefinitely.
                         CheckedAt = DateTime.UtcNow,
+                        CredentialGeneration = req.RepositoryCredentialGeneration,
                     });
                     logger.Log(succeeded ? LogLevel.Information : LogLevel.Warning,
                         "remote-runner-project-preflight project={Project} projectId={ProjectId} runner={Runner} status={Status} detail={Detail}",
@@ -1179,7 +1180,7 @@ public static class LeaseEndpoints
                 var projectPreflight = clients.FindRunnerProjectPreflight(clientId, repository.ProjectId);
                 if (projectPreflight is null
                     || !string.Equals(projectPreflight.RegistrationFingerprint, registrationFingerprint, StringComparison.Ordinal)
-                    || !ProjectDeliveryPreflightPolicy.IsFresh(projectPreflight, DateTime.UtcNow))
+                    || !ProjectDeliveryPreflightPolicy.Applies(projectPreflight, DateTime.UtcNow, req.RepositoryCredentialGeneration))
                 {
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
                         RunnerClaimStatus.PreflightRequired,
