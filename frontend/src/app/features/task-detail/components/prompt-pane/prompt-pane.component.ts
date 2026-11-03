@@ -146,6 +146,7 @@ export class PromptPaneComponent {
    *  drop. */
   readonly titleSaved = output<void>();
   readonly activeTabChange = output<PromptPaneTabId>();
+  readonly reviewAttemptRequested = output<string>();
 
   /**
    * overview | description | timeline | evidence | code-review.

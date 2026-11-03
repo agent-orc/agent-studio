@@ -36,7 +36,8 @@ public static class TaskPipelineEndpoints
             TaskSessionLog sessions,
             TimelineLog timeline,
             ITokenAggregator tokens,
-            OnDemandPostStepService onDemand) =>
+            OnDemandPostStepService onDemand,
+            BatchGateStore batchGates) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
@@ -57,7 +58,8 @@ public static class TaskPipelineEndpoints
                 info,
                 sessionEvents,
                 timeline.ReadAll(info.FolderPath),
-                taskTokens);
+                taskTokens,
+                batchGates);
             var record = projected.Execution;
             // Remote rows use canonical ledger calls; unchanged local rows
             // retain their recorded step usage. Enrich only the response copy

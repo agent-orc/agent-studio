@@ -712,6 +712,16 @@
     font-style: italic;
   }
 
+  &__review-link {
+    flex: 0 0 auto;
+    border: 0;
+    background: none;
+    color: var(--studio-accent-strong);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
   &__details,
   &__toggle {
     flex: 0 0 auto;

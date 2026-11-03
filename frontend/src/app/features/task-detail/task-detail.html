@@ -132,7 +132,8 @@
         (agentConfigCommit)="onAgentConfigCommit($event)"
         (referencesChanged)="fileSaved.emit()"
         (titleSaved)="fileSaved.emit()"
-        (activeTabChange)="detailTabChange.emit($event)" />
+        (activeTabChange)="detailTabChange.emit($event)"
+        (reviewAttemptRequested)="openReviewAttempt($event)" />
     }
 
     @if (!maximizedPane() && panesVisible().prompt && (panesVisible().protocol || panesVisible().git)) {
@@ -151,6 +152,7 @@
         [isRunning]="effectiveRunActive()"
         [isActiveJob]="isActiveJob()"
         [activeInspectorTab]="activeInspectorTab()"
+        [reviewAttemptFocus]="reviewAttemptFocus()"
         [followupPrompt]="followupPrompt()"
         [canSendChat]="canSendChat()"
         [chatSendLabel]="chatSendLabel()"

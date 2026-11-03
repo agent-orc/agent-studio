@@ -316,6 +316,10 @@ public sealed record PipelineStepExecution
     public string? ExecutionExecutorId { get; init; }
     /// <summary>Fenced attempt that owns the remote step evidence.</summary>
     public string? ExecutionAttemptId { get; init; }
+    /// <summary>Ordinal of this review among the card's settled Remote Review attempts.</summary>
+    public int? ReviewAttemptNumber { get; init; }
+    /// <summary>Durable batch gate outcome for a card whose build and tests were deferred.</summary>
+    public BatchGatePipelineEvidence? BatchGate { get; init; }
     /// <summary>
     /// Human-readable attribution for the token counts, e.g.
     /// <c>AGENT (CLI FOOTER) / reported</c>. Null when no token usage was
@@ -397,6 +401,9 @@ public sealed record PipelineStepRunSummary
     public string? Reason { get; init; }
     public string? EvidenceRef { get; init; }
 }
+
+public sealed record BatchGatePipelineEvidence(
+    string BatchId, string Phase, string? Verdict, string? PublishedSha);
 
 public enum PipelineStepStatus
 {

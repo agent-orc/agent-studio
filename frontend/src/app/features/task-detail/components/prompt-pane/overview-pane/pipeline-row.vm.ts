@@ -83,6 +83,9 @@ export interface PipelineRowVm {
   concernTooltip: StructuredTooltip | null;
   /** One-line conclusion for every completed aspect, including clean passes. */
   aspectSummary: string | null;
+  reviewAttemptNumber?: number | null;
+  reviewAttemptId?: string | null;
+  batchGateSummary?: string | null;
   /** Latest-first report, raw-log, and grade links for Remote Review attempts. */
   aspectEvidence: PipelineAspectEvidence[];
   /** Relationship between this aspect and a review-driven coding round. */

@@ -137,7 +137,7 @@ export class OverviewPaneComponent {
   /** Fired after a successful title PUT so the parent can re-fetch the
    *  detail and let the optimistic override drop back to the canonical
    *  `job().title`. */
-  readonly titleSaved = output<void>(); readonly documentRequested = output<string>();
+  readonly titleSaved = output<void>(); readonly documentRequested = output<string>(); readonly reviewAttemptRequested = output<string>();
 
   private readonly runTimelinePoll = inject(RunTimelinePollService);
   private readonly agentWorkPoll = inject(AgentWorkSummaryPollService);
@@ -307,7 +307,7 @@ export class OverviewPaneComponent {
       const resolvedModel = cfg?.resolvedModel ?? null;
       const model = recordedModel ?? resolvedModel ?? cfg?.model ?? step.model ?? null;
       const thinkingLevel = e?.thinkingLevel ?? null;
-      const cliType = this.asCliType(cfg?.cliType ?? step.cliType ?? this.effectiveCliType());
+      const cliType = this.asCliType(e?.reviewCli ?? cfg?.cliType ?? step.cliType ?? this.effectiveCliType());
       const modelIsResolved = recordedModel == null && model != null;
       const modelTooltip = this.buildModelTooltip(
         label, model, modelIsResolved, (modelIsResolved ? cfg?.modelSource : e?.modelSource) ?? null, e?.runs ?? 0);
@@ -360,12 +360,11 @@ export class OverviewPaneComponent {
             ? 'executed remotely · not applicable'
           : status === 'skipped' && chainEndedByEarlyEscalate
             ? 'skipped: chain ended by early escalate'
-            : null,
+            : status === 'skipped' ? e?.reason ?? 'This step was skipped.' : null,
         remoteNotApplicable,
         attentionRequired,
-        remoteReviewDetail: e?.reason?.startsWith('Remote Review Plane verdict')
-          ? e.reason
-          : null,
+        remoteReviewDetail: e?.executionAttemptId && (step.id === FINAL_VERDICT_STEP_ID || step.id === 'post-code-review-grade')
+          ? e.verdictSummary ?? e.reason ?? null : e?.reason?.startsWith('Remote Review Plane verdict') ? e.reason : null,
         model,
         thinkingLevel,
         cliType,
@@ -377,6 +376,8 @@ export class OverviewPaneComponent {
         verdict: onDemand ? `attempt ${onDemand.attempt}` : verdict,
         concernTooltip: buildConcernTooltip(label, verdict, statusDetail),
         aspectSummary: step.kind === 'aspect' ? statusDetail : null, aspectEvidence: res.aspectEvidence?.[step.id] ?? [],
+        reviewAttemptNumber: e?.reviewAttemptNumber ?? null, reviewAttemptId: e?.executionAttemptId ?? null,
+        batchGateSummary: e?.batchGate ? `Batch ${e.batchGate.batchId} · ${e.batchGate.phase} · ${e.batchGate.verdict ?? 'pending'}${e.batchGate.publishedSha ? ` · ${e.batchGate.publishedSha.slice(0, 12)}` : ''}` : null,
         reviewRoundStatus: reviewRoundStatus(e),
         explanation: buildStepExplanation(step.id, label, step.kind),
         durationMs: onDemand?.durationMs ?? e?.durationMs ?? 0,
