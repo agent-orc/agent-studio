@@ -67,6 +67,18 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   worker does not spend the batch budget on a
   clean-repeat diagnosis.
   The report counts batches currently held for a red integration branch.
+  A collided base red or one measured with at least 25% average external CPU
+  stays provisional. The service runs the base again before holding a batch;
+  a still provisional verdict is retried on the next red. The state route shows
+  the base verdict, its provisional flag, and each batch's `phaseReason`.
+  Different parsed failing tests on base and candidate send the candidate to
+  member isolation. A confirmed deterministic red still isolates when the
+  same run quarantined a separate flaky test.
+- A cancelled per-task fallback can return to the pending queue with its passed
+  review. The pilot also re-admits a current passed review moved back into Auto
+  Review when its pending record was resolved. Fallback requests use at most
+  one fewer concurrent slot than the gate host has configured, preserving a
+  slot for a formed batch.
 - Full-suite execution runs outside the 30-second planning tick. One batch runs
   per project. A documentation-only base movement queues a successor manifest
   for replay and another full gate. Publication pushes the tested SHA to origin
