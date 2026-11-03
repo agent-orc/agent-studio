@@ -378,6 +378,17 @@ public sealed class TaskIntegrationStatusService
         // exact-SHA gate verdict is still pending. That state must resume the
         // runner rather than treating ancestry as proof that the gate ran.
 
+        // AGT-3461: no attributed commit and no task branch - nothing to
+        // integrate. Replaying the merge or returning the card cannot change
+        // that, so the acceptance stands without an integration.
+        if (status?.Status == IntegrationStatuses.NoBranch && AnchorFor(job) is null)
+        {
+            return new AcceptedIntegrationRecoveryDecision(
+                AcceptedIntegrationRecoveryAction.Ignore,
+                "The card has no attributed commit and no task branch; there is nothing to integrate.",
+                lastMerge);
+        }
+
         if (IsDecidedIntegrationAttempt(lastMerge))
         {
             return new AcceptedIntegrationRecoveryDecision(
@@ -1075,9 +1086,29 @@ public sealed class TaskIntegrationStatusService
     {
         deliveryRef ??= DeliveryRefFor(job);
         var anchor = AnchorFor(job);
-        var hasWork = anchor != null || deliveryRef != null;
+        var recordedFailure = ReadIntegrationFailure(job);
 
-        if (ReadIntegrationFailure(job) is { } failure)
+        // AGT-3461: a card with no attributed commit whose task branch the merge
+        // runner found missing (typically a parent card whose work landed through its
+        // child cards) has nothing to integrate. The NoTaskBranch attempt is
+        // not a conflict; it settles on the terminal no-branch status.
+        if (anchor == null
+            && (deliveryRef == null
+                || recordedFailure?.Code == AcceptedIntegrationFailureCodes.NoTaskBranch)
+            && (recordedFailure is null
+                || recordedFailure.Code == AcceptedIntegrationFailureCodes.NoTaskBranch))
+        {
+            return new TaskIntegrationStatus
+            {
+                Status = IntegrationStatuses.NoBranch,
+                DeliveryRef = null,
+                IntegrationBranch = branchName,
+                Detail = "No delivery ref or attributed commit to integrate.",
+                Repositories = repositories ?? [],
+            };
+        }
+
+        if (recordedFailure is { } failure)
         {
             var visibleReason = VisibleFailureReason(job, branchName, failure);
             var failedStep = failure.Code == AcceptedIntegrationFailureCodes.IntegrationPushBlocked
@@ -1142,16 +1173,6 @@ public sealed class TaskIntegrationStatusService
                 },
             };
         }
-
-        if (!hasWork)
-            return new TaskIntegrationStatus
-            {
-                Status = IntegrationStatuses.NoBranch,
-                DeliveryRef = null,
-                IntegrationBranch = branchName,
-                Detail = "No delivery ref or attributed commit to integrate.",
-                Repositories = repositories ?? [],
-            };
 
         return new TaskIntegrationStatus
         {

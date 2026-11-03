@@ -42,6 +42,11 @@ public sealed class AcceptedIntegrationInventorySweep
             var step = _integrationStatus.ReadLatestMergeStep(task);
             if (string.Equals(step?.Verdict, "operator-override", StringComparison.OrdinalIgnoreCase))
                 continue;
+            // AGT-3461: no attributed commit and no task branch - nothing to
+            // integrate, so a NoTaskBranch attempt is not a finding.
+            if (string.Equals(status?.Status, IntegrationStatuses.NoBranch, StringComparison.Ordinal)
+                && TaskIntegrationStatusService.AttributedCommits(task).Count == 0)
+                continue;
 
             var timeline = _timeline.ReadAll(task.FolderPath);
             var verification = TaskIntegrationRecordDetector.LatestVerification(task);

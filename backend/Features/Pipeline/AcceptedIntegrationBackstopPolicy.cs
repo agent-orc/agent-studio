@@ -31,6 +31,8 @@ internal sealed record AcceptedIntegrationAlertCandidate
     public string? IntegrationStatus { get; init; }
     public string? LastOutcome { get; init; }
     public string? Detail { get; init; }
+    public int AttributedCommitCount { get; init; }
+    public string? IntegrationBranch { get; init; }
 }
 
 internal sealed record AcceptedIntegrationSweepSummary(
@@ -64,7 +66,36 @@ internal static class AcceptedIntegrationBackstopPolicy
         if (candidate.HasHistoricalVerification) return false;
         if (!candidate.HasIntegrationRecord) return false;
         if (!AcceptanceIntegrationPolicy.IsIntegrationRequired(candidate.Task)) return false;
+        if (HasNothingToIntegrate(candidate)) return false;
         return candidate.Task.State is TaskStates.Completed or TaskStates.Archive;
+    }
+
+    /// <summary>
+    /// AGT-3461: an accepted card without attributed commits whose task branch
+    /// is gone (a parent card whose work came through child cards) has nothing to
+    /// integrate. It never counts as a stall, whatever lane it is in.
+    /// </summary>
+    public static bool HasNothingToIntegrate(AcceptedIntegrationAlertCandidate candidate)
+        => candidate.AttributedCommitCount == 0
+           && (string.Equals(candidate.IntegrationStatus, IntegrationStatuses.NoBranch, StringComparison.Ordinal)
+               || string.Equals(candidate.LastOutcome, nameof(MergeIntoIntegrationOutcome.NoTaskBranch), StringComparison.Ordinal));
+
+    /// <summary>
+    /// AGT-3461: attributed commits that are not on the integration branch
+    /// while the task branch is gone are lost work; the detail says so.
+    /// </summary>
+    public static string? ResolveDetail(AcceptedIntegrationAlertCandidate candidate)
+    {
+        if (candidate.AttributedCommitCount > 0
+            && string.Equals(candidate.LastOutcome, nameof(MergeIntoIntegrationOutcome.NoTaskBranch), StringComparison.Ordinal))
+        {
+            var branch = string.IsNullOrWhiteSpace(candidate.IntegrationBranch)
+                ? "the integration branch"
+                : candidate.IntegrationBranch;
+            return $"The task branch is gone and {candidate.AttributedCommitCount} attributed commit(s) are not on {branch}; "
+                   + "the accepted work may be lost.";
+        }
+        return candidate.Detail;
     }
 
     public static AcceptedIntegrationSweepSummary Summarize(
@@ -127,7 +158,7 @@ internal static class AcceptedIntegrationBackstopPolicy
                     ? IntegrationStatuses.Pending
                     : candidate.IntegrationStatus,
                 LastOutcome = candidate.LastOutcome,
-                Detail = candidate.Detail,
+                Detail = ResolveDetail(candidate),
             })
             .ToList();
 
