@@ -34,12 +34,47 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.False(Ownership(member.Key)?.FallbackGateActive ?? false);
         Assert.Equal(1, _gate.FallbackRuns);
 
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        store.ResolvePending(pending.ReviewAttemptId, "operator-cancelled");
+        Assert.Empty(store.ListPending());
+
         _gate.Batch = request => Green(request.ExpectedSha);
         await pilot.TickAsync(CancellationToken.None);
 
-        Assert.Single(factory.Services.GetRequiredService<BatchGateStore>().ListManifests());
+        Assert.Single(store.ListManifests());
         Assert.Equal(1, _gate.BatchRuns);
         Assert.Equal(1, _gate.FallbackRuns);
+    }
+
+    [Fact]
+    public async Task Passed_review_moved_from_escalated_back_to_auto_review_reenters_queue()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-ESCALATED-RETURN", "docs/escalated-return.md");
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+        settings.SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.TickAsync(CancellationToken.None);
+        AssertLane(member.Key, TaskStates.Escalated);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        Assert.Empty(store.ListPending());
+
+        EnableBatchGate(factory, closeSize: 1);
+        var moved = await factory.Services.GetRequiredService<TaskTransitionService>().MoveAsync(
+            member.Key, TaskStates.AutoReview, _watchPath, CancellationToken.None,
+            cause: "operator-return", suppressProductExecution: true,
+            expectedSourceState: TaskStates.Escalated);
+        Assert.True(moved.Status == MoveJobStatus.Success, moved.Message);
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Single(store.ListManifests());
+        AssertLane(member.Key, TaskStates.HumanReview);
     }
 
     [Theory]
