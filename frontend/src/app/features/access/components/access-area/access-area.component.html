@@ -71,12 +71,12 @@
     @if (operators.available()) {
       <section class="access__section" aria-labelledby="access-operators-title">
         <header><h3 id="access-operators-title">Operator agents</h3><p class="access-hint">Automations that act for the Owner through sessions of at most 8 hours. Each call is audited with the agent, the session, and the Owner who delegated it.</p></header>
-        <app-access-operator-agents />
+        @defer (on immediate) { <app-access-operator-agents /> }
       </section>
 
       <section class="access__section" aria-labelledby="access-operator-activity-title">
         <header><h3 id="access-operator-activity-title">Operator activity</h3><p class="access-hint">Audit entries of operator sessions in a hash chain, with its verification and off-host forwarding.</p></header>
-        <app-access-operator-activity />
+        @defer (on immediate) { <app-access-operator-activity /> }
       </section>
     }
 

@@ -19,6 +19,7 @@ describe('AccessAreaComponent', () => {
     }).compileComponents();
     const fixture = TestBed.createComponent(AccessAreaComponent);
     fixture.detectChanges();
+    await fixture.whenStable();
     return fixture.nativeElement as HTMLElement;
   }
 

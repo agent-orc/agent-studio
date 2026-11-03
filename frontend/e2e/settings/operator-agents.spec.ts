@@ -73,6 +73,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof operato
     });
   });
   await page.route('**/api/auth/status', route => json(route, status));
+  await page.route('**/api/auth/sessions', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, status));
   await page.route('**/api/projects', route => route.request().method() === 'GET'
     ? json(route, [{ id: 'PROJ-001', displayName: 'Website', shortCode: 'WEB', workspaceId: 'ws_main', storageLocation: '/w/website', sortOrder: 0 }])
