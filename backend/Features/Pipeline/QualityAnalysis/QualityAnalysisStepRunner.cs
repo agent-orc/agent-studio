@@ -189,6 +189,8 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
     private readonly ProjectRegistry? projects;
     private readonly ProjectSettingsService? settings;
     private readonly ILogger<QualityStudioAnalysisCoreAdapter>? logger;
+    private readonly AgentStudio.QualityStudio.QualityStudioConnectionStore? connectionStore;
+    private readonly AgentStudio.Secrets.ISecretProvider? secretProvider;
 
     public QualityStudioAnalysisCoreAdapter(HttpClient client, IConfiguration configuration,
         ProjectRegistry? projects = null, ProjectSettingsService? settings = null,
@@ -201,6 +203,16 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
         this.logger = logger;
     }
 
+    public QualityStudioAnalysisCoreAdapter(HttpClient client, IConfiguration configuration,
+        AgentStudio.QualityStudio.QualityStudioConnectionStore connectionStore,
+        AgentStudio.Secrets.ISecretProvider secretProvider, ProjectRegistry projects,
+        ProjectSettingsService settings, ILogger<QualityStudioAnalysisCoreAdapter> logger)
+        : this(client, configuration, projects, settings, logger)
+    {
+        this.connectionStore = connectionStore;
+        this.secretProvider = secretProvider;
+    }
+
     public async Task<QualityStudioCoreResult> RunAsync(
         string repositoryPath,
         string analysisName,
@@ -208,7 +220,7 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
         IReadOnlyList<string> relativePaths,
         CancellationToken cancellationToken)
     {
-        var baseUrl = this.configuration["QualityStudio:BaseUrl"];
+        var baseUrl = connectionStore?.Get()?.InternalBaseUrl ?? this.configuration["QualityStudio:BaseUrl"];
         if (string.IsNullOrWhiteSpace(baseUrl))
             return Unavailable("Quality Studio API URL is not configured.");
         if (!Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var origin)
@@ -284,16 +296,23 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
             new[] { item.RepositoryPath, item.RootPath }.Any(path =>
                 !string.IsNullOrWhiteSpace(path) && string.Equals(
                     Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar), expected, comparison)));
-        return project is null ? null : settings.Get(project.DisplayName).QualityStudio?.RepositoryId;
+        if (project is null) return null;
+        var projectSettings = settings.Get(project.DisplayName);
+        return projectSettings.QualityStudioRepositoryId ?? projectSettings.QualityStudio?.RepositoryId;
     }
 
     private async Task<JsonDocument> SendAsync(Uri origin, HttpMethod method, string route, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, new Uri(origin, route));
-        var token = configuration["QualityStudio:ApiToken"];
-        if (!string.IsNullOrWhiteSpace(token))
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var clientId = configuration["QualityStudio:ClientId"];
+        var connection = connectionStore?.Get();
+        if (connection is not null && secretProvider is not null)
+        {
+            var token = await secretProvider.GetForPlatformAsync(
+                AgentStudio.Secrets.SecretReference.Parse(AgentStudio.QualityStudio.QualityStudioEndpoints.TokenReference),
+                "quality-studio-analysis", cancellationToken);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Value);
+        }
+        var clientId = connection?.ServiceClientId ?? configuration["QualityStudio:ClientId"];
         if (!string.IsNullOrWhiteSpace(clientId))
             request.Headers.Add("X-Client-Id", clientId);
         using var response = await client.SendAsync(request, cancellationToken);
