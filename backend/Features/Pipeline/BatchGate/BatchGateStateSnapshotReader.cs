@@ -111,6 +111,7 @@ public static class BatchGateStateSnapshotReader
             }).ToArray(),
             batches,
             members,
+            isolationFindings = store.ListIsolationFindings(project),
             pushWait,
             gateSlots,
         };

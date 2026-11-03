@@ -36,7 +36,8 @@ public sealed record BatchGatePilotSnapshot(
     int PerTaskFallbackCards = 0,
     int PerTaskFallbackSuiteRuns = 0,
     double? PerTaskFallbackSuitesPerCard = null,
-    int PerTaskPublishVerdictReuses = 0);
+    int PerTaskPublishVerdictReuses = 0,
+    IReadOnlyList<BatchGateIsolationFinding>? IsolationFindings = null);
 
 public static class BatchGatePilotSnapshotReader
 {
@@ -133,7 +134,8 @@ public static class BatchGatePilotSnapshotReader
             PerTaskFallbackCards: fallbackCards.Count,
             PerTaskFallbackSuiteRuns: fallbackSuites,
             PerTaskFallbackSuitesPerCard: Ratio(fallbackSuites, fallbackCards.Count),
-            PerTaskPublishVerdictReuses: fallbackCards.Count(item => item.PublishVerdictReused));
+            PerTaskPublishVerdictReuses: fallbackCards.Count(item => item.PublishVerdictReused),
+            IsolationFindings: store.ListIsolationFindings(project));
     }
 
     private static double? Ratio(double numerator, double denominator)
