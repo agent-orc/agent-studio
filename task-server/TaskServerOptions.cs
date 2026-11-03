@@ -40,6 +40,7 @@ public sealed class TaskServerOptions
     public string? AttemptCredentialWrappingKeyFile { get; set; }
     public int ResultRetentionDays { get; set; } = 30;
     public int ResultFinalizationMaxAttempts { get; set; } = 3;
+    public int ResultFinalizationGenerationTimeoutSeconds { get; set; } = 60;
     public bool ResultRefGcEnabled { get; set; } = true;
     public int ResultRefGcSweepMinutes { get; set; } = 360;
     public int ResultRefGcBatchSize { get; set; } = 50;

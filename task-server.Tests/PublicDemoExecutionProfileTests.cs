@@ -101,7 +101,19 @@ public sealed class PublicDemoExecutionProfileTests
         // AGT-3332 records executor receipts for attempt visibility (Continue).
         // AGT-3426 adds package creation and attempt renewal/report (Review),
         // plus a review package claim (Claim); all four deny execution here.
-        Assert.Equal(69, routes.Count);
+        // AGT-3371 adds artifact chunk status, upload and completion (PostStep).
+        Assert.Equal(72, routes.Count);
+        foreach (var path in new[]
+        {
+            "/api/v1/runs/{runId}/artifact-chunks/{sha256}",
+            "/api/v1/runs/{runId}/artifact-chunks",
+            "/api/v1/runs/{runId}/artifact-chunks/complete",
+        })
+        {
+            var chunkRoute = Assert.Single(routes, route => route.RoutePattern.RawText == path);
+            Assert.Equal(ExecutionAdmissionPath.PostStep,
+                chunkRoute.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
+        }
         foreach (var (path, admissionPath) in new[]
         {
             ("/api/v1/review-packages/", ExecutionAdmissionPath.Review),
@@ -182,7 +194,7 @@ public sealed class PublicDemoExecutionProfileTests
                 [ExecutionAdmissionPath.Review] = 5,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,
-                [ExecutionAdmissionPath.PostStep] = 24,
+                [ExecutionAdmissionPath.PostStep] = 27,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

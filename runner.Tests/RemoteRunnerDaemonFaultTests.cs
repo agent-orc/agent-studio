@@ -26,6 +26,7 @@ public class RemoteRunnerDaemonFaultTests
     [InlineData(500)]
     [InlineData(502)]
     [InlineData(503)]
+    [InlineData(524)]
     public void Server_side_status_codes_are_transient(int status)
         => Assert.True(RemoteRunnerDaemon.IsTransientServerFault(
             new TaskServerException(status, $"POST /claim -> {status}")));
