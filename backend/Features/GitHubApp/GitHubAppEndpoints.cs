@@ -62,7 +62,7 @@ public static class GitHubAppEndpoints
 
         app.MapPost("/api/v1/runners/{runnerId}/repository-credentials", (string runnerId, RepositoryCredentialsRequest request,
             HttpContext context, GitHubAppBroker broker, GitHubAppHostKeys hostKeys, AccessSecurityStore security,
-            IConfiguration configuration, CancellationToken ct) => Run(context, async () =>
+            IConfiguration configuration, AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) => Run(context, async () =>
         {
             var access = RepositoryAccess.Normalize(request.Access);
             if (access is null)
@@ -74,7 +74,10 @@ public static class GitHubAppEndpoints
                 return Error(StatusCodes.Status401Unauthorized, "host-key-required", "A host key or Runner service credential is required.");
             if (access == RepositoryAccess.Write && granted != RepositoryAccess.Write)
                 return Error(StatusCodes.Status403Forbidden, "write-access-denied", "This host may only read repositories.");
-            var credentials = await broker.IssueAllAsync(access, runnerId, ct);
+            // SM-9: a runner credential receives tokens only for the repositories of its bound projects.
+            var runner = SecurityProfiles.IsLocal(configuration) ? null : BoundRunner(context, security);
+            var credentials = await broker.IssueAllAsync(access, runnerId, ct,
+                admits: runner is null ? null : repository => RunnerProjectBinding.Allows(runner, repository.Project, projects));
             return credentials.Count == 0
                 ? Results.NoContent()
                 : Results.Ok(new RepositoryCredentialsResponse(credentials, GitHubAppBroker.HostRefreshSeconds));
@@ -97,6 +100,10 @@ public static class GitHubAppEndpoints
         if (runner.Scopes.Contains(RunnerScopes.RepositoryWrite)) return RepositoryAccess.Write;
         return runner.Scopes.Contains(RunnerScopes.RepositoryRead) ? RepositoryAccess.Read : null;
     }
+
+    private static RunnerPrincipal? BoundRunner(HttpContext context, AccessSecurityStore security)
+        => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] as RunnerPrincipal
+           ?? security.AuthenticateRunner(ReadBearer(context));
 
     private static string? ReadBearer(HttpContext context)
         => context.Request.Headers.Authorization.FirstOrDefault() is { } header

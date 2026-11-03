@@ -132,7 +132,8 @@ public sealed partial class TaskServerStore
     }
 
     public async Task<ReviewPackageClaimResponse> ClaimReviewPackageAsync(
-        ReviewPackageClaimRequest request, string actorId, CancellationToken ct)
+        ReviewPackageClaimRequest request, string actorId, CancellationToken ct,
+        RunnerProjectScope? projects = null)
     {
         RequireWritable();
         ReviewPackageClaimResponse? result = null;
@@ -143,6 +144,7 @@ public sealed partial class TaskServerStore
                 "p.status IN ('queued', 'leased')", ct);
             foreach (var record in open)
             {
+                if (projects is not null && !projects.Allows(record.Subject.Project)) continue;
                 var state = await ReadPackageStateAsync(connection, transaction, record.Subject.PackageId, ct);
                 var current = ReviewPackageLeasePolicy.Expire(state, now);
                 if (current != state)
@@ -164,6 +166,14 @@ public sealed partial class TaskServerStore
             result = new ReviewPackageClaimResponse("empty", null, null, "No review package is queued.");
         }, ct);
         return result!;
+    }
+
+    public async Task<string?> ReviewPackageProjectAsync(string attemptId, CancellationToken ct)
+    {
+        await using var connection = await OpenReadyAsync(ct);
+        return Convert.ToString(await ScalarAsync(connection,
+            "SELECT project FROM review_package_subjects WHERE id = $id;",
+            ct, ("$id", PackageOfAttempt(attemptId))));
     }
 
     public async Task<ReviewPackageLeaseDto> RenewReviewPackageAsync(

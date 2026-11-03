@@ -119,7 +119,7 @@ public static class GitHubAppEndpoints
         })).RequireStudioRole(StudioUserRoles.Owner);
 
         app.MapPost("/api/v1/runners/{runnerId}/repository-credentials", (string runnerId, RepositoryCredentialsRequest request,
-            HttpContext context, GitHubAppBroker broker, CancellationToken ct) => Run(context, async () =>
+            HttpContext context, GitHubAppBroker broker, TaskServerStore store, CancellationToken ct) => Run(context, async () =>
         {
             var access = RepositoryAccess.Normalize(request.Access);
             if (access is null)
@@ -131,7 +131,12 @@ public static class GitHubAppEndpoints
             // host's role. A review host's principal is enrolled without this one.
             if (access == RepositoryAccess.Write && !principal.Scopes.Contains(TaskServerScopes.RepositoriesWrite))
                 return Error(StatusCodes.Status403Forbidden, "write-access-denied", "This host may only read repositories.");
-            var credentials = await broker.IssueAllAsync(access, runnerId, ct);
+            // SM-9: a host receives tokens only for the repositories of its bound projects.
+            var binding = await RunnerRouteAuthorization.BindingAsync(context, principal, store);
+            if (binding.Projects.IsEmpty) return Results.NoContent();
+            var repositories = await store.RunnerRepositoryUrlsAsync(binding.Projects, ct);
+            var credentials = await broker.IssueAllAsync(access, runnerId, ct,
+                admits: repository => repository.RepositoryUrl is { } url && repositories.Contains(url));
             return credentials.Count == 0
                 ? Results.NoContent()
                 : Results.Ok(new RepositoryCredentialsResponse(credentials, GitHubAppBroker.HostRefreshSeconds));

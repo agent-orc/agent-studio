@@ -83,7 +83,8 @@ public sealed class OperationPermitTests
                     scopes_json TEXT NOT NULL, runner_id TEXT UNIQUE, created_at TEXT NOT NULL,
                     revoked_at TEXT, last_seen_at TEXT, CHECK(kind = 'runner' OR runner_id IS NULL)
                 );
-                INSERT INTO principals_v19 SELECT * FROM principals;
+                INSERT INTO principals_v19(principal_id, kind, scopes_json, runner_id, created_at, revoked_at, last_seen_at)
+                SELECT principal_id, kind, scopes_json, runner_id, created_at, revoked_at, last_seen_at FROM principals;
                 DROP TABLE principals;
                 ALTER TABLE principals_v19 RENAME TO principals;
                 UPDATE meta SET value = '19' WHERE key = 'schema_version';

@@ -142,11 +142,13 @@ public sealed partial class TaskServerStore
     /// <summary>
     /// Streams ready, unleased tasks the host may serve, in claim order. The
     /// reader stays open only until the caller stops at an admissible task.
+    /// With <paramref name="requirePolicy"/> a host without a policy serves none.
     /// </summary>
     private static async IAsyncEnumerable<TaskDto> ReadClaimableTasksAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         string hostId,
+        bool requirePolicy,
         [EnumeratorCancellation] CancellationToken ct)
     {
         await using var command = Command(connection, """
@@ -158,9 +160,9 @@ public sealed partial class TaskServerStore
                    SELECT 1 FROM leases l
                     WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'))
                AND (
-                   NOT EXISTS (
+                   ($requirePolicy = 0 AND NOT EXISTS (
                        SELECT 1 FROM host_project_policies policy
-                        WHERE policy.host_id = $host)
+                        WHERE policy.host_id = $host))
                    OR EXISTS (
                        SELECT 1 FROM host_project_policies policy
                         WHERE policy.host_id = $host
@@ -170,7 +172,7 @@ public sealed partial class TaskServerStore
                         WHERE allowed.host_id = $host
                           AND allowed.project_id = t.project_id))
              ORDER BY t.created_at, t.task_key;
-            """, transaction, ("$host", hostId));
+            """, transaction, ("$host", hostId), ("$requirePolicy", requirePolicy ? 1 : 0));
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             yield return ReadTask(reader);
