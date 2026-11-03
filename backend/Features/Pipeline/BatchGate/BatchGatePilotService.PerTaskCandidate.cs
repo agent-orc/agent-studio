@@ -108,7 +108,8 @@ public sealed partial class BatchGatePilotService
                 GateProfile(settings.BuildProfile, pending.RepositoryPath), pending.RepositoryPath,
                 Path.Combine(TaskPaths.LogsDir(task.FolderPath), FallbackTipEvidenceName(pending.ReviewAttemptId)),
                 null, ct).ConfigureAwait(false);
-            return PerTaskFallbackPolicy.RetestOnOwnBase(subject, pending.Subject.ResultSha, gate, verdict.Outcome);
+            return !verdict.Provisional && PerTaskFallbackPolicy.RetestOnOwnBase(
+                subject, pending.Subject.ResultSha, gate, verdict.Outcome);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested
             && ex is IOException or InvalidDataException or InvalidOperationException)
