@@ -7,7 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   acceptedTokenHits, anonymousProbeUrl, buildInventory, cardLocations, carriedVisibilities, carryVisibility, classifyAnonymousProbe, classifyPath, classifyWorkspace, countCards, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
-  projectVisibilities, readProjectRegistry, runCli, scanFileContent, scanWorkspace, screenTokens, selectDelta, skippedFolders, stripUrlCredentials, taskRoots, tokenStateIssues,
+  deriveRepositoryFromStorage, integrationBranches, inventoryExitCode, projectVisibilities, readProjectRegistry, runCli,
+  scanFileContent, scanWorkspace, screenTokens, selectDelta, setRepositoryPaths, skippedFolders, stripUrlCredentials,
+  taskRoots, tokenHitLines, tokenStateIssues,
 } from './move-studio-to-server.mjs';
 import { inventory as relocateInventory, relocate } from './relocate-workspace-paths.mjs';
 
@@ -224,6 +226,91 @@ test('task storage under a checkout or outside it gets its own copied root', () 
   assert.deepEqual(relocate(projects[1].storageLocation, mappings),
     { target: '/data/projects/.task-storage/PROJ-014', unresolved: false });
   assert.deepEqual(plan.issues, []);
+});
+
+test('derives a repository from in-repo task storage the way ProjectRepoResolver does', () => {
+  assert.equal(deriveRepositoryFromStorage('C:\\Code\\Repo\\.orchestrator\\jobs'), 'C:\\Code\\Repo');
+  assert.equal(deriveRepositoryFromStorage('C:\\Code\\Repo\\.Orchestrator\\Jobs\\'), 'C:\\Code\\Repo');
+  assert.equal(deriveRepositoryFromStorage('/home/op/repo/.orchestrator/jobs'), '/home/op/repo');
+  for (const none of ['C:\\.orchestrator\\jobs', '/.orchestrator/jobs', 'D:\\Tasks\\jobs', 'C:\\Repo\\.orchestrator', null]) {
+    assert.equal(deriveRepositoryFromStorage(none), null, String(none));
+  }
+});
+
+test('a checkout derived from task storage is cloned and gets its RepositoryPath written', () => {
+  const projects = [
+    { id: 'PROJ-020', displayName: 'Derived', storageLocation: 'C:\\Code\\Derived\\.orchestrator\\jobs', repositoryPath: null, rootPath: null, urls: [] },
+    { id: 'PROJ-021', displayName: 'Plain folder', storageLocation: 'C:\\Code\\NoGit\\.orchestrator\\jobs', repositoryPath: null, rootPath: null, urls: [] },
+  ];
+  const plan = generateMapping({ workspace: 'C:\\Studio\\workspace', projects,
+    remotes: { 'PROJ-020': 'git@example.invalid:derived.git' },
+    isRepository: folder => folder === 'C:\\Code\\Derived' });
+  assert.deepEqual(plan.checkouts.map(item => [item.name, item.source, item.repositoryUrl, item.derivedProjects]),
+    [['derived', 'C:\\Code\\Derived', 'git@example.invalid:derived.git', ['PROJ-020']]]);
+  assert.deepEqual(plan.repositoryPaths, { 'PROJ-020': '/data/projects/derived' });
+  // Task storage still wins over the checkout prefix it lies in.
+  const mappings = Object.entries(plan.mapping).sort((a, b) => b[0].length - a[0].length);
+  assert.equal(relocate(projects[0].storageLocation, mappings).target, '/data/projects/.task-storage/PROJ-020');
+  assert.deepEqual(plan.issues, []);
+
+  const registry = { Projects: [
+    { Id: 'PROJ-020', StorageLocation: '/data/projects/.task-storage/PROJ-020', RepositoryPath: null },
+    { Id: 'PROJ-022', RepositoryPath: '/data/projects/kept' },
+  ] };
+  assert.deepEqual(setRepositoryPaths(registry, { ...plan.repositoryPaths, 'PROJ-022': '/data/projects/other' }), ['PROJ-020']);
+  assert.equal(registry.Projects[0].RepositoryPath, '/data/projects/derived');
+  assert.equal(registry.Projects[1].RepositoryPath, '/data/projects/kept');
+});
+
+test('a checkout carries its configured integration branch unless its projects disagree', () => {
+  const projects = readRegistryFromFixture();
+  const settings = { demo: { IntegrationBranch: 'develop' }, 'PROJ-003': { integrationBranch: ' release ' }, 'Demo docs': { IntegrationBranch: '' } };
+  const branches = integrationBranches(settings, projects);
+  assert.deepEqual(branches, { 'PROJ-001': 'develop', 'PROJ-003': 'release' });
+  let plan = generateMapping({ workspace: fixture.workspace, projects, remotes: fixture.remotes, branches });
+  assert.deepEqual(plan.checkouts.map(item => [item.name, item.integrationBranch]),
+    [['demo', 'develop'], ['demo-2', 'release'], ['legacy', null]]);
+  plan = generateMapping({ workspace: fixture.workspace, projects, remotes: fixture.remotes,
+    branches: { ...branches, 'PROJ-002': 'main' } });
+  assert.equal(plan.checkouts[0].integrationBranch, null);
+});
+
+test('only token hits make the inventory acceptable, any other issue keeps it blocked', () => {
+  const token = { code: 'token-in-state', path: 'projects/demo/tasks/AGT-1/notes.md', token: 'github-token' };
+  const storage = { code: 'token-in-state', project: 'PROJ-005', path: 'F:\\Legacy\\.orchestrator\\jobs/AGT-1/task.md', token: 'private-key' };
+  assert.equal(inventoryExitCode([]), 0);
+  assert.equal(inventoryExitCode([token, storage]), 4);
+  assert.equal(inventoryExitCode([token, { code: 'missing-repository-url', projects: ['PROJ-003'] }]), 3);
+  assert.deepEqual(tokenHitLines([token, storage, { code: 'unmapped-path' }]),
+    ['github-token\tprojects/demo/tasks/AGT-1/notes.md', 'private-key\tF:\\Legacy\\.orchestrator\\jobs/AGT-1/task.md']);
+  // Each listed line is exactly what the screen accepts on the next pass.
+  const entry = { path: 'AGT-1/task.md', size: 1, mtimeMs: 1, transfer: 'archive', area: 'other' };
+  const screened = screenTokens([entry], { scan: () => ({ hash: 'h', token: 'private-key' }),
+    accepted: new Set(tokenHitLines([storage])), prefix: 'F:\\Legacy\\.orchestrator\\jobs/' });
+  assert.equal(screened[0].transfer, 'archive');
+});
+
+test('the server-side repository-paths command links derived projects in the registry and its backup', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-repo-paths-'));
+  const metadata = path.join(root, 'workspace', '.metadata');
+  await mkdir(metadata, { recursive: true });
+  const registry = { Projects: [{ Id: 'PROJ-020', RepositoryPath: null }, { Id: 'PROJ-001', RepositoryPath: '/data/projects/demo' }] };
+  await writeFile(path.join(metadata, 'projects.json'), '\uFEFF' + JSON.stringify(registry));
+  await writeFile(path.join(metadata, 'projects.json.bak'), JSON.stringify(registry));
+  await writeFile(path.join(root, 'paths.json'), JSON.stringify({ 'PROJ-020': '/data/projects/derived' }));
+  const output = [];
+  try {
+    assert.equal(runCli(['repository-paths', '--workspace', path.join(root, 'workspace'), '--paths', path.join(root, 'paths.json')],
+      { write: text => output.push(text) }), 0);
+    assert.equal(output.join(''), 'RepositoryPath written for PROJ-020\n');
+    const primary = await readFile(path.join(metadata, 'projects.json'), 'utf8');
+    assert.ok(primary.startsWith('\uFEFF'));
+    assert.equal(JSON.parse(primary.slice(1)).Projects[0].RepositoryPath, '/data/projects/derived');
+    assert.equal(JSON.parse(await readFile(path.join(metadata, 'projects.json.bak'), 'utf8')).Projects[0].RepositoryPath, '/data/projects/derived');
+    assert.equal(readProjectRegistry(path.join(root, 'workspace'))[1].repositoryPath, '/data/projects/demo');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('reports conflicting repository URLs for one shared checkout', () => {
@@ -453,7 +540,7 @@ test('token hits in metadata, orchestration state, and task folders block the in
   ]);
 });
 
-test('inventory exits 3 when a task folder file contains a token', async () => {
+test('inventory exits 4 and lists the acceptable hit when only a task folder token blocks', async () => {
   const { root, workspace } = await materialize({
     'projects/demo/tasks/3-done/AGT-1/notes.md': `pushed with ${fakeToken.github()}\n`,
     '.runtime/cli-output/AGT-1.log': `pushed with ${fakeToken.github()}\n`,
@@ -465,10 +552,27 @@ test('inventory exits 3 when a task folder file contains a token', async () => {
     const status = runCli(['inventory', '--workspace', workspace, '--source-workspace', fixture.workspace, '--home', fixture.home,
       '--remotes', path.join(root, 'remotes.tsv'), '--extra-mapping', path.join(root, 'extra.json'), '--out-dir', root],
     { now: fixedClock, write: text => output.push(text) });
-    assert.equal(status, 3);
+    assert.equal(status, 4);
     const inventory = JSON.parse(await readFile(path.join(root, 'inventory.json'), 'utf8'));
     assert.deepEqual(inventory.issues.map(issue => [issue.code, issue.path]), [['token-in-state', 'projects/demo/tasks/3-done/AGT-1/notes.md']]);
     assert.match(output.join(''), /not copied \(contains a github-token\): \.runtime\/cli-output\/AGT-1\.log/);
+    assert.match(output.join(''), /Only token hits block/);
+    const hits = path.join(root, 'token-hits.tsv');
+    assert.equal(await readFile(hits, 'utf8'), 'github-token\tprojects/demo/tasks/3-done/AGT-1/notes.md\n');
+
+    // Accepting the listed lines lets the same pass continue; the file then travels.
+    process.env.MOVE_ACCEPTED_TOKEN_HITS = hits;
+    try {
+      const again = runCli(['inventory', '--workspace', workspace, '--source-workspace', fixture.workspace, '--home', fixture.home,
+        '--remotes', path.join(root, 'remotes.tsv'), '--extra-mapping', path.join(root, 'extra.json'), '--out-dir', root],
+      { now: fixedClock, write: () => {} });
+      assert.equal(again, 0);
+    } finally {
+      delete process.env.MOVE_ACCEPTED_TOKEN_HITS;
+    }
+    const accepted = JSON.parse(await readFile(path.join(root, 'inventory.json'), 'utf8'));
+    assert.equal(accepted.entries.find(entry => entry.path === 'projects/demo/tasks/3-done/AGT-1/notes.md').transfer, 'archive');
+    assert.equal(await readFile(hits, 'utf8'), '');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -716,6 +820,7 @@ test('an operator-reviewed token hit travels, and a new shape in that file still
   const other = screenTokens([entry], { scan: () => ({ hash: 'h', token: 'private-key' }), accepted });
   assert.equal(other[0].reason, 'token-pattern');
   assert.equal(acceptedTokenHits(undefined).size, 0);
+  assert.equal(acceptedTokenHits(path.join(dir, 'not-written-yet.tsv')).size, 0);
   await rm(dir, { recursive: true, force: true });
 });
 

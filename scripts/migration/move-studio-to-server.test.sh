@@ -151,6 +151,44 @@ git -C "$work/code/Demo" remote add origin "git@test-server:$work/remotes/demo.g
 git -C "$work/code/Demo" push -q origin main
 # Three external task storage roots, each with its own cards. A card is a folder
 # with task.json or job.json; one below results/ is evidence, not a card.
+# Work the remote does not have: develop one commit ahead of origin/develop, an
+# integration lane and a backup under refs/agent-studio, and a branch only the
+# workstation has. The workstation stands on that branch, but the project
+# configures develop as its integration branch.
+git -C "$work/code/Demo" checkout -q -b develop
+git -C "$work/code/Demo" push -q -u origin develop
+printf 'ahead\n' >"$work/code/Demo/ahead.md"
+git -C "$work/code/Demo" add ahead.md
+git -C "$work/code/Demo" commit -qm 'unpublished develop work'
+demo_develop=$(git -C "$work/code/Demo" rev-parse develop)
+printf 'lane\n' >"$work/code/Demo/lane.md"
+git -C "$work/code/Demo" add lane.md
+git -C "$work/code/Demo" commit -qm 'integration lane candidate'
+git -C "$work/code/Demo" update-ref refs/agent-studio/lanes/develop/AGT-7 HEAD
+git -C "$work/code/Demo" update-ref refs/agent-studio/backups/AGT-6 "$demo_develop"
+demo_lane=$(git -C "$work/code/Demo" rev-parse HEAD)
+git -C "$work/code/Demo" reset -q --hard "$demo_develop"
+git -C "$work/code/Demo" checkout -q -b feature/local
+printf 'local\n' >"$work/code/Demo/local.md"
+git -C "$work/code/Demo" add local.md
+git -C "$work/code/Demo" commit -qm 'local only'
+demo_local=$(git -C "$work/code/Demo" rev-parse HEAD)
+printf '.orchestrator/\n' >"$work/code/Demo/.git/info/exclude"
+# A checkout Studio derives from its task storage (<repo>/.orchestrator/jobs):
+# no RepositoryPath and no registry URL. The workstation stands on a local branch.
+git init -q --bare -b main "$work/remotes/derived.git"
+git init -q -b main "$work/code/Derived"
+printf 'derived\n' >"$work/code/Derived/README.md"
+git -C "$work/code/Derived" add README.md
+git -C "$work/code/Derived" commit -qm 'derived'
+git -C "$work/code/Derived" remote add origin "git@test-server:$work/remotes/derived.git"
+git -C "$work/code/Derived" push -q origin main
+git -C "$work/code/Derived" checkout -q -b work
+printf '.orchestrator/\n' >"$work/code/Derived/.git/info/exclude"
+storage_derived="$work/code/Derived/.orchestrator/jobs"
+mkdir -p "$storage_derived/AGT-20"
+printf '# AGT-20\n' >"$storage_derived/AGT-20/task.md"
+printf '{"key":"AGT-20"}' >"$storage_derived/AGT-20/task.json"
 storage_inside="$work/code/Demo/.orchestrator/jobs"
 storage_outside="$work/code/TaskOnly/.orchestrator/jobs"
 storage_third="$work/code/Third/.orchestrator/jobs"
@@ -177,10 +215,11 @@ cat >"$ws/.metadata/projects.json" <<EOF
  {"Id":"PROJ-011","DisplayName":"Task only","StorageLocation":"$storage_outside","Urls":[]},
  {"Id":"PROJ-012","DisplayName":"Third tasks","StorageLocation":"$storage_third","Urls":[]},
  {"Id":"PROJ-013","DisplayName":"Private site","Urls":[{"Id":"repo","Label":"Repository","Url":"git@github.com:owner/private-site.git"}]},
- {"Id":"PROJ-014","DisplayName":"Public site","Urls":[{"Id":"repo","Label":"Repository","Url":"https://github.com/owner/public-site.git"}]}]}
+ {"Id":"PROJ-014","DisplayName":"Public site","Urls":[{"Id":"repo","Label":"Repository","Url":"https://github.com/owner/public-site.git"}]},
+  {"Id":"PROJ-020","DisplayName":"Derived","StorageLocation":"$storage_derived","Urls":[]}]}
 EOF
 # Demo's visibility is set; the two sites have none and are probed anonymously.
-printf '{"Demo":{"RepositoryVisibility":"public"},"Private site":{"AutoCommit":true}}\n' >"$ws/project-settings.json"
+printf '{"Demo":{"IntegrationBranch":"develop","RepositoryVisibility":"public"},"Private site":{"AutoCommit":true}}\n' >"$ws/project-settings.json"
 printf '# AGT-1\n' >"$ws/projects/demo/tasks/AGT-1/task.md"
 printf '{"key":"AGT-1"}' >"$ws/projects/demo/tasks/AGT-1/task.json"
 printf 'open\n' >"$ws/projects/demo/tasks/AGT-1/status.md"
@@ -243,6 +282,9 @@ check grep -q "PROJ-004 $storage_inside -> /data/projects/.task-storage/PROJ-004
 check grep -q "PROJ-011 $storage_outside -> /data/projects/.task-storage/PROJ-011" "$work/out"
 check grep -q "PROJ-012 $storage_third -> /data/projects/.task-storage/PROJ-012" "$work/out"
 check grep -q 'Git Credential Manager entries' "$work/out"
+check grep -q 'projects/demo <- .*; integration branch develop' "$work/out"
+check grep -q 'projects/derived <- .*(PROJ-020; branch checked out on the workstation)' "$work/out"
+check grep -q 'RepositoryPath /data/projects/derived is written for PROJ-020' "$work/out"
 check grep -q 'visibility: public (project setting)' "$work/out"
 check grep -q 'visibility: private (anonymous probe; written to the server copy)' "$work/out"
 check grep -q 'visibility: unknown' "$work/out"
@@ -267,7 +309,7 @@ check test -f "$work/server/move-staging/storage/PROJ-012/AGT-21/task.json"
 check test -f "$work/server/move-staging/storage/PROJ-012/AGT-22/job.json"
 check test -f "$work/server/move-staging/storage/PROJ-012/AGT-22/results/nested/task.json"
 check grep -q 'task storage PROJ-012 staged' "$work/out"
-printf 'PROJ-001\tworkspace/projects/demo/tasks\t1\nPROJ-004\tstorage/PROJ-004\t1\nPROJ-011\tstorage/PROJ-011\t1\nPROJ-012\tstorage/PROJ-012\t2\n' >"$work/cards.expected"
+printf 'PROJ-001\tworkspace/projects/demo/tasks\t1\nPROJ-004\tstorage/PROJ-004\t1\nPROJ-011\tstorage/PROJ-011\t1\nPROJ-012\tstorage/PROJ-012\t2\nPROJ-020\tstorage/PROJ-020\t1\n' >"$work/cards.expected"
 check cmp -s "$work/cards.expected" "$work/server/move-bin/cards.tsv"
 [ ! -e "$staged/.git-credentials" ] || fail 'credential file was transferred'
 [ ! -e "$staged/runner.env" ] || fail 'runner.env was transferred'
@@ -282,15 +324,33 @@ for file in "$work/out" "$work/state/checkouts.tsv" "$work/state/inventory.json"
 done
 [ ! -e "$staged/.metadata/write.json.tmp" ] || fail 'transient file was transferred'
 [ ! -e "$staged/projects/demo/tasks/AGT-2/task.md" ] || fail 'tracked file deleted on the source still exists'
-check test "$(git -C "$work/server/move-staging/projects/demo" rev-parse HEAD)" = "$(git -C "$work/code/Demo" rev-parse HEAD)"
 check grep -q 'Delta: 7 to copy, 1 to remove' "$work/out"
+# The checkout stands on the configured integration branch with the
+# workstation's unpublished commit; lanes, backups, and local branches arrived.
+demo_staged="$work/server/move-staging/projects/demo"
+check test "$(git -C "$demo_staged" symbolic-ref --short HEAD)" = develop
+check test "$(git -C "$demo_staged" rev-parse HEAD)" = "$demo_develop"
+check test "$(git -C "$demo_staged" rev-parse --abbrev-ref 'develop@{upstream}')" = origin/develop
+check test "$(git -C "$demo_staged" rev-parse refs/agent-studio/lanes/develop/AGT-7)" = "$demo_lane"
+check test "$(git -C "$demo_staged" rev-parse refs/agent-studio/backups/AGT-6)" = "$demo_develop"
+check test "$(git -C "$demo_staged" rev-parse refs/heads/feature/local)" = "$demo_local"
+check test -z "$(git -C "$demo_staged" status --porcelain)"
+check grep -q 'checkout /data/projects/demo from .* on develop' "$work/out"
+derived_staged="$work/server/move-staging/projects/derived"
+check test "$(git -C "$derived_staged" symbolic-ref --short HEAD)" = work
+check test -f "$work/server/move-staging/storage/PROJ-020/AGT-20/task.md"
+check grep -q '"PROJ-020": "/data/projects/derived"' "$work/server/move-bin/repository-paths.json"
 
 # Second pass sends only the delta: one changed log, one new file, one removal.
 sleep 1
 printf '{"e":2}\n' >>"$ws/logs/bus/day.jsonl"
 printf 'new' >"$ws/.runtime/cli-output/AGT-3.log"
 rm "$ws/.runtime/cli-output/AGT-1.log"
+# The lane was published and deleted on the workstation: it leaves staging too.
+git -C "$work/code/Demo" update-ref -d refs/agent-studio/lanes/develop/AGT-7
 run --transfer
+! git -C "$demo_staged" rev-parse -q --verify refs/agent-studio/lanes/develop/AGT-7 >/dev/null || fail 'a deleted lane stayed in staging'
+check test "$(git -C "$demo_staged" symbolic-ref --short HEAD)" = develop
 check grep -q 'Delta: 3 to copy, 2 to remove' "$work/out"
 check grep -q 'Delta: 0 to copy, 0 to remove, 2 unchanged' "$work/out"
 check grep -q 'Delta: 0 to copy, 0 to remove, 3 unchanged' "$work/out"
@@ -326,7 +386,12 @@ cp "$ws/.orchestration-occurrences/o.json" "$work/o.json"
 printf '{"note":"%s"}' "$token" >"$ws/.orchestration-occurrences/o.json"
 run_fails --transfer
 check grep -q 'token-in-state.*\.orchestration-occurrences/o.json' "$work/out"
-check grep -q 'blocking inventory issues' "$work/out"
+check grep -q 'github-token in .orchestration-occurrences/o.json' "$work/out"
+check grep -q 'token hits above block the move' "$work/out"
+[ ! -s "$work/state/accepted-token-hits.tsv" ] || fail 'a token hit was accepted without an answer'
+if printf 'accept\n' | sh "$move" --transfer --yes --workspace "$ws" --server test-server --server-root "$work/server" \
+  --state-dir "$work/state" >"$work/out" 2>&1; then fail '--yes accepted a token hit'; fi
+check grep -q 'token hits above block the move' "$work/out"
 cp "$work/o.json" "$ws/.orchestration-occurrences/o.json"
 rm "$ws/.runtime/cli-output/AGT-3.log"
 
@@ -345,6 +410,10 @@ check grep -q -- '-p studio-move-rehearsal .* down --remove-orphans' "$FAKE_LOG"
 check grep -q 'HEADER X-CSRF-Token: csrf-1' "$FAKE_LOG"
 check grep -q 'CONFIG header = "Authorization: Bearer test-secret"' "$FAKE_LOG"
 check grep -q '"availableSlots":0' "$FAKE_LOG"
+check grep -qF 'check: git indexes refreshed' "$work/out"
+refresh_line=$(grep -n -- '-p studio-move-rehearsal .* run --rm --no-deps -T --entrypoint sh api -c ' "$FAKE_LOG" | head -n 1 | cut -d: -f1)
+up_line=$(grep -n -- '-p studio-move-rehearsal .* up -d' "$FAKE_LOG" | head -n 1 | cut -d: -f1)
+[ -n "$refresh_line" ] && [ "$refresh_line" -lt "$up_line" ] || fail 'the rehearsal did not refresh the git indexes before the start'
 # Owner password and one-time codes reach the payloads through stdin, not node's command line.
 check grep -q 'BODY {"username":"move.rehearsal.owner","password":"Rehearsal-[0-9a-f]*","displayName":"Move rehearsal owner","bootstrapCode":"[0-9a-f]*"}' "$FAKE_LOG"
 check grep -qx 'BODY {"code":"enrol-1"}' "$FAKE_LOG"
@@ -549,9 +618,26 @@ check grep -q 'api-prebuilt-required' "$work/api.out"
 ! grep -q 'Studio has moved' "$work/api.out" || fail 'api.sh still refuses after the rollback'
 
 # Apply: Stable stop, final delta, switch, check, moved marker, guard, rollback hint.
+# A harmless token hit turns up while Stable stops; the operator accepts it and
+# the apply goes on in the same window.
+fixture_log="$ws/projects/demo/tasks/AGT-1/results/fixture.log"
+cat >"$devspace/stop-stable.sh" <<STOP
+#!/bin/sh
+rm -f "$work/stable-up"
+touch "$work/stable-stopped"
+printf 'test fixture %s\n' "$token" >"$fixture_log"
+STOP
 sleep 1
 fresh
-FAKE_BOOTSTRAP=false run --apply --yes
+if ! printf 'move\naccept\n' | FAKE_BOOTSTRAP=false sh "$move" --apply --workspace "$ws" --devspace "$devspace" --server test-server \
+  --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1; then
+  cat "$work/out" >&2; fail 'apply with an accepted token hit exited non-zero'
+fi
+check grep -q 'github-token in projects/demo/tasks/AGT-1/results/fixture.log' "$work/out"
+check grep -qF "accepted; recorded in $work/state/accepted-token-hits.tsv" "$work/out"
+check grep -qx 'github-token	projects/demo/tasks/AGT-1/results/fixture.log' "$work/state/accepted-token-hits.tsv"
+check test -f "$data/workspace/projects/demo/tasks/AGT-1/results/fixture.log"
+normal_stop
 check test -f "$work/stable-stopped"
 [ ! -e "$work/stable-started" ] || fail 'Stable restarted after a successful apply'
 check test "$(git -C "$data/workspace" rev-parse HEAD)" = "$head"
@@ -590,6 +676,22 @@ check grep -q 'remedy: Seed it from the published branch: git -C /data/projects/
 check grep -q "readiness: report kept at $work/server/move-bin/readiness.json" "$work/out"
 check grep -q -- '--env-file .*/server/stack/.env exec -T api curl .* -H Host: studio.test http://127.0.0.1:5031/healthz/readiness' "$FAKE_LOG"
 check grep -q 'Fix every FAIL line of the readiness report above' "$work/out"
+# Checkouts keep their branch and refs; the derived project is linked to its clone.
+check test "$(git -C "$data/projects/demo" symbolic-ref --short HEAD)" = develop
+check test "$(git -C "$data/projects/demo" rev-parse refs/heads/feature/local)" = "$demo_local"
+check test "$(git -C "$data/projects/derived" symbolic-ref --short HEAD)" = work
+check test -f "$data/projects/.task-storage/PROJ-020/AGT-20/task.md"
+check grep -q 'RepositoryPath written for PROJ-020' "$work/out"
+repository_path() { node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String(r.Projects.find(p=>p.Id===process.argv[2]).RepositoryPath))' "$data/workspace/.metadata/projects.json" "$1"; }
+check test "$(repository_path PROJ-020)" = /data/projects/derived
+check test "$(repository_path PROJ-011)" = undefined
+# The indexes are refreshed as the service user after the ownership change and before the stack starts.
+check grep -q 'check: git indexes refreshed' "$work/out"
+chown_line=$(grep -n 'run --rm --user 0 .*chown.* 10001:10001 ' "$FAKE_LOG" | tail -n 1 | cut -d: -f1)
+refresh_line=$(grep -n 'server/stack .* run --rm --no-deps -T --entrypoint sh api -c ' "$FAKE_LOG" | tail -n 1 | cut -d: -f1)
+up_line=$(grep -n 'server/stack .* up -d' "$FAKE_LOG" | tail -n 1 | cut -d: -f1)
+[ -n "$chown_line" ] && [ -n "$refresh_line" ] && [ "$chown_line" -lt "$refresh_line" ] && [ "$refresh_line" -lt "$up_line" ] \
+  || fail 'apply did not refresh the git indexes between the ownership change and the start'
 
 # A second apply would roll the live server back to the workstation snapshot: refused before Stable stops.
 fresh
@@ -623,4 +725,4 @@ check test "$(git -C "$data/workspace" rev-parse HEAD)" = "$head"
 check test -f "$maintenance"
 check grep -qx 'status=moved' "$guard"
 
-printf 'move-studio-to-server: required workspace and devspace, read-only dry run, first pass with three storage roots, delta pass, idempotent repeat, rehearsal, card count checks, apply guards, restart only when safe, failed-switch stop and re-run refusal, rollback, re-apply refusal, and forced apply verified.\n'
+printf 'move-studio-to-server: required workspace and devspace, read-only dry run, first pass with four storage roots, branches, lanes, a derived checkout, delta pass, idempotent repeat, rehearsal, card count checks, token acceptance, index refresh, apply guards, restart only when safe, failed-switch stop and re-run refusal, rollback, re-apply refusal, and forced apply verified.\n'
