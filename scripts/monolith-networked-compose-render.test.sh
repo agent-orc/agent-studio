@@ -8,6 +8,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 stack="$repo_root/deploy/compose/monolith-networked"
 caddy_image="${CADDY_IMAGE:-caddy:2-alpine}"
+export STUDIO_API_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_WEB_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_EDGE_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_ACCESS_AUTH_URL=https://access.example.test
+export STUDIO_ACCESS_MFA_ENFORCED=true
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -133,9 +138,8 @@ for name, (caddyfile, allow_direct, public_edge, restart_policy) in expected.ite
     for service_name, service in rendered['services'].items():
         hardened(service_name, service)
     assert frontend.get('read_only') is True and edge.get('read_only') is True, 'frontend and edge run read-only'
-    assert edge.get('cap_add') == ['NET_BIND_SERVICE'] and frontend.get('cap_add') == ['NET_BIND_SERVICE'], 'only NET_BIND_SERVICE comes back'
-    assert 'cap_add' not in api, api.get('cap_add')
-    assert re.fullmatch(r'caddy:[0-9.]+-alpine@sha256:[0-9a-f]{64}', edge['image']), edge['image']
+    assert all('cap_add' not in service for service in rendered['services'].values()), 'no capabilities are added back'
+    assert re.fullmatch(r'caddy@sha256:[0-9a-f]{64}', edge['image']), edge['image']
     assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3,172.30.83.2', api['environment']
     assert api['environment']['Security__PublicCloudflareEdge'] == public_edge, api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
