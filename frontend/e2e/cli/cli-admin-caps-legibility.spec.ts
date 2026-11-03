@@ -83,7 +83,7 @@ async function stubBackgroundApis(page: Page) {
 }
 
 async function openCapsSection(page: Page) {
-  await page.getByTestId('status-bar-settings').click();
+  await page.getByTestId('studio-titlebar-settings').click();
   await expect(page.locator(
     '[data-testid="workspace-settings-inline"], [data-testid="workspace-settings-overlay"]',
   )).toBeVisible({ timeout: 5_000 });

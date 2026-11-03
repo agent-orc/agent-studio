@@ -205,7 +205,6 @@
     "src/app/features/studio-shell/components/studio-activity-bar/studio-activity-bar.component.html": {
       "reason": "Activity bar buttons navigate among product areas.",
       "signatures": [
-        "7513eb676320f1f2",
         "e82237c2c5933d34",
         "ec598792edfe75da",
         "ed423528dd6bb629"

@@ -5,21 +5,20 @@ import {
   OnInit,
   ViewEncapsulation,
   computed,
+  DestroyRef,
   inject,
   input,
   output,
-  signal,
 } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
-import { ClientDefaultsService } from '../../../../services/client-defaults.service';
-import type { CliType } from '../../../../models/task.model';
-import { CLI_TYPES } from '../../../../models/task.model';
 import {
   clearVisibleInterval,
   setVisibleInterval,
   type VisibleIntervalHandle,
 } from '../../../../utils/visible-interval';
-import { UsageHoverPanelComponent } from '../../../tokens';
+import { UsageCockpitService, UsageAlarmStatusComponent, buildCliChipView, buildCostChipView } from '../../../usage-cockpit';
+import type { UsageCli } from '../../../usage-cockpit';
+import { ProviderAuthStatusService } from '../../../remote-hosts/services/provider-auth-status.service';
 import {
   deriveBoardRunningTruth,
   RemoteHostsService,
@@ -28,13 +27,9 @@ import {
 
 import { StatusbarItemComponent } from '../statusbar-item/statusbar-item.component';
 import { CrashRecoveryPromptComponent } from '../crash-recovery-prompt/crash-recovery-prompt.component';
-import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { summarizeStatusBarHostLoad, summarizeStatusBarSlotsByRole } from './status-bar-host-load';
 import { withRouteSegment } from '../../../../services/url-hash.util';
 
-const STORAGE_DEFAULT_CLI = 'defaultCliType';
-const STORAGE_DEFAULT_MODEL_PREFIX = 'defaultModel:';
-const STORAGE_DEFAULT_THINKING_PREFIX = 'defaultThinkingLevel:';
 const HOST_LOAD_REFRESH_MS = 30_000;
 
 export function formatRunningLabel(
@@ -56,50 +51,56 @@ export function formatRunningLabel(
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
-  imports: [UsageHoverPanelComponent, StatusbarItemComponent, CliModelSelectorComponent, CrashRecoveryPromptComponent],
+  imports: [UsageAlarmStatusComponent, StatusbarItemComponent, CrashRecoveryPromptComponent],
   templateUrl: './status-bar.html',
   styleUrl: './status-bar.scss',
 })
 export class StatusBarComponent implements OnInit, OnDestroy {
   private readonly jobService = inject(TaskService);
-  private readonly clientDefaults = inject(ClientDefaultsService);
   private readonly remoteHosts = inject(RemoteHostsService);
   private readonly reviewQueue = inject(ReviewQueueService);
+  readonly usage = inject(UsageCockpitService);
+  private readonly providerAuth = inject(ProviderAuthStatusService);
   private hostLoadRefreshHandle: VisibleIntervalHandle | null = null;
+  constructor() { this.usage.connect(inject(DestroyRef)); }
+
+  readonly visibleUsageClis = computed(() => (this.usage.snapshot()?.clis ?? []).filter(cli =>
+    cli.windows.some(window => window.usedPct !== null)
+    || (this.usage.snapshot()?.runs ?? []).some(run => run.effectiveCli === cli.cliId)));
+  usageView(cli: UsageCli) {
+    return buildCliChipView(cli.cliId, cli, this.usage.snapshot()?.timeZone ?? null, Date.now(), [], [], this.usage.readFailed());
+  }
+  costView() { return buildCostChipView(this.usage.snapshot()?.cost ?? null, Date.now(), [], this.usage.readFailed()); }
+  age(iso: string | null | undefined): string {
+    const elapsed = Date.now() - Date.parse(iso ?? '');
+    if (!Number.isFinite(elapsed) || elapsed < 0) return 'age unknown';
+    if (elapsed < 60_000) return 'less than 1 min old';
+    if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} min old`;
+    if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} h old`;
+    return `${Math.floor(elapsed / 86_400_000)} d old`;
+  }
+  usageTooltip(cli: UsageCli): string {
+    const view = this.usageView(cli);
+    return `${view.detail}\n${view.state === 'stale' ? 'Refresh the usage source or check the provider connection in Execution Hosts.' : 'Open usage detail.'}`;
+  }
+  readonly hostProblems = computed(() => {
+    const problems = new Map<string, string[]>();
+    for (const badge of this.providerAuth.statuses()) {
+      if (!badge.reachable || badge.state !== 'unavailable' || badge.healthOutcome !== 'credential_invalid') continue;
+      const names = problems.get(badge.provider) ?? [];
+      if (!names.includes(badge.hostName)) names.push(badge.hostName);
+      problems.set(badge.provider, names);
+    }
+    return problems;
+  });
+  hostProblem(cliId: string): string | null {
+    const names = this.hostProblems().get(cliId);
+    return names?.length ? `sign-in needed on ${names.join(', ')}` : null;
+  }
 
   readonly projectNames = input<string[]>([]);
 
-  // Open-state of each overlay this bar can toggle. Bound to the panel's
-  // own `xOpen` signal by the shell so the trigger button shows a
-  // pressed/active state while its panel is visible (and `aria-pressed`
-  // reflects it). The bar stays presentational — the source of truth for
-  // "is the panel open" lives with the panel, not here.
-  readonly usageOpen = input(false);
-  readonly orchestratorOpen = input(false);
-  readonly orchestratorActiveChatCount = input(0);
-  readonly feedOpen = input(false);
-  readonly settingsOpen = input(false);
-  readonly showSignOut = input(false);
-  readonly signedInLabel = input('');
-
-  readonly toggleUsage = output<void>();
-  readonly toggleOrchestrator = output<void>();
-  readonly toggleFeed = output<void>();
-  // Single entry into the global Workspace-settings home. Summary, visual
-  // evidence and CLI management are sections of that home now, so the
-  // status bar exposes one button instead of three scattered ones.
-  readonly toggleSettings = output<void>();
-  readonly signOut = output<void>();
-  // Quota-strip click: open the CLI-Management (usage caps) section
-  // directly, where the full usage detail lives. Separate from
-  // `toggleSettings`, which lands on the home overview.
-  readonly openCliAdmin = output<void>();
-  readonly defaultCliChange = output<CliType>();
-  readonly defaultModelChange = output<{ cliType: CliType; model: string; thinkingLevel: string | null }>();
-
-  readonly defaultCli = signal<CliType>(this.readDefaultCli());
-  readonly defaultModel = signal<string>(this.readDefaultModel(this.readDefaultCli()));
-  readonly defaultThinkingLevel = signal<string | null>(this.readDefaultThinkingLevel(this.readDefaultCli()));
+  readonly openUsageDetail = output<{ section: 'cli' | 'cost'; cliId: string | null }>();
 
   readonly runningTruth = computed(() =>
     deriveBoardRunningTruth(this.jobService.grouped().progress));
@@ -229,12 +230,6 @@ export class StatusBarComponent implements OnInit, OnDestroy {
       : 'CLI repair failed');
 
   readonly projectCount = computed(() => this.projectNames().length || Object.keys(this.jobService.runnerStatus().projects).length);
-  readonly orchestratorLabel = computed(() => this.orchestratorActiveChatCount() > 0
-    ? `Orchestrator · ${this.orchestratorActiveChatCount()} active`
-    : 'Orchestrator');
-  readonly orchestratorTooltip = computed(() => this.orchestratorActiveChatCount() > 0
-    ? `${this.orchestratorActiveChatCount()} orchestrator chat(s) are working. Open Orchestrator Chat.`
-    : 'Orchestrator chat');
 
   readonly activeFallback = computed(() => {
     for (const project of Object.values(this.jobService.runnerStatus().projects)) {
@@ -250,12 +245,6 @@ export class StatusBarComponent implements OnInit, OnDestroy {
       () => { this.remoteHosts.refresh(); this.reviewQueue.refresh(); },
       HOST_LOAD_REFRESH_MS,
     );
-    void this.clientDefaults.hydrate().then(() => {
-      const cli = this.readDefaultCli();
-      this.defaultCli.set(cli);
-      this.defaultModel.set(this.readDefaultModel(cli));
-      this.defaultThinkingLevel.set(this.readDefaultThinkingLevel(cli));
-    });
   }
 
   ngOnDestroy(): void {
@@ -317,52 +306,4 @@ export class StatusBarComponent implements OnInit, OnDestroy {
     );
   }
 
-  /** Atomic commit from the unified selector. Persists to localStorage and
-   *  to the cross-device ClientDefaults profile; the create-task form
-   *  subscribes via `defaultCliChange` / `defaultModelChange`. */
-  onDefaultCommit(change: { cliType: CliType; model: string; thinkingLevel: string | null }): void {
-    const previousCli = this.defaultCli();
-    if (change.cliType !== previousCli) {
-      this.defaultCli.set(change.cliType);
-      localStorage.setItem(STORAGE_DEFAULT_CLI, change.cliType);
-      void this.clientDefaults.pushDefaultCli(change.cliType);
-      this.defaultCliChange.emit(change.cliType);
-      // When the CLI flips we also need a fresh per-CLI model preference.
-      this.defaultModel.set(this.readDefaultModel(change.cliType));
-      this.defaultThinkingLevel.set(this.readDefaultThinkingLevel(change.cliType));
-    }
-    const model = change.model;
-    const thinkingLevel = change.thinkingLevel;
-    if (model !== this.defaultModel() || thinkingLevel !== this.defaultThinkingLevel() || change.cliType !== previousCli) {
-      this.defaultModel.set(model);
-      this.defaultThinkingLevel.set(thinkingLevel);
-      if (model) {
-        localStorage.setItem(STORAGE_DEFAULT_MODEL_PREFIX + change.cliType, model);
-      } else {
-        localStorage.removeItem(STORAGE_DEFAULT_MODEL_PREFIX + change.cliType);
-      }
-      if (thinkingLevel) {
-        localStorage.setItem(STORAGE_DEFAULT_THINKING_PREFIX + change.cliType, thinkingLevel);
-      } else {
-        localStorage.removeItem(STORAGE_DEFAULT_THINKING_PREFIX + change.cliType);
-      }
-      void this.clientDefaults.pushDefaultModel(model);
-      void this.clientDefaults.pushDefaultThinkingLevel(thinkingLevel);
-      this.defaultModelChange.emit({ cliType: change.cliType, model, thinkingLevel });
-    }
-  }
-
-  private readDefaultCli(): CliType {
-    const stored = localStorage.getItem(STORAGE_DEFAULT_CLI) as CliType | null;
-    if (stored && (CLI_TYPES as string[]).includes(stored)) return stored;
-    return 'claude';
-  }
-
-  private readDefaultModel(cliType: CliType): string {
-    return localStorage.getItem(STORAGE_DEFAULT_MODEL_PREFIX + cliType) ?? '';
-  }
-
-  private readDefaultThinkingLevel(cliType: CliType): string | null {
-    return localStorage.getItem(STORAGE_DEFAULT_THINKING_PREFIX + cliType) ?? null;
-  }
 }

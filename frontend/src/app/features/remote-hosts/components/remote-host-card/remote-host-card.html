@@ -47,7 +47,6 @@
       [showRelease]="!rolesShareRelease()" [stableRelease]="stableRelease()"
       (action)="action.emit($event)"></tr>
 }
-
 @if (expanded()) {
   <tr class="host__detail-row" data-testid="remote-host-detail-row">
     <td colspan="8">
@@ -126,6 +125,7 @@
                   <strong>{{ auth.providerLabel }}</strong>
                   <span>{{ providerLoginStateLabel(auth) }}</span>
                 </span>
+                @if (auth.acceptedModels?.length) { <span class="provider-auth__models" [attr.data-testid]="'remote-host-models-' + auth.provider">Accepted models: {{ auth.acceptedModels?.join(', ') }}</span> }
                 @if (signInLabel(auth); as label) { <button type="button" class="provider-auth__sign-in"
                   [attr.data-testid]="'remote-host-' + auth.provider + '-sign-in'" (click)="openSignIn(auth)">{{ label }}</button> }
                 @if (auth.expiresSoon && auth.expiryLabel) {
