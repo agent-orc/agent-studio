@@ -131,6 +131,9 @@ public static class TestSelectionPlanner
         var fullTests = verifyPlan.Commands.Where(command => command.Kind == VerifyCommandKind.Test).ToList();
         var nonTests = verifyPlan.Commands.Where(command => command.Kind != VerifyCommandKind.Test).ToList();
 
+        if (level == TestExecutionLevels.BatchPreCheck)
+            return BatchPreCheckPlanner.Plan(repositoryPath, verifyPlan, diff, lane);
+
         // Compile-only stage (an integration gate that reuses a Remote Review
         // verdict, AGT-2839): the merge result still has to compile, but the
         // lint and test commands were just run on exactly this content. Both

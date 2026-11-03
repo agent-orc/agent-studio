@@ -69,8 +69,11 @@ public sealed record BatchGateFormationOptions(
     int MinimumSize = 2, int LookAheadMinutes = 45,
     IReadOnlyList<string>? UrgentTags = null, string RiskPolicy = "balanced",
     string Overlap = "adjacent", string ReviewTestLevel = "work-package",
-    int GateTimeoutMinutes = 150, BatchGateAdvisorOptions? Advisor = null)
+    int GateTimeoutMinutes = 150, BatchGateAdvisorOptions? Advisor = null,
+    bool? PreCheckEnabled = null)
 {
+    public bool PreCheckFor(string project) => PreCheckEnabled
+        ?? string.Equals(project, "Agent Studio", StringComparison.OrdinalIgnoreCase);
     public string EffectiveScope => !DocumentationOnly || Scope == "code" ? "code" : Scope;
     public IReadOnlyList<string> EffectiveUrgentTags => UrgentTags ?? ["urgent"];
     public string? InvalidField =>

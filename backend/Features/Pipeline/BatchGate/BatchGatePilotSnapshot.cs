@@ -42,7 +42,8 @@ public sealed record BatchGatePilotSnapshot(
     int PerTaskFallbackSuiteRuns = 0,
     double? PerTaskFallbackSuitesPerCard = null,
     int PerTaskPublishVerdictReuses = 0,
-    IReadOnlyList<BatchGateIsolationFinding>? IsolationFindings = null);
+    IReadOnlyList<BatchGateIsolationFinding>? IsolationFindings = null,
+    int PreChecksRun = 0, int PreChecksRed = 0, double PreCheckMinutesSaved = 0);
 
 /// <summary>One red candidate's base answer: its classification, the source that answered, and the minutes it cost.</summary>
 public sealed record BatchGateBaseCheckView(
@@ -132,6 +133,7 @@ public static class BatchGatePilotSnapshotReader
             item.CandidateMinutes + item.BaselineMinutes);
         var fallbackCards = store.ListFallbackSuites(project);
         var fallbackSuites = fallbackCards.Sum(item => item.Suites);
+        var preChecks = store.ListPreChecks(project);
         return new BatchGatePilotSnapshot(
             project, primary.Length, eligible, fullSuiteRuns,
             Ratio(fullSuiteRuns, eligible), Ratio(attempted, primary.Length),
@@ -155,7 +157,10 @@ public static class BatchGatePilotSnapshotReader
             PerTaskFallbackSuiteRuns: fallbackSuites,
             PerTaskFallbackSuitesPerCard: Ratio(fallbackSuites, fallbackCards.Count),
             PerTaskPublishVerdictReuses: fallbackCards.Count(item => item.PublishVerdictReused),
-            IsolationFindings: store.ListIsolationFindings(project));
+            IsolationFindings: store.ListIsolationFindings(project),
+            PreChecksRun: preChecks.Count,
+            PreChecksRed: preChecks.Count(item => item.Outcome == "red"),
+            PreCheckMinutesSaved: preChecks.Sum(item => item.MinutesSaved));
     }
 
     private static double? Ratio(double numerator, double denominator)

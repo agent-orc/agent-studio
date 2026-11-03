@@ -335,6 +335,32 @@ batch green rate or answer the staging-lane decision in the
 
 ## Batch gate for code and documentation deliveries
 
+### Delivery pre-check
+
+After a deferred build/test review passes, the batch pilot checks the immutable
+delivery SHA against the current integration base and gate profile before batch
+admission. The gate worker runs the project's build commands and the `.NET`
+guard filter `(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)`.
+For a frontend diff it also runs the declared lint commands and any touched
+package `format:check` script. The complete suite and its guard step still run
+on the assembled batch candidate.
+
+The pilot dispatches a pre-check only while at least one spare gate slot exists.
+The worker reserves its first slot for regular gates and gives a pre-check a
+one-second slot queue budget. A code-red result is stored by result SHA, base
+SHA, and gate profile digest; its failed tests and route lines go into an agent
+follow-up, and the card returns to Ready. Green admits the member. If a slot
+does not become free before the batch deadline, an unchecked member may join
+the batch. Infrastructure failures are retried while time remains and do not
+become code-red verdicts. The project option `preCheckEnabled` defaults on for
+Agent Studio and off elsewhere when unset.
+
+The state route exposes each verdict on pending members and cards, plus
+`preChecksRun`, `preChecksRed`, and `preCheckMinutesSaved`. Saved minutes are an
+estimate for red pre-checks: the median of the last 20 batch gate executions
+multiplied by one candidate, one base, and the expected bisection runs. With no
+batch history, the estimate is zero. The pilot report exposes the same counters.
+
 `BatchGate:Execution=claimed` refuses startup while `TaskServer:BaseUrl` is set.
 The monolith's batch member task and run IDs do not exist in the Task Server,
 so that authority cannot validate or claim the subject. Use the bridge mode
