@@ -153,6 +153,7 @@ function configuration(value: unknown): BatchGateConfiguration {
   const settings = value['settings'];
   const advisor = settings['advisor'];
   if (typeof settings['enabled'] !== 'boolean' ||
+      typeof settings['preCheckEnabled'] !== 'boolean' ||
       !['documentation', 'code'].includes(String(settings['scope'])) ||
       !['threshold', 'look-ahead'].includes(String(settings['planner'])) ||
       !['minimumSize', 'maximumSize', 'deadlineMinutes', 'lookAheadMinutes', 'gateTimeoutMinutes']
@@ -199,7 +200,7 @@ export function isBatchGateState(value: unknown): value is BatchGateState {
         optionalString(run['finishedAtUtc'])) &&
       (batch['publication'] == null || record(batch['publication'])))) return false;
   return Object.values(value['members']).every(member => record(member) &&
-    ['pending', 'in-batch', 'published', 'fallback'].includes(String(member['status'])) &&
+    ['pending', 'in-batch', 'published', 'fallback', 'pre-check-red'].includes(String(member['status'])) &&
     optionalString(member['batchId']) && optionalString(member['phase']) &&
     optionalNumber(member['position']) && optionalNumber(member['size']) &&
     optionalString(member['reason']) && optionalString(member['reasonDetail']));
