@@ -208,12 +208,60 @@ public sealed class AcceptedIntegrationBackstopPolicyTests
         Assert.Equal(expected, AcceptedIntegrationBackstopPolicy.IsRecoveryCandidate(task));
     }
 
+    [Fact]
+    public void Alert_AcceptedEpicWithoutCommitsAndWithoutBranch_IsNotInAlert()
+    {
+        var snapshot = AcceptedIntegrationBackstopPolicy.EvaluateAlert(
+            Now,
+            TimeSpan.FromMinutes(30),
+        [
+            Candidate("ASS-1156", 90, MergeIntoIntegrationOutcome.NoTaskBranch.ToString(),
+                IntegrationStatuses.ConflictSkipped, attributedCommitCount: 0),
+            Candidate("ASS-927", 90, MergeIntoIntegrationOutcome.NoTaskBranch.ToString(),
+                IntegrationStatuses.NoBranch, attributedCommitCount: 0),
+        ]);
+
+        Assert.False(snapshot.Active);
+        Assert.Empty(snapshot.Items);
+    }
+
+    [Fact]
+    public void Alert_CommitsNotIntegratedAndBranchMissing_IsInAlertWithLossDetail()
+    {
+        var snapshot = AcceptedIntegrationBackstopPolicy.EvaluateAlert(
+            Now,
+            TimeSpan.FromMinutes(30),
+            [Candidate("AGT-LOST", 45, MergeIntoIntegrationOutcome.NoTaskBranch.ToString(),
+                IntegrationStatuses.ConflictSkipped, attributedCommitCount: 2)]);
+
+        var item = Assert.Single(snapshot.Items);
+        Assert.True(snapshot.Active);
+        Assert.Equal("AGT-LOST", item.TaskKey);
+        Assert.Contains("task branch is gone", item.Detail, StringComparison.Ordinal);
+        Assert.Contains("2 attributed commit(s) are not on develop", item.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Alert_ArchivedCardWithoutCommits_IsNotInAlert()
+    {
+        var snapshot = AcceptedIntegrationBackstopPolicy.EvaluateAlert(
+            Now,
+            TimeSpan.FromMinutes(30),
+            [Candidate("AGT-2131", 600, MergeIntoIntegrationOutcome.NoTaskBranch.ToString(),
+                IntegrationStatuses.NoBranch, attributedCommitCount: 0, state: TaskStates.Archive)]);
+
+        Assert.False(snapshot.Active);
+        Assert.Empty(snapshot.Items);
+    }
+
     private static AcceptedIntegrationAlertCandidate Candidate(
         string key,
         int acceptedMinutesAgo,
         string? lastOutcome,
         string integrationStatus = IntegrationStatuses.Pending,
-        bool hasIntegrationRecord = true)
+        bool hasIntegrationRecord = true,
+        int attributedCommitCount = 1,
+        string state = TaskStates.Completed)
         => new()
         {
             Task = new TaskInfo
@@ -223,10 +271,12 @@ public sealed class AcceptedIntegrationBackstopPolicyTests
                 Key = key,
                 Title = $"Delivery {key}",
                 ProjectName = "Agent Studio",
-                State = TaskStates.Completed,
+                State = state,
                 Mode = TaskModes.Coding,
                 EnteredLaneAt = Now.AddMinutes(-acceptedMinutesAgo),
             },
+            AttributedCommitCount = attributedCommitCount,
+            IntegrationBranch = "develop",
             AcceptedAt = Now.AddMinutes(-acceptedMinutesAgo),
             IntegrationStatus = integrationStatus,
             LastOutcome = lastOutcome,
