@@ -1,206 +1,82 @@
 <div class="rh" data-testid="remote-hosts-panel">
   <app-environment-header [view]="view()" [retiredCount]="retiredCount()" [loading]="loading()"
-                          (viewChange)="setView($event)" (add)="openWizard()"
-                          (purge)="openPurgeRetired()" (reload)="reload()" />
+    (viewChange)="setView($event)" (add)="openWizard()" (purge)="openPurgeRetired()" (reload)="reload()" />
+  @if (view() === 'list') {
+    <app-environment-attention [causes]="attention()" [now]="now()" (reconnect)="reconnect($event)" />
+    <div class="rh__summary" data-testid="remote-hosts-summary">
+      <span><strong>{{ machineCount() }}</strong> machines</span>
+      <span><strong>{{ reportingCount() }}</strong> reporting</span>
+      <span><strong>{{ degradedCount() }}</strong> degraded</span>
+      <span><strong>{{ offlineCount() }}</strong> offline</span>
+      <span><strong>{{ notEnrolledCount() }}</strong> not enrolled</span>
+      <span><strong>{{ roleCount() + gateWorkers().length }}</strong> roles</span>
+      @if (stableReleaseLabel(); as stable) { <span data-testid="remote-hosts-stable-release">{{ stable }}</span> }
+      @if (behindReleaseCount(); as behind) { <span data-testid="remote-hosts-release-behind">{{ behind }} behind Stable</span> }
+      @if (retiredCount()) {
+        <label data-testid="remote-hosts-retired-filter" class="rh__retired-filter">
+          <input type="checkbox" [checked]="showRetired()" (change)="toggleRetired()" />
+          Show retired {{ retiredCount() }}
+        </label>
+      }
+      @if (reviewQueueSnapshot(); as review) {
+        @if (review.queueDepth || review.isStagnant) {
+          <span data-testid="auto-review-queue-summary">Review queue: <strong data-testid="auto-review-queue-depth">{{ review.queueDepth }}</strong> waiting
+            @if (review.isStagnant) { · stagnant }
+          </span>
+        }
+      }
+    </div>
+    @if (error(); as err) { <p class="rh__error" data-testid="remote-hosts-error">{{ err }}</p> }
+    @if (!machineCount() && !loading()) { <p class="rh__empty" data-testid="remote-hosts-empty">No execution hosts registered yet.</p> }
+    @if (machineCount()) {
+      <div class="rh__layout" data-testid="remote-hosts-active">
+        <app-environment-host-list [groups]="orderedGroups()" [gates]="gateWorkers()"
+          [selected]="currentSelection()" [slots]="slotFn" (selectedChange)="selectHost($event)" />
+        <main class="rh__detail" [class.rh__detail--mobile]="selectedId()" aria-label="Selected host detail"
+          tabindex="0" (keydown)="onDetailKeydown($event)">
+          <button type="button" class="rh__back" (click)="backToList()">Back to hosts</button>
+          @if (selectedHost(); as host) {
+            <app-remote-host-card [host]="host" [roles]="selectedRoles()"
+              [repositoryAccess]="selectedRepositoryAccess()"
+              [roleActiveSlots]="selectedRoleSlots()"
+              [now]="now()" [boardActiveSlots]="selectedSlots()"
+              [projectSlots]="projectSlots(host)" [allChatUsage]="interactiveUsage()"
+              [stableRelease]="stableRelease()" [expanded]="true"
+              (action)="onAction($event)" (capacityChange)="onCapacityChange($event)"
+              (projectPolicyChange)="onProjectPolicyChange($event)" (setup)="openSetup($event)" />
+          } @else if (selectedGate(); as gate) {
+            <section class="rh__gate"><h3>{{ gate.name }}</h3><p>Gate worker</p>
+              <dl><div><dt>Slots</dt><dd>{{ gate.busy }} / {{ gate.slots }}</dd></div>
+                <div><dt>Last contact</dt><dd [title]="gate.lastHeartbeat">{{ gate.lastHeartbeat }}</dd></div></dl>
+            </section>
+          }
+        </main>
+      </div>
+    }
+  }
   @if (view() === 'map') {
     <app-environment-map [map]="environmentMap()" (selectHost)="selectMapHost($event)" />
   }
-  @if (view() === 'list') {
-  <app-deployment-checkpoints [hosts]="hosts()" [stableRelease]="stableRelease()" [now]="now()" />
-  <app-execution-infrastructure [reloadToken]="infrastructureReload()" />
-  @defer (on idle) {
-    <app-operational-stalls />
-  }
-  <div class="rh__summary" data-testid="remote-hosts-summary">
-    <span class="rh__count"><strong>{{ total() }}</strong> {{ total() === 1 ? 'machine' : 'machines' }}</span>
-    <span class="rh__sep" aria-hidden="true">·</span>
-    <span class="rh__count"><strong>{{ onlineCount() }}</strong> online</span>
-    <span class="rh__sep" aria-hidden="true">·</span>
-    <span class="rh__count"><strong>{{ roleCount() }}</strong> {{ roleCount() === 1 ? 'role' : 'roles' }}</span>
-    @if (stableReleaseLabel(); as stable) {
-      <span class="rh__sep" aria-hidden="true">·</span>
-      <span class="rh__count" data-testid="remote-hosts-stable-release">{{ stable }}</span>
-    }
-    @if (behindReleaseCount(); as behind) {
-      <span class="rh__behind" data-testid="remote-hosts-release-behind">
-        <strong>{{ behind }}</strong> behind Stable
-      </span>
-    }
-    @if (retiredCount()) {
-      <button class="rh__retired-filter"
-              type="button"
-              data-testid="remote-hosts-retired-filter"
-              [attr.aria-pressed]="showRetired()"
-              (click)="toggleRetired()">
-        {{ showRetired() ? 'Hide retired' : 'Show retired' }}
-        <span>{{ retiredCount() }}</span>
-      </button>
-    }
-  </div>
-  }
-  <app-runner-infrastructure-failures />
-  @if (readyCandidateTasks().length > 0) {
-    <section class="rh__candidates" data-testid="execution-host-candidates">
-      <h3 class="rh__candidates-title">Ready routes with benchmark candidates</h3>
-      @for (task of readyCandidateTasks(); track task.id) {
-        @if (task.betterCandidates; as note) {
-          <app-better-candidate-lines
-            [note]="note"
-            [prefix]="(task.displayKey || task.key || task.id) + ' · ' + note.currentModel" />
-        }
+  @if (view() === 'installation') {
+    <app-deployment-checkpoints [hosts]="hosts()" [stableRelease]="stableRelease()" [now]="now()" />
+    <app-execution-infrastructure [reloadToken]="infrastructureReload()" />
+    @if (reviewQueueSnapshot(); as review) {
+      @if (!review.queueDepth && !review.isStagnant) {
+        <p class="rh__quiet" data-testid="auto-review-queue-summary">Review queue: {{ review.queueDepth }} waiting · {{ review.activeJobs }} processing</p>
       }
-    </section>
+    }
   }
-  @for (host of linkFailures(); track host.id) {
-    <app-notification kind="warning" layout="banner" [closable]="false"
-                      [title]="host.name + ' link is down'" testid="remote-host-link-notification">
-      {{ linkFailureMessage(host) }} Ready cards targeting this host cannot be claimed.
-      <div notification-actions>
-        <button type="button" class="rh__refresh" data-testid="remote-host-link-reconnect"
-                [disabled]="!!host.busyAction" (click)="reconnect(host.id)">
-          {{ host.busyAction === 'reconnect' ? 'Reconnecting…' : 'Reconnect' }}
-        </button>
-      </div>
-    </app-notification>
-  }
-
-  @if (reviewQueueSnapshot(); as review) {
-    <section class="rh__review"
-             data-testid="auto-review-queue-summary"
-             [class.rh__review--attention]="review.isStagnant">
-      <h3 class="rh__review-title">Auto-review queue</h3>
-      <div class="rh__review-metrics">
-        <div class="rh__review-metric" data-testid="auto-review-queue-depth">
-          <span class="rh__review-metric-label">Waiting</span>
-          <span class="rh__review-metric-value">{{ review.queueDepth }}</span>
-        </div>
-        <div class="rh__review-metric" data-testid="auto-review-queue-active">
-          <span class="rh__review-metric-label">Processing</span>
-          <span class="rh__review-metric-value">{{ review.activeJobs }}</span>
-        </div>
-        <div class="rh__review-metric" data-testid="auto-review-queue-drain-rate">
-          <span class="rh__review-metric-label">Drain rate</span>
-          <span class="rh__review-metric-value">{{ reviewDrainRateLabel() }}</span>
-        </div>
-        <div class="rh__review-metric" data-testid="auto-review-queue-duration">
-          <span class="rh__review-metric-label">Median duration</span>
-          <span class="rh__review-metric-value">{{ reviewDurationLabel() }}</span>
-        </div>
-      </div>
-      @if (review.isStagnant) {
-        <p class="rh__review-attention" data-testid="auto-review-queue-attention">
-          ATTENTION - queue has not drained for over {{ review.stagnantThresholdMinutes }} minutes.
-        </p>
-      }
-    </section>
-  }
-  @if (providerRefusals().length) {
-    <section class="rh__refusals" data-testid="provider-refusal-summary">
-      <div>
-        <h3 class="rh__refusals-title">Provider request refusals · last 14 days</h3>
-        <p class="rh__refusals-copy">Model requests rejected by the provider for this organisation.</p>
-      </div>
-      <div class="rh__refusal-rows">
+  @if (view() === 'history') {
+    <app-operational-stalls [historyOnly]="true" />
+    @if (providerRefusals().length) {
+      <section class="rh__history" data-testid="provider-refusal-summary"><h3>Provider request refusals · last 14 days</h3>
         @for (refusal of providerRefusals(); track refusal.day + ':' + refusal.model) {
-          <div class="rh__refusal-row" data-testid="provider-refusal-row">
-            <time [attr.datetime]="refusal.day">{{ refusal.day }}</time>
-            <strong>{{ refusal.model }}</strong>
-            <span class="rh__refusal-count">{{ refusal.count }}</span>
-            <span>{{ refusal.refusals.join(', ') }}</span>
-          </div>
+          <div class="rh__history-row" data-testid="provider-refusal-row"><time [attr.datetime]="refusal.day">{{ refusal.day }}</time>
+            <strong>{{ refusal.model }}</strong><span>{{ refusal.count }}</span><span>{{ refusal.refusals.join(', ') }}</span></div>
         }
-      </div>
-    </section>
+      </section>
+    }
   }
-  @if (error(); as err) {
-    <div class="rh__error" data-testid="remote-hosts-error">{{ err }}</div>
-  }
-
-  @if (identityDiagnostics().length) {
-    <section class="rh__identity-errors" role="alert" data-testid="remote-hosts-identity-errors">
-      <strong>Client identity registry needs repair</strong>
-      <p>Affected runners cannot start until each identity file is restored.</p>
-      <ul>
-        @for (diagnostic of identityDiagnostics(); track diagnostic.identityFileName || diagnostic.id) {
-          <li>
-            <code>{{ diagnostic.identityFileError }}</code>
-            @if (diagnostic.identityFileModifiedAt) {
-              <span>Last modified {{ diagnostic.identityFileModifiedAt }}</span>
-            }
-            <span>{{ diagnostic.identityRestoreHint }}</span>
-          </li>
-        }
-      </ul>
-    </section>
-  }
-
-  @if (total() === 0 && !loading()) {
-    <div class="rh__empty" data-testid="remote-hosts-empty">
-      @if (retiredCount()) {
-        No active or recently seen execution hosts. Retired roles are hidden.
-      } @else {
-        No execution hosts registered yet. Hosts appear here after their first heartbeat.
-      }
-    </div>
-  }
-
-  @if (total()) {
-    <div class="rh__table-wrap" [class.rh__table-wrap--map]="view() === 'map'" data-testid="remote-hosts-active">
-      <table class="rh__table" data-testid="remote-hosts-table">
-        <caption>Execution hosts and their current operating state</caption>
-        <thead>
-          <tr>
-            <th class="rh__col-name" [attr.aria-sort]="ariaSort('name')">
-              <button type="button" data-testid="remote-host-sort-name" (click)="sort('name')">
-                Name <span aria-hidden="true">{{ sortIndicator('name') }}</span>
-              </button>
-            </th>
-            <th class="rh__col-status" [attr.aria-sort]="ariaSort('status')">
-              <button type="button" data-testid="remote-host-sort-status" (click)="sort('status')">
-                Status <span aria-hidden="true">{{ sortIndicator('status') }}</span>
-              </button>
-            </th>
-            <th class="rh__col-link">Link</th>
-            <th class="rh__col-slots" [attr.aria-sort]="ariaSort('slots')">
-              <button type="button" data-testid="remote-host-sort-slots" (click)="sort('slots')">
-                Slots <span aria-hidden="true">{{ sortIndicator('slots') }}</span>
-              </button>
-            </th>
-            <th class="rh__col-load" [attr.aria-sort]="ariaSort('load')">
-              <button type="button" data-testid="remote-host-sort-load" (click)="sort('load')">
-                Load <span aria-hidden="true">{{ sortIndicator('load') }}</span>
-              </button>
-            </th>
-            <th class="rh__col-activity" [attr.aria-sort]="ariaSort('activity')">
-              <button type="button" data-testid="remote-host-sort-activity" (click)="sort('activity')">
-                Last activity <span aria-hidden="true">{{ sortIndicator('activity') }}</span>
-              </button>
-            </th>
-            <th class="rh__col-release" [attr.aria-sort]="ariaSort('release')">
-              <button type="button" data-testid="remote-host-sort-release" (click)="sort('release')">
-                Release <span aria-hidden="true">{{ sortIndicator('release') }}</span>
-              </button>
-            </th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        @for (group of sortedHostGroups(); track group.id) {
-          <tbody appRemoteHostCard [host]="group.machine" [roles]="group.roles"
-            [roleActiveSlots]="roleSlots(group)" [now]="now()"
-            [boardActiveSlots]="groupSlots(group)" [projectSlots]="projectSlots(group.machine)"
-            [allChatUsage]="interactiveUsage()"
-            [stableRelease]="stableRelease()" [expanded]="isExpanded(group.id)"
-            (expandedChange)="setExpanded(group.id, $event)"
-            (action)="onAction($event)"
-            (capacityChange)="onCapacityChange($event)"
-            (projectPolicyChange)="onProjectPolicyChange($event)"
-            (setup)="openSetup($event)">
-          </tbody>
-        }
-      </table>
-    </div>
-  }
-
   @if (wizardOpen()) {
     <app-add-host-wizard (cancelled)="closeWizard()" (completed)="completeWizard($event)" />
   }

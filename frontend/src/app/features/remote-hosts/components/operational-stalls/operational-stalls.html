@@ -1,4 +1,4 @@
-@if (cases().length) {
+@if (cases().length && !historyOnly()) {
   <section class="operational-stalls" aria-label="Open host and container stalls" data-testid="operational-stalls">
     <h3>Open host and container stalls <strong>{{ cases().length }}</strong></h3>
     <ul>

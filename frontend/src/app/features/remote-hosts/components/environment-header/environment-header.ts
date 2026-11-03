@@ -8,11 +8,11 @@ import { ChangeDetectionStrategy, Component, input, output } from '@angular/core
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class EnvironmentHeaderComponent {
-  readonly viewOptions = [{ value: 'list', label: 'List', testid: 'environment-list-toggle' }, { value: 'map', label: 'Map', testid: 'environment-map-toggle' }] as const;
-  readonly view = input.required<'list' | 'map'>();
+  readonly viewOptions = [{ value: 'list', label: 'Hosts', testid: 'environment-list-toggle' }, { value: 'map', label: 'Topology', testid: 'environment-map-toggle' }, { value: 'installation', label: 'Installation', testid: 'environment-installation-toggle' }, { value: 'history', label: 'History', testid: 'environment-history-toggle' }] as const;
+  readonly view = input.required<'list' | 'map' | 'installation' | 'history'>();
   readonly retiredCount = input.required<number>();
   readonly loading = input.required<boolean>();
-  readonly viewChange = output<'list' | 'map'>();
+  readonly viewChange = output<'list' | 'map' | 'installation' | 'history'>();
   readonly add = output<void>();
   readonly purge = output<void>();
   readonly reload = output<void>();

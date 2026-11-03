@@ -38,7 +38,7 @@
 
 .claude-auth__steps li {
   padding-left: var(--studio-spacing-2);
-  color: var(--studio-fg-muted);
+  color: var(--studio-fg-dim);
 }
 
 .claude-auth__steps li::marker {
@@ -58,7 +58,7 @@
   background: var(--studio-bg-hover);
   color: var(--studio-fg-dim);
   padding: var(--studio-spacing-3);
-  font-size: 11px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .claude-auth__failure {

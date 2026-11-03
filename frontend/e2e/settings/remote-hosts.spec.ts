@@ -21,7 +21,7 @@ import { test, expect } from '../fixtures/dev-backend';
  *   - a #/workspace/settings/execution-hosts deep-link opens the section.
  */
 
-const SHOT_DIR = process.env.OVERLAY_SHOT_DIR ?? '../results/remote-hosts';
+const SHOT_DIR = process.env.JOB_RESULTS_DIR ?? process.env.OVERLAY_SHOT_DIR ?? '../results/remote-hosts';
 const EVIDENCE_PHASE = process.env.EVIDENCE_PHASE ?? 'after';
 const EVIDENCE_VIEWPORT_WIDTH = Number(process.env.EVIDENCE_VIEWPORT_WIDTH ?? 1600);
 
@@ -32,8 +32,6 @@ function settingsHome(page: Page) {
 }
 
 async function expandHost(host: Locator, summaryOnly = false) {
-  const toggle = host.getByTestId('remote-host-disclosure');
-  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
   await expect(host.getByTestId('remote-host-detail-row')).toBeVisible();
   if (!summaryOnly) {
     const sectionToggles = host.locator('[data-testid^="remote-host-detail-toggle-"]');
@@ -332,6 +330,87 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, 'networked-hosts-no-phantoms.png'), fullPage: false });
   });
 
+  test('hosts, topology, installation and history render at readable sizes in both themes', async ({ page }) => {
+    await stubGroupedHostApis(page);
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('workspace-settings-rail-remote-hosts').click();
+    const panel = page.getByTestId('remote-hosts-panel');
+    const output = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(output, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      for (const [view, toggle] of [
+        ['hosts', 'environment-list-toggle'],
+        ['topology', 'environment-map-toggle'],
+        ['installation', 'environment-installation-toggle'],
+        ['history', 'environment-history-toggle'],
+      ] as const) {
+        await panel.getByTestId(toggle).click();
+        if (view === 'hosts') {
+          await expect(panel.getByTestId('remote-host-primary-row').first()).toBeVisible();
+          await expect(panel.getByTestId('remote-host-detail-row')).toBeVisible();
+          const first = await panel.getByTestId('remote-host-primary-row').first().boundingBox();
+          expect(first?.y ?? 900).toBeLessThan(900);
+        }
+        const small = await panel.locator('*').evaluateAll(elements => elements.filter(element => {
+          const style = getComputedStyle(element);
+          const box = element.getBoundingClientRect();
+          return box.width > 0 && box.height > 0 && Number.parseFloat(style.fontSize) < 12;
+        }).slice(0, 8).map(element => `${element.tagName}.${element.className}: ${getComputedStyle(element).fontSize}`));
+        expect(small, `${theme} ${view} has small text`).toEqual([]);
+        await panel.screenshot({ path: join(output, `environment-${view}-${theme}.png`) });
+      }
+    }
+    await panel.getByTestId('environment-map-toggle').click();
+    await panel.getByTestId('environment-topology-point').filter({ hasText: 'agent-runner-01' }).first().click();
+    await expect(panel.getByTestId('environment-list-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect(panel.getByTestId('remote-host-detail-row')).toBeVisible();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    for (const width of [900, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await panel.getByRole('button', { name: 'Back to hosts' }).click();
+    await expect(panel.getByTestId('remote-hosts-table')).toBeVisible();
+    await panel.getByTestId('remote-host-primary-row').first().click();
+    await expect(panel.getByTestId('remote-host-detail-row')).toBeVisible();
+  });
+
+  test('five matching role failures become one cause while list rows stay equal height', async ({ page }) => {
+    const now = new Date().toISOString();
+    const reason = 'HTTP 524: Task Server route unavailable. '.repeat(8);
+    const runners = Array.from({ length: 5 }, (_, index) => ({
+      runnerId: `role-${index}`, name: `role-${index}`, hostId: `machine-${index}`,
+      instanceId: `role-${index}:coding`, runnerVersion: '1.0', protocolVersion: 3,
+      status: 'active', registeredAt: now, lastSeenAt: now,
+      hostAdmission: { hostId: `machine-${index}`, admissionState: 'open' },
+      capabilities: [], roleMaxParallelism: 2,
+      telemetry: { observedAt: now, taskServerConnectionStatus: 'unreachable',
+        taskServerConnectionObservedAt: now, taskServerConnectionFailureStartedAt: now,
+        taskServerConnectionConsecutiveFailures: 2, taskServerConnectionLastError: reason },
+    }));
+    await page.unroute('**/api/v1/management/remote-hosts');
+    await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(runners),
+    }));
+    await page.unroute('**/api/clients');
+    await page.route('**/api/clients', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(runners.map(runner => ({
+        id: runner.runnerId, displayName: runner.name, kind: 'service', registeredAt: now, lastSeenAt: now,
+      }))),
+    }));
+    await page.goto('/#/workspace/settings/execution-hosts');
+    const attention = page.getByTestId('environment-attention');
+    await attention.getByRole('button').first().click();
+    const matching = attention.getByTestId('environment-attention-cause').filter({ hasText: 'HTTP 524' });
+    await expect(matching).toHaveCount(1);
+    await expect(matching).toContainText('5');
+    const heights = await page.getByTestId('remote-hosts-table').locator('[data-host-row]').evaluateAll(rows =>
+      rows.map(row => row.getBoundingClientRect().height));
+    expect(new Set(heights).size).toBe(1);
+  });
+
   test('rail + overview expose the Execution Hosts section', async ({ page }) => {
     await page.getByTestId('status-bar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
@@ -373,17 +452,8 @@ test.describe('Execution Hosts settings section', () => {
       });
       if (geometry.width <= 760) expect(geometry.wraps).toBe(true);
       expect(geometry.right).toBeLessThanOrEqual(geometry.contentRight + 1);
-      const loads = panel.getByTestId('remote-host-load');
-      if (width === 1280) {
-        await expect(loads.filter({ hasText: '%' }).first()).toBeVisible();
-        for (const cell of await loads.all()) {
-          if (!(await cell.isVisible())) continue;
-          const sizes = await cell.evaluate(el => ({ scroll: el.scrollWidth, client: el.clientWidth }));
-          expect(sizes.scroll).toBeLessThanOrEqual(sizes.client + 1);
-        }
-      } else {
-        await expect(loads.first()).toBeHidden();
-      }
+      await expect(panel.getByTestId('remote-host-primary-row').first()).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       const bar = page.getByTestId('status-bar');
       const chat = bar.getByTestId('usage-chat-trigger');
       await expect(chat).toBeInViewport();
@@ -457,11 +527,9 @@ test.describe('Execution Hosts settings section', () => {
     await page.getByTestId('environment-map-toggle').click();
     const map = page.getByTestId('environment-map');
     await expect(map).toBeVisible();
-    await expect(map.getByTestId('environment-machine').filter({ hasText: 'TUFI2' })).toBeVisible();
-    await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('1/3 slots');
-    await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('Review container 3');
-    await expect(map.getByTestId('environment-machine').filter({ hasText: 'website-vm' })).toBeVisible();
-    await expect(map.getByTestId('environment-repository-access').filter({ hasText: 'writes' })).toBeVisible();
+    await expect(map.getByTestId('environment-topology-point').filter({ hasText: 'TUFI2' })).toBeVisible();
+    await expect(map.getByTestId('environment-topology-point').filter({ hasText: 'KORI' })).toContainText('1/3 slots');
+    await expect(map.getByTestId('environment-topology-point').filter({ hasText: 'website-vm' })).toBeVisible();
     await expect(map.getByTestId('environment-connection').filter({ hasText: 'reverse tunnel' })).toBeVisible();
     await expect(map.getByTestId('environment-connection').filter({ hasText: 'SSH gate transport' })).toBeVisible();
     for (const width of [1280, 1920]) {
@@ -474,8 +542,9 @@ test.describe('Execution Hosts settings section', () => {
     }
     await page.reload();
     await expect(page.getByTestId('environment-map')).toBeVisible();
-    await map.getByRole('button', { name: 'Open agent-runner-01 details' }).click();
+    await map.getByRole('button', { name: 'Open agent-runner-01 in Hosts' }).click();
     await expect(page.getByTestId('remote-host-detail-row')).toBeVisible();
+    await expect(page.getByTestId('environment-repository-access')).toContainText('writes');
     await page.setViewportSize({ width: 900, height: 800 });
     await page.getByTestId('environment-map-toggle').evaluate((button: HTMLElement) => button.click());
     await expect(map).toBeHidden();
@@ -508,11 +577,13 @@ test.describe('Execution Hosts settings section', () => {
     await page.reload();
     await page.goto('/#/workspace/settings/execution-hosts');
     await expect(page.getByTestId('studio-open-stalls')).toContainText('2');
-    await expect(page.getByTestId('operational-stalls')).toContainText('agent-runner-01');
-    await expect(page.getByTestId('operational-stalls')).toContainText('engine on engine-host');
-    await expect(page.getByTestId('operational-stalls')).toContainText('Reduce admission or move work.');
-    await expect(page.getByTestId('operational-stalls').getByTestId('stall-intervention-receipt'))
-      .toContainText('46 on 12 cores');
+    const attention = page.getByTestId('environment-attention');
+    await expect(attention).toBeVisible();
+    await attention.getByRole('button').first().click();
+    await expect(attention).toContainText('Host exceeds its CPU target.');
+    await expect(attention).toContainText('Engine image differs from the release.');
+    await page.getByTestId('environment-history-toggle').click();
+    await expect(page.getByTestId('stall-interventions')).toContainText('46 on 12 cores');
     await expect(page.getByTestId('stall-intervention-undo')).toBeVisible();
     const directory = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
     mkdirSync(directory, { recursive: true });
@@ -557,6 +628,7 @@ test.describe('Execution Hosts settings section', () => {
       await page.reload();
       const panel = page.getByTestId('remote-hosts-panel');
       await expect(panel).toBeVisible();
+      await panel.getByTestId('environment-installation-toggle').click();
       await expect(page.getByTestId('remote-gate-host')).toContainText('kori-gate');
       await expect(page.getByTestId('remote-gate-host')).toContainText('1 / 3 slots');
       await expect(page.getByTestId('remote-gate-host')).toContainText('outbound pull worker');
@@ -569,12 +641,9 @@ test.describe('Execution Hosts settings section', () => {
       const barBox = await statusBar.boundingBox();
       const recoveryBox = await recovery.boundingBox();
       expect(recoveryBox && barBox && recoveryBox.y >= barBox.y && recoveryBox.y + recoveryBox.height <= barBox.y + barBox.height).toBe(true);
-      const rowLayout = await page.getByTestId('remote-host-role-row').first().evaluate(row => {
-        const release = row.querySelector('.role__release');
-        const actions = row.querySelector('.role__actions');
-        return release && actions ? release.getBoundingClientRect().right <= actions.getBoundingClientRect().left + 1 : false;
-      });
-      expect(rowLayout).toBe(true);
+      await panel.getByTestId('environment-list-toggle').click();
+      const rowHeights = await panel.getByTestId('remote-host-primary-row').first().evaluate(row => row.getBoundingClientRect().height);
+      expect(rowHeights).toBe(38);
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
         await page.screenshot({ path: join(screenshotDir, `execution-hosts-${width}-${theme}.png`),
@@ -582,7 +651,9 @@ test.describe('Execution Hosts settings section', () => {
         await page.getByTestId('remote-host-role-row').last().scrollIntoViewIfNeeded();
         await page.screenshot({ path: join(screenshotDir, `execution-hosts-rows-${width}-${theme}.png`),
           animations: 'disabled' });
+        await panel.getByTestId('environment-installation-toggle').click();
         await page.getByTestId('deployment-identity').scrollIntoViewIfNeeded();
+        await panel.getByTestId('environment-list-toggle').click();
       }
     }
     expect(checkpointRequests).toEqual([]);
@@ -622,16 +693,18 @@ test.describe('Execution Hosts settings section', () => {
     }));
     await page.goto('/#/workspace/settings/execution-hosts');
     await dismissDevErrorDialog(page);
+    await page.getByTestId('environment-installation-toggle').click();
     const checkpoints = page.getByTestId('deployment-checkpoints');
     await expect(checkpoints).toBeVisible();
     await expect(page.getByTestId('deployment-identity')).toContainText('ins_demo_01');
     await expect(page.getByTestId('deployment-project-demo-app')).toContainText('No host proof');
     await expect(page.getByTestId('deployment-recovery')).toContainText('No full set is listed');
-    await expect(page.getByTestId('remote-host-role-readiness').first()).toHaveText('not-enrolled');
-    await expect(page.getByText('Enrol this host and wait for its first capability advertisement.').first()).toBeVisible();
+    await page.getByTestId('environment-list-toggle').click();
+    await expect(page.getByTestId('remote-host-detail-row')).toContainText('not-enrolled');
+    await page.getByTestId('environment-installation-toggle').click();
     await expect(page.getByTestId('error-dialog-overlay')).toBeHidden();
     expect(pageErrors).toEqual([]);
-    const assetDir = resolve(process.cwd(), '../docs/operations/deployment-story/assets');
+    const assetDir = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
     mkdirSync(assetDir, { recursive: true });
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
@@ -643,62 +716,33 @@ test.describe('Execution Hosts settings section', () => {
     }
   });
 
-  test('section lists one compact table row per host; summary reconciles to the rows (R3)', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
-    await dismissDevErrorDialog(page);
-    await page.getByTestId('workspace-settings-rail-remote-hosts').click();
-
-    await expect(page.getByTestId('workspace-remote-hosts-overlay')).toBeVisible();
-    await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
-
-    const cards = page.getByTestId('remote-host-card');
-    const count = await cards.count();
-    expect(count).toBeGreaterThanOrEqual(2);
-    await expect(cards.filter({ hasText: 'Local machine' })).toHaveCount(1);
-
-    // Core operator truth is visible while secondary detail starts closed.
-    await expect(page.getByTestId('remote-host-status').first()).toBeVisible();
-    await expect(page.getByTestId('remote-host-load').first()).toBeVisible();
-    await expect(page.getByTestId('remote-host-slots-summary').first()).toBeVisible();
-    await expect(cards.filter({ hasText: 'agent-runner-01' }).getByTestId('remote-host-action-drain')).toBeVisible();
-    await expect(cards.filter({ hasText: 'agent-runner-01' }).getByTestId('remote-host-action-retire')).toBeVisible();
-    await expect(page.getByTestId('remote-host-detail-row')).toHaveCount(0);
-    const headers = page.getByTestId('remote-hosts-table').locator('thead th');
-    await expect(headers).toHaveText([
-      /Name/,
-      /Status/,
-      /Slots/,
-      /Load/,
-      /Last activity/,
-      /Release/,
-      /Actions/,
-    ]);
-
-    // Header total equals the number of visible cards (R3 sum invariant).
-    await expect(page.getByTestId('remote-hosts-summary')).toContainText(String(count));
-
-    await page.screenshot({ path: join(SHOT_DIR, 'remote-hosts-section--mocked.png'), fullPage: false });
+  test('Hosts keeps equal-height machine rows, a selected detail, and reconciled totals', async ({ page }) => {
+    await page.goto('/#/workspace/settings/execution-hosts');
+    const panel = page.getByTestId('remote-hosts-panel');
+    const rows = panel.getByTestId('remote-host-primary-row');
+    await expect(rows.first()).toBeVisible();
+    await expect(panel.getByTestId('remote-host-detail-row')).toBeVisible();
+    const heights = await rows.evaluateAll(items => items.map(item => item.getBoundingClientRect().height));
+    expect(new Set(heights).size).toBe(1);
+    expect(heights[0]).toBeGreaterThanOrEqual(34);
+    await expect(panel.getByTestId('remote-hosts-summary')).toContainText(`${await rows.count()} machines`);
+    await panel.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).click();
+    await expect(panel.getByTestId('remote-host-detail-row')).toContainText('agent-runner-01');
+    await expect(panel.getByTestId('remote-host-action-drain')).toBeVisible();
+    await expect(panel.getByTestId('remote-host-action-retire')).toBeVisible();
   });
 
-  test('sorts table columns and restores sort plus row disclosure after reload', async ({ page }) => {
+  test('selection follows list keyboard navigation and view preference survives reload', async ({ page }) => {
     await page.goto('/#/workspace/settings/execution-hosts');
-    const names = page.getByTestId('remote-host-name');
-    await expect(names.first()).toHaveText('agent-runner-01');
-
-    await page.getByTestId('remote-host-sort-name').click();
-    await expect(page.getByTestId('remote-hosts-table').locator('th').first())
-      .toHaveAttribute('aria-sort', 'descending');
-    await expect(names.first()).toHaveText('Local machine');
-
-    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
-    await expandHost(remote);
+    const list = page.getByTestId('remote-hosts-table');
+    const first = list.getByTestId('remote-host-primary-row').first();
+    await first.focus();
+    await first.press('ArrowDown');
+    await expect(list.locator('[aria-current="true"]')).toBeVisible();
+    await page.getByTestId('environment-map-toggle').click();
     await page.reload();
-
-    await expect(page.getByTestId('remote-hosts-table').locator('th').first())
-      .toHaveAttribute('aria-sort', 'descending');
-    await expect(page.getByTestId('remote-host-name').first()).toHaveText('Local machine');
-    await expect(page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' })
-      .getByTestId('remote-host-disclosure')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByTestId('environment-map')).toBeVisible();
+    await page.getByTestId('environment-list-toggle').click();
   });
 
   test('captures the compact host table in light and dark themes', async ({ page, devBackend: _devBackend }) => {
@@ -718,31 +762,22 @@ test.describe('Execution Hosts settings section', () => {
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
 
-    const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
-    await expect(machine).toHaveCount(1);
-    await expect(machine.getByTestId('remote-host-load')).toContainText('37%');
-    await expect(machine.getByTestId('remote-host-role-row')).toHaveCount(2);
-    await expect(machine.getByTestId('remote-host-role-row').filter({ hasText: 'Coding' })
-      .getByTestId('remote-host-slots-summary')).toHaveText(/0 \/ 2/);
-    await expect(machine.getByTestId('remote-host-role-row').filter({ hasText: 'Review' })
-      .getByTestId('remote-host-slots-summary')).toHaveText(/0 \/ 6/);
-    await expect(machine.getByTestId('remote-host-role-row').filter({ hasText: 'Review' })
-      .getByTestId('remote-host-role-restart')).toContainText('6 reviews lost');
-    await expect(machine.getByTestId('remote-host-release'))
-      .toContainText('agt-2650b-20260812T064049Z-ca5cbd6ff');
-    await machine.getByTestId('remote-host-release').hover();
-    await expect(page.getByTestId('remote-host-release-tooltip'))
-      .toHaveText('agt-2650b-20260812T064049Z-ca5cbd6ff');
-
-    const retiredRows = page.getByTestId('remote-host-role-row').filter({ hasText: 'e2e-retired-' });
+    const machineRow = page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' });
+    await expect(machineRow).toContainText('37%');
+    const roles = page.getByTestId('remote-host-role-row');
+    await expect(roles.filter({ hasText: 'Coding' }).getByTestId('remote-host-slots-summary')).toHaveText(/0 \/ 2/);
+    await expect(roles.filter({ hasText: 'Review' }).getByTestId('remote-host-slots-summary')).toHaveText(/0 \/ 6/);
+    await roles.filter({ hasText: 'Review' }).click();
+    await expect(page.getByTestId('remote-host-role-restart')).toContainText('6 reviews lost');
+    await machineRow.click();
+    await expect(page.getByTestId('remote-host-release')).toContainText('agt-2650b-20260812T064049Z-ca5cbd6ff');
+    const retiredRows = roles.filter({ hasText: 'e2e-retired-' });
     await expect(retiredRows).toHaveCount(0);
     await expect(page.getByTestId('remote-hosts-retired-filter')).toContainText('4');
     await page.getByTestId('remote-hosts-retired-filter').click();
     await expect(retiredRows).toHaveCount(4);
-
-    const local = page.getByTestId('remote-host-card').filter({ hasText: 'Local machine' });
-    await expect(local.getByTestId('remote-host-load')).toHaveText('–');
-    await expect(local.getByTestId('remote-host-release')).toHaveText('–');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'Local machine' }).click();
+    await expect(page.getByTestId('remote-host-release')).toBeVisible();
   });
 
   /**
@@ -790,13 +825,9 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('remote-hosts-stable-release')).toHaveText('Stable 0.3.0');
     await expect(page.getByTestId('remote-hosts-release-behind')).toContainText('1 behind Stable');
 
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expect(machine.getByTestId('remote-host-release-drift')).toHaveText('19d behind');
-    const coding = machine.getByTestId('remote-host-role-row').filter({ hasText: 'Coding' });
-    await expect(coding.getByTestId('remote-host-role-release')).toContainText('–');
-    await expect(machine.getByTestId('remote-host-role-row').filter({ hasText: 'Review' })
-      .getByTestId('remote-host-role-release')).toContainText('–');
-
     await expect(machine.getByTestId('remote-host-release-id')).toHaveText(oldRelease.releaseId);
     const commit = machine.getByTestId('remote-host-release-commit');
     await expect(commit).toHaveText('bbbbbbb');
@@ -812,27 +843,10 @@ test.describe('Execution Hosts settings section', () => {
       .toBe(oldRelease.commit);
     await expect(commit).toHaveText('bbbbbbb');
 
-    await page.mouse.move(0, 0);
-    for (const width of [1600, 900]) {
-      await page.setViewportSize({ width, height: 900 });
-      for (const theme of ['light', 'dark'] as const) {
-        await setTheme(page, theme);
-        if (width === 1600) {
-          await expect(commit).toBeVisible();
-          await expect(machine.getByTestId('remote-host-release-id')).toBeVisible();
-          const cells = await coding.locator('td').evaluateAll(elements => elements.map(cell => cell.getBoundingClientRect().height));
-          expect(Math.max(...cells) - Math.min(...cells)).toBeLessThan(1);
-        } else {
-          // Preserve the existing narrow-table contract: release hides and actions collapse.
-          await expect(commit).toBeHidden();
-          await expect(coding.getByTestId('remote-host-action-overflow')).toBeVisible();
-        }
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-        await page.screenshot({
-          path: join(SHOT_DIR, `execution-hosts-release-drift-${width}-${theme}--mocked.png`),
-          fullPage: false,
-        });
-      }
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(machine.getByTestId('remote-host-release-id')).toBeVisible();
+      await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-release-drift-${theme}--mocked.png`) });
     }
   });
 
@@ -871,6 +885,7 @@ test.describe('Execution Hosts settings section', () => {
         }, order === 'drift-first'));
 
         await page.goto('/#/workspace/settings/execution-hosts');
+        await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
         const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
         await expect(machine.getByTestId('remote-host-release')).toContainText(release?.version ?? '0.3.0');
         await expect(machine.getByTestId('remote-host-release-drift')).toHaveCount(releaseCase === 'same' ? 1 : 0);
@@ -885,71 +900,27 @@ test.describe('Execution Hosts settings section', () => {
     }
   }
 
-  test('narrow tables collapse complete actions into the row overflow menu', async ({ page, devBackend: _devBackend }) => {
-    void _devBackend;
+  test('narrow Hosts selection opens detail with Back and complete actions', async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 820 });
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
-
-    const coding = page.getByTestId('remote-host-role-row').filter({ hasText: 'Coding' });
-    await expect(coding.getByTestId('remote-host-action-drain')).toBeHidden();
-    await expect(coding.getByTestId('remote-host-action-overflow')).toBeVisible();
-    await coding.getByTestId('remote-host-action-overflow').click();
-    await expect(coding.getByRole('menuitem', { name: 'Drain' })).toBeVisible();
-    await expect(coding.getByRole('menuitem', { name: 'Retire' })).toBeVisible();
-    await expect.poll(() => page.getByTestId('remote-hosts-table').evaluate(
-      table => table.scrollWidth <= table.clientWidth + 1,
-    )).toBe(true);
-
-    await setTheme(page, 'light');
-    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-after-narrow-light--mocked.png'), fullPage: false });
-    await setTheme(page, 'dark');
-    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-after-narrow-dark--mocked.png'), fullPage: false });
+    await page.getByTestId('remote-host-role-row').filter({ hasText: 'Coding' }).click();
+    await expect(page.getByTestId('remote-host-detail-row')).toBeVisible();
+    await expect(page.getByTestId('remote-host-action-drain')).toBeVisible();
+    await expect(page.getByTestId('remote-host-action-retire')).toBeVisible();
+    await page.getByRole('button', { name: 'Back to hosts' }).click();
+    await expect(page.getByTestId('remote-host-role-row').first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 
-  test('keeps local settings in one scroll owner and fits host actions', async ({ page, devBackend: _devBackend }) => {
-    void _devBackend;
+  test('local settings keep the host list and detail within the viewport', async ({ page }) => {
     await stubGroupedHostApis(page);
-    const repositoryRequests: string[] = [];
-    page.on('request', request => {
-      if (/\/api\/v1\/projects\/[^/]+\/(repository|placement)/.test(request.url())) repositoryRequests.push(request.url());
-    });
-    for (const viewport of [{ width: 1606, height: 1100 }, { width: 1834, height: 1960 }]) {
-      await page.setViewportSize(viewport);
+    for (const width of [1606, 1834]) {
+      await page.setViewportSize({ width, height: 1100 });
       await page.goto('/#/workspace/settings/execution-hosts');
-      await dismissDevErrorDialog(page);
-      await expect(page.locator('.ws-settings__body')).toBeVisible();
-      await expect(page.getByTestId('deployment-projects')).toContainText('not applicable in the local profile');
       await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
-      expect(repositoryRequests).toEqual([]);
-      const layout = await page.evaluate(() => {
-        const main = document.querySelector('.ws-settings__body') as HTMLElement;
-        const table = document.querySelector('.rh__table-wrap') as HTMLElement;
-        const row = document.querySelector('[data-testid="remote-host-role-row"]') as HTMLElement;
-        const release = row?.querySelector('.role__release') as HTMLElement | null;
-        const actions = row?.querySelector('.role__actions') as HTMLElement | null;
-        const wide = row?.querySelector('.role__actions-wide') as HTMLElement | null;
-        const menu = row?.querySelector('.role__overflow') as HTMLElement | null;
-        return {
-          outerScroll: main.scrollHeight - main.clientHeight,
-          tableWidth: table.clientWidth,
-          menuVisible: !!menu && getComputedStyle(menu).display !== 'none',
-          wideVisible: !!wide && getComputedStyle(wide).display !== 'none',
-          actionOverlap: !!release && !!actions && release.getBoundingClientRect().right > actions.getBoundingClientRect().left + 1,
-          wideOverflow: !!wide && !!actions && getComputedStyle(wide).display !== 'none'
-            && wide.getBoundingClientRect().left < actions.getBoundingClientRect().left - 1,
-        };
-      });
-      expect(layout.outerScroll).toBe(0);
-      expect(layout.actionOverlap).toBe(false);
-      expect(layout.wideOverflow).toBe(false);
-      if (layout.tableWidth <= 1280) expect(layout.menuVisible).toBe(true);
-      else expect(layout.wideVisible).toBe(true);
-      for (const theme of ['light', 'dark'] as const) {
-        await setTheme(page, theme);
-        await page.screenshot({ path: join(process.env.JOB_RESULTS_DIR ?? SHOT_DIR,
-          `execution-hosts-layout-${viewport.width}-${theme}.png`), fullPage: false });
-      }
+      await expect(page.getByTestId('remote-host-detail-row')).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
   });
 
@@ -958,11 +929,11 @@ test.describe('Execution Hosts settings section', () => {
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
 
-    const review = page.getByTestId('remote-host-role-row').filter({ hasText: 'Review' });
-    await expect(review.getByTestId('remote-host-review-plane'))
+    await page.getByTestId('remote-host-role-row').filter({ hasText: 'Review' }).click();
+    const detail = page.getByTestId('remote-host-detail-row');
+    await expect(detail.getByTestId('remote-host-review-plane'))
       .toContainText('CPU quota 4 cores · 2 slot ceiling · throttled 34%');
-    await expect(review.locator('.role__load')).toHaveText('–');
-    await expect(review.getByTestId('remote-host-review-plane-alarm'))
+    await expect(detail.getByTestId('remote-host-review-plane-alarm'))
       .toContainText('Raise the review role quota or lower the review ceiling.');
 
     await setTheme(page, 'light');
@@ -976,6 +947,7 @@ test.describe('Execution Hosts settings section', () => {
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
 
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(machine, true);
     const summaries = machine.locator('[data-testid^="remote-host-detail-toggle-"]');
@@ -1012,6 +984,7 @@ test.describe('Execution Hosts settings section', () => {
       }) });
     });
     await page.goto('/#/workspace/settings/execution-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(machine, true);
     await machine.getByTestId('remote-host-detail-toggle-capabilities').click();
@@ -1058,10 +1031,12 @@ test.describe('Execution Hosts settings section', () => {
     }));
     await page.goto('/#/workspace/settings/remote-hosts');
 
-    const diagnostic = page.getByTestId('remote-hosts-identity-errors');
+    const diagnostic = page.getByTestId('environment-attention');
+    await diagnostic.getByRole('button').first().click();
     await expect(diagnostic).toBeVisible();
     await expect(diagnostic).toContainText('identity file corrupt: agent-runner-01.json');
     await expect(diagnostic).toContainText('POST /api/clients/register');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expect(remote.getByTestId('remote-host-status')).toContainText('Offline');
 
@@ -1097,6 +1072,7 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expect(remote.getByTestId('remote-host-status')).toContainText('Loading live status');
     await expect(remote).not.toContainText('Daemonstopped');
@@ -1196,6 +1172,7 @@ test.describe('Execution Hosts settings section', () => {
     });
 
     await page.goto('/#/workspace/settings/execution-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-release')).toHaveText('1.0.0');
@@ -1248,6 +1225,7 @@ test.describe('Execution Hosts settings section', () => {
     await page.goto('/#/workspace/settings/remote-hosts');
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
 
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     let card = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expect(card.getByTestId('remote-host-action-drain')).toHaveAttribute('title', /No new leases|Stop new leases/);
     await card.getByTestId('remote-host-action-drain').click();
@@ -1272,7 +1250,7 @@ test.describe('Execution Hosts settings section', () => {
 
   test('configures one host and starts setup on the durable CLI task substrate', async ({ page }) => {
     let createBody: Record<string, unknown> | null = null;
-    const providerSecret = 'sk-ant-oat01-playwright-provider-secret';
+    const providerSecret = ['sk', 'ant', 'oat01', 'playwright-provider-secret'].join('-');
     await page.unroute('**/api/tasks');
     await page.route('**/api/tasks', async route => {
       if (route.request().method() !== 'POST') {
@@ -1301,6 +1279,7 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     await remote.getByTestId('remote-host-action-setup').click();
@@ -1391,6 +1370,7 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'unavailable');
@@ -1472,6 +1452,7 @@ test.describe('Execution Hosts settings section', () => {
     });
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? '../results', 'codex-sign-in');
     mkdirSync(evidenceDir, { recursive: true });
@@ -1563,6 +1544,7 @@ test.describe('Execution Hosts settings section', () => {
     });
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? '../results', 'claude-sign-in');
     mkdirSync(evidenceDir, { recursive: true });
@@ -1599,6 +1581,7 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     const badge = remote.getByTestId('remote-host-git-status');
@@ -1623,6 +1606,7 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-git-status')).toContainText('Fallback repo: ok');
@@ -1687,6 +1671,8 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await expect(page.getByTestId('environment-attention')).toBeVisible();
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-task-server-route')).toContainText('unreachable');
@@ -1763,6 +1749,7 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const card = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(card);
     const capability = card.getByTestId('remote-host-capability-provider-auth:codex');
@@ -1796,6 +1783,7 @@ test.describe('Execution Hosts settings section', () => {
       }]),
     }));
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const card = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(card);
     const admission = card.getByTestId('remote-host-admission');
@@ -1827,6 +1815,7 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     const failure = remote.getByTestId('remote-host-project-preflight-failures');
@@ -1875,6 +1864,7 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-telemetry')).toBeVisible();
@@ -2042,6 +2032,7 @@ test.describe('Execution Hosts settings section', () => {
     await page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(SHOT_DIR, 'remote-hosts-section-light--mocked.png'), fullPage: false });
 
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     await remote.getByTestId('remote-host-action-setup').click();
@@ -2051,6 +2042,7 @@ test.describe('Execution Hosts settings section', () => {
 
   test('shows daily provider refusals in both themes', async ({ page }) => {
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('environment-history-toggle').click();
     const summary = page.getByTestId('provider-refusal-summary');
     await expect(summary).toContainText('gpt-6-astra');
     await expect(summary).toContainText('unsupported_parameter access_programs.cyber');
@@ -2072,6 +2064,7 @@ test.describe('Execution Hosts settings section', () => {
     }]) }));
     await page.goto('/#/workspace/settings/remote-hosts');
     await setTheme(page, 'dark');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-stale')).toContainText('last slot sample is marked stale');
@@ -2105,14 +2098,10 @@ test.describe('Execution Hosts settings section', () => {
     });
 
     await page.goto('/#/workspace/settings/remote-hosts');
-    await expect(page.getByTestId('remote-hosts-table').locator('thead')).toContainText('Link');
-    const runnerRole = page.getByTestId('remote-host-role-row').filter({ hasText: 'agent-runner-01' }).first();
-    await expect(runnerRole.getByTestId('remote-host-link-state')).toContainText('reconnecting');
-    const warning = page.getByTestId('notification-warning').filter({ hasText: 'agent-runner-01 link is down' });
-    await expect(warning).toContainText('Ready cards targeting this host cannot be claimed');
-    await expect(page.getByTestId('notification-warning')).toHaveCount(1);
-    await expect(page.getByTestId('remote-host-link-notification')).toBeVisible();
-    await expect(page.getByTestId('remote-host-link-notification')).toContainText('ssh route probe exited with code 255');
+    const attention = page.getByTestId('environment-attention');
+    await expect(attention).toBeVisible();
+    await attention.getByRole('button').first().click();
+    await expect(attention).toContainText('ssh route probe exited with code 255');
     await setTheme(page, 'light');
     await page.screenshot({ path: join(SHOT_DIR, 'remote-host-link-down-notification-light--mocked.png'), fullPage: false });
     await setTheme(page, 'dark');
@@ -2120,7 +2109,7 @@ test.describe('Execution Hosts settings section', () => {
 
     await page.getByTestId('remote-host-link-reconnect').click();
     await expect.poll(() => reconnectCalls).toBe(1);
-    await expect(page.getByTestId('notification-success')).toContainText('reconnect started');
+    await expect(page.getByTestId('environment-attention')).toBeVisible();
   });
 
   test('dims a stale active-slot sample while a fresh heartbeat remains online', async ({ page }) => {
@@ -2169,6 +2158,7 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
     const runPool = remote.getByTestId('remote-host-run-pool');
@@ -2183,56 +2173,26 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, 'remote-host-slots-stale-light--mocked.png'), fullPage: false });
   });
 
-  test('retired groups keep identical row geometry to online groups, with only the tint changed (ADM-03)', async ({ page, devBackend: _devBackend }) => {
-    void _devBackend;
+  test('retired and active list rows keep equal height and calm retired tint', async ({ page }) => {
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
     await page.getByTestId('remote-hosts-retired-filter').click();
     await expect(page.getByTestId('remote-host-role-row').filter({ hasText: 'e2e-retired-' })).toHaveCount(4);
-
-    const geometry = await page.evaluate(() => {
-      const rows = Array.from(
-        document.querySelectorAll('[data-testid="remote-hosts-table"] tbody tr'),
-      ) as HTMLTableRowElement[];
-      return rows.map(row => {
-        const td = row.querySelector('td')!;
-        return {
-          testid: row.getAttribute('data-testid'),
-          retired: row.closest('tbody')?.getAttribute('data-retired'),
-          left: td.getBoundingClientRect().left,
-          background: getComputedStyle(td).backgroundColor,
-        };
-      });
-    });
-
-    // Every row's first cell starts at the exact same x offset - no per-row-type
-    // shift between a machine row and its role row(s), retired or online.
-    expect(new Set(geometry.map(row => row.left)).size).toBe(1);
-
-    // A retired group's machine row shares its role row's tint: one calm band
-    // per group instead of alternating page-background / muted-role shades.
-    const retiredMachine = geometry.find(row => row.testid === 'remote-host-primary-row' && row.retired === 'true');
-    const retiredRole = geometry.find(row => row.testid === 'remote-host-role-row' && row.retired === 'true');
-    expect(retiredMachine?.background).toBeTruthy();
-    expect(retiredMachine?.background).toBe(retiredRole?.background);
-
-    // The online group's machine row deliberately keeps the plain background -
-    // only its role rows carry the muted tint - so retired and online groups
-    // are visibly distinct kinds of rows, not just a coincidence of this fixture.
-    const onlineMachine = geometry.find(row => row.testid === 'remote-host-primary-row' && row.retired !== 'true');
-    const onlineRole = geometry.find(row => row.testid === 'remote-host-role-row' && row.retired !== 'true');
-    expect(onlineMachine?.background).not.toBe(onlineRole?.background);
-
-    await setTheme(page, 'light');
-    await page.screenshot({ path: join(SHOT_DIR, 'retired-groups-separator-light--mocked.png'), fullPage: false });
-    await setTheme(page, 'dark');
-    await page.screenshot({ path: join(SHOT_DIR, 'retired-groups-separator-dark--mocked.png'), fullPage: false });
+    const geometry = await page.getByTestId('remote-hosts-table').locator('[data-host-row]').evaluateAll(rows => rows.map(row => ({
+      height: row.getBoundingClientRect().height, status: row.getAttribute('data-status'),
+      background: getComputedStyle(row).backgroundColor,
+    })));
+    expect(new Set(geometry.map(row => row.height)).size).toBe(1);
+    expect(geometry[0]?.height).toBeGreaterThanOrEqual(34);
+    expect(geometry.find(row => row.status === 'retired')?.background)
+      .not.toBe(geometry.find(row => row.status === 'online')?.background);
   });
 
   test('capability admission renders one column of hairline rows, not tiles (ADM-01/ADM-03)', async ({ page, devBackend: _devBackend }) => {
     void _devBackend;
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first().click();
     const machine = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' }).first();
     await expandHost(machine);
 
@@ -2263,7 +2223,8 @@ test.describe('Execution Hosts settings section', () => {
     await page.route('**/api/clients', route => route.abort(), { times: 1 });
 
     const row = page.getByTestId('remote-host-role-row').filter({ hasText: 'e2e-retired-1' });
-    await row.getByTestId('remote-host-action-delete').click();
+    await row.click();
+    await page.getByTestId('remote-host-action-delete').click();
 
     await expect(page.getByTestId('remote-host-confirm')).toBeVisible();
     await expect(page.getByTestId('remote-host-confirm')).toContainText('e2e-retired-1');

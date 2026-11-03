@@ -2,11 +2,11 @@
 
 .git-badge {
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 1px pill inset is intentionally sub-scale */
-  padding: 1px var(--studio-spacing-2);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border-radius: 999px;
   background: var(--studio-bg-selected);
   color: var(--studio-fg-dim);
-  font-size: 10px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 600;
   letter-spacing: 0.04em;
 }
@@ -28,7 +28,7 @@
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   background: var(--notify-warning-tint);
   color: var(--studio-fg);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .token-warning code { color: var(--studio-fg-strong); }
 .token-warning a { color: var(--studio-accent-3-strong); }
