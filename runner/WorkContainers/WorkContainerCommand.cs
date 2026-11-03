@@ -10,7 +10,11 @@ namespace AgentRunner.WorkContainers;
 /// executor. <c>run</c> executes one claimed attempt in canary mode,
 /// <c>reconcile</c> removes orphans after a restart, <c>image-promote</c> and
 /// <c>image-rollback</c> maintain the pinned role image manifest, and
-/// <c>proof</c> records the acceptance and go/no-go evidence.
+/// <c>proof</c> records the acceptance and go/no-go evidence. SM-11 adds
+/// <c>check</c> (the containment decision per role), <c>probe</c> (one probe
+/// attempt that must not see host credentials, provider logins, other
+/// projects, the runtime socket or a non-allowlisted address) and <c>launch</c>,
+/// the root side of the narrow launcher.
 /// </summary>
 public static class WorkContainerCommand
 {
@@ -28,6 +32,11 @@ public static class WorkContainerCommand
           image-rollback --manifest <path> --role <coding|review|gate|all>
           proof --host <host-id> --image <ref> --source <bare.git> --sha <sha> --report <dir>
                 [--attempts 100] [--parallel 4] [--grant-half-cores 3] [--repository-key <key>] [--gate-script <sh>] [--image-layers-local true]
+                [--verdict-dir <dir>]   (default: the host work-container state directory)
+          check [--role <coding|review|gate|all>]
+          probe --host <host-id> --repository-key <key> --source <bare.git|https url> --sha <sha> --report <dir>
+                --forbidden-paths <path,...> --blocked-addresses <host:port,...> [--image <ref>] [--role coding]
+          launch <runtime arguments...>   (root only, through /usr/local/sbin/agent-work-launcher)
         Common: --state-dir <dir> (default $RUNNER_STATE_DIR/work-containers)
         """;
 
@@ -38,6 +47,8 @@ public static class WorkContainerCommand
             error.WriteLine(Usage);
             return 2;
         }
+        if (args[0] == "launch")
+            return await WorkContainerLauncherCommand.RunAsync(args[1..], Console.In, output, error, ct);
         Dictionary<string, string> options;
         try { options = ParseOptions(args[1..]); }
         catch (ArgumentException ex)
@@ -69,17 +80,53 @@ public static class WorkContainerCommand
                     output.WriteLine(JsonSerializer.Serialize(actions, Json));
                     return 0;
                 }
+                case "check":
+                {
+                    var settings = Settings(options);
+                    var role = options.GetValueOrDefault("role") ?? "all";
+                    var decisions = (role == "all" ? RoleImageManifest.KnownRoles : [role])
+                        .ToDictionary(item => item, item => AttemptContainmentPolicy.Decide(AttemptContainmentHost.Gather(
+                            settings, item, Environment.GetEnvironmentVariable("RUNNER_ZONE_POLICY_STATE"), TimeProvider.System)));
+                    output.WriteLine(JsonSerializer.Serialize(decisions, Json));
+                    return decisions.Values.Any(decision => decision.Verdict == ContainmentVerdict.Refuse) ? 1 : 0;
+                }
+                case "probe":
+                {
+                    var settings = Settings(options);
+                    var role = options.GetValueOrDefault("role") ?? "coding";
+                    var image = options.GetValueOrDefault("image")
+                        ?? RoleImageManifest.TryLoad(settings.ImageManifestPath)?.Resolve(role)
+                        ?? throw new InvalidOperationException($"No pinned image for role '{role}'.");
+                    static string[] List(string value)
+                        => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var result = await ContainmentProbe.RunAsync(
+                        new WorkContainerExecutor(new CliWorkContainerRuntime(settings.Runtime, settings.Launcher), settings, log: output.WriteLine),
+                        new ContainmentProbeOptions(Required(options, "host"), Required(options, "repository-key"),
+                            Required(options, "source"), Required(options, "sha"), image,
+                            List(Required(options, "forbidden-paths")), List(Required(options, "blocked-addresses")),
+                            Path.GetFullPath(Required(options, "report")), role), ct);
+                    foreach (var check in result.Report.Checks) output.WriteLine($"  {check}");
+                    foreach (var kind in result.Report.MissingKinds) output.WriteLine($"  {kind} MISSING");
+                    output.WriteLine($"containment probe passed={result.Report.Passed} outcome={result.Receipt.Outcome} cleanupVerified={result.Receipt.CleanupVerified}");
+                    return result.Report.Passed && result.Receipt.CleanupVerified ? 0 : 1;
+                }
                 case "run":
                 {
                     var settings = Settings(options);
-                    if (settings.Mode != WorkContainerMode.Canary)
-                    {
-                        error.WriteLine($"work-container run requires {WorkContainerSettings.ModeVariable}=canary; the process executor stays authoritative.");
-                        return 3;
-                    }
                     var attempt = JsonSerializer.Deserialize<WorkContainerAttempt>(
                         await File.ReadAllTextAsync(Required(options, "attempt"), ct), Json)
                         ?? throw new InvalidDataException("Attempt file is empty.");
+                    if (settings.Mode != WorkContainerMode.Canary)
+                    {
+                        // SM-11: contained mode runs the attempt only when the host proves every prerequisite.
+                        var decision = AttemptContainmentPolicy.Decide(AttemptContainmentHost.Gather(
+                            settings, attempt.Role, Environment.GetEnvironmentVariable("RUNNER_ZONE_POLICY_STATE"), TimeProvider.System));
+                        if (decision.Verdict != ContainmentVerdict.Container)
+                        {
+                            error.WriteLine($"work-container run refused: {decision.Reason}");
+                            return 3;
+                        }
+                    }
                     var image = options.GetValueOrDefault("image")
                         ?? RoleImageManifest.TryLoad(settings.ImageManifestPath)?.Resolve(attempt.Role)
                         ?? throw new InvalidOperationException($"No pinned image for role '{attempt.Role}'.");
@@ -114,7 +161,7 @@ public static class WorkContainerCommand
                         using var response = await brokerHttp.SendAsync(request, token);
                         response.EnsureSuccessStatusCode();
                     }
-                    var receipt = await new WorkContainerExecutor(new CliWorkContainerRuntime(settings.Runtime), settings,
+                    var receipt = await new WorkContainerExecutor(new CliWorkContainerRuntime(settings.Runtime, settings.Launcher), settings,
                             log: output.WriteLine, credentials: credentialSource,
                             reportStarted: (item, selectedImage, halfCores, token) =>
                                 Report(item, selectedImage, halfCores, "running", "pending", DateTime.UtcNow, token))
@@ -152,7 +199,11 @@ public static class WorkContainerCommand
                         options.ContainsKey("grant-half-cores") ? (int)Number(options, "grant-half-cores") : 3,
                         Path.GetFullPath(Required(options, "report")),
                         options.GetValueOrDefault("gate-script") ?? DefaultGateScript,
-                        options.GetValueOrDefault("image-layers-local") == "true");
+                        options.GetValueOrDefault("image-layers-local") == "true",
+                        // SM-11: the verdict belongs to the host, not to the proof's scratch state.
+                        options.TryGetValue("verdict-dir", out var verdictDirectory)
+                            ? Path.GetFullPath(verdictDirectory)
+                            : Settings(new Dictionary<string, string>()).StateDirectory);
                     return await WorkContainerProof.RunAsync(proof, settings, output, ct);
                 }
                 default:
@@ -245,7 +296,7 @@ public static class WorkContainerCommand
     private static WorkContainerExecutor Executor(Dictionary<string, string> options, TextWriter output)
     {
         var settings = Settings(options);
-        return new WorkContainerExecutor(new CliWorkContainerRuntime(settings.Runtime), settings, log: output.WriteLine);
+        return new WorkContainerExecutor(new CliWorkContainerRuntime(settings.Runtime, settings.Launcher), settings, log: output.WriteLine);
     }
 
     private static WorkContainerSettings Settings(Dictionary<string, string> options)

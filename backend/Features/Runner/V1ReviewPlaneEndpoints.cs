@@ -881,6 +881,12 @@ public static class V1ReviewPlaneEndpoints
                 return error!;
             var currentReview = current!;
             var authoritativeLease = currentReview.Lease!;
+            // SM-11: a verdict counts only from a review executor other than the delivery's coding executor.
+            var separation = Contract.ReviewPrincipalSeparationPolicy.Decide(
+                new Contract.DeliveryCodingPrincipal(authority.GetRun(currentReview.SourceRunAttemptId)?.Lease?.ExecutorId, null),
+                new Contract.ReviewVerdictReporter(authoritativeLease.ExecutorId, null, null));
+            if (!separation.Accepted)
+                return Results.Conflict(new Contract.ApiError(separation.Code!, separation.Message!));
             // AGT-3016: an executor that still reads verdict markers out of
             // command output must not downgrade a command that exited 0.
             request = Contract.ReviewCommandVerdictPolicy.NormalizeReport(

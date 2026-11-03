@@ -1455,7 +1455,10 @@ public sealed partial class TaskServerStore
         string? ProjectId,
         string? TaskId);
 
-    public async Task<ClaimResponse> ClaimAsync(ClaimRequest request, string actorId, CancellationToken ct)
+    /// <param name="claimPrincipalId">SM-11: the authenticated principal that claims, recorded on the run
+    /// so a later review verdict can be refused from the delivery's coding principal.</param>
+    public async Task<ClaimResponse> ClaimAsync(
+        ClaimRequest request, string actorId, CancellationToken ct, string? claimPrincipalId = null)
     {
         if (request.AvailableSlots > 0)
             RequireAdmission();
@@ -1785,10 +1788,10 @@ public sealed partial class TaskServerStore
                 INSERT INTO runs(
                     id, task_id, status, runner_id, fence, created_at, started_at,
                     required_capabilities_json, canary_capabilities_json, brief_version,
-                    coding_host_id)
+                    coding_host_id, claim_principal_id)
                 VALUES (
                     $run, $task, 'running', $runner, $fence, $now, $now,
-                    $requiredCapabilities, $canaryCapabilities, $briefVersion, $codingHost);
+                    $requiredCapabilities, $canaryCapabilities, $briefVersion, $codingHost, $claimPrincipal);
                 INSERT INTO leases(task_id, lease_id, run_id, runner_id, instance_id, fence, acquired_at, expires_at, status)
                 VALUES ($task, $lease, $run, $runner, $instance, $fence, $now, $expires, 'active');
                 UPDATE pending_follow_ups
@@ -1800,6 +1803,7 @@ public sealed partial class TaskServerStore
                 ("$run", runId), ("$task", task.TaskId), ("$runner", request.RunnerId), ("$instance", request.InstanceId),
                 ("$fence", fence), ("$lease", leaseId), ("$now", Iso(now)), ("$expires", Iso(expires)),
                 ("$codingHost", capabilityRunner.HostId),
+                ("$claimPrincipal", claimPrincipalId),
                 ("$requiredCapabilities", JsonSerializer.Serialize(capabilityAdmission.Required)),
                 ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)),
                 ("$legacyFollowUp", continuationIntent is null ? 1 : 0),
