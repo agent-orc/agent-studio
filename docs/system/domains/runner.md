@@ -2557,6 +2557,12 @@ case; a failed probe cannot close cases. `GET /api/watcher/stalls` supplies the
 open count and cases for the red Studio marker, Execution Hosts, and board lane
 headers. Activity records the opening and closing transitions once each.
 
+A `host-offline` finding is `critical` only when the stalled host blocks work:
+claimable work waits for its role, or it still holds a running attempt (a
+claimed review lease, active coding slots, or busy pull gate jobs). An offline
+host with no blocked work and no running attempt is at most a `warning`, so a
+host that is not enrolled or idle never reads as critical with 0 affected cards.
+
 The live release comparison covers registered runner roles. A container with
 no reported release identity has no comparable running-version fact and is
 not labelled as drift. The policy accepts a deployment start error when one is
@@ -2615,6 +2621,11 @@ second pending intervention on the subject and compares the live value
 (admission, route, the worker's running work) with the plan's before-value; on
 a mismatch it records `superseded` and does nothing. Cards and gate members are
 re-checked at apply time as well.
+A `host-offline` proposal (status `proposed`) becomes `superseded` once its
+case is resolved and the host reported after the proposal was decided
+(`ProposalRecoveryPolicy`); the receipt keeps its text, gains the outcome "The
+host reported after this proposal was decided." and no longer reads as a
+current proposal.
 An admission reduction also checks fresh overload or memory pressure immediately
 before the side effect. Both lowering and restoring admission use an atomic
 compare-and-set against the planned before-value, so a capacity edit made by a

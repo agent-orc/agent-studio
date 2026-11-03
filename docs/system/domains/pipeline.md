@@ -840,6 +840,11 @@ For SSH gates, the slot line and idle-capacity detector use the same recent
 gate-host slot report when available. A process-local count does not include
 workers left by an earlier Studio process. The idle detector requires a fresh
 host report. Pull gate wait age comes only from jobs still in the queued state.
+Its `taskServer` field names where the Task Server runs: `remote Task Server`
+when `TaskServer:BaseUrl` is set, otherwise `local monolith` in the `local`
+security profile and `server monolith` in every other profile (for example
+`networked`). The value reads the same `Security:Profile` the checkpoints read,
+so a monolith on a server is never reported as local.
 Size slots times processors below host online cores; see the
 [execution hosts runbook](../../operations/remote-hosts.md#remote-buildtest-gate-capacity).
 

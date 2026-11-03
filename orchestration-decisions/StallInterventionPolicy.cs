@@ -322,9 +322,7 @@ public sealed record StallInterventionPlan(
     IReadOnlyList<string>? AttemptIds = null)
 {
     /// <summary>One readable paragraph for feeds, timelines and the host view.</summary>
-    public string Receipt => string.Join(" ", new[] { Observed, Done, Why, Change,
-        Action is StallInterventionActions.LowerAdmission or StallInterventionActions.RerouteProvider
-            or StallInterventionActions.RequeueFromDelivery ? Undo : string.Empty }
+    public string Receipt => string.Join(" ", new[] { Observed, Done, Why, Change, Undo }
         .Where(part => !string.IsNullOrWhiteSpace(part)));
 
     public string Change => Before.Length == 0 && After.Length == 0 ? string.Empty
