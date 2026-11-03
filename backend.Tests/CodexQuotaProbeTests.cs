@@ -30,6 +30,41 @@ public class CodexQuotaProbeTests
     }
 
     [Fact]
+    public void SharedParser_UsesTheObservationDateAndLocalZoneForLegacyResets()
+    {
+        // clock-independent: all reset comparisons use the fixed observation below.
+        const string status = "Account: example (Plus)\n" +
+            "5h limit: [░░] 97% left (resets 02:33)\n" +
+            "Weekly limit: [██] 86% left (resets 21:33 on 3 May)";
+        var observed = new DateTime(2026, 5, 2, 20, 0, 0, DateTimeKind.Utc);
+
+        var windows = AgentStudio.CliHosting.SubscriptionQuotaParser.ParseCodex(status, observed);
+
+        Assert.Collection(windows,
+            fiveHour =>
+            {
+                Assert.Equal(3, fiveHour.UsedPct);
+                Assert.Equal("02:33", fiveHour.ResetLabel);
+                Assert.Equal(NextLocalOccurrence(observed, 2, 33), fiveHour.ResetAt);
+            },
+            weekly =>
+            {
+                Assert.Equal(14, weekly.UsedPct);
+                Assert.Equal("21:33 on 3 May", weekly.ResetLabel);
+                Assert.Equal(TimeZoneInfo.ConvertTimeToUtc(
+                    new DateTime(2026, 5, 3, 21, 33, 0), TimeZoneInfo.Local), weekly.ResetAt);
+            });
+    }
+
+    private static DateTime NextLocalOccurrence(DateTime observed, int hour, int minute)
+    {
+        var local = TimeZoneInfo.ConvertTimeFromUtc(observed, TimeZoneInfo.Local);
+        var next = new DateTime(local.Year, local.Month, local.Day, hour, minute, 0);
+        if (next <= local) next = next.AddDays(1);
+        return TimeZoneInfo.ConvertTimeToUtc(next, TimeZoneInfo.Local);
+    }
+
+    [Fact]
     public void ParseStatusWindows_V0_149_0Fixture_ReadsSplitResetRowsWithoutInventingFiveHour()
     {
         var snapshot = ReadFixture("codex-status-v0.149.0.txt");

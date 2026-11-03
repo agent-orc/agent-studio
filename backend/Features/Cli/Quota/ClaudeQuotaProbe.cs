@@ -30,17 +30,6 @@ public sealed class ClaudeQuotaProbe : QuotaProbeBase
         @"Claude\s*(Pro\+?|Pro\s*Plus|Free|Team|Max(?:\s*\d+x)?|Enterprise)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    // "Current session ... NN% used Resets H:MMam (Tz)"
-    private static readonly Regex SessionRegex = new(
-        @"Current\s*session[^\d]{0,160}?(?<pct>\d+)\s*%\s*used[^R]{0,40}?Resets\s*(?<time>\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:\((?<tz>[^)]+)\))?",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    // "Current week (all models) ... NN% used Resets Mon DD, H[:MM][am|pm] (Tz)"
-    // or the compact Claude variant: "Currentweek(allmodels)...32%usedResets2pm(Europe/Berlin)"
-    private static readonly Regex WeekRegex = new(
-        @"Current\s*week\s*\(\s*all\s*models?\s*\)[^\d]{0,220}?(?<pct>\d+)\s*%\s*used[^R]{0,60}?Resets\s*(?<reset>(?:[A-Za-z]+\s*\d+\s*,?\s*)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:\((?<tz>[^)]+)\))?",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
     // Inline rate-limit warning Claude prints when over quota — used as a
     // last-ditch fallback for the session reset time when /usage failed.
     private static readonly Regex RateLimitResetRegex = new(
@@ -60,28 +49,6 @@ public sealed class ClaudeQuotaProbe : QuotaProbeBase
     private static readonly Regex OnboardingWizardRegex = new(
         @"Choose\s*the\s*text\s*style|text\s*style\s*that\s*looks\s*best|Let'?s\s*get\s*started|match\s*terminal|fullscreen\s*renderer|Try\s*the\s*new\s*full|Flicker-?free\s*output",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    // Claude Code 2.1.202 replaced the old standalone /usage panel with a
-    // tabbed Settings / Status / Config / Usage / Stats view. API-billed
-    // accounts only get session cost/token statistics in that view, not
-    // subscription utilization percentages. Treat that as a recognized
-    // "quota exists but the CLI did not report a number" shape rather than
-    // returning no windows or a parser error.
-    //
-    // PTY snapshots commonly collapse all inter-word whitespace, hence the
-    // deliberately whitespace-optional headings. The two anchors keep a
-    // random assistant response mentioning "usage" from matching.
-    private static readonly Regex TabbedSessionUsageRegex = new(
-        @"Settings\s*Status\s*Config\s*Usage\s*Stats.*?" +
-        @"Session.*?Total\s*cost\s*:.*?Total\s*duration\s*\(\s*API\s*\)\s*:.*?" +
-        @"Usage\s*:.*?(?:input|output|cache\s*read|cache\s*write)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
-
-    // Inserts a space between a letter and the digit after it ("Oct13" -> "Oct 13").
-    private static readonly Regex LetterDigitBoundaryRegex = new(
-        @"(?<=[A-Za-z])(?=\d)", RegexOptions.Compiled);
-
-    private static readonly Regex WhitespaceRunRegex = new(@"\s+", RegexOptions.Compiled);
 
     private readonly IConfiguration _configuration;
     private readonly TimeProvider _time;
@@ -312,36 +279,4 @@ public sealed class ClaudeQuotaProbe : QuotaProbeBase
         return TimeZoneInfo.ConvertTimeToUtc(resetInTz, tz);
     }
 
-    /// <summary>
-    /// Parses "Apr 28, 2pm", "Apr 28, 14:30" or the compact PTY form "Oct13,2pm"
-    /// with an optional IANA timezone and returns the corresponding UTC instant.
-    /// The year is taken from <paramref name="nowUtc"/>.
-    /// </summary>
-    private static DateTime? ParseResetDateUtc(string dateStr, string? ianaTz, DateTime nowUtc)
-    {
-        // Normalise "Oct13,2pm" and "Apr 28, 2pm" to "Oct 13 2pm" / "Apr 28 2pm" so a single
-        // set of formats covers both. Only a letter followed by a digit is split; "2pm" stays
-        // intact because the formats expect "htt".
-        var spaced = LetterDigitBoundaryRegex.Replace(dateStr, " ").Replace(",", " ");
-        var clean = WhitespaceRunRegex.Replace(spaced, " ").Trim();
-        var formats = new[]
-        {
-            "MMM d htt", "MMM d hh tt", "MMM d h:mmtt", "MMM d hh:mmtt",
-            "MMM d HH:mm", "MMM d H:mm",
-            "MMMM d htt", "MMMM d h:mmtt", "MMMM d HH:mm"
-        };
-        if (!DateTime.TryParseExact(clean, formats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var local))
-            return null;
-
-        TimeZoneInfo tz;
-        try { tz = ianaTz != null ? TimeZoneInfo.FindSystemTimeZoneById(ianaTz) : TimeZoneInfo.Local; }
-        catch { tz = TimeZoneInfo.Local; }
-
-        // Year is missing from the input — assume the current year, roll to next year if past.
-        var nowInTz = TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc), tz);
-        var year = nowInTz.Year;
-        var candidate = new DateTime(year, local.Month, local.Day, local.Hour, local.Minute, 0, DateTimeKind.Unspecified);
-        if (candidate < nowInTz.AddDays(-1)) candidate = candidate.AddYears(1);
-        return TimeZoneInfo.ConvertTimeToUtc(candidate, tz);
-    }
 }
