@@ -29,6 +29,8 @@ public sealed class ConnectorSessionStore(TimeSpan lifetime, TimeProvider time)
         if (_sessions.Count >= PruneThreshold) PruneExpired();
         var session = RandomNumberGenerator.GetHexString(32).ToLowerInvariant();
         var csrf = RandomNumberGenerator.GetHexString(32).ToLowerInvariant();
+        AgentStudio.Security.CredentialRedactor.RegisterLiteral(session);
+        AgentStudio.Security.CredentialRedactor.RegisterLiteral(csrf);
         _sessions[session] = new SessionEntry(csrf, time.GetUtcNow() + lifetime);
         AppendCookies(response, session, csrf);
     }

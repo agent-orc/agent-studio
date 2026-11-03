@@ -414,7 +414,7 @@ public sealed partial class AccessSecurityStore
                 MustChangePassword = true, CreatedAt = now, PasswordChangedAt = now
             };
             var id = Guid.NewGuid().ToString("N");
-            var token = $"inv.{id}.{PasswordSecretHasher.RandomToken()}";
+            var token = Issued($"inv.{id}.{PasswordSecretHasher.RandomToken()}");
             var expiresAt = now.AddHours(24);
             state.Users.Add(user);
             (user, var bindings) = AddUserGrantsLocked(state, user, grants, actingUserId);
@@ -526,7 +526,7 @@ public sealed partial class AccessSecurityStore
         var expires = request.ExpiresAt ?? now.AddMinutes(15);
         if (expires <= now || expires > now.AddHours(24)) throw new SecurityOperationException(400, "invalid-expiry", "Enrollment expiry must be within the next 24 hours.");
         var id = Guid.NewGuid().ToString("N");
-        var code = $"enr.{id}.{PasswordSecretHasher.RandomToken()}";
+        var code = Issued($"enr.{id}.{PasswordSecretHasher.RandomToken()}");
         var enrollment = new RunnerEnrollment
         {
             Id = id, Name = request.Name.Trim(), CodeHash = PasswordSecretHasher.HashSecret(code), Scopes = scopes,
@@ -756,7 +756,7 @@ public sealed partial class AccessSecurityStore
     {
         if (expiresAt <= Now) throw new SecurityOperationException(400, "invalid-expiry", "Credential expiry must be in the future.");
         var id = Guid.NewGuid().ToString("N");
-        var secret = $"rnr.{id}.{PasswordSecretHasher.RandomToken()}";
+        var secret = Issued($"rnr.{id}.{PasswordSecretHasher.RandomToken()}");
         return (new RunnerCredential { Id = id, SecretHash = PasswordSecretHasher.HashSecret(secret), Scopes = scopes.ToList(), CreatedAt = Now, ExpiresAt = expiresAt }, secret);
     }
 
@@ -764,8 +764,8 @@ public sealed partial class AccessSecurityStore
     {
         var now = Now;
         var id = Guid.NewGuid().ToString("N");
-        var token = $"ssn.{id}.{PasswordSecretHasher.RandomToken()}";
-        var csrf = PasswordSecretHasher.RandomToken();
+        var token = Issued($"ssn.{id}.{PasswordSecretHasher.RandomToken()}");
+        var csrf = Issued(PasswordSecretHasher.RandomToken());
         var absolute = now.AddMinutes(_configuration.GetValue("Security:Session:AbsoluteMinutes", 10080));
         var session = new StudioSession
         {
@@ -947,7 +947,17 @@ public sealed partial class AccessSecurityStore
         if (password.Length is < 12 or > 128) throw new SecurityOperationException(400, "password-policy", "Password must be 12 to 128 characters.");
         if (password.Contains(username, StringComparison.OrdinalIgnoreCase)) throw new SecurityOperationException(400, "password-policy", "Password must not contain the username.");
     }
-    private static string GenerateTemporaryPassword() => "Tmp!" + PasswordSecretHasher.RandomToken(18);
+    private static string GenerateTemporaryPassword() => Issued("Tmp!" + PasswordSecretHasher.RandomToken(18));
+
+    /// <summary>
+    /// Registers a credential this store hands out with the redactor, so logs
+    /// and reports mask the exact value even where no pattern matches.
+    /// </summary>
+    private static string Issued(string secret)
+    {
+        CredentialRedactor.RegisterLiteral(secret);
+        return secret;
+    }
     private static DateTime Min(DateTime a, DateTime b) => a <= b ? a : b;
 }
 
