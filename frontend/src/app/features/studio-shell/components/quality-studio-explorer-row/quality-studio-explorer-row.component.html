@@ -1,0 +1,13 @@
+@if (show()) {
+  <app-tree-row level="child" glyph="check" label="Quality Studio"
+                [ariaLabel]="'Quality Studio, ' + displayLabel() + ', opens in a new tab'"
+                [testid]="'studio-explorer-project-quality-' + projectName()"
+                (selectRequest)="open()">
+    <button type="button" class="studio-tree-row__url-ext"
+            [attr.data-testid]="'studio-explorer-project-quality-ext-' + projectName()"
+            [disabled]="!ready()" aria-label="Open Quality Studio in a new tab"
+            (click)="open($event)">
+      <app-studio-icon name="send" [size]="10" />
+    </button>
+  </app-tree-row>
+}
