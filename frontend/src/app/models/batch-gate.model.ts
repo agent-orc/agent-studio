@@ -41,7 +41,7 @@ export interface BatchGateState {
     upcoming: { taskKey: string; stage: string; etaUtc?: string | null; risk: BatchRisk; overlapsWith: string[] }[];
     advisor?: { mode: string; verdict: string; reasons: string[]; model: string; atUtc: string } | null;
   };
-  pending: { taskKey: string; reviewAttemptId: string; resultSha: string; waitMinutes: number; risk: BatchRisk; exclusion?: string | null }[];
+  pending: { taskKey: string; reviewAttemptId: string; resultSha: string; waitMinutes: number; risk: BatchRisk; paths?: string[]; riskAgeMinutes?: number | null; exclusion?: string | null }[];
   batches: {
     batchId: string;
     parentBatchId?: string | null;

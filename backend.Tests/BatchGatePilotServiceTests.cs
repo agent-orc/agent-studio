@@ -313,6 +313,56 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task State_route_reads_risk_from_the_tick_cache_and_starts_no_git()
+    {
+        // AGT-3413: the route ran merge-base and diff for every pending card.
+        var observer = new GitReadRecorder();
+        using var factory = BuildFactory(testServices: services =>
+            services.AddSingleton<AgentStudio.Git.IGitReadRequestObserver>(observer));
+        using var client = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-STATE-CACHE", "docs/state-cache.md");
+        var route = $"/api/projects/{ProjectName}/batch-gate/state?history=10";
+
+        // Cold: the tick has not read the diff, so the card keeps the lane estimate.
+        using (var cold = JsonDocument.Parse(await client.GetStringAsync(route)))
+        {
+            var pending = Assert.Single(cold.RootElement.GetProperty("pending").EnumerateArray());
+            Assert.Equal(member.Key, pending.GetProperty("taskKey").GetString());
+            Assert.Equal(.08, pending.GetProperty("risk").GetDouble());
+            Assert.Empty(pending.GetProperty("paths").EnumerateArray());
+            Assert.Equal(JsonValueKind.Null, pending.GetProperty("riskAgeMinutes").ValueKind);
+        }
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var expected = Assert.Single(Builder(factory).Build(ProjectName, "develop",
+            store.ListPending(), Settings(factory), _clock).Waiting);
+        // Past the tick's five-minute reuse window the route still answers the last known value.
+        _clock = _clock.AddMinutes(7);
+
+        using (var warm = JsonDocument.Parse(await client.GetStringAsync(route)))
+        {
+            var pending = Assert.Single(warm.RootElement.GetProperty("pending").EnumerateArray());
+            Assert.Equal(expected.Risk, pending.GetProperty("risk").GetDouble());
+            Assert.Equal(["docs/state-cache.md"], pending.GetProperty("paths").EnumerateArray()
+                .Select(path => path.GetString()!).ToArray());
+            Assert.Equal(7, pending.GetProperty("riskAgeMinutes").GetDouble());
+        }
+        var reads = observer.Records.Where(record =>
+            record.RouteTemplate == "/api/projects/{projectName}/batch-gate/state").ToArray();
+        Assert.Equal(2, reads.Length);
+        Assert.All(reads, record => Assert.Empty(record.Commands));
+    }
+
+    private sealed class GitReadRecorder : AgentStudio.Git.IGitReadRequestObserver
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<AgentStudio.Git.GitReadRequestRecord> Records { get; } = new();
+        public void OnCompleted(AgentStudio.Git.GitReadRequestRecord record) => Records.Enqueue(record);
+    }
+
+    [Fact]
     public void Look_ahead_snapshot_includes_queued_reviews()
     {
         using var factory = BuildFactory();
