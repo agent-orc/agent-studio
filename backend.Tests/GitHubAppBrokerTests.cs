@@ -298,6 +298,19 @@ public sealed class GitHubAppBrokerTests
     }
 
     [Fact]
+    public async Task A_host_bound_to_some_projects_receives_tokens_only_for_their_repositories()
+    {
+        await ConnectAsync();
+
+        var issued = await _broker.IssueAllAsync(RepositoryAccess.Write, "runner-1", default,
+            admits: repository => repository.Project == "Site");
+
+        // SM-9: the Core repository is reachable too, but its project is not bound to this host.
+        Assert.Equal(["https://github.com/Owner/Site.git"], issued.Select(item => item.RepositoryUrl));
+        Assert.Empty(await _broker.IssueAllAsync(RepositoryAccess.Read, "runner-2", default, admits: _ => false));
+    }
+
+    [Fact]
     public async Task A_token_minted_while_disconnecting_is_neither_handed_out_nor_kept()
     {
         await ConnectAsync();

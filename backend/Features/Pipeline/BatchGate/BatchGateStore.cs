@@ -94,7 +94,8 @@ public sealed record BatchGateBaseVerdict(
     string Project, string BaseSha, string GateProfileDigest,
     string Outcome, string? FailureFingerprint, string Reason,
     string EvidencePath, DateTimeOffset RecordedAtUtc,
-    string? Source = null, double? Minutes = null, string? VerifiedSha = null);
+    string? Source = null, double? Minutes = null, string? VerifiedSha = null,
+    bool Provisional = false, IReadOnlyList<string>? FailedTests = null);
 
 /// <summary>
 /// AGT-3434: the suites one card ran in the per-task fallback path, written
@@ -111,7 +112,6 @@ public sealed record BatchGateFallbackSuiteFact(
 {
     public int Suites => PerTaskGateRuns + PublishGateRuns;
 }
-
 
 public sealed record BatchGateIsolationFinding(
     string Project, string ParentBatchId, string TaskKey, string RunAttempt,
@@ -169,7 +169,29 @@ public sealed partial class BatchGateStore
     {
         var path = BaseVerdictPath(verdict.Project, verdict.BaseSha, verdict.GateProfileDigest);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        if (!File.Exists(path)) WriteOnce(path, verdict);
+        if (!File.Exists(path)) { WriteOnce(path, verdict); return; }
+        if (!Read<BatchGateBaseVerdict>(path).Provisional || verdict.Provisional) return;
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(file, verdict, Json);
+            file.Flush(flushToDisk: true);
+        }
+        File.Move(temporary, path, overwrite: true);
+    }
+
+    public void MarkBaseVerdictProvisional(BatchGateBaseVerdict verdict)
+    {
+        var path = BaseVerdictPath(verdict.Project, verdict.BaseSha, verdict.GateProfileDigest);
+        var current = Read<BatchGateBaseVerdict>(path);
+        if (current.Provisional || current.RecordedAtUtc != verdict.RecordedAtUtc) return;
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(file, current with { Provisional = true }, Json);
+            file.Flush(flushToDisk: true);
+        }
+        File.Move(temporary, path, overwrite: true);
     }
 
     private string BaseVerdictPath(string project, string sha, string digest)

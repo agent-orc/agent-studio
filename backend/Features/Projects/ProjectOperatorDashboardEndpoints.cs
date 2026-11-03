@@ -75,6 +75,12 @@ public static class ProjectOperatorDashboardEndpoints
                 engine.State, clock.GetUtcNow().UtcDateTime, gates.Hosts()));
         });
 
+        app.MapGet("/api/v1/operations/structure/library", async (StructureLibraryService library,
+            CancellationToken ct) => Results.Ok(await library.ReadAsync(false, ct)));
+        app.MapPost("/api/v1/operations/structure/library/refresh", async (StructureLibraryService library,
+            CancellationToken ct) => Results.Ok(await library.ReadAsync(true, ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+
         app.MapGet("/api/environment/flow", (EnvironmentFlowService flow) =>
             Results.Ok(flow.Build()));
 

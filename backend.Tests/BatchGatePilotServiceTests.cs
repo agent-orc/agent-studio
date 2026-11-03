@@ -1964,6 +1964,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Single(store.ListPending());
         Assert.Single(store.ListManifests());
         Assert.Contains("integration-branch-red", JsonSerializer.Serialize(pilot.State(ProjectName)));
+        using var state = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/state"));
+        var shown = Assert.Single(state.RootElement.GetProperty("batches").EnumerateArray());
+        Assert.Equal("integration-branch-red", shown.GetProperty("phaseReason").GetString());
+        Assert.False(shown.GetProperty("baseVerdict").GetProperty("provisional").GetBoolean());
         Assert.Equal(1, pilot.Report(ProjectName).IntegrationBranchRedBatches);
         using var report = JsonDocument.Parse(await client.GetStringAsync(
             $"/api/projects/{ProjectName}/batch-gate/report"));
@@ -1983,6 +1988,126 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var retry = Assert.Single(store.ListManifests(), item => item.BatchId != manifest.BatchId);
         AssertPhase(store, retry.BatchId, BatchPhase.Published);
         AssertLane(member.Key, TaskStates.HumanReview);
+    }
+
+    [Fact]
+    public async Task Contended_base_red_is_rechecked_before_the_batch_can_pause()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        SeedMember(factory, "DOC-CONTENDED-BASE", "docs/contended-base.md");
+        _gate.Batch = request => Red(request.ExpectedSha);
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        _gate.Base = request => _gate.BaseRuns == 1
+            ? Red(request.ExpectedSha) with { GateCollisionDetected = true }
+            : Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests(), item => item.ParentBatchId is null);
+        Assert.NotEqual("integration-branch-red", store.LatestState(manifest.BatchId).Reason);
+        Assert.Equal(2, _gate.BaseRuns);
+        Assert.Equal("pass", store.ReadBaseVerdict(ProjectName, manifest.BaseSha,
+            manifest.Scope.GateProfileDigest)?.Outcome);
+    }
+
+    [Fact]
+    public async Task Deterministic_red_with_flaky_quarantine_enters_isolation()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        SeedMember(factory, "DOC-MIXED-RED", "docs/mixed-red.md");
+        _gate.Batch = request => Red(request.ExpectedSha) with
+        {
+            RetryPerformed = true,
+            FlakyQuarantinedFailures = ["Product.Tests.Flaky"],
+        };
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        _gate.Base = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests(), item => item.ParentBatchId is null);
+        Assert.NotEqual("flaky quarantine requires a fresh gate verdict",
+            store.LatestState(manifest.BatchId).Reason);
+        Assert.Equal("deterministic-suite-red", store.ReadVerdict(manifest.BatchId,
+            Assert.Single(store.ListRuns(manifest.BatchId)).BatchRunId)?.Classification);
+    }
+
+    [Fact]
+    public async Task Distinct_base_and_candidate_test_failures_isolate_members()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        SeedMember(factory, "DOC-TEST-A", "docs/test-a.md");
+        SeedMember(factory, "DOC-TEST-B", "docs/test-b.md");
+        _gate.Batch = request => Red(request.ExpectedSha) with
+        {
+            Processes = [new BuildTestGateProcessEvidence
+            {
+                ExitCode = 1, StandardOutput = "  Failed Product.Tests.Member [1 ms]",
+            }],
+        };
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        _gate.Base = request => Red(request.ExpectedSha) with
+        {
+            Processes = [new BuildTestGateProcessEvidence
+            {
+                ExitCode = 1, StandardOutput = "  Failed Product.Tests.Base [1 ms]",
+            }],
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var primary = Assert.Single(store.ListManifests(), item => item.ParentBatchId is null);
+        Assert.NotEqual("integration-branch-red", store.LatestState(primary.BatchId).Reason);
+        Assert.Contains(store.ListManifests(), item => item.ParentBatchId == primary.BatchId);
+    }
+
+    [Fact]
+    public async Task Legacy_cached_base_failure_uses_saved_test_names_for_isolation()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        SeedMember(factory, "DOC-LEGACY-BASE", "docs/legacy-base.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        var baseSha = RemoteTip();
+        var evidence = Path.Combine(_workspace, "legacy-base.json");
+        File.WriteAllText(evidence, JsonSerializer.Serialize(Red(baseSha) with
+        {
+            Processes = [new BuildTestGateProcessEvidence
+            {
+                ExitCode = 1, StandardOutput = "  Failed Product.Tests.Base [1 ms]",
+            }],
+        }));
+        store.RecordBaseVerdict(new BatchGateBaseVerdict(ProjectName, baseSha,
+            pending.Subject.GateProfileDigest, "fail", null, "legacy red", evidence, _clock));
+        _gate.Batch = request => Red(request.ExpectedSha) with
+        {
+            Processes = [new BuildTestGateProcessEvidence
+            {
+                ExitCode = 1, StandardOutput = "  Failed Product.Tests.Member [1 ms]",
+            }],
+        };
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var primary = Assert.Single(store.ListManifests(), item => item.ParentBatchId is null);
+        Assert.NotEqual("integration-branch-red", store.LatestState(primary.BatchId).Reason);
+        Assert.Equal(0, _gate.BaseRuns);
     }
 
     [Fact]

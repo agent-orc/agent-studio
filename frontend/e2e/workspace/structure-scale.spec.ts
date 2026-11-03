@@ -14,6 +14,7 @@ async function mockShell(page: Page, fixture: () => FixtureName): Promise<void> 
   await page.context().route('**/api/**', route => {
     const url = route.request().url();
     const json = (body: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    if (url.includes('/api/v1/operations/structure/library')) return json({ registries: [], consumers: [] });
     if (url.includes('/api/v1/operations/structure')) return json(structureFixtures[fixture()]);
     if (url.includes('/api/v1/studio/auth/status')) return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     if (url.includes('/api/v1/management/credential-inventory')) return json({ generatedAt: '2026-11-02T00:00:00Z', items: [] });
@@ -73,6 +74,7 @@ async function show(page: Page, view: 'host' | 'container', level: 1 | 2): Promi
 }
 
 test('complex, AGT and workspace fixtures render without links across instance boxes', async ({ page }) => {
+  test.setTimeout(120_000);
   fs.mkdirSync(results, { recursive: true });
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));

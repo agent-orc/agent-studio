@@ -603,9 +603,9 @@ public sealed partial class TaskServerStore
               JOIN tasks t ON t.id = p.task_id
              WHERE p.status = 'available' AND p.expires_at > $now AND t.state = '2-ready'
                AND (
-                   NOT EXISTS (
+                   ($requirePolicy = 0 AND NOT EXISTS (
                        SELECT 1 FROM host_project_policies policy
-                        WHERE policy.host_id = $host)
+                        WHERE policy.host_id = $host))
                    OR EXISTS (
                        SELECT 1 FROM host_project_policies policy
                         WHERE policy.host_id = $host
@@ -615,7 +615,8 @@ public sealed partial class TaskServerStore
                         WHERE allowed.host_id = $host
                           AND allowed.project_id = t.project_id))
              ORDER BY t.created_at, t.task_key;
-            """, transaction, ("$now", Iso(UtcNow)), ("$host", hostId));
+            """, transaction, ("$now", Iso(UtcNow)), ("$host", hostId),
+            ("$requirePolicy", RequiresHostProjectPolicy ? 1 : 0));
         await using var reader = await command.ExecuteReaderAsync(ct);
         var result = new List<WorkPermitDto>();
         while (await reader.ReadAsync(ct))
