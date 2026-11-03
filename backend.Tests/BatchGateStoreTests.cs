@@ -23,6 +23,29 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void Idle_base_verdict_replaces_provisional_red_once()
+    {
+        var provisional = new BatchGateBaseVerdict("project", Base, "profile-a",
+            "fail", "old", "contended", "first.json", Now, Provisional: true);
+        var final = provisional with { Outcome = "pass", FailureFingerprint = null,
+            Reason = "idle", EvidencePath = "second.json", Provisional = false };
+        _store.RecordBaseVerdict(provisional);
+        _store.RecordBaseVerdict(final);
+        _store.RecordBaseVerdict(provisional);
+        Assert.Equal(final, new BatchGateStore(_root).ReadBaseVerdict("project", Base, "profile-a"));
+    }
+
+    [Fact]
+    public void Legacy_contended_base_can_be_marked_for_recheck()
+    {
+        var legacy = new BatchGateBaseVerdict("project", Base, "profile-a",
+            "fail", "old", "red", "evidence.json", Now);
+        _store.RecordBaseVerdict(legacy);
+        _store.MarkBaseVerdictProvisional(legacy);
+        Assert.True(_store.ReadBaseVerdict("project", Base, "profile-a")!.Provisional);
+    }
+
+    [Fact]
     public async Task Readers_never_observe_a_partially_written_state()
     {
         var manifest = Close();
