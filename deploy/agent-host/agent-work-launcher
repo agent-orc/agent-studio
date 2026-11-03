@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# SM-11 narrow container launcher (security-model Dossier, decision SM-D6 H2).
+#
+# The host service user is not a member of the container-runtime group. The
+# host agent reaches Docker or Podman only through /run/agent-work-launcher.sock
+# (agent-work-launcher.socket, root-owned, group of the service user, mode
+# 0660). Socket activation starts this root-owned wrapper once per connection
+# as `agent-work-launcher --stdio`, with the connection as stdin and stdout; no
+# setuid step, so the daemon keeps NoNewPrivileges=true. The wrapper hands the
+# request to `agent-host work-container launch`, whose WorkContainerLauncherPolicy admits
+# exactly the work-container executor's own calls: digest-pinned images,
+# agent-work-* names, an attempt UID, a read-only root, no capabilities, no
+# runtime socket or provider home, and only the work-zone networks of the
+# applied zone policy. Everything else is refused before the runtime runs.
+#
+# Install as /usr/local/sbin/agent-work-launcher, owner root:root, mode 0755,
+# with /etc/agent-host/work-container-launcher.env (see the example next to
+# this file). scripts/harden-agent-runner-host.sh --apply installs both.
+set -euo pipefail
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+readonly config="/etc/agent-host/work-container-launcher.env"
+readonly product_root="/opt/agent-host"
+readonly binary="$product_root/current/agent-host"
+
+die() {
+  printf 'agent-work-launcher: %s\n' "$*" >&2
+  exit 2
+}
+
+# A path the service user could replace would turn this wrapper into root.
+root_owned() {
+  local path="$1" owner mode
+  [[ -e "$path" ]] || return 1
+  read -r owner mode < <(stat -L -c '%u %a' -- "$path")
+  [[ "$owner" == 0 ]] || return 1
+  (( (8#$mode & 8#022) == 0 ))
+}
+
+(( EUID == 0 )) || die "runs as root from agent-work-launcher.socket; the service user has no runtime access"
+resolved="$(readlink -f -- "$binary")" || die "agent-host is not installed: $binary"
+for path in "$config" "$product_root" "$product_root/releases" "$(dirname -- "$resolved")" "$resolved"; do
+  root_owned "$path" || die "$path must exist, be owned by root and not be writable by group or others"
+done
+
+runtime="docker"
+zone_state="/var/lib/agent-studio/zone-policy/applied.json"
+dotnet_root=""
+while IFS='=' read -r key value || [[ -n "$key" ]]; do
+  case "$key" in
+    ''|'#'*) ;;
+    RUNTIME) runtime="$value" ;;
+    ZONE_POLICY_STATE) zone_state="$value" ;;
+    DOTNET_ROOT) dotnet_root="$value" ;;
+    *) die "unknown setting '$key' in $config" ;;
+  esac
+done < "$config"
+[[ "$runtime" == docker || "$runtime" == podman ]] || die "RUNTIME must be docker or podman"
+[[ "$zone_state" == /* ]] || die "ZONE_POLICY_STATE must be an absolute path"
+
+environment=(PATH="$PATH" HOME=/root DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+  RUNNER_WORK_CONTAINER_RUNTIME="$runtime" RUNNER_ZONE_POLICY_STATE="$zone_state")
+[[ -z "$dotnet_root" ]] || environment+=(DOTNET_ROOT="$dotnet_root" DOTNET_ROOT_X64="$dotnet_root")
+exec env -i "${environment[@]}" "$resolved" work-container launch "$@"

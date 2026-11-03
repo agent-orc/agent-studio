@@ -34,6 +34,8 @@ public sealed partial class TaskServerStore
         await AddColumnIfMissingAsync(connection, "runs", "source_bundle_artifact_id", "TEXT", ct);
         await AddColumnIfMissingAsync(connection, "runs", "source_bundle_sha256", "TEXT", ct);
         await AddColumnIfMissingAsync(connection, "runs", "coding_host_id", "TEXT", ct);
+        // SM-11: the authenticated principal that claimed the coding attempt.
+        await AddColumnIfMissingAsync(connection, "runs", "claim_principal_id", "TEXT", ct);
         await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS review_subjects(
                 id TEXT PRIMARY KEY,
@@ -274,7 +276,8 @@ public sealed partial class TaskServerStore
     public async Task<ReviewClaimResponse> ClaimReviewAsync(
         ReviewClaimRequest request,
         string actorId,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? claimantPrincipalId = null)
     {
         RequireAdmission();
         ReviewClaimResponse? response = null;
@@ -354,6 +357,7 @@ public sealed partial class TaskServerStore
             var unclaimable = new List<ReviewUnclaimableAttemptDto>();
             string? hostWaitReason = null;
             string? hostWaitMessage = null;
+            var coderExcluded = false;
             // Read one page at a time so a claimable attempt cannot be hidden
             // behind a page of plans this executor cannot run.
             async Task<int> ScanCandidatesAsync(int offset)
@@ -418,6 +422,15 @@ public sealed partial class TaskServerStore
                 var scannedRows = await ScanCandidatesAsync(offset);
                 foreach (var candidate in candidates)
                 {
+                    // SM-11: never hand a delivery's review to the principal that coded it.
+                    var coding = await ReadDeliveryCodingPrincipalAsync(
+                        connection, transaction, candidate.Subject.SourceRunId, ct);
+                    if (!ReviewPrincipalSeparationPolicy.Decide(coding,
+                            new ReviewVerdictReporter(request.ExecutorId, claimantPrincipalId, null)).Accepted)
+                    {
+                        coderExcluded = true;
+                        continue;
+                    }
                     var quotaProjectName = QuotaAdmissionOn
                         ? await ScalarAsync(connection,
                             "SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = $task LIMIT 1;",
@@ -489,6 +502,9 @@ public sealed partial class TaskServerStore
                 if (capabilityBlock is null) unclaimableToLog = unclaimable;
                 response = hostWaitReason == ReviewClaimEmptyReasons.DifferentHostRequired
                     ? ReviewClaimEmptyResponses.Empty(hostWaitReason, hostWaitMessage!)
+                    : coderExcluded && capabilityBlock is null && hostWaitReason is null && unclaimable.Count == 0
+                    ? ReviewClaimEmptyResponses.Empty(ReviewClaimEmptyReasons.CodingPrincipalExcluded,
+                        "Every queued review subject was coded by this principal; another review principal must claim it.")
                     : capabilityBlock is not null
                     ? ReviewClaimEmptyResponses.Empty(ReviewClaimEmptyReasons.CapabilityAdmission, capabilityBlock)
                         with { AdmissionReason = capabilityBlockReason }
@@ -985,7 +1001,8 @@ public sealed partial class TaskServerStore
         string attemptId,
         ReviewReportRequest request,
         string actorId,
-        CancellationToken ct)
+        CancellationToken ct,
+        TaskServerPrincipal? reporter = null)
     {
         RequireWritable();
         ReviewReportDto? result = null;
@@ -1014,6 +1031,12 @@ public sealed partial class TaskServerStore
             ValidateReviewAuthority(attempt, request.ExecutorId, request.InstanceId, request.LeaseId, request.Fence, requireLeased: true);
             if (attempt.ExpiresAt <= UtcNow)
                 throw new TaskServerConflictException("review-lease-expired", "Review lease expired and its report is fenced off.");
+            // SM-11: a verdict counts only from a review principal other than the delivery's coding principal.
+            var separation = ReviewPrincipalSeparationPolicy.Decide(
+                await ReadDeliveryCodingPrincipalAsync(connection, transaction, subject.SourceRunId, ct),
+                new ReviewVerdictReporter(attempt.ExecutorId ?? request.ExecutorId, reporter?.PrincipalId, reporter?.Kind));
+            if (!separation.Accepted)
+                throw new TaskServerConflictException(separation.Code!, separation.Message!);
             await EnsureReviewSubjectCurrentAsync(connection, transaction, subject, ct);
             if (subject.Plan.Commands.Any(command => command.LibraryStep is not null)
                 && !ReviewLibraryStepPolicy.ValidReport(
@@ -1094,6 +1117,20 @@ public sealed partial class TaskServerStore
                 payloadHash, received, retry, taskState);
         }, ct);
         return result!;
+    }
+
+    /// <summary>The runner and the claiming principal of a delivery's coding attempt.</summary>
+    private static async Task<DeliveryCodingPrincipal> ReadDeliveryCodingPrincipalAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string sourceRunId, CancellationToken ct)
+    {
+        await using var command = Command(connection,
+            "SELECT runner_id, claim_principal_id FROM runs WHERE id = $run;", transaction, ("$run", sourceRunId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct)
+            ? new DeliveryCodingPrincipal(
+                reader.IsDBNull(0) ? null : reader.GetString(0),
+                reader.IsDBNull(1) ? null : reader.GetString(1))
+            : new DeliveryCodingPrincipal(null, null);
     }
 
     public async Task<ReviewCleanupResponse> CleanupReviewAsync(

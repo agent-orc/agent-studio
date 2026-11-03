@@ -252,6 +252,12 @@ public class WorkContainerExecutorTests : IDisposable
             return Task.FromResult(WorkRuntimeResult.Success);
         }
 
+        public Task<WorkRuntimeResult> PrepareAsync(IReadOnlyList<string> args, CancellationToken ct)
+        {
+            Call($"prepare {args[args.ToList().IndexOf("--name") + 1]}");
+            return Task.FromResult(WorkRuntimeResult.Success);
+        }
+
         public Task<WorkRuntimeResult> StartAsync(string container, CancellationToken ct)
         {
             Call($"start {container}");

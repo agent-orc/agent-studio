@@ -32,7 +32,13 @@ public sealed record WorkContainerLaunchPlan(
     IReadOnlyDictionary<string, string> Labels,
     IReadOnlyList<WorkContainerMount> Mounts,
     IReadOnlyList<string> CreateArguments,
-    WorkContainerLimits Limits);
+    WorkContainerLimits Limits,
+    int Uid,
+    IReadOnlyList<string> PrepareArguments)
+{
+    /// <summary>The one-shot ownership step's container, removed with the attempt.</summary>
+    public string PrepareContainerName => ContainerName + "-prepare";
+}
 
 /// <summary>
 /// Pure translation from attempt, image and admitted limits to the runtime
@@ -50,7 +56,8 @@ public static class WorkContainerLaunchPlanner
     public const string GrantLabel = "agent-studio.grant-half-cores";
     public const string ImageLabel = "agent-studio.image";
 
-    /// <summary>Non-root identity baked into every role image (see deploy/work-container/Dockerfile).</summary>
+    /// <summary>Non-root identity baked into every role image (see deploy/work-container/Dockerfile).
+    /// SM-11: attempts run under their own <see cref="WorkContainerIdentity"/> UID instead.</summary>
     public const string ContainerUser = "10001:10001";
     public const string SecretDirectory = "/run/agent-secrets";
     public const string WorkDirectory = "/work";
@@ -73,13 +80,23 @@ public static class WorkContainerLaunchPlanner
         "/.ssh", "/.git-credentials", "/.gnupg", "/.aws", "/.kube",
     ];
 
-    public static string CacheVolume(string cache, int version) => $"agent-cache-{cache}-v{version}";
+    /// <summary>
+    /// SM-11: caches are per repository. One shared mirror volume would show
+    /// every attempt the mirrors, and so the source, of every other project.
+    /// </summary>
+    public static string CacheVolume(string cache, string repositoryKey, int version)
+        => $"agent-cache-{cache}-{repositoryKey}-v{version}";
 
     public static WorkContainerLaunchPlan Plan(
         WorkContainerAttempt attempt, string image, WorkContainerLimits limits, WorkContainerSettings settings,
-        bool credentialRequired = false)
+        bool credentialRequired = false, int? uid = null)
     {
         Validate(attempt, image);
+        var attemptUid = uid ?? WorkContainerIdentity.Allocate(attempt.AttemptId, attempt.Fence, new HashSet<int>());
+        if (!WorkContainerIdentity.IsAttemptUid(attemptUid))
+            throw new ArgumentException("A work container runs under an attempt UID.");
+        var user = WorkContainerIdentity.User(attemptUid);
+        var uidText = attemptUid.ToString(CultureInfo.InvariantCulture);
         var stem = $"agent-work-{Sanitize(attempt.AttemptId)}-f{attempt.Fence.ToString(CultureInfo.InvariantCulture)}";
         var labels = new SortedDictionary<string, string>(StringComparer.Ordinal)
         {
@@ -92,14 +109,15 @@ public static class WorkContainerLaunchPlanner
             [EpochLabel] = attempt.AuthorityEpoch.ToString(CultureInfo.InvariantCulture),
             [GrantLabel] = limits.HalfCores.ToString(CultureInfo.InvariantCulture),
             [ImageLabel] = image,
+            [WorkContainerIdentity.UidLabel] = uidText,
         };
 
         var mounts = new List<WorkContainerMount>
         {
             new("volume", stem, WorkDirectory, false),
-            new("volume", CacheVolume("npm", settings.CacheVersion), "/cache/npm", false),
-            new("volume", CacheVolume("nuget", settings.CacheVersion), "/cache/nuget", false),
-            new("volume", CacheVolume("repo", settings.CacheVersion), "/cache/repo", false),
+            new("volume", CacheVolume("npm", attempt.RepositoryKey, settings.CacheVersion), "/cache/npm", false),
+            new("volume", CacheVolume("nuget", attempt.RepositoryKey, settings.CacheVersion), "/cache/nuget", false),
+            new("volume", CacheVolume("repo", attempt.RepositoryKey, settings.CacheVersion), "/cache/repo", false),
         };
         var source = attempt.RepositorySource;
         if (Path.IsPathRooted(source))
@@ -129,23 +147,35 @@ public static class WorkContainerLaunchPlanner
             ValidateEnvironment(name);
             environment[name] = value;
         }
+        // SM-11: the repository mirror belongs to an earlier attempt UID and the
+        // bound source to the host, so Git's ownership check needs them named.
+        // Command-line configuration is protected; GIT_CONFIG_NOSYSTEM drops the
+        // image's own entry.
+        var gitConfig = new List<(string Key, string Value)>
+        {
+            ("safe.directory", SourceMountTarget),
+            ("safe.directory", $"/cache/repo/{attempt.RepositoryKey}.git"),
+        };
         if (credentialRequired)
         {
             if (!attempt.RepositorySource.StartsWith("https://github.com/", StringComparison.Ordinal)
                 || !attempt.RepositorySource.EndsWith(".git", StringComparison.Ordinal))
                 throw new ArgumentException("Brokered Git credentials require a canonical GitHub HTTPS source.");
             environment["AGENT_SECRET_REQUIRED"] = "1";
-            environment["GIT_CONFIG_COUNT"] = "2";
-            environment["GIT_CONFIG_KEY_0"] = "credential.helper";
-            environment["GIT_CONFIG_VALUE_0"] = "/usr/local/bin/agent-git-credential-helper";
-            environment["GIT_CONFIG_KEY_1"] = "credential.useHttpPath";
-            environment["GIT_CONFIG_VALUE_1"] = "true";
+            gitConfig.Add(("credential.helper", "/usr/local/bin/agent-git-credential-helper"));
+            gitConfig.Add(("credential.useHttpPath", "true"));
+        }
+        environment["GIT_CONFIG_COUNT"] = gitConfig.Count.ToString(CultureInfo.InvariantCulture);
+        for (var index = 0; index < gitConfig.Count; index++)
+        {
+            environment[$"GIT_CONFIG_KEY_{index}"] = gitConfig[index].Key;
+            environment[$"GIT_CONFIG_VALUE_{index}"] = gitConfig[index].Value;
         }
 
         var arguments = new List<string>
         {
             "create", "--name", stem,
-            "--user", ContainerUser,
+            "--user", user,
             "--read-only",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
@@ -157,7 +187,7 @@ public static class WorkContainerLaunchPlanner
             "--pids-limit", limits.PidsLimit.ToString(CultureInfo.InvariantCulture),
             "--network", settings.Network,
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=1g",
-            "--tmpfs", $"{SecretDirectory}:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=10001,gid=10001",
+            "--tmpfs", $"{SecretDirectory}:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid={uidText},gid={WorkContainerIdentity.GroupId}",
             "--workdir", WorkDirectory,
         };
         foreach (var (name, value) in labels) arguments.AddRange(["--label", $"{name}={value}"]);
@@ -169,8 +199,39 @@ public static class WorkContainerLaunchPlanner
         arguments.AddRange(["/bin/sh", "-c", EntryScript, "agent-work"]);
         arguments.AddRange(attempt.Command);
 
-        return new WorkContainerLaunchPlan(stem, stem, image, labels, mounts, arguments, limits);
+        // Root without network and with CHOWN and FOWNER only: hand the fresh
+        // attempt volume to the attempt UID and keep the repository caches
+        // group-writable for the next attempt of the same repository.
+        var prepare = new List<string>
+        {
+            "run", "--rm", "--user", "0:0", "--network", "none", "--read-only", "--cap-drop", "ALL",
+            "--cap-add", "CHOWN", "--cap-add", "FOWNER", "--security-opt", "no-new-privileges",
+            "--name", stem + "-prepare",
+        };
+        // No grant label: the ownership step reserves no share of the host grant.
+        foreach (var (name, value) in labels.Where(label => label.Key != GrantLabel))
+            prepare.AddRange(["--label", $"{name}={value}"]);
+        foreach (var mount in mounts.Where(mount => mount.Type == "volume"))
+            prepare.AddRange(["--mount", $"type=volume,source={mount.Source},target={mount.Target}"]);
+        prepare.AddRange([image, "/bin/sh", "-c", PrepareScript, "agent-prepare", uidText]);
+
+        return new WorkContainerLaunchPlan(stem, stem, image, labels, mounts, arguments, limits, attemptUid, prepare);
     }
+
+    /// <summary>Runs as root in the prepare container; its only input is the attempt UID.</summary>
+    public const string PrepareScript = """
+        set -eu
+        chown "$1:10001" /work
+        chmod 0700 /work
+        for cache in /cache/npm /cache/nuget /cache/repo; do
+          chgrp 10001 "$cache"
+          chmod 2770 "$cache"
+        done
+        """;
+
+    /// <summary>Writes stdin into the private tmpfs as the container's own user (SM-11 attempt UID).</summary>
+    public const string InjectTokenScript =
+        "umask 077; cat > /run/agent-secrets/.github-token-next && mv /run/agent-secrets/.github-token-next /run/agent-secrets/github-token";
 
     /// <summary>
     /// Runs inside the container before the work command: materialize the
@@ -180,6 +241,8 @@ public static class WorkContainerLaunchPlanner
     /// </summary>
     public const string EntryScript = """
         set -eu
+        # Group-writable files keep the repository caches usable by the next attempt UID.
+        umask 0007
         if [ "${AGENT_SECRET_REQUIRED:-0}" = 1 ]; then
           attempts=0
           until [ -r "$AGENT_SECRET_DIR/github-token" ]; do
