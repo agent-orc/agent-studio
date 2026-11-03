@@ -115,6 +115,9 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.Contains(plan.Commands, command => command.Arguments.Contains(
             "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "
             + "\"(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)\""));
+    }
+
+    [Fact]
     public void AgentStudioTestOnlyDiffRunsTheChangedClassAndBuild()
     {
         Write("backend.Tests/Delivery/FocusedTests.cs",
