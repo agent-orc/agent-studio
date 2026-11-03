@@ -193,10 +193,10 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.RunnerService, "/api/auth/runner");
         Add("R", IamPermissions.AccessRead,
             "/api/auth/users/**", "/api/auth/runners/**", "/api/auth/runner-enrollments/**", "/api/auth/api-tokens/**",
-            "/api/auth/iam/**");
+            "/api/auth/iam/**", "/api/auth/audit/**");
         Add("W", IamPermissions.AccessManage,
             "/api/auth/users/**", "/api/auth/invitations", "/api/auth/runners/**", "/api/auth/runner-enrollments/**",
-            "/api/auth/api-tokens/**", "/api/auth/iam/**");
+            "/api/auth/api-tokens/**", "/api/auth/iam/**", "/api/auth/audit/**");
         // First-run setup writes Git credentials and probes repositories for
         // the installation; the checklist is the Owner's.
         Add("*", IamPermissions.WorkspaceAdminister, "/api/first-run/**");

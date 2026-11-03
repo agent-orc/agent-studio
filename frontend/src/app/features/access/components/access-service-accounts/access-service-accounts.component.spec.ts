@@ -17,6 +17,7 @@ describe('AccessServiceAccountsComponent', () => {
           { id: 'tok_gone', name: 'gone', createdAt: '2026-10-20T09:00:00Z', expiresAt: '2027-01-18T09:00:00Z', revokedAt: '2026-10-20T10:00:00Z' },
         ] },
         { id: 'sa_off', name: 'retired-bot', createdAt: '2026-10-20T09:00:00Z', disabledAt: '2026-10-20T11:00:00Z', tokens: [] },
+        { id: 'sa_opa', name: 'studio-operator', createdAt: '2026-10-20T09:00:00Z', origin: 'operator-agent', createdBy: 'usr_owner', tokens: [] },
         { id: 'sa_api', name: 'build bot', createdAt: '2026-10-20T09:00:00Z', origin: 'api-token', createdBy: 'usr_owner', tokens: [
           { id: 'tok_api', name: 'build bot', createdAt: '2026-10-20T09:00:00Z', expiresAt: '2026-11-19T09:00:00Z', lastUsedAt: null, revokedAt: null },
         ] },
@@ -66,6 +67,15 @@ describe('AccessServiceAccountsComponent', () => {
     expect(api).toContain('Created by First Owner');
     expect(api).toContain('Revoke');
     expect(element.querySelector('[data-testid="access-token-create-sa_api"]')).toBeNull();
+  });
+
+  it('leaves operator agents to the operator panel', () => {
+    const fixture = TestBed.createComponent(AccessServiceAccountsComponent);
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('[data-testid="access-service-account-sa_opa"]')).toBeNull();
+    expect(element.textContent).not.toContain('studio-operator');
+    expect(element.querySelector('[data-testid="access-service-account-sa_ci"]')).not.toBeNull();
   });
 
   it('creates an account with its initial binding', async () => {

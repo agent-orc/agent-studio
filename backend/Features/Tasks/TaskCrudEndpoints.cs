@@ -1577,7 +1577,7 @@ public static class TaskCrudEndpoints
     internal static string OperatorActor(HttpContext context)
     {
         if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
-            return TimelineActors.ServiceAccount(account.AccountId);
+            return account.ActorId;
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
             return TimelineActors.Human(human.User.DisplayName);
         var clientId = context.Items["ClientId"] as string

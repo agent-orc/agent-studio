@@ -39,7 +39,7 @@ public static class BatchMoveEndpoints
                 req.Items,
                 projectNames,
                 context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account
-                    ? TimelineActors.ServiceAccount(account.AccountId)
+                    ? account.ActorId
                     : TimelineActors.Human(clientId ?? string.Empty));
             return Results.Accepted($"/api/tasks/batch-move/{job.Id}", job);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);

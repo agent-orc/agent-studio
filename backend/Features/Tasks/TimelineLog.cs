@@ -69,11 +69,13 @@ public sealed class TimelineLog
     /// is the canonical record (ADR-0049) and silently dropping an
     /// escalation event because the folder was racing a move would defeat
     /// the point. The chat log can drop a duplicate line; the timeline
-    /// must not drop the underlying event.
+    /// must not drop the underlying event. During an operator agent session
+    /// the event is attributed to that session (<see cref="OperatorActorScope"/>).
     /// </summary>
     public bool Append(string jobFolderPath, TimelineEvent evt)
     {
         if (string.IsNullOrWhiteSpace(jobFolderPath) || evt == null) return false;
+        evt = OperatorActorScope.Attribute(evt);
         try
         {
             Directory.CreateDirectory(TaskPaths.LogsDir(jobFolderPath));
