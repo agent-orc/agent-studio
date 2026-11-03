@@ -65,6 +65,7 @@ builder.Services.AddSignalR();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.AllowDuplicateProperties = false);
 builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationResultFinalizationSummaryGenerator>();
 builder.Services.AddSingleton<TaskServerStore>();
+builder.Services.AddSingleton<ArtifactChunkStore>();
 builder.Services.AddSingleton<AgentStudio.TaskServer.AttemptCredentials.IAttemptRootSecretStore>(services =>
 {
     var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<TaskServerOptions>>().Value;
