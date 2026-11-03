@@ -397,6 +397,7 @@ if (!underTestHost)
 
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
+builder.Services.AddControlPlaneAudit();
 builder.Services.AddHostedService<AgentStudio.Diagnostics.LastSeenPersistenceService>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
 builder.Services.AddHttpClient("secret-external", client => client.Timeout = TimeSpan.FromSeconds(10))
@@ -1437,6 +1438,19 @@ builder.Services.AddSingleton(new AgentStudio.TaskServer.Contracts.HostQuotaCoor
     builder.Configuration.GetValue<int?>("Quota:TtlSeconds")
     ?? AgentStudio.TaskServer.Contracts.HostQuotaCoordinator.DefaultTtlSeconds));
 builder.Services.AddHostedService<HostQuotaSyncService>();
+// Device sign-in and Git setup sessions are volatile; the monolith audits only the code-free outcome.
+builder.Services.AddSingleton(services =>
+{
+    var audit = services.GetRequiredService<ILoggerFactory>().CreateLogger("AgentStudio.HostSetup.DeviceLogin");
+    return new AgentStudio.TaskServer.Contracts.DeviceLoginSessions(services.GetRequiredService<TimeProvider>(),
+        (request, actor, _) =>
+        {
+            audit.LogInformation("Device sign-in {Result}: host {HostId}, provider {Provider}, actor {Actor}",
+                request.Status, request.HostId, request.Provider, actor);
+            return Task.CompletedTask;
+        });
+});
+builder.Services.AddSingleton<AgentStudio.TaskServer.Contracts.RunnerGitSetupStore>();
 if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
     builder.Services.AddHostedService<CliVersionMonitorHostedService>();
 builder.Services.AddSingleton<CliQuotaCapsService>();

@@ -457,11 +457,12 @@ Do **not** select by CSS class names; they belong to styling and change often.
 |------|---------|
 | `networked-login.spec.ts` | networked Studio gates the workspace behind same-origin login |
 
-### `settings/` - 7 specs
+### `settings/` - 8 specs
 
 | Spec | Summary |
 |------|---------|
 | `appearance-layout-toggles.spec.ts` | Settings - Appearance/Layout segmented toggles |
+| `operator-agents.spec.ts` | AGT-3372 · Access operator agents: create, one-time session token, audited activity, chain and forwarding strip, light and dark (mocked) |
 | `quota-forecast.spec.ts` | AGT-3001 · CLI Management quota forecast: curve, rate, 100% time, session gauge, armed fallback (mocked) |
 | `remote-hosts.spec.ts` | Execution Hosts settings section |
 | `settings-consolidation.spec.ts` | Settings consolidation (AGT-2035) |

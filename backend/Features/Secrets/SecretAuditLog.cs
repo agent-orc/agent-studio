@@ -10,6 +10,8 @@ namespace AgentStudio.Secrets;
 /// One JSON line per entry in <c>audit/&lt;yyyy-MM&gt;.jsonl</c> next to the store.
 /// Identical refused writes by one actor are merged per
 /// <see cref="RefusalMergeWindow"/> (see <see cref="AppendRefusal"/>).
+/// Each written entry is also routed through the control plane audit writer
+/// (<see cref="AgentStudio.Security.ControlPlaneAuditLog"/>, security model SM-1).
 /// </summary>
 public sealed class SecretAuditLog
 {
@@ -22,6 +24,7 @@ public sealed class SecretAuditLog
     public static readonly TimeSpan RefusalMergeWindow = TimeSpan.FromMinutes(1);
 
     private readonly string _directory;
+    private readonly AgentStudio.Security.ControlPlaneAuditLog? _chain;
     private readonly object _gate = new();
     private readonly Dictionary<RefusalKey, RefusalWindow> _refusals = [];
 
@@ -30,7 +33,16 @@ public sealed class SecretAuditLog
     {
     }
 
-    public SecretAuditLog(string directory) => _directory = directory;
+    public SecretAuditLog(IConfiguration configuration, AgentStudio.Security.ControlPlaneAuditLog chain)
+        : this(Path.Combine(SecretStorePaths.DataRoot(configuration), "audit"), chain)
+    {
+    }
+
+    public SecretAuditLog(string directory, AgentStudio.Security.ControlPlaneAuditLog? chain = null)
+    {
+        _directory = directory;
+        _chain = chain;
+    }
 
     public void Append(SecretAuditEntry entry)
     {
@@ -81,9 +93,14 @@ public sealed class SecretAuditLog
         var path = Path.Combine(_directory, entry.At.ToString("yyyy-MM", CultureInfo.InvariantCulture) + ".jsonl");
         var options = new FileStreamOptions { Mode = FileMode.Append, Access = FileAccess.Write, Share = FileShare.Read };
         if (!File.Exists(path)) OwnerOnlyAccess.ApplyCreateMode(options);
-        using var stream = new FileStream(path, options);
-        stream.Write(Encoding.UTF8.GetBytes(line));
-        stream.Flush(flushToDisk: true);
+        using (var stream = new FileStream(path, options))
+        {
+            stream.Write(Encoding.UTF8.GetBytes(line));
+            stream.Flush(flushToDisk: true);
+        }
+        _chain?.Append(new AgentStudio.Security.ControlPlaneAuditRecord(
+            AgentStudio.Security.ControlPlaneAuditStreams.Secret, entry.Actor, "secret." + entry.Action, entry.Outcome,
+            Target: $"{entry.Scope}/{entry.Reference}", Details: JsonSerializer.SerializeToElement(entry, Json), At: entry.At));
     }
 
     /// <summary>Newest entries first, optionally only those of one scope.</summary>

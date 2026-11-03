@@ -629,10 +629,10 @@ public sealed class DeviceLoginExecutorTests
     }
 
     [Fact]
-    public async Task Poller_pauses_for_the_recheck_interval_when_the_server_does_not_map_device_login()
+    public async Task Poller_stops_for_the_process_when_the_server_does_not_map_device_login()
     {
-        // A monolith maps no device-login route (AGT-3366). The host logged a
-        // refusal every two seconds; it now logs once and re-checks hourly.
+        // A server without the device-login routes says so once (AGT-3366); the
+        // host logs one line and stops polling it until it restarts (AGT-3432).
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 1, 8, 0, 0, TimeSpan.Zero));
         var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -650,26 +650,70 @@ public sealed class DeviceLoginExecutorTests
             using var client = new TaskServerClient(http, "runner-a");
             var logs = new List<string>();
             using var stop = new CancellationTokenSource();
+
+            await new DeviceLoginPoller(client, line => { lock (logs) logs.Add(line); }, directory, clock: clock)
+                .RunAsync(stop.Token).WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(1, Volatile.Read(ref claims));
+            lock (logs)
+            {
+                Assert.Single(logs, line => line.Contains("device-login stopped", StringComparison.Ordinal));
+                Assert.DoesNotContain(logs, line => line.Contains("poll failed", StringComparison.Ordinal));
+            }
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Poller_backs_off_while_the_claim_fails_and_returns_to_two_seconds_after_an_answer()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 8, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var claims = 0;
+            var answered = 0;
+            using var http = new HttpClient(new Handler(_ =>
+            {
+                Interlocked.Increment(ref claims);
+                return Task.FromResult(Volatile.Read(ref answered) == 1
+                    ? new HttpResponseMessage(HttpStatusCode.NoContent)
+                    : new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                    {
+                        Content = JsonContent.Create(new { error = "authentication-required", message = "refused" }),
+                    });
+            })) { BaseAddress = new Uri("https://studio.test") };
+            using var client = new TaskServerClient(http, "runner-a");
+            var logs = new List<string>();
+            using var stop = new CancellationTokenSource();
             var run = new DeviceLoginPoller(client, line => { lock (logs) logs.Add(line); }, directory, clock: clock)
                 .RunAsync(stop.Token);
 
+            async Task AdvanceAsync(int seconds, int expectedClaims)
+            {
+                clock.Advance(TimeSpan.FromSeconds(seconds));
+                await WaitUntilAsync(() => Volatile.Read(ref claims) >= expectedClaims);
+                await Task.Delay(20);
+                Assert.Equal(expectedClaims, Volatile.Read(ref claims));
+            }
+
             await WaitUntilAsync(() => Volatile.Read(ref claims) == 1);
-            for (var poll = 0; poll < 5; poll++)
-            {
-                clock.Advance(DeviceLoginPoller.PollInterval);
-                await Task.Delay(20);
-            }
-            Assert.Equal(1, Volatile.Read(ref claims));
-            for (var attempt = 0; attempt < 100 && Volatile.Read(ref claims) < 2; attempt++)
-            {
-                clock.Advance(FeatureRouteAbsence.RecheckInterval);
-                await Task.Delay(20);
-            }
-            Assert.True(Volatile.Read(ref claims) >= 2);
+            await AdvanceAsync(2, 1);   // backed off: not polled after two seconds
+            await AdvanceAsync(2, 2);   // polled after four
+            await AdvanceAsync(4, 2);
+            await AdvanceAsync(4, 3);   // then after eight
+            Volatile.Write(ref answered, 1);
+            await AdvanceAsync(16, 4);  // answered
+            await AdvanceAsync(2, 5);   // back to two seconds
+
             lock (logs)
             {
-                Assert.Single(logs, line => line.Contains("device-login paused", StringComparison.Ordinal));
-                Assert.DoesNotContain(logs, line => line.Contains("poll failed", StringComparison.Ordinal));
+                Assert.Equal(new[]
+                {
+                    "device-login poll failed: status=401 code=authentication-required; backing off up to 60s, repeats are counted",
+                    "device-login poll recovered after 3 failed polls (last: status=401 code=authentication-required x3)",
+                }, logs.Where(line => line.Contains(" poll ", StringComparison.Ordinal)));
             }
             stop.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);

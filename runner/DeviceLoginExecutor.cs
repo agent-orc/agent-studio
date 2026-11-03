@@ -291,8 +291,8 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
     string stateDir, string codexBinary = "codex", string claudeBinary = "claude", TimeProvider? clock = null,
     ProviderAuthProbe? authProbe = null)
 {
-    /// <summary>Claim poll and running-session state poll interval.</summary>
-    internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+    /// <summary>Claim poll interval while the claim answers, and the running-session state poll interval.</summary>
+    internal static readonly TimeSpan PollInterval = ClaimPollPacer.BaseInterval;
 
     /// <summary>Bounds the completion report on its own, so it still goes out during shutdown.</summary>
     internal static readonly TimeSpan CompletionTimeout = TimeSpan.FromSeconds(10);
@@ -302,19 +302,20 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
     public async Task RunAsync(CancellationToken ct)
     {
         RestoreClaudeToken();
-        var absence = new FeatureRouteAbsence("device-login", log);
+        var pacer = new ClaimPollPacer("device-login", log);
         while (!ct.IsCancellationRequested)
         {
+            TimeSpan delay;
             try
             {
                 var claim = await client.ClaimDeviceLoginAsync(ct);
-                absence.RecordAnswered();
+                delay = pacer.RecordAnswered();
                 if (claim is not null) await ServeAsync(claim, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
-            catch (Exception ex) when (absence.TryRecordAbsent(ex)) { }
-            catch (Exception ex) { log($"device-login poll failed: {ex.GetType().Name}"); }
-            await Task.Delay(absence.NextDelay(PollInterval), _clock, ct);
+            catch (Exception ex) { delay = pacer.RecordFailed(ex); }
+            if (pacer.Stopped) return;
+            await Task.Delay(delay, _clock, ct);
         }
     }
 

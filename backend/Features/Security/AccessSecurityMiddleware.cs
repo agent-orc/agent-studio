@@ -20,6 +20,9 @@ public sealed class AccessSecurityMiddleware
     public const string RequestAccessItem = "AccessSecurity.RequestAccess";
     public const string AttributionClientIdItem = "AccessSecurity.AttributionClientId";
     private const string TaskResolutionItem = "AccessSecurity.TaskResolution";
+    private const string AuditTargetItem = "AccessSecurity.AuditTarget";
+    /// <summary>Bodies above this size are digested by length only, without buffering them.</summary>
+    private const long MaxDigestedBodyBytes = 16L * 1024 * 1024;
     private const string SkipTaskResolutionItem = "AccessSecurity.SkipTaskResolution";
 
     private readonly RequestDelegate _next;
@@ -225,10 +228,14 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
-        // Every call a service-account or API-token bearer makes is audited,
-        // refused calls included.
+        // Every call a service-account, API-token, or operator session bearer
+        // makes is audited, refused calls included. An operator session runs
+        // inside its actor scope, so every timeline event and audit entry the
+        // request writes names the session (security model SM-1).
         context.Items[ServiceAccountPrincipalItem] = serviceAccount;
         context.Items["ClientId"] = serviceAccount.ActorId;
+        var parameterDigest = await ParameterDigestAsync(context.Request, path);
+        using var operatorScope = serviceAccount.Operator is { } operatorActor ? OperatorActorScope.Enter(operatorActor) : null;
         var faulted = false;
         try
         {
@@ -242,7 +249,8 @@ public sealed class AccessSecurityMiddleware
         finally
         {
             _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path,
-                faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode);
+                faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode,
+                AuditTarget(context, path), parameterDigest);
         }
     }
 
@@ -618,11 +626,21 @@ public sealed class AccessSecurityMiddleware
             await Reject(context, 403, "human-session-required", "A service account has no Studio session.");
             return;
         }
+        // An operator session never administers access, reads or writes the
+        // audit trail, takes Owner-reserved installation changes, or resolves
+        // a secret value, whatever its bindings say.
+        if (account.Operator is not null && OperatorDeniedPermission(required.Permission))
+        {
+            await Reject(context, 403, "operator-route-denied",
+                "An operator agent session cannot administer access, change the audit trail, or resolve secrets.");
+            return;
+        }
         var safeMethod = IsSafe(context.Request.Method, path);
         var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.ServiceAccount, account.AccountId);
         context.Items[SkipTaskResolutionItem] = (safeMethod || account.Origin != ServiceAccountOrigins.ApiToken)
             && WorkspaceBindingsDecide(subject, bindings);
         var target = await TargetAsync(context, path, required, safeMethod);
+        context.Items[AuditTargetItem] = target;
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
         if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
@@ -660,6 +678,55 @@ public sealed class AccessSecurityMiddleware
         context.Items[HumanPrincipalItem] = new HumanPrincipal(user, session);
         context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
         await _next(context);
+    }
+
+    private static bool OperatorDeniedPermission(string permission)
+        => permission is IamPermissions.AccessRead or IamPermissions.AccessManage or IamPermissions.WorkspaceAdminister
+            or IamPermissions.SecretsResolve;
+
+    /// <summary>
+    /// What a bearer request addressed, for its audit entry: the task a
+    /// single-task route names and the project(s) it resolved to, or the
+    /// workspace for an installation-wide route.
+    /// </summary>
+    private static string? AuditTarget(HttpContext context, string path)
+    {
+        var target = context.Items[AuditTargetItem] as PermissionTarget;
+        var projects = target?.Projects.OfType<string>().Where(project => project.Length > 0).ToArray() ?? [];
+        var scope = projects.Length > 0 ? "project:" + string.Join(",", projects)
+            : target?.Scope == ProjectRouteScope.WorkspaceWide ? "workspace"
+            : null;
+        string? task = null;
+        if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase) && IsParameterSegment(context.GetEndpoint(), 2))
+            task = "task:" + Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]);
+        return scope is null ? task : task is null ? scope : scope + "/" + task;
+    }
+
+    /// <summary>
+    /// <c>sha256:</c> over the method, path, query, and body of a bearer
+    /// request. The body stays readable for the handler; a body above
+    /// <see cref="MaxDigestedBodyBytes"/> contributes only its length.
+    /// </summary>
+    private static async Task<string> ParameterDigestAsync(HttpRequest request, string path)
+    {
+        using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        hash.AppendData(System.Text.Encoding.UTF8.GetBytes($"{request.Method.ToUpperInvariant()}\n{path}\n{request.QueryString.Value}\n"));
+        if (request.ContentLength is > MaxDigestedBodyBytes)
+            hash.AppendData(System.Text.Encoding.UTF8.GetBytes($"body-length:{request.ContentLength}"));
+        else if (request.ContentLength is > 0 || request.Headers.TransferEncoding.Count > 0)
+        {
+            request.EnableBuffering();
+            var buffer = new byte[81920];
+            int read;
+            long total = 0;
+            while ((read = await request.Body.ReadAsync(buffer, request.HttpContext.RequestAborted)) > 0 && total <= MaxDigestedBodyBytes)
+            {
+                hash.AppendData(buffer, 0, read);
+                total += read;
+            }
+            request.Body.Position = 0;
+        }
+        return "sha256:" + Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
     private static StudioUser ProjectedUser(
@@ -835,6 +902,13 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPut(method) && path.EndsWith("/quota/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsGet(method) && (path.EndsWith("/cli-update", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith("/provider-comparison", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
+            // Device sign-in and Git setup (HostSetupEndpoints): the host claims a session and reports on it.
+            var segments = path.Split('/');
+            if (segments.Length >= 7 && segments[5].Equals("device-login", StringComparison.OrdinalIgnoreCase)
+                && (HttpMethods.IsGet(method) || HttpMethods.IsPost(method))) return RunnerScopes.Claim;
+            if (segments.Length >= 7 && segments[5].Equals("git-setups", StringComparison.OrdinalIgnoreCase)
+                && HttpMethods.IsPost(method))
+                return segments.Length == 7 ? RunnerScopes.Claim : RunnerScopes.Events;
         }
         if (HttpMethods.IsGet(method) && (path is "/api/v1/projects" or "/api/v1/artifact-limits"
             || path.StartsWith("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;

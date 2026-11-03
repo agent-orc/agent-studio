@@ -79,7 +79,12 @@ builder.Services.AddHttpClient<AgentStudio.TaskServer.AttemptCredentials.IReposi
     AgentStudio.TaskServer.AttemptCredentials.GitHubAppTokenIssuer>(client => client.Timeout = TimeSpan.FromSeconds(20));
 // SM-11: tokens of finished attempts are revoked even when their host never tears down.
 builder.Services.AddHostedService<AgentStudio.TaskServer.AttemptCredentials.AttemptCredentialCompletionSweep>();
-builder.Services.AddSingleton<DeviceLoginSessions>();
+builder.Services.AddSingleton(services =>
+{
+    var store = services.GetRequiredService<TaskServerStore>();
+    return new DeviceLoginSessions(services.GetRequiredService<TimeProvider>(), async (request, actor, ct) =>
+        _ = await store.RecordStudioProviderAuthEventAsync(request, actor, ct));
+});
 builder.Services.AddHostedService<DeviceLoginAuditSweep>();
 builder.Services.AddSingleton<RunnerGitSetupStore>();
 builder.Services.AddHttpClient("github-app", client => client.Timeout = TimeSpan.FromSeconds(20))

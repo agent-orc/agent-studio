@@ -121,7 +121,7 @@
               (click)="toggleTheme()">
         <app-studio-icon [name]="theme() === 'light' ? 'moon' : 'sun'" [size]="14"></app-studio-icon>
       </button>
-      <button type="button" class="studio-titlebar__iconbtn" data-testid="studio-open-stalls" [attr.aria-label]="orchestratorFeed.openStallCount() + ' open stalls'" cacTooltip="Open stall events" (click)="openFeed()">
+      <button type="button" class="studio-titlebar__iconbtn" data-testid="studio-open-stalls" data-nav-inline-from="desktop" [attr.aria-label]="orchestratorFeed.openStallCount() + ' open stalls'" cacTooltip="Open stall events" (click)="openFeed()">
         <app-studio-icon name="bell" [size]="14"></app-studio-icon> @if (orchestratorFeed.openStallCount()) { <strong class="studio-titlebar__stall-count">{{ orchestratorFeed.openStallCount() }}</strong> }
       </button>
     </div>

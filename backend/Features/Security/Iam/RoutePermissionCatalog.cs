@@ -193,10 +193,10 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.RunnerService, "/api/auth/runner");
         Add("R", IamPermissions.AccessRead,
             "/api/auth/users/**", "/api/auth/runners/**", "/api/auth/runner-enrollments/**", "/api/auth/api-tokens/**",
-            "/api/auth/iam/**");
+            "/api/auth/iam/**", "/api/auth/audit/**");
         Add("W", IamPermissions.AccessManage,
             "/api/auth/users/**", "/api/auth/invitations", "/api/auth/runners/**", "/api/auth/runner-enrollments/**",
-            "/api/auth/api-tokens/**", "/api/auth/iam/**");
+            "/api/auth/api-tokens/**", "/api/auth/iam/**", "/api/auth/audit/**");
         // First-run setup writes Git credentials and probes repositories for
         // the installation; the checklist is the Owner's.
         Add("*", IamPermissions.WorkspaceAdminister, "/api/first-run/**");
@@ -237,6 +237,10 @@ public static class RoutePermissionCatalog
         // The App key can reach every repository; connecting it is the Owner's.
         Add("*", IamPermissions.WorkspaceAdminister, "/api/v1/management/github-app", "/api/v1/management/github-app/**");
         Add("GET", IamPermissions.WorkspaceAdminister, "/api/v1/management/credential-inventory");
+        // A device sign-in authorizes a host's provider account; a Git setup hands a host a repository credential.
+        Add("*", IamPermissions.WorkspaceAdminister,
+            "/api/v1/management/device-logins", "/api/v1/management/device-logins/**",
+            "/api/v1/management/runner-git-setups", "/api/v1/management/runner-git-setups/**");
         Add("*", IamPermissions.WorkspaceOperate, "/api/v1/management/**");
         // Studio's browser reads installation-wide declared topology, even when
         // a project scope is requested. Runner credentials do not call it.

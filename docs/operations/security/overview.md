@@ -475,6 +475,40 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   service-account, token, and legacy role change with the acting user and the
   time, append-only.
 
+### Operator agent identity (security model SM-1)
+
+The operator agent, the interactive coding agent session the Owner runs to
+operate Studio, has its own identity instead of acting through the Owner's
+account ([security model Dossier](../../security-model/index.html), decisions
+D1, D4, and D11).
+
+- The principal kind `operator-agent` is built on the service-account model:
+  a service account of origin `operator-agent` (id `opa_*`) with role bindings
+  like any service account, but no `sat.*` token. Its credentials are child
+  sessions. The Owner creates the agent and starts each session in Settings →
+  Access → Operator agents (`/api/auth/iam/operator-agents`).
+- Each session receives its own `oas.*` bearer, returned once and stored only
+  as a hash. A session lasts 1 to 8 hours (default 8). Only an active Owner
+  starts, renews (again at most 8 hours from the renewal), or revokes it;
+  disabling the agent revokes every session. A session also stops working when
+  the Owner who started it is no longer an active Owner.
+- Every request made with a session token, every control plane audit entry it
+  causes, and every card timeline event written during it carries the actor
+  `operator-agent:<id>/session:<sid>` and `delegatedBy: human:<owner id>`. The
+  middleware opens an ambient operator scope for the request, so a handler
+  that passes another actor still writes the session as actor; a non-human
+  actor the handler named is kept as `reportedActor`. Queued batch moves keep
+  the scope. The Owner never appears as the actor of a session's action.
+- A session token is refused (403) on every `/api/auth/*` route (access
+  administration, role bindings, which are today's grants, and the audit view
+  and verification), on the versioned Task Server plane `/api/v1/*`, and on any
+  route that needs `access.*`, `workspace.administer`, or `secrets.resolve`,
+  whatever its bindings say. The standalone Task Server has no operator
+  principal; operator sessions act only through the Studio API.
+- The operator agent runs on the Owner's machine under its own OS user,
+  without the Owner's SSH agent, keys, or credential files (D11). See the
+  [operator agent setup guide](../setup/operator-agent.md).
+
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,
 `runner.events`, `runner.artifacts`, and `runner.completion`. Reading the prompt
 and the attachments of a claimed task is covered by `runner.claim` and needs
@@ -482,8 +516,21 @@ the task's live lease. Lease requests bind the wire `runnerId` to the
 authenticated service identity. A Runner credential on a route this server
 does not map, such as a standalone Task Server feature route called against
 the monolith, gets `404` with code `route-not-mapped`; the host then pauses
-that poll loop for an hour and logs it once. Anonymous callers still get `401`.
+that poll loop for an hour and logs it once. The device sign-in and Git setup
+claim loops instead stop for the life of the host process. Anonymous callers
+still get `401`.
 `HostRouteClassificationTests` classifies every route the host client calls.
+
+The monolith maps the device sign-in (`/api/v1/management/device-logins`,
+`/api/v1/runners/{id}/device-login/*`) and Git setup
+(`/api/v1/management/runner-git-setups`, `/api/v1/runners/{id}/git-setups/*`)
+routes itself (AGT-3432). The management routes are Owner-only. A host claims
+with its own credential: `runner.claim` for the claims and the device sign-in
+reports, `runner.events` for the Git setup reports. An empty queue answers
+`204`. While a claim poll fails, the host backs off from 2 seconds up to
+1 minute. It logs the status and refusal code once for each distinct failure,
+logs the repeat count when the failure changes or the poll recovers, and goes
+back to 2 seconds after an answer.
 
 ### Runner credential binding (SM-9)
 
@@ -705,6 +752,58 @@ other service-account calls go to `service-account-audit.jsonl` with the same
 fields and the actor `service-account:<id>`. Refused calls are recorded too. Token values
 and query strings are omitted from that audit. IAM changes go to
 `iam-audit.jsonl`.
+
+### Control plane audit chain (security model SM-1)
+
+One writer records the control plane audit trail in
+`<TaskRepository>/.security/control-plane-audit.jsonl` (D4 option A2). Each
+line carries `sequence`, `at`, `stream` (`iam`, `service-account`,
+`api-token`, `operator-agent`, `secret`, `run`), `actor`, `session`,
+`delegatedBy`, `operation` (route or operation), `target`, `parameterDigest`
+(`sha256:` over method, path, query, and body for bearer requests; over the
+change details for IAM changes), `outcome`, the producer's full legacy record
+in `details`, `previousHash`, and `hash`. The hash is SHA-256 over the stored
+line without its `hash` member, so any changed byte, deleted, inserted, or
+reordered line breaks the chain. The writer never edits or removes a line.
+The IAM, service-account, API-token, secret, and run audits are routed
+through it; their per-stream files above stay as read projections for the
+existing readers.
+
+Forwarding: `AuditSinkForwarder` copies every entry, unchanged and in order,
+to the configured off-host append-only sink and records the acknowledged
+position in `control-plane-audit.forwarded.json`. It wakes on each append, so
+entries normally leave within a second. The local chain is the queue: the
+position moves only after the sink acknowledged a batch, so an unreachable
+sink loses nothing. When the oldest unforwarded entry is older than
+`ControlPlaneAudit:Sink:AlertAfterSeconds` (default 60) an acute
+`audit-sink-unreachable` alert goes to the log and the operator feed; it
+clears when the sink has caught up.
+
+| Setting | Meaning |
+| --- | --- |
+| `ControlPlaneAudit:Sink:Kind` | `none` (default) or `https`. |
+| `ControlPlaneAudit:Sink:Url` | Base URL of the sink; HTTPS required, plain HTTP only on loopback for a local relay. |
+| `ControlPlaneAudit:Sink:AppendTokenFile` | File with the append-only bearer; read per call, so rotation needs no restart. |
+| `ControlPlaneAudit:Sink:ReadTokenFile` | Optional separate read bearer for verification. |
+| `ControlPlaneAudit:Sink:PollSeconds` | Fallback poll interval (default 5). |
+| `ControlPlaneAudit:VerifyIntervalMinutes` | Verification interval (default 15). |
+
+The HTTPS adapter sends `POST {url}/entries` with an NDJSON body of stored
+lines and reads `GET {url}/entries?from=<sequence>&limit=<n>` back. The
+endpoint, or the object store with write-once retention behind it, must
+accept a sequence once, ignore a repeated identical sequence, and refuse
+every change or deletion. Neither Studio nor the operator agent holds a
+credential that can delete there.
+
+Verification: `ControlPlaneAuditVerifier` recomputes the chain, checks it
+against the highest sequence this process wrote and the forwarded position,
+and compares every forwarded entry with the sink. A broken chain, a sink
+that lacks a forwarded entry, or an entry that differs raises the acute
+alert `audit-chain-broken`, `audit-sink-gap`, or `audit-sink-mismatch`. A
+chain rewritten with valid hashes on the Studio host still fails against the
+sink. The Owner sees sessions, their entries, the verification state, and
+forwarding progress in Settings → Access → Operator activity
+(`GET /api/auth/audit/operator-activity`, `POST /api/auth/audit/verify`).
 
 Networked project repository candidate changes are recorded in the registry's
 `RepositoryAudit` list in the same atomic write as the project URL records.
