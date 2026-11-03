@@ -26,8 +26,12 @@ export class BatchDetailComponent {
     return state.pushWaits?.find(wait => wait.jobId === this.task().id)
       ?? (state.pushWait?.jobId === this.task().id ? state.pushWait : null);
   });
-  readonly unavailable = computed(() => this.gate.unavailable(this.project())());
-  readonly member = computed(() => batchMemberFor(this.state(), this.task().taskKey, this.task().key, this.task().displayKey, this.task().id));
+  /** AGT-3463: drives the whole section; null while loading, when disabled, or for a non-member. */
+  readonly member = computed(() => {
+    const state = this.state();
+    if (!state || state.plan.decision === 'disabled') return null;
+    return batchMemberFor(state, this.task().taskKey, this.task().key, this.task().displayKey, this.task().id);
+  });
   readonly record = computed(() => {
     const batches = this.state()?.batches;
     const batchId = this.member()?.batchId;
