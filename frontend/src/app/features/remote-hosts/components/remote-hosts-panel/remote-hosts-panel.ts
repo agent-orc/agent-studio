@@ -27,15 +27,17 @@ import {
   type PhysicalHostGroup,
 } from '../../models/physical-host-group';
 import { stableReleaseLabel } from '../../models/host-release-drift';
-import { NotificationComponent } from '../../../../components/notification/notification.component';
-import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
-import { RunnerInfrastructureFailuresComponent } from '../runner-infrastructure-failures/runner-infrastructure-failures';
 import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
 import { ExecutionInfrastructureComponent } from '../execution-infrastructure/execution-infrastructure';
 import { AuthSessionState } from '../../../../services/auth.service';
 import { StructureViewComponent } from '../../../structure/structure-view/structure-view.component';
 import { EnvironmentHeaderComponent } from '../environment-header/environment-header';
 import { OperationalStallsComponent } from '../operational-stalls/operational-stalls';
+import { EnvironmentHostListComponent } from '../environment-host-list/environment-host-list';
+import { EnvironmentAttentionComponent } from '../environment-attention/environment-attention';
+import { buildEnvironmentAttention } from '../../models/environment-attention';
+import { OrchestratorFeedStore } from '../../../orchestrator/state/orchestrator-feed.store';
+import { hostReadiness } from '../../models/host-readiness';
 
 /**
  * Execution Hosts settings page (AGT-1921). The local
@@ -52,15 +54,14 @@ import { OperationalStallsComponent } from '../operational-stalls/operational-st
     RemoteHostCardComponent,
     AddHostWizardComponent,
     RunnerSetupDialogComponent,
-    NotificationComponent,
     PurgeRetiredHostsDialogComponent,
-    BetterCandidateLinesComponent,
-    RunnerInfrastructureFailuresComponent,
     DeploymentCheckpointsComponent,
     ExecutionInfrastructureComponent,
     StructureViewComponent,
     EnvironmentHeaderComponent,
     OperationalStallsComponent,
+    EnvironmentHostListComponent,
+    EnvironmentAttentionComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',
@@ -71,6 +72,8 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   private readonly tasks = inject(TaskService);
   private readonly reviewQueue = inject(ReviewQueueService);
   private readonly auth = inject(AuthSessionState);
+  private readonly credentials = inject(CredentialInventoryService);
+  private readonly feed = inject(OrchestratorFeedStore);
   private readonly tableState = new RemoteHostTableState();
   readonly hosts = this.service.hosts;
   readonly infrastructureReload = signal(0);
@@ -82,7 +85,11 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly wizardOpen = signal(false);
   readonly purgeRetiredOpen = signal(false);
   readonly showRetired = signal(false);
-  readonly view = signal<'list' | 'map'>('list');
+  readonly view = signal<'list' | 'map' | 'installation' | 'history'>('list');
+  readonly selectedId = signal<string | null>(null);
+  readonly environment = signal<EnvironmentSnapshot | null>(null);
+  readonly environmentMap = computed(() => buildEnvironmentMap(
+    this.hostGroups(), this.environment(), host => this.boardSlots(host), this.credentials.inventory()));
   readonly setupHost = signal<RemoteHost | null>(null);
   readonly pendingConfirmation = signal<{ kind: 'retire' | 'delete'; host: RemoteHost } | null>(null);
   readonly confirmationTitle = computed(() => {
@@ -128,8 +135,39 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly total = computed(() => this.hostGroups().length);
   readonly roleCount = computed(() => this.hostGroups()
     .reduce((total, group) => total + group.roles.length, 0));
-  readonly onlineCount = computed(() => this.hostGroups()
-    .filter(group => group.machine.status === 'online').length);
+  readonly gateWorkers = computed(() => this.environment()?.gateWorkers ?? []);
+  readonly machineCount = computed(() => this.hostGroups().length + this.gateWorkers()
+    .filter(gate => !this.hostGroups().some(group => group.name === gate.name)).length);
+  readonly reportingCount = computed(() => this.machineCount() - this.degradedCount()
+    - this.offlineCount() - this.notEnrolledCount());
+  readonly degradedCount = computed(() => this.hostGroups().filter(group =>
+    !this.groupNotEnrolled(group) && (group.machine.status === 'degraded' || group.machine.status === 'draining')).length);
+  readonly offlineCount = computed(() => this.hostGroups().filter(group =>
+    !this.groupNotEnrolled(group) && group.machine.status === 'offline').length);
+  readonly notEnrolledCount = computed(() => this.hostGroups().filter(group => group.roles.every(role =>
+    hostReadiness(role, this.now()).state === 'not-enrolled')).length);
+  readonly attention = computed(() => buildEnvironmentAttention({ hosts: this.hosts(),
+    stalls: this.feed.openStalls(), identities: this.identityDiagnostics(),
+    failures: this.service.runnerInfrastructureFailures(), review: this.reviewQueueSnapshot(), now: this.now() }));
+  readonly orderedGroups = computed(() => [...this.hostGroups()].sort((a, b) =>
+    Number(this.groupNeedsAttention(b)) - Number(this.groupNeedsAttention(a)) || a.name.localeCompare(b.name)));
+  readonly selectedGroup = computed(() => this.hostGroups().find(group => group.id === this.currentSelection()) ?? null);
+  readonly selectedHost = computed(() => this.hostGroups().flatMap(group => group.roles)
+    .find(host => host.id === this.currentSelection()) ?? this.selectedGroup()?.machine ?? null);
+  readonly selectedGate = computed(() => this.gateWorkers().find(gate => `gate:${gate.id}` === this.currentSelection()) ?? null);
+  readonly selectedRepositoryAccess = computed(() => {
+    const selected = this.currentSelection();
+    const id = this.selectedGroup()?.roles[0]?.id ?? selected;
+    return this.environmentMap().machines.flatMap(machine => machine.nodes)
+      .find(node => node.hostId === id)?.repositoryAccess ?? 'unknown';
+  });
+  readonly currentSelection = computed(() => {
+    if (this.selectedId()) return this.selectedId();
+    const firstIssueHost = this.attention().find(cause => cause.hostId)?.hostId;
+    const issueGroup = this.orderedGroups().find(group => group.roles.some(role => role.id === firstIssueHost));
+    return issueGroup?.id ?? this.orderedGroups()[0]?.id
+      ?? (this.gateWorkers()[0] ? `gate:${this.gateWorkers()[0].id}` : null);
+  });
   readonly boardRunningTruth = computed(() =>
     deriveBoardRunningTruth(this.tasks.grouped().progress));
   readonly readyCandidateTasks = computed(() => this.tasks.grouped().ready
@@ -158,7 +196,10 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   });
   ngOnInit(): void {
     this.tableState.hydrate();
-    try { this.view.set(localStorage.getItem(this.viewStorageKey()) === 'map' ? 'map' : 'list'); }
+    try {
+      const stored = localStorage.getItem(this.viewStorageKey());
+      this.view.set(stored === 'map' || stored === 'installation' || stored === 'history' ? stored : 'list');
+    }
     catch { this.view.set('list'); }
     this.service.ensureLoaded();
     this.service.refreshInteractiveUsage();
@@ -178,12 +219,53 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   private viewStorageKey(): string {
     return `atp.environment.view.v1.${this.auth.status()?.user?.id ?? 'local'}`;
   }
-  setView(view: 'list' | 'map'): void {
+  setView(view: 'list' | 'map' | 'installation' | 'history'): void {
     this.view.set(view);
     try { localStorage.setItem(this.viewStorageKey(), view); }
     catch { return; }
   }
+  selectMapHost(id: string): void {
+    const group = this.hostGroups().find(item => item.roles.some(role => role.id === id));
+    const gate = this.gateWorkers().find(worker => worker.id === id);
+    this.setView('list');
+    this.selectedId.set(group?.id ?? (gate ? `gate:${gate.id}` : id));
+  }
   reconnect(id: string): void { this.service.reconnect(id); }
+  selectHost(id: string): void { this.selectedId.set(id); }
+  backToList(): void { this.selectedId.set(null); }
+  onDetailKeydown(event: KeyboardEvent): void {
+    if ((event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"]')) return;
+    const owner = event.currentTarget as HTMLElement;
+    const step = 38;
+    let target: number;
+    switch (event.key) {
+      case 'ArrowDown': target = owner.scrollTop + step; break;
+      case 'ArrowUp': target = owner.scrollTop - step; break;
+      case 'PageDown': target = owner.scrollTop + owner.clientHeight; break;
+      case 'PageUp': target = owner.scrollTop - owner.clientHeight; break;
+      case 'Home': target = 0; break;
+      case 'End': target = owner.scrollHeight; break;
+      default: return;
+    }
+    event.preventDefault(); event.stopPropagation(); owner.scrollTop = target;
+  }
+  groupNeedsAttention(group: PhysicalHostGroup): boolean {
+    return group.roles.some(role => role.status === 'degraded' || role.status === 'offline'
+      || role.taskServerConnection?.status === 'unreachable' || role.runnerLink?.state === 'down');
+  }
+  groupNotEnrolled(group: PhysicalHostGroup): boolean {
+    return group.roles.every(role => hostReadiness(role, this.now()).state === 'not-enrolled');
+  }
+  slotFn = (host: RemoteHost): number => this.boardSlots(host);
+  selectedRoles(): readonly RemoteHost[] {
+    const group = this.selectedGroup();
+    const host = this.selectedHost();
+    return group ? group.roles : host ? [host] : [];
+  }
+  selectedRoleSlots(): Readonly<Record<string, number>> {
+    return Object.fromEntries(this.selectedRoles().map(role => [role.id, this.boardSlots(role)]));
+  }
+  selectedSlots(): number { return this.selectedRoles().reduce((sum, role) => sum + this.boardSlots(role), 0); }
   linkFailureMessage(host: RemoteHost): string { return host.runnerLink?.lastError ?? 'The runner heartbeat is late and recovery is active.'; }
 
   boardSlots(host: RemoteHost): number {
@@ -219,7 +301,13 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.tableState.setExpanded(hostId, expanded);
   }
 
-  toggleRetired(): void { this.showRetired.update(value => !value); }
+  toggleRetired(): void {
+    this.showRetired.update(value => !value);
+    if (this.selectedId() && !this.hostGroups().some(group =>
+      group.id === this.selectedId() || group.roles.some(role => role.id === this.selectedId()))) {
+      this.selectedId.set(null);
+    }
+  }
 
   roleSlots(group: PhysicalHostGroup): Readonly<Record<string, number>> { return Object.fromEntries(group.roles.map(role => [role.id, this.boardSlots(role)])); }
 

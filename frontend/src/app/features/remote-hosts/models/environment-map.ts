@@ -46,6 +46,7 @@ export interface EnvironmentConnection {
   to: string;
   type: 'outbound claim link' | 'reverse tunnel' | 'SSH gate transport' | 'Git remote';
   health: 'ok' | 'warn' | 'unknown';
+  label?: string;
 }
 
 export interface EnvironmentMap { machines: readonly EnvironmentMachine[]; connections: readonly EnvironmentConnection[] }
@@ -119,9 +120,12 @@ export function buildEnvironmentMap(
     const route = snapshot?.routes?.find(item => group.roles.some(host => host.clientId === item.runnerId));
     const link = group.roles.find(host => host.runnerLink)?.runnerLink;
     const claim = group.roles.map(host => host.taskServerConnection).find(connection => connection?.observedAt);
-    if (route || claim) connections.push({ id: `claim:${group.id}`, from: controlId, to: group.id,
+    if (route || claim) connections.push({ id: `claim:${group.id}`, from: group.id, to: controlId,
       type: 'outbound claim link', health: claim?.status === 'reachable' ? 'ok'
-        : claim?.status === 'unreachable' ? 'warn' : 'unknown' });
+        : claim?.status === 'unreachable' ? 'warn' : 'unknown',
+      label: claim?.status === 'unreachable'
+        ? `${claim.lastError || 'Route unavailable'} · ${group.roles.length} ${group.roles.length === 1 ? 'role' : 'roles'}`
+        : claim?.status === 'reachable' ? 'Healthy' : 'No recent contact' });
     if (route?.route === 'reverse-ssh' || link?.kind === 'ssh-reverse')
       connections.push({ id: `tunnel:${group.id}`, from: group.id, to: controlId,
         type: 'reverse tunnel', health: link?.state === 'up' ? 'ok' : link ? 'warn' : 'unknown' });

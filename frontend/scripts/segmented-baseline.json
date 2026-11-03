@@ -220,12 +220,6 @@
         "8602e31cf96dd928"
       ]
     },
-    "src/app/features/remote-hosts/components/remote-hosts-panel/remote-hosts-panel.html": {
-      "reason": "Show retired is an independent visibility toggle.",
-      "signatures": [
-        "df07be96dd69b785"
-      ]
-    },
     "src/app/features/orchestrator/components/prompt-catalogue-nav/prompt-catalogue-nav.component.html": {
       "reason": "Prompt catalogue rows navigate a tree.",
       "signatures": [

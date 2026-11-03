@@ -1,0 +1,23 @@
+@if (causes().length) {
+  <section class="attention" data-testid="environment-attention" aria-label="Open environment issues">
+    <button type="button" class="attention__summary" [attr.aria-expanded]="expanded()" (click)="expanded.set(!expanded())">
+      <app-disclosure-marker [open]="expanded()" />
+      <span class="attention__dot" aria-hidden="true"></span>
+      <strong>{{ causes().length }} open {{ causes().length === 1 ? 'issue' : 'issues' }}</strong>
+      <span class="attention__preview">{{ causes()[0].statement }}</span>
+    </button>
+    @if (expanded()) {
+      @for (cause of causes(); track cause.id) {
+        <div class="attention__cause" data-testid="environment-attention-cause">
+          <span class="attention__dot" aria-hidden="true"></span>
+          <span>{{ cause.statement }}</span>
+          <strong>{{ cause.count }}</strong>
+          <time [attr.title]="cause.since">{{ age(cause.since) }}</time>
+          @if (cause.action === 'reconnect' && cause.hostId) {
+            <button type="button" data-testid="remote-host-link-reconnect" (click)="reconnect.emit(cause.hostId)">Reconnect</button>
+          }
+        </div>
+      }
+    }
+  </section>
+}
