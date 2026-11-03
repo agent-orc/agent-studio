@@ -977,6 +977,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var store = factory.Services.GetRequiredService<BatchGateStore>();
 
         await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
         await pilot.TickAsync(CancellationToken.None);
         await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
 
