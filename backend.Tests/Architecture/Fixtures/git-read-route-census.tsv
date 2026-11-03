@@ -144,7 +144,7 @@
 /api/projects/{projectName}/batch-gate	free	-	-	-
 /api/projects/{projectName}/batch-gate/queue-stalls	free	-	-	-
 /api/projects/{projectName}/batch-gate/report	free	-	-	-
-/api/projects/{projectName}/batch-gate/state	reachable	gap	Pipeline	Pipeline reads from the Git fact store
+/api/projects/{projectName}/batch-gate/state	free	-	-	-
 /api/projects/{projectName}/build-profile	reachable	gap	Pipeline	Pipeline reads from the Git fact store
 /api/projects/{projectName}/chat-metadata	free	-	-	-
 /api/projects/{projectName}/checkout/status	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
