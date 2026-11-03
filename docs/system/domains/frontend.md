@@ -907,36 +907,27 @@ occur. It is not a claim about tunnel transfer time.
   uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
   the Orchestrator proxy and direct Task Server deployment share one frontend.
 - The Environment destination at `#/workspace/settings/environment` (old
-  `execution-hosts` and `remote-hosts` routes redirect here) offers a per-user
-  List/Map preference. The map combines runner roles with the read-only
-  management environment snapshot: control machine, configured gate host,
-  engine readiness, manifest routes, and gate slot usage. Unreported service
-  health, repository permission, and installation machines stay unknown.
-  Selecting a runner role opens its existing list detail and actions. Narrow
-  widths show the list. The list
-  uses one sortable machine row for status, host CPU load, activity, and release
-  identity. Its occupied/total slots sum the visible role rows. Matching role releases appear once on the machine row; differing
-  releases appear on their role rows. Coding and Review runner processes
-  advertised with the same host id are role sub-rows with their own slot
-  ceilings and lifecycle actions. The Review row states CPU quota in cores and
-  throttled share separately from host CPU load. Narrow action columns use an
-  overflow menu. Installation checkpoints map active project registry records
-  and group projects without a canonical repository behind a disclosure only in
-  the networked profile. The local profile labels Task Server installation,
-  repository registration, placement, and full backup checkpoints as not
-  applicable and makes no Task Server v1 checkpoint requests. The adjacent
-  infrastructure summary reads the API host, decision boundary, and remote SSH
-  gate identity, slots, and last observed reachability. Review roles require
-  read access and provider authentication, while coding roles require task-branch
-  push capability. Retired
-  roles are hidden until the compact history filter is enabled. The persisted
-  machine disclosure opens first to one-line summaries for identity,
-  connection, capabilities, capacity, project access, host work, and system
-  load; each section discloses its internals independently. Crash recovery
-  pending count occupies a status-bar slot so it cannot cover host actions.
-  Release drift stays paired with the release reported for the same runner
-  generation. An older drift response cannot mark a newer capability release
-  behind Stable.
+  `execution-hosts` and `remote-hosts` routes redirect here) persists a per-user
+  Hosts, Topology, Installation, or History view. Hosts opens with a grouped
+  attention row when current issues exist. Its cause count equals the visible
+  cause rows; repeated role failures group by capability and error code. The
+  machine list keeps one fixed-height row per machine with nested role and gate
+  worker rows, sorted with attention first. Selecting a machine or role opens a
+  flat detail pane with facts, local and relative contact time, and independent
+  identity, connection, capabilities, capacity, project access, work, and load
+  disclosures. The same pane carries setup, link, capacity, provider sign-in,
+  drain, and lifecycle controls. Retired roles remain behind the Show retired
+  filter. At narrow widths selection replaces the list and a Back control returns
+  to it. The Topology view keeps Task Server as the hub, labels connection health
+  in text as well as line style, and opens a selected machine in Hosts. The
+  Installation view owns checkpoints and infrastructure facts; the Task Server
+  observation is labelled as seen from the browser. History shows settled AI
+  Operator interventions and provider refusals without current-warning tint.
+  Runner roles and the read-only management environment snapshot remain the
+  underlying data sources. Unreported health, repository access, and placement
+  display as unknown. Review roles require read access and provider
+  authentication; coding roles require task-branch push capability. Release
+  drift stays paired with the release reported for the same runner generation.
 - The System prompts destination is the prompt registry and observability
   surface. Its overview groups runtime-step, orchestrator, drift, and framing
   templates, explains application and project pipeline override precedence, and

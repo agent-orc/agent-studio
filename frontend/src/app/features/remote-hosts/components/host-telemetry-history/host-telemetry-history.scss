@@ -11,11 +11,11 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--studio-spacing-2);
-  font-size: 11px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .telemetry__context { color: var(--studio-fg-dim); flex: 1 1 auto; }
-.telemetry__context--stale { color: var(--studio-fg-muted); opacity: 0.62; }
+.telemetry__context--stale { color: var(--studio-fg-dim); opacity: 0.62; }
 .telemetry__findings {
   display: flex;
   flex-wrap: wrap;
@@ -35,7 +35,7 @@
   overflow: hidden;
   background: var(--studio-bg-selected);
   color: var(--studio-fg-dim);
-  font-size: 10px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -66,7 +66,7 @@
 .telemetry__labels {
   align-items: center;
   color: var(--studio-fg-dim);
-  font-size: 10px;
+  font-size: var(--studio-font-size-sm);
 }
 .telemetry__plots {
   position: relative;
@@ -121,7 +121,7 @@
   box-shadow: var(--elevation-tooltip);
   color: var(--studio-tooltip-fg);
   font-family: var(--font-mono, monospace);
-  font-size: 10px;
+  font-size: var(--studio-font-size-sm);
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
   pointer-events: none;

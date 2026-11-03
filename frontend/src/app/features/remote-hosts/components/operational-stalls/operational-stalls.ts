@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject } from '@angular/core';
-import { OrchestratorFeedStore } from '../../../orchestrator';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input } from '@angular/core';
+import { OrchestratorFeedStore } from '../../../orchestrator/state/orchestrator-feed.store';
 import { StallInterventionsService } from '../../services/stall-interventions.service';
 import { StallInterventionReceiptComponent } from '../stall-intervention-receipt/stall-intervention-receipt';
 
@@ -15,12 +15,14 @@ const REFRESH_MS = 30_000;
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class OperationalStallsComponent {
+  readonly historyOnly = input(false);
   private readonly feed = inject(OrchestratorFeedStore);
   protected readonly interventions = inject(StallInterventionsService);
   readonly cases = computed(() => this.feed.openStalls().filter(item =>
     item.subject.startsWith('host:') || item.subject.startsWith('container:')));
   /** AGT-3207: receipts of host and container subjects without an open stall (recent first). */
   readonly settled = computed(() => {
+    if (this.historyOnly()) return this.interventions.rows().slice(0, RECENT_INTERVENTIONS);
     const open = new Set(this.cases().map(item => item.subject));
     return this.interventions.rows()
       .filter(row => !open.has(row.receipt.subject)

@@ -15,6 +15,9 @@ describe('EnvironmentHeaderComponent', () => {
     fixture.componentInstance.viewChange.subscribe(view => selected.push(view));
     const element = fixture.nativeElement as HTMLElement;
     expect(element.querySelector('h2')?.textContent).toBe('Environment');
+    expect(element.querySelectorAll('.segmented__option')).toHaveLength(4);
+    expect(element.textContent).toContain('Installation');
+    expect(element.textContent).toContain('History');
     (element.querySelector('[data-testid="environment-map-toggle"]') as HTMLButtonElement).click();
     expect(selected).toEqual(['map']);
     fixture.destroy();

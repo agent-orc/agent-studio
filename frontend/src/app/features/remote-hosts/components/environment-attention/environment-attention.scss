@@ -1,0 +1,12 @@
+:host { display: block; }
+.attention { background: var(--notify-warning-tint); color: var(--studio-fg); border-block: 1px solid var(--studio-border); }
+.attention__summary, .attention__cause { display: flex; align-items: center; gap: var(--studio-spacing-2); width: 100%; min-height: 38px; padding: var(--studio-spacing-2); color: inherit; font-size: var(--studio-font-size-md); }
+.attention__summary { border: 0; background: transparent; cursor: pointer; text-align: start; }
+.attention__summary:hover { background: var(--studio-bg-hover); }
+.attention__summary:focus-visible, .attention__cause button:focus-visible { outline: 2px solid var(--studio-accent); }
+.attention__preview { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.attention__dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--severity-warn); }
+.attention__cause { border-top: 1px solid var(--studio-border); }
+.attention__cause > span:nth-child(2) { flex: 1; min-width: 0; }
+.attention__cause time { color: var(--studio-fg-dim); white-space: nowrap; }
+.attention__cause button { border: 1px solid var(--studio-border-strong); background: transparent; color: inherit; padding: var(--studio-spacing-1) var(--studio-spacing-2); cursor: pointer; }

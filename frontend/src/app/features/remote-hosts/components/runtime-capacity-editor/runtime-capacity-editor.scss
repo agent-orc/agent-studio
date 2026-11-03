@@ -15,12 +15,12 @@
   flex-direction: column;
   gap: var(--studio-spacing-1);
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .capacity__copy strong {
   color: var(--studio-fg-strong);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .capacity__copy [data-testid='remote-host-slots'] {
@@ -66,7 +66,7 @@
 }
 
 .capacity__projects-empty,
-.capacity__projects-note { color: var(--studio-fg-muted); }
+.capacity__projects-note { color: var(--studio-fg-dim); }
 
 .capacity--unknown .capacity__copy { flex: 1 1 auto; }
 
@@ -82,7 +82,7 @@
   flex-direction: column;
   gap: var(--studio-spacing-1);
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .capacity__form input,
@@ -109,7 +109,7 @@
   background: var(--studio-accent);
   color: var(--studio-bg);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 700;
 }
 

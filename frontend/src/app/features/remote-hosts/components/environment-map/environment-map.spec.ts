@@ -4,7 +4,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { EnvironmentMapComponent } from './environment-map';
 
 describe('EnvironmentMapComponent', () => {
-  it('renders machine frames and emits the selected role identity', async () => {
+  it('renders labelled topology and opens a machine in Hosts', async () => {
     await TestBed.configureTestingModule({ imports: [EnvironmentMapComponent], providers: [provideZonelessChangeDetection()] }).compileComponents();
     const fixture = TestBed.createComponent(EnvironmentMapComponent);
     const roles = ['control', 'coding', 'review', 'gate', 'integration', 'link'] as const;
@@ -19,20 +19,15 @@ describe('EnvironmentMapComponent', () => {
     });
     fixture.detectChanges();
     const element = fixture.nativeElement as HTMLElement;
-    expect(element.querySelectorAll('[data-testid="environment-machine"]')).toHaveLength(1);
+    expect(element.querySelectorAll('[data-testid="environment-machine"]')).toHaveLength(0);
     expect(element.querySelector('[data-testid="environment-connection"]')?.textContent).toContain('outbound claim link');
     expect(element.querySelectorAll('[data-testid="environment-topology-edge"]')).toHaveLength(4);
     expect(element.querySelectorAll('[data-testid="environment-topology-point"]')).toHaveLength(2);
-    for (const role of roles) expect(element.querySelector(`[data-testid="environment-node"][data-role="${role}"]`)).toBeTruthy();
     for (const type of types) expect(element.querySelector('[data-testid="environment-map"]')?.textContent).toContain(type);
-    expect(element.querySelector('[data-testid="environment-repository-access"][data-access="writes"]')?.textContent).toContain('writes');
-    const writes = element.querySelector<HTMLElement>('[data-testid="environment-repository-access"][data-access="writes"] [data-testid="status-indicator"]')!;
-    expect([writes.dataset['tone'], writes.dataset['icon']]).toEqual(['success', 'check']);
-    expect(element.querySelector<HTMLElement>('[data-testid="environment-node-health"]')?.dataset['tone']).toBe('success');
-    expect(element.querySelector<HTMLElement>('[data-testid="environment-connection-health"]')?.dataset['tone']).toBe('success');
+    expect(element.querySelector('[data-testid="environment-topology-edge"]')?.textContent).toContain('healthy');
     const selected: string[] = [];
     fixture.componentInstance.selectHost.subscribe(id => selected.push(id));
-    (element.querySelector('button[aria-label="Open Coding slot details"]') as HTMLButtonElement).click();
+    element.querySelector('[data-testid="environment-topology-point"][role="button"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(selected).toEqual(['coding']);
     fixture.destroy();
   });

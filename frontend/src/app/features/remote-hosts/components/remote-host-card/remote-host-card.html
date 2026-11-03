@@ -1,54 +1,46 @@
 @let h = host();
-<tr class="host__row" [attr.data-tone]="tone()" data-testid="remote-host-primary-row">
-  <td class="host__name-cell">
-    <button class="host__disclosure"
-            type="button"
-            data-testid="remote-host-disclosure"
-            [attr.aria-expanded]="expanded()"
-            [attr.aria-controls]="detailId()"
-            [attr.aria-label]="(expanded() ? 'Hide details for ' : 'Show details for ') + h.name"
-            (click)="toggleExpanded()">
-      <span aria-hidden="true">›</span>
-    </button>
-    <strong class="host__name" data-testid="remote-host-name">{{ h.name }}</strong>
-    <span class="host__role-count">{{ roles().length }} {{ roles().length === 1 ? 'role' : 'roles' }}</span><app-host-credential-badge [host]="h" />
-  </td>
-  <td>
-    <app-status-indicator class="host__status" [tone]="indicatorTone()" [label]="statusLabel()" [detail]="statusReason()" testId="remote-host-status" />
-  </td>
-  <td class="host__link" data-testid="remote-host-link-state" [attr.title]="linkTooltip()">@if (!h.runnerLink && h.role === 'remote') { Not configured <button class="host__btn" type="button" (click)="requestSetup()">Set up</button> } @else { {{ linkLabel() }} }</td>
-  <td class="host__number" data-testid="remote-host-machine-slots">{{ totalActiveSlots() }} / {{ roleSlotCapacity() ?? 'n/a' }}</td>
-  <td class="host__load" data-testid="remote-host-load">
-    @if (loadPct() !== null) {
-      <span class="host__load-track" aria-hidden="true">
-        <span [style.width.%]="loadPct()"></span>
-      </span>
-      <span class="host__number">{{ loadLabel() }}</span>
-    } @else {
-      <span class="host__placeholder" title="Not reported">–</span>
+<section class="host-detail" data-testid="remote-host-detail-row">
+  <header class="host-detail__head">
+    <div><h3 data-testid="remote-host-name">{{ h.name }}</h3><span>{{ roleLabel() }}</span> <app-host-credential-badge [host]="h" /></div>
+    <div class="host-detail__actions">
+      @if (retired()) {
+        <button type="button" data-testid="remote-host-action-revive" (click)="emit('revive')" [disabled]="!!h.busyAction">Revive</button>
+        <button type="button" data-testid="remote-host-action-delete" (click)="emit('delete')" [disabled]="!!h.busyAction">Delete</button>
+      } @else {
+        @if (h.runnerLink && h.runnerLink.state !== 'up' && h.runnerLink.state !== 'paused') {
+          <button type="button" data-testid="remote-host-action-reconnect" (click)="emit('reconnect')" [disabled]="!!h.busyAction">Reconnect</button>
+        }
+        @if (h.runnerLink?.state === 'paused') {
+          <button type="button" data-testid="remote-host-action-resume-link" (click)="emit('resume-link')" [disabled]="!!h.busyAction">Resume link</button>
+        } @else if (h.runnerLink) {
+          <button type="button" data-testid="remote-host-action-pause-link" (click)="emit('pause-link')" [disabled]="!!h.busyAction">Pause link</button>
+        }
+        <button type="button" data-testid="remote-host-action-drain" title="Stop new leases. Running work continues until it finishes."
+          (click)="emit('drain')" [disabled]="!!h.busyAction || h.status === 'draining'">Drain</button>
+        <button type="button" data-testid="remote-host-action-retire" (click)="emit('retire')" [disabled]="!!h.busyAction">Retire</button>
+      }
+    </div>
+  </header>
+  <div class="host-detail__state" [attr.data-tone]="tone()">
+    <app-status-indicator [tone]="indicatorTone()" [label]="statusLabel()" testId="remote-host-status" />
+    @if (h.taskServerConnection?.lastError; as reason) { <span>{{ reason }}</span> }
+    @else if (statusReason(); as reason) { <span>{{ reason }}</span> }
+  </div>
+  <dl class="host-detail__facts">
+    <div><dt>Machine</dt><dd>{{ h.capacityHostId || h.name }}</dd></div>
+    <div><dt>Readiness</dt><dd>{{ readiness().state }} · {{ readiness().reason }}</dd></div>
+    <div><dt>Slots</dt><dd class="host__number" data-testid="remote-host-machine-slots">{{ totalActiveSlots() }} / {{ roleSlotCapacity() ?? 'Unknown' }}</dd></div>
+    <div><dt>Last contact</dt><dd data-testid="remote-host-heartbeat" [attr.title]="h.lastHeartbeatAt || 'No heartbeat reported'">{{ h.lastHeartbeatAt ? (h.lastHeartbeatAt | date:'short') : 'Unknown' }} · {{ heartbeatLabel() }}</dd></div>
+    @if (h.taskServerConnection?.lastError; as failed) { <div><dt>Failed request</dt><dd>{{ failed }}</dd></div> }
+    @if (h.restartedAt) { <div><dt>Restarted</dt><dd data-testid="remote-host-role-restart" [title]="h.restartedAt">{{ h.restartedAt | date:'short' }} · {{ h.reviewsLost ?? 0 }} reviews lost</dd></div> }
+    <div><dt>Repository access</dt><dd data-testid="environment-repository-access">{{ repositoryAccess() }}</dd></div>
+    <div><dt>Release</dt><dd data-testid="remote-host-release"><app-host-release-identity [host]="h" [stableRelease]="stableRelease()" [now]="now()" testIdPrefix="remote-host-release" [showIdentity]="true" /></dd></div>
+    @if (h.reviewPlane; as plane) {
+      <div><dt>Review quota</dt><dd data-testid="remote-host-review-plane">CPU quota {{ plane.cpuQuotaPercent === null ? 'unlimited' : plane.cpuQuotaPercent / 100 + ' cores' }} · {{ plane.currentCeiling }} slot ceiling · throttled {{ plane.throttledShare === null ? 'Unknown' : (plane.throttledShare * 100).toFixed(0) + '%' }}</dd></div>
+      @if (plane.sustainedThrottling) { <div><dt>Throttling</dt><dd data-testid="remote-host-review-plane-alarm">{{ plane.alarmSuggestion }}</dd></div> }
     }
-  </td>
-  <td class="host__activity" data-testid="remote-host-heartbeat"
-      [attr.title]="h.lastHeartbeatAt ? (h.lastHeartbeatAt | date:'medium') : 'No heartbeat reported'">
-    {{ heartbeatLabel() }}
-  </td>
-  <td class="host__release" data-testid="remote-host-release">
-    @if (rolesShareRelease()) {
-      <app-host-release-identity [host]="h" [stableRelease]="stableRelease()" [now]="now()" testIdPrefix="remote-host-release" [showIdentity]="true" />
-    } @else { <span class="host__placeholder" title="Releases differ by role">Per role</span> }
-  </td>
-  <td class="host__actions"><span class="host__placeholder" title="Actions are per runner role">Per role</span></td>
-</tr>
-@for (role of roles(); track role.id) {
-  <tr appRemoteHostRoleRow [host]="role" [activeSlots]="activeSlotsFor(role)" [now]="now()"
-      [showRelease]="!rolesShareRelease()" [stableRelease]="stableRelease()"
-      (action)="action.emit($event)"></tr>
-}
-
-@if (expanded()) {
-  <tr class="host__detail-row" data-testid="remote-host-detail-row">
-    <td colspan="8">
-      <div class="host__details" [id]="detailId()" data-testid="remote-host-detail-summaries">
+  </dl>
+  <div class="host__details" data-testid="remote-host-detail-summaries">
         <section class="detail" data-testid="remote-host-detail-section-identity">
           <app-remote-host-detail-summary label="Identity" [summary]="identitySummary()"
             testId="remote-host-detail-toggle-identity" [expanded]="isSectionExpanded('identity')"
@@ -95,14 +87,6 @@
                     (click)="emit('reprobe')">
               {{ h.busyAction === 'reprobe' ? 'Re-probing…' : 'Re-Probe' }}
             </button>
-            @if (retired()) {
-              <button class="host__btn host__btn--danger" type="button"
-                      data-testid="remote-host-action-delete"
-                      [disabled]="!!h.busyAction"
-                      (click)="emit('delete')">
-                {{ h.busyAction === 'delete' ? 'Deleting…' : 'Delete permanently' }}
-              </button>
-            }
           </div>
           }
         </section>
@@ -286,7 +270,5 @@
           }
           }
         </section>
-      </div>
-    </td>
-  </tr>
-}
+  </div>
+</section>
