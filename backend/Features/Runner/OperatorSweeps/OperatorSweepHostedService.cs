@@ -1,3 +1,5 @@
+using AgentStudio.Tasks;
+
 namespace AgentStudio.Runner;
 
 /// <summary>
@@ -7,11 +9,16 @@ namespace AgentStudio.Runner;
 /// </summary>
 public sealed class OperatorSweepHostedService : BackgroundService
 {
+    private readonly TaskScannerService _scanner;
     private readonly IOperatorSweepRunner _sweeps;
     private readonly ILogger<OperatorSweepHostedService> _logger;
 
-    public OperatorSweepHostedService(IOperatorSweepRunner sweeps, ILogger<OperatorSweepHostedService> logger)
+    public OperatorSweepHostedService(
+        TaskScannerService scanner,
+        IOperatorSweepRunner sweeps,
+        ILogger<OperatorSweepHostedService> logger)
     {
+        _scanner = scanner;
         _sweeps = sweeps;
         _logger = logger;
     }
@@ -29,6 +36,9 @@ public sealed class OperatorSweepHostedService : BackgroundService
 
         try
         {
+            // A tick reads the task index synchronously; before the first
+            // publication that read holds a pool worker until the scan ends.
+            await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
             if (options.InitialDelay > TimeSpan.Zero)
                 await Task.Delay(options.InitialDelay, stoppingToken);
         }
