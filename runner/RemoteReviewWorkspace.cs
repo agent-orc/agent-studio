@@ -296,6 +296,14 @@ public sealed class RemoteReviewWorkspace
         IReadOnlyList<ReviewCommandDto> plannedCommands = _subject.Plan.Commands;
         var artifacts = resume?.Artifacts?.ToList() ?? [];
         DependencyCacheSession? candidateCache = null;
+        var candidateScopes = (_subject.Plan.Preparation ?? [])
+            .SelectMany(command => command.DependencyScopes ?? [])
+            .GroupBy(scope => scope.WorkingSubdir, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new ReviewDependencyScopeDto(group.Key,
+                group.SelectMany(scope => scope.Lockfiles).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()))
+            .ToArray();
+        var candidateDependencyRemovers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string? lastCandidateStep = null;
         string? reviewMaterial = null;
         IReadOnlyDictionary<string, VerifyCacheEntry> reusableVerify =
             new Dictionary<string, VerifyCacheEntry>(StringComparer.Ordinal);
@@ -377,6 +385,69 @@ public sealed class RemoteReviewWorkspace
         // One planned command. The ledgers are parameters on purpose and shadow
         // the attempt's: a tool command passes the attempt's ledgers, an agent
         // aspect passes its own because other aspects run beside it.
+        ReviewDependencyCacheEvidenceDto[] MissingCandidateScopes()
+            => candidateScopes
+                .Select(scope =>
+                {
+                    var installRoot = ResolveWorkingDirectory(RepositoryPath, scope.WorkingSubdir);
+                    var decision = DependencyPreparationState.Evaluate(installRoot, scope);
+                    return !Directory.Exists(Path.Combine(installRoot, DependencyPreparationState.DependencyDirectoryName))
+                        ? decision with { State = "miss", Reason = "deps-dir-missing" }
+                        : decision;
+                })
+                .Where(decision => decision.State != "hit" && decision.Reason != "no-lockfile")
+                .ToArray();
+
+        void RecordCandidateDependencyLoss(string stepId)
+        {
+            foreach (var missing in MissingCandidateScopes().Where(item =>
+                         item.Reason is "deps-dir-missing" or "install-root-missing"))
+            {
+                if (candidateDependencyRemovers.TryAdd(missing.Scope, stepId))
+                    _log($"review candidate dependency disappeared scope={missing.Scope} after step={stepId}");
+            }
+        }
+
+        async Task EnsureCandidateDependenciesAsync(ReviewCommandDto command, CancellationToken ct)
+        {
+            var missing = MissingCandidateScopes();
+            if (missing.Length == 0) return;
+            foreach (var scope in missing)
+            {
+                var remover = candidateDependencyRemovers.GetValueOrDefault(scope.Scope)
+                    ?? lastCandidateStep ?? "preparation";
+                _log($"review candidate dependency reprepare scope={scope.Scope} " +
+                     $"reason={scope.Reason} before={command.StepId} removedBy={remover}");
+            }
+            try
+            {
+                await ExecutePreparationAsync(RepositoryPath, "candidate", null,
+                    ProcessEnvironment(), commands, artifacts, ct, restoreCache: false);
+            }
+            catch (ReviewInfrastructureException exception)
+            {
+                var scope = missing[0];
+                var remover = candidateDependencyRemovers.GetValueOrDefault(scope.Scope)
+                    ?? lastCandidateStep ?? "preparation";
+                throw new ReviewInfrastructureException("DependencyDirectoryMissing",
+                    $"Candidate dependency scope '{scope.Scope}' disappeared after step '{remover}' " +
+                    $"and could not be prepared before '{command.StepId}': {exception.Message}",
+                    exception, exception.Evidence);
+            }
+            var remaining = MissingCandidateScopes();
+            if (remaining.Length > 0)
+            {
+                var scope = remaining[0];
+                var remover = candidateDependencyRemovers.GetValueOrDefault(scope.Scope)
+                    ?? lastCandidateStep ?? "preparation";
+                throw await InfrastructureFailureAsync("DependencyDirectoryMissing",
+                    $"Candidate dependency scope '{scope.Scope}' disappeared after step '{remover}' " +
+                    $"and remains unprepared before '{command.StepId}' ({scope.Reason}).",
+                    commands, artifacts, ct);
+            }
+            foreach (var scope in missing) candidateDependencyRemovers.Remove(scope.Scope);
+        }
+
         async Task ExecuteCommandAsync(
             ReviewCommandDto plannedCommand,
             List<ReviewCommandEvidenceDto> commands,
@@ -403,6 +474,9 @@ public sealed class RemoteReviewWorkspace
             // for it must not outlive a run that fails or never finishes.
             if (!ReviewCommandKinds.IsAgent(plannedCommand.ExecutionKind))
                 ReviewVerifyResultCache.Delete(VerifyCacheRoot, VerifyCacheKey(plannedCommand), _log);
+
+            if (!ReviewCommandKinds.IsAgent(plannedCommand.ExecutionKind))
+                await EnsureCandidateDependenciesAsync(plannedCommand, ct);
 
             // AGT-2820: the plan froze a budget for the prompt as authored.
             // The authoritative diff is appended here, at execution time, so
@@ -451,6 +525,11 @@ public sealed class RemoteReviewWorkspace
             var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 ? await _agentCommands.RunAsync(command, ct)
                 : await RunCommandAsync(command, RepositoryPath, ct);
+            if (!ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            {
+                RecordCandidateDependencyLoss(command.StepId);
+                lastCandidateStep = command.StepId;
+            }
             if (AspectCommandTimedOut(command, execution))
             {
                 // AGT-2749 addendum (2026-09-07 19:20): a review aspect call
@@ -593,6 +672,9 @@ public sealed class RemoteReviewWorkspace
                     ct,
                     command,
                     execution.AgentUsage));
+                var lostScope = MissingCandidateScopes().FirstOrDefault(scope =>
+                    scope.Reason is "deps-dir-missing" or "install-root-missing");
+                var remover = lostScope is null ? null : candidateDependencyRemovers.GetValueOrDefault(lostScope.Scope);
                 SaveCaches(candidateCache);
                 // AGT-3420: a CLI that refuses its model failed on the
                 // project's review setting, not on this host's toolchain.
@@ -605,13 +687,15 @@ public sealed class RemoteReviewWorkspace
                         artifacts,
                         ct);
                 throw await InfrastructureFailureAsync(
-                    "ToolUnavailable",
-                    $"Review command '{command.StepId}' could not use its declared toolchain: " +
-                    $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                    $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
-                    commands,
-                    artifacts,
-                    ct);
+                    lostScope is null ? "ToolUnavailable" : "DependencyDirectoryMissing",
+                    lostScope is null
+                        ? $"Review command '{command.StepId}' could not use its declared toolchain: " +
+                          $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
+                          $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}."
+                        : $"Candidate dependency scope '{lostScope.Scope}' disappeared after step " +
+                          $"'{remover ?? command.StepId}' while '{command.StepId}' ran; " +
+                          $"exit={execution.Process.ExitCode}.",
+                    commands, artifacts, ct);
             }
 
             if (TmpMountTornDownDuringBuild(execution.Process))
@@ -678,10 +762,10 @@ public sealed class RemoteReviewWorkspace
                 comparison = await CompareToBaselineAsync(
                     command,
                     execution.Process,
-                    candidateCache,
                     commands,
                     artifacts,
                     ct);
+                RecordCandidateDependencyLoss($"{command.StepId} baseline comparison");
                 if (execution.Signal != "timeout"
                     && (execution.Signal is not null || execution.Process.ExitCode == 127
                         || execution.Process.ExitCode >= 128))
@@ -866,8 +950,20 @@ public sealed class RemoteReviewWorkspace
                 if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
                     && candidateCache is not null)
                 {
-                    foreach (var message in candidateCache.DiscardIncludingWorkspace("diagnosed-environment"))
+                    // The diagnosis invalidates the cache entry, but later
+                    // candidate commands still need their prepared workspace.
+                    // Remove only its scope markers so the next command runs
+                    // preparation again without the baseline path moving deps.
+                    foreach (var message in candidateCache.Discard("diagnosed-environment"))
                         _log(message);
+                    foreach (var scope in candidateScopes)
+                    {
+                        var marker = Path.Combine(
+                            ResolveWorkingDirectory(RepositoryPath, scope.WorkingSubdir),
+                            DependencyPreparationState.MarkerFileName);
+                        if (File.Exists(marker)) File.Delete(marker);
+                        _log($"review candidate dependency invalidated scope={scope.WorkingSubdir} after step={command.StepId}");
+                    }
                     candidateCache = null;
                 }
                 else if (cacheDefect is not null && candidateCache is not null)
@@ -1948,7 +2044,6 @@ public sealed class RemoteReviewWorkspace
     private async Task<BaselineComparison> CompareToBaselineAsync(
         ReviewCommandDto command,
         ProcessResult subjectResult,
-        DependencyCacheSession? candidateCache,
         ICollection<ReviewCommandEvidenceDto> commands,
         ICollection<ReviewArtifactEvidenceDto> artifacts,
         CancellationToken ct)
@@ -2058,7 +2153,7 @@ public sealed class RemoteReviewWorkspace
                 ct));
             if (MissingToolchain(execution.Process))
             {
-                SaveCaches(baselineCache, candidateCache);
+                SaveCaches(baselineCache);
                 throw await InfrastructureFailureAsync(
                     "ToolUnavailable",
                     $"Baseline review command '{command.StepId}' could not use its declared toolchain: " +
@@ -2070,7 +2165,7 @@ public sealed class RemoteReviewWorkspace
             }
             if (StalledWithoutCpuProgress(execution))
             {
-                SaveCaches(baselineCache, candidateCache);
+                SaveCaches(baselineCache);
                 throw await InfrastructureFailureAsync(
                     NoCpuProgressClassification,
                     NoProgressSummary(
@@ -2088,7 +2183,7 @@ public sealed class RemoteReviewWorkspace
                     $"Baseline command '{command.StepId}' did not complete normally.",
                     baselineSha,
                     command);
-                SaveCaches(baselineCache, candidateCache);
+                SaveCaches(baselineCache);
                 throw await InfrastructureFailureAsync(
                     unavailable.Classification,
                     unavailable.Message,
@@ -2116,7 +2211,6 @@ public sealed class RemoteReviewWorkspace
                 UnrunBaselineSummary(command, execution.Process),
                 baselineSha,
                 command);
-            SaveCaches(candidateCache);
             throw await InfrastructureFailureAsync(
                 unavailable.Classification,
                 unavailable.Message,
