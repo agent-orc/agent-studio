@@ -245,6 +245,8 @@ public static class ReviewClaimEmptyReasons
     public const string UnclaimablePlanRequirements = "unclaimable-plan-requirements";
     public const string DifferentHostRequired = "different-review-host-required";
     public const string DifferentHostPreferred = "different-review-host-preferred";
+    /// <summary>SM-11: every queued subject was coded by the claiming principal.</summary>
+    public const string CodingPrincipalExcluded = "coding-principal-excluded";
 }
 
 public enum ReviewHostPlacementDecision

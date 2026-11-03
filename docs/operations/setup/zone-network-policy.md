@@ -179,6 +179,13 @@ policy.
 
 ## Install on a Docker host
 
+Since security-model SM-11 this applies to **every host that runs agents**,
+not only to dedicated work-zone VMs. The narrow work-container launcher reads
+the applied state and refuses every work container while the host has no
+verified work zone, and contained mode requires the zone (capability
+`attempt-containment`, reason `zone-policy-unavailable`). See
+[Per-attempt containment by default](linux-runner-host.md#per-attempt-containment-by-default-sm-11).
+
 1. Install the tools, copy the policy, the script and the units, and create
    the environment file. `dnsmasq-base` ships the dnsmasq binary without the
    distribution's own `dnsmasq.service`, which would claim port 53 on every

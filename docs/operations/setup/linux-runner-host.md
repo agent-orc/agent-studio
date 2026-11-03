@@ -2544,18 +2544,20 @@ executor; enable a cluster profile for it only through a separate acceptance.
 DP-S3 uses Dossier decision D3 option A: a fresh Linux work container per
 claimed attempt, with the process and cgroup executor retained as rollback
 (option B). Windows keeps the worktree process executor in a Job Object and
-never needs Docker. The switch is host-local and defaults to `off`:
+never needs Docker. The switch is host-local; since SM-11 it defaults to
+`contained` on Linux (see [below](#per-attempt-containment-by-default-sm-11)):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RUNNER_WORK_CONTAINER_MODE` | `off` | `shadow` records `executor-shadow.json` beside each detached worker; `canary` enables `agent-host work-container run`. |
+| `RUNNER_WORK_CONTAINER_MODE` | `contained` on Linux, `off` elsewhere | `contained` (SM-11) runs attempts in containers once the host's canary verdict is go and fails closed afterwards; `shadow` records `executor-shadow.json` beside each detached worker; `canary` enables `agent-host work-container run` without the SM-11 prerequisites; `off` is the rollback. |
 | `RUNNER_WORK_CONTAINER_RUNTIME` | `docker` | `docker` or `podman`; the host agent calls the CLI, the work container never gets its socket. |
 | `RUNNER_WORK_CONTAINER_IMAGES` | `/etc/agent-host/work-container-images.json` | Digest-pinned role image manifest. |
 | `RUNNER_WORK_CONTAINER_MAX_CPUS` | host cores minus 2 | Host profile ceiling for one grant and for all live grants. |
 | `RUNNER_WORK_CONTAINER_MAX_MEMORY_MB` | RAM minus max(4 GiB, 15%) | Host profile memory ceiling. |
 | `RUNNER_WORK_CONTAINER_MEMORY_MB_PER_HALF_CORE` | `2048` | Memory limit granted per AGT-3019 half-core. |
 | `RUNNER_WORK_CONTAINER_CACHE_VERSION` | `1` | Generation of the npm, NuGet and repository-mirror cache volumes. |
-| `RUNNER_WORK_CONTAINER_NETWORK` | `bridge` | `host` and `container:*` are refused. |
+| `RUNNER_WORK_CONTAINER_NETWORK` | `agent-work` in contained mode, else `bridge` | `host` and `container:*` are refused; the launcher admits only networks of the applied work zone. |
+| `RUNNER_WORK_CONTAINER_LAUNCHER` | `/run/agent-work-launcher.sock` in contained mode | Every runtime call goes to the socket-activated root launcher; set it in canary mode to use the launcher there too. |
 
 Detached coding and review workers stay on the process executor in every mode.
 The DP-S5 coding canary uses Task Server's brokered GitHub App read token,
@@ -2634,6 +2636,73 @@ noisy; its gate p50 was 3500 ms in one run and 8397 ms in the next. Treat it
 as an upper bound, not as a container speedup. The verdict is no-go only
 because the role image layers were already local, so the cold pull is
 unproven. Record a cold pull on a fresh canary host before widening.
+
+#### Per-attempt containment by default (SM-11)
+
+Security-model decision SM-D6 option H2: on Linux the work-container executor
+is the default after its canary. The steps below apply to every host that
+runs agents.
+
+1. **Leave the runtime group, install the launcher.** As root, run
+   `scripts/harden-agent-runner-host.sh --apply`. It removes the service
+   account from `sudo`, `docker` and `podman`, installs
+   `/usr/local/sbin/agent-work-launcher` (root-owned, mode 0755), creates
+   `/etc/agent-host/work-container-launcher.env` from
+   [`work-container-launcher.env.example`](../../../deploy/agent-host/work-container-launcher.env.example)
+   if it is absent, installs and enables
+   [`agent-work-launcher.socket`](../../../deploy/agent-host/systemd/agent-work-launcher.socket)
+   with the service group as `SocketGroup`, and verifies that sudo grants no
+   direct `docker` or `podman`. If the host agent runs under another account
+   than the hardened service user, set `SocketGroup` to that account's group.
+   End existing login sessions; they keep their old groups.
+2. **Apply the work-zone egress policy** with `agent-host zone-policy apply
+   --execute` and its timer, as in
+   [Zone network policy](zone-network-policy.md#install-on-a-docker-host).
+   The launcher reads `ZONE_POLICY_STATE` from its configuration and refuses
+   every work container while that state is missing, failed, stale or from an
+   earlier boot.
+3. **Install the role image manifest** (`image-promote`, above).
+4. **Record the canary verdict.** As the operator (root; the service user has
+   no runtime access any more), run `scripts/work-container-proof.sh
+   <report-dir>` on the host. The proof writes `rollout-verdict.json` into the
+   host's work-container state directory (`--verdict-dir` overrides it); only a
+   go verdict that also passed acceptance turns contained mode on.
+5. **Check and probe.**
+
+   ```sh
+   agent-host work-container check
+   agent-host work-container probe --host <host-id> --repository-key <key> \
+     --source <bare.git or https URL> --sha <exact-sha> --report <dir> \
+     --forbidden-paths <runner credential file>,<provider login dirs>,<another project's checkout> \
+     --blocked-addresses <address outside the allowlist>:443
+   ```
+
+   `check` prints the decision per role and exits 1 when any role is
+   refused. `probe` runs one attempt through the executor and exits 0 only
+   when the container saw none of the paths, no runtime socket, no
+   secret-shaped variable and no other repository mirror, could not connect
+   to the blocked addresses, ran as an attempt UID, and was cleaned up. Use
+   a documentation address such as one from 192.0.2.0/24 for the blocked
+   probe. Keep `containment-probe.json` with the host's evidence.
+   `scripts/work-container-containment-probe.sh <report-dir> <host-id>
+   <paths> <addresses>` wraps both commands for a checkout of this repository.
+
+After the verdict, the daemons require their `attempt-containment`
+capability. When it reads `unavailable`, the Environment view shows the reason
+(`runtime-group-member`, `launcher-missing`, `role-image-unpinned`,
+`zone-policy-unavailable` or `network-outside-work-zone`) and the host claims
+no coding or review work until it is fixed. To roll back, set
+`RUNNER_WORK_CONTAINER_MODE=off`; removing `rollout-verdict.json` returns the
+host to the pre-canary process executor.
+
+Each attempt now runs under its own UID from 200000 and mounts per-repository
+caches named `agent-cache-<cache>-<repository>-v<n>`. The former shared
+volumes (`agent-cache-npm-v<n>`, `agent-cache-nuget-v<n>`,
+`agent-cache-repo-v<n>`) are no longer mounted; remove them with `docker
+volume rm` once no canary attempt from before the upgrade is running.
+Detached Claude and Codex sessions keep the process executor until provider
+attempt tokens exist; see the
+[security overview](../security/overview.md#per-attempt-containment-sm-11).
 
 #### Claimed gate migration (DP-S4)
 

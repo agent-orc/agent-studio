@@ -763,6 +763,12 @@ the last week. Existing credentials keep working with a notice. Settings &gt; Ac
 at enrollment and edits them per runner. Gate claim admission, per-attempt container tokens (SM-11)
 and a lifecycle-only card read in the monolith remain open. See
 <a href="../operations/security/overview.md#runner-credential-binding-sm-9">Security overview</a>.</li>
+<li data-implementation-entry="" data-task-key="AGT-3382" data-delivered-at="2026-11-03" data-slice="SM-11 Per-attempt containment by default">
+  <strong>AGT-3382 · SM-11 Per-attempt containment by default</strong>
+  <span>Implemented SM-D6 option H2 and SM-D10 option A. On Linux the work-container mode defaults to <code>contained</code>: once a host's proof records a go verdict, coding, review and gate attempts selected for the container executor run in a fresh container under their own UID with per-repository caches, the work-zone network and every runtime call through the root-owned <code>agent-work-launcher</code>, whose policy admits only the executor's own calls. After the verdict a missing prerequisite (runtime group membership, launcher, pinned image, applied work zone) makes the <code>attempt-containment</code> capability unavailable and the Task Server refuses claims. The hardening script removes the service user from the runtime groups.</span>
+  <span>Attempt repository tokens stay <code>contents:read</code> without workflow permission, are bound to a project the host still holds, and are revoked by the Task Server within 15 seconds once the attempt's lease is released, completed, fenced or revoked. Review verdicts and claims are refused from the delivery's coding executor or coding principal and from non-runner principals, in the Task Server and, by executor, in the monolith. <code>agent-host work-container probe</code> proves the container boundary on a host.</span>
+  <span>Open: detached Claude and Codex sessions still run as host processes because provider root logins may not enter a container; per-attempt provider tokens wait for the host provider broker and the dynamic placement S5 concurrency proof. Review-role attempt repository tokens are not minted yet. See <a href="../operations/security/overview.md#per-attempt-containment-sm-11">Security overview</a>.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
 </ol>
 </section>
