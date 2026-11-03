@@ -1,3 +1,5 @@
+using AgentStudio.Tasks;
+
 namespace AgentStudio.Runner;
 
 /// <summary>
@@ -11,17 +13,20 @@ public sealed class CauseBreakerHostedService : BackgroundService, IAiOperatorEf
 {
     public const int DefaultIntervalSeconds = 60;
 
+    private readonly TaskScannerService _scanner;
     private readonly CauseBreakerService _breakers;
     private readonly IConfiguration _configuration;
     private readonly ILogger<CauseBreakerHostedService> _logger;
     private readonly AiOperatorDecisionGateway _decisions;
 
     public CauseBreakerHostedService(
+        TaskScannerService scanner,
         CauseBreakerService breakers,
         IConfiguration configuration,
         ILogger<CauseBreakerHostedService> logger,
         AiOperatorDecisionGateway? decisions = null)
     {
+        _scanner = scanner;
         _breakers = breakers;
         _configuration = configuration;
         _logger = logger;
@@ -42,6 +47,10 @@ public sealed class CauseBreakerHostedService : BackgroundService, IAiOperatorEf
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // A sweep reads the task index synchronously under the breaker lock;
+        // before the first publication that read holds a pool worker, and the
+        // lock, until the scan ends.
+        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         var intervalSeconds = Math.Clamp(
             _configuration.GetValue<int?>("Runner:CauseBreaker:IntervalSeconds") ?? DefaultIntervalSeconds,
             10, 3600);

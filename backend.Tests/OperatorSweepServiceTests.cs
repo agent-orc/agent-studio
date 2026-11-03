@@ -291,7 +291,8 @@ public sealed class OperatorSweepServiceTests : IDisposable
     public async Task HostedLoop_KeepsTickingAfterATickThrows()
     {
         var runner = new ScriptedRunner();
-        var hosted = new OperatorSweepHostedService(runner, NullLogger<OperatorSweepHostedService>.Instance);
+        var hosted = new OperatorSweepHostedService(Build().Scanner, runner,
+            NullLogger<OperatorSweepHostedService>.Instance);
 
         await hosted.StartAsync(CancellationToken.None);
         var reached = await runner.ReachedThirdTick.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -299,6 +300,39 @@ public sealed class OperatorSweepServiceTests : IDisposable
 
         Assert.True(reached);
         Assert.True(runner.Calls >= 3);
+    }
+
+    [Fact]
+    public async Task HostedLoop_WaitsForTheFirstIndexPublicationBeforeItsFirstTick()
+    {
+        // A tick reads the task index synchronously; before the first
+        // publication that read held a pool worker until the first scan ended.
+        var stack = Build();
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        stack.Scanner.SetIndexCache(new TaskIndexCache(stack.Scanner, NullLogger<TaskIndexCache>.Instance,
+            new ConfigurationBuilder().Build(), () =>
+            {
+                entered.Set();
+                release.Wait();
+                return stack.Scanner.ScanAllJobsRaw();
+            }));
+        var runner = new ScriptedRunner();
+        var hosted = new OperatorSweepHostedService(stack.Scanner, runner,
+            NullLogger<OperatorSweepHostedService>.Instance);
+
+        await hosted.StartAsync(CancellationToken.None);
+        try
+        {
+            // Nothing else reads the index: the loop itself asked for the first publication.
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "the loop did not wait for the first publication");
+            Assert.Equal(0, runner.Calls);
+        }
+        finally { release.Set(); }
+
+        var reached = await runner.ReachedThirdTick.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await hosted.StopAsync(CancellationToken.None);
+        Assert.True(reached);
     }
 
     [Fact]
