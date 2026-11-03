@@ -55,11 +55,38 @@ public sealed class RunnerReleaseIdentityStoreTests
         Assert.Equal(New, Assert.Single(await store.ListRunnerCapabilitySnapshotsAsync(default)).Release);
     }
 
-    private static async Task<TaskServerStore> CreateStoreAsync(string dataDirectory)
+    [Fact]
+    public async Task Optional_container_summary_survives_store_restart_and_older_reports()
+    {
+        using var temp = new TempDirectory();
+        var clock = new FixedTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
+        var store = await CreateStoreAsync(temp.Path, clock);
+        await RegisterAsync(store, "instance-1", New);
+        var now = clock.GetUtcNow().UtcDateTime;
+        var telemetry = new HostTelemetrySnapshotDto(now, null, null, null, null,
+            null, null, null, null, null, null, 0, 0,
+            Containers: [new("Gate", "sha256:abc", "running")]);
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-1", "instance-1", 2, now, 180, 1,
+            [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor")],
+            Telemetry: telemetry), "test", default);
+
+        var reopened = await CreateStoreAsync(temp.Path, clock);
+        Assert.Equal("Gate", Assert.Single(Assert.Single(
+            await reopened.ListRunnerCapabilitySnapshotsAsync(default)).Containers!).Name);
+        await reopened.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-1", "instance-1", 2, now.AddSeconds(1), 180, 2,
+            [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor")],
+            Telemetry: telemetry with { ObservedAt = now.AddSeconds(1), Containers = null }),
+            "test", default);
+        Assert.Null(Assert.Single(await reopened.ListRunnerCapabilitySnapshotsAsync(default)).Containers);
+    }
+
+    private static async Task<TaskServerStore> CreateStoreAsync(string dataDirectory, TimeProvider? clock = null)
     {
         var store = new TaskServerStore(
             Options.Create(new TaskServerOptions { DataDirectory = dataDirectory }),
-            TimeProvider.System);
+            clock ?? TimeProvider.System);
         await store.InitializeAsync();
         return store;
     }
@@ -80,4 +107,9 @@ public sealed class RunnerReleaseIdentityStoreTests
                 Release: release),
             "test",
             default);
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
 }

@@ -21,6 +21,11 @@
 .structure-box[data-kind='process'] { border-radius: 22px; }
 .structure-box[data-kind='process'] .structure-node { padding-inline: var(--studio-spacing-4); }
 .structure-box[data-kind='external'] { background: transparent; border-style: dashed; }
+.structure-box[data-difference='declared-only'], .structure-box[data-difference='unreachable-by-design'] { border-style: dashed; }
+.structure-box[data-difference='undeclared'] { background: repeating-linear-gradient(45deg, var(--studio-bg-surface), var(--studio-bg-surface) 6px, var(--studio-bg-hover) 6px, var(--studio-bg-hover) 12px); }
+.structure-box[data-health='down'] { background-color: color-mix(in srgb, var(--studio-error) 10%, var(--studio-bg-surface)); }
+.structure-box[data-health='degraded'] { background-color: color-mix(in srgb, var(--studio-warn) 10%, var(--studio-bg-surface)); }
+.structure-view[data-overlay='drift'] .structure-box[data-difference='matched'] > .structure-node { opacity: .55; }
 // Managed services sit inside the boundary but the platform cannot enter them: dashed, cylinder-like ends.
 .structure-box[data-kind='managed'] { background: var(--studio-bg-elevated); border-style: dashed; border-radius: 12px / 9px; }
 .structure-box[data-collapsed='true'] { box-shadow: 0 3px 0 -1px var(--studio-bg-surface), 0 3px 0 0 var(--studio-border-strong); }
@@ -31,6 +36,10 @@
 .structure-node small { overflow: hidden; color: var(--studio-fg-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .structure-box[data-opaque='true'] .structure-node { border-radius: inherit; }
 .structure-box[data-opaque='true'] .structure-node small { flex-basis: 100%; }
+.structure-observation-state { flex: none; color: var(--studio-fg-muted); font-size: 10px; white-space: nowrap; }
+.structure-observation-state[data-state='Down'] { color: var(--studio-error); }
+.structure-observation-state[data-state='Degraded'], .structure-observation-state[data-state='Differs'] { color: var(--studio-warn); }
+.structure-chip { padding: var(--studio-spacing-1) var(--studio-spacing-2); border: 1px solid var(--studio-border-strong); border-radius: 999px; background: var(--studio-bg-elevated); color: var(--studio-fg-strong); font-size: 10px; white-space: nowrap; }
 .structure-node:hover { background: var(--studio-bg-hover); }
 .structure-node:focus-visible, .structure-outline button:focus-visible, .structure-controls button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 .structure-summary { flex-basis: 100%; overflow: hidden; color: var(--studio-fg-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }

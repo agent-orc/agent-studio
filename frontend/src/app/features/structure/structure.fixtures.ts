@@ -101,11 +101,11 @@ function complex(): StructureData {
         'production', namespace, namespace === 'storefront' && i < 2 ? 4 : 2)));
     }
     nodes.push(node(`${region}-db`, 'managed', 'PostgreSQL', region,
-      { ...scope, detail: 'database', observation: 'probed', probe: 'tls', status: 'up' }));
+      { ...scope, detail: 'database', probeObservation: 'probed', probe: 'tls', status: 'up' }));
     nodes.push(node(`${region}-mq`, 'managed', 'Message queue', region,
-      { ...scope, detail: 'queue', observation: 'not-observed' }));
+      { ...scope, detail: 'queue', probeObservation: 'not-observed' }));
     nodes.push(node(`${region}-obj`, 'managed', 'Object storage', region,
-      { ...scope, detail: 'object storage', observation: 'probed', probe: 'http', status: 'up' }));
+      { ...scope, detail: 'object storage', probeObservation: 'probed', probe: 'http', status: 'up' }));
   }
   const staging = { environmentId: 'staging', project };
   nodes.push(node('env-stage', 'environment', 'Staging', 'b', staging));
@@ -115,7 +115,7 @@ function complex(): StructureData {
     list.forEach(name => nodes.push(service(`st-${namespace}-${name}`, name, `st-${namespace}`, 'staging', namespace, 1)));
   }
   nodes.push(node('stage-db', 'managed', 'PostgreSQL', 'env-stage',
-    { ...staging, detail: 'database', observation: 'not-observed' }));
+    { ...staging, detail: 'database', probeObservation: 'not-observed' }));
   const development = { environmentId: 'development', project };
   nodes.push(node('env-dev', 'environment', 'Development', 'b', development));
   nodes.push(node('dev-vm', 'vm', 'Shared development VM', 'env-dev', { ...development, detail: 'SSH Docker host' }));

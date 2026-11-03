@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { projectStructure, visibleBoxes, type StructureData, type StructureNode } from './structure.model';
+import { observationGlyph, observationWord, projectStructure, visibleBoxes,
+  type StructureData, type StructureNode, type StructureObservation } from './structure.model';
 
 const node = (id: string, kind: string, label: string, parentId: string | null,
   role: string | null = null): StructureNode => ({ id, kind, label, parentId, role,
@@ -82,6 +83,25 @@ describe('Structure projection', () => {
       .toEqual(['b', 'machine:custom']);
     expect(visibleBoxes(projectStructure(fixture, 'container', 2, {})).map(box => box.id))
       .toContain('app');
+  });
+
+  it.each([
+    ['matched', 'up', 'Up', '●'],
+    ['declared-only', 'not observed', 'Not observed', '○'],
+    ['undeclared', 'up', 'Not declared', '○'],
+    ['differs', 'up', 'Differs', '▲'],
+    ['stale', 'stale', 'Stale', '○'],
+    ['unreachable-by-design', 'not observed', 'Unreachable by design', '○'],
+  ] as const)('labels %s with a word and glyph', (difference, health, word, glyph) => {
+    const observation: StructureObservation = { difference, health };
+    expect(observationWord(observation)).toBe(word);
+    expect(observationGlyph(observation)).toBe(glyph);
+    const fixture: StructureData = { nodes: [{ ...node('host', 'physical', 'Host', null), observation }], links: [] };
+    expect(visibleBoxes(projectStructure(fixture, 'host', 3, {}))[0].observation).toEqual(observation);
+  });
+
+  it('does not call an unknown health metric healthy', () => {
+    expect(observationWord({ difference: 'matched', health: 'unknown' })).toBe('Not observed');
   });
 
   it('draws a system environment boundary around its exclusive shared placement', () => {

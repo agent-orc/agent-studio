@@ -161,7 +161,10 @@ public sealed record HostTelemetrySnapshotDto(
     int? DotnetProcesses = null,
     int? StaleBuildNodes = null,
     long? StaleBuildNodesReaped = null,
-    DateTime? BuildNodeSweepAt = null);
+    DateTime? BuildNodeSweepAt = null,
+    IReadOnlyList<HostContainerSummaryDto>? Containers = null);
+
+public sealed record HostContainerSummaryDto(string Name, string? ImageDigest, string State);
 
 /// <summary>
 /// The coding host's salvage store (AGT-2999): the tarball directory the
@@ -378,7 +381,8 @@ public sealed record RunnerCapabilitySnapshotDto(
     HostCliUpdateDto? CliUpdate = null,
     RunnerReleaseIdentityDto? Release = null,
     int ActiveGateCount = 0,
-    IReadOnlyList<ConfiguredModelRouteDto>? ConfiguredModelRoutes = null);
+    IReadOnlyList<ConfiguredModelRouteDto>? ConfiguredModelRoutes = null,
+    IReadOnlyList<HostContainerSummaryDto>? Containers = null);
 
 /// <summary>
 /// The latest non-ready model-acceptance entry a host advertised after the

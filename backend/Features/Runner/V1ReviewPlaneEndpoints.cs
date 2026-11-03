@@ -4049,7 +4049,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 RoleMaxParallelism: registration.RoleMaxParallelism,
                 RestartedAt: restart?.RestartedAt,
                 ReviewsLost: restart?.ReviewsLost ?? 0,
-                Release: registration.Release);
+                Release: registration.Release,
+                Containers: request.Telemetry?.Containers);
         }
         CapabilitySnapshotAdvertised?.Invoke(runnerId, advertisedAt);
         return result;
@@ -4345,7 +4346,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                         RestartedAt: restart?.RestartedAt,
                         ReviewsLost: restart?.ReviewsLost ?? 0,
                         InstalledClis: Contract.InstalledCliProjection.FromCapabilities(capabilities),
-                        Release: registration.Release);
+                        Release: registration.Release,
+                        Containers: state?.Telemetry?.Containers);
                 })
                 .ToArray();
         }
