@@ -243,6 +243,7 @@ test('observed differences, versions and a stopped host refresh in both themes',
   await page.context().route('**/api/**', route => {
     const url = route.request().url();
     const json = (body: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    if (url.includes('/api/v1/operations/structure/library')) return json({ registries: [], consumers: [] });
     if (url.includes('/api/v1/operations/structure')) {
       const state = stopped ? observed.map(node => node.id === 'host' ? { ...node, observation: { difference: 'stale', health: 'stale' } } : node) : observed;
       const connections = stopped ? observedLinks.map(link => ({ ...link, observation: { difference: 'matched', health: 'down' } })) : observedLinks;

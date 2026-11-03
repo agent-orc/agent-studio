@@ -398,12 +398,14 @@ public static partial class ProjectDefinitionReader
                 "delivery.fullSuite must be required, optional, or off."));
 
         if (!int.TryParse(schemaVersion, out var version)) version = 0;
-        var structure = ParseStructure(lines, issues);
+        var structure = lines.Any(line => line.Indent == 0 && KeyValue(line.Text).Key == "structure")
+            ? ParseStructure(lines, issues)
+            : null;
         var definition = new ProjectExecutionDefinition(
             version, stack, tools, commands, suites, caches, capabilities,
             environment, devServer, NullIfBlank(image), release, project, quality)
         {
-            Deployment = ParseDeployment(lines, issues, structure),
+            Deployment = ParseDeployment(lines, issues, structure ?? ProjectStructureDefinition.Empty),
             Structure = structure,
             DeliveryFullSuite = fullSuite,
         };
