@@ -287,6 +287,8 @@ public sealed record RunnerProjectPreflight
     public string Status { get; init; } = "failed";
     public string Detail { get; init; } = "";
     public DateTime CheckedAt { get; init; }
+    /// <summary>The host's repository credential generation the proof ran with; null from an older host.</summary>
+    public string? CredentialGeneration { get; init; }
 }
 
 public record RunnerGitCapabilityRequest

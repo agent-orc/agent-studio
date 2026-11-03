@@ -145,6 +145,31 @@ public sealed class RemoteProjectRepositoryResolverTests : IDisposable
         Assert.False(ProjectDeliveryPreflightPolicy.IsFresh(stale, now));
     }
 
+    [Theory]
+    // A failed proof decides only for the credential generation it ran with.
+    [InlineData("failed", "generation-a", "generation-a", -4, true)]
+    [InlineData("failed", "generation-a", "generation-b", -4, false)]
+    [InlineData("failed", null, "generation-b", -4, false)]
+    [InlineData("failed", "generation-a", null, -4, false)]
+    [InlineData("failed", null, null, -4, true)]
+    // A ready proof keeps its bounded window; a new token of the same host does not void it.
+    [InlineData("ready", "generation-a", "generation-b", -4, true)]
+    [InlineData("ready", "generation-a", "generation-a", -6, false)]
+    [InlineData("failed", "generation-a", "generation-a", -6, false)]
+    public void A_cached_preflight_applies_only_within_its_window_and_credential_generation(
+        string status, string? cachedGeneration, string? currentGeneration, int ageMinutes, bool applies)
+    {
+        var now = new DateTime(2026, 11, 1, 12, 0, 0, DateTimeKind.Utc);
+        var cached = new RunnerProjectPreflight
+        {
+            Status = status,
+            CredentialGeneration = cachedGeneration,
+            CheckedAt = now.AddMinutes(ageMinutes),
+        };
+
+        Assert.Equal(applies, ProjectDeliveryPreflightPolicy.Applies(cached, now, currentGeneration));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); }
