@@ -19,6 +19,7 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
     {
         var authPath = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
         if (authPath is "/api/v1/studio/auth/status" or "/api/v1/studio/auth/login" or "/api/v1/studio/auth/bootstrap"
+            or "/api/v1/studio/auth/passkeys/assertion-options"
             or "/api/v1/studio/auth/invite/accept" or "/api/v1/studio/auth/recover")
         {
             await next(context);
@@ -36,6 +37,15 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return;
         }
+        if (status.SecondFactorEnrollmentRequired
+            && authPath is not "/api/v1/studio/auth/logout" and not "/api/v1/studio/auth/change-password"
+                and not "/api/v1/studio/auth/status"
+            && !authPath.StartsWith("/api/v1/studio/auth/totp/", StringComparison.Ordinal)
+            && !authPath.StartsWith("/api/v1/studio/auth/passkeys/", StringComparison.Ordinal))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
         var user = status.User;
         context.Items["StudioActorId"] = user.UserId;
         if (!StudioProductSession.IsProduct(user))
@@ -50,7 +60,10 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
         var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         var safe = HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method);
         var selfAuth = path is "/api/v1/studio/auth/status" or "/api/v1/studio/auth/logout"
-            or "/api/v1/studio/auth/change-password";
+            or "/api/v1/studio/auth/change-password" or "/api/v1/studio/auth/step-up"
+            || path.StartsWith("/api/v1/studio/auth/sessions", StringComparison.Ordinal)
+            || path.StartsWith("/api/v1/studio/auth/totp/", StringComparison.Ordinal)
+            || path.StartsWith("/api/v1/studio/auth/passkeys/", StringComparison.Ordinal);
         if (selfAuth)
         {
             await next(context);

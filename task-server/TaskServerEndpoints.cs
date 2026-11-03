@@ -1457,6 +1457,8 @@ public static class TaskServerEndpoints
 
     internal static IResult MapError(Exception exception) => exception switch
     {
+        StudioThrottledException throttled => Results.Json(
+            new ApiError("login-throttled", throttled.Message), statusCode: StatusCodes.Status429TooManyRequests),
         StudioAuthenticationException studioAuth => Results.Json(
             new ApiError(studioAuth.Code, studioAuth.Message),
             statusCode: StatusCodes.Status401Unauthorized),

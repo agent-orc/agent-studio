@@ -182,9 +182,14 @@ public static class RoutePermissionCatalog
         Add("*", IamPermissions.Anonymous, "/healthz/**");
         Add("R", IamPermissions.Anonymous, "/api/auth/status", "/recovery");
         Add("POST", IamPermissions.Anonymous,
-            "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll");
+            "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
+            "/api/auth/passkeys/assertion-options");
         Add("R", IamPermissions.SelfSession, "/api/auth/session");
         Add("POST", IamPermissions.SelfSession, "/api/auth/logout", "/api/auth/change-password");
+        Add("R", IamPermissions.SelfSession, "/api/auth/sessions");
+        Add("W", IamPermissions.SelfSession, "/api/auth/sessions/**", "/api/auth/totp/**", "/api/auth/step-up");
+        Add("W", IamPermissions.SelfSession, "/api/auth/passkeys/register-options", "/api/auth/passkeys/register",
+            "/api/auth/passkeys/step-up-options");
         Add("R", IamPermissions.RunnerService, "/api/auth/runner");
         Add("R", IamPermissions.AccessRead,
             "/api/auth/users/**", "/api/auth/runners/**", "/api/auth/runner-enrollments/**", "/api/auth/api-tokens/**",

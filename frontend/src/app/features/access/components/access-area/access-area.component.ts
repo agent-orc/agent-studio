@@ -6,6 +6,7 @@ import { AccessGroupsComponent } from '../access-groups/access-groups.component'
 import { AccessInviteFormComponent } from '../access-invite-form/access-invite-form.component';
 import { AccessRunnersComponent } from '../access-runners/access-runners.component';
 import { AccessServiceAccountsComponent } from '../access-service-accounts/access-service-accounts.component';
+import { SessionManagerComponent } from '../session-manager/session-manager.component';
 
 /**
  * The one Access area: users with their role bindings, groups, service
@@ -15,7 +16,7 @@ import { AccessServiceAccountsComponent } from '../access-service-accounts/acces
 @Component({
   selector: 'app-access-area',
   standalone: true,
-  imports: [AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessRunnersComponent, AccessServiceAccountsComponent],
+  imports: [AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessRunnersComponent, AccessServiceAccountsComponent, SessionManagerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-area.component.html',
   styleUrl: './access-area.component.scss',

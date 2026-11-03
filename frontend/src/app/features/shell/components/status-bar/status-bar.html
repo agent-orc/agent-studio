@@ -74,6 +74,7 @@
                         [active]="settingsOpen()"
                         (activated)="toggleSettings.emit()" />
     @if (showSignOut()) {
+      <app-session-manager [watchNotices]="true" />
       <app-statusbar-item icon="close" label="Sign out" [tooltip]="'Sign out ' + signedInLabel()"
                           testid="status-bar-sign-out"
                           (activated)="signOut.emit()" />

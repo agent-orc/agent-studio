@@ -18,8 +18,8 @@ authenticate anything and are ignored by every route on this page.
 | Identity | Created by | Credential | Revoked by |
 |---|---|---|---|
 | Installation | First store start | `installationId` (`ins_*`, public) | Never; migration preserves it |
-| Owner | First login with the installer code | Password and one recovery code (`rcv_*`) | Recovery replaces both |
-| Operator / contributor / viewer | Owner (`POST /api/v1/studio/auth/invitations`) | One-time link, password chosen on acceptance | Owner |
+| Owner | First login with the installer code | Password, one installation recovery code (`rcv_*`), and a registered second factor | Recovery replaces the password and installation recovery code |
+| Operator / contributor / viewer | Owner (`POST /api/v1/studio/auth/invitations`) | One-time link and password; operators also register a second factor | Owner |
 | Studio edge, engine, each runner host | One-time enrolment (`enr_*`) or Compose bootstrap file | Principal bearer (`ats_*`) in a restricted host file | `POST /api/v1/management/principals/{id}/revoke` |
 
 Every one-time secret is shown once and stored only as a SHA-256 hash.
@@ -57,6 +57,21 @@ provide host, credential, merge, or promotion access.
    `bootstrapCode`. The response carries the session and the owner's
    `recoveryCode`. Store the recovery code offline; it is the recovery custody
    for this installation.
+4. The new owner session can only set up a second factor. Add an authenticator
+   with `/api/v1/studio/auth/totp/start` and `/totp/confirm`, or register a
+   WebAuthn passkey in Studio. Store the one-use factor recovery codes outside
+   the browser. They are separate from the installation recovery code. Owner
+   and operator sign-in require a registered factor; every step-up requires one
+   regardless of role. A new
+   operator accepts an invitation in the same limited setup session.
+
+Studio lists each user's active sessions with device, address, creation time,
+and last use. A user can revoke one or all other sessions; the Owner can revoke
+sessions for any user. Existing live Studio event connections close within
+15 seconds after revocation. A signed-in browser shows a notice when it sees a
+newer session. Idle sessions expire after 8 hours and all sessions after 7
+days. Failed sign-ins use a 10-attempt client lockout, a 20-attempt username
+budget, and a 15-minute window.
 
 Closure rules:
 

@@ -149,6 +149,9 @@ public static class TaskServerPlaneProxy
             }
         }
 
+        request.Headers.TryAddWithoutValidation("X-Studio-Public-Origin",
+            context.Request.Scheme + "://" + context.Request.Host);
+
         if (ActingRole(context, context.RequestServices.GetRequiredService<IConfiguration>()) is { } actingRole)
             request.Headers.TryAddWithoutValidation(CredentialViewProtocol.ActingRoleHeader, actingRole);
         if (context.Request.Path.StartsWithSegments("/api/v1/management/device-logins"))
@@ -189,6 +192,7 @@ public static class TaskServerPlaneProxy
 
     internal static bool ForwardsRequestHeader(string name)
         => !HopByHopHeaders.Contains(name)
+           && !string.Equals(name, "X-Studio-Public-Origin", StringComparison.OrdinalIgnoreCase)
            && !string.Equals(name, "Host", StringComparison.OrdinalIgnoreCase)
            && !string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase)
            && !string.Equals(name, CredentialViewProtocol.ActingRoleHeader, StringComparison.OrdinalIgnoreCase);
