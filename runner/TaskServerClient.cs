@@ -1986,7 +1986,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         var baseUrl = $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifact-chunks";
         var count = (bytes.Length + ArtifactChunkBytes - 1) / ArtifactChunkBytes;
         using var response = await _http.GetAsync(
-            $"{baseUrl}/{sha}?count={count}&sizeBytes={bytes.LongLength}", ct);
+            $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifact-chunks/{sha}?count={count}&sizeBytes={bytes.LongLength}", ct);
         if (!response.IsSuccessStatusCode)
             throw new TaskServerException((int)response.StatusCode,
                 $"Artifact chunk status failed: {(int)response.StatusCode}",
@@ -2005,7 +2005,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                     index, count, Convert.ToBase64String(bytes.AsSpan(offset, length))), ct);
         }
         await PostJsonAsync<Contract.ArtifactChunkCompleteRequest, Contract.ArtifactDto>(
-            baseUrl + "/complete",
+            $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifact-chunks/complete",
             new Contract.ArtifactChunkCompleteRequest(artifactId ?? $"art_{Guid.NewGuid():N}", path,
                 MediaType(path), sha, bytes.LongLength, count, key, authority.Fence,
                 authority.RunnerId, authority.InstanceId, authority.LeaseId, sequence), ct);
