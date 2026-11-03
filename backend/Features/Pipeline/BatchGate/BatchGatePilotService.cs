@@ -1051,6 +1051,7 @@ public sealed partial class BatchGatePilotService
                         || _store.ReadVerdict(manifest.BatchId,
                             publishedRun.BatchRunId)?.Outcome != "pass")
                         throw new InvalidDataException("batch-gate-evidence-missing");
+                    RecordPublishedBaseVerdict(manifest, publishedRun);
                     if (!_leases.IsCurrent(lease)
                         || !RefMutationLeaseService.IsCurrent(refLease)) continue;
                     State(manifest, BatchPhase.Published,
@@ -1326,24 +1327,25 @@ public sealed partial class BatchGatePilotService
                 // The candidate suite may stop at its first red step. A red
                 // base therefore blocks publication and isolation even when
                 // the two observed failure fingerprints differ.
-                if (await BaseIsRedAsync(manifest, run, gate, repo,
-                        cancellation.Token).ConfigureAwait(false)
+                var baseAnswer = await CheckBaseAsync(manifest, run, gate, repo,
+                    cancellation.Token).ConfigureAwait(false);
+                if (baseAnswer is { Red: true }
                     && string.Equals(gate.TestedSha, assembly.CandidateSha,
                         StringComparison.OrdinalIgnoreCase))
                 {
-                    RecordVerdict(run, gate, "pre-existing-base-red");
+                    RecordVerdict(run, gate, "pre-existing-base-red", baseAnswer);
                     State(manifest, BatchPhase.Paused, assembly.CandidateSha, lease.Fence,
                         "integration-branch-red");
                     return;
                 }
                 if (gate.FlakyQuarantinedFailures.Count > 0)
                 {
-                    RecordVerdict(run, gate, "flaky-red");
+                    RecordVerdict(run, gate, "flaky-red", baseAnswer);
                     State(manifest, BatchPhase.Paused, assembly.CandidateSha,
                         lease.Fence, "flaky quarantine requires a fresh gate verdict");
                     return;
                 }
-                RecordVerdict(run, gate, "deterministic-suite-red");
+                RecordVerdict(run, gate, "deterministic-suite-red", baseAnswer);
                 State(manifest, BatchPhase.Red, assembly.CandidateSha, lease.Fence,
                     "deterministic suite red");
                 await IsolateAsync(manifest, assembly, lease, pending, repo,
@@ -1573,6 +1575,7 @@ public sealed partial class BatchGatePilotService
                 manifest.BatchId, manifest.MembershipDigest, run.BatchRunId,
                 manifest.BaseSha, assembly.CandidateSha, published.Sha,
                 lease.Fence, refLease.Fence, _time.GetUtcNow()));
+            RecordPublishedBaseVerdict(manifest, run);
             State(manifest, BatchPhase.Published, assembly.CandidateSha, lease.Fence);
             foreach (var key in assembly.AdmittedKeys)
                 Lane(pending[key], "published", outcome: published.Status,
@@ -1883,30 +1886,17 @@ public sealed partial class BatchGatePilotService
     }
 
     private BatchGateRunVerdict RecordVerdict(BatchGateRunRecord run,
-        BuildTestGateResult gate, string classification)
+        BuildTestGateResult gate, string classification, BaseAnswer? baseAnswer = null)
     {
         var verdict = new BatchGateRunVerdict(
             run.BatchRunId, run.BatchId, run.MembershipDigest,
             gate.TestedSha ?? run.CandidateSha, run.GateProfileDigest,
             classification is "pass" or "flaky-quarantined-pass"
                 ? "pass" : "fail", classification,
-            run.EvidencePath, _time.GetUtcNow());
+            run.EvidencePath, _time.GetUtcNow(),
+            baseAnswer?.Source, baseAnswer?.Minutes);
         _store.RecordVerdict(verdict);
         return verdict;
-    }
-
-    private async Task<bool> BaseIsRedAsync(BatchGateManifest manifest,
-        BatchGateRunRecord run, BuildTestGateResult candidate, string repo,
-        CancellationToken ct)
-    {
-        if (candidate.Verdict != BuildTestGateVerdict.Fail
-            || candidate.FailureKind != BuildTestGateFailureKind.Code)
-            return false;
-        var baseline = await BaseVerdictAsync(manifest.Scope.Project, manifest.BaseSha,
-            run.GateProfileDigest, repo,
-            Path.Combine(_store.BatchDirectory(manifest.BatchId), "base-" + manifest.BaseSha + ".json"),
-            manifest.BatchId, ct).ConfigureAwait(false);
-        return baseline.Outcome == "fail";
     }
 
     /// <summary>

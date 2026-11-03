@@ -624,19 +624,37 @@ bookkeeping.
 The backend worker sends the full gate through `RemoteBuildTestGateRunner` to
 the configured remote gate host. A red candidate is compared on the server
 with a durable base verdict keyed by exact base SHA and gate profile. The
-candidate and base each run one full suite, including a targeted failed-test
-rerun when needed; the batch request does not trigger the remote clean-repeat
-diagnosis. It does not claim an independently claimable remote `GateAttempt`;
+candidate runs one full suite, including a targeted failed-test rerun when
+needed; the batch request does not trigger the remote clean-repeat
+diagnosis.
+
+The base question is answered cheapest first (AGT-3433). Publishing a batch
+records a passing base verdict for the tip it verified. A base without a
+verdict reuses the passing verdict of a first-parent ancestor (at most 20
+commits back) when it is an ancestor and every path changed since is
+documentation by `DocsOnlyDeliveryPolicy`. Otherwise the gate repeats only
+what failed on the base (`BuildTestGateRequest.NarrowCheck`): the guard step
+after a guard violation, the failed tests of the red test command, or the
+build. Only a failure that names nothing repeatable runs the full suite on the
+base. Red on the base is `pre-existing-base-red`, green is
+`deterministic-suite-red`. A narrow green answers only that candidate and is
+never recorded as a passing base; a narrow red is recorded. The answer only
+chooses whom to blame and when to split: a green base sends the batch to
+isolation, where every subset is gated again. The candidate verdict records
+`baseCheck` (which source answered) and `baseCheckMinutes`. It does not claim an independently claimable remote `GateAttempt`;
 that separate target remains described in the [Gates Dossier](../../operations/gates/index.html#sect4).
 `GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
 including `integrationBranchRedBatches` and the correctness floor; comparable baseline and cost fields remain null
-until measured on the same window. `fullSuiteRuns` and `fullSuiteHostMinutes`
-count every gate execution, including emergency per-task fallbacks run at
-review settlement. `perTaskFallbackCards`, `perTaskFallbackSuiteRuns`,
+until measured on the same window. `fullSuiteRuns` counts every full gate
+execution, including emergency per-task fallbacks run at review settlement;
+`fullSuiteHostMinutes` also includes narrow base checks. `baseChecks` lists
+per red candidate what answered the base question and its minutes, and
+`baseCheckMinutes` sums them. `perTaskFallbackCards`, `perTaskFallbackSuiteRuns`,
 `perTaskFallbackSuitesPerCard` and `perTaskPublishVerdictReuses` (AGT-3434)
 count, once per review generation the per-task path settled, the suites that
 card ran: its per-task gates, the tip verdict it triggered, and the merge gate
-when the publish step ran it instead of reusing the per-task verdict. `reviewVerificationRuns`, `reviewVerificationHostMinutes`
+when the publish step ran it instead of reusing the per-task verdict.
+`reviewVerificationRuns` and `reviewVerificationHostMinutes`
 and `reviewVerificationBaselineMinutes` count the builds and selected tests a
 batch-deferred review ran itself (`review-verification` tool commands,
 candidate and clean-repeat plus non-cached baseline workspaces), recorded once

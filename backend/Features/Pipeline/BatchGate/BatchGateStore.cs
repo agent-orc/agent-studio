@@ -18,11 +18,19 @@ public sealed record BatchGateRunRecord(
     string Host, long CoordinatorFence, IReadOnlyList<string> Commands,
     DateTimeOffset StartedAtUtc, string EvidencePath);
 
+/// <summary>
+/// One candidate verdict. On a red candidate <see cref="BaseCheck"/> names
+/// what answered the base question (a <see cref="BatchGateBaseCheckSources"/>
+/// or <see cref="GateNarrowCheckKinds"/> value) and
+/// <see cref="BaseCheckMinutes"/> what that answer cost; both are null when no
+/// base check was needed.
+/// </summary>
 public sealed record BatchGateRunVerdict(
     string BatchRunId, string BatchId, string MembershipDigest,
     string TestedCandidateSha, string GateProfileDigest,
     string Outcome, string Classification, string EvidencePath,
-    DateTimeOffset CompletedAtUtc);
+    DateTimeOffset CompletedAtUtc, string? BaseCheck = null,
+    double? BaseCheckMinutes = null);
 
 public sealed record BatchGatePublication(
     string BatchId, string MembershipDigest, string BatchRunId,
@@ -62,7 +70,8 @@ public sealed record BatchGateExecutionFact(
     string TestedSha, string Outcome, string Host,
     DateTimeOffset StartedAtUtc, DateTimeOffset CompletedAtUtc,
     long QueueWaitMs, double OverloadMinutes, string EvidencePath,
-    long? DurationMs = null, IReadOnlyList<string>? MemberKeys = null);
+    long? DurationMs = null, IReadOnlyList<string>? MemberKeys = null,
+    string? NarrowCheck = null);
 
 /// <summary>
 /// Review-side verification of one batch-deferred review: the builds and
@@ -72,6 +81,20 @@ public sealed record BatchGateReviewVerificationFact(
     string Project, string TaskKey, string ReviewAttemptId, string TestedSha,
     string Outcome, double CandidateMinutes, double BaselineMinutes,
     int CountedCommands, DateTimeOffset RecordedAtUtc);
+
+/// <summary>
+/// A base verdict any later batch on the same base and gate profile reuses.
+/// Only a full answer is recorded as <c>pass</c>: a published batch, a
+/// verified ancestor with no gated change since (<see cref="VerifiedSha"/>),
+/// or the whole suite. A narrow check is recorded only when it is red; a red
+/// part makes the base red. <see cref="Source"/> is null on records written
+/// before AGT-3433, which all came from the whole suite.
+/// </summary>
+public sealed record BatchGateBaseVerdict(
+    string Project, string BaseSha, string GateProfileDigest,
+    string Outcome, string? FailureFingerprint, string Reason,
+    string EvidencePath, DateTimeOffset RecordedAtUtc,
+    string? Source = null, double? Minutes = null, string? VerifiedSha = null);
 
 /// <summary>
 /// AGT-3434: the suites one card ran in the per-task fallback path, written
@@ -89,10 +112,6 @@ public sealed record BatchGateFallbackSuiteFact(
     public int Suites => PerTaskGateRuns + PublishGateRuns;
 }
 
-public sealed record BatchGateBaseVerdict(
-    string Project, string BaseSha, string GateProfileDigest,
-    string Outcome, string? FailureFingerprint, string Reason,
-    string EvidencePath, DateTimeOffset RecordedAtUtc);
 
 /// <summary>
 /// Durable batch authority. A closed manifest is written once before assembly;

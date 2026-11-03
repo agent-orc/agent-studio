@@ -105,6 +105,13 @@ public sealed record BuildTestGateRequest(
     public GateShardRequest? Sharding { get; init; }
 
     /// <summary>
+    /// AGT-3433: run only this part of the resolved plan (see
+    /// <see cref="GateNarrowCheckPlan"/>). A narrowed run never reads or
+    /// writes the verdict cache, because its green is not a full-suite green.
+    /// </summary>
+    public GateNarrowCheck? NarrowCheck { get; init; }
+
+    /// <summary>
     /// Host requirements (capability keys) whose gate steps the reused Remote
     /// Review verdict already ran on a host that has them (AGT-2981). Only
     /// the pre-develop gate sets this, and only when the reuse policy granted
@@ -291,6 +298,9 @@ public sealed record BuildTestGateResult(
     /// </summary>
     public bool GuardViolation { get; init; }
 
+    /// <summary>Kind of the verify command that turned the gate red; null for a preparation or infrastructure stop.</summary>
+    public VerifyCommandKind? FailedStepKind { get; init; }
+
     public ProjectPreparationManifest? PreparationManifest { get; init; }
     public IReadOnlyList<ProjectDefinitionIssue> ProjectDefinitionIssues { get; init; } = [];
 
@@ -463,6 +473,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         CancellationToken ct)
     {
         if (mode == PostStepMode.Off) return Skipped("mode=off");
+        // A narrowed green is not a full-suite green; it never meets the cache.
+        if (request.NarrowCheck is not null) request = request with { DisableVerdictCache = true };
 
         var repositoryPath = Path.GetFullPath(request.RepositoryPath);
         var cacheProject = request.Project ?? repositoryPath;
@@ -744,6 +756,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     var commands = ComposeRenderGate.Append(
                         staged.Commands.Where(c => ShouldRunForChange(c, changedFiles)).ToList(),
                         composeRender);
+                    if (request.NarrowCheck is { } narrow)
+                        commands = GateNarrowCheckPlan.Apply(commands, narrow) ?? [];
                     // The digest covers the resolved command plan as well as the
                     // inputs that selected it. A different selection never borrows
                     // a verdict merely because the tree SHA is unchanged.
@@ -784,14 +798,17 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                         ? []
                         : GatePreparationPlanner.Plan(workspace!, profile, commands);
                     completed ??= commands.Count == 0
-                        ? Skipped($"no verify commands apply to the changed files ({plan.Source}); level={staged.Audit.Level}")
+                        ? Skipped(request.NarrowCheck is { } empty
+                            ? $"narrow check {empty.Kind} matched no verify command ({plan.Source})"
+                            : $"no verify commands apply to the changed files ({plan.Source}); level={staged.Audit.Level}")
                             with
                         {
                             TestSelection = staged.Audit,
                         }
                         : await RunCommandsAsync(
                             workspace!, preparation, commands, plan.Source, mode, timeout,
-                            [], projectPreparation, ct, ShardContext(request))
+                            [], projectPreparation, ct, ShardContext(request),
+                            guardFirst: request.NarrowCheck is null)
                             .ConfigureAwait(false);
                     if (completed.VerdictSource != GateVerdictSource.CacheHit)
                     {
@@ -1360,7 +1377,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         IReadOnlyList<string> cacheRestoreMessages,
         ProjectPreparationResult? projectPreparation,
         CancellationToken ct,
-        GateShardContext? sharding = null)
+        GateShardContext? sharding = null,
+        bool guardFirst = true)
     {
         var sw = Stopwatch.StartNew();
         var budget = new GateContentionBudget(timeout);
@@ -1378,7 +1396,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         var quarantineDay = DateOnly.FromDateTime(DateTime.UtcNow);
         var quarantined = new List<TestQuarantineHit>();
         foreach (var issue in quarantine.Issues) output.AppendLine($"# test quarantine issue: {issue}");
-        commands = GuardFirstGatePlan.Apply(commands);
+        // A narrow check is already exactly the steps it repeats.
+        if (guardFirst) commands = GuardFirstGatePlan.Apply(commands);
         var shardSuites = sharding is null ? [] : ShardSuites(repositoryPath);
         var testShards = new List<GateShardSuiteEvidence>();
 
@@ -1636,6 +1655,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     QuarantinedFailures = quarantined,
                     QuarantineIssues = quarantine.Issues,
                     GuardViolation = guardStep,
+                    FailedStepKind = command.Kind,
                     TestShards = testShards,
                 }, kind);
             }

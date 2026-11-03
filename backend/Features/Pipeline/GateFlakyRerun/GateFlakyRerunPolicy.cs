@@ -150,6 +150,13 @@ public static class GateFlakyRerunPolicy
     }
 
     /// <summary>
+    /// The command re-pointed at <paramref name="tests"/> with its own build
+    /// behaviour unchanged: for a fresh workspace that has not built yet.
+    /// </summary>
+    public static string TargetCommand(string command, IReadOnlyList<string> tests)
+        => $"{ExistingFilter.Replace(command, string.Empty).Trim()} --filter \"{FilterExpression(tests)}\"";
+
+    /// <summary>
     /// A single <c>dotnet test</c> invocation. A chained or piped command line
     /// is left alone: rewriting its filter would change a part of it this
     /// policy never inspected.
