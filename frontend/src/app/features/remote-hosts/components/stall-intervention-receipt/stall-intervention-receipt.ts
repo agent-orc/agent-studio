@@ -1,10 +1,12 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import type { StallInterventionRow } from '../../models/stall-intervention.model';
 
 /** AGT-3207: what the AI Operator observed, did, why, what changed and how to undo it. */
 @Component({
   selector: 'app-stall-intervention-receipt',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './stall-intervention-receipt.html',
   styleUrl: './stall-intervention-receipt.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -12,6 +14,16 @@ import type { StallInterventionRow } from '../../models/stall-intervention.model
 export class StallInterventionReceiptComponent {
   readonly row = input.required<StallInterventionRow>();
   readonly undo = output<string>();
+
+  statusTone(status: string): StatusTone {
+    switch (status) {
+      case 'verified': return 'success';
+      case 'applying': return 'running';
+      case 'escalated': return 'warning';
+      case 'applied': return 'info';
+      default: return 'neutral';
+    }
+  }
 
   statusLabel(status: string): string {
     switch (status) {

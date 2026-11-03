@@ -180,6 +180,29 @@ public static class TagMaintenancePolicy
     public static string[] Rewrite(IEnumerable<string> tags, string source, string target) =>
         tags.Select(tag => tag == source ? target : tag).Distinct(StringComparer.Ordinal).ToArray();
 
+    public const int MaxCardTitleLength = 240;
+
+    /// <summary>Card title per proposal kind; an added tag shows its Label, never the model's Source.</summary>
+    public static string CardTitle(TagMaintenanceProposal proposal)
+    {
+        var source = Collapse(proposal.Source);
+        var target = Collapse(proposal.Target);
+        var detail = proposal.Kind switch
+        {
+            "add" => Collapse(proposal.Label) is { Length: > 0 } label
+                ? $"add tag \"{label}\" ({target})" : $"add tag {target}",
+            "merge" => $"merge {source} into {target}",
+            "retire" => $"retire {(source.Length > 0 ? source : target)}",
+            "glossary" => $"glossary terms for {(Collapse(proposal.Area) is { Length: > 0 } area ? area : target)}",
+            _ => $"{Collapse(proposal.Kind)} {string.Join(' ', new[] { source, target }.Where(v => v.Length > 0))}",
+        };
+        var title = Collapse("Tag maintenance: " + detail);
+        return title.Length <= MaxCardTitleLength ? title : title[..(MaxCardTitleLength - 1)].TrimEnd() + "…";
+    }
+
+    private static string Collapse(string? value) =>
+        string.Join(' ', (value ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
     public static string Card(string project, TagMaintenanceDecision decision) => $"""
         # Tag maintenance decision: {decision.Proposal.Kind}
 

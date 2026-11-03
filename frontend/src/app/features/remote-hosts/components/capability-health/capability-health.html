@@ -2,7 +2,7 @@
 
 @if (routeStatus() !== 'unknown') {
   <section class="route" [attr.data-tone]="routeStatus()" data-testid="remote-host-task-server-route-state">
-    <strong>Task Server route {{ routeStatus() }}</strong>
+    <strong>Task Server route <app-status-indicator [tone]="routeStatus() === 'reachable' ? 'success' : routeStatus() === 'degraded' ? 'warning' : 'danger'" [label]="routeStatus()" [compact]="true" /></strong>
     <span>{{ routeDetail() }}</span>
     @if (h.taskServerConnection?.failureStartedAt) {
       <span>

@@ -179,7 +179,7 @@
       <div><h3>Proof run</h3>
         <p>Create a small overview document in the first repository. Follow the card through coding, review, and integration.</p>
         @if (proof(); as card) {
-          <p data-testid="first-run-proof-id">Card {{ card.id }} · coding {{ proofRan() ? 'run' : 'waiting' }} · review {{ proofReviewed() ? 'passed' : 'waiting' }} · integration {{ proofIntegrated() ? 'verified' : 'waiting' }}</p>
+          <p data-testid="first-run-proof-id">Card {{ card.id }} · coding <app-status-indicator [tone]="proofRan() ? 'success' : 'neutral'" [label]="proofRan() ? 'run' : 'waiting'" [compact]="true" /> · review <app-status-indicator [tone]="proofReviewed() ? 'success' : 'neutral'" [label]="proofReviewed() ? 'passed' : 'waiting'" [compact]="true" /> · integration <app-status-indicator [tone]="proofIntegrated() ? 'success' : 'neutral'" [label]="proofIntegrated() ? 'verified' : 'waiting'" [compact]="true" /></p>
         } @else {
           <label class="first-run__demo-confirm">
             <input type="checkbox" data-testid="first-run-demo-confirm"

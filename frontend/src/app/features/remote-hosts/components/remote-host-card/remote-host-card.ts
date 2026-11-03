@@ -51,7 +51,7 @@ import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.se
 import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
 import { HostCredentialBadgeComponent } from '../../../credentials/host-credential-badge/host-credential-badge.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
-import { hostReadiness } from '../../models/host-readiness';
+import { hostReadiness, hostReadinessTone } from '../../models/host-readiness';
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {
   key: string;
@@ -96,6 +96,7 @@ interface Meter {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class RemoteHostCardComponent {
+  readonly readinessTone = hostReadinessTone;
   readonly providerLoginStateLabel = providerLoginStateLabel;
   readonly providerAuthTone = providerAuthTone;
   private readonly codexSignIn = inject(CodexSignInDialogService);
@@ -156,6 +157,10 @@ export class RemoteHostCardComponent {
     const ageLabel = age < 60_000 ? `${Math.floor(age / 1000)}s`
       : age < 3_600_000 ? `${Math.floor(age / 60_000)}m` : `${Math.floor(age / 3_600_000)}h`;
     return `${link.state[0].toUpperCase()}${link.state.slice(1)} · ${ageLabel} ago`;
+  });
+  readonly linkIndicatorTone = computed<StatusTone>(() => {
+    const state = this.host().runnerLink?.state;
+    return state === 'up' ? 'success' : state === 'paused' || !state ? 'neutral' : 'warning';
   });
   readonly linkTooltip = computed(() => {
     const link = this.host().runnerLink;
@@ -275,6 +280,8 @@ export class RemoteHostCardComponent {
   readonly cliDriftCount = computed(() => this.host().installedClis?.filter(cli => cli.isBelowTarget).length ?? 0);
   readonly cliUpdateActive = computed(() => ['draining', 'ready', 'upgrading', 'probing']
     .includes(this.host().cliUpdate?.state ?? ''));
+  readonly cliUpdateTone = computed<StatusTone>(() => this.cliUpdateActive() ? 'running'
+    : this.host().cliUpdate?.state === 'failed' ? 'danger' : 'neutral');
   readonly cliUpdateLabel = computed(() => {
     const update = this.host().cliUpdate;
     if (!update) return null;

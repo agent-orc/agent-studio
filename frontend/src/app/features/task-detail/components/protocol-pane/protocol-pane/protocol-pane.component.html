@@ -298,7 +298,11 @@
                               data-testid="activity-runs-open"
                               [cacTooltip]="'Show the full run list'"
                               (click)="runsModalOpen.set(true)">
-                        {{ runCount() }} Run{{ runCount() === 1 ? '' : 's' }}
+                        @if (reviewAttemptFocus(); as attempt) {
+                          Review attempt {{ attempt }}
+                        } @else {
+                          {{ runCount() }} Run{{ runCount() === 1 ? '' : 's' }}
+                        }
                       </button>
                       <button type="button"
                               class="btn-icon activity-runs__info"
@@ -351,7 +355,11 @@
                            (click)="$event.stopPropagation()" (keydown.enter)="$event.stopPropagation()" (keydown.space)="$event.stopPropagation()">
                     <header class="runs-modal__head">
                       <h3 id="runs-modal-title" class="runs-modal__title">
-                        {{ runCount() }} Run{{ runCount() === 1 ? '' : 's' }}
+                        @if (reviewAttemptFocus(); as attempt) {
+                          Review attempt {{ attempt }}
+                        } @else {
+                          {{ runCount() }} Run{{ runCount() === 1 ? '' : 's' }}
+                        }
                       </h3>
                       <button type="button"
                               class="runs-modal__close"

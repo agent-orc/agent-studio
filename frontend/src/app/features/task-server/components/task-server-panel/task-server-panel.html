@@ -129,8 +129,8 @@
         <header class="ts__block-head"><h3 class="ts__block-title">Maintenance</h3>
           <app-status-indicator class="ts__status" [tone]="s.maintenance.mode === 'normal' ? 'success' : 'warning'" [label]="s.maintenance.mode" testId="task-server-maintenance-mode" /></header>
         <dl class="ts__rows">
-          <div class="ts__row"><dt>Drain</dt><dd>{{ s.maintenance.drainRequested ? 'Requested' : 'Open' }}</dd></div>
-          <div class="ts__row"><dt>Shutdown</dt><dd>{{ s.maintenance.shutdownPrepared ? 'Prepared' : 'Service manager owned' }}</dd></div>
+          <div class="ts__row"><dt>Drain</dt><dd><app-status-indicator [tone]="s.maintenance.drainRequested ? 'warning' : 'success'" [label]="s.maintenance.drainRequested ? 'Requested' : 'Open'" [compact]="true" /></dd></div>
+          <div class="ts__row"><dt>Shutdown</dt><dd><app-status-indicator [tone]="s.maintenance.shutdownPrepared ? 'warning' : 'neutral'" [label]="s.maintenance.shutdownPrepared ? 'Prepared' : 'Service manager owned'" [compact]="true" /></dd></div>
           <div class="ts__row"><dt>Reason</dt><dd>{{ s.maintenance.reason || '-' }}</dd></div>
         </dl>
       </section>
@@ -138,8 +138,8 @@
         <header class="ts__block-head"><h3 class="ts__block-title">Migrations</h3><span class="ts__badge">{{ s.migrations.length }} active</span></header>
         <dl class="ts__rows">
           @for (migration of s.migrations; track migration.id) {
-            <div class="ts__row"><dt>{{ migration.id }}</dt><dd>{{ migration.state }}</dd></div>
-          } @empty { <div class="ts__row"><dt>State</dt><dd>No active migrations</dd></div> }
+            <div class="ts__row"><dt>{{ migration.id }}</dt><dd><app-status-indicator [tone]="migrationTone(migration.state)" [label]="migration.state" [compact]="true" /></dd></div>
+          } @empty { <div class="ts__row"><dt>State</dt><dd><app-status-indicator tone="neutral" label="No active migrations" [compact]="true" /></dd></div> }
         </dl>
       </section>
       <section class="ts__block" data-testid="task-server-backups" [attr.data-tone]="s.backups.lastFailure ? 'error' : 'ok'">

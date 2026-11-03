@@ -18,10 +18,10 @@
     @if (driftLabel(); as drift) {
       <span class="release__drift"
             [attr.data-tone]="driftTone()"
-            [attr.data-testid]="driftTestId()">{{ drift }}</span>
+            [attr.data-testid]="driftTestId()"><app-status-indicator [tone]="indicatorTone()" [label]="drift" [compact]="true" /></span>
     }
     @if (reportAge(); as age) {
-      <span class="release__stale" [attr.data-testid]="testIdPrefix() + '-stale'">Report stale · {{ age }} ago</span>
+      <span class="release__stale" [attr.data-testid]="testIdPrefix() + '-stale'"><app-status-indicator tone="warning" [label]="'Report stale · ' + age + ' ago'" [compact]="true" /></span>
     }
   } @else {
     <span class="release__placeholder" title="Not reported">–</span>

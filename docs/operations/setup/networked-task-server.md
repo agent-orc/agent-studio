@@ -28,6 +28,15 @@ The reference files are:
 3. Copy the networked settings example to a host-owned configuration file,
    set `AllowedHosts`, and set `ASPNETCORE_ENVIRONMENT=Production`. Keep the
    file and Task Repository readable only by the service user.
+
+   Installation-specific backend settings live in `appsettings.Local.json` at
+   the backend content root. The container deployment mounts that file at
+   `/app/appsettings.Local.json`. It overrides the packaged appsettings files;
+   environment variables take precedence over it. For example,
+   `Security__MaxRequestBodyBytes` overrides
+   `Security:MaxRequestBodyBytes` in the file. Restart the backend after
+   changing a startup limit such as the Kestrel request body cap.
+
 4. Install Caddy, copy the reference Caddyfile, and set `STUDIO_DOMAIN` and
    `ACME_EMAIL` in the Caddy service environment.
 5. Validate before reload:

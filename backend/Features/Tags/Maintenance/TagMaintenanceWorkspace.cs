@@ -139,7 +139,7 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
         if (scanner.FindJob(id, watch.Path) != null) return id;
         return tasks.CreateJob(new CreateTaskRequest
         {
-            Id = id, WatchPath = watch.Path, Title = $"Tag maintenance: {decision.Proposal.Kind} {decision.Proposal.Source}{decision.Proposal.Target}",
+            Id = id, WatchPath = watch.Path, Title = TagMaintenancePolicy.CardTitle(decision.Proposal),
             TargetState = TaskStates.Backlog, PromptMarkdown = TagMaintenancePolicy.Card(project, decision),
             CreationSource = "tag-maintenance", CreatedBy = "Tag maintenance", Tags = ["decision"],
         }) ?? throw new InvalidOperationException("Decision card creation failed.");

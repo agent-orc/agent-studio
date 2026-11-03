@@ -332,6 +332,7 @@ export class TaskDetailComponent implements OnDestroy {
   readonly cliTesting = signal(false);
   readonly showLogOverlay = signal(false);
   readonly activeInspectorTab = signal<'task' | 'activity' | 'protocol'>('protocol');
+  readonly reviewAttemptFocus = signal<string | null>(null);
   /** When true while a run is active, the user has manually expanded the
    *  setup bar and we keep it expanded until the run ends or they toggle it
    *  off. Reset on job switch and when the run ends so the next run starts
@@ -480,6 +481,7 @@ export class TaskDetailComponent implements OnDestroy {
     this.git.setJob(d.info);
 
     if (isJobSwitch) {
+      this.reviewAttemptFocus.set(null);
       this.errorMsg.set(null);
       this.modelDraft.set(d.info.model || (this.availableModels().find((m) => m.isDefault)?.id ?? ''));
       this.thinkingLevelDraft.set(d.info.thinkingLevel ?? null);
@@ -1262,6 +1264,12 @@ export class TaskDetailComponent implements OnDestroy {
     this.userTouchedInspectorTab = true;
     this.activeInspectorTab.set(tab);
     this.inspectorTabChange.emit(tab);
+  }
+
+  openReviewAttempt(attemptId: string): void {
+    if (!this.panesVisible().protocol) this.togglePane('protocol');
+    this.onInspectorTabChange('activity');
+    this.reviewAttemptFocus.set(attemptId);
   }
 
   /** Toggles the running setup bar between compact and full selectors. */
