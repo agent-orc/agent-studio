@@ -213,6 +213,43 @@ public sealed class BatchGateReviewPlanTests
         }
     }
 
+    [Theory]
+    [InlineData("backend.Tests/Delivery/NewOnlyTests.cs", true)]
+    [InlineData("backend.Tests/SharedFixtureTests.cs", false)]
+    public void TestOnlyDeliveryRetainsAReviewBuildAndItsOwnTestGate(
+        string changed, bool classFilter)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-plan-test-" + Guid.NewGuid().ToString("N"));
+        var repo = Path.Combine(root, "repo");
+        var folder = Path.Combine(root, "task");
+        Directory.CreateDirectory(repo);
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var resultRef = BackendRepository(repo, folder);
+            var file = Path.Combine(repo, changed);
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllText(file, classFilter
+                ? "namespace AgentStudio.Tests;\npublic sealed class NewOnlyTests { [Fact] public void Runs() { } }\n"
+                : "namespace AgentStudio.Tests;\npublic sealed class SharedFixtureTests { }\n");
+            Git(repo, "add", ".");
+            Git(repo, "commit", "-qm", "test-only delivery");
+            var sha = Git(repo, "rev-parse", "HEAD").Trim();
+            Git(repo, "switch", "-q", "develop");
+
+            var plan = PlanBuilder().Build(AutoReviewTask(repo, folder), repo,
+                new ProjectSettings { BatchGate = new(Enabled: true, Scope: "code") }, "develop",
+                sha, [changed], resultRef);
+
+            Assert.True(plan.BuildTestDeferredToBatch);
+            Assert.Contains(plan.Commands, command => command.Arguments.Contains("echo build"));
+            Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
+                argument.Contains("dotnet test", StringComparison.Ordinal)
+                && argument.Contains("FullyQualifiedName~NewOnlyTests", StringComparison.Ordinal) == classFilter));
+        }
+        finally { DeleteDirectory(root); }
+    }
+
     /// <summary>
     /// AGT-3108: OrchestratorApi.Tests references task-server only so that
     /// ConnectorNegativeMatrixTests can start its built output. A deferred plan
