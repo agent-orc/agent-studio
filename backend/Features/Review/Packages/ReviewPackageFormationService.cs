@@ -154,10 +154,17 @@ public sealed class ReviewPackageFormationService(
 /// <summary>Runs the formation tick every 30 seconds, like the batch gate pilot.</summary>
 public sealed class ReviewPackageFormationHostedService(
     ReviewPackageFormationService formation,
+    IHostApplicationLifetime lifetime,
     ILogger<ReviewPackageFormationHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // The first tick may scan the task store. Let the host start and serve
+        // its restored board before package formation reads any tasks.
+        await Task.Yield();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = lifetime.ApplicationStarted.Register(() => started.TrySetResult());
+        await started.Task.WaitAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         do
         {
