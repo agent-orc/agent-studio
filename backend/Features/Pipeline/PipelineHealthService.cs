@@ -279,7 +279,7 @@ public sealed class PipelineHealthService
         new(StringComparer.OrdinalIgnoreCase);
     private readonly AutoReviewQueueStagnationWatchdog? _reviewQueue;
     private readonly RemoteQueueStarvationWatchdog? _queueStarvation;
-    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _laneBlockedCards =
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, DateTime>> _laneBlockedCards =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Alert identity of the review-claim stall, separate from the file-based lane drain.</summary>
@@ -452,8 +452,20 @@ public sealed class PipelineHealthService
         var identity = IntegrationLaneIdentity(stall.Branch);
         var blocked = _laneBlockedCards.GetOrAdd(
             stall.Project + "\0" + identity,
-            _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
-        blocked[stall.JobId] = 0;
+            _ => new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase));
+        blocked.AddOrUpdate(stall.JobId, stall.DetectedAtUtc, (_, _) => stall.DetectedAtUtc);
+        var jobs = _scanner.ScanAllAutomationJobsWithArchive()
+            .Where(job => string.Equals(job.ProjectName, stall.Project, StringComparison.OrdinalIgnoreCase)
+                || (stall.WatchPath is not null && WatchPathComparison.PathsEqual(job.WatchPath, stall.WatchPath)))
+            .GroupBy(job => job.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        foreach (var (card, blockedAt) in blocked)
+        {
+            if (jobs.TryGetValue(card, out var job)
+                && IntegrationLaneEvents.Read(job.FolderPath).Any(entry =>
+                    entry.Kind == "published" && entry.AtUtc.UtcDateTime > blockedAt))
+                blocked.TryRemove(card, out _);
+        }
         var cards = blocked.Keys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase).ToArray();
         var commits = stall.Commits
             .Where(commit => commit.Status == AgentStudio.Git.LaneCommitStatus.Unpublished)
