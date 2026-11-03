@@ -26,7 +26,7 @@ test.describe('Status bar default picker (unified chip)', () => {
     });
 
     await page.setViewportSize({ width: 1600, height: 900 });
-    await page.goto('http://localhost:4010');
+    await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(800);
 
