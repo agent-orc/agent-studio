@@ -160,13 +160,21 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     /// Review. The card therefore projects a typed failure instead of a silent
     /// integration-pending state, and acceptance has no reason to retry it.
     /// </summary>
+    /// <remarks>
+    /// AGT-3428: a refusal for a missing verify definition is no gate failure;
+    /// it keeps its own code so the gate failure router never classifies it.
+    /// </remarks>
     public void RecordGateFailure(
         RemoteDeliveryIntegrationRequest request,
         string detail)
         => _recordFailure(
             request,
-            AcceptedIntegrationFailureCodes.DeliveryGateFailed,
-            "Remote delivery gate failed before integration.",
+            VerifyDefinitionPolicy.DescribesMissingDefinition(detail)
+                ? AcceptedIntegrationFailureCodes.VerifyDefinitionMissing
+                : AcceptedIntegrationFailureCodes.DeliveryGateFailed,
+            VerifyDefinitionPolicy.DescribesMissingDefinition(detail)
+                ? "The repository defines no verify commands, so the delivery was not integrated."
+                : "Remote delivery gate failed before integration.",
             detail);
 
     /// <param name="request">The delivery to integrate.</param>

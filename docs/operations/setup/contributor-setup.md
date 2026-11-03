@@ -183,12 +183,28 @@ Three things describe one project and should be decided in the same sitting. Ski
    command's durable gate reason includes a bounded stderr/stdout excerpt; the
    complete streams remain in its gate log.
 
-   If nothing is derivable (no root solution/project, no usable npm scripts),
-   the gate records `NotApplicable` with reason `no verify commands derivable`;
-   the board, task detail, and timeline render the neutral `No build/test
-   defined` state. This is distinct from `Skipped`, which means a required gate
-   did not reach a verdict and remains an attention state. Project Settings
-   keeps a neutral reminder visible while the derived plan is empty. When your
+   If nothing is derivable (no `.agent-studio/project.yml`, no build profile,
+   no root solution/project, no usable npm scripts), the gate records
+   `NotApplicable` with reason `no verify commands derivable`; the board, task
+   detail, and timeline render the neutral `No build/test defined` state. This
+   is distinct from `Skipped`, which means a required gate did not reach a
+   verdict and remains an attention state.
+
+   AGT-3428 rule: a delivery merges only when a check verified it, or when the
+   repository declares on purpose that it has none. A valid
+   `.agent-studio/project.yml` whose `build`, `test` and `lint` lists are empty
+   is that declaration (gate reason `the project definition declares no verify
+   commands`) and merges. Without any definition, the merge is refused with the
+   typed code `verify-definition-missing`, never `build-gate-failed`, so the
+   gate failure router does not classify it. The message names the missing
+   file and shows a minimal example for the detected stack. The same message
+   appears in Project Settings, as a mandatory prompt-enrichment block
+   (`verify-definition-missing`) at the start of a coding run, and in the
+   Remote Review plan (`verifyDefinitionMissing`, skipped `build-tests`
+   aspect), which sends the card to Human Review instead of integrating it.
+   Docs-only deliveries keep their light gate, and a develop merge that no
+   gate applies to stays ungated as before; the pre-main gate refuses it at
+   promotion. When your
    project needs a non-conventional command (a `make` target, a monorepo build,
    a nested solution), declare an explicit **build profile** with `PUT
    /api/projects/{project}/build-profile` (`buildCmds` / `testCmds`); those

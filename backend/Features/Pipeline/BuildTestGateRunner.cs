@@ -742,7 +742,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     var emptySelection = DeterministicTestScope.Plan(
                         workspace!, plan, changedFiles, request.ChangedFileStatuses,
                         request.TestExecution, request.Lane, request.RequiredTestLevel);
-                    completed = NotApplicable("no verify commands derivable") with
+                    // AGT-3428: the reason tells a deliberate empty definition
+                    // apart from a missing one; only the first admits a merge.
+                    completed = NotApplicable(VerifyDefinitionPolicy.NotApplicableReason(plan)) with
                     {
                         TestSelection = emptySelection.Audit,
                         TestSelectionAuditDigest = emptySelection.Audit.Digest,

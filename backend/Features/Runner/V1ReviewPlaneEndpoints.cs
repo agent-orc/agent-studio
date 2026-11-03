@@ -2117,7 +2117,9 @@ public static class V1ReviewPlaneEndpoints
                         remoteIntegration.RecordGateFailure(
                             integrationRequest,
                             integrationDecision.Reason);
-                        integrationOutcome = AcceptedIntegrationFailureCodes.DeliveryGateFailed;
+                        integrationOutcome = integrationDecision.VerifyDefinitionMissing
+                            ? AcceptedIntegrationFailureCodes.VerifyDefinitionMissing
+                            : AcceptedIntegrationFailureCodes.DeliveryGateFailed;
                     }
                     AdvanceDeliverySettlement(
                         task.FolderPath,

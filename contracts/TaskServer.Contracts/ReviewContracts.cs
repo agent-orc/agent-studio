@@ -134,7 +134,11 @@ public sealed record ReviewPlanDto(
     // repository is claimable only by an executor that registered the
     // repository-read capability for exactly this repository.
     bool PrivateRepository = false,
-    DeepReviewDecisionDto? DeepReviewDecision = null);
+    DeepReviewDecisionDto? DeepReviewDecision = null,
+    // AGT-3428: set when the repository defines no verify commands and nothing
+    // is derivable. Carries the message naming the missing file with a minimal
+    // example. The delivery is not integrated while it is set.
+    string? VerifyDefinitionMissing = null);
 
 /// <summary>Frozen engine decision visible with the review subject before any review command runs.</summary>
 public sealed record DeepReviewDecisionDto(string ReceiptId, string Mode, bool Selected,

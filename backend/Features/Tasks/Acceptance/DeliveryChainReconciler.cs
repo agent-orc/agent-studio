@@ -166,6 +166,12 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             }
             else return Applied.None;
         }
+        // AGT-3428: no gate ran, so there is nothing to classify. The park
+        // reason is the message naming the missing definition and its example.
+        if (fatal && gateParkReason is null
+            && status?.Failure?.Code == AcceptedIntegrationFailureCodes.VerifyDefinitionMissing)
+            gateParkReason = $"[{AcceptedIntegrationFailureCodes.VerifyDefinitionMissing}] {status.Failure.Reason} "
+                             + "Then use Retry integration.";
         var category = fatal
             ? gateParkCategory ?? status?.Failure?.Code ?? (status?.Status == IntegrationStatuses.NoBranch
                 ? "missing-delivery" : "integration-failed")

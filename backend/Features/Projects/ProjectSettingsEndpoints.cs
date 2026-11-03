@@ -1096,6 +1096,7 @@ public static class ProjectSettingsEndpoints
                 ? project.RootPath
                 : project.RepositoryPath;
             var verifyPlan = VerifyCommandPlanner.Plan(repositoryPath, profile);
+            var verifyDefinition = VerifyDefinitionPolicy.Inspect(repositoryPath, profile);
             var repositoryDefinition = ProjectDefinitionReader.ReadWorkspace(repositoryPath);
             var contradictions = BuildProfileContradictionPolicy.Evaluate(
                 repositoryDefinition.IsValid ? repositoryDefinition.Definition : null,
@@ -1112,6 +1113,21 @@ public static class ProjectSettingsEndpoints
                 {
                     source = verifyPlan.Source,
                     commands = verifyPlan.Commands,
+                },
+                // AGT-3428: shown at setup, before any card reaches the merge.
+                verifyDefinition = new
+                {
+                    state = verifyDefinition.State switch
+                    {
+                        VerifyDefinitionState.Missing => "missing",
+                        VerifyDefinitionState.DeclaredEmpty => "declared-empty",
+                        _ => "derived",
+                    },
+                    path = ProjectPreparationPaths.Definition,
+                    message = verifyDefinition.Message,
+                    exampleStack = verifyDefinition.Example?.Stack,
+                    exampleDefinition = verifyDefinition.Example?.Definition,
+                    examplePrepareScript = verifyDefinition.Example?.PrepareScript,
                 },
                 contradictions,
             });
