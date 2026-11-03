@@ -12,6 +12,28 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
         Path.GetTempPath(), "remote-review-evidence-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Grade_reports_each_aspect_cache_usage_and_review_total()
+    {
+        Directory.CreateDirectory(_root);
+        var now = new DateTime(2026, 11, 3, 0, 0, 0, DateTimeKind.Utc);
+        ReviewCommandEvidenceDto Aspect(string id, long created, long read) => new(
+            "aspect-" + id, id, "claude", [], new string('a', 40), new string('a', 40),
+            new string('b', 40), now, now, 0, null, new string('1', 64), new string('2', 64),
+            ExecutionKind: ReviewCommandKinds.AgentAspect,
+            CacheCreationTokens: created, CacheReadTokens: read);
+        var request = Request(new string('a', 40),
+            [Aspect("requirement-fit", 60_000, 0), Aspect("code-quality", 2_000, 58_000)]);
+
+        var file = await RemoteReviewReportEvidence.WriteAsync(_root, "cache-review", "subject",
+            request, new string('c', 64), now, default);
+        var grade = await File.ReadAllTextAsync(Path.Combine(_root, file));
+
+        Assert.Contains("| requirement-fit | 60000 | 0 |", grade);
+        Assert.Contains("| code-quality | 2000 | 58000 |", grade);
+        Assert.Contains("| **Review total** | **62000** | **58000** |", grade);
+    }
+
+    [Fact]
     public async Task Grade_names_brief_version_and_skipped_content_aspect()
     {
         Directory.CreateDirectory(_root);

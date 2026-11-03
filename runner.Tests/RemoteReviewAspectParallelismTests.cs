@@ -245,6 +245,62 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
         Assert.Equal(4, evidence.Verdicts.Count);
     }
 
+    [Fact]
+    public async Task Claude_shared_prefix_is_written_by_first_aspect_before_siblings_start()
+    {
+        var runner = new FakeAspectRunner(_time);
+        runner.Usage = command => command.StepId == "aspect-1"
+            ? new RemoteAgentUsage("claude-opus-5", 0, 0, 0, 1000, false) : null;
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Work = (command, ct) => command.StepId == "aspect-1"
+            ? releaseFirst.Task.WaitAsync(ct) : releaseRest.Task.WaitAsync(ct);
+        var plan = Aspects(4).Select(command => command with
+        {
+            FileName = "claude",
+            CliType = "claude",
+            Model = "claude-opus-5",
+            Prompt = "Shared brief\n<!-- remote-review-shared-material-v1 -->\nAspect " + command.Aspect,
+        }).ToArray();
+        var workspace = await PreparedAsync("attempt-cache-prefix", plan, runner);
+
+        var attempt = workspace.ExecutePlanAsync(default);
+        await runner.InFlightReached(1).WaitAsync(Patience);
+        Assert.Equal(["aspect-1"], runner.Started);
+        releaseFirst.SetResult();
+        await runner.InFlightReached(3).WaitAsync(Patience);
+        Assert.Equal(3, runner.MaxInFlight);
+        releaseRest.SetResult();
+        var evidence = await attempt.WaitAsync(Patience);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(4, evidence.Verdicts.Count);
+        var prefixes = runner.Prompts.Select(prompt => prompt[..prompt.IndexOf("Aspect aspect-", StringComparison.Ordinal)]).ToArray();
+        Assert.All(prefixes, prefix => Assert.Equal(prefixes[0], prefix));
+        Assert.Contains("Shared brief", prefixes[0]);
+        Assert.Contains("feature.txt", prefixes[0]);
+        Assert.DoesNotContain("remote-review-shared-material-v1", prefixes[0]);
+    }
+
+    [Fact]
+    public async Task Claude_aspects_remain_serial_when_first_call_reports_no_cache_usage()
+    {
+        var runner = new FakeAspectRunner(_time);
+        var plan = Aspects(4).Select(command => command with
+        {
+            CliType = "claude",
+            Model = "claude-opus-5",
+            Prompt = "Shared brief\n<!-- remote-review-shared-material-v1 -->\nAspect " + command.Aspect,
+        }).ToArray();
+        var workspace = await PreparedAsync("attempt-cache-unconfirmed", plan, runner);
+
+        var evidence = await workspace.ExecutePlanAsync(default).WaitAsync(Patience);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(1, runner.MaxInFlight);
+        Assert.Equal(["aspect-1", "aspect-2", "aspect-3", "aspect-4"], runner.Started);
+    }
+
     [Theory]
     [InlineData(-3, 1)]
     [InlineData(0, 1)]
@@ -382,7 +438,9 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
 
         public Func<ReviewCommandDto, CancellationToken, Task> Work { get; set; } = (_, _) => Task.CompletedTask;
         public Func<ReviewCommandDto, ProcessResult?> Reply { get; set; } = _ => null;
+        public Func<ReviewCommandDto, RemoteAgentUsage?> Usage { get; set; } = _ => null;
         public ConcurrentQueue<string> Started { get; } = new();
+        public ConcurrentQueue<string> Prompts { get; } = new();
         public ConcurrentQueue<string> Cancelled { get; } = new();
         public int MaxInFlight => Volatile.Read(ref _maxInFlight);
 
@@ -394,6 +452,7 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
         {
             var startedAt = time.GetUtcNow().UtcDateTime;
             Started.Enqueue(command.StepId);
+            Prompts.Enqueue(command.Prompt ?? string.Empty);
             var inFlight = Interlocked.Increment(ref _inFlight);
             var max = Volatile.Read(ref _maxInFlight);
             while (inFlight > max && Interlocked.CompareExchange(ref _maxInFlight, inFlight, max) != max)
@@ -417,7 +476,7 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
                 $"[[ASPECT_VERDICT: status=pass; summary={command.Aspect} passed.; "
                 + "evidence_checked=feature.txt; missing=none]]",
                 string.Empty);
-            return new CommandExecution(process, startedAt, time.GetUtcNow().UtcDateTime, null);
+            return new CommandExecution(process, startedAt, time.GetUtcNow().UtcDateTime, null, Usage(command));
         }
 
         private static Task Await(

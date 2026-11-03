@@ -356,6 +356,12 @@ public sealed class RemoteReviewPlanBuilder
                 model,
                 PipelineStepConfigResolver.ResolvePrompt(settings, step.Id),
                 step.Id);
+            // Version the prompt layout through its frozen prompt bytes. Only the
+            // four stock Claude aspects use the shared cache prefix; overrides
+            // and other CLIs retain their authored prompt.
+            if (!isConcept && string.Equals(cliType, "claude", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(PipelineStepConfigResolver.ResolvePrompt(settings, step.Id)))
+                prompt = ReviewAspectCachePrompt.Compose(prompt, inputs);
             // AGT-2820: the budget is derived from the toolchain, the model, the
             // thinking level, and the size of the prompt - not from a constant.
             // The executor re-derives it once it has appended the authoritative
