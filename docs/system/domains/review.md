@@ -219,6 +219,16 @@ documentation-impact, and no test file was removed for tests-and-evidence.
 Otherwise review falls back to every aspect. A carried verdict records
 `carriedOverFrom`; it is displayed as carried over and is not a fresh pass.
 
+For a new Remote Review delivery, the plan also compares the last passed
+delivery's own patch with the new result's own patch. Each patch is measured
+against its respective merge base with the integration branch, per changed
+path and without hunk line offsets. If every patch matches, the four content
+verdicts carry over from that passed attempt. If only `status.md` or a path
+under `results/` differs, requirement-fit and tests-and-evidence run again,
+while code-quality and documentation-impact carry over. Any other difference,
+missing merge-base evidence, or unavailable prior passing verdict runs the
+full content review. Deterministic tool gates remain in the review plan.
+
 Use this when a change touches ReviewSubject preparation, aspect prompts,
 review-report verdicts, reissue or escalation decisions, the isolation of
 concurrent review attempts, or the evidence shown for a remote grade.
