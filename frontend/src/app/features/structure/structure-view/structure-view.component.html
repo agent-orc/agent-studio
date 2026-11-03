@@ -1,4 +1,4 @@
-<section class="structure-view" [class.structure-view--embedded]="embedded()" data-testid="structure-view" aria-label="Declared structure">
+<section class="structure-view" [class.structure-view--embedded]="embedded()" data-testid="structure-view" aria-label="Structure and library registries">
   <header class="structure-header">
     <div><p class="structure-eyebrow">Operations</p><h1>Structure</h1>
       <p>{{ projectName() ? projectName() + ' partial picture' : 'Workspace whole picture' }}</p></div>
@@ -19,6 +19,46 @@
     </div>
   </header>
   @if (error()) { <p role="alert">{{ error() }}</p> }
+  @if (library().registries.length || libraryError()) {
+    <section class="structure-library" aria-label="Library and registry inventory" data-testid="structure-library">
+      <div class="structure-library-head"><div><h2>Libraries and registries</h2>
+        <p>Published channels and workspace consumers</p></div>
+        <button type="button" data-testid="refresh-registries" [disabled]="refreshing()"
+                (click)="loadLibrary(true)">Refresh registry lookups</button></div>
+      @if (libraryError()) { <p role="alert">{{ libraryError() }}</p> }
+      <div class="structure-registry-list">
+        @for (registry of library().registries; track registry.projectId + registry.artifact + registry.provider + registry.package) {
+          <article class="structure-registry" data-testid="structure-registry" [attr.data-state]="registry.state">
+            <div class="structure-registry-head"><strong>{{ registryLabel(registry.provider) }}</strong>
+              <span class="structure-state" [attr.data-state]="registry.state">{{ registry.state === 'current' ? 'Current' : registry.state === 'stale' ? 'Stale' : 'Lookup unavailable' }}</span></div>
+            <p>{{ registry.package }} · {{ registry.artifact }} @if (registry.private) { · Private }</p>
+            @if (registry.channels.length) {
+              <div class="structure-channels">
+                @for (channel of registry.channels; track channel.name + channel.version) {
+                  @if (channel.name !== 'version') { <span><b>{{ channel.name }}</b> {{ channel.version }}</span> }
+                }
+              </div>
+            }
+            <small>Last successful lookup: {{ registry.checkedAt ? (registry.checkedAt | date:'medium') : 'unavailable' }} ·
+              Last publish: {{ registry.lastPublishAt ? (registry.lastPublishAt | date:'medium') : 'unavailable' }}</small>
+          </article>
+        }
+      </div>
+      @if (library().consumers.length) {
+        <h3>Consumers in this workspace</h3>
+        <div class="structure-consumers">
+          @for (consumer of library().consumers; track consumer.projectId + consumer.package + consumer.version) {
+            <div class="structure-consumer"><strong>{{ consumer.project }}</strong>
+              <span>{{ consumer.package }} {{ consumer.version }}</span>
+              @if (consumer.releasesBehind && consumer.releasesBehind > 0) {
+                <span class="structure-behind">{{ consumer.releasesBehind }} releases behind</span>
+              }
+              <small>{{ consumer.source }}</small></div>
+          }
+        </div>
+      }
+    </section>
+  }
   <div class="structure-body">
     <div class="structure-main" tabindex="0" role="region" aria-label="Structure diagram"
          (keydown)="onCanvasKeydown($event)">

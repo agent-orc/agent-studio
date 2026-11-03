@@ -27,6 +27,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
     private readonly ILogger<PublishActionService> _logger;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly TimeProvider _clock;
+    private readonly AgentStudio.Management.StructureLibraryService? _library;
     private readonly object _runGate = new();
     private readonly Dictionary<string, PublishWorkflowRun> _runs = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _autoDeploying = new(StringComparer.OrdinalIgnoreCase);
@@ -39,7 +40,8 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         TaskScannerService scanner,
         ILogger<PublishActionService> logger,
         AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        AgentStudio.Management.StructureLibraryService? library = null)
     {
         _git = git;
         _targets = targets;
@@ -49,6 +51,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         _logger = logger;
         _workspaceQuota = workspaceQuota;
         _clock = clock ?? TimeProvider.System;
+        _library = library;
     }
 
     public PublishActionPanel GetPanel(string project, string targetId)
@@ -496,6 +499,18 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
     private PublishWorkflowRun StoreRun(PublishWorkflowRun run)
     {
         lock (_runGate) _runs[$"{run.Project}\n{run.TargetId}"] = run;
+        if (run.Status == "completed" && run.Conclusion == "success" && run.Version is { } version)
+        {
+            try
+            {
+                var target = _targets.GetProjectPublishStatus(run.Project).Targets
+                    .FirstOrDefault(item => item.Id == run.TargetId);
+                if (target?.PackageName is { } package && target.Ecosystem is { } provider)
+                    _library?.RecordPublish(run.Project, package, provider, version, _clock.GetUtcNow().UtcDateTime);
+            }
+            catch (Exception ex)
+            { _logger.LogWarning(ex, "Registry publish receipt unavailable for {Project} {Target}", run.Project, run.TargetId); }
+        }
         return run;
     }
 
