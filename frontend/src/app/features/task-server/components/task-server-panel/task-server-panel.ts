@@ -3,7 +3,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TaskServerService } from '../../services/task-server.service';
 import { TaskServerClientsCardComponent } from '../task-server-clients-card/task-server-clients-card';
 import { TaskServerManagementPanelComponent } from '../task-server-management-panel/task-server-management-panel';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   evidenceIndicatorTone,
   evidenceStateLabel,
@@ -42,6 +42,14 @@ import {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TaskServerPanelComponent implements OnInit, OnDestroy {
+  readonly migrationTone = (state: string): StatusTone => {
+    switch (state.toLowerCase()) {
+      case 'running': return 'running';
+      case 'failed': return 'danger';
+      case 'completed': return 'success';
+      default: return 'neutral';
+    }
+  };
   private readonly service = inject(TaskServerService);
 
   readonly status = this.service.status;

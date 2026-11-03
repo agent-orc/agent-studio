@@ -34,6 +34,17 @@ describe('EnvironmentHostListComponent', () => {
     expect(fixture.nativeElement.querySelectorAll('[data-host-row]').length).toBe(3);
   });
 
+  it('gives machine, role and gate states an icon and accessible status text', () => {
+    const fixture = mount();
+    const rows = fixture.nativeElement.querySelectorAll('[data-host-row]') as NodeListOf<HTMLElement>;
+    for (const row of rows) {
+      const indicator = row.querySelector('app-status-indicator');
+      expect(indicator?.textContent).toContain('Online');
+      expect(indicator?.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('success');
+      expect(indicator?.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    }
+  });
+
   it('moves selection between contained rows with the arrow keys', () => {
     const fixture = mount();
     const rows = fixture.nativeElement.querySelectorAll('[data-host-row]') as NodeListOf<HTMLButtonElement>;

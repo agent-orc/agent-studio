@@ -28,7 +28,7 @@
   </div>
   <dl class="host-detail__facts">
     <div><dt>Machine</dt><dd>{{ h.capacityHostId || h.name }}</dd></div>
-    <div><dt>Readiness</dt><dd>{{ readiness().state }} · {{ readiness().reason }}</dd></div>
+    <div><dt>Readiness</dt><dd><app-status-indicator [tone]="readinessTone(readiness().state)" [label]="readiness().state" [compact]="true" /> · {{ readiness().reason }}</dd></div>
     <div><dt>Slots</dt><dd class="host__number" data-testid="remote-host-machine-slots">{{ totalActiveSlots() }} / {{ roleSlotCapacity() ?? 'Unknown' }}</dd></div>
     <div><dt>Last contact</dt><dd data-testid="remote-host-heartbeat" [attr.title]="h.lastHeartbeatAt || 'No heartbeat reported'">{{ h.lastHeartbeatAt ? (h.lastHeartbeatAt | date:'short') : 'Unknown' }} · {{ heartbeatLabel() }}</dd></div>
     @if (h.taskServerConnection?.lastError; as failed) { <div><dt>Failed request</dt><dd>{{ failed }}</dd></div> }
@@ -37,7 +37,7 @@
     <div><dt>Release</dt><dd data-testid="remote-host-release"><app-host-release-identity [host]="h" [stableRelease]="stableRelease()" [now]="now()" testIdPrefix="remote-host-release" [showIdentity]="true" /></dd></div>
     @if (h.reviewPlane; as plane) {
       <div><dt>Review quota</dt><dd data-testid="remote-host-review-plane">CPU quota {{ plane.cpuQuotaPercent === null ? 'unlimited' : plane.cpuQuotaPercent / 100 + ' cores' }} · {{ plane.currentCeiling }} slot ceiling · throttled {{ plane.throttledShare === null ? 'Unknown' : (plane.throttledShare * 100).toFixed(0) + '%' }}</dd></div>
-      @if (plane.sustainedThrottling) { <div><dt>Throttling</dt><dd data-testid="remote-host-review-plane-alarm">{{ plane.alarmSuggestion }}</dd></div> }
+      @if (plane.sustainedThrottling) { <div><dt>Throttling</dt><dd data-testid="remote-host-review-plane-alarm"><app-status-indicator tone="warning" label="CPU throttling sustained" [detail]="plane.alarmSuggestion" [compact]="true" /> {{ plane.alarmSuggestion }}</dd></div> }
     }
   </dl>
   <div class="host__details" data-testid="remote-host-detail-summaries">
@@ -150,7 +150,7 @@
               }
             </div>
             @if (cliUpdateLabel(); as updateLabel) {
-              <p class="cli-update" data-testid="remote-host-cli-update-status">{{ updateLabel }}. {{ h.cliUpdate?.detail }}</p>
+              <p class="cli-update" data-testid="remote-host-cli-update-status"><app-status-indicator [tone]="cliUpdateTone()" [label]="updateLabel" [compact]="true" /> {{ h.cliUpdate?.detail }}</p>
             }
             <div class="detail__actions">
               @if (!cliUpdateActive()) {
