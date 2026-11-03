@@ -88,7 +88,7 @@ test.describe('Task Server settings section', () => {
   });
 
   test('querying and pending statistics leave connection status clear', async ({ page }) => {
-    await expect(page.getByTestId('status-bar-settings')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('studio-titlebar-settings')).toBeVisible({ timeout: 30_000 });
     let answer!: () => void;
     const held = new Promise<void>(resolve => { answer = resolve; });
     await page.route('**/api/v1/management/status', async route => {
@@ -99,7 +99,7 @@ test.describe('Task Server settings section', () => {
         evidence: { ...MANAGEMENT_STATUS.evidence, state: 'pending', eventFiles: 0, artifactFiles: 0 },
       }) });
     });
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-task-server').click();
     await expect(page.getByTestId('task-server-querying')).toBeVisible();
     await expect(page.getByTestId('task-server-unavailable')).toHaveCount(0);
@@ -112,7 +112,7 @@ test.describe('Task Server settings section', () => {
   });
 
   test('rail + overview expose the Task Server section', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
     await expect(page.getByTestId('workspace-settings-rail-task-server')).toBeVisible();
     await expect(page.getByTestId('workspace-settings-rail-task-server')).toContainText('Task Server');
@@ -120,7 +120,7 @@ test.describe('Task Server settings section', () => {
   });
 
   test('section renders connection, store, evidence, clients, and management', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await dismissDevErrorDialog(page);
     await page.getByTestId('workspace-settings-rail-task-server').click();
 

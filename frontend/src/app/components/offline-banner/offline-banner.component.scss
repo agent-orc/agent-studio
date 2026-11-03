@@ -1,9 +1,10 @@
 .offline-banner {
   position: fixed;
-  top: 0;
+  top: var(--studio-header-nav-h);
   left: 0;
   right: 0;
   z-index: 4000;
+  pointer-events: none;
   display: flex;
   align-items: center;
   gap: var(--studio-spacing-3, 12px);
@@ -52,4 +53,8 @@
   .offline-banner__dot {
     animation: none;
   }
+}
+
+@media (max-width: 720px) {
+  .offline-banner { top: var(--studio-header-phone-h); }
 }

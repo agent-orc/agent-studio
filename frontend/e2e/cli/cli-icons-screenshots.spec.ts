@@ -12,7 +12,8 @@ test.describe('CLI icons — screenshots @screenshots', () => {
 
     // 1) CLI-Management cards (cost overview) in the workspace-settings home
     await page.goto('/');
-    await page.getByTestId('status-bar-usage').click();
+    await page.getByTestId('studio-titlebar-settings').click();
+    await page.getByTestId('workspace-settings-rail-caps').click();
     const overlay = page.getByTestId('cli-admin-overlay');
     await overlay.waitFor();
     // Wait briefly so quota cards have a chance to populate.

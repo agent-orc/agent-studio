@@ -413,7 +413,7 @@ test.describe('Execution Hosts settings section', () => {
   });
 
   test('rail + overview expose the Execution Hosts section', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toBeVisible();
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toContainText('Environment');
@@ -467,7 +467,7 @@ test.describe('Execution Hosts settings section', () => {
       expect(fits.whiteSpace).toBe('nowrap');
       expect(fits.top).toBeGreaterThanOrEqual(fits.barTop - 1);
       expect(fits.bottom).toBeLessThanOrEqual(fits.barBottom + 1);
-      for (const id of ['status-bar-running', 'status-bar-usage', 'status-bar-settings']) {
+      for (const id of ['status-bar-running', 'footer-usage-cost', 'studio-titlebar-settings']) {
         const item = bar.getByTestId(id);
         await expect(item).toHaveCSS('white-space', 'nowrap');
       }
@@ -1387,6 +1387,7 @@ test.describe('Execution Hosts settings section', () => {
         hostAdmission: { hostId: 'host-berlin', admissionState: 'open' },
         capabilities: [
           capability('cli-execution:claude', 'ready'), claude,
+          capability('model-acceptance:claude:claude-opus-5-5', 'ready'),
           capability('cli-execution:codex', 'ready'), codex,
           copilot, antigravity,
           capability('cli-execution:gemini', 'ready'),
@@ -1402,6 +1403,7 @@ test.describe('Execution Hosts settings section', () => {
     const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(remote);
     await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'unavailable');
+    await expect(remote.getByTestId('remote-host-models-claude')).toContainText('claude-opus-5-5');
     await expect(remote.getByTestId('remote-host-provider-auth-codex')).toHaveAttribute('data-state', 'retrying');
     await expect(remote.getByTestId('remote-host-provider-auth-copilot')).toHaveAttribute('data-state', 'limited');
     await expect(remote.getByTestId('remote-host-provider-auth-copilot')).toContainText('rate limited');

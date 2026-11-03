@@ -37,7 +37,7 @@ test.describe('Tasks activity panel — removed', () => {
 
     // Remaining surfaces are still there so we know we removed only Tasks.
     await expect(page.getByTestId('studio-ab-filters')).toBeVisible();
-    await expect(page.getByTestId('studio-ab-settings')).toBeVisible();
+    await expect(page.getByTestId('studio-titlebar-settings')).toBeVisible();
   });
 
   test('no LANES or OPEN TASKS sidebar surface lives outside Board/Explorer', async ({ page }) => {

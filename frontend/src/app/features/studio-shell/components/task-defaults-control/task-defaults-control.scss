@@ -1,0 +1,7 @@
+app-task-defaults-control { display: inline-flex; align-items: center; min-width: 0; }
+app-task-defaults-control .model-selector { min-height: var(--studio-row-min-h-interactive-compact); }
+@media (max-width: 720px) {
+  app-task-defaults-control { max-width: var(--studio-target-coarse-min); }
+  app-task-defaults-control .model-selector { min-width: var(--studio-target-coarse-min); min-height: var(--studio-target-coarse-min); }
+  app-task-defaults-control .model-selector__name, app-task-defaults-control .model-selector__tags { display: none; }
+}

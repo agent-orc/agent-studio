@@ -105,6 +105,7 @@
                       [appTooltip]="auth.detail + ' Last checked: ' + (auth.advertisedAt || 'not checked')">
                   <app-status-indicator [tone]="providerAuthTone(auth.state)" [label]="auth.providerLabel + ': ' + providerLoginStateLabel(auth)" />
                 </span>
+                @if (auth.acceptedModels?.length) { <span class="provider-auth__models" [attr.data-testid]="'remote-host-models-' + auth.provider">Accepted models: {{ auth.acceptedModels?.join(', ') }}</span> }
                 @if (signInLabel(auth); as label) { <button type="button" class="provider-auth__sign-in"
                   [attr.data-testid]="'remote-host-' + auth.provider + '-sign-in'" (click)="openSignIn(auth)">{{ label }}</button> }
                 @if (auth.expiresSoon && auth.expiryLabel) {
