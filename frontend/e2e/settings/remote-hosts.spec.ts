@@ -1397,7 +1397,7 @@ test.describe('Execution Hosts settings section', () => {
     }));
 
     await page.goto('/#/workspace/settings/remote-hosts');
-    const providerHost = page.locator('[data-testid="remote-host-primary-row"][data-host-row="host-berlin"]');
+    const providerHost = page.getByTestId('remote-host-role-row').filter({ hasText: 'agent-runner-01' });
     await expect(providerHost).toBeVisible();
     await providerHost.click();
     const remote = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
