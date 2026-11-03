@@ -88,9 +88,13 @@ if (args is ["zone-policy", ..])
     return await ZonePolicyCommand.RunAsync(args[1..], Console.Out, Console.Error, CancellationToken.None);
 
 // The scheduled runs below parse their own options. They share the host's App tokens
-// when their unit names its state directory.
+// when their unit names its state directory, and read the folder of RUNNER_ROLE
+// (coding, the default role, when unset).
 if (Environment.GetEnvironmentVariable("RUNNER_STATE_DIR") is { Length: > 0 } scheduledStateDir)
-    RepositoryCredentialRouting.Configure(scheduledStateDir);
+    RepositoryCredentialRouting.Configure(scheduledStateDir,
+        Environment.GetEnvironmentVariable("RUNNER_ROLE") is { Length: > 0 } scheduledRole
+            ? scheduledRole.Trim().ToLowerInvariant()
+            : "coding");
 
 // AGT-3074: scheduled release-category coverage run, started by agent-coverage-run.timer.
 if (args is ["coverage-run", ..])
@@ -183,7 +187,7 @@ if (args is ["--repository-admin"])
 }
 
 var (options, taskKey, once, help) = RunnerOptions.Parse(args);
-RepositoryCredentialRouting.Configure(options.StateDir);
+RepositoryCredentialRouting.Configure(options.StateDir, options.Role);
 
 void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] [agent-host] {message}");
 
@@ -446,9 +450,15 @@ try
         Log("gate daemon stopped");
         return 0;
     }
+    // The role's token files belong to this process alone: a second process with
+    // the same role on this state folder would replace them (1 November 2026).
+    using var repositoryCredentialOwnership = daemonMode
+        ? RepositoryCredentialOwnership.Claim(options.StateDir, options.Role, options.RunnerId)
+        : null;
     if (daemonMode)
     {
         var repositoryCredentials = new RepositoryCredentialSync(options, client, Log);
+        RepositoryCredentialRouting.Attach(repositoryCredentials);
         // Before the first registration: review capabilities name the repositories it finds.
         using var firstSync = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
         firstSync.CancelAfter(TimeSpan.FromSeconds(30));
@@ -512,6 +522,11 @@ catch (TaskServerException ex)
 {
     Log($"task server error: {ex.Message}");
     return 4;
+}
+catch (RepositoryCredentialCollisionException ex)
+{
+    Log($"refusing to start: {ex.Message}");
+    return 2;
 }
 catch (HttpRequestException ex)
 {
