@@ -50,6 +50,7 @@ public sealed partial class BatchGatePilotService
     private readonly HashSet<string> _fallbackClearEjectOnFinish = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Task> _runningBatches = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _replanAfterBatch = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Task> _runningPreChecks = new(StringComparer.Ordinal);
     private readonly GateQueueStallMonitor _queueStalls;
 
     /// <summary>Coordinator lease renewal cadence; well inside the two-minute grant.</summary>
@@ -496,6 +497,28 @@ public sealed partial class BatchGatePilotService
                     .Where(item => ProvenRed(item) is null)
                     .OrderByDescending(item => baseSha is not null && ProvenGreen(item, baseSha))
                     .ThenBy(item => item.Subject.EnqueueSequence).ToArray();
+                if (baseSha is not null && options.PreCheckFor(first.Subject.Project))
+                {
+                    var admitted = new List<BatchGatePendingRecord>();
+                    foreach (var item in current)
+                    {
+                        var verdict = _store.ReadPreCheck(item.Subject.Project, item.Subject.ResultSha,
+                            baseSha, item.Subject.GateProfileDigest);
+                        var action = BatchGatePreCheckPolicy.Decide(true, verdict?.Outcome,
+                            item.EnqueuedAtUtc, _time.GetUtcNow(), options.DeadlineMinutes,
+                            BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId is not null);
+                        if (action == BatchGatePreCheckAction.ReturnToAgent)
+                        {
+                            SchedulePreCheckRed(item, verdict!, ct);
+                            continue;
+                        }
+                        if (action == BatchGatePreCheckAction.Admit)
+                            admitted.Add(item);
+                        else
+                            SchedulePreCheck(item, baseSha, ct);
+                    }
+                    current = admitted.ToArray();
+                }
                 var provenGreenKeys = baseSha is null ? new HashSet<string>(StringComparer.Ordinal)
                     : current.Where(item => ProvenGreen(item, baseSha))
                         .Select(item => item.Subject.TaskKey)
@@ -623,13 +646,17 @@ public sealed partial class BatchGatePilotService
         {
             Task[] batches;
             Task[] fallbacks = [];
+            Task[] preChecks;
             lock (_runningBatches) batches = _runningBatches.Values.ToArray();
+            lock (_runningPreChecks) preChecks = _runningPreChecks.Values.ToArray();
             if (includeFallbacks)
                 lock (_fallbackFlights) fallbacks = _fallbackFlights.Values.ToArray();
-            if (batches.Length == 0 && fallbacks.Length == 0) return;
-            await Task.WhenAll(batches.Concat(fallbacks)).WaitAsync(ct).ConfigureAwait(false);
+            if (batches.Length == 0 && fallbacks.Length == 0 && preChecks.Length == 0) return;
+            await Task.WhenAll(batches.Concat(fallbacks).Concat(preChecks)).WaitAsync(ct).ConfigureAwait(false);
             lock (_runningBatches)
                 if (_runningBatches.Values.Any(task => !task.IsCompleted)) continue;
+            lock (_runningPreChecks)
+                if (_runningPreChecks.Values.Any(task => !task.IsCompleted)) continue;
             if (includeFallbacks)
                 lock (_fallbackFlights)
                     if (_fallbackFlights.Values.Any(task => !task.IsCompleted)) continue;

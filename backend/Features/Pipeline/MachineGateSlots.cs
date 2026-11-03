@@ -23,9 +23,11 @@ internal sealed class MachineGateSlots
     /// </summary>
     internal async Task<Lease?> AcquireAsync(int count, TimeSpan timeout,
         Action<int, int>? waiting, CancellationToken ct,
-        GateDurationClass durationClass = GateDurationClass.Unknown)
+        GateDurationClass durationClass = GateDurationClass.Unknown,
+        bool reserveFirstSlot = false)
     {
         if (count is < 1 or > 64) throw new ArgumentOutOfRangeException(nameof(count));
+        if (reserveFirstSlot && count == 1) return null;
         var started = _clock.GetTimestamp();
         var collision = false;
         var lastReportedBusy = -1;
@@ -39,7 +41,7 @@ internal sealed class MachineGateSlots
                 var busy = 0;
                 var eligible = GateSlotFairnessPolicy.Eligible(count, durationClass,
                     _clock.GetElapsedTime(started)).Slots;
-                foreach (var slot in eligible)
+                foreach (var slot in reserveFirstSlot ? eligible.Where(slot => slot != 0) : eligible)
                 {
                     var lease = await TryTakeAsync(slot, count, started, collision, bounded.Token).ConfigureAwait(false);
                     if (lease is not null) return lease;
