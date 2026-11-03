@@ -3,30 +3,28 @@ using AgentStudio.TaskServer.Contracts;
 namespace AgentRunner;
 
 /// <summary>Creates host-local credentials and proves repository access without returning secrets.</summary>
-public sealed class RunnerGitSetupAgent(RunnerOptions options, TaskServerClient client, Action<string> log)
+public sealed class RunnerGitSetupAgent(RunnerOptions options, TaskServerClient client, Action<string> log,
+    TimeProvider? clock = null)
 {
-    internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
 
     public async Task PollAsync(CancellationToken shutdown)
     {
-        // A monolith has no setup queue: its first-run setup runs on the Studio host itself.
-        var absence = new FeatureRouteAbsence("git setup", log);
+        var pacer = new ClaimPollPacer("git setup", log);
         while (!shutdown.IsCancellationRequested)
         {
+            TimeSpan delay;
             try
             {
                 var work = await client.ClaimGitSetupAsync(options.RunnerId, shutdown);
-                absence.RecordAnswered();
+                delay = pacer.RecordAnswered();
                 if (work is not null)
                     await ExecuteAsync(work, shutdown);
             }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
-            catch (Exception exception) when (absence.TryRecordAbsent(exception)) { }
-            catch (Exception exception)
-            {
-                log($"git setup deferred type={exception.GetType().Name}");
-            }
-            try { await Task.Delay(absence.NextDelay(PollInterval), shutdown); }
+            catch (Exception exception) { delay = pacer.RecordFailed(exception); }
+            if (pacer.Stopped) return;
+            try { await Task.Delay(delay, _clock, shutdown); }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
         }
     }

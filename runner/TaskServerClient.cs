@@ -1160,7 +1160,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         // A monolith has no setup queue: its first-run setup runs on the Studio host itself.
         await ThrowIfRouteAbsentAsync(response, ct);
         if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        await ThrowForClaimStatusAsync(response, "Git setup claim", ct);
         return await response.Content.ReadFromJsonAsync<Contract.RunnerGitSetupWork>(
             TaskServerContractJson, ct);
     }
@@ -1391,8 +1391,10 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/claim",
             new { }, Json, ct);
         await ThrowIfRouteAbsentAsync(response, ct);
-        if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        // The Task Server answers an empty queue with an empty 200; the monolith with 204.
+        if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotFound) return null;
+        await ThrowForClaimStatusAsync(response, "Device sign-in claim", ct);
+        if (response.Content.Headers.ContentLength == 0) return null;
         return await response.Content.ReadFromJsonAsync<Contract.DeviceLoginClaimDto>(Json, ct);
     }
 
@@ -2426,6 +2428,36 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     /// so a caller that reads a 404 as "nothing there" does not poll an absent
     /// feature as if it were idle (<see cref="FeatureRouteAbsence"/>).
     /// </summary>
+    /// <summary>
+    /// A refused claim carries its status and error code, so the poll loop can log
+    /// why it fails instead of a bare <see cref="HttpRequestException"/>.
+    /// </summary>
+    private static async Task ThrowForClaimStatusAsync(HttpResponseMessage response, string operation, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode) return;
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        throw new TaskServerException((int)response.StatusCode,
+            $"{operation} failed with {(int)response.StatusCode}.", TryReadRefusalCode(detail));
+    }
+
+    /// <summary>The Task Server's <c>code</c>, or the monolith's <c>error</c> refusal field.</summary>
+    private static string? TryReadRefusalCode(string response)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(response);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            foreach (var name in new[] { "code", "error" })
+                if (document.RootElement.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
+                    return value.GetString();
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     private static async Task ThrowIfRouteAbsentAsync(HttpResponseMessage response, CancellationToken ct)
     {
         if (response.StatusCode != HttpStatusCode.NotFound) return;

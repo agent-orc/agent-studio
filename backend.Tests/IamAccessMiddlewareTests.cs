@@ -287,7 +287,7 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         // AGT-3366: the monolith refused the standalone Task Server's feature
         // routes with 401, so every host logged a refusal every two seconds.
         var enrolled = _store.EnrollRunner(_store.CreateEnrollment(new RunnerEnrollmentRequest("host", null, null, null)).Code);
-        var claim = $"/api/v1/runners/{enrolled.Runner.Id}/git-setups/claim";
+        var claim = $"/api/v1/runners/{enrolled.Runner.Id}/project-probes/alpha";
 
         var absent = await InvokeUnrouted("POST", claim, Bearer(enrolled.Secret));
         Assert.Equal((404, AgentStudio.TaskServer.Contracts.RouteAbsenceContract.ErrorCode, false),
@@ -301,7 +301,7 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         var stranger = await InvokeUnrouted("POST", claim, Bearer("not-a-credential"));
         Assert.Equal((401, false), (stranger.Status, stranger.Called));
         // A mapped route keeps its refusal.
-        var mapped = await InvokeBearer("POST", "/api/v1/runners/{runnerId}/git-setups/claim", claim, enrolled.Secret);
+        var mapped = await InvokeBearer("POST", "/api/v1/runners/{runnerId}/project-probes/{projectId}", claim, enrolled.Secret);
         Assert.Equal((401, false), (mapped.Status, mapped.Called));
     }
 
