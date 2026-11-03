@@ -937,7 +937,43 @@ that verdict.
 | Baseline red or same fingerprint on the baseline or other cards | `environment` | no |
 | Clean repeat green and fingerprint has known intermittent pattern or prior occurrence | `intermittent` | no |
 | Clean repeat green without history, or required evidence unavailable | `unclassified-first-occurrence` | no |
+| Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
 | Reviewer block without evidence against a changed path | `concern` | no |
+
+**Red baseline on cached state (AGT-3430).** A baseline that ran on a
+dependency-cache hit, or a baseline result reused from the baseline result
+cache, does not prove the integration branch red while the candidate's clean
+repeat of the same command is green. Before the card or the branch is blamed,
+the runner runs that baseline once more in a fresh same-host clone with fresh
+home, temp and cache directories and without the dependency cache
+(`ReviewCachedBaselinePolicy`). Its evidence has phase `clean-repeat` and
+workspace role `baseline-clean-repeat`. Green settles `ReviewInfra` with
+`DependencyCacheDefect` (a dependency scope of the baseline's preparation was
+restored from the cache, whether the command was then skipped or, since
+AGT-3429, reran over the restored directories) or
+`BaselineResultCacheDefect` (the red result was reused), records the clean
+baseline's exit code 0 as the candidate's `BaselineExitCode`, evicts the stored
+baseline result, the baseline dependency-cache entry and the candidate entry,
+and does not charge the card. Red keeps today's attribution
+(`IntegrationBranchDefect` for a build, `environment` otherwise). A clean
+baseline that times out, is killed, or runs no test settles
+`ReviewInfra/BaselineUnavailable`. At most one such repeat runs per attempt;
+the recorded evidence carries the bound across a resumed worker.
+`ReviewReportDiagnosisPolicy` accepts a cache classification only with a green
+`clean-repeat` and a green `baseline-clean-repeat` for the same step and
+baseline, otherwise `DiagnosisEvidenceInvalid`.
+
+**Failure text and output tail (AGT-3430).** The summary of a test-failures
+baseline that exited without a test result quotes the lines that explain the
+failure, from stdout and stderr: lines naming an error, `FATAL`, a failure or an
+exception come first, npm's own `npm error` wrapper lines after them, and known
+noise (`npm notice`, `npm warn`) is skipped. Without such a line the first other
+stderr line, else stdout line, is quoted. At most three lines of 240 characters,
+secrets redacted. Every failed command's evidence row also carries
+`OutputTail`: the last 4096 characters
+(`ReviewCommandOutputTailDto.MaximumCharacters`) of stdout and of stderr, each
+with a truncation flag and redacted like the product-failure evidence tail, so
+the cause survives the deleted attempt in the settled report.
 
 The shared decision table is `DeliveryFailureDiagnosis`. Review and gate
 reporters append observations to the Task Server's fingerprint event store via

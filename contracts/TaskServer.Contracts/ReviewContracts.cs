@@ -409,7 +409,28 @@ public sealed record ReviewCommandEvidenceDto(
     /// ran in this attempt.
     /// </summary>
     string? VerifyReusedFromAttemptId = null,
-    long VerifyReusedAgeSeconds = 0);
+    long VerifyReusedAgeSeconds = 0,
+    /// <summary>
+    /// Bounded, secret-scrubbed end of both streams of a failed command
+    /// (AGT-3430). The full logs are deleted with the attempt; this tail is
+    /// what survives in the settled report. Null for a passed command.
+    /// </summary>
+    ReviewCommandOutputTailDto? OutputTail = null);
+
+/// <summary>
+/// The last <see cref="MaximumCharacters"/> characters of one failed
+/// command's stdout and stderr, with secret-shaped values redacted. A
+/// truncated stream says so, so a reader knows the tail is not the whole log.
+/// </summary>
+public sealed record ReviewCommandOutputTailDto(
+    string Stdout,
+    string Stderr,
+    bool StdoutTruncated,
+    bool StderrTruncated)
+{
+    /// <summary>Upper bound per stream, in characters.</summary>
+    public const int MaximumCharacters = 4096;
+}
 
 /// <summary>
 /// The one word every surface uses for a test failure that a targeted re-run

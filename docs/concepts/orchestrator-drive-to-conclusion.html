@@ -401,6 +401,13 @@
         </tr>
         <tr>
           <td>2026-11-02</td>
+          <td>Quality Studio cards<br><span class="small">cached-baseline-blamed-branch (fix <code>AGT-3430</code>)</span></td>
+          <td>No CLI crashed. Every card of the project settled <code>IntegrationBranchDefect</code> for weeks with <code>build verify-1 was already red on the integration branch</code>, while <code>main</code> was green. The candidate failed after a dependency-cache hit, its clean repeat passed, and the baseline, also on a cache hit, failed with the same digest. Another summary quoted <code>npm notice</code> while the cause (<code>FATAL ... Socket path too long</code>, <code>ChromeHeadless failed 2 times</code>) sat in stdout. Terminal at discovery: parked as an integration-branch defect, with only digests left after the attempt was deleted.</td>
+          <td>A red baseline on cached state counted as proof that the branch was red even though a clean run of the same tree had passed. The unrun-baseline summary quoted the first stderr line. Failed command logs were deleted together with the attempt.</td>
+          <td>A green clean repeat over a red cached baseline now runs the baseline once more from a clean clone. Green settles <code>ReviewInfra</code> with <code>DependencyCacheDefect</code> or <code>BaselineResultCacheDefect</code>, evicts the cache entries and does not charge the card. Red keeps the integration-branch attribution. At most one such repeat runs per attempt. The summary quotes the explaining lines, and each failed command keeps a bounded, redacted <code>OutputTail</code> in the settled report.</td>
+        </tr>
+        <tr>
+          <td>2026-11-02</td>
           <td><code>AOW-15</code><br><span class="small">review-model-cli-mismatch (fix <code>AGT-3420</code>)</span></td>
           <td>Every review aspect exited after about 2.5 seconds and was reported as <code>ToolUnavailable</code>. After three infrastructure retries the card escalated. Terminal at discovery: escalated, with the host's semantic-review capability drained for a fault the host did not have.</td>
           <td>The project had no review step setting, so <code>RemoteReviewPlanBuilder</code> fell back to <code>ReviewDecisionOrchestrator:AspectModel</code> and <code>ReviewDecisionOrchestrator:Cli</code>. They resolved independently, so the plan was sealed with the Claude CLI and a GPT model.</td>
