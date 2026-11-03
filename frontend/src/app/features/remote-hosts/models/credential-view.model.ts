@@ -1,4 +1,5 @@
 import type { RemoteHost } from './remote-host.model';
+import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
 
 /**
  * I8 Execution Hosts credential view (docs/credentials-and-logins/index.html#surface,
@@ -137,6 +138,17 @@ export function credentialScopeLabel(row: CredentialViewRow): string {
   const services = row.services.map(service => SERVICE_LABELS[service] ?? service);
   if (services.length) return services.join(' and ');
   return row.scopes.join(', ') || 'Scope not recorded';
+}
+
+/** Credential tone on the shared status indicator (docs/quality/design/status-indicator.md). */
+export function credentialIndicatorTone(tone: CredentialTone): StatusTone {
+  switch (tone) {
+    case 'ok': return 'success';
+    case 'info': return 'info';
+    case 'warn': return 'warning';
+    case 'error': return 'danger';
+    default: return 'neutral';
+  }
 }
 
 export function credentialStatusPresentation(row: CredentialViewRow): { label: string; tone: CredentialTone } {

@@ -76,5 +76,7 @@ describe('CapabilityHealthComponent', () => {
     expect(capability.getAttribute('data-state')).toBe('unavailable');
     expect(capability.textContent).toContain('unavailable');
     expect(capability.textContent).not.toContain('healthy');
+    const state = capability.querySelector<HTMLElement>('[data-testid="remote-host-capability-state-provider-auth:claude"]')!;
+    expect([state.dataset['tone'], state.dataset['icon']]).toEqual(['danger', 'close']);
   });
 });

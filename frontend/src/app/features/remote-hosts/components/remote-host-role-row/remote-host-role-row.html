@@ -5,11 +5,8 @@
     <span class="role__branch" aria-hidden="true">↳</span>
     <strong data-testid="remote-host-role-label">{{ roleLabel() }}</strong>
     <span class="role__identity" data-testid="remote-host-role-name">{{ h.name }}</span>
-    <span class="role__readiness" data-testid="remote-host-role-readiness"
-          [attr.data-state]="readiness().state"
-          [attr.title]="readiness().reason + ' ' + readiness().action">
-      {{ readiness().state }}
-    </span>
+    <app-status-indicator class="role__readiness" [tone]="readinessTone(readiness().state)" [label]="readiness().state" [compact]="true"
+      [detail]="readiness().reason + ' ' + readiness().action" testId="remote-host-role-readiness" />
     @if (readiness().state !== 'capability-ready') {
       <span class="role__readiness-detail">{{ readiness().reason }} {{ readiness().action }}</span>
     }
@@ -33,10 +30,7 @@
   </span>
 </td>
 <td>
-  <span class="role__status" data-testid="remote-host-role-status" [attr.title]="statusReason()">
-    <span class="role__dot" [attr.data-tone]="tone()" aria-hidden="true"></span>
-    <span>{{ statusLabel() }}</span>
-  </span>
+  <app-status-indicator class="role__status" [tone]="indicatorTone()" [label]="statusLabel()" [detail]="statusReason()" testId="remote-host-role-status" />
   @if (statusReason(); as reason) { <span class="role__status-reason">{{ reason }}</span> }
 </td>
 <td>

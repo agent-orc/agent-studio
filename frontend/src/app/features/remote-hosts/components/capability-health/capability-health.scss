@@ -72,16 +72,6 @@
   font-size: 11px;
   overflow-wrap: anywhere;
 }
-.state {
-  border-radius: 999px;
-  padding: 2px var(--studio-spacing-2);
-  font-size: 10px;
-  font-weight: 600;
-}
-.state[data-tone='ok'] { background: var(--notify-success-icon-bg); color: var(--notify-success-icon-fg); }
-.state[data-tone='idle'] { background: var(--studio-bg-selected); color: var(--studio-fg-dim); }
-.state[data-tone='warn'] { background: var(--notify-warning-icon-bg); color: var(--notify-warning-icon-fg); }
-.state[data-tone='error'] { background: var(--notify-error-icon-bg); color: var(--notify-error-icon-fg); }
 .capability dl {
   display: grid;
   gap: var(--studio-spacing-1);

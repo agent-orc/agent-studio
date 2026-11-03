@@ -1,5 +1,15 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { UpdateClientService } from '../../../../services/update.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Update state on the shared indicator (docs/quality/design/status-indicator.md). */
+const updateTones: Readonly<Record<'running' | 'behind' | 'failed' | 'ok' | 'unknown', StatusTone>> = {
+  ok: 'success',
+  behind: 'warning',
+  running: 'running',
+  failed: 'danger',
+  unknown: 'neutral',
+};
 
 /**
  * AGT-2035 — compact Updates section of the consolidated Workspace-settings
@@ -14,6 +24,7 @@ import { UpdateClientService } from '../../../../services/update.service';
 @Component({
   selector: 'app-updates-settings',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './updates-settings.component.html',
   styleUrl: './updates-settings.component.scss',
@@ -28,13 +39,15 @@ export class UpdatesSettingsComponent {
     if (st.isRunning) return `Updating… ${st.phase}`;
     const behind = this.updateClient.behindBy();
     const head = st.headLocal || '—';
+    // The tone shows a failed last run, so the text has to say it too.
+    const failed = st.phase === 'failed' ? 'Last update failed · ' : '';
     if (behind > 0) {
-      return `${behind} ${behind === 1 ? 'commit' : 'commits'} behind · ${head}`;
+      return `${failed}${behind} ${behind === 1 ? 'commit' : 'commits'} behind · ${head}`;
     }
-    return `Up to date · ${head}`;
+    return `${failed}Up to date · ${head}`;
   });
 
-  /** Semantic state used to tint the status dot. */
+  /** Semantic state behind the status indicator tone. */
   readonly state = computed<'running' | 'behind' | 'failed' | 'ok' | 'unknown'>(() => {
     const st = this.updateClient.status();
     if (!st) return 'unknown';
@@ -43,6 +56,8 @@ export class UpdatesSettingsComponent {
     if (this.updateClient.behindBy() > 0) return 'behind';
     return 'ok';
   });
+
+  readonly tone = computed<StatusTone>(() => updateTones[this.state()]);
 
   /** Primary-button label flips with the current state. */
   readonly actionLabel = computed<string>(() => {

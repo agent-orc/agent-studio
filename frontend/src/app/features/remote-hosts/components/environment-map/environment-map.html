@@ -31,15 +31,16 @@
                   } @else { <strong>{{ node.label }}</strong> }
                 </div>
                 <dl>
-                  <div><dt>Health</dt><dd>{{ node.health }}</dd></div>
+                  <div><dt>Health</dt><dd><app-status-indicator [tone]="healthTone(node.health)" [label]="node.health" [compact]="true" testId="environment-node-health" /></dd></div>
                   <div><dt>Capacity</dt><dd>{{ node.capacity }}</dd></div>
                   <div><dt>Load</dt><dd>{{ node.load || 'Unknown' }}</dd></div>
                   <div><dt>Version</dt><dd>{{ node.version }}</dd></div>
                   <div><dt>Drift vs Task Server</dt><dd>{{ node.drift }}</dd></div>
                   <div><dt>Last contact</dt><dd>{{ node.lastContact }}</dd></div>
                 </dl>
-                <span class="node__access" [attr.data-access]="node.repositoryAccess"
-                      data-testid="environment-repository-access">Repo: {{ node.repositoryAccess }}</span>
+                <span class="node__access" [attr.data-access]="node.repositoryAccess" data-testid="environment-repository-access">
+                  <app-status-indicator [tone]="accessTone(node.repositoryAccess)" [label]="'Repo: ' + node.repositoryAccess" />
+                </span>
               </div>
             }
           </div>
@@ -52,7 +53,7 @@
         <div class="connection" [attr.data-health]="connection.health" data-testid="environment-connection">
           <span class="connection__line" aria-hidden="true"></span>
           <div><strong>{{ connection.type }}</strong><small>{{ connection.from }} → {{ connection.to }}</small></div>
-          <span class="connection__health">{{ connection.health }}</span>
+          <app-status-indicator [tone]="healthTone(connection.health)" [label]="connection.health" [compact]="true" testId="environment-connection-health" />
         </div>
       } @empty { <p>No connections reported.</p> }
     </section>

@@ -6,6 +6,7 @@ import type {
   TaskServerRunnerCapabilitySnapshot,
   RemoteRunnerLinkHealth,
 } from './remote-host.model';
+import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
 
 export type ProviderAuthDisplayState = 'ok' | 'retrying' | 'limited' | 'expiring' | 'unavailable' | 'unknown';
 
@@ -42,6 +43,18 @@ export function providerSignInLabel(badge: ProviderAuthBadge): string | null {
     && !(badge.healthOutcome == null && badge.signal === 'signed-out' && badge.consecutiveFailures >= 2)) return null;
   if (badge.state !== 'unavailable' && badge.state !== 'expiring') return null;
   return badge.provider === 'codex' ? 'Sign in Codex' : 'Sign in Claude';
+}
+
+/** Provider login state on the shared indicator (docs/quality/design/status-indicator.md). */
+export function providerAuthTone(state: ProviderAuthDisplayState): StatusTone {
+  switch (state) {
+    case 'ok': return 'success';
+    case 'retrying': return 'running';
+    case 'limited':
+    case 'expiring': return 'warning';
+    case 'unavailable': return 'danger';
+    default: return 'neutral';
+  }
 }
 
 export function providerLoginStateLabel(badge: ProviderAuthBadge): string {

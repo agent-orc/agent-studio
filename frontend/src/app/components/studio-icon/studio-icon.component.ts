@@ -19,7 +19,8 @@ export type StudioIconName =
   | 'panelLeft' | 'panelRight' | 'layout' | 'sliders' | 'bot'
   | 'grid' | 'deck' | 'archive' | 'send' | 'sun' | 'moon' | 'pin'
   | 'backlog' | 'link' | 'star' | 'starFilled' | 'drag'
-  | 'chevronRight' | 'chevronDown' | 'chevronLeft' | 'clock' | 'help';
+  | 'chevronRight' | 'chevronDown' | 'chevronLeft' | 'clock' | 'help'
+  | 'info' | 'spinner' | 'circle';
 
 @Component({
   selector: 'app-studio-icon',

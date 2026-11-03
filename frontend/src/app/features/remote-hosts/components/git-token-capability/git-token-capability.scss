@@ -1,28 +1,5 @@
 :host { display: contents; }
 
-.git-badge {
-  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 1px pill inset is intentionally sub-scale */
-  padding: 1px var(--studio-spacing-2);
-  border-radius: 999px;
-  background: var(--studio-bg-selected);
-  color: var(--studio-fg-dim);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-.git-badge[data-tone='ok'] {
-  background: var(--notify-success-tint);
-  color: var(--notify-success-icon-fg);
-}
-.git-badge[data-tone='warn'] {
-  background: var(--notify-warning-icon-bg);
-  color: var(--notify-warning-icon-fg);
-}
-.git-badge[data-tone='error'] {
-  background: var(--notify-error-icon-bg);
-  color: var(--notify-error-icon-fg);
-}
-
 .token-warning {
   margin: var(--studio-spacing-3) 0 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);

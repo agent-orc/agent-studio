@@ -17,6 +17,7 @@
 
 .github-app__facts dt { color: var(--studio-fg-muted); }
 .github-app__facts dd { margin: 0; }
+.github-app__status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-2); }
 
 .github-app__actions {
   display: flex;
@@ -53,7 +54,7 @@
   list-style: none;
 }
 
-.github-app__list li { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
+.github-app__list li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-2); }
 
 .github-app__table { width: 100%; border-collapse: collapse; }
 
@@ -65,13 +66,3 @@
 
 .github-app__table th { color: var(--studio-fg-muted); font-weight: 500; }
 .github-app__table code { overflow-wrap: anywhere; }
-
-.github-app__badge {
-  padding: 0 var(--studio-spacing-2);
-  border: 1px solid var(--studio-border);
-  border-radius: var(--studio-radius-sm);
-  white-space: nowrap;
-}
-
-.github-app__badge[data-state='not-installed'],
-.github-app__badge[data-state='not-adopted'] { background: var(--notify-error-tint); }

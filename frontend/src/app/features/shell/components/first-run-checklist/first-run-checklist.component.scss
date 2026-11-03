@@ -39,7 +39,7 @@
 .first-run__steps h3 { font-size: 1rem; }
 .first-run__steps p { margin-top: var(--studio-spacing-2); }
 .first-run__steps button { margin-top: var(--studio-spacing-2); }
-.first-run__steps strong { font-size: .8rem; }
+.first-run__state { justify-self: end; }
 .first-run__subrow { display: flex; align-items: center; gap: var(--studio-spacing-3); }
 .first-run__form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-3); margin-top: var(--studio-spacing-3); }
 .first-run__form label { display: grid; gap: var(--studio-spacing-1); }

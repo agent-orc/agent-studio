@@ -39,22 +39,8 @@
   background: var(--studio-bg-elevated);
 }
 
-.updates__dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--studio-fg-muted);
-
-  &[data-state='ok'] { background: var(--studio-success); }
-  &[data-state='behind'] { background: var(--studio-accent); }
-  &[data-state='running'] { background: var(--studio-accent-3); }
-  &[data-state='failed'] { background: var(--studio-error); }
-}
-
 .updates__status {
-  font-size: 0.85rem;
-  color: var(--studio-fg);
+  min-width: 0;
 }
 
 .updates__spacer {

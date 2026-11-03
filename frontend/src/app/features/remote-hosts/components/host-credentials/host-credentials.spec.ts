@@ -75,6 +75,7 @@ describe('HostCredentialsComponent', () => {
     expect(claude.open).toHaveBeenCalledWith(expect.objectContaining({ hostId: 'host-a', sshTarget: 'ssh://agent@runner-a', mode }));
     expect(codex.open).not.toHaveBeenCalled();
     expect(element.querySelector(`[data-testid="host-credential-status-${kind}"]`)?.textContent).toContain('Login invalid');
+    expect(element.querySelector<HTMLElement>(`[data-testid="host-credential-status-${kind}"]`)?.dataset['icon']).toBe('close');
   });
 
   it('confirmed invalid Codex login opens the Codex device flow', () => {
@@ -91,6 +92,7 @@ describe('HostCredentialsComponent', () => {
     const element = mount([row({ status: 'provider_incident', nextRetryAt: '2026-10-13T09:01:00Z', serviceAvailability: 'unavailable' })]);
     expect(element.querySelector('[data-testid="host-credential-status-claude-native"]')?.textContent)
       .toContain('Provider incident · retry scheduled');
+    expect(element.querySelector<HTMLElement>('[data-testid="host-credential-status-claude-native"]')?.dataset['tone']).toBe('info');
     expect(element.querySelector('[data-testid="host-credential-service-claude-native"]')?.textContent).toContain('Service unavailable');
     expect(element.querySelector('[data-testid="host-credential-actions-claude-native"]')).toBeNull();
     expect(element.textContent).not.toContain('Sign in');

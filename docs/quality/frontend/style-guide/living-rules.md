@@ -66,8 +66,10 @@ Use the canonical recipes in [buttons.md](./buttons.md). Icon-only actions use
 
 - A typed `<app-button>` remains open; until it exists, use the documented
   `.btn` variants or a shared feature recipe without changing their semantics.
-- A typed static status-label primitive remains open. Prefer plain text plus a
-  semantic dot over introducing another pill.
+- Static status labels use the shared `<app-status-indicator>` (AGT-3402),
+  documented in [status-indicator.md](../../design/status-indicator.md). Do not
+  introduce another per-feature status pill; migrate legacy ones from the
+  [status display inventory](../../design/status-display-inventory.md).
 - Deck-Panel mixin adoption is incremental. Do not add nested panels while
   migrating legacy shells.
 

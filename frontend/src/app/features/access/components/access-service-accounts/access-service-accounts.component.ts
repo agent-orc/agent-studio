@@ -10,6 +10,7 @@ import {
 import { ACCESS_CLOCK } from '../../services/access-clock';
 import { AccessService } from '../../services/access.service';
 import { AccessGrantFormComponent } from '../access-grant-form/access-grant-form.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -22,7 +23,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 @Component({
   selector: 'app-access-service-accounts',
   standalone: true,
-  imports: [AccessGrantFormComponent],
+  imports: [AccessGrantFormComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-service-accounts.component.html',
   styleUrl: './access-service-accounts.component.scss',

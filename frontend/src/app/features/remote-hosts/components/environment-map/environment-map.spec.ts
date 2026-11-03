@@ -26,6 +26,10 @@ describe('EnvironmentMapComponent', () => {
     for (const role of roles) expect(element.querySelector(`[data-testid="environment-node"][data-role="${role}"]`)).toBeTruthy();
     for (const type of types) expect(element.querySelector('[data-testid="environment-map"]')?.textContent).toContain(type);
     expect(element.querySelector('[data-testid="environment-repository-access"][data-access="writes"]')?.textContent).toContain('writes');
+    const writes = element.querySelector<HTMLElement>('[data-testid="environment-repository-access"][data-access="writes"] [data-testid="status-indicator"]')!;
+    expect([writes.dataset['tone'], writes.dataset['icon']]).toEqual(['success', 'check']);
+    expect(element.querySelector<HTMLElement>('[data-testid="environment-node-health"]')?.dataset['tone']).toBe('success');
+    expect(element.querySelector<HTMLElement>('[data-testid="environment-connection-health"]')?.dataset['tone']).toBe('success');
     const selected: string[] = [];
     fixture.componentInstance.selectHost.subscribe(id => selected.push(id));
     (element.querySelector('button[aria-label="Open Coding slot details"]') as HTMLButtonElement).click();

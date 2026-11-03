@@ -123,6 +123,14 @@ describe('FirstRunChecklistComponent probes', () => {
     expect(component.ownerReady()).toBe(true);
     expect(component.providersReady()).toBe(true);
     expect(component.gitReady()).toBe(true);
+    fixture.detectChanges();
+    const step = (id: string) => fixture.nativeElement.querySelector(
+      `[data-testid="${id}"] [data-testid="first-run-step-state"]`) as HTMLElement;
+    expect([step('first-run-git').dataset['tone'], step('first-run-git').dataset['icon'], step('first-run-git').textContent?.trim()])
+      .toEqual(['success', 'check', 'Verified']);
+    expect([step('first-run-proof').dataset['tone'], step('first-run-proof').textContent?.trim()]).toEqual(['neutral', 'Pending']);
+    const provider = fixture.nativeElement.querySelector('[data-testid="first-run-provider-state"]') as HTMLElement;
+    expect(provider.dataset['tone']).toBe('success');
     host.set([{ ...host()[0], status: 'offline' }]);
     expect(component.gitReady()).toBe(false);
     fixture.destroy();
@@ -371,6 +379,7 @@ describe('FirstRunChecklistComponent probes', () => {
     fixture.detectChanges();
     const host: HTMLElement = fixture.nativeElement;
     expect(host.querySelector('[data-testid="first-run-device-login"]')?.textContent).toContain('Claude on Runner A: running');
+    expect(host.querySelector<HTMLElement>('[data-testid="first-run-device-state"]')?.dataset['icon']).toBe('spinner');
     expect(host.querySelector('[data-testid="first-run-device-url"]')?.getAttribute('href'))
       .toBe('https://claude.ai/oauth/authorize');
     deviceLogins.deviceLoginStatus.mockReturnValue(of({ ...session, state: 'failed',

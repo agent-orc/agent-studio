@@ -144,6 +144,8 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Design hard rules (prompt-known) | [design/style-guide-hard-rules.md](../quality/design/style-guide-hard-rules.md) |
 | Living frontend styling rules and compact prompt context | [living rules](../quality/frontend/style-guide/living-rules.md) · [styling context](../quality/frontend-styling.md) |
 | Project Deck visual audit and Deck-Panel v1 recommendation | [interactive Deck Audit](../concepts/visual-style-guide/deck-audit.html) · [implementation contract](../concepts/visual-style-guide/deck-panel-v1.md) |
+| Shared status indicator (tones, icons, state-to-tone mapping, tag/count boundary) | [design/status-indicator.md](../quality/design/status-indicator.md) |
+| Status display inventory (every status display by surface, migration plan) | [design/status-display-inventory.md](../quality/design/status-display-inventory.md) |
 | Model and thinking-level indicator vocabulary | [design/model-level-indicator.md](../quality/design/model-level-indicator.md) |
 | Engineering style guides (technology-aware and prompt-injected) | [quality/README.md](../quality/README.md) |
 | Application visual survey (2026-07-11) | [design/app-survey-2026-07-11.html](../quality/design/app-survey-2026-07-11.html) |

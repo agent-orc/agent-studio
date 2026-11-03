@@ -2,13 +2,15 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import {
   hostStatusLabel,
+  hostStatusIndicatorTone,
   hostStatusTone,
   runnerServiceRoleLabel,
   type HostActionKind,
   type RemoteHost,
 } from '../../models/remote-host.model';
 import { releaseDriftTooltip, type StableReleaseIdentity } from '../../models/host-release-drift';
-import { hostReadiness } from '../../models/host-readiness';
+import { hostReadiness, hostReadinessTone } from '../../models/host-readiness';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { HostReleaseIdentityComponent } from '../host-release-identity/host-release-identity';
 
 /** One runner process role nested below its advertised physical machine. */
@@ -16,7 +18,7 @@ import { HostReleaseIdentityComponent } from '../host-release-identity/host-rele
   // eslint-disable-next-line @angular-eslint/component-selector -- Native table semantics require a tr host.
   selector: 'tr[appRemoteHostRoleRow]',
   standalone: true,
-  imports: [DatePipe, HostReleaseIdentityComponent],
+  imports: [DatePipe, HostReleaseIdentityComponent, StatusIndicatorComponent],
   templateUrl: './remote-host-role-row.html',
   styleUrl: './remote-host-role-row.scss',
   host: {
@@ -39,6 +41,8 @@ export class RemoteHostRoleRowComponent {
   readonly retired = computed(() => this.host().status === 'retired');
   readonly liveLoading = computed(() => this.host().liveDataState === 'loading');
   readonly tone = computed(() => this.liveLoading() ? 'idle' : hostStatusTone(this.host().status));
+  readonly indicatorTone = computed<StatusTone>(() => this.liveLoading() ? 'running' : hostStatusIndicatorTone(this.host().status));
+  readonly readinessTone = hostReadinessTone;
   readonly statusLabel = computed(() => this.liveLoading()
     ? 'Loading live status'
     : hostStatusLabel(this.host().status));
