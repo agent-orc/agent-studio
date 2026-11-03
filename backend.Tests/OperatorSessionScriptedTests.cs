@@ -205,7 +205,8 @@ public sealed class OperatorSessionScriptedTests : IDisposable
         var bootstrap = store.Bootstrap(new BootstrapRequest("first.owner", Password, null));
         var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
         _ownerTotpSecret = store.BeginTotpEnrollment(owner);
-        store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(_ownerTotpSecret, DateTime.UtcNow));
+        store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(_ownerTotpSecret,
+            factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime));
         return factory;
     }
 
@@ -219,7 +220,8 @@ public sealed class OperatorSessionScriptedTests : IDisposable
         var response = await client.PostAsJsonAsync("/api/auth/login", new
         {
             username = "first.owner", password = Password,
-            secondFactorCode = SecondFactorCodes.CurrentTotp(_ownerTotpSecret, DateTime.UtcNow),
+            secondFactorCode = SecondFactorCodes.CurrentTotp(_ownerTotpSecret,
+                factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime),
         });
         response.EnsureSuccessStatusCode();
         client.DefaultRequestHeaders.Add("X-CSRF-Token", (await response.Content.ReadFromJsonAsync<AuthStatusResponse>())!.CsrfToken!);
