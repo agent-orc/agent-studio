@@ -745,25 +745,28 @@ public sealed class ManagementApiOwnHostTests : IDisposable
     [Fact]
     public async Task StatusAndDiagnostics_ReturnLiveHealthWhileStatisticsRefreshIsBlocked()
     {
-        using var entered = new ManualResetEventSlim();
-        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var scans = 0;
         var cache = new ManagementStatisticsCache(() =>
         {
             Interlocked.Increment(ref scans);
-            entered.Set();
-            release.Wait();
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+            completed.TrySetResult();
             return new ManagementStatistics(1, 1, 1, 0, 1, 0, null, [], "2026-11-01T00:00:00Z");
         });
         try
         {
             await using var factory = BuildFactory(statisticsCache: cache);
             using var client = factory.CreateClient();
+            await WaitForStartupMigrationAsync(factory, client.Timeout);
             client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-            var first = client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
-            var second = client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
-            var statuses = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(30));
-            Assert.True(entered.Wait(TimeSpan.FromSeconds(30)));
+            var first = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
+            await entered.Task.WaitAsync(client.Timeout);
+            var second = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
+            var statuses = new[] { first, second };
             Assert.All(statuses, status =>
             {
                 Assert.Equal("healthy", status.GetProperty("health").GetProperty("state").GetString());
@@ -774,7 +777,11 @@ public sealed class ManagementApiOwnHostTests : IDisposable
             Assert.Equal("healthy", diagnostics.GetProperty("health").GetString());
             Assert.Equal(1, Volatile.Read(ref scans));
         }
-        finally { release.Set(); }
+        finally
+        {
+            release.TrySetResult();
+            if (entered.Task.IsCompleted) await completed.Task.WaitAsync(TimeSpan.FromMinutes(2));
+        }
     }
 
     /// <summary>
@@ -1056,9 +1063,9 @@ public sealed class ManagementApiOwnHostTests : IDisposable
         var supervisor = factory.Services.GetRequiredService<LinkSupervisor>();
 
         await supervisor.StartAsync(CancellationToken.None);
-        for (var attempt = 0;
-             attempt < 100 && supervisor.Snapshot().Single().State == RunnerLinkStates.Down;
-             attempt++)
+        var startup = Stopwatch.StartNew();
+        while (startup.Elapsed < TimeSpan.FromMinutes(2)
+               && supervisor.Snapshot().Single().State == RunnerLinkStates.Down)
             await Task.Delay(10);
         var adopted = Assert.Single(supervisor.Snapshot());
         Assert.Equal(RunnerLinkStates.Connecting, adopted.State);
@@ -1110,8 +1117,11 @@ public sealed class ManagementApiOwnHostTests : IDisposable
     [Fact]
     public async Task BackupCreate_VerifiesRealArchive_OutsideDataDirectory()
     {
+        const string archiveEvidence = "backup fixture content\n";
+        File.WriteAllText(Path.Combine(_root, "backup-fixture.txt"), archiveEvidence);
         await using var factory = BuildFactory(Environments.Production);
         using var client = factory.CreateClient();
+        await WaitForStartupMigrationAsync(factory, client.Timeout);
         var environment = factory.Services.GetRequiredService<IWebHostEnvironment>();
         Assert.Equal(Environments.Production, environment.EnvironmentName);
         Assert.False(environment.IsDevelopment());
@@ -1132,7 +1142,12 @@ public sealed class ManagementApiOwnHostTests : IDisposable
         var backups = Directory.GetFiles(_backups, "backup-*.zip");
         Assert.Single(backups);
         Assert.True(File.Exists(backups[0] + ".manifest.json"));
-        Assert.True(new FileInfo(backups[0]).Length > 0);
+        using (var archive = ZipFile.OpenRead(backups[0]))
+        {
+            var entry = Assert.IsType<ZipArchiveEntry>(archive.GetEntry("backup-fixture.txt"));
+            using var reader = new StreamReader(entry.Open());
+            Assert.Equal(archiveEvidence, await reader.ReadToEndAsync());
+        }
         Assert.DoesNotContain(Path.GetFullPath(_root) + Path.DirectorySeparatorChar, Path.GetFullPath(backups[0]));
 
         var verify = await client.PostAsJsonAsync("/api/v1/management/commands", new
@@ -1318,6 +1333,34 @@ public sealed class ManagementApiOwnHostTests : IDisposable
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder => ManagementApiTests.Configure(
             builder, _folders, environment, provisioner, runnerLinks, launcher, stableRelease, timeProvider,
             connectivityManifest, statisticsCache));
+
+    private async Task WaitForStartupMigrationAsync(WebApplicationFactory<Program> factory, TimeSpan timeout)
+    {
+        // Program starts project chat migration after the test host has begun
+        // answering requests. Its state file is created by Begin and cleared
+        // by Complete, so an absent file is not evidence that boot settled.
+        var stateFile = Path.Combine(_root, ".metadata", "migrations.json");
+        var migrations = factory.Services.GetRequiredService<MigrationStateStore>();
+        using var deadline = new CancellationTokenSource(timeout);
+        try
+        {
+            while (true)
+            {
+                if (File.Exists(stateFile))
+                {
+                    var active = migrations.List().FirstOrDefault(item => item.Id == "project-chat-v1");
+                    if (active is null) return;
+                    if (active.State == "failed")
+                        throw new Xunit.Sdk.XunitException($"Project chat startup migration failed: {active.Detail}");
+                }
+                await Task.Delay(25, deadline.Token);
+            }
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            throw new Xunit.Sdk.XunitException("Project chat startup migration did not settle before the client deadline.");
+        }
+    }
 
     private string ReadWorkspaceBus()
     {
