@@ -50,9 +50,15 @@ public sealed class PersistedBoardReadTests : IDisposable
 {
     private const string ProjectName = "persisted-board";
     private static readonly TimeSpan NoWait = TimeSpan.FromSeconds(15);
+    // Bounds waits for an event that a correct host always reaches: a host
+    // start, a scan entering, a held publication finishing. Only a wait that
+    // never ends reaches it, so it is not a latency budget; a host start
+    // alone took three to four minutes at load 80 on 12 cores.
+    private static readonly TimeSpan HangLimit = TimeSpan.FromMinutes(5);
 
     private readonly string _workspace;
     private readonly string _watchPath;
+    private readonly ConcurrentBag<ScanGate> _gates = [];
 
     private sealed class StartupCalls
     {
@@ -102,7 +108,7 @@ public sealed class PersistedBoardReadTests : IDisposable
 
     private sealed class ScanStartBarrier(ScanGate gate) : IHostedService
     {
-        public Task StartAsync(CancellationToken ct) => gate.Started.WaitAsync(ct);
+        public Task StartAsync(CancellationToken ct) => gate.Entered(1).WaitAsync(ct);
         public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
     }
 
@@ -204,6 +210,8 @@ public sealed class PersistedBoardReadTests : IDisposable
 
     public void Dispose()
     {
+        // A failed test may end before its own release; no walk outlives it.
+        foreach (var gate in _gates) gate.Release();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try { Directory.Delete(_workspace, recursive: true); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -222,38 +230,60 @@ public sealed class PersistedBoardReadTests : IDisposable
         }));
     }
 
-    /// <summary>The index disk walk of one host, counted and holdable.</summary>
+    /// <summary>
+    /// The index disk walk of one host, counted and holdable. A held walk
+    /// waits until the test releases it, and the class releases every gate
+    /// when the test ends. No clock ends the hold: a restart test holds the
+    /// first walk across the whole host start, which takes minutes on a loaded
+    /// host, so a timed hold gave up before the test read the restored board.
+    /// </summary>
     private sealed class ScanGate
     {
-        private readonly TimeSpan _timeout;
+        private readonly ManualResetEventSlim _open = new(true);
+        private readonly ConcurrentDictionary<int, TaskCompletionSource> _entered = new();
         private int _scans;
+        private int _completed;
         private int _failures;
-        private int _timedOut;
-        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public ManualResetEventSlim Open { get; } = new(true);
-        public int Scans => Volatile.Read(ref _scans);
-        public bool TimedOut => Volatile.Read(ref _timedOut) == 1;
-        public Task Started => _started.Task;
 
-        public ScanGate(TimeSpan? timeout = null) => _timeout = timeout ?? TimeSpan.FromSeconds(60);
+        /// <summary>Walks that have entered, held or not.</summary>
+        public int Scans => Volatile.Read(ref _scans);
+
+        /// <summary>Walks that have returned their task list.</summary>
+        public int Completed => Volatile.Read(ref _completed);
+
+        public void Hold() => _open.Reset();
+
+        public void Release() => _open.Set();
+
+        /// <summary>Completes once <paramref name="count"/> walks have entered.</summary>
+        public Task Entered(int count)
+        {
+            var entered = _entered.GetOrAdd(count,
+                _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+            if (Scans >= count) entered.TrySetResult();
+            return entered.Task;
+        }
 
         /// <summary>The next <paramref name="count"/> scans fail at once, like an unreadable workspace.</summary>
         public void Fail(int count) => Volatile.Write(ref _failures, count);
 
         public Func<List<TaskInfo>> Wrap(Func<List<TaskInfo>> scan) => () =>
         {
-            Interlocked.Increment(ref _scans);
-            _started.TrySetResult();
+            var entered = Interlocked.Increment(ref _scans);
+            foreach (var (count, signal) in _entered)
+                if (count <= entered) signal.TrySetResult();
             if (Interlocked.Decrement(ref _failures) >= 0) throw new IOException("workspace walk failed");
-            var released = Open.Wait(_timeout);
-            if (!released) Volatile.Write(ref _timedOut, 1);
-            Assert.True(released, "the test never released the index scan");
-            return scan();
+            _open.Wait();
+            var tasks = scan();
+            Interlocked.Increment(ref _completed);
+            return tasks;
         };
     }
 
-    private WebApplicationFactory<Program> Host(ScanGate gate, bool hostedServices = false, StartupCalls? calls = null) =>
-        new TestHostFactory().WithWebHostBuilder(builder =>
+    private WebApplicationFactory<Program> Host(ScanGate gate, bool hostedServices = false, StartupCalls? calls = null)
+    {
+        _gates.Add(gate);
+        return new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
@@ -289,6 +319,7 @@ public sealed class PersistedBoardReadTests : IDisposable
                 });
             });
         });
+    }
 
     private static HttpClient Client(WebApplicationFactory<Program> host)
     {
@@ -314,6 +345,28 @@ public sealed class PersistedBoardReadTests : IDisposable
             Header(response, RestoredBoard.StateHeader), Header(response, RestoredBoard.GenerationHeader));
     }
 
+    /// <summary>Awaits <paramref name="task"/>, failing with <paramref name="what"/> if it never ends.</summary>
+    private static Task Within(Task task, string what) => Within(task, () => what);
+
+    private static async Task Within(Task task, Func<string> what)
+    {
+        if (await Task.WhenAny(task, Task.Delay(HangLimit)) != task)
+            Assert.Fail($"{what()} still pending after {HangLimit.TotalMinutes} min; {PoolState()}");
+        await task;
+    }
+
+    /// <summary>
+    /// Starts <paramref name="host"/> off the test thread. A start that waited
+    /// for the held scan would never return, and the test must still reach the
+    /// release of that scan.
+    /// </summary>
+    private static async Task<HttpClient> Start(WebApplicationFactory<Program> host, ScanGate gate)
+    {
+        var start = Task.Run(() => Client(host));
+        await Within(start, () => $"host start (scans={gate.Scans}, completed={gate.Completed})");
+        return await start;
+    }
+
     private static string PoolState() =>
         $"threadPoolThreads={ThreadPool.ThreadCount}; pendingWorkItems={ThreadPool.PendingWorkItemCount}; "
         + $"completedWorkItems={ThreadPool.CompletedWorkItemCount}; processId={Environment.ProcessId}";
@@ -325,6 +378,17 @@ public sealed class PersistedBoardReadTests : IDisposable
         => JsonDocument.Parse(grouped).RootElement.EnumerateObject()
             .Where(property => property.Value.ValueKind == JsonValueKind.Array)
             .ToDictionary(property => property.Name, property => property.Value.GetRawText());
+
+    /// <summary>Same lanes, naming the first lane that differs and both of its bodies.</summary>
+    private static void AssertSameLanes(byte[] expected, byte[] actual, string what)
+    {
+        var want = Lanes(expected);
+        var got = Lanes(actual);
+        var lane = want.Keys.Union(got.Keys).Order(StringComparer.Ordinal)
+            .FirstOrDefault(name => want.GetValueOrDefault(name) != got.GetValueOrDefault(name));
+        Assert.True(lane is null,
+            $"{what}: lane '{lane}' differs.\nexpected: {want.GetValueOrDefault(lane ?? "")}\nactual:   {got.GetValueOrDefault(lane ?? "")}");
+    }
 
     [Fact]
     public async Task After_a_restart_the_board_answers_from_the_persisted_board_marked_restored_while_the_first_scan_runs()
@@ -340,15 +404,21 @@ public sealed class PersistedBoardReadTests : IDisposable
         }
 
         var gate = new ScanGate();
-        gate.Open.Reset();
+        gate.Hold();
         await using var restarted = Host(gate);
-        using var restartedClient = Client(restarted);
+        HttpClient restartedClient;
+        Task? firstPublication;
         try
         {
+            // The boot starts the first publication, and the host starts while it is held.
+            restartedClient = await Start(restarted, gate);
+            firstPublication = restarted.Services.GetRequiredService<TaskIndexCache>().RefreshInFlight;
+            Assert.NotNull(firstPublication);
+
             var grouped = await Get(restartedClient, "/api/tasks/grouped");
             Assert.Equal(HttpStatusCode.OK, grouped.Status);
             Assert.Equal(RestoredBoard.Restored, grouped.State);
-            Assert.Equal(Lanes(liveGrouped), Lanes(grouped.Body));
+            AssertSameLanes(liveGrouped, grouped.Body, "restored read");
             Assert.Equal(["pb-auto"], JsonDocument.Parse(grouped.Body).RootElement.GetProperty("review")
                 .EnumerateArray().Select(card => card.GetProperty("id").GetString()));
             Assert.True(JsonDocument.Parse(grouped.Body).RootElement.GetProperty("stale").GetBoolean());
@@ -361,20 +431,22 @@ public sealed class PersistedBoardReadTests : IDisposable
             Assert.Equal(HttpStatusCode.NotModified, (await Get(restartedClient, "/api/tasks/grouped", grouped.ETag)).Status);
 
             // The first publication was started once, off the reads, and is still held.
-            await gate.Started.WaitAsync(TimeSpan.FromSeconds(30));
+            await Within(gate.Entered(1), "the first index scan");
             Assert.Equal(1, gate.Scans);
+            Assert.Equal(0, gate.Completed);
         }
         finally
         {
-            gate.Open.Set();
+            gate.Release();
         }
 
-        var waited = Stopwatch.StartNew();
-        (HttpStatusCode Status, byte[] Body, string? ETag, string? State, string? Generation) ready;
-        do ready = await Get(restartedClient, "/api/tasks/grouped");
-        while (ready.State != RestoredBoard.Ready && waited.Elapsed < TimeSpan.FromSeconds(30) && await Delay());
-        Assert.Equal(RestoredBoard.Ready, ready.State);
-        Assert.Equal(Lanes(liveGrouped), Lanes(ready.Body));
+        using (restartedClient)
+        {
+            await Within(firstPublication, "the first publication");
+            var ready = await Get(restartedClient, "/api/tasks/grouped");
+            Assert.Equal(RestoredBoard.Ready, ready.State);
+            AssertSameLanes(liveGrouped, ready.Body, "ready read");
+        }
     }
 
     [Fact]
@@ -388,8 +460,8 @@ public sealed class PersistedBoardReadTests : IDisposable
             Assert.Equal(1, first.Services.GetRequiredService<BoardSummaryPersister>().PersistPublished());
         }
 
-        var gate = new ScanGate(TimeSpan.FromMinutes(3));
-        gate.Open.Reset();
+        var gate = new ScanGate();
+        gate.Hold();
         var calls = new StartupCalls();
         var restarted = Host(gate, hostedServices: true, calls);
         Task<HttpClient>? startup = null;
@@ -408,16 +480,20 @@ public sealed class PersistedBoardReadTests : IDisposable
             // entered. ApplicationStarted proves none waited for publication;
             // the factory's unrelated endpoint warmup may finish later.
             var ready = calls.ClientReady;
-            var started = await Task.WhenAny(ready, Task.Delay(TimeSpan.FromMinutes(2))) == ready;
+            var started = await Task.WhenAny(ready, Task.Delay(HangLimit)) == ready;
             var startPool = started ? null : PoolState();
             Assert.True(ready.IsCompleted,
                 $"host start pending; entered={Volatile.Read(ref entered) == 1}; scans={gate.Scans}; hosted calls={calls.Describe()}; {startPool}");
             using var client = await ready;
+            // Every request waits for routing, which the factory's warmup
+            // builds once after the start; on a loaded host that build alone
+            // outlasts the read bound. Wait for it, with the scan still held.
+            await Within(startup, () => $"endpoint warmup (scans={gate.Scans}; hosted calls={calls.Describe()})");
             var list = await Get(client, "/api/tasks/");
             Assert.Equal(RestoredBoard.Restored, list.State);
             Assert.Equal(liveList, list.Body);
             Assert.True(gate.Scans >= 1, "the boot must start the first publication");
-            Assert.False(gate.TimedOut, "the held first scan timed out before the restored read");
+            Assert.True(gate.Completed == 0, "the restored read must be answered while the first scan is held");
             var index = restarted.Services.GetRequiredService<TaskIndexCache>();
             Assert.True(index.BlockingRefreshWaits == 0,
                 $"blocking refresh waits={index.BlockingRefreshWaits}; {PoolState()}; first stack={index.FirstBlockingRefreshWaitStack}");
@@ -425,22 +501,16 @@ public sealed class PersistedBoardReadTests : IDisposable
         finally
         {
             // Hosted services wait for the held scan; release it before the stop.
-            gate.Open.Set();
+            gate.Release();
             try
             {
                 if (startup is not null)
                 {
-                    using var factoryClient = await startup.WaitAsync(TimeSpan.FromMinutes(2));
+                    using var factoryClient = await startup.WaitAsync(HangLimit);
                 }
             }
             finally { await restarted.DisposeAsync(); }
         }
-    }
-
-    private static async Task<bool> Delay()
-    {
-        await Task.Delay(25);
-        return true;
     }
 
     [Fact]
@@ -453,18 +523,23 @@ public sealed class PersistedBoardReadTests : IDisposable
         await using var host = Host(gate);
         using var client = Client(host);
         Assert.Equal(1, gate.Scans);
-        gate.Open.Reset();
+        gate.Hold();
 
         var read = client.GetAsync("/api/tasks/grouped");
         try
         {
+            // The read starts the first publication, then waits for it.
+            var entered = gate.Entered(2);
+            await Within(Task.WhenAny(entered, read), "the cold read");
+            Assert.True(entered.IsCompleted, "the cold read must start the first publication");
             Assert.NotSame(read, await Task.WhenAny(read, Task.Delay(TimeSpan.FromMilliseconds(300))));
         }
         finally
         {
-            gate.Open.Set();
+            gate.Release();
         }
-        using var response = await read.WaitAsync(NoWait);
+        await Within(read, "the cold read after the release");
+        using var response = await read;
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(RestoredBoard.Ready, Header(response, RestoredBoard.StateHeader));
     }
@@ -479,9 +554,11 @@ public sealed class PersistedBoardReadTests : IDisposable
         // The boot published the first generation; the read did not scan.
         Assert.Equal(1, gate.Scans);
 
-        gate.Open.Reset();
+        gate.Hold();
         Seed("pb-new", TaskStates.Backlog, "PB-9");
-        host.Services.GetRequiredService<TaskIndexCache>().Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        var index = host.Services.GetRequiredService<TaskIndexCache>();
+        index.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        Task? refresh;
         try
         {
             // Both reads return while the refresh is held: neither ran it.
@@ -491,19 +568,21 @@ public sealed class PersistedBoardReadTests : IDisposable
             Assert.Equal(RestoredBoard.Ready, dirty.State);
             Assert.Equal(HttpStatusCode.NotModified, (await Get(client, "/api/tasks/grouped", published.ETag)).Status);
             Assert.Equal(published.Generation, (await Get(client, "/api/tasks/")).Generation);
-            Assert.True(SpinWait.SpinUntil(() => gate.Scans == 2, TimeSpan.FromSeconds(10)),
-                "a dirty read must start one background refresh");
+            // The dirty read started one background refresh, which is held.
+            await Within(gate.Entered(2), "the background refresh of the dirty read");
+            refresh = index.RefreshInFlight;
+            Assert.NotNull(refresh);
             Assert.Equal(2, gate.Scans);
+            Assert.Equal(1, gate.Completed);
         }
         finally
         {
-            gate.Open.Set();
+            gate.Release();
         }
 
-        var waited = Stopwatch.StartNew();
-        (HttpStatusCode Status, byte[] Body, string? ETag, string? State, string? Generation) fresh;
-        do fresh = await Get(client, "/api/tasks/grouped");
-        while (fresh.Generation == published.Generation && waited.Elapsed < TimeSpan.FromSeconds(30) && await Delay());
+        await Within(refresh, "the background refresh after the release");
+        var fresh = await Get(client, "/api/tasks/grouped");
+        Assert.NotEqual(published.Generation, fresh.Generation);
         Assert.Contains("pb-new", Lanes(fresh.Body)["backlog"]);
         Assert.Equal(2, gate.Scans);
     }
@@ -516,7 +595,7 @@ public sealed class PersistedBoardReadTests : IDisposable
         using var client = Client(host);
         await Get(client, "/api/tasks/grouped");
 
-        gate.Open.Reset();
+        gate.Hold();
         host.Services.GetRequiredService<TaskIndexCache>().Invalidate(TaskIndexCache.InvalidationSource.Mutation);
         try
         {
@@ -526,7 +605,7 @@ public sealed class PersistedBoardReadTests : IDisposable
         }
         finally
         {
-            gate.Open.Set();
+            gate.Release();
         }
     }
 }
