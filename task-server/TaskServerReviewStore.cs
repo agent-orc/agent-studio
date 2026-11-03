@@ -1501,7 +1501,9 @@ public sealed partial class TaskServerStore
             if (clean is null)
                 return ("ReviewInfra", "CleanRepeatMissing");
             if (failed.Diagnosis.ChargesCard
-                && (failed.BaselineExitCode != 0 || clean.ExitCode == 0
+                && ((failed.BaselineExitCode != 0
+                     && !ReviewReportDiagnosisPolicy.HasNewTestFailures(failed, subject.Plan))
+                    || clean.ExitCode == 0
                     || failed.Diagnosis.Confidence <= 0))
                 return ("ReviewInfra", "DiagnosisEvidenceInvalid");
         }
