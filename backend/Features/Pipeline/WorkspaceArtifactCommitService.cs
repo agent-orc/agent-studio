@@ -652,7 +652,8 @@ public sealed class WorkspaceArtifactCommitService
 
                 var candidates = modified.Out
                     .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Where(path => !IsRuntimeOnlyPath(path))
+                    .Where(path => !IsRuntimeOnlyPath(path)
+                        && !AgentStudio.Git.SecurityStorePathPolicy.IsSecurityStorePath(path))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 var oversized = FindOversizedFiles(gitRoot, candidates);
@@ -670,6 +671,12 @@ public sealed class WorkspaceArtifactCommitService
                     if (add.Code != 0)
                         return WorkspaceArtifactCommitResult.Failed("git-add", add.ErrorText);
                 }
+
+                // The sweep commits the whole index, so .security/ content
+                // staged by anything else is unstaged first. Staged removals
+                // stay: they come from untracking the folder.
+                var unstage = UnstageSecurityStoreContent(gitRoot);
+                if (unstage != null) return unstage;
 
                 var changed = RunGit(gitRoot, ["diff", "--cached", "--quiet"]);
                 if (changed.Code == 0)
@@ -750,6 +757,29 @@ public sealed class WorkspaceArtifactCommitService
         if (reset.Code != 0)
             _logger.LogWarning("workspace-artifact refused-file reset failed root={Root} error={Error}", gitRoot, reset.ErrorText);
     }
+
+    private WorkspaceArtifactCommitResult? UnstageSecurityStoreContent(string gitRoot)
+    {
+        var staged = RunGit(gitRoot,
+            ["diff", "--cached", "--name-only", "-z", "--no-renames", "--diff-filter=d", "--",
+                $":(top,icase){AgentStudio.Git.SecurityStorePathPolicy.DirectoryName}"]);
+        if (staged.Code != 0)
+            return WorkspaceArtifactCommitResult.Failed("git-diff-cached", staged.ErrorText);
+        var paths = staged.Out.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (paths.Length == 0) return null;
+
+        var resetArgs = new List<string> { "reset", "-q", "--" };
+        resetArgs.AddRange(BuildLiteralPathspecs(paths));
+        var reset = RunGitRetryingIndexLock(gitRoot, resetArgs);
+        if (reset.Code != 0)
+            return WorkspaceArtifactCommitResult.Failed("security-store-unstage", reset.ErrorText);
+        _logger.LogWarning("workspace-tracked-sweep skipped staged .security paths count={Count} root={Root}",
+            paths.Length, gitRoot);
+        return null;
+    }
+
+    private static List<string> BuildLiteralPathspecs(IEnumerable<string> paths) =>
+        paths.Select(path => $":(top,literal){path}").ToList();
 
     private static List<string> BuildLiteralExcludePathspecs(IReadOnlyList<string> paths) =>
         paths.Select(path => $":(exclude,top,literal){path}").ToList();

@@ -440,6 +440,31 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
     }
 
     [Fact]
+    public void TrackedSweep_SkipsSecurityStoreDriftAndStagedContent()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".security"));
+        File.WriteAllText(Path.Combine(_root, ".security", "access-state.json"), "one\n");
+        File.WriteAllText(Path.Combine(_root, "tracked.txt"), "one\n");
+        RunGit(_root, "add", ".security/access-state.json", "tracked.txt");
+        RunGit(_root, "commit", "-q", "-m", "tracked files");
+        File.AppendAllText(Path.Combine(_root, ".security", "access-state.json"), "two\n");
+        File.WriteAllText(Path.Combine(_root, ".security", "secret-binding.json"), "{}\n");
+        RunGit(_root, "add", "-f", ".security/secret-binding.json");
+        File.AppendAllText(Path.Combine(_root, "tracked.txt"), "two\n");
+
+        var result = _service.TryCommitTrackedSweep(_root);
+
+        Assert.True(result.DidCommit, result.Error);
+        var committed = RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD");
+        Assert.Contains("tracked.txt", committed);
+        Assert.DoesNotContain(".security", committed);
+        Assert.Equal("one\n", RunGitCapture(_root, "show", "HEAD:.security/access-state.json").Replace("\r\n", "\n"));
+        Assert.Empty(RunGitCapture(_root, "diff", "--cached", "--name-only"));
+        Assert.Equal("one\ntwo\n", File.ReadAllText(Path.Combine(_root, ".security", "access-state.json")));
+        Assert.True(File.Exists(Path.Combine(_root, ".security", "secret-binding.json")));
+    }
+
+    [Fact]
     public void EvidenceCommit_ExcludesOversizedFileButCommitsTheRest()
     {
         var job = JobFolder("ASS-EVIDENCE-LARGE");

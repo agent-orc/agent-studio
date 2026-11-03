@@ -26,6 +26,7 @@ public sealed class WorkspaceRepositoryMaintenanceWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        UntrackSecurityStoreSafely(stoppingToken);
         await RunSafelyAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(Math.Clamp(
             _configuration.GetValue<int?>("WorkspaceRepository:MaintenanceIntervalMinutes") ?? 60,
@@ -33,6 +34,20 @@ public sealed class WorkspaceRepositoryMaintenanceWorker : BackgroundService
             24 * 60)));
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
             await RunSafelyAsync(stoppingToken).ConfigureAwait(false);
+    }
+
+    private void UntrackSecurityStoreSafely(CancellationToken ct)
+    {
+        try
+        {
+            var result = _maintenance.UntrackSecurityStore(ct);
+            if (!result.Success)
+                _logger.LogWarning("workspace-security-store-untrack-failed phase={Phase} error={Error}", result.Phase, result.Error);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "workspace-security-store-untrack-failed phase=exception");
+        }
     }
 
     private async Task RunSafelyAsync(CancellationToken ct)
@@ -62,6 +77,7 @@ public sealed class WorkspaceRepositoryMaintenanceService
         "/logs/bus/",
         "/.metadata/attempt-authority*",
         "*.bak",
+        AgentStudio.Git.SecurityStorePathPolicy.IgnorePattern,
     };
 
     private readonly IConfiguration _configuration;
@@ -123,6 +139,42 @@ public sealed class WorkspaceRepositoryMaintenanceService
         return WorkspaceRepositoryMaintenanceResult.Ok("complete");
     }
 
+    /// <summary>
+    /// Startup step: removes <c>.security/</c> from the workspace index while
+    /// keeping the files on disk, and adds the folder to <c>info/exclude</c>.
+    /// The staged removal is recorded by the next tracked sweep. Runs whether
+    /// or not periodic maintenance is enabled, and logs only when it untracked
+    /// something, so a clean repository stays silent.
+    /// </summary>
+    public WorkspaceRepositoryMaintenanceResult UntrackSecurityStore(CancellationToken ct = default)
+    {
+        var gitRoot = _commits.ResolveWorkspaceGitRoot(_configuration["TaskRepository"]);
+        if (gitRoot == null)
+            return WorkspaceRepositoryMaintenanceResult.Ok("workspace-missing");
+
+        lock (WorkspaceArtifactCommitService.RepositoryGate(gitRoot))
+        {
+            var excluded = EnsureExcluded(gitRoot, [AgentStudio.Git.SecurityStorePathPolicy.IgnorePattern], ct);
+            if (!excluded.Success) return excluded;
+
+            var securitySpec = $":(top,icase){AgentStudio.Git.SecurityStorePathPolicy.DirectoryName}";
+            var tracked = RunGit(gitRoot, ["ls-files", "-z", "--", securitySpec], ct);
+            if (!tracked.Success)
+                return WorkspaceRepositoryMaintenanceResult.Failed("security-store-inventory", tracked.Error);
+            var count = tracked.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Length;
+            if (count == 0)
+                return WorkspaceRepositoryMaintenanceResult.Ok("security-store-untracked");
+
+            var untrack = RunGit(gitRoot, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", securitySpec], ct);
+            if (!untrack.Success)
+                return WorkspaceRepositoryMaintenanceResult.Failed("security-store-untrack", untrack.Error);
+            _logger.LogWarning(
+                "workspace-security-store-untracked repo={Repo} files={Files}; the files stay on disk and the removal is committed by the next tracked sweep",
+                gitRoot, count);
+            return WorkspaceRepositoryMaintenanceResult.Ok("security-store-untracked");
+        }
+    }
+
     private WorkspaceRepositoryMaintenanceResult BootstrapPackWhenNeeded(string gitRoot, CancellationToken ct)
     {
         var inventory = RunGit(gitRoot, ["count-objects", "-v"], ct);
@@ -165,22 +217,34 @@ public sealed class WorkspaceRepositoryMaintenanceService
                 return WorkspaceRepositoryMaintenanceResult.Failed("git-config", result.Error);
         }
 
-        var excludePathResult = RunGit(gitRoot, ["rev-parse", "--git-path", "info/exclude"], ct);
-        if (!excludePathResult.Success)
-            return WorkspaceRepositoryMaintenanceResult.Failed("git-exclude-path", excludePathResult.Error);
-        var excludePath = excludePathResult.Output.Trim();
-        if (!Path.IsPathRooted(excludePath)) excludePath = Path.GetFullPath(Path.Combine(gitRoot, excludePath));
-        Directory.CreateDirectory(Path.GetDirectoryName(excludePath)!);
-        var existing = File.Exists(excludePath) ? File.ReadAllLines(excludePath).ToHashSet(StringComparer.Ordinal) : [];
-        var missing = RuntimeIgnorePatterns.Where(pattern => !existing.Contains(pattern)).ToList();
-        if (missing.Count > 0)
-            File.AppendAllLines(excludePath, missing);
+        var excluded = EnsureExcluded(gitRoot, RuntimeIgnorePatterns, ct);
+        if (!excluded.Success) return excluded;
 
         var untrack = RunGit(gitRoot,
             ["rm", "-r", "--cached", "--ignore-unmatch", "--", "logs/bus", ".metadata/attempt-authority*"], ct);
         return untrack.Success
             ? WorkspaceRepositoryMaintenanceResult.Ok("configured")
             : WorkspaceRepositoryMaintenanceResult.Failed("runtime-untrack", untrack.Error);
+    }
+
+    private WorkspaceRepositoryMaintenanceResult EnsureExcluded(
+        string gitRoot, IReadOnlyList<string> patterns, CancellationToken ct)
+    {
+        var excludePathResult = RunGit(gitRoot, ["rev-parse", "--git-path", "info/exclude"], ct);
+        if (!excludePathResult.Success)
+            return WorkspaceRepositoryMaintenanceResult.Failed("git-exclude-path", excludePathResult.Error);
+        var excludePath = excludePathResult.Output.Trim();
+        if (!Path.IsPathRooted(excludePath)) excludePath = Path.GetFullPath(Path.Combine(gitRoot, excludePath));
+        Directory.CreateDirectory(Path.GetDirectoryName(excludePath)!);
+        var text = File.Exists(excludePath) ? File.ReadAllText(excludePath) : string.Empty;
+        var existing = text.Split('\n', StringSplitOptions.TrimEntries).ToHashSet(StringComparer.Ordinal);
+        var missing = patterns.Where(pattern => !existing.Contains(pattern)).ToList();
+        if (missing.Count > 0)
+        {
+            var prefix = text.Length == 0 || text.EndsWith('\n') ? string.Empty : Environment.NewLine;
+            File.AppendAllText(excludePath, prefix + string.Join(Environment.NewLine, missing) + Environment.NewLine);
+        }
+        return WorkspaceRepositoryMaintenanceResult.Ok("excluded");
     }
 
     private MaintenanceGitResult RunGit(string cwd, IReadOnlyList<string> args, CancellationToken ct)
