@@ -39,7 +39,7 @@ import { OperationalStallsComponent } from '../operational-stalls/operational-st
 import { EnvironmentHostListComponent } from '../environment-host-list/environment-host-list';
 import { EnvironmentAttentionComponent } from '../environment-attention/environment-attention';
 import { buildEnvironmentAttention } from '../../models/environment-attention';
-import { OrchestratorFeedStore } from '../../../orchestrator';
+import { OrchestratorFeedStore } from '../../../orchestrator/state/orchestrator-feed.store';
 import { hostReadiness } from '../../models/host-readiness';
 
 /**

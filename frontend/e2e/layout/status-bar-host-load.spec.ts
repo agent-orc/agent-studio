@@ -76,25 +76,26 @@ async function stubHostLoad(
     },
   ]));
 
-  await page.route('**/api/v1/studio/auth/status', json({
+  const authStatus = {
     profile: 'local',
     bootstrapRequired: false,
     authenticated: true,
     user: null,
-  }));
+  };
+  await page.route('**/api/auth/status', json(authStatus));
+  await page.route('**/api/v1/studio/auth/status', json(authStatus));
   await page.route('**/api/environment**', json({ isDev: false, devTools: {} }));
   await page.route('**/api/watch-paths', json(projectNames.map((name, index) => ({
     name,
     path: `/mock/project-${index + 1}`,
     rootPath: `/mock/project-${index + 1}`,
   }))));
-  await page.route('**/api/v1/studio/board', json({
-    preparation: [],
-    ready: [],
+  await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({
+    backlog: [], preparation: [], orchestratorPrep: [], ready: [],
     progress: [...local, ...remote],
-    review: [],
-    completed: [],
-    archive: [],
+    failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
+    escalated: [], review: [], completed: [], archive: [],
+    gitStateAt: null, stale: false,
   }));
   await page.route('**/api/tasks', json([]));
   await page.route('**/api/v1/studio/runner/status', json({ projects: runnerProjects, cliRepairs }));
@@ -149,7 +150,13 @@ async function stubHostLoad(
     }],
     findings: [],
   }));
-  await page.route('**/api/v1/management/remote-hosts', json([]));
+  await page.route('**/api/v1/management/remote-hosts', json([{
+    runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+    instanceId: 'agent-runner-01:coding', runnerVersion: '0.3.0', protocolVersion: 3,
+    status: 'active', registeredAt: now, lastSeenAt: now,
+    hostAdmission: { hostId: 'agent-runner-01', admissionState: 'open' },
+    capabilities: [], roleMaxParallelism: 8,
+  }]));
 }
 
 test.describe('Status bar execution-host load companion signal', () => {
@@ -212,11 +219,11 @@ test.describe('Status bar execution-host load companion signal', () => {
     await expect(running).toContainText('2 local · remote idle');
     await running.click();
 
-    await expect(page).toHaveURL(/#\/workspace\/settings\/execution-hosts(?:&|$)/);
+    await expect(page).toHaveURL(/#\/workspace\/settings\/environment(?:&|$)/);
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
     await expect(page.getByTestId('remote-hosts-panel').getByRole('heading', { level: 2 }))
       .toHaveText('Environment');
-    await expect(page.getByTestId('remote-hosts-empty')).toBeVisible();
+    await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
   });
 
   test('high load without runs becomes a quiet hint in both themes', async ({ page }) => {
