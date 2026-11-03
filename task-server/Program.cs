@@ -76,7 +76,12 @@ builder.Services.AddSingleton<AgentStudio.TaskServer.AttemptCredentials.IAttempt
 });
 builder.Services.AddHttpClient<AgentStudio.TaskServer.AttemptCredentials.IRepositoryTokenIssuer,
     AgentStudio.TaskServer.AttemptCredentials.GitHubAppTokenIssuer>(client => client.Timeout = TimeSpan.FromSeconds(20));
-builder.Services.AddSingleton<DeviceLoginSessions>();
+builder.Services.AddSingleton(services =>
+{
+    var store = services.GetRequiredService<TaskServerStore>();
+    return new DeviceLoginSessions(services.GetRequiredService<TimeProvider>(), async (request, actor, ct) =>
+        _ = await store.RecordStudioProviderAuthEventAsync(request, actor, ct));
+});
 builder.Services.AddHostedService<DeviceLoginAuditSweep>();
 builder.Services.AddSingleton<RunnerGitSetupStore>();
 builder.Services.AddHttpClient("github-app", client => client.Timeout = TimeSpan.FromSeconds(20))

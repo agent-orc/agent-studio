@@ -382,6 +382,7 @@
 /api/usage/cockpit	free	-	-	-
 /api/v1/gates/subjects/{subjectId}	free	-	-	-
 /api/v1/management/credential-inventory	free	-	-	-
+/api/v1/management/device-logins/{handle}	free	-	-	-
 /api/v1/management/diagnostics	free	-	-	-
 /api/v1/management/environment	free	-	-	-
 /api/v1/management/github-app/	free	-	-	-
@@ -393,6 +394,7 @@
 /api/v1/management/remote-hosts/provider-auth-renewals/{operationId}	free	-	-	-
 /api/v1/management/remote-hosts/{id}/claude-sign-in/{handle}	free	-	-	-
 /api/v1/management/remote-hosts/{id}/codex-sign-in/{handle}	free	-	-	-
+/api/v1/management/runner-git-setups/{id}	free	-	-	-
 /api/v1/management/runner-infrastructure-failures	free	-	-	-
 /api/v1/management/status	free	-	-	-
 /api/v1/operations/structure	reachable	gap	Structure projection	Resolve project repository roots without Git in the declared structure read path
@@ -403,6 +405,7 @@
 /api/v1/orchestration/runs/{runId}/grounds-input	free	-	-	-
 /api/v1/protocol	free	-	-	-
 /api/v1/reviews/attempts/{attemptId}	free	-	-	-
+/api/v1/runners/{runnerId}/device-login/{handle}	free	-	-	-
 /api/v1/runs/{runId}/result-handoff	free	-	-	-
 /api/v1/{**path}	free	-	-	-
 /api/watch-paths	free	-	-	-
