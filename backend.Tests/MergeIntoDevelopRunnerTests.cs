@@ -1353,7 +1353,7 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Skipped, step!.Status);
         Assert.Equal("no-remote", step.Verdict);
-        Assert.NotNull(reservations.GetWait("Fixture"));
+        Assert.Null(reservations.GetWait("Fixture"));
         Assert.DoesNotContain(IntegrationLaneEvents.Read(jobFolder), e => e.Kind == "published");
     }
 
@@ -1660,10 +1660,14 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
 
         var (git, log) = Build(repo);
         var jobFolder = BeginRun(log, repo, jobId: "push-main-lineage");
+        var reservations = new BatchIntegrationReservationService();
+        reservations.MarkPushPending("Fixture", "push-main-lineage", candidate,
+            jobFolder, repo, "main", repo);
         var runner = new MergeIntoDevelopRunner(
             git,
             log,
             NullLogger<MergeIntoDevelopRunner>.Instance,
+            batchReservations: reservations,
             environmentalBackoff: _ => TimeSpan.Zero);
 
         var result = await runner.PushIntegrationBranchAsync(
@@ -1688,6 +1692,9 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(PipelineStepStatus.Failed, step!.Status);
         Assert.Equal("push-blocked", step.Verdict);
         Assert.Equal(AcceptedIntegrationFailureCodes.IntegrationPushBlocked, step.FailureCode);
+        Assert.Null(reservations.GetWait("Fixture"));
+        using var batch = await reservations.AcquireBatchAsync("Fixture", CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     [Fact]
@@ -2468,7 +2475,7 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
-    public async Task Run_MergedButPushDisabled_KeepsTheBatchWaiting()
+    public async Task Run_MergedButPushDisabled_DoesNotCreateAnUnrecoverableBatchWait()
     {
         var repo = SeedRepo("run-disabled");
         RunGit(repo, "checkout -q -b develop");
@@ -2491,11 +2498,9 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
         Assert.False(queue.Reader.TryRead(out _), "no push must be enqueued when the push step is disabled");
-        using var cancellation = new CancellationTokenSource();
-        var batch = reservations.AcquireBatchAsync("Fixture", cancellation.Token);
-        Assert.False(batch.IsCompleted);
-        cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await batch);
+        using var batch = await reservations.AcquireBatchAsync("Fixture", CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Null(reservations.GetWait("Fixture"));
     }
 
     /// <summary>

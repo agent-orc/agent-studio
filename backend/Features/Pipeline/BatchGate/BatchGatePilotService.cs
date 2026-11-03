@@ -340,7 +340,8 @@ public sealed partial class BatchGatePilotService
                     StringComparer.Ordinal);
         return BatchGateStateSnapshotReader.Read(_store, project, options, history,
             risks, CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null,
-            _gateSlots?.Snapshot());
+            _gateSlots?.Snapshot(),
+            CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null);
     }
 
     private bool CodeBatchEnabled(string project)

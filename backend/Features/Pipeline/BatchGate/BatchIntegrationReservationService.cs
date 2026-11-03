@@ -10,7 +10,7 @@ public sealed record PendingIntegrationPush(string JobId, string? ApprovedSha,
     string? WatchPath, DateTimeOffset SinceUtc, string? Project = null);
 
 public sealed record PendingIntegrationPushWait(string Reason, string JobId,
-    string? ApprovedSha, DateTimeOffset SinceUtc, bool AgeAlert);
+    string? ApprovedSha, DateTimeOffset SinceUtc, bool AgeAlert, double AgeMinutes);
 
 /// <summary>Serializes code integration and batch execution per project.</summary>
 public sealed class BatchIntegrationReservationService
@@ -28,7 +28,7 @@ public sealed class BatchIntegrationReservationService
     {
         _root = root;
         _time = timeProvider ?? TimeProvider.System;
-        _alertAfter = alertAfter ?? TimeSpan.FromMinutes(15);
+        _alertAfter = alertAfter ?? TimeSpan.FromMinutes(3);
         LoadPersistedProjects();
     }
 
@@ -184,15 +184,22 @@ public sealed class BatchIntegrationReservationService
     }
 
     public PendingIntegrationPushWait? GetWait(string project)
+        => GetWaits(project).FirstOrDefault();
+
+    public IReadOnlyList<PendingIntegrationPushWait> GetWaits(string project)
     {
         var pending = ForProject(project);
         lock (pending)
         {
-            var marker = pending.Jobs.Values.MinBy(item => item.SinceUtc);
-            if (marker is null) return null;
-            var reason = $"waiting on push {marker.JobId}@{marker.ApprovedSha} since {marker.SinceUtc:O}";
-            return new PendingIntegrationPushWait(reason, marker.JobId, marker.ApprovedSha,
-                marker.SinceUtc, _time.GetUtcNow() - marker.SinceUtc >= _alertAfter);
+            var now = _time.GetUtcNow();
+            return pending.Jobs.Values.OrderBy(item => item.SinceUtc).Select(marker =>
+            {
+                var age = now - marker.SinceUtc;
+                var reason = $"waiting on approved integration push {marker.JobId}@{marker.ApprovedSha} "
+                    + $"since {marker.SinceUtc:O}; the push worker or restart recovery must publish it to origin";
+                return new PendingIntegrationPushWait(reason, marker.JobId, marker.ApprovedSha,
+                    marker.SinceUtc, age >= _alertAfter, Math.Max(0, age.TotalMinutes));
+            }).ToArray();
         }
     }
 
@@ -201,6 +208,12 @@ public sealed class BatchIntegrationReservationService
         {
             lock (item.Value) return item.Value.Jobs.Count > 0;
         }).Select(item => item.Key).ToArray();
+
+    public IReadOnlyList<PendingIntegrationPush> PendingForProject(string project)
+    {
+        var pending = ForProject(project);
+        lock (pending) return pending.Jobs.Values.OrderBy(item => item.SinceUtc).ToArray();
+    }
 
     public void MarkPushPending(string project, string jobId, string? approvedSha,
         string? jobFolderPath = null, string? repositoryPath = null,

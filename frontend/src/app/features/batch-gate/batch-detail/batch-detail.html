@@ -2,6 +2,12 @@
   @if (data.plan.decision !== 'disabled') {
     <section class="batch-detail" aria-labelledby="task-batch-title" data-testid="task-batch-verification">
       <h2 id="task-batch-title">Batch verification</h2>
+      @if (pushWait(); as wait) {
+        <p data-testid="task-integration-push-wait" role="status">
+          Approved integration push pending for {{ wait.ageMinutes.toFixed(1) }} min.
+          {{ wait.reason }}
+        </p>
+      }
       @if (member(); as item) {
         <p><strong>{{ item.status }}</strong>
           @if (item.batchId) { · Batch {{ item.batchId }} }

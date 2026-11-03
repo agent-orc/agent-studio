@@ -32,6 +32,8 @@ export interface BatchGateConfiguration {
 
 export interface BatchGateState {
   gateSlots?: { busy: number; total: number } | null;
+  pushWait?: BatchGatePushWait | null;
+  pushWaits?: BatchGatePushWait[];
   plan: {
     decision: BatchDecision;
     reason: string;
@@ -54,6 +56,15 @@ export interface BatchGateState {
     publication?: BatchPublication | null;
   }[];
   members: Record<string, BatchMemberState>;
+}
+
+export interface BatchGatePushWait {
+  reason: string;
+  jobId: string;
+  approvedSha: string | null;
+  sinceUtc: string;
+  ageAlert: boolean;
+  ageMinutes: number;
 }
 
 /**

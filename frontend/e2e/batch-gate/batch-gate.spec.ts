@@ -52,6 +52,12 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
     workspaceId: 'workspace-1', storageLocation: path, rootPath: path, repositoryPath: path,
     repositoryUrl: null, urls: [], archived: false, sortOrder: 0,
   }] }]));
+  await page.route('**/api/workspaces/*/quota/admission', route => json(route, {
+    workspaceId: 'workspace-1',
+    workspace: { projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+    projects: [],
+  }));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/usage/cockpit**', route => json(route, {
     snapshotVersion: 1, workspaceId: null, generatedAt: '2026-10-11T13:00:00Z', timeZone: 'Europe/Berlin', weekStart: 1,
@@ -62,6 +68,7 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
   await page.route('**/api/cli/usage**', route => json(route, { at: '2026-10-11T13:00:00Z', sessions: [] }));
   await page.route('**/api/v1/management/retention/policy/**', route => json(route, { rules: [], revision: 1 }));
   await page.route('**/api/v1/management/retention/policy', route => json(route, { rules: [], revision: 1 }));
+  await page.route('**/api/v1/management/credential-inventory', route => json(route, { items: [] }));
   await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: { [project]: { projectName: project, mode: 'manual', activeJobId: null, queuedJobIds: [] } } }));
   await page.route('**/api/projects/*/batch-gate/state?history=10', route => json(route, batchState));
   await page.route('**/api/projects/*/snapshot**', route => json(route, {
@@ -81,16 +88,31 @@ test('board badge, batch panel and project settings save use batch contract', as
   const evidence = process.env.JOB_RESULTS_DIR;
   if (evidence) fs.mkdirSync(evidence, { recursive: true });
   let saved = false;
-  await routeBoard(page, state, () => { saved = true; });
+  await routeBoard(page, { ...state, pushWait: {
+    reason: 'Approved integration push awaits the worker or restart recovery.',
+    jobId: 'AGT-2', approvedSha: 'd'.repeat(40),
+    sinceUtc: '2026-10-11T13:00:00Z', ageAlert: true, ageMinutes: 4.5,
+  } }, () => { saved = true; });
   await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'Board' }).click();
   // This route-only fixture has no SignalR server; keep its offline banner out of the target surface.
   await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
   const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
   await expect(card.getByTestId('batch-member-badge')).toContainText('Batch batch-8');
+  await expect(card.getByTestId('task-card-integration-push-wait'))
+    .toContainText('Awaiting approved origin push · 4.5 min');
   await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+  if (evidence) {
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      await card.screenshot({ path: nodePath.join(evidence, `integration-push-card-${theme}.png`) });
+    }
+  }
   await page.getByTestId('batch-lane-indicator').first().click();
   await expect.poll(async () => (await page.getByTestId('batch-panel').boundingBox())?.x ?? 0).toBeGreaterThan(700);
   await expect(page.getByTestId('batch-panel')).toContainText('Advisor veto');
+  await expect(page.getByTestId('batch-integration-push-wait'))
+    .toContainText('Approved integration push awaits the worker or restart recovery.');
   await expect(page.getByTestId('batch-gate-slot-usage')).toHaveText('Gate slots: 2/3 busy');
   await expect(page.getByTestId('batch-panel')).toContainText('from batch-7');
   await expect(page.getByTestId('batch-panel')).toContainText('test-failure');

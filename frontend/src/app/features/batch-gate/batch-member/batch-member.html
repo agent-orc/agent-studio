@@ -9,3 +9,9 @@
     }
   </span>
 }
+@if (pushWait(); as wait) {
+  <span class="batch-member" data-testid="task-card-integration-push-wait" role="status"
+    [attr.title]="wait.reason">
+    Awaiting approved origin push · {{ wait.ageMinutes.toFixed(1) }} min
+  </span>
+}

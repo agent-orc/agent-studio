@@ -1,11 +1,13 @@
 namespace AgentStudio.Pipeline;
 
+internal enum PendingPushRecoveryDisposition { Ignore, Clear, Push }
+
 /// <summary>
 /// Restart recovery for <see cref="IntegrationPushQueue"/>. The channel is an
 /// in-process latency optimization, while the merge and push step outcomes in
 /// <c>pipeline-execution.json</c> are durable. On startup and periodically this
-/// service re-drives every successful acceptance merge whose integration push
-/// has not reached a terminal success.
+/// service first re-drives persisted pending-push reservations, including cards
+/// still in Auto Review, then recovers older accepted cards from pipeline facts.
 /// </summary>
 public sealed class IntegrationPushBackstopHostedService : BackgroundService
 {
@@ -16,6 +18,7 @@ public sealed class IntegrationPushBackstopHostedService : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly ILogger<IntegrationPushBackstopHostedService> _logger;
     private readonly GitService? _git;
+    private readonly BatchIntegrationReservationService? _reservations;
 
     /// <param name="git">
     /// Proves a superseded push (see <see cref="RecordSupersededPush"/>). Legacy
@@ -28,7 +31,8 @@ public sealed class IntegrationPushBackstopHostedService : BackgroundService
         MergeIntoDevelopRunner runner,
         IConfiguration configuration,
         ILogger<IntegrationPushBackstopHostedService> logger,
-        GitService? git = null)
+        GitService? git = null,
+        BatchIntegrationReservationService? reservations = null)
     {
         _scanner = scanner;
         _settings = settings;
@@ -37,11 +41,57 @@ public sealed class IntegrationPushBackstopHostedService : BackgroundService
         _configuration = configuration;
         _logger = logger;
         _git = git;
+        _reservations = reservations;
     }
 
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
     {
         var pushed = 0;
+        // The persisted reservation is the push job for per-task integrations.
+        // It can belong to a card still in Auto Review, so the completed-card
+        // scan below cannot recover it after a process restart.
+        if (_reservations is not null)
+        {
+            _reservations.LoadPersistedProjects(_settings.GetAll().Keys);
+            foreach (var project in _reservations.ProjectsWithPending())
+            foreach (var marker in _reservations.PendingForProject(project))
+            {
+                ct.ThrowIfCancellationRequested();
+                var folder = _scanner.FindJob(marker.JobId, marker.WatchPath)?.FolderPath
+                    ?? marker.JobFolderPath;
+                if (folder is null) continue;
+                var record = _pipeline.Read(folder);
+                var merge = record?.Steps.LastOrDefault(step =>
+                    step.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
+                var priorPush = record?.Steps.LastOrDefault(step =>
+                    step.StepId == PipelineCatalogue.MergeIntoDevelopPushStepId);
+                var disposition = DecideMarker(marker, merge, priorPush);
+                if (disposition == PendingPushRecoveryDisposition.Ignore) continue;
+                if (disposition == PendingPushRecoveryDisposition.Clear)
+                {
+                    _reservations.MarkPushVerified(project, marker.JobId, marker.ApprovedSha);
+                    continue;
+                }
+                var branch = marker.IntegrationBranch
+                    ?? _settings.Get(project).IntegrationBranch;
+                var result = await _runner.PushIntegrationBranchAsync(project,
+                    marker.JobId, folder, marker.WatchPath ?? marker.RepositoryPath,
+                    branch, ct, marker.ApprovedSha).ConfigureAwait(false);
+                if (result.Success)
+                {
+                    _reservations.MarkPushVerified(project, marker.JobId, marker.ApprovedSha);
+                    pushed++;
+                }
+                else
+                {
+                    // The runner records the failed push step on the card.
+                    // A failed job must release the batch gate for repair.
+                    _reservations.MarkPushVerified(project, marker.JobId, marker.ApprovedSha);
+                    _logger.LogWarning("integration-push-backstop failed project={Project} job={JobId} status={Status}: {Reason}",
+                        project, marker.JobId, result.Status, result.Error);
+                }
+            }
+        }
         var accepted = _scanner.ScanAllAutomationJobsWithArchive()
             .Where(job => job.State is TaskStates.Completed or TaskStates.Archive)
             .Where(job => File.Exists(Path.Combine(job.FolderPath, PipelineExecutionLog.FileName)))
@@ -96,6 +146,24 @@ public sealed class IntegrationPushBackstopHostedService : BackgroundService
                 pushed);
         }
         return pushed;
+    }
+
+    internal static PendingPushRecoveryDisposition DecideMarker(PendingIntegrationPush marker,
+        PipelineStepExecution? merge, PipelineStepExecution? push)
+    {
+        if (merge?.Status != PipelineStepStatus.Passed
+            || !ReviewSubjectStore.IsValidResultSha(marker.ApprovedSha)
+            || !string.Equals(merge.ApprovedIntegrationSha, marker.ApprovedSha,
+                StringComparison.OrdinalIgnoreCase))
+            return PendingPushRecoveryDisposition.Ignore;
+        // A prior success is not proof that origin still contains the approved
+        // SHA. Re-enter the push path so git verifies the current remote tip.
+        return push is { StartedAt: { } started }
+            && merge.CompletedAt is { } mergedAt
+            && started >= mergedAt
+            && push.Status == PipelineStepStatus.Failed
+            ? PendingPushRecoveryDisposition.Clear
+            : PendingPushRecoveryDisposition.Push;
     }
 
     /// <summary>

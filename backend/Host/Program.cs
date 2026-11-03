@@ -1056,7 +1056,7 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationRes
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"],
         "batch-push-reservations"),
     alertAfter: TimeSpan.FromMinutes(Math.Clamp(
-        builder.Configuration.GetValue<int?>("BatchGate:PendingPushAlertMinutes") ?? 15,
+        builder.Configuration.GetValue<int?>("BatchGate:PendingPushAlertMinutes") ?? 3,
         1, 24 * 60))));
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();

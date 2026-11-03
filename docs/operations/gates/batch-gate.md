@@ -77,19 +77,22 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   A deferred `IntegrationBranchDefect` review releases on verified batch evidence.
   Recovery failures are logged per manifest, allowing later batches to proceed.
   A queued code push keeps its project batch reservation pending until origin
-  verifies the merged SHA. The pending marker survives a backend restart.
+  verifies the merged SHA. The pending marker is a durable recovery job, so a
+  startup sweep re-drives it even if the card remains in Auto Review and the
+  project's automatic artifact-push strategy is `never`.
   Before waiting and on each code-enabled planning tick, the batch gate clears markers
   whose approved SHA is already on origin, whose merge was superseded,
   rolled back, or left the integration path, or whose push ended with a
-  permanent branch divergence, or a completed local-only push. A failed push can therefore
-  remain visible without blocking later batches forever. State and report
-  expose the oldest push wait and an age alert after 15 minutes by default;
+  permanent branch divergence, or a completed local-only push. A failed push is
+  recorded on the card and releases its reservation. State exposes each push
+  wait and the oldest wait as the plan reason. The age alert starts after three
+  minutes by default;
   `BatchGate:PendingPushAlertMinutes` configures that limit.
   Persisted markers are loaded at startup. Reconciliation shares one integration-tip
   fetch per repository and branch in each pass, and a disabled or documentation-only
   batch gate does not reconcile code push markers.
-  Disabling the push step keeps code batching on hold while the local merge
-  is still unpublished.
+  Disabling the integration push step does not create a reservation that no
+  worker can clear.
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
   and member state. The existing report includes observed batch green rate.
 - AGT-3055 (D16 option A): the batch suite is claimable gate work by default.

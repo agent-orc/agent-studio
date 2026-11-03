@@ -45,4 +45,28 @@ describe('BatchMemberComponent', () => {
     expect(badge.dataset['reason']).toBe('unattributable');
     expect(badge.title).toBe('Immutable result ref does not resolve to the expected SHA.');
   });
+
+  it('shows the pending approved push on its matching card', async () => {
+    const matchingWait = {
+      jobId: 'AGT-2', approvedSha: 'a'.repeat(40),
+      sinceUtc: '2026-11-03T01:05:36Z', ageMinutes: 4.5, ageAlert: true,
+      reason: 'The push worker or restart recovery must publish it to origin.',
+    };
+    const state = signal({ ...redHalvingState,
+      pushWait: { ...matchingWait, jobId: 'AGT-1' },
+      pushWaits: [{ ...matchingWait, jobId: 'AGT-1' }, matchingWait],
+    });
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService,
+      useValue: { state: () => state.asReadonly(), watch: () => vi.fn() },
+    }] });
+    const fixture = TestBed.createComponent(BatchMemberComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('taskKey', 'AGT-2');
+    fixture.componentRef.setInput('taskId', 'AGT-2');
+    await fixture.whenStable();
+    const badge = fixture.nativeElement.querySelector('[data-testid="task-card-integration-push-wait"]') as HTMLElement;
+    expect(badge.textContent).toContain('4.5 min');
+    expect(badge.title).toContain('restart recovery');
+  });
 });
