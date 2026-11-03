@@ -524,6 +524,15 @@ public sealed class RemoteReviewExecutor
                         DeliveryFailureDiagnosis.Environment or
                         DeliveryFailureDiagnosis.Intermittent or
                         DeliveryFailureDiagnosis.FirstOccurrence)?.Classification;
+                var failedHashes = evidence.Commands
+                    .Where(command => command.ExitCode is { } exitCode && exitCode != 0)
+                    .SelectMany(command => new[] { command.StdoutSha256, command.StderrSha256 })
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var boundedArtifacts = ReviewReportPayloadPolicy.Bound(
+                    evidence.Artifacts, priorityHashes: failedHashes);
+                if (boundedArtifacts.Omitted > 0)
+                    _log($"review-report inline evidence omitted attempt={attempt.AttemptId} " +
+                         $"count={boundedArtifacts.Omitted} reason=request-body-budget");
                 var request = ReviewReportArtifactBudget.Apply(new ReviewReportRequest(
                     lease.ExecutorId,
                     lease.InstanceId,
@@ -538,7 +547,7 @@ public sealed class RemoteReviewExecutor
                         lease,
                         DurableReviewProcess.Provenance(slot)),
                     evidence.Commands,
-                    evidence.Artifacts,
+                    boundedArtifacts.Artifacts,
                     evidence.Verdicts,
                     AuthorityEpoch: lease.AuthorityEpoch,
                     BriefSha256: slot.Claim.Subject?.Plan.BriefSha256,

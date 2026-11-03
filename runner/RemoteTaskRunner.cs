@@ -496,7 +496,7 @@ public sealed class RemoteTaskRunner
         var artifactLimits = await _client.GetArtifactTransferLimitsAsync(taskKey, stopRun.Token);
         _log(
             $"result-artifact-budget task={taskKey} "
-            + $"fileBytes={artifactLimits.MaxFileBytes} totalBytes={artifactLimits.MaxTotalBytes} "
+            + $"fileBytes={artifactLimits.TransferFileLimitBytes} totalBytes={artifactLimits.MaxTotalBytes} "
             + $"requestBytes={artifactLimits.MaxRequestBodyBytes}");
 
         var outcome = new RunOutcome(RunOutcomeKind.Unknown, "Runner ended before a terminal outcome was recorded.");
@@ -2160,7 +2160,7 @@ public sealed class RemoteTaskRunner
             .AppendLine("## Artifact transfer")
             .AppendLine()
             .AppendLine("- Status: `partial`")
-            .AppendLine($"- Per-file budget: {ArtifactTransferPolicy.FormatMb(limits.MaxFileBytes)} MB")
+            .AppendLine($"- Per-file budget: {ArtifactTransferPolicy.FormatMb(limits.TransferFileLimitBytes)} MB")
             .AppendLine($"- Total budget: {ArtifactTransferPolicy.FormatMb(limits.MaxTotalBytes)} MB")
             .AppendLine("- Not transferred:");
         foreach (var issue in issues)

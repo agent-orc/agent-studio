@@ -14,7 +14,9 @@ public sealed class ArtifactRequestLimitMiddleware(
         var path = context.Request.Path.Value ?? string.Empty;
         var artifact = HttpMethods.IsPost(context.Request.Method)
                        && path.StartsWith("/api/v1/runs/", StringComparison.OrdinalIgnoreCase)
-                       && path.EndsWith("/artifacts", StringComparison.OrdinalIgnoreCase);
+                       && (path.EndsWith("/artifacts", StringComparison.OrdinalIgnoreCase)
+                           || path.EndsWith("/artifact-chunks", StringComparison.OrdinalIgnoreCase)
+                           || path.EndsWith("/artifact-chunks/complete", StringComparison.OrdinalIgnoreCase));
         var reviewReport = HttpMethods.IsPost(context.Request.Method)
                            && path.StartsWith("/api/v1/reviews/attempts/", StringComparison.OrdinalIgnoreCase)
                            && path.EndsWith("/report", StringComparison.OrdinalIgnoreCase);
@@ -26,7 +28,12 @@ public sealed class ArtifactRequestLimitMiddleware(
 
         var limit = reviewReport
             ? ReviewReportLimits.MaxRequestBodyBytes
-            : configured.Value.MaxRequestBodyBytes;
+            : Math.Min(configured.Value.MaxRequestBodyBytes,
+                path.EndsWith("/artifact-chunks", StringComparison.OrdinalIgnoreCase)
+                    ? ArtifactChunkProtocol.MaxChunkBytes * 2L
+                    : path.EndsWith("/artifact-chunks/complete", StringComparison.OrdinalIgnoreCase)
+                        ? 64L * 1024
+                        : configured.Value.MaxRequestBodyBytes);
         if (reviewReport
             && context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit)
             bodyLimit.MaxRequestBodySize = limit;
