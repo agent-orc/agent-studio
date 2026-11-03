@@ -7,12 +7,16 @@ x-hardening: &hardening
 
 services:
   api:
-    image: ghcr.io/agent-orc/agent-studio-api:v${STUDIO_VERSION:?Run setup.sh with a release version}
+    image: ghcr.io/agent-orc/agent-studio-api@sha256:${STUDIO_API_DIGEST:?Set the release API image digest}
+    user: '10001:10001'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
     <<: *hardening
-    # The root file system stays writable: agent CLIs and project build gates
-    # run in this container and need a disk-backed /tmp. A tmpfs would count
-    # toward the memory limit below.
+    # Writable workspace, projects, and home are mounted explicitly. Temporary
+    # files use tmpfs so the root file system can remain read-only.
     pids_limit: 8192
     # .NET caps its heap at 75 % of this limit; 8g stalled on a real workspace.
     mem_limit: ${STUDIO_API_MEMORY_LIMIT:-20g}
@@ -38,23 +42,25 @@ services:
         ipv4_address: 172.30.83.4
 
   frontend:
-    image: ghcr.io/agent-orc/agent-studio-web:v${STUDIO_VERSION}
+    image: ghcr.io/agent-orc/agent-studio-web@sha256:${STUDIO_WEB_DIGEST:?Set the release web image digest}
+    user: '10001:10001'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
     <<: *hardening
-    # The image's caddy binary carries this file capability and cannot start
-    # without it in the bounding set; the server listens on 8080.
-    cap_add: [NET_BIND_SERVICE]
-    read_only: true
+    # The frontend listens on unprivileged port 8080.
     pids_limit: 512
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
-    tmpfs:
-      # Caddy's autosave and state; the shell itself is part of the image.
-      - /config:uid=10001,gid=10001,mode=0700
-      - /data:uid=10001,gid=10001,mode=0700
-      - /tmp
+      XDG_CONFIG_HOME: /config
+      XDG_DATA_HOME: /data
+      HOME: /tmp
     volumes:
       - ./Caddyfile.frontend:/etc/caddy/Caddyfile:ro
+      - ${STUDIO_DATA_DIR}/frontend-data:/data
+      - ${STUDIO_DATA_DIR}/frontend-config:/config
     depends_on:
       api: {condition: service_healthy}
     networks:
@@ -62,21 +68,27 @@ services:
         ipv4_address: 172.30.83.3
 
   edge:
-    image: caddy:2.11-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    image: caddy@sha256:${STUDIO_EDGE_DIGEST:?Set the edge image digest}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: '0'
     # Public stacks wait for the firewall boot unit; private stacks use Docker restart.
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
     <<: *hardening
-    # Caddy runs as root in this image; it keeps only the right to bind 80 and 443.
-    # caddy-data and caddy-config therefore belong to root (setup.sh).
-    cap_add: [NET_BIND_SERVICE]
+    # Unprivileged port binding is enabled through the service sysctl.
     read_only: true
     pids_limit: 512
-    tmpfs:
-      - /tmp
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
       # Caddyfile.cloudflare only: true admits peers outside Cloudflare's ranges.
       STUDIO_CLOUDFLARE_ALLOW_DIRECT: ${STUDIO_CLOUDFLARE_ALLOW_DIRECT:-false}
+      STUDIO_ACCESS_AUTH_URL: ${STUDIO_ACCESS_AUTH_URL:?Set the HTTPS access-layer authorization URL}
+      XDG_CONFIG_HOME: /config
+      XDG_DATA_HOME: /data
+      HOME: /tmp
     ports:
       - '0.0.0.0:80:80'
       - '0.0.0.0:443:443'

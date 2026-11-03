@@ -1,5 +1,5 @@
 {
-    # The edge's root file system is read-only. Browsers trust the local root by hand (studio-website.md).
+    # The private edge runs without root and cannot update host trust stores.
     skip_install_trust
 }
 

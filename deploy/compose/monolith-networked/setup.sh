@@ -47,6 +47,21 @@ case "$version" in *[!0-9A-Za-z._-]*|'') echo 'Invalid version' >&2; exit 2;; es
 case "$domain" in *[!0-9A-Za-z.-]*|'') echo 'Invalid hostname' >&2; exit 2;; esac
 case "$data_dir" in /*) ;; *) echo 'Data directory must be absolute' >&2; exit 2;; esac
 case "$data_dir" in *[!0-9A-Za-z._/-]*) echo 'Data directory contains unsupported characters' >&2; exit 2;; esac
+for key in STUDIO_API_DIGEST STUDIO_WEB_DIGEST STUDIO_EDGE_DIGEST; do
+  value="${!key:-}"
+  if [[ ! "$value" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "$key must be a 64-character lowercase image digest" >&2
+    exit 2
+  fi
+done
+if [[ ! "${STUDIO_ACCESS_AUTH_URL:-}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+  echo 'STUDIO_ACCESS_AUTH_URL must be an HTTPS origin' >&2
+  exit 2
+fi
+if [ "${STUDIO_ACCESS_MFA_ENFORCED:-}" != true ]; then
+  echo 'STUDIO_ACCESS_MFA_ENFORCED=true is required after provider MFA policy is verified' >&2
+  exit 2
+fi
 # The secret store's key-encryption key. It lives outside the data directory so
 # that a copy of the data never carries the key that opens its secrets.
 key_file="${STUDIO_SECRETS_KEY_FILE:-$PWD/keys/secrets.kek}"
@@ -54,12 +69,10 @@ case "$key_file" in /*) ;; *) echo 'STUDIO_SECRETS_KEY_FILE must be absolute' >&
 case "$key_file" in *[!0-9A-Za-z._/-]*) echo 'STUDIO_SECRETS_KEY_FILE contains unsupported characters' >&2; exit 2;; esac
 case "${key_file%/}/" in "${data_dir%/}"/*) echo 'STUDIO_SECRETS_KEY_FILE must lie outside the data directory' >&2; exit 2;; esac
 if [ -e .env ]; then echo '.env already exists; keep its owner code and edit the version for an update.' >&2; exit 2; fi
-# home/.local/share holds the API's machine-local state (batch gates, gate
-# cache, quota and routing state); it must be on the data directory.
-mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home/.local/share" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/origin-pull"
+mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home/.local/share" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$data_dir/origin-pull"
 chmod 711 "$data_dir"
 chmod 700 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home"
-chmod 755 "$data_dir/caddy-data" "$data_dir/caddy-config"
+chmod 700 "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config"
 chmod 755 "$data_dir/origin-pull"
 if [ ! -d "$data_dir/workspace/.git" ]; then
   git -C "$data_dir/workspace" init -q -b main
@@ -79,15 +92,11 @@ else
   (umask 077 && mkdir -p "$key_dir" && openssl rand -base64 32 > "$key_file")
 fi
 chmod 600 "$key_file"
-# The API (UID 10001) reads the key; the edge runs as root without the right
-# to override file permissions, so root owns its state directories.
 if [ "$(id -u)" -eq 0 ]; then
-  chown -R 10001:10001 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$key_file"
-  chown -R 0:0 "$data_dir/caddy-data" "$data_dir/caddy-config"
+  chown -R 10001:10001 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$key_file"
 else
-  helper=caddy:2.11-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
-  docker run --rm --user 0 -v "$data_dir:/site" -v "$key_dir:/keys" --entrypoint sh "$helper" -c \
-    'chown -R 10001:10001 /site/workspace /site/projects /site/home "/keys/$1" && chown -R 0:0 /site/caddy-data /site/caddy-config' \
+  docker run --rm --user 0 -v "$data_dir:/site" -v "$key_dir:/keys" --entrypoint sh "caddy@sha256:$STUDIO_EDGE_DIGEST" -c \
+    'chown -R 10001:10001 /site/workspace /site/projects /site/home /site/caddy-data /site/caddy-config /site/frontend-data /site/frontend-config "/keys/$1"' \
     sh "$(basename "$key_file")"
 fi
 code="$(openssl rand -hex 24)"
@@ -103,6 +112,11 @@ STUDIO_CLOUDFLARE_ALLOW_DIRECT=$allow_direct
 STUDIO_PUBLIC_CLOUDFLARE_EDGE=$public_edge
 STUDIO_RESTART_POLICY=$restart_policy
 STUDIO_BACKUP_DESTINATION=
+STUDIO_API_DIGEST=$STUDIO_API_DIGEST
+STUDIO_WEB_DIGEST=$STUDIO_WEB_DIGEST
+STUDIO_EDGE_DIGEST=$STUDIO_EDGE_DIGEST
+STUDIO_ACCESS_AUTH_URL=$STUDIO_ACCESS_AUTH_URL
+STUDIO_ACCESS_MFA_ENFORCED=true
 EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
 printf 'Secret store key: %s\nCopy it to a safe place outside the data backups; a restore needs it.\n' "$key_file"
