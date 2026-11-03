@@ -125,7 +125,7 @@ public static class RemoteRunPrompt
               + "is discarded with the temporary worktree."
               + (artifactLimits is null
                   ? string.Empty
-                  : $" Keep each result file at or below {ArtifactTransferPolicy.FormatMb(artifactLimits.MaxFileBytes)} MB "
+                  : $" Keep each result file at or below {ArtifactTransferPolicy.FormatMb(artifactLimits.TransferFileLimitBytes)} MB "
                     + $"and all result files at or below {ArtifactTransferPolicy.FormatMb(artifactLimits.MaxTotalBytes)} MB total. "
                     + "Playwright traces and videos are not kept unless the task explicitly asks for them; "
                     + "do not copy node_modules or bin/obj output into results.")

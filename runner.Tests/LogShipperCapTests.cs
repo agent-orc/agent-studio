@@ -110,6 +110,24 @@ public class LogShipperCapTests
         Assert.EndsWith(" [runner: event payload truncated]", shipped, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Log_batch_stays_below_proxy_body_limit_and_leaves_remaining_lines_queued()
+    {
+        var handler = new RecordingHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = new TaskServerClient(http, "runner-under-test");
+        var lease = new RunLeaseInfoDto(
+            "AGT-1", "runner-under-test", "runner", "host", 1, "backend",
+            "lease-1", 1, DateTime.UnixEpoch, DateTime.UnixEpoch.AddMinutes(2));
+        var shipper = new LogShipper(client, "AGT-1", lease, _ => { });
+        for (var index = 0; index < 40; index++) shipper.Add("stdout", new string('x', 60_000));
+
+        Assert.True(await shipper.FlushAsync(CancellationToken.None));
+        var request = Assert.IsType<LogIngestRequest>(handler.Request);
+        Assert.True(request.Lines.Sum(line => line.Text.Length) <= 1_000_000);
+        Assert.True(shipper.PendingCount > 0);
+    }
+
     private sealed class RecordingHandler : HttpMessageHandler
     {
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);

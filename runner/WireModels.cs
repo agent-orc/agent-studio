@@ -485,7 +485,13 @@ public sealed record ArtifactIngestResponse(
 public sealed record ArtifactTransferLimitsResponse(
     long MaxRequestBodyBytes,
     long MaxFileBytes,
-    long MaxTotalBytes);
+    long MaxTotalBytes,
+    long? MaxChunkedFileBytes = null)
+{
+    public long TransferFileLimitBytes => MaxChunkedFileBytes is > 0
+        ? MaxChunkedFileBytes.Value
+        : MaxFileBytes;
+}
 
 public sealed record ArtifactTransferIssue(
     string Path,
