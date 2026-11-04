@@ -2954,6 +2954,15 @@ whose `task.integration` said `integrated`. Two defects met.
   one card and a lookup of the whole board agree by construction. This does not
   weaken AGT-2817: the proof is still Git ancestry of the delivery against the
   integration branch, never a lane state or a pipeline record.
+- **Verified ancestor acceptance.** Acceptance retains a delivery's passed
+  gate after later publications only when its recorded verification tree is on
+  the published branch's first-parent line. One bounded first-parent range from
+  that tree to the current tip identifies the later publication commits. Each
+  must be covered by its own passed per-task gate or by a passed batch gate
+  spanning those commits. Batch evidence cannot substitute for the original
+  tree's first-parent ancestry. A branch rewrite or an uncovered later
+  publication is refused; acceptance evidence names the gate that verified
+  the delivery.
 - **One refusal per state change.** A refused rail action is a decision, not a
   symptom to retry. `AcceptanceRailAttemptPolicy`
   (`backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs`) is a
