@@ -391,6 +391,14 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         "\\b\\d+\\b", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex Whitespace = new(
         "\\s+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex BuildDiagnostic = new(
+        @"^(?:[^\r\n]{1,512}:[ \t]+)?error(?:[ \t]+[A-Z]{1,4}\d{3,6}|[ \t]+):[ \t]*\S",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase,
+        TimeSpan.FromMilliseconds(100));
+    private static readonly Regex PlainErrorLine = new(
+        @"^(?:[^\r\n]{1,512}:[ \t]+)?error:[ \t]*\S",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase,
+        TimeSpan.FromMilliseconds(100));
     private static readonly Regex MissingRelativeModuleFromNodeModules = new(
         "cannot find module\\s+['\"]\\.{1,2}[\\\\/][^'\"]+['\"][\\s\\S]{0,8192}" +
         "require stack:[\\s\\S]{0,8192}node_modules[\\\\/]",
@@ -1838,16 +1846,21 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     internal static string FailureOutputExcerpt(BuildTestGateProcessEvidence process)
     {
         var parts = new List<string>();
-        // Build output often places the decisive MSBuild/compiler error before
-        // a long summary. Keep that line in the durable gate reason.
-        var error = Regex.Match(process.StandardError + "\n" + process.StandardOutput,
-            @"^.*\berror(?:\s+[A-Z]+\d+)?\s*:.*$",
-            RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        if (error.Success)
+        // Prefer a compiler or MSBuild diagnostic to a generic tool error.
+        // Search only the beginning and end of each stream, and bound each
+        // regex input so malformed or very large output cannot stall the gate.
+        string? diagnostic = null;
+        string? plainError = null;
+        foreach (var stream in new[] { process.StandardError, process.StandardOutput })
         {
-            var line = Whitespace.Replace(error.Value, " ").Trim();
-            parts.Add("error: " + (line.Length <= 900 ? line : line[..897] + "..."));
+            const int windowChars = 64 * 1024;
+            Scan(stream[..Math.Min(stream.Length, windowChars)], skipFirstLine: false);
+            if (stream.Length > windowChars)
+                Scan(stream[^windowChars..], skipFirstLine: true);
         }
+        var error = diagnostic ?? plainError;
+        if (error is not null)
+            parts.Add("error: " + (error.Length <= 900 ? error : error[..897] + "..."));
         Append("stderr", process.StandardError);
         Append("stdout", process.StandardOutput);
         Append("launch", process.LaunchError);
@@ -1864,6 +1877,30 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             if (normalized.Length > perStreamLimit)
                 normalized = "..." + normalized[^perStreamLimit..];
             parts.Add($"{label}: {normalized}");
+        }
+
+        void Scan(string window, bool skipFirstLine)
+        {
+            using var reader = new StringReader(window);
+            if (skipFirstLine) reader.ReadLine();
+            while (reader.ReadLine() is { } line)
+            {
+                line = line.TrimEnd('\r');
+                if (line.Length > 2048) line = line[..2048];
+                try
+                {
+                    if (diagnostic is null && BuildDiagnostic.IsMatch(line))
+                        diagnostic = Whitespace.Replace(line, " ").Trim();
+                    else if (plainError is null && PlainErrorLine.IsMatch(line))
+                        plainError = Whitespace.Replace(line, " ").Trim();
+                }
+                catch (RegexMatchTimeoutException ex)
+                {
+                    // The stream tail still appears in the ordinary excerpt.
+                    SilentCatch.Note(ex, "BuildTestGateRunner: build diagnostic match");
+                }
+                if (diagnostic is not null) return;
+            }
         }
     }
 

@@ -15,8 +15,9 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   Batch pre-checks, batch and per-task gates, and package-reference delivery
   reviews inherit this command from the same project definition. It does not
   repeat the test suites. A failing command makes the gate red; the durable
-  reason retains the first compiler or MSBuild error line. The Release build
-  shares the existing gate run budget and is measured separately from the
+  reason prefers a compiler or MSBuild diagnostic from bounded output windows
+  over a generic error line. The Release build shares the existing gate run
+  budget and is measured separately from the
   Debug build in the gate process evidence.
   On the shared runner on 2026-11-04, the new step reached the existing
   Six Labors Release license error in 97.3 seconds (1.6 minutes). This is

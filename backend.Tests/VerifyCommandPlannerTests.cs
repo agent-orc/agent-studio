@@ -826,6 +826,23 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         Assert.True(result.Reason.Length <= BuildTestGateRunner.MaxFailureExcerptChars + 500);
     }
 
+    [Fact]
+    public void FailureOutputExcerpt_PrefersBoundedBuildDiagnosticOverPlainError()
+    {
+        var output = "error: wrapper command failed\n"
+            + new string('x', 80_000) + "\n"
+            + "backend/Program.cs(12,3): error CS1002: ; expected\n"
+            + new string('y', 20_000);
+        var excerpt = BuildTestGateRunner.FailureOutputExcerpt(new BuildTestGateProcessEvidence
+        {
+            StandardOutput = output,
+        });
+
+        Assert.StartsWith("error: backend/Program.cs(12,3): error CS1002: ; expected", excerpt);
+        Assert.DoesNotContain("error: wrapper command failed |", excerpt, StringComparison.Ordinal);
+        Assert.True(excerpt.Length <= BuildTestGateRunner.MaxFailureExcerptChars);
+    }
+
     // AGT-2822: a failed repository preparation used to reach the card as a bare
     // "exit code -65536". The gate reason now carries the bounded stderr tail the
     // manifest keeps, which is the string the integration failure detail renders.
