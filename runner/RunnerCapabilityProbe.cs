@@ -51,10 +51,37 @@ internal static class RunnerCapabilityProbe
             .Distinct()
             .ToArray();
         var baseline = routed.Length > 0 ? routed : BuiltInModelCandidates(options);
+        // Probe declared siblings and policy equivalents before a rejection.
+        // A server-supplied primary list otherwise hides the built-in routes.
+        var fallbackCandidates = options.Role == "coding" ? baseline.SelectMany(route => route switch
+        {
+            (CliSelection.CodexCli, "gpt-6-sol") => new[]
+            {
+                (CliSelection.CodexCli, "gpt-5.6-sol"),
+                (CliSelection.ClaudeCli, "claude-sonnet-5"),
+                (CliSelection.ClaudeCli, "claude-opus-5"),
+            },
+            (CliSelection.CodexCli, "gpt-5.6-sol") => new[]
+            {
+                (CliSelection.ClaudeCli, "claude-sonnet-5"),
+                (CliSelection.ClaudeCli, "claude-opus-5"),
+            },
+            (CliSelection.CodexCli, "gpt-6-luna") => new[]
+            {
+                (CliSelection.CodexCli, "gpt-5.6-luna"),
+            },
+            _ => Array.Empty<(string, string)>(),
+        }).Where(route => providers.Contains(route.Item1))
+            : Enumerable.Empty<(string, string)>();
+        baseline = baseline.Concat(fallbackCandidates).Distinct().ToArray();
         // Include these two in cached host probes before routing switches to
         // them. Old CLIs cannot serve them, so skip the paid calls.
         var codex = CodingCliBinaries(options).FirstOrDefault(item => item.CliType == CliSelection.CodexCli);
         var installation = codex.Binary is null ? null : InspectCli(codex.Binary);
+        if (configured is null && installation is not null && CodexModels(installation) is not null
+            && CodexModelCatalogs.TryGetValue($"{installation.Path}\0{installation.Version}", out var catalogue))
+            RunnerModelAcceptanceProbe.Shared.NoteCatalogueRefresh(
+                CliSelection.CodexCli, $"{installation.Version}:{catalogue.ObservedAt.Ticks}");
         if (installation is null || !CodexCliRelease.OffersGpt61(installation.Version))
             return baseline.Where(route => route.Provider != CliSelection.CodexCli
                 || route.Model is not (CodexCliRelease.Gpt61Sol or CodexCliRelease.Gpt61Terra)).ToArray();

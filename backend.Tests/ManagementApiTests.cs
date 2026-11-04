@@ -146,9 +146,10 @@ public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
             snapshot.Capabilities,
             capability => capability.Key == "provider-auth:claude"
                           && capability.AdvertisedStatus == "ready"
-                          && capability.HealthState == Contract.CapabilityHealthStates.Suspect
+                          && capability.HealthState == Contract.CapabilityHealthStates.Draining
                           && capability.ConsecutiveFailures == 1
-                          && capability.FirstFailureAt is not null);
+                          && capability.FirstFailureAt is not null
+                          && capability.CooldownUntil == DateTime.MaxValue);
 
         var expiresAt = DateTime.UtcNow.AddDays(10);
         registry.AdvertiseCapabilities(
@@ -182,7 +183,7 @@ public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
         Assert.Equal(expiresAt, recoveredAuth.ExpiresAt);
         Assert.Contains(
             recoveredAuth.RecoveryHistory,
-            item => item.FromState == Contract.CapabilityHealthStates.Suspect
+            item => item.FromState == Contract.CapabilityHealthStates.Draining
                     && item.ToState == Contract.CapabilityHealthStates.Healthy);
     }
 
