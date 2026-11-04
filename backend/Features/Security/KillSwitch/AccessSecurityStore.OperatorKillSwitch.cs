@@ -97,6 +97,9 @@ public sealed partial class AccessSecurityStore
     /// </summary>
     public (string AgentId, string SessionId, string Secret) StartDrillOperatorSession(string? ownerId)
     {
+        // A test principal created while the latch exists would be refused and, created after the
+        // request, outlive the API's re-enforcement; the drill waits until the kill was applied.
+        RequireNoOperatorKillRequest();
         lock (_gate)
         {
             var next = Copy(StateLocked());
@@ -139,6 +142,20 @@ public sealed partial class AccessSecurityStore
             var now = Now;
             return StateLocked().ServiceAccounts
                 .Where(account => IsOperatorAgent(account) && !IsDrillPrincipal(account) && account.DisabledAt is null)
+                .SelectMany(account => account.Sessions ?? [])
+                .Where(session => session.RevokedAt is null && session.ExpiresAt > now)
+                .Select(session => session.Id).ToHashSet(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>The sessions of drill test principals that would still be admitted; every drill ends with none.</summary>
+    internal IReadOnlySet<string> LiveDrillSessionIds()
+    {
+        lock (_gate)
+        {
+            var now = Now;
+            return StateLocked().ServiceAccounts
+                .Where(account => IsOperatorAgent(account) && IsDrillPrincipal(account) && account.DisabledAt is null)
                 .SelectMany(account => account.Sessions ?? [])
                 .Where(session => session.RevokedAt is null && session.ExpiresAt > now)
                 .Select(session => session.Id).ToHashSet(StringComparer.Ordinal);

@@ -64,8 +64,11 @@ public sealed class OperatorKillSwitchLog(string securityFolder)
         catch (JsonException exception)
         {
             // A torn latch still refuses every session; it is applied as a request without a reason.
+            // Its id derives from the file, so the waiting command and the API read the same request.
             SilentCatch.Note(exception, "OperatorKillSwitchLog: unreadable kill request, applied without its reason");
-            return new OperatorKillRequest("request_" + Guid.NewGuid().ToString("N"), File.GetLastWriteTimeUtc(path), null);
+            var writtenAt = File.GetLastWriteTimeUtc(path);
+            return new OperatorKillRequest("request_torn_" + writtenAt.Ticks.ToString("x", System.Globalization.CultureInfo.InvariantCulture),
+                writtenAt, null);
         }
     }
 

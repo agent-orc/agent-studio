@@ -102,6 +102,7 @@ public sealed class OperatorKillSwitch(
         TimeSpan? operationsAfter = null;
         var operationsState = revocation.Configured ? OperatorKillPropagationStates.Pending : OperatorKillPropagationStates.NotConfigured;
         var kept = false;
+        var ended = false;
         string? failure;
         try
         {
@@ -114,6 +115,7 @@ public sealed class OperatorKillSwitch(
             {
                 start = clock.GetTimestamp();
                 store.EndOperatorAccess([drill.AgentId], OperatorKillActor.Drill);
+                ended = true;
                 studioRefused = await WaitUntilRefusedAsync(drill.Secret, start, ct);
                 if (revocation.Configured)
                 {
@@ -128,6 +130,11 @@ public sealed class OperatorKillSwitch(
         catch (SecurityOperationException exception)
         {
             failure = exception.Code;
+        }
+        finally
+        {
+            // A drill that stopped before its kill step must not leave a live test principal behind.
+            if (agentId is not null && !ended) store.EndOperatorAccess([agentId], OperatorKillActor.Drill);
         }
         var result = new OperatorKillDrillResult(id, trigger, startedAt, Milliseconds(clock.GetElapsedTime(start)),
             studioRefused is { } studio ? Milliseconds(studio) : null, operationsState,

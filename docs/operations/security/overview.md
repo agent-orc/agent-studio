@@ -521,10 +521,14 @@ D1, D4, and D11).
 ### Operator kill switch (security model SM-2)
 
 The Owner ends operator access in one step
-([security model Dossier](../../security-model/index.html), decisions D1 and
-D7, both option A as recommended). The switch only removes authority, so it
-asks for no step-up; resuming means creating a new operator agent and
-starting a session, which only the Owner can do.
+([security model Dossier](../../security-model/index.html), decision D1
+option O4 with O3 as the transition path, and decision D7 option A, both as
+recommended). The kill acts on the operator's Studio identity and on its typed
+Operations Server principals; host certificates (O3) join it with SM-6. A
+session lasts at most 8 hours, and every refusal lands within 60 seconds. The
+switch only removes authority, so it asks for no step-up; resuming means
+creating a new operator agent and starting a session, which only the Owner can
+do.
 
 - **End all operator access** in Settings → Access → Kill switch
   (`POST /api/auth/iam/operator-kill-switch/end-all`, Owner only) disables
@@ -587,7 +591,10 @@ starting a session, which only the Owner can do.
   interval; **Run drill now** runs one on request. Each result (duration,
   Studio and Operations Server times, pass or the named failure) is kept in
   `.security/operator-kill-switch.json` and in the `operator-kill.drill` audit
-  entry; a failed drill is an acute operator feed event.
+  entry; a failed drill is an acute operator feed event. A drill does not run
+  while an out-of-band latch is pending (`operator-kill-pending`), and a drill
+  that stops before its kill step still disables its test principal, so no
+  drill session outlives a kill.
 
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,
 `runner.events`, `runner.artifacts`, and `runner.completion`. Reading the prompt

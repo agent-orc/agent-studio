@@ -153,6 +153,38 @@ public sealed class OperatorKillSwitchTests : IDisposable
     }
 
     [Fact]
+    public async Task A_drill_during_a_pending_out_of_band_kill_is_refused_and_leaves_no_live_test_principal()
+    {
+        OperatorKillSwitchLog.WriteRequest(_store.OperatorKillRequestPath,
+            new OperatorKillRequest("request_pending", _clock.GetUtcNow().UtcDateTime, null));
+
+        var drill = await _killSwitch.RunDrillAsync(OperatorKillTriggers.ManualDrill, _ownerId, default);
+        // The API applies the latch and removes it; no drill session may survive into the access it leaves.
+        File.Delete(_store.OperatorKillRequestPath);
+
+        Assert.False(drill.Passed);
+        Assert.Equal("operator-kill-pending", drill.Failure);
+        Assert.Empty(_revocation.Calls);
+        Assert.Empty(_store.LiveOperatorSessionIds());
+        Assert.Empty(_store.LiveDrillSessionIds());
+        Assert.Equal("failed", Assert.Single(_store.ControlPlaneAudit.ReadNewest(entry => entry.Operation == OperatorKillEvents.Drill, 10)).Outcome);
+    }
+
+    [Fact]
+    public void A_torn_latch_reads_as_the_same_request_in_every_process()
+    {
+        Directory.CreateDirectory(_store.SecurityFolder);
+        File.WriteAllText(_store.OperatorKillRequestPath, "{\"id\":\"request_");
+
+        var command = OperatorKillSwitchLog.ReadRequest(_store.OperatorKillRequestPath);
+        var api = OperatorKillSwitchLog.ReadRequest(_store.OperatorKillRequestPath);
+
+        Assert.NotNull(command);
+        Assert.Equal(command, api);
+        Assert.Null(command.Reason);
+    }
+
+    [Fact]
     public async Task The_scheduled_drill_runs_one_interval_after_start_and_then_every_interval()
     {
         var options = new OperatorKillSwitchOptions(TimeSpan.FromSeconds(2), TimeSpan.FromDays(30));
