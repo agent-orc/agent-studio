@@ -10,6 +10,7 @@ export const ACCESS_ROLES: IamRole[] = [
   { id: 'owner', displayName: 'Owner', description: 'Break-glass role.', permissions: ['access.manage'], bindableScopes: ['workspace'], serviceAccountBindable: false },
   { id: 'admin', displayName: 'Admin', description: 'Runs a scope.', permissions: ['project.settings.write'], bindableScopes: ['workspace', 'project'], serviceAccountBindable: true },
   { id: 'developer', displayName: 'Developer', description: 'Works on cards.', permissions: ['project.cards.write'], bindableScopes: ['workspace', 'project', 'environment'], serviceAccountBindable: true },
+  { id: 'operator-agent', displayName: 'Operator agent', description: 'Operates the board for a coding agent; no secrets, production approval, access, or installation settings.', permissions: ['project.runs.operate'], bindableScopes: ['workspace', 'project'], serviceAccountBindable: true, userBindable: false },
   { id: 'contributor', displayName: 'Product', description: 'Product role.', permissions: ['project.cards.write'], bindableScopes: ['project'], serviceAccountBindable: false },
   { id: 'viewer', displayName: 'Viewer', description: 'Reads.', permissions: ['project.read'], bindableScopes: ['workspace', 'project', 'environment'], serviceAccountBindable: true },
   { id: 'approver', displayName: 'Approver', description: 'Approves production.', permissions: ['environment.production.deploy.approve'], bindableScopes: ['workspace', 'project', 'environment'], serviceAccountBindable: false },

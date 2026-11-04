@@ -54,6 +54,25 @@ public static class LegacyRoleMapping
         };
     }
 
+    /// <summary>
+    /// The bindings of a Studio API token (AGT-3186): the <c>operator</c> token
+    /// role binds the narrow Operator agent role (Dossier operator-agent-level,
+    /// OP-1), never Admin; <c>viewer</c> binds Viewer. Users keep
+    /// <see cref="Grants"/>.
+    /// </summary>
+    public static IReadOnlyList<IamGrantRequest> ApiTokenGrants(string? role, IReadOnlyList<string>? projects)
+    {
+        var assigned = Normalize(projects);
+        var allProjects = assigned.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal);
+        var named = assigned.Where(project => project != ProjectAccessAuthorization.AllProjectsGrant).ToList();
+        return role switch
+        {
+            StudioRoles.Operator => Scoped(IamRoles.OperatorAgent, allProjects, named),
+            StudioRoles.Viewer => Scoped(IamRoles.Viewer, allProjects, named),
+            _ => [],
+        };
+    }
+
     /// <summary>Bindings that reproduce every user's legacy access in a state without bindings.</summary>
     public static List<RoleBinding> Migrate(IEnumerable<StudioUser> users, DateTime now, Func<string> newId)
         => users.SelectMany(user => Grants(user.Role, user.Projects, user.ProductionApprovalProjects)
@@ -77,7 +96,9 @@ public static class LegacyRoleMapping
             return new LegacyRoleSummary(StudioRoles.Owner, [], []);
         if (bindings.Count == 0) return new LegacyRoleSummary(StudioRoles.Viewer, [], []);
 
-        var admins = bindings.Where(binding => binding.Role == IamRoles.Admin).ToList();
+        // Operator agent binds only service accounts; an API token bound to it
+        // reports its token role operator.
+        var admins = bindings.Where(binding => binding.Role is IamRoles.Admin or IamRoles.OperatorAgent).ToList();
         if (admins.Count > 0) return new LegacyRoleSummary(StudioRoles.Operator, ProjectsOf(admins), []);
 
         var contributors = bindings.Where(binding => binding.Role == IamRoles.Contributor).ToList();

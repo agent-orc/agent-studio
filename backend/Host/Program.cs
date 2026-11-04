@@ -1656,6 +1656,20 @@ if (underTestHost)
 }
 
 var networkedSecurityProfile = SecurityProfiles.IsNetworked(app.Configuration);
+// Load the access state now, so a pending IAM migration (for example the
+// operator token rebinding of OP-1) and its audit entries run at start
+// rather than on the first request. An unreadable state does not stop the
+// host: the load retries on every request, and the exception handler answers
+// each of them with a 500 until the file is repaired.
+if (networkedSecurityProfile)
+{
+    try { _ = app.Services.GetRequiredService<AccessSecurityStore>().BootstrapRequired; }
+    catch (InvalidOperationException exception)
+    {
+        app.Services.GetRequiredService<ILogger<Program>>().LogError(exception,
+            "The access state could not be loaded at start; a pending IAM migration runs on the first request that reads it.");
+    }
+}
 var projectScopedSignalRProfile = networkedSecurityProfile || publicDemoExecutionProfile;
 var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");

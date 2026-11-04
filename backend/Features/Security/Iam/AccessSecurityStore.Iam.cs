@@ -20,8 +20,13 @@ public sealed record IamSnapshot(
 /// </summary>
 public sealed partial class AccessSecurityStore
 {
-    /// <summary>1: users hold role bindings. 2: API tokens are service accounts.</summary>
-    public const int CurrentIamVersion = 2;
+    /// <summary>
+    /// 1: users hold role bindings. 2: API tokens are service accounts.
+    /// 3: operator API tokens bind Operator agent instead of Admin (OP-1).
+    /// </summary>
+    public const int CurrentIamVersion = 3;
+    /// <summary>The IAM audit action of one API token rebound from Admin to Operator agent.</summary>
+    public const string ApiTokenRoleMigrationAction = "api-token.role-migration";
     public const string IamAuditFileName = "iam-audit.jsonl";
     public const string ServiceAccountAuditFileName = "service-account-audit.jsonl";
     public const string ApiTokenAuditFileName = "api-token-audit.jsonl";
@@ -29,6 +34,8 @@ public sealed partial class AccessSecurityStore
     private const int MaxTokenNameLength = 100;
     private static readonly TimeSpan DefaultServiceAccountTokenLifetime = TimeSpan.FromDays(90);
     private static readonly TimeSpan MaxServiceAccountTokenLifetime = TimeSpan.FromDays(366);
+    /// <summary>The expiry an API token gets without one (OP-1); the maximum stays 365 days.</summary>
+    public static readonly TimeSpan DefaultApiTokenLifetime = TimeSpan.FromDays(30);
 
     public IamSnapshot ReadIamSnapshot()
     {
@@ -383,17 +390,18 @@ public sealed partial class AccessSecurityStore
         if (request.Role is not StudioRoles.Operator and not StudioRoles.Viewer)
             throw new SecurityOperationException(400, "invalid-role", "API tokens must use the operator or viewer role.");
         var now = Now;
-        if (request.ExpiresAt <= now || request.ExpiresAt > now.AddDays(365))
+        var expiresAt = request.ExpiresAt ?? now + DefaultApiTokenLifetime;
+        if (expiresAt <= now || expiresAt > now.AddDays(365))
             throw new SecurityOperationException(400, "invalid-expiry", "Token expiry must be within the next 365 days.");
         var projects = NormalizeProjects(request.Projects);
         if (projects.Count == 0)
             throw new SecurityOperationException(400, "project-required", "Choose at least one project or the all-projects grant.");
-        var grants = LegacyRoleMapping.Grants(request.Role, projects, null)
+        var grants = LegacyRoleMapping.ApiTokenGrants(request.Role, projects)
             .Select(grant => ValidateGrant(IamPrincipalKind.ServiceAccount, grant)).ToList();
         lock (_gate)
         {
             var next = Copy(StateLocked());
-            var (token, secret) = NewServiceAccountToken("api", request.Name.Trim(), now, request.ExpiresAt);
+            var (token, secret) = NewServiceAccountToken("api", request.Name.Trim(), now, expiresAt);
             var account = new ServiceAccount
             {
                 Id = "sa_" + token.Id, Name = request.Name.Trim(), CreatedAt = now, CreatedBy = creatorId,
@@ -461,14 +469,22 @@ public sealed partial class AccessSecurityStore
     private static bool NeedsIamMigration(SecurityState state)
         => state.IamVersion < CurrentIamVersion || state.ApiTokens.Count > 0;
 
+    /// <summary>One API token rebound by a migration, for its IAM audit entry.</summary>
+    private sealed record ApiTokenRoleMigration(
+        string AccountId, string TokenId, string FromRole, string ToRole, IReadOnlyList<RoleBinding> Bindings);
+
     /// <summary>
     /// Migrates a loaded state (a copy; the caller assigns it only after the
     /// backup and the save succeed): legacy roles become user bindings
-    /// (version 0), and API tokens become service accounts that keep their
-    /// token id and secret hash, bound per <see cref="LegacyRoleMapping.Grants"/>.
+    /// (version 0), API tokens become service accounts that keep their token
+    /// id and secret hash, bound per <see cref="LegacyRoleMapping.ApiTokenGrants"/>,
+    /// and the Admin bindings of existing API tokens become Operator agent
+    /// bindings in the same scope (version 3). Returns one record per API
+    /// token whose operator binding changed or was created.
     /// </summary>
-    private void MigrateToRoleBindings(SecurityState state)
+    private List<ApiTokenRoleMigration> MigrateToRoleBindings(SecurityState state)
     {
+        var migrations = new List<ApiTokenRoleMigration>();
         var now = Now;
         if (state.IamVersion < 1)
             state.RoleBindings.AddRange(LegacyRoleMapping.Migrate(state.Users, now, NewBindingId));
@@ -489,18 +505,60 @@ public sealed partial class AccessSecurityStore
                     },
                 ],
             });
-            state.RoleBindings.AddRange(LegacyRoleMapping.Grants(token.Role, token.Projects, null)
+            var bindings = LegacyRoleMapping.ApiTokenGrants(token.Role, token.Projects)
                 .Where(grant => IamRoles.Find(grant.Role)?.ServiceAccountBindable == true)
                 .Select(grant => new RoleBinding
                 {
                     Id = NewBindingId(), PrincipalKind = IamPrincipalKind.ServiceAccount, PrincipalId = id,
                     Role = grant.Role, Scope = grant.Scope, Source = IamBindingSources.Migration,
                     CreatedAt = now, CreatedBy = IamBindingSources.Migration,
-                }));
+                }).ToList();
+            state.RoleBindings.AddRange(bindings);
+            if (token.Role == StudioRoles.Operator)
+                migrations.Add(new ApiTokenRoleMigration(id, token.Id, StudioRoles.Operator, IamRoles.OperatorAgent, bindings));
         }
+        if (state.IamVersion < 3) migrations.AddRange(RebindApiTokenAdmins(state));
         state.ApiTokens.Clear();
         state.IamVersion = CurrentIamVersion;
         ReprojectLocked(state);
+        return migrations;
+    }
+
+    /// <summary>
+    /// Version 3 (OP-1): every Admin binding of an API-token service account
+    /// becomes an Operator agent binding in the same scope. Service accounts
+    /// created in the Access area keep the bindings the Owner chose.
+    /// </summary>
+    private static List<ApiTokenRoleMigration> RebindApiTokenAdmins(SecurityState state)
+    {
+        var migrations = new List<ApiTokenRoleMigration>();
+        foreach (var account in state.ServiceAccounts.Where(account => account.Origin == ServiceAccountOrigins.ApiToken))
+        {
+            var rebound = new List<RoleBinding>();
+            for (var index = 0; index < state.RoleBindings.Count; index++)
+            {
+                var binding = state.RoleBindings[index];
+                if (binding.PrincipalKind != IamPrincipalKind.ServiceAccount || binding.PrincipalId != account.Id
+                    || binding.Role != IamRoles.Admin) continue;
+                state.RoleBindings[index] = binding with { Role = IamRoles.OperatorAgent, Source = IamBindingSources.Migration };
+                rebound.Add(state.RoleBindings[index]);
+            }
+            if (rebound.Count > 0)
+                migrations.Add(new ApiTokenRoleMigration(account.Id, account.Tokens.FirstOrDefault()?.Id ?? string.Empty,
+                    IamRoles.Admin, IamRoles.OperatorAgent, rebound));
+        }
+        return migrations;
+    }
+
+    /// <summary>One IAM audit entry per migrated API token: id, roles, and the bindings, never the secret.</summary>
+    private void AuditApiTokenRoleMigrations(IEnumerable<ApiTokenRoleMigration> migrations)
+    {
+        foreach (var migration in migrations)
+            AppendIamAudit(null, ApiTokenRoleMigrationAction, "service-account", migration.AccountId, new
+            {
+                tokenId = migration.TokenId, fromRole = migration.FromRole, toRole = migration.ToRole,
+                bindings = migration.Bindings.Select(binding => new { bindingId = binding.Id, binding.Role, binding.Scope }).ToList(),
+            });
     }
 
     /// <summary>A copy of the state file as it was before this migration, one per migration.</summary>
@@ -691,6 +749,8 @@ public sealed partial class AccessSecurityStore
         var role = IamRoles.Find(grant.Role?.Trim().ToLowerInvariant())
             ?? throw new SecurityOperationException(400, "invalid-role",
                 "Role must be one of " + string.Join(", ", IamRoles.All.Select(candidate => candidate.Id)) + ".");
+        if (kind != IamPrincipalKind.ServiceAccount && !role.UserBindable)
+            throw new SecurityOperationException(400, "invalid-role", $"{role.DisplayName} can be bound only to a service account.");
         var scope = grant.Scope ?? throw new SecurityOperationException(400, "invalid-scope", "A scope is required.");
         if (!role.BindableScopes.Contains(scope.Kind))
             throw new SecurityOperationException(400, "invalid-scope",
