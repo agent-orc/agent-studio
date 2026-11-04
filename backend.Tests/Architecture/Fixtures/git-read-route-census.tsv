@@ -90,7 +90,9 @@
 /api/filesystem-layer/snapshot	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
 /api/first-run/git-setups/{id}	free	-	-	-
 /api/first-run/projects/{projectId}/repository	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
+/api/model-selection/active	free	-	-	-
 /api/model-selection/effective	free	-	-	-
+/api/model-selection/events	free	-	-	-
 /api/gate-artifacts/{runId}	free	-	-	-
 /api/gate-artifacts/{runId}/{name}	free	-	-	-
 /api/gate-economics	free	-	-	-

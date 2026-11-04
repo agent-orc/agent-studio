@@ -19,3 +19,4 @@ Durable contracts that code, CLIs, and agents must respect.
 | [wiki-tree.md](wiki-tree.md) | Wiki physical docs tree, mutation, rendering, and history contract. |
 | [operations-backchannel.md](operations-backchannel.md) | Service principals, outbound agents, task permits and one-box parity gates. |
 | [operator-api.md](operator-api.md) | Operator section of the API reference: continue with the card's result ref, the batch isolation guard, requeue and eject. |
+| [model-selection-api.md](model-selection-api.md) | Selection ledger read, active, effective, and runner-scoped ingestion routes. |

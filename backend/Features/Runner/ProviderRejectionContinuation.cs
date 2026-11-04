@@ -1,5 +1,6 @@
 using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Cli;
 
 namespace AgentStudio.Runner;
 
@@ -102,6 +103,7 @@ public sealed class ProviderRejectionContinuationService
     private readonly TaskTransitionService _transitions;
     private readonly TimelineLog _timeline;
     private readonly ILogger<ProviderRejectionContinuationService> _logger;
+    private readonly ModelSelectionLedger? _selectionLedger;
     private readonly Func<TaskInfo, AttemptWriteReference, CancellationToken, Task<MoveJobOutcome>> _moveToReady;
 
     public ProviderRejectionContinuationService(
@@ -110,7 +112,8 @@ public sealed class ProviderRejectionContinuationService
         TaskStateMachine states,
         TaskTransitionService transitions,
         TimelineLog timeline,
-        ILogger<ProviderRejectionContinuationService> logger)
+        ILogger<ProviderRejectionContinuationService> logger,
+        ModelSelectionLedger? selectionLedger = null)
     {
         _scanner = scanner;
         _mutations = mutations;
@@ -118,6 +121,7 @@ public sealed class ProviderRejectionContinuationService
         _transitions = transitions;
         _timeline = timeline;
         _logger = logger;
+        _selectionLedger = selectionLedger;
         _moveToReady = MoveToReadyAsync;
     }
 
@@ -209,6 +213,17 @@ public sealed class ProviderRejectionContinuationService
         var summary =
             $"Provider refused the request ({ProviderRejectionContinuationPolicy.Describe(rejection)}); continued on {fallback.ToModel}."
             + (pinCard ? $" Card pinned to {fallback.ToModel} after {ProviderRejectionContinuationPolicy.RefusalsBeforePin} refusals." : string.Empty);
+        var selectionEvent = new ModelSelectionEvent
+        {
+            Kind = "switched", Consumer = "provider-rejection-continuation", Project = task.ProjectName,
+            TaskKey = task.TaskKey, AttemptId = attemptId,
+            From = new ModelSelectionRoute(fallback.CliType, fallback.FromModel, thinkingLevel),
+            To = new ModelSelectionRoute(fallback.CliType, fallback.ToModel, thinkingLevel),
+            Rule = "provider-rejection", Reason = summary,
+            Evidence = new ModelSelectionEvidence(rejection.Message, ProviderRejectionContinuationPolicy.Describe(rejection)),
+            Equivalence = new ModelSelectionEquivalence(null, null, "sibling"),
+        };
+        _selectionLedger?.Append(selectionEvent);
         _timeline.Append(
             folder,
             TimelineEventKinds.ProviderRejectionContinuationStarted,
@@ -228,6 +243,7 @@ public sealed class ProviderRejectionContinuationService
                 ["salvageCommitSha"] = salvage.CommitSha,
                 ["cardPinned"] = pinCard ? "true" : "false",
                 ["runAttemptId"] = attemptId,
+                ["selectionEventId"] = _selectionLedger is null ? string.Empty : selectionEvent.Id,
             });
         _logger.LogWarning(
             "provider-rejection-continuation task={TaskKey} attempt={AttemptId} from={FromModel} to={ToModel} code={Code} parameter={Parameter} pinned={Pinned}",

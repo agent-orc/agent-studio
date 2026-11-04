@@ -105,6 +105,7 @@ public sealed partial class TaskServerStore
     private long? _oldestUnacknowledgedSequence;
     private IReadOnlyDictionary<string, int> _finalHandoffStates =
         new Dictionary<string, int>(StringComparer.Ordinal);
+    private readonly TaskServerModelSelectionPoster? _selectionPoster;
 
     public TaskServerStore(IOptions<TaskServerOptions> options, TimeProvider clock)
         : this(
@@ -130,7 +131,8 @@ public sealed partial class TaskServerStore
         IResultFinalizationSummaryGenerator resultSummaries,
         ITaskServerEventPublisher? operationalEvents,
         ILogger<TaskServerStore>? logger,
-        IWorkspaceQuotaAdmission? workspaceQuota = null)
+        IWorkspaceQuotaAdmission? workspaceQuota = null,
+        TaskServerModelSelectionPoster? selectionPoster = null)
     {
         _options = options.Value;
         _clock = clock;
@@ -138,6 +140,7 @@ public sealed partial class TaskServerStore
         _operationalEvents = operationalEvents;
         _logger = logger;
         _quotaVerdicts = workspaceQuota is null ? null : new WorkspaceQuotaVerdictCache(workspaceQuota, clock);
+        _selectionPoster = selectionPoster;
         _startedAt = UtcNow;
     }
 
@@ -2649,6 +2652,21 @@ public sealed partial class TaskServerStore
                 resultHandoff?.Envelope.RepositoryId,
                 BriefVersion: claimedBriefVersion);
         }, ct);
+        if (_selectionPoster is not null && providerRecovery?.Fallback is { } selectedFallback)
+        {
+            var selectionId = TaskServerModelSelectionPoster.NewId();
+            await _selectionPoster.PostAsync(new
+            {
+                id = selectionId, at = _clock.GetUtcNow(), kind = "switched", consumer = "task-server-recovery",
+                host = request.RunnerId,
+                taskKey = completed!.TaskId, attemptId = runId,
+                @from = new { cliType = selectedFallback.CliType, model = selectedFallback.From, thinkingLevel = selectedFallback.ThinkingLevel },
+                to = new { cliType = selectedFallback.CliType, model = selectedFallback.To, thinkingLevel = selectedFallback.ThinkingLevel },
+                rule = "provider-rejection", reason = effectiveSummary,
+                evidence = new { excerpt = providerRecovery.Rejection.Message, classifierKind = DescribeProviderRejection(providerRecovery.Rejection) },
+                equivalence = new { source = "sibling" },
+            }, CancellationToken.None);
+        }
         return completed!;
     }
 

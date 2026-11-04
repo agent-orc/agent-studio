@@ -430,6 +430,8 @@ public class ProjectRunner
     private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
     private readonly bool _networked;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
+    private readonly ModelSelectionLedger? _selectionLedger;
+    private readonly Dictionary<string, string> _selectionIdsByJob = new();
 
     /// <summary>Workspace or project quota refusal for a new local run; null admits it.</summary>
     internal RunRejection? WorkspaceQuotaRefusal()
@@ -492,6 +494,7 @@ public class ProjectRunner
         ReviewInputDecisionGateway? reviewInputDecisions = null,
         AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
         bool networked = false,
+        ModelSelectionLedger? selectionLedger = null,
         IModelSelectionService? modelSelection = null)
     {
         ProjectName = projectName;
@@ -515,6 +518,7 @@ public class ProjectRunner
         _quotaCaps = quotaCaps;
         _quotaFallback = quotaFallback;
         _quotaAdmission = quotaAdmission;
+        _selectionLedger = selectionLedger;
         _modelSelection = modelSelection ?? quotaAdmission?.Selection;
         _quotaWaitPolicy = quotaWaitPolicy;
         _providerLimits = providerLimits ?? new ProviderLimitRegistry();
@@ -1015,6 +1019,8 @@ public class ProjectRunner
             info,
             OrchestratorMessageKind.Decision,
             $"[quota-wait] {limit.Reason}. The task is waiting and will resume automatically; other CLI providers remain eligible.");
+        var selectionEventId = RecordLocalSelection(info, "waiting", "provider-limit-wait", cliType,
+            "provider-limited", limit.Reason, limit.LimitedUntil);
         _timeline?.Append(
             info.FolderPath,
             TimelineEventKinds.QuotaAdmissionDecision,
@@ -1027,6 +1033,7 @@ public class ProjectRunner
                 ["cli"] = cliType,
                 ["resetAt"] = limit.LimitedUntil.ToString("o"),
                 ["resetTimeReported"] = limit.ResetTimeReported ? "true" : "false",
+                ["selectionEventId"] = selectionEventId,
             });
         NotifyStatus();
     }
@@ -1132,11 +1139,34 @@ public class ProjectRunner
             warning?.Reason, plan.Reason);
 
         var key = $"{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.ThinkingLevel}|{plan.Reason}|{plan.BetterCandidates?.EvidenceSnapshot}";
+        bool repeated;
         lock (_lastAdmissionDecisionByJob)
         {
-            if (_lastAdmissionDecisionByJob.TryGetValue(info.Id, out var prev) && prev == key) return;
-            _lastAdmissionDecisionByJob[info.Id] = key;
+            repeated = _lastAdmissionDecisionByJob.TryGetValue(info.Id, out var prev) && prev == key;
+            if (!repeated) _lastAdmissionDecisionByJob[info.Id] = key;
         }
+        if (repeated && !plan.IsDeferred) return;
+        string? selectionEventId = null;
+        if (_selectionLedger is not null && (plan.IsFallback || plan.IsDeferred || warning is not null))
+        {
+            var selection = new ModelSelectionEvent
+            {
+                Kind = plan.IsFallback ? "switched" : plan.IsDeferred ? "waiting" : "health-marked",
+                Consumer = "local-coding-launch", Project = ProjectName, TaskKey = info.TaskKey,
+                From = new ModelSelectionRoute(info.CliType, info.Model, info.ThinkingLevel),
+                To = plan.IsFallback ? new ModelSelectionRoute(plan.CliType, plan.Model, plan.ThinkingLevel) : null,
+                Rule = plan.ModelFallback?.Reason ?? (plan.IsFallback ? "quota-cap" : plan.Outcome.ToString()),
+                Reason = plan.Reason, ReturnToPrimaryAt = plan.NextResetAt,
+                Quota = proj is null ? null : new ModelSelectionQuota(info.CliType, proj.WindowLabel,
+                    proj.CurrentUsedPct, proj.CapPct, proj.ProjectedUsedPct, proj.ResetAt, null),
+            };
+            if (_selectionLedger.Append(selection)) selectionEventId = selection.Id;
+            if (selectionEventId is not null) _selectionIdsByJob[info.Id] = selectionEventId;
+        }
+        else if (_selectionLedger is not null && plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary)
+            selectionEventId = _selectionLedger.ReturnToPrimary("local-coding-launch", ProjectName, info.TaskKey,
+                new ModelSelectionRoute(plan.CliType, plan.Model, plan.ThinkingLevel), plan.Reason)?.Id;
+        if (repeated) return;
 
         // Persist normal and notable decisions alike. This gives the token
         // report an explicit interval boundary when candidates disappear.
@@ -1155,7 +1185,7 @@ public class ProjectRunner
         // surfaces unless a benchmark candidate needs to be shown.
         if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary
             && warning is null
-            && plan.BetterCandidates is null) return;
+            && plan.BetterCandidates is null && selectionEventId is null) return;
 
         _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-admission] " + plan.Reason);
         _timeline?.Append(
@@ -1182,6 +1212,7 @@ public class ProjectRunner
                 ["modelFallback"] = plan.ModelFallback is null
                     ? string.Empty
                     : System.Text.Json.JsonSerializer.Serialize(plan.ModelFallback),
+                ["selectionEventId"] = selectionEventId ?? string.Empty,
             });
 
         // AGT-2055 req 3 ("+ Feed-Zeile") + req 7: every load-steering decision
@@ -1190,6 +1221,19 @@ public class ProjectRunner
         // numbers. That feed is the data source for the separate
         // load-distribution view, so the switch / throttle / wait is never a
         // silent decision the operator has to reconstruct from logs.
+    }
+
+    private string RecordLocalSelection(TaskInfo info, string kind, string consumer, string cli,
+        string rule, string reason, DateTime? returnAt)
+    {
+        if (_selectionLedger is null) return string.Empty;
+        var entry = new ModelSelectionEvent
+        {
+            Kind = kind, Consumer = consumer, Project = ProjectName, TaskKey = info.TaskKey,
+            From = new ModelSelectionRoute(cli, info.Model, info.ThinkingLevel),
+            Rule = rule, Reason = reason, ReturnToPrimaryAt = returnAt,
+        };
+        return _selectionLedger.Append(entry) ? entry.Id : string.Empty;
     }
 
     /// <summary>
@@ -3143,6 +3187,7 @@ public class ProjectRunner
                         ["modelFallback"] = admissionPlan.ModelFallback is null
                             ? string.Empty
                             : System.Text.Json.JsonSerializer.Serialize(admissionPlan.ModelFallback),
+                        ["selectionEventId"] = _selectionIdsByJob.GetValueOrDefault(info.Id) ?? string.Empty,
                     });
             }
 
@@ -3948,6 +3993,8 @@ public class ProjectRunner
                     if (info.State == TaskStates.Progress)
                         _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.QuotaWaiting);
                     _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-wait] " + reason);
+                    var selectionEventId = RecordLocalSelection(info, "waiting", "library-quota-wait",
+                        cliType, "quota-wait", reason, quotaWaitStarted.ResetAt);
                     _timeline?.Append(
                         info.FolderPath,
                         TimelineEventKinds.QuotaAdmissionDecision,
@@ -3959,6 +4006,7 @@ public class ProjectRunner
                             ["decision"] = "library-quota-wait-started",
                             ["cli"] = cliType,
                             ["resetAt"] = quotaWaitStarted.ResetAt.ToString("o"),
+                            ["selectionEventId"] = selectionEventId,
                         });
                 }
             }
@@ -3976,12 +4024,14 @@ public class ProjectRunner
                     if (info.State == TaskStates.Progress)
                         _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.ExecutionRunning);
                     _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-wait] reset reached; restarting the same request");
+                    var selectionEventId = RecordLocalSelection(info, "returned", "library-quota-wait",
+                        run?.CliType ?? "unknown", "quota-reset", "Quota reset reached; restarting the same request", null);
                     _timeline?.Append(
                         info.FolderPath,
                         TimelineEventKinds.QuotaAdmissionDecision,
                         TimelineActors.System,
                         summary: "Quota reset reached; restarting the same request",
-                        details: new() { ["decision"] = "library-quota-wait-ended" });
+                        details: new() { ["decision"] = "library-quota-wait-ended", ["selectionEventId"] = selectionEventId });
                 }
             }
             catch (Exception ex) { _logger.LogWarning(ex, "Could not project quota-wait end for {TaskKey}", jobKey); }

@@ -17,6 +17,17 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class RoutePermissionInventoryTests : IDisposable
 {
+    [Fact]
+    public void ModelSelectionIngestionIsRunnerScoped()
+    {
+        Assert.Equal(IamPermissions.RunnerService,
+            RoutePermissionCatalog.Resolve("POST", "/api/model-selection/events")?.Permission);
+        Assert.Equal(IamPermissions.WorkspaceOperate,
+            RoutePermissionCatalog.Resolve("GET", "/api/model-selection/events")?.Permission);
+        Assert.Equal(IamPermissions.WorkspaceOperate,
+            RoutePermissionCatalog.Resolve("GET", "/api/model-selection/active")?.Permission);
+    }
+
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "route-permissions-" + Guid.NewGuid().ToString("N"));
 
     public static TheoryData<string, string?> Profiles => new()
