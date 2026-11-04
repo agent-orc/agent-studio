@@ -119,6 +119,7 @@
 .cli-models__head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--studio-spacing-2);
 }
 
@@ -134,6 +135,17 @@
 .cli-models__prefer[data-state='fallback-preferred'],
 .cli-models__prefer[data-state='fallback-active'] { color: var(--studio-accent-warn-strong); }
 .cli-models__prefer input { accent-color: var(--studio-accent-warn-strong); }
+.cli-models__effective {
+  order: 5;
+  flex: 1 0 100%;
+  display: grid;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border-top: 1px solid var(--studio-border);
+  color: var(--studio-fg);
+  font-size: 11px;
+  line-height: 1.4;
+}
 
 .cli-models__toggle {
   flex: 1 1 auto;

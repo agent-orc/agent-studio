@@ -49,6 +49,15 @@ export interface CliModelRoutesResponse {
   callersCannotReroute: { caller: string; cliType: string; reason: string }[];
 }
 
+export interface EffectiveModelSelection {
+  consumer: string;
+  stepId: string | null;
+  configured: { cliType: string; model: string | null; thinkingLevel: string | null };
+  effective: { cliType: string; model: string | null; thinkingLevel: string | null } | null;
+  rule: 'consumer-default' | 'operator-switch' | 'quota-cap' | 'pin';
+  reason: string | null;
+}
+
 export interface CliQuotaWaitPolicy {
   enabled: boolean;
   thresholdMinutes: number;
@@ -181,6 +190,12 @@ export class QuotaApiService {
   getModelRoutes() {
     return this.http.get<CliModelRoutesResponse>(
       `${this.baseUrl}/cli/quota/model-routes`,
+    );
+  }
+
+  getEffectiveModelSelection() {
+    return this.http.get<{ routes: EffectiveModelSelection[] }>(
+      `${this.baseUrl}/model-selection/effective`,
     );
   }
 

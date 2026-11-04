@@ -1457,6 +1457,7 @@ if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
 builder.Services.AddSingleton<CliQuotaCapsService>();
 builder.Services.AddSingleton<CliQuotaWaitPolicyService>();
 builder.Services.AddSingleton<CliFallbackPreferenceService>();
+builder.Services.AddSingleton<ModelSelectionEffectiveService>();
 builder.Services.AddSingleton<AgentStudio.Cli.IModelEquivalenceCatalog, AgentStudio.Cli.ModelEquivalenceCatalog>();
 builder.Services.AddSingleton<CliQuotaFallbackService>();
 builder.Services.AddSingleton<AgentStudio.Cli.QuotaAdmissionService>();

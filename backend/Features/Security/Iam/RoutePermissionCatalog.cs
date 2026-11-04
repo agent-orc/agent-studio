@@ -353,6 +353,7 @@ public static class RoutePermissionCatalog
         // working memory, quota and model probes are installation-wide.
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/types", "/api/cli/contracts", "/api/cli/model-migrations");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/effective");
         // These return configuration or cached data without reading sessions.
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/{}/models", "/api/cli/maintenance-model", "/api/cli/{}/effective-mode",

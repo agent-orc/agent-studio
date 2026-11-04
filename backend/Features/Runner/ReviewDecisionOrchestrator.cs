@@ -239,6 +239,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly DecisionCardRequests? _decisionRequests;
     private readonly MonolithOrchestrationStore? _orchestration;
     private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
+    private readonly QuotaAdmissionService? _quotaAdmission;
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -297,7 +298,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         DecisionCardRequests? decisionRequests = null,
         MonolithOrchestrationStore? orchestration = null,
         TimeProvider? timeProvider = null,
-        ReviewInputDecisionGateway? reviewInputDecisions = null)
+        ReviewInputDecisionGateway? reviewInputDecisions = null,
+        QuotaAdmissionService? quotaAdmission = null)
     {
         _scanner = scanner;
         _stateMachine = stateMachine;
@@ -338,6 +340,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _decisionRequests = decisionRequests;
         _orchestration = orchestration;
         _reviewInputDecisions = reviewInputDecisions;
+        _quotaAdmission = quotaAdmission;
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -2711,6 +2714,27 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             };
         }
 
+        foreach (var aspectId in enabledAspects)
+        {
+            var stepId = $"aspect-{aspectId}";
+            var aspectCli = cliForAspect?.Invoke(aspectId) ?? NormalizeReviewCliType(cliBinary);
+            var candidateModel = modelForAspect?.Invoke(aspectId) ?? aspectModel;
+            var aspectThinking = thinkingLevelForAspect?.Invoke(aspectId);
+            var admission = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+                aspectCli, candidateModel, aspectThinking, entry.Name, 0,
+                $"local-review:{stepId}", SameClassOnly: true));
+            if (admission is not { ShouldLaunch: false }) continue;
+            _pipelineLog?.RecordStep(current.FolderPath, new PipelineStepExecution
+            {
+                StepId = stepId,
+                Kind = StepKind.Aspect,
+                Status = PipelineStepStatus.Pending,
+                Reason = admission.Reason,
+                Model = candidateModel,
+                ThinkingLevel = aspectThinking,
+            });
+            return;
+        }
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
         var aspectSubject = ResolveBuildTestGateSubject(current, entry.Path);
@@ -5368,9 +5392,32 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var thinkingLevel = catalogueStep is null
                 ? null
                 : PipelineStepConfigResolver.ResolveThinkingLevel(projectSettings, catalogueStep, cli, model);
+            var gradeAdmission = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+                cli, model, thinkingLevel, entry.Name, 0, "review-grade", SameClassOnly: true));
+            if (gradeAdmission is { ShouldLaunch: false })
+            {
+                _pipelineLog?.RecordStep(job.FolderPath, new PipelineStepExecution
+                {
+                    StepId = stepId,
+                    Kind = StepKind.Orchestrator,
+                    Status = PipelineStepStatus.Pending,
+                    Reason = gradeAdmission.Reason,
+                    Model = model,
+                    ThinkingLevel = thinkingLevel,
+                });
+                return null;
+            }
+            if (gradeAdmission is not null)
+            {
+                cli = gradeAdmission.CliType;
+                model = gradeAdmission.Model ?? model;
+                thinkingLevel = gradeAdmission.ThinkingLevel;
+            }
             selectedModel = model;
             selectedThinkingLevel = thinkingLevel;
-            selectedModelSource = modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
+            selectedModelSource = gradeAdmission?.IsFallback == true
+                ? gradeAdmission.ModelFallback?.Reason == "operator-preference" ? "operator-switch" : "quota-cap"
+                : modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
 
             var (diff, commitLabel) = BuildGradeDiff(entry, job, buildGateResult);
 

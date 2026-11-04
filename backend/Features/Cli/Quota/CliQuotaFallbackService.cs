@@ -67,7 +67,9 @@ public sealed class CliQuotaFallbackService
         string? requestedThinkingLevel,
         Func<string?, CapEvaluation> evaluateQuota,
         bool preferFallback = false,
-        Func<string, string?, bool>? modelAccepted = null)
+        Func<string, string?, bool>? modelAccepted = null,
+        bool sameClassOnly = false,
+        Func<string, bool>? fallbackProviderAllowed = null)
     {
         var cli = Clean(requestedCliType)?.ToLowerInvariant() ?? CliTypes.Claude;
         EnsureLoaded();
@@ -81,11 +83,38 @@ public sealed class CliQuotaFallbackService
             return new(cli, primaryModel, primaryThinking, false, null, cap);
 
         var effective = EffectiveFallback(cli, profile, primaryModel, primaryThinking);
+        if (preferFallback && effective is { } selected
+            && string.Equals(selected.CliType, cli, StringComparison.OrdinalIgnoreCase))
+        {
+            var other = OtherFamily(cli);
+            var crossProvider = other is null ? null
+                : _equivalence?.TryGetRoute(cli, primaryModel, primaryThinking, other);
+            effective = crossProvider is null ? null
+                : (other!, crossProvider.ToModel, crossProvider.ToThinkingLevel);
+        }
         if (effective is null)
             return new(cli, primaryModel, primaryThinking, false,
                 preferFallback ? "operator prefers fallback, but no comparable route is available" : cap.DescribeReason(), cap);
 
         var (fallbackCli, fallbackModel, fallbackThinking) = effective.Value;
+        if (sameClassOnly && (_equivalence is null
+            || !_equivalence.SameCapabilityClass(primaryModel, fallbackModel)))
+            return new(cli, primaryModel, primaryThinking, false,
+                "review requires a fallback in the same Token Economy capability class", cap);
+        if (sameClassOnly && ThinkingRank(primaryThinking) is { } required)
+        {
+            var mapped = ModelMetadataRegistry.ThinkingLevelsFor(fallbackCli, fallbackModel)
+                .Where(level => ThinkingRank(level) is { } rank && rank >= required)
+                .OrderBy(level => ThinkingRank(level))
+                .FirstOrDefault();
+            if (mapped is null)
+                return new(cli, primaryModel, primaryThinking, false,
+                    "review fallback has no supported thinking level at or above the configured route", cap);
+            fallbackThinking = mapped;
+        }
+        if (fallbackProviderAllowed is not null && !fallbackProviderAllowed(fallbackCli))
+            return new(cli, primaryModel, primaryThinking, false,
+                $"operator is conserving provider {fallbackCli} until its quota reset", cap);
         if (modelAccepted is not null && !modelAccepted(fallbackCli, fallbackModel))
             return new(cli, primaryModel, primaryThinking, false,
                 $"fallback {fallbackCli}/{fallbackModel} is not accepted by the claiming host", cap);
@@ -96,7 +125,9 @@ public sealed class CliQuotaFallbackService
             return new(cli, primaryModel, primaryThinking, false,
                 $"primary {cap.DescribeReason()}; fallback {fallbackCap.DescribeReason()}", cap);
 
-        var isOverride = profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel);
+        var isOverride = profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel)
+            && (!preferFallback || !string.Equals(profile.FallbackCliType ?? cli, cli,
+                StringComparison.OrdinalIgnoreCase));
         return new(
             fallbackCli,
             fallbackModel,
@@ -139,6 +170,17 @@ public sealed class CliQuotaFallbackService
     {
         _ when string.Equals(cli, CliTypes.Codex, StringComparison.OrdinalIgnoreCase) => CliTypes.Claude,
         _ when string.Equals(cli, CliTypes.Claude, StringComparison.OrdinalIgnoreCase) => CliTypes.Codex,
+        _ => null,
+    };
+
+    private static int? ThinkingRank(string? level) => level?.Trim().ToLowerInvariant() switch
+    {
+        "low" => 1,
+        "medium" => 2,
+        "high" => 3,
+        "xhigh" => 4,
+        "max" => 5,
+        "ultra" => 6,
         _ => null,
     };
 

@@ -942,6 +942,7 @@ public static class TaskCrudEndpoints
             ModelRoutingPolicyRegistry modelRouting,
             IModelRoutingModeProvider routingMode,
             CliRouter cliRouter,
+            QuotaAdmissionService quotaAdmission,
             AgentStudio.Tags.AutoTagCreationWorker autoTag,
             IConfiguration configuration,
             CancellationToken ct) =>
@@ -1052,13 +1053,23 @@ public static class TaskCrudEndpoints
 
             var modelExplicit = req.ModelExplicit ?? !string.IsNullOrWhiteSpace(req.Model);
             var thinkingExplicit = req.ThinkingLevelExplicit ?? !string.IsNullOrWhiteSpace(req.ThinkingLevel);
+            var requestedCli = string.IsNullOrWhiteSpace(req.CliType) ? CliTypes.Claude : req.CliType;
             if ((!modelExplicit || !thinkingExplicit)
-                && !string.IsNullOrWhiteSpace(req.CliType)
-                && CliTypes.IsValid(req.CliType))
+                && CliTypes.IsValid(requestedCli))
             {
                 try
                 {
-                    var catalogue = await cliRouter.Get(req.CliType).GetModelCatalogAsync(false, ct);
+                    CliModelCatalog catalogue;
+                    try
+                    {
+                        catalogue = await cliRouter.Get(requestedCli).GetModelCatalogAsync(false, ct);
+                    }
+                    catch when (requestedCli is CliTypes.Claude or CliTypes.Codex)
+                    {
+                        catalogue = requestedCli == CliTypes.Claude
+                            ? ClaudeModelDiscovery.FallbackCatalog("creation-registry-fallback")
+                            : CodexModelDiscovery.FallbackCatalog("creation-registry-fallback");
+                    }
                     var recommendation = modelRouting.Recommend(
                         req.TaskType,
                         catalogue,
@@ -1071,7 +1082,7 @@ public static class TaskCrudEndpoints
                         : string.Equals(effectiveModel, recommendation.Model, StringComparison.OrdinalIgnoreCase)
                             ? recommendation.ThinkingLevel
                             : ModelMetadataRegistry.ResolveThinkingLevel(
-                                req.CliType,
+                                requestedCli,
                                 effectiveModel,
                                 recommendation.ThinkingLevel);
                     req = req with
@@ -1081,6 +1092,19 @@ public static class TaskCrudEndpoints
                         ModelExplicit = modelExplicit,
                         ThinkingLevelExplicit = thinkingExplicit,
                     };
+                    if (!modelExplicit)
+                    {
+                        var selection = quotaAdmission.Plan(new QuotaAdmissionRequest(
+                            requestedCli, req.Model, req.ThinkingLevel,
+                            req.Project, 0, "card-creation"));
+                        if (selection is { ShouldLaunch: true, IsFallback: true })
+                            req = req with
+                            {
+                                CliType = selection.CliType,
+                                Model = selection.Model,
+                                ThinkingLevel = selection.ThinkingLevel,
+                            };
+                    }
                 }
                 catch (Exception ex)
                 {
