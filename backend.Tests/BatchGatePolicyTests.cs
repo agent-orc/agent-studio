@@ -111,7 +111,9 @@ public sealed class BatchGatePolicyTests
         BatchGateSubject Code(string key, int minute = 0) => Subject(key, minute) with { DocumentationOnly = false };
         Assert.Null(BatchGatePolicy.Form([Code("a")], Scope, Sha, code, Now).Manifest);
         Assert.False(BatchGatePolicy.Form([Code("a")], Scope, Sha, code, Now).UsePerTaskGate);
-        Assert.True(BatchGatePolicy.Form([Code("a", -16)], Scope, Sha, code, Now).UsePerTaskGate);
+        var agedSolo = BatchGatePolicy.Form([Code("a", -16)], Scope, Sha, code, Now);
+        Assert.True(agedSolo.UsePerTaskGate);
+        Assert.Equal("oldest eligible card reached deadline without a batch partner", agedSolo.Reason);
         Assert.NotNull(BatchGatePolicy.Form([Code("a"), Code("b")], Scope, Sha, code, Now,
             reviewQueueLength: 12).Manifest);
         Assert.Null(BatchGatePolicy.Form([Code("a"), Code("b")], Scope, Sha, code, Now).Manifest);
@@ -129,6 +131,18 @@ public sealed class BatchGatePolicyTests
         Assert.Null(held.Manifest);
         Assert.False(held.UsePerTaskGate);
         Assert.True(BatchGatePolicy.Form([due], Scope, Sha, options, Now).UsePerTaskGate);
+    }
+
+    [Fact]
+    public void Forced_close_below_minimum_explains_its_per_task_fallback()
+    {
+        var code = Enabled with { Scope = "code", MinimumSize = 2 };
+        var formed = BatchGatePolicy.Close(
+            [Subject("a") with { DocumentationOnly = false }], Scope, Sha,
+            code, ["a"], Now);
+
+        Assert.True(formed.UsePerTaskGate);
+        Assert.Equal("close requested below minimum batch size", formed.Reason);
     }
 
     [Theory]

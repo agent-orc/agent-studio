@@ -164,6 +164,7 @@ public static class BatchGateStateSnapshotReader
             pushWaits = pushWaits ?? (pushWait is null
                 ? Array.Empty<PendingIntegrationPushWait>() : [pushWait]),
             gateSlots,
+            integrationGateLeaseCapMinutes = BatchIntegrationReservationService.IntegrationGateLeaseCap.TotalMinutes,
             preChecksRun = preChecks.Length,
             preChecksRed = preChecks.Count(check => check.Outcome == "red"),
             preCheckMinutesSaved = preChecks.Sum(check => check.MinutesSaved),

@@ -158,7 +158,8 @@ public sealed class IntakeRunner
                     Source = $"docs/{guide.RelPath}",
                     Revision = guide.Version,
                     Tier = "optional",
-                    Priority = 20,
+                    Priority = matchedAreas.Any(area => !string.Equals(area, "frontend", StringComparison.OrdinalIgnoreCase))
+                        ? 10 : 20,
                     Areas = matchedAreas,
                     Text = $"Style-guide version {guide.Version}; matched task area(s): {string.Join(", ", matchedAreas)}. {guide.PromptSummary}"
                 });
@@ -724,6 +725,7 @@ public sealed class IntakeRunner
         ("backend", ["backend", ".cs", "c#", ".net", "dotnet", "api", "endpoint", "service", "controller"]),
         ("runner", ["runner", "pickup", "cli", "agent", "orchestrator", "intake", "pre-step", "pipeline", "watchdog", "sentinel"]),
         ("frontend", ["frontend", "angular", ".ts", ".scss", "css", "style", "styling", "component", "ui", "design", "token", "layout", "button", "lane", "card", "visual"]),
+        ("header", ["header", "toolbar", "tab strip", "tabbar", "detail-header", "task-live-status", "pickup-hold", "task detail"]),
         ("git", ["git", "commit", "push", "merge", "branch", "worktree", "workspace artifact", "auto-commit", "pull request"]),
         ("filesystem", ["job folder", "task folder", "job.json", "task.json", "lane", "state", "move", "reorder", "archive", ".orchestrator", "workspace"]),
         ("refactor", ["refactor", "split", "extract", "rename", "namespace", "move file", "decompose"]),

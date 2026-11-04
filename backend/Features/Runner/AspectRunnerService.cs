@@ -43,7 +43,7 @@ public sealed class AspectRunnerService
     /// </summary>
     public Func<string, string, string, string, TimeSpan, CancellationToken, Task<string>> CliRunner { get; set; }
 
-    private Func<string, string, string, string, string?, TimeSpan, string, CancellationToken, Task<string>>? _thinkingAwareCliRunner;
+    private Func<string, string, string, string, string?, TimeSpan, string, string, string, CancellationToken, Task<string>>? _thinkingAwareCliRunner;
 
     /// <summary>
     /// Backoff before the single environmental retry of an aspect whose reviewing
@@ -87,10 +87,43 @@ public sealed class AspectRunnerService
         }
     }
 
-    private async Task<string> RunViaOneShotAsync(string aspectId, string cli, string model, string prompt, string? thinkingLevel, TimeSpan timeout, string jobFolderPath, CancellationToken ct)
+    private async Task<string> RunViaOneShotAsync(string aspectId, string cli, string model, string prompt,
+        string? thinkingLevel, TimeSpan timeout, string jobFolderPath, string project, string jobId,
+        CancellationToken ct)
     {
         var oneShot = _oneShotRegistry?.Get(cli);
-        if (oneShot == null) return await CliRunner(aspectId, cli, model, prompt, timeout, ct);
+        if (oneShot == null)
+        {
+            var direct = _oneShotRegistry?.SelectDirect(new CliOneShotRequest(cli, model, prompt)
+            {
+                ThinkingLevel = thinkingLevel,
+                Source = $"aspect-{aspectId}",
+                StepId = $"aspect-{aspectId}",
+                Project = project,
+                JobId = jobId,
+            });
+            if (direct is { Admission.ShouldLaunch: false })
+                throw new InvalidOperationException(direct.Admission.Reason);
+            var admitted = direct?.Admission;
+            if (admitted is not null && !string.Equals(admitted.CliType, cli, StringComparison.OrdinalIgnoreCase))
+            {
+                var selected = await _oneShotRegistry!.RunSelectedAsync(new CliOneShotRequest(
+                    admitted.CliType, admitted.Model ?? model, prompt)
+                {
+                    ThinkingLevel = admitted.ThinkingLevel,
+                    Timeout = timeout,
+                    Source = AdHocUsageSources.ReviewDecision,
+                    RecordUsage = false,
+                    JobFolderPath = jobFolderPath,
+                    StepId = $"aspect-{aspectId}",
+                    Project = project,
+                    JobId = jobId,
+                }, ct);
+                return CliOneShotCompatibility.ToClaudeResultEnvelope(selected, admitted.Model);
+            }
+            return await CliRunner(aspectId, admitted?.CliType ?? cli,
+                admitted?.Model ?? model, prompt, timeout, ct);
+        }
 
         var result = await oneShot.RunAsync(new CliOneShotRequest(
             CliType: cli,
@@ -105,6 +138,8 @@ public sealed class AspectRunnerService
             // final prompt to .metadata/prompts.jsonl keyed on this step id.
             JobFolderPath = jobFolderPath,
             StepId = $"aspect-{aspectId}",
+            Project = project,
+            JobId = jobId,
             TemplateRef = Catalogue.TryGetValue(aspectId, out var def) ? def.PromptTemplate : null,
         }, ct);
 
@@ -665,7 +700,8 @@ public sealed class AspectRunnerService
             var sw = AdHocClaudeInvoker.StartTiming();
             var rawResponse = _thinkingAwareCliRunner is null
                 ? await CliRunner(def.Id, cliBinary, model, prompt, perAspectTimeout, ct)
-                : await _thinkingAwareCliRunner(def.Id, cliBinary, model, prompt, thinkingLevel, perAspectTimeout, inputs.JobFolderPath, ct);
+                : await _thinkingAwareCliRunner(def.Id, cliBinary, model, prompt, thinkingLevel,
+                    perAspectTimeout, inputs.JobFolderPath, inputs.Project, inputs.JobId, ct);
             sw.Stop();
             var durationMs = sw.ElapsedMilliseconds;
             var parsed = AdHocClaudeInvoker.ParseOrFallback(rawResponse, model);
