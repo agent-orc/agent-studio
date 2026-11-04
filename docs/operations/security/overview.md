@@ -239,6 +239,25 @@ that is already allowed to edit that project's checkout.
   other projects. It reads only; the per-project batch gate writes keep their
   own `project.runs.operate` check. See the
   [operator API reference](../operator-api.md#batch-triage).
+
+### Deploy and restart preflight (OP-6)
+
+The [operator preflight routes](../operator-api.md#deploy-and-restart-preflight)
+check all configured projects for pending integration pushes, publishing
+flights, and cards with a running commit step. A blocker returns HTTP 409 with
+a stable code. The deploy plan rechecks these facts and gives the Task Server,
+readiness, Engine, and hosts an ordered, expiring update window after drain.
+Only an installation-wide reader may see or use the result. An override is a
+T2 operation: SM-5 opens an exact-request approval for an operator session,
+the Owner decides it in Studio after step-up, and the session may redeem it
+once. Read and plan routes do not accept an override flag. No route here
+executes host updates over SSH.
+
+The Task Server rejects an Engine or Agent Host whose protocol exceeds its
+current protocol before registration or claim, and records
+`protocol.startup-refused` in the operator feed with the client and server
+versions. The Engine and Agent Host also inspect the returned server version
+and refuse startup if an older Task Server incorrectly says it is compatible.
 - A Runner never receives a human password or session cookie.
 
 #### Operator chat readiness read

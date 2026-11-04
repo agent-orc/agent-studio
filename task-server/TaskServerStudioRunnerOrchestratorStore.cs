@@ -503,6 +503,10 @@ public sealed partial class TaskServerStore
                            c.project_id AS project_id, turn.body AS body
                       FROM orchestrator_context_turns turn
                       JOIN orchestrator_contexts c ON c.context_key = turn.context_key
+                    UNION ALL
+                    SELECT occurred_at, kind, CAST(cursor AS TEXT), project_id, payload_json
+                      FROM studio_stream_events
+                     WHERE kind = 'protocol.startup-refused'
                    )
              ORDER BY occurred_at DESC
              LIMIT $limit;

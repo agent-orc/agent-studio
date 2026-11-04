@@ -177,7 +177,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (!response.IsSuccessStatusCode)
             throw new TaskServerException((int)response.StatusCode, $"Task Server protocol negotiation failed: {Trim(detail)}");
         var compatibility = JsonSerializer.Deserialize<Contract.ProtocolCompatibilityResponse>(detail, Json);
-        if (compatibility?.Supported != true)
+        if (compatibility?.Supported != true || compatibility.Server.Current < RunnerOptions.ProtocolVersion)
             throw new TaskServerException(426, compatibility?.Reason ?? "Task Server protocol is not compatible.");
         var serverCapabilities = compatibility.Server.Capabilities ?? [];
         _supportsCredentialObservationV2 = serverCapabilities.Contains("credential-observation-v2", StringComparer.Ordinal);

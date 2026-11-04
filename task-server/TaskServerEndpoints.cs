@@ -43,22 +43,31 @@ public static class TaskServerEndpoints
             TaskServerScopes.ReviewsWrite,
             TaskServerScopes.RunsWrite,
             TaskServerScopes.TasksWrite);
-        api.MapPost("/protocol/compatibility", (ProtocolCompatibilityRequest request, TaskServerStore store) =>
+        api.MapPost("/protocol/compatibility", async (ProtocolCompatibilityRequest request, TaskServerStore store,
+            CancellationToken ct) =>
         {
+            var server = store.Status().Protocol;
             var supported = TaskServerProtocol.Supports(request.ProtocolVersion)
+                && request.ProtocolVersion <= server.Current
                 && request.ClientKind is "studio" or "runner" or "review-runner" or "management"
                     or TaskServerProtocol.EngineClientKind;
             var reason = supported
                 ? null
-                : !store.Status().Protocol.ClientKinds.Contains(request.ClientKind, StringComparer.Ordinal)
+                : !server.ClientKinds.Contains(request.ClientKind, StringComparer.Ordinal)
                     ? $"Client kind '{request.ClientKind}' is not supported. Supported client kinds: " +
-                      $"{string.Join(", ", store.Status().Protocol.ClientKinds)}."
+                      $"{string.Join(", ", server.ClientKinds)}."
                     : $"Client protocol {request.ProtocolVersion} is outside the supported range " +
-                      $"{TaskServerProtocol.MinimumSupported}-{TaskServerProtocol.MaximumSupported}.";
+                      $"{server.MinimumSupported}-{server.Current}.";
             var response = new ProtocolCompatibilityResponse(
                 supported,
-                store.Status().Protocol,
+                server,
                 reason);
+            if (!supported && request.ProtocolVersion > server.Current
+                && (request.ClientKind is "runner" or "review-runner" or TaskServerProtocol.EngineClientKind))
+                await store.AppendStudioStreamEventAsync("protocol.startup-refused", null, null,
+                    new ProtocolStartupRefusalEvent("task-server-protocol-older", request.ClientKind,
+                        request.ClientVersion, request.ProtocolVersion, server.ServerVersion, server.Current,
+                        reason!), ct);
             return supported ? Results.Ok(response) : Results.Json(response, statusCode: StatusCodes.Status426UpgradeRequired);
         });
         // Authenticated attach handshake of the loopback Studio connector: it

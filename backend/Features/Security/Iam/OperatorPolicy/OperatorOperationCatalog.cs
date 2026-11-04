@@ -50,6 +50,7 @@ public static class OperatorOperationIds
     public const string AccessChange = "access.change";
     public const string GrantChange = "grant.change";
     public const string CatalogueChange = "catalogue.change";
+    public const string DeployBlockerOverride = "deploy.blocker-override";
 }
 
 /// <summary>One catalogued operation: exactly one tier and the kind of scope it acts on.</summary>
@@ -123,6 +124,8 @@ public static class OperatorOperationCatalog
         new(OperatorOperationIds.GrantChange, OperatorTier.T2, OperatorScopeKinds.Workspace, "Change standing grants"),
         new(OperatorOperationIds.CatalogueChange, OperatorTier.T2, OperatorScopeKinds.Workspace,
             "Change the operation catalogue"),
+        new(OperatorOperationIds.DeployBlockerOverride, OperatorTier.T2, OperatorScopeKinds.Workspace,
+            "Override a deploy or restart preflight blocker"),
     ];
 
     /// <summary>Typed host operations of the Operations Server, by their definition id.</summary>
@@ -195,6 +198,7 @@ public static class OperatorOperationCatalog
         new("W", "/api/auth/iam/groups/**", OperatorOperationIds.AccessChange),
         new("W", "/api/auth/iam/service-accounts/**", OperatorOperationIds.AccessChange),
         new("W", "/api/auth/iam/operator-agents/**", OperatorOperationIds.AccessChange),
+        new("POST", "/api/operator/preflight/{}/override", OperatorOperationIds.DeployBlockerOverride),
     ];
 
     private static readonly Dictionary<string, OperatorOperation> ById =

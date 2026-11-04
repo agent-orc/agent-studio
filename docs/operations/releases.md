@@ -134,6 +134,14 @@ candidate:
 sudo /opt/agent-orchestrator/current/update.sh v0.1.1
 ```
 
+Before opening the window, `GET /api/operator/preflight/deploy` checks all
+projects for pending pushes, publishing flights, and running card commit steps.
+`POST /api/operator/deploy/plan` returns the Task Server's reported version,
+the intended release, the observed Agent Host versions, and an expiry. The
+plan's order is drain, Task Server, readiness, Engine, then Agent Hosts in the
+same window. The native updater below still owns the control-plane switch;
+host updates use their typed operation or the host runbook.
+
 The updater follows this order:
 
 1. set Task Server mode to `Draining`, which stops new coding, review, and

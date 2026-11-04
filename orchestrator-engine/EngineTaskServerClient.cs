@@ -12,6 +12,7 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
 
     private readonly HttpClient _http;
     private readonly HttpClient _decisions;
+    private readonly int _protocolVersion;
 
     public EngineTaskServerClient(EngineOptions options)
         : this(CreateHttpClient(options), string.IsNullOrWhiteSpace(options.DecisionPlaneUrl)
@@ -19,18 +20,20 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
     {
     }
 
-    internal EngineTaskServerClient(HttpClient http, HttpClient? decisions = null)
+    internal EngineTaskServerClient(HttpClient http, HttpClient? decisions = null,
+        int protocolVersion = TaskServerProtocol.Current)
     {
         _http = http;
         _decisions = decisions ?? http;
+        _protocolVersion = protocolVersion;
         if (!_http.DefaultRequestHeaders.Contains(TaskServerProtocol.HeaderName))
-            _http.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
+            _http.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName, protocolVersion.ToString());
         if (!_http.DefaultRequestHeaders.Contains(TaskServerProtocol.ClientVersionHeaderName))
             _http.DefaultRequestHeaders.Add(TaskServerProtocol.ClientVersionHeaderName, EngineVersion.ProductVersion);
         if (!ReferenceEquals(_decisions, _http))
         {
             _decisions.DefaultRequestHeaders.TryAddWithoutValidation(TaskServerProtocol.HeaderName,
-                TaskServerProtocol.Current.ToString());
+                protocolVersion.ToString());
             _decisions.DefaultRequestHeaders.TryAddWithoutValidation(TaskServerProtocol.ClientVersionHeaderName,
                 EngineVersion.ProductVersion);
         }
@@ -43,11 +46,12 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
             new ProtocolCompatibilityRequest(
                 TaskServerProtocol.EngineClientKind,
                 EngineVersion.ProductVersion,
-                TaskServerProtocol.Current),
+                _protocolVersion),
             ct,
             allowUpgradeRequired: true);
-        if (!response.Supported)
-            throw new EngineProtocolException(response.Reason ?? "Task Server protocol is not compatible.");
+        if (!response.Supported || response.Server.Current < _protocolVersion)
+            throw new EngineProtocolException(response.Reason ??
+                $"Task Server protocol {response.Server.Current} is older than Engine protocol {_protocolVersion}.");
     }
 
     public Task<OrchestrationClaimResponse> ClaimAsync(
