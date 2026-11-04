@@ -1435,13 +1435,15 @@ comparison before Quality Studio's verdict contract can decide a review.
   separate `POST /api/projects/{project}/checkout/sync` action. Local task
   worktrees cut and rebase from the published ref, without taking unapproved
   merges from the Studio lane. If an outside push makes the lane diverge,
-  synchronization drops only lane merges whose delivery is already on origin
+  synchronization drops only lane merges or net-change commits whose source delivery is already on origin
   by ancestry, tree, or patch equality, or that a newer published delivery of
   the same card superseded (AGT-3215, `IntegrationLaneDivergencePolicy`).
+  Net-change commits record the source delivery in an `Agent-Studio-Net-Change-Of`
+  trailer; older commits resolve their source from the abbreviated SHA in the subject.
   It backs the old tip up under `refs/agent-studio/integration-backup/` and
   restarts the lane at origin when nothing unpublished remains; otherwise it
-  refuses, names the unpublished merges, and raises the
-  `integration-lane-diverged` pipeline health alarm with the blocked cards. Before a legacy acceptance
+  refuses, names the unpublished deliveries and their cards, and raises the
+  `integration-lane-diverged` pipeline health alarm with cards still blocked at alarm time. Before a legacy acceptance
   sweep moves a Completed card back to Human Review, it fetches origin and
   checks the card's delivery there. It resolves that delivery from the review
   subject, card attribution, or local task branch, including local deliveries

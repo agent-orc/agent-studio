@@ -6710,8 +6710,11 @@ public partial class GitService
     private MechanicalRebaseAttempt TryMechanicalNetChange(
         string repoRoot, string sourceRef, string integrationTip, string mergeBase)
     {
+        var sourceSha = GetBranchTip(repoRoot, sourceRef);
+        if (!ReviewSubjectStore.IsValidResultSha(sourceSha))
+            return MechanicalRebaseAttempt.Failed("Net-change replay could not resolve the source delivery commit.");
         var (range, rangeError, rangeCode) = RunGitArgs(
-            repoRoot, "rev-list", "--reverse", $"{integrationTip}..{sourceRef}", RevisionsOnly);
+            repoRoot, "rev-list", "--reverse", $"{integrationTip}..{sourceSha}", RevisionsOnly);
         if (rangeCode != 0)
             return MechanicalRebaseAttempt.Failed($"Net-change replay could not enumerate delivery commits: {rangeError.Trim()}");
         var originals = range.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -6720,7 +6723,7 @@ public partial class GitService
 
         var (merged, mergeError, mergeCode) = RunGitArgs(repoRoot,
             "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z",
-            "--merge-base=" + mergeBase, integrationTip, sourceRef);
+            "--merge-base=" + mergeBase, integrationTip, sourceSha);
         if (mergeCode == 1)
         {
             var files = merged.Split('\0', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
@@ -6734,7 +6737,7 @@ public partial class GitService
 
         var tree = merged.Split('\0', 2)[0].Trim();
         var (metadata, metadataError, metadataCode) = RunGitArgs(repoRoot,
-            "show", "-s", "--format=%an%x00%ae%x00%aI", sourceRef);
+            "show", "-s", "--format=%an%x00%ae%x00%aI", sourceSha);
         var author = metadata.TrimEnd('\r', '\n').Split('\0');
         if (metadataCode != 0 || author.Length != 3)
             return MechanicalRebaseAttempt.Failed($"Net-change replay could not read delivery author: {metadataError.Trim()}");
@@ -6746,7 +6749,7 @@ public partial class GitService
         };
         var (candidate, commitError, commitCode) = RunGitArgs(repoRoot,
             ["commit-tree", tree, "-p", integrationTip, "-F", "-"],
-            $"Integrate net change from {AbbreviateSha(sourceRef)}", environment);
+            $"Integrate net change from {AbbreviateSha(sourceSha)}\n\nAgent-Studio-Net-Change-Of: {sourceSha}\n", environment);
         if (commitCode != 0)
             return MechanicalRebaseAttempt.Failed($"Net-change replay could not write a commit: {commitError.Trim()}");
         var sha = candidate.Trim();
