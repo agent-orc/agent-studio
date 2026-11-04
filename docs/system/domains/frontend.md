@@ -910,7 +910,11 @@ occur. It is not a claim about tunnel transfer time.
   `GET /api/auth/iam/standing-grants`, and issues, renews, and revokes through
   `POST /api/auth/iam/standing-grants`, `.../{id}/renew`, and
   `.../{id}/revoke` (security model SM-4), stepping up before an issue or
-  renewal. The rights model is described in
+  renewal. Its Approval requests panel reads
+  `GET /api/auth/iam/operator-approvals` and decides through
+  `.../{id}/approve` and `.../{id}/reject` (security model SM-5), stepping up
+  before each decision; a `?approval=<id>` query, the target of the push link,
+  puts that request in focus. The rights model is described in
   [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
