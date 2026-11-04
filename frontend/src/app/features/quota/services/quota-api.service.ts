@@ -59,6 +59,18 @@ export interface EffectiveModelSelection {
 }
 
 export interface SelectionRoute { cliType: string; model: string | null; thinkingLevel: string | null }
+export interface ActiveModelSwitch {
+  id: string;
+  at: string;
+  kind: string;
+  consumer: string;
+  project: string | null;
+  taskKey: string | null;
+  from: SelectionRoute;
+  to: SelectionRoute;
+  rule: string;
+  returnToPrimaryAt: string | null;
+}
 export interface ConsumerPolicyRoute { cli: string; model: string | null; thinking: string | null }
 export interface ConsumerModelPolicy {
   primary: ConsumerPolicyRoute | null;
@@ -220,6 +232,10 @@ export class QuotaApiService {
 
   getSelectionPolicy() {
     return this.http.get<ModelSelectionPolicy>(`${this.baseUrl}/model-selection/policy`);
+  }
+
+  getActiveModelSwitches() {
+    return this.http.get<ActiveModelSwitch[]>(`${this.baseUrl}/model-selection/active`);
   }
 
   setConsumerPolicy(consumer: string, setting: ConsumerModelPolicy) {

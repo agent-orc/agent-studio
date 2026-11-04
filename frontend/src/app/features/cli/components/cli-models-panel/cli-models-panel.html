@@ -1,4 +1,17 @@
 <div class="cli-models" data-testid="cli-models-panel">
+  <section class="cli-models__policy" data-testid="active-model-switches">
+    <div class="cli-models__policy-copy">
+      <span class="cli-models__policy-title">Active fallbacks ({{ activeSwitches().length }})</span>
+      @for (item of activeSwitches(); track item.id) {
+        <span class="cli-models__active-route" [attr.data-switch-id]="item.id">
+          {{ item.from.cliType }}/{{ item.from.model ?? 'default' }} →
+          {{ item.to.cliType }}/{{ item.to.model ?? 'default' }}
+          <span class="cli-models__source">{{ item.rule }}</span>
+          @if (item.returnToPrimaryAt) { · returns after {{ item.returnToPrimaryAt | date:'medium' }} }
+        </span>
+      }
+    </div>
+  </section>
   <app-consumer-model-policy />
   @if (policy(); as routingPolicy) {
     <section class="cli-models__policy" data-testid="model-routing-policy">

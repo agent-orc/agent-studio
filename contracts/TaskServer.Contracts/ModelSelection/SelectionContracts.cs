@@ -190,6 +190,13 @@ public sealed record SelectionFacts
     /// only for the cards that switch.
     /// </summary>
     public Func<ModelRoutingTier?>? CorrectnessFloor { get; init; }
+    /// <summary>The open switch for this consumer and card, if any.</summary>
+    public SelectionLedgerEntry? ActiveSwitch { get; init; }
+    public int ReturnBelowCapPoints { get; init; } = 10;
+    public int MinDwellMinutes { get; init; } = 30;
+    public double CostGuardFactor { get; init; } = 2.0;
+    /// <summary>Comparable input plus output price per million tokens. Null means unpriced.</summary>
+    public Func<string?, decimal?> PricePerMTok { get; init; } = _ => null;
 }
 
 /// <summary>Ledger kinds of a selection event.</summary>
@@ -198,6 +205,7 @@ public static class SelectionLedgerKinds
     public const string Switched = "switched";
     public const string Waiting = "waiting";
     public const string Refused = "refused";
+    public const string Returned = "returned";
 }
 
 /// <summary>
@@ -227,6 +235,9 @@ public sealed record SelectionLedgerEntry(
     DateTime? RetryAt,
     DateTime? ReturnToPrimaryAt)
 {
+    public string? ClosesId { get; init; }
+    public decimal? FromPricePerMTok { get; init; }
+    public decimal? ToPricePerMTok { get; init; }
     /// <summary>The ledger event for a result, or null for a plain primary launch.</summary>
     public static SelectionLedgerEntry? For(
         SelectionRequest request, SelectionResult result, string executionPath, string id, DateTime at)

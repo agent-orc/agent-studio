@@ -371,6 +371,7 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/types", "/api/cli/contracts", "/api/cli/model-migrations");
         Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/effective");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/active");
         Add("R", IamPermissions.WorkspaceRead, "/api/model-selection/policy");
         Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/events", "/api/model-selection/active");
         // These return configuration or cached data without reading sessions.

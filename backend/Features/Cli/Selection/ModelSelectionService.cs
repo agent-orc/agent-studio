@@ -2,6 +2,7 @@ using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tokens;
 
 namespace AgentStudio.Cli;
 
@@ -80,6 +81,7 @@ public sealed class ModelSelectionService : IModelSelectionService
     private readonly IModelSelectionLedger? _ledger;
     private readonly ModelSelectionPolicyStore? _policy;
     private readonly TimeProvider _timeProvider;
+    private readonly ITokenPricing? _pricing;
 
     public ModelSelectionService(
         QuotaService quota,
@@ -92,7 +94,8 @@ public sealed class ModelSelectionService : IModelSelectionService
         CliFallbackPreferenceService? preference = null,
         ModelRoutingPolicyRegistry? routing = null,
         IModelSelectionLedger? ledger = null,
-        ModelSelectionPolicyStore? policy = null)
+        ModelSelectionPolicyStore? policy = null,
+        ITokenPricing? pricing = null)
     {
         _quota = quota;
         _caps = caps;
@@ -105,6 +108,7 @@ public sealed class ModelSelectionService : IModelSelectionService
         _ledger = ledger;
         _policy = policy;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _pricing = pricing;
     }
 
     public bool IsOperatorSwitchActive(string? cliType)
@@ -119,7 +123,8 @@ public sealed class ModelSelectionService : IModelSelectionService
             : _projectSettings.Get(request.Project);
         var consumer = request.Consumer.StartsWith("one-shot:", StringComparison.Ordinal)
             ? "one-shot" : request.Consumer;
-        var consumerPolicy = _policy?.Get().Consumers.GetValueOrDefault(consumer);
+        var workspacePolicy = _policy?.Get();
+        var consumerPolicy = workspacePolicy?.Consumers.GetValueOrDefault(consumer);
         var projectOverride = project?.ModelSelectionOverrides?.GetValueOrDefault(consumer);
         projectOverride = projectOverride?.ByPipelineType?.GetValueOrDefault(
             request.PipelineType ?? PipelineTypes.Task) ?? projectOverride;
@@ -140,6 +145,7 @@ public sealed class ModelSelectionService : IModelSelectionService
             configuredFallback = [explicitFallback];
         var routing = _fallback.RoutingFacts();
         var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var active = _ledger?.GetActive(request);
         var facts = new SelectionFacts
         {
             NowUtc = now,
@@ -156,14 +162,36 @@ public sealed class ModelSelectionService : IModelSelectionService
             Tiers = _routing?.Policy.Tiers ?? [],
             NormalizeModelId = ModelMetadataRegistry.NormalizeId,
             CorrectnessFloor = call.CorrectnessFloor,
+            ActiveSwitch = active,
+            ReturnBelowCapPoints = workspacePolicy?.Hysteresis.ReturnBelowCapPoints ?? 10,
+            MinDwellMinutes = workspacePolicy?.Hysteresis.MinDwellMinutes ?? 30,
+            CostGuardFactor = consumerPolicy?.CostGuardFactor ?? workspacePolicy?.CostGuardFactor ?? 2.0,
+            PricePerMTok = model => string.IsNullOrWhiteSpace(model) ? null
+                : _pricing?.Estimate(model, 0, 0, 0, 0).PriceBasis is { } price
+                    ? price.InputPerMillion + price.OutputPerMillion : null,
         };
 
         var result = ModelSelectionPlanner.Plan(request, facts);
-        var entry = SelectionLedgerEntry.For(
+        var entry = result.Outcome == SelectionOutcome.Primary && active is not null
+            ? new SelectionLedgerEntry(
+                ModelSelectionLedger.NewId(), now,
+                SelectionLedgerKinds.Returned, request.Consumer, request.Host?.HostId,
+                request.Project, request.PipelineType, request.StepId, request.TaskKey,
+                request.AttemptId, request.Round, call.ExecutionPath, active.To, result.Route,
+                active.Rule, "Returned to the primary route after the quota return rule cleared.",
+                result.Quota, result.Equivalence, null, null) { ClosesId = active.Id }
+            : result.Outcome == SelectionOutcome.Fallback && active?.To == result.Route
+                ? null
+                : SelectionLedgerEntry.For(
             request, result, call.ExecutionPath,
-            Guid.CreateVersion7(new DateTimeOffset(now, TimeSpan.Zero)).ToString("N"), now);
+            ModelSelectionLedger.NewId(), now);
         if (entry is not null && _ledger is not null)
         {
+            entry = entry with
+            {
+                FromPricePerMTok = facts.PricePerMTok(entry.From.Model),
+                ToPricePerMTok = facts.PricePerMTok(entry.To.Model),
+            };
             _ledger.Record(entry);
             result = result with { LedgerId = entry.Id };
         }

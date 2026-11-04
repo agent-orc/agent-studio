@@ -94,6 +94,7 @@
 /api/first-run/projects/{projectId}/repository	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
 /api/model-selection/active	free	-	-	-
 /api/model-selection/effective	free	-	-	-
+/api/model-selection/active	free	-	-	-
 /api/model-selection/policy	free	-	-	-
 /api/model-selection/events	free	-	-	-
 /api/gate-artifacts/{runId}	free	-	-	-

@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, forwardRef, inject, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../models/cli.model';
 import { CliCatalogStore } from '../../services/cli-catalog.store';
@@ -7,7 +8,7 @@ import { ModelMigrationBadgeComponent } from '../../../../components/model-migra
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService, type CliFallbackState, type CliModelFallbackRoute, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
-import type { EffectiveModelSelection } from '../../../quota/services/quota-api.service';
+import type { ActiveModelSwitch, EffectiveModelSelection } from '../../../quota/services/quota-api.service';
 import { ConsumerModelPolicyComponent } from '../consumer-model-policy/consumer-model-policy.component';
 import { TaskService } from '../../../../services/task.service';
 import {
@@ -38,7 +39,7 @@ interface CliModelGroup {
   standalone: true,
   // The badge reads the migration store through the CLI barrel. Defer it so
   // file-order-dependent barrel evaluation cannot leave Angular an undefined dependency.
-  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent],
+  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent, DatePipe],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -54,6 +55,7 @@ export class CliModelsPanelComponent implements OnInit {
   readonly fallbackRoutes = signal<CliModelFallbackRoute[]>([]);
   readonly fallbackStates = signal<Record<string, CliFallbackState>>({});
   readonly effectiveRoutes = signal<EffectiveModelSelection[]>([]);
+  readonly activeSwitches = signal<ActiveModelSwitch[]>([]);
   readonly catalogueVersion = signal<string | null>(null);
   readonly callersCannotReroute = signal<{ caller: string; cliType: string; reason: string }[]>([]);
   readonly preferenceSaving = signal<string | null>(null);
@@ -112,6 +114,10 @@ export class CliModelsPanelComponent implements OnInit {
       next: (policy) => this.policy.set(policy),
     });
     this.refreshEffectiveRoutes();
+    this.routesApi.getActiveModelSwitches().subscribe({
+      next: response => this.activeSwitches.set(response.filter(item =>
+        (item.kind === 'switched' || item.kind === 'operator-switch') && item.from && item.to)),
+    });
     this.loadWorkspaceAutoApply();
   }
 
