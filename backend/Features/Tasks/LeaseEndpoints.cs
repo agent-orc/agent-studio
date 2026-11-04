@@ -938,7 +938,8 @@ public static class LeaseEndpoints
                             var promptText = File.Exists(promptPath)
                                 ? File.ReadAllText(promptPath) : string.Empty;
                             return modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
-                        }));
+                        },
+                        DecisionKey: req.IdempotencyKey));
                     var quotaPlan = selection.Admission;
                     if (quotaPlan.IsDeferred)
                     {

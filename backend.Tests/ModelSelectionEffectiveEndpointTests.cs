@@ -86,6 +86,47 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
     }
 
     [Fact]
+    public void LedgerWriteFailureDoesNotChangeQuotaFallbackDecision()
+    {
+        Directory.CreateDirectory(_root);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build();
+        var now = new DateTime(2030, 11, 4, 12, 0, 0, DateTimeKind.Utc);
+        var clock = new MutableClock(now);
+        var cache = new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance);
+        cache.Write([
+            new QuotaSnapshot { CliType = CliTypes.Claude, FetchedAt = now,
+                Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 98, ResetAt = now.AddDays(3) }] },
+            new QuotaSnapshot { CliType = CliTypes.Codex, FetchedAt = now,
+                Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 10, ResetAt = now.AddDays(3) }] },
+        ]);
+        var quota = new QuotaService(NullLogger<QuotaService>.Instance, [], config, cache);
+        var caps = new CliQuotaCapsService(NullLogger<CliQuotaCapsService>.Instance, config);
+        var fallback = new CliQuotaFallbackService(config, NullLogger<CliQuotaFallbackService>.Instance);
+        fallback.Set(new CliModelRouteProfile
+        {
+            CliType = CliTypes.Claude, PrimaryModel = ModelIds.ClaudeOpus5,
+            FallbackCliType = CliTypes.Codex, FallbackModel = ModelIds.Gpt56Sol,
+            FallbackThinkingLevel = "high",
+        });
+        var wait = new CliQuotaWaitPolicyService(NullLogger<CliQuotaWaitPolicyService>.Instance, config);
+        var projects = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        var service = new ModelSelectionService(quota, caps, fallback, wait, projects,
+            timeProvider: clock, ledger: new FailingSelectionLedger());
+
+        var decision = service.Select(new ModelSelectionCall(new SelectionRequest
+        {
+            Consumer = SelectionConsumers.Coding,
+            Pins = new SelectionPins(CliTypes.Claude, ModelIds.ClaudeOpus5, "high"),
+        }, "remote-coding-claim"));
+
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, decision.Admission.Outcome);
+        Assert.Equal(CliTypes.Codex, decision.Admission.CliType);
+        Assert.Equal(ModelIds.Gpt56Sol, decision.Admission.Model);
+        Assert.Null(decision.Result.LedgerId);
+    }
+
+    [Fact]
     public async Task CostGuardWaitUsesTheSameDurableEventsRoute()
     {
         Directory.CreateDirectory(_root);
@@ -278,5 +319,10 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
         private DateTime _now = now;
         public override DateTimeOffset GetUtcNow() => new(_now);
         public void Advance(TimeSpan duration) => _now = _now.Add(duration);
+    }
+
+    private sealed class FailingSelectionLedger : IModelSelectionLedger
+    {
+        public void Record(SelectionLedgerEntry entry) => throw new IOException("ledger unavailable");
     }
 }
