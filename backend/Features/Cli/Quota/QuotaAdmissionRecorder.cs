@@ -64,7 +64,15 @@ public sealed class QuotaAdmissionRecorder
                 logLevel,
                 "cli_quota_admission_decision source={Source} jobId={JobId} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason}",
                 source, info.Id, info.ProjectName, plan.Outcome, plan.CliType, plan.Model ?? "<default>", plan.IsFallback, plan.Reason);
-        if (!changed) return;
+        if (!changed)
+        {
+            // The task timeline stays quiet, while the ledger records how many
+            // times the same card was held by this decision.
+            if (plan.IsDeferred)
+                RecordSelection(plan, source, info.ProjectName, info.TaskKey, info.CliType, info.Model,
+                    host, attemptId, stepId);
+            return;
+        }
         var selectionId = RecordSelection(plan, source, info.ProjectName, info.TaskKey, info.CliType, info.Model,
             host, attemptId, stepId);
         if (selectionId is not null) _selectionIds[$"{info.Id}|{source}"] = selectionId;

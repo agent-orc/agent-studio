@@ -1126,11 +1126,13 @@ public class ProjectRunner
             warning?.Reason, plan.Reason);
 
         var key = $"{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.ThinkingLevel}|{plan.Reason}|{plan.BetterCandidates?.EvidenceSnapshot}";
+        bool repeated;
         lock (_lastAdmissionDecisionByJob)
         {
-            if (_lastAdmissionDecisionByJob.TryGetValue(info.Id, out var prev) && prev == key) return;
-            _lastAdmissionDecisionByJob[info.Id] = key;
+            repeated = _lastAdmissionDecisionByJob.TryGetValue(info.Id, out var prev) && prev == key;
+            if (!repeated) _lastAdmissionDecisionByJob[info.Id] = key;
         }
+        if (repeated && !plan.IsDeferred) return;
         string? selectionEventId = null;
         if (_selectionLedger is not null && (plan.IsFallback || plan.IsDeferred || warning is not null))
         {
@@ -1151,6 +1153,7 @@ public class ProjectRunner
         else if (_selectionLedger is not null && plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary)
             selectionEventId = _selectionLedger.ReturnToPrimary("local-coding-launch", ProjectName, info.TaskKey,
                 new ModelSelectionRoute(plan.CliType, plan.Model, plan.ThinkingLevel), plan.Reason)?.Id;
+        if (repeated) return;
 
         // Persist normal and notable decisions alike. This gives the token
         // report an explicit interval boundary when candidates disappear.
