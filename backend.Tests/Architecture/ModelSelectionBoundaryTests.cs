@@ -40,14 +40,15 @@ public sealed class ModelSelectionBoundaryTests
     {
         // Local coding run: PlanQuotaAdmission asks IModelSelectionService (local-coding-launch).
         ["AgentStudio.Runner.ProjectRunner.RunCliAsync"] = "AgentStudio.Runner.ProjectRunner.PlanQuotaAdmission",
+        ["AgentStudio.Runner.ProjectRunner.RunConflictResolutionStepAsync"] =
+            "AgentStudio.Runner.ProjectRunner.RunConflictResolutionStepAsync",
     };
 
     /// <summary>Starts that still decide outside the service. MS-6 moves each behind it and removes the entry.</summary>
-    private static readonly IReadOnlyDictionary<string, string> PendingStarts = new Dictionary<string, string>
-    {
-        ["AgentStudio.Runner.ProjectRunner.RunConflictResolutionStepAsync"] =
-            "MS-6: merge resolver reads the step config and the legacy admission adapter, then starts directly",
-    };
+    private static readonly IReadOnlyDictionary<string, string> PendingStarts = new Dictionary<string, string>();
+
+    [Fact]
+    public void Pending_start_allow_list_is_empty() => Assert.Empty(PendingStarts);
 
     /// <summary>Types that call <see cref="CliRouter.Get"/> without starting a model run.</summary>
     private static readonly IReadOnlyDictionary<string, string> RouterReaders = new Dictionary<string, string>
@@ -108,7 +109,7 @@ public sealed class ModelSelectionBoundaryTests
         var sites = Scan(typeof(ModelSelectionService).Assembly);
         foreach (var (owner, via) in SelectionRoutedStarts)
         {
-            Assert.Contains(via, sites.Calls[owner]);
+            if (via != owner) Assert.Contains(via, sites.Calls[owner]);
             Assert.Contains("AgentStudio.Cli.IModelSelectionService.Select", sites.Calls[via]);
         }
         // The one-shot registry dispatch is the only caller of the concrete one-shots it wraps.

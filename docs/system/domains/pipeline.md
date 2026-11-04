@@ -29,6 +29,28 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+### Gate run ledger (AGT-3500)
+
+The instance-local gate run ledger lives under `gate-run-ledger` beside the
+batch gate store, outside the workspace repository. Each execution writes one
+create-only JSON record, retained for 90 days. `GET
+/api/projects/{projectName}/batch-gate/ledger?day=YYYY-MM-DD&type=batch-gate&page=1&pageSize=50`
+returns newest-first rows and a total count. The `type` filter accepts the
+stored run types: `batch-gate`, `batch-base`, `batch-pre-check`,
+`per-task-fallback`, `per-task-gate`, and `clean-diagnostic-rerun`.
+
+Rows carry request, slot, lease, command start and finish times, process and
+shard evidence (including class names and measured class durations), rerun cost,
+host load, and trigger. A base run names the red
+candidate or fallback that requested it. A cache hit executes no host gate and
+does not add a row. The batch gate state includes a UTC `dailySummary` with
+minutes by type, batch and fallback published cards per hour (the UTC day's
+24-hour rate), and
+median and nearest-rank p90 batch gate minutes. Its reconciliation percentage
+compares ledger durations with existing execution facts for the same day; a
+missing host total is Unknown. Historical days before the ledger was enabled
+cannot be reconstructed from card receipts.
+
 Each gate-economics row also carries the grouping figures of its window
 (AGT-3399): `batchesClosed` (distinct batches whose gate ran), `meanBatchSize`
 (largest membership per batch, averaged), and `soloGatedMerges` (merges
@@ -46,6 +68,18 @@ selection when develop moved over a path changed by the reviewed delivery,
 or when review and merge evidence cannot prove a disjoint merge. Merge and
 publication locks are keyed by project and integration branch; the aggregate
 merge-busy flag still drains stable deployment.
+The threshold batch planner selects a per-task gate when one eligible card
+reaches its deadline without a batch partner, or an operator closes below the
+minimum batch size. The plan state names that trigger. This path does not use
+title urgency, risk, or changed-path overlap. Its fallback gate does not own
+the project batch reservation. A later direct integration must hold the
+reservation through its merge gate and possible rollback. It acquires the
+reservation after the per-project merge lock, so a queued per-task integration
+does not block a formed batch. Its machine queue
+wait is capped at two minutes and its gate run at 25 minutes. The batch
+gate state reports the combined 27-minute reservation gate cap.
+When the gate host has more than one slot, per-task fallback gates leave the
+first slot available for a batch.
 The post-merge worker reads its window size and age from the project's
 look-ahead settings through the runner state endpoint.
 
@@ -282,7 +316,10 @@ owning process is gone. Recovery is scoped to
 the installation id and recorded host/root; the primary and every configured
 SSH shard host are swept. A startup sweep failure is logged and does not stop
 the periodic sweep. A different Studio installation sharing a gate host
-is left alone. The record is removed after the remote run
+is left alone. A run with `response.json` is already finished: recovery
+removes its remote directory once without sending another cancel marker and
+retires its record even if that cleanup fails. An unfinished run's record is
+removed after the remote run
 directory is removed under the worker lock and confirmed gone. A run that never
 started is removed by the same recovery path.
 

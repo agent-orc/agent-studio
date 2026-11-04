@@ -737,13 +737,9 @@ public class OrchestratorChatService
                                     _localChatUsage?.Start(userTurn.Id, projectName,
                                         fallbackQueuedAt ?? queuedAt, startedAt);
                                     localStarted = true;
-                                    result = string.Equals(effectiveCli, CliTypes.Codex, StringComparison.OrdinalIgnoreCase)
-                                        ? await _runner.DecideCodexAsync(
-                                            fullPrompt, effectiveModel, effectiveThinking,
-                                            workingDirectory, ct, projectName, watchPath)
-                                        : await _runner.DecideWithCliAsync(
-                                            effectiveCli, fullPrompt, effectiveModel,
-                                            effectiveThinking, workingDirectory, ct);
+                                    result = await RunLocalPlannedRouteAsync(
+                                        _runner, effectiveCli, effectiveModel, effectiveThinking,
+                                        fullPrompt, workingDirectory, projectName, watchPath, ct);
                                 }
                                 finally
                                 {
@@ -887,6 +883,15 @@ public class OrchestratorChatService
                 SessionGate.Release();
         }
     }
+
+    /// <summary>Preserve the planner's CLI when an unreachable remote chat runs locally.</summary>
+    internal static Task<OrchestratorDecisionResult> RunLocalPlannedRouteAsync(
+        OrchestratorRunner runner, string cliType, string model, string? thinkingLevel,
+        string prompt, string workingDirectory, string projectName, string watchPath,
+        CancellationToken ct)
+        => string.Equals(cliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase)
+            ? runner.DecideCodexAsync(prompt, model, thinkingLevel, workingDirectory, ct, projectName, watchPath)
+            : runner.DecideWithCliAsync(cliType, prompt, model, thinkingLevel, workingDirectory, ct);
 
     /// <summary>
     /// Writes the turn's usage into the project token ledger (AGT-2986). The

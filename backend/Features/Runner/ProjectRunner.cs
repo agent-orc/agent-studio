@@ -900,7 +900,10 @@ public class ProjectRunner
                    TaskType = info.TaskType,
                },
                "local-coding-launch",
-               _activeRuns.Count)).Admission
+               _activeRuns.Count,
+               CorrectnessFloor: _modelQualification is null ? null : () =>
+                   _modelQualification.CorrectnessFloor(info,
+                       ReadPromptText(Path.Combine(info.FolderPath, "prompt.md"))))).Admission
            ?? QuotaAdmissionPlanner.Plan(
                info.CliType, info.Model, info.ThinkingLevel,
                _quotaFallback, _quotaCaps,
@@ -2195,8 +2198,18 @@ public class ProjectRunner
             resolverCliType,
             resolverModel,
             AgentStudio.Pipeline.PipelineStepModelDefaults.SupportThinkingLevel);
-        var resolverAdmission = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
-            resolverCliType, resolverModel, resolverThinkingLevel, ProjectName, 0, "merge-resolver"));
+        var resolverAdmission = _modelSelection?.Select(new ModelSelectionCall(
+            new AgentStudio.TaskServer.Contracts.SelectionRequest
+            {
+                Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.MergeResolver,
+                Project = ProjectName,
+                TaskKey = info.Key ?? info.TaskKey ?? info.Id,
+                StepId = step.Id,
+                Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
+                    resolverCliType, resolverModel, resolverThinkingLevel),
+            }, "merge-resolver")).Admission
+            ?? _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+                resolverCliType, resolverModel, resolverThinkingLevel, ProjectName, 0, "merge-resolver"));
         if (resolverAdmission is { ShouldLaunch: false })
         {
             var waiting = $"Conflict resolution is waiting: {resolverAdmission.Reason}";
@@ -2660,7 +2673,7 @@ public class ProjectRunner
             var modelAdmission = await EvaluateModelPinAdmissionAsync(
                 cli,
                 route?.Model ?? info.Model,
-                info.ModelExplicit && route?.IsFallback != true,
+                info.ModelExplicit || route?.IsFallback == true,
                 ct);
             if (!modelAdmission.IsAllowed)
             {

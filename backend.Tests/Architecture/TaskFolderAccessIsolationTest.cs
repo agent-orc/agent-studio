@@ -133,6 +133,8 @@ public class TaskFolderAccessIsolationTest
                 "Deletes only its GUID-named agent-studio-git-proof clone under OS temp, never task storage.",
             ["backend/Features/Registry/LocalFirstRunGitSetup.cs"] =
                 "Deletes only a failed fresh clone under the AgentStudio first-run-git checkouts root, never task storage.",
+            ["backend/Features/Pipeline/BatchGate/GateRunLedger.cs"] =
+                "Prunes expired instance-local gate ledger day folders outside the task repository.",
 
             // The readiness commit-tree probe creates a GUID-named repository
             // under OS temp and removes it after each cached probe. It cannot

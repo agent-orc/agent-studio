@@ -122,6 +122,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof operato
   await page.route('**/api/auth/runner-enrollments', route => json(route, []));
   await page.route('**/api/auth/runners', route => json(route, []));
   await stubGrantRoutes(page);
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-approvals'), route => json(route, []));
   return stubOperatorRoutes(page, operatorState());
 }
 
@@ -473,4 +474,115 @@ test('owner issues, renews, and revokes a standing grant with a fresh second fac
   await expect(issued).toHaveAttribute('data-state', 'revoked');
   await expect(section.getByTestId('access-grant-revoke-sgr_new')).toHaveCount(0);
   expect(grants.stepUps).toHaveLength(2);
+});
+
+/** SM-5 (AGT-3376): the Owner approves or rejects a T2 operator request after a step-up; the actor comes from the session. */
+function approvalState() {
+  const approval = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id, principalId: 'opa_release', principalName: 'release-operator', sessionId: 'ses_morning',
+    actor: 'operator-agent:opa_release/session:ses_morning', delegatedBy: 'human:usr_owner',
+    operation: 'data.delete', operationTitle: 'Delete data', tier: 'T2', method: 'DELETE', path: '/api/tasks/AGT-12',
+    query: '?project=PROJ-001', parameters: null as string | null, parameterDigest: `sha256:${'4c1d9e07'.repeat(8)}`,
+    target: 'project:PROJ-001/task:AGT-12', instructionSource: 'owner-chat', reason: 'Remove the duplicate card' as string | null,
+    requestedAt: '2026-11-04T09:00:00Z', expiresAt: '2026-11-04T09:15:00Z', state: 'pending',
+    decidedBy: null as string | null, decidedAt: null as string | null, decisionNote: null as string | null,
+    approvalExpiresAt: null as string | null, usedAt: null as string | null, resultStatus: null as number | null,
+    cancelledAt: null as string | null, cancelReason: null as string | null, ...overrides,
+  });
+  return {
+    approvals: [
+      approval('apr_wait'),
+      approval('apr_web', {
+        operation: 'secrets.change', operationTitle: 'Change secrets', method: 'POST', path: '/api/projects/PROJ-001/secrets', query: '',
+        parameters: '{\n  "name": "DEPLOY_VALUE",\n  "value": "[masked]",\n  "environment": "stage"\n}',
+        parameterDigest: `sha256:${'9b2e61af'.repeat(8)}`, instructionSource: 'web-page', reason: null,
+        requestedAt: '2026-11-04T09:04:00Z', expiresAt: '2026-11-04T09:19:00Z', target: 'project:PROJ-001',
+      }),
+      approval('apr_done', {
+        operation: 'gate.bypass', operationTitle: 'Bypass a gate', method: 'POST', path: '/api/tasks/AGT-9/external-completion', query: '',
+        requestedAt: '2026-11-04T08:20:00Z', expiresAt: '2026-11-04T08:35:00Z', state: 'used', decidedBy: 'usr_owner',
+        decidedAt: '2026-11-04T08:22:00Z', approvalExpiresAt: '2026-11-04T08:37:00Z', usedAt: '2026-11-04T08:23:00Z', resultStatus: 200,
+        instructionSource: 'card', target: 'project:PROJ-001/task:AGT-9',
+      }),
+    ],
+    decisions: [] as { id: string; decision: string; body: unknown }[],
+    stepUps: [] as unknown[],
+  };
+}
+
+async function stubApprovalRoutes(page: Page) {
+  const state = approvalState();
+  await page.route(url => url.pathname === '/api/auth/step-up', route => {
+    state.stepUps.push(route.request().postDataJSON());
+    return json(route, {});
+  });
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-approvals'), route => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname.split('/').slice(5);
+    if (request.method() === 'GET') return json(route, state.approvals);
+    const target = state.approvals.find(candidate => candidate.id === path[0])!;
+    const approve = path[1] === 'approve';
+    state.decisions.push({ id: target.id, decision: path[1], body: request.postDataJSON() });
+    // The stub, like the server, records the session's Owner; nothing in the request names the actor.
+    Object.assign(target, {
+      state: approve ? 'approved' : 'rejected', decidedBy: 'usr_owner', decidedAt: '2026-11-04T09:06:00Z',
+      decisionNote: (request.postDataJSON() as { note?: string }).note ?? null, approvalExpiresAt: approve ? '2026-11-04T09:21:00Z' : null,
+    });
+    return json(route, target);
+  });
+  return state;
+}
+
+test('owner reviews a T2 request with its digest and source, and approves or rejects it after a step-up', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1600 });
+  await stubNetworkedOwner(page);
+  const approvals = await stubApprovalRoutes(page);
+  /** Built at runtime: a one-time code is never a source literal. */
+  const code = String(100_000 + Math.floor(Math.random() * 899_999));
+
+  // The push notification's link opens Settings > Access with the request in focus.
+  await page.goto('/#/workspace/settings/access?approval=apr_web', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  const access = page.getByTestId('access-area');
+  await expect(access.getByRole('heading', { name: 'Approval requests' })).toBeVisible({ timeout: 30_000 });
+  const section = access.getByTestId('access-operator-approvals');
+
+  const waiting = section.getByTestId('access-approval-apr_wait');
+  await expect(waiting).toContainText('T2 high risk');
+  await expect(waiting).toContainText('Delete data');
+  await expect(section.getByTestId('access-approval-request-apr_wait')).toHaveText('DELETE /api/tasks/AGT-12?project=PROJ-001');
+  await expect(section.getByTestId('access-approval-digest-apr_wait')).toHaveText(`sha256:${'4c1d9e07'.repeat(8)}`);
+  await expect(waiting).toContainText('project:PROJ-001/task:AGT-12');
+  await expect(waiting).toContainText('operator-agent:opa_release/session:ses_morning');
+  await expect(section.getByTestId('access-approval-source-apr_wait')).toHaveText('Owner chat');
+  await expect(section.getByTestId('access-approval-reason-apr_wait')).toHaveText('Remove the duplicate card');
+
+  const web = section.getByTestId('access-approval-apr_web');
+  await expect(web).toHaveAttribute('data-focused', 'true');
+  await expect(section.getByTestId('access-approval-source-apr_web')).toHaveText('Web page');
+  await expect(section.getByTestId('access-approval-source-apr_web')).toHaveAttribute('data-tone', 'untrusted');
+  await expect(web).toContainText('can propose an action, never authorize it');
+  await expect(section.getByTestId('access-approval-parameters-apr_web')).toContainText('"value": "[masked]"');
+  await expect(section.getByTestId('access-approval-reason-apr_web')).toHaveText('Not stated');
+  await expect(section.getByTestId('access-approval-apr_done')).toContainText('Ran, answered 200');
+  await shoot(page, 'section[aria-labelledby="access-approvals-title"]', 'operator-approvals');
+
+  await section.getByTestId('access-approval-note-apr_wait').fill('Duplicate confirmed');
+  await section.getByTestId('access-approval-code').fill(code);
+  await section.getByTestId('access-approval-approve-apr_wait').click();
+  await expect(section.getByTestId('access-approval-apr_wait')).toHaveAttribute('data-state', 'approved');
+  await expect(section.getByTestId('access-approval-apr_wait')).toContainText('Waiting for the agent to run it');
+  expect(approvals.stepUps).toEqual([{ code }]);
+  expect(approvals.decisions.map(item => [item.id, item.decision, item.body])).toEqual([['apr_wait', 'approve', { note: 'Duplicate confirmed' }]]);
+  // The decision carries only the note; the server takes the deciding actor from the session
+  // and ignores the browser's client id header (OperatorApprovalFlowTests).
+  expect(Object.keys(approvals.decisions[0].body as object)).toEqual(['note']);
+  await expect(section.getByTestId('access-approval-code')).toHaveValue('');
+
+  await section.getByTestId('access-approval-code').fill(code);
+  await section.getByTestId('access-approval-reject-apr_web').click();
+  await expect(section.getByTestId('access-approval-apr_web')).toHaveAttribute('data-state', 'rejected');
+  await expect(section.getByTestId('access-approvals-empty')).toBeVisible();
+  await expect(section.getByTestId('access-approval-linked')).toContainText('rejected: Change secrets');
+  expect(approvals.stepUps).toHaveLength(2);
+  await shoot(page, 'section[aria-labelledby="access-approvals-title"]', 'operator-approvals-decided');
 });

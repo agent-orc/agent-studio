@@ -10,9 +10,11 @@ public static class BatchGateStateSnapshotReader
         PendingIntegrationPushWait? pushWait = null,
         GateSlotUsage? gateSlots = null,
         IReadOnlyList<PendingIntegrationPushWait>? pushWaits = null,
-        DateTimeOffset? now = null)
+        DateTimeOffset? now = null,
+        GateRunLedger? ledger = null)
     {
         var at = now ?? DateTimeOffset.UtcNow;
+        var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
         var pending = store.ListPending().Where(item =>
                 string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.Subject.EnqueueSequence).ToArray();
@@ -162,9 +164,11 @@ public static class BatchGateStateSnapshotReader
             pushWaits = pushWaits ?? (pushWait is null
                 ? Array.Empty<PendingIntegrationPushWait>() : [pushWait]),
             gateSlots,
+            integrationGateLeaseCapMinutes = BatchIntegrationReservationService.IntegrationGateLeaseCap.TotalMinutes,
             preChecksRun = preChecks.Length,
             preChecksRed = preChecks.Count(check => check.Outcome == "red"),
             preCheckMinutesSaved = preChecks.Sum(check => check.MinutesSaved),
+            dailySummary,
         };
     }
 

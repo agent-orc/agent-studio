@@ -17,6 +17,26 @@ namespace AgentStudio.Tests;
 public sealed partial class BatchGatePilotServiceTests
 {
     [Fact]
+    public async Task Close_now_below_minimum_keeps_the_policy_reason_in_the_plan()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4, scope: "code");
+        var member = SeedMember(factory, "CODE-CLOSE-REASON", "src/close-reason.cs");
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.RequestCloseNow(ProjectName);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var plan = factory.Services.GetRequiredService<BatchGateStore>()
+            .LatestPlanDecision(ProjectName)!;
+        Assert.Equal("per-task", plan.Decision);
+        Assert.Equal("close requested below minimum batch size", plan.Reason);
+        Assert.Equal([member.Key], plan.ProposedMembers);
+    }
+
+    [Fact]
     public async Task Restart_with_a_formed_batch_keeps_its_members_out_of_per_task_gates()
     {
         var seededAt = _clock;

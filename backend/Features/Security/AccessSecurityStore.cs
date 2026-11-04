@@ -563,13 +563,14 @@ public sealed partial class AccessSecurityStore
         state.Sessions[state.Sessions.IndexOf(session)] = session with { StepUpVerifiedAt = Now };
     }
 
-    private void ConsumeStepUpLocked(SecurityState state, HumanPrincipal principal)
+    private void ConsumeStepUpLocked(SecurityState state, HumanPrincipal principal,
+        string message = "Verify a second factor before managing sessions.")
     {
         var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id && x.UserId == principal.User.Id);
         if (session?.StepUpVerifiedAt is not { } verifiedAt || session.SecondFactorEnrollmentOnly
             || session.ExpiresAt <= Now || session.AbsoluteExpiresAt <= Now
             || verifiedAt > Now || Now - verifiedAt > TimeSpan.FromMinutes(5))
-            throw new SecurityOperationException(403, "step-up-required", "Verify a second factor before managing sessions.");
+            throw new SecurityOperationException(403, "step-up-required", message);
         state.Sessions[state.Sessions.IndexOf(session)] = session with { StepUpVerifiedAt = null };
     }
 

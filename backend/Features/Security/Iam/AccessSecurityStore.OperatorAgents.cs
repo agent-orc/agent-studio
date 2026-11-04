@@ -120,12 +120,15 @@ public sealed partial class AccessSecurityStore
                 Sessions = agent.Sessions!.Select(session => session.Id == sessionId && session.RevokedAt is null
                     ? session with { RevokedAt = now, RevokedBy = ownerId } : session).ToList(),
             };
+            var cancelled = CancelOpenApprovalsLocked(next, approval => approval.PrincipalId == agentId && approval.SessionId == sessionId,
+                now, "operator session revoked");
             SaveLocked(next);
             AppendIamAudit(ownerId, "operator-session.revoke", "operator-agent", agentId, new { sessionId });
+            AuditCancelledApprovals(ownerId, cancelled);
         }
     }
 
-    /// <summary>Disables the agent and revokes every session and standing grant.</summary>
+    /// <summary>Disables the agent, revokes every session and standing grant, and cancels its open approvals.</summary>
     public void DisableOperatorAgent(string agentId, string ownerId)
     {
         lock (_gate)
@@ -137,11 +140,13 @@ public sealed partial class AccessSecurityStore
             var now = Now;
             next.ServiceAccounts[next.ServiceAccounts.IndexOf(agent)] = DisabledLocked(agent, now, ownerId);
             var revoked = RevokeAgentGrantsLocked(next, agentId, now, ownerId, "operator agent disabled");
+            var cancelled = CancelOpenApprovalsLocked(next, approval => approval.PrincipalId == agentId, now, "operator agent disabled");
             SaveLocked(next);
             AppendIamAudit(ownerId, "operator-agent.disable", "operator-agent", agentId, null);
             foreach (var grant in revoked)
                 AppendIamAudit(ownerId, "standing-grant.revoke", "standing-grant", grant.Id,
                     new { grant.PrincipalId, grant.RevokeReason });
+            AuditCancelledApprovals(ownerId, cancelled);
         }
     }
 

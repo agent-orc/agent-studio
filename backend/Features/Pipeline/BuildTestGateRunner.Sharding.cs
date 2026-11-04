@@ -312,6 +312,10 @@ public sealed partial class BuildTestGateRunner
                 report?.Counts ?? GateTestCounts.None, failedTests)
             {
                 FailureKind = failureKind,
+                StartedAtUtc = process.StartedAtUtc,
+                CompletedAtUtc = process.CompletedAtUtc,
+                ClassNames = shard.Classes,
+                ClassDurationsMs = classDurations,
                 Rerun = rerun,
                 Detail = detail,
             };

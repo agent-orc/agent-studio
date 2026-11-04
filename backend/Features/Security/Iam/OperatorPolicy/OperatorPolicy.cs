@@ -18,13 +18,22 @@ public sealed record OperatorGrantTarget(string? Project = null, string? Environ
     public static readonly OperatorGrantTarget None = new();
 }
 
-/// <summary>The policy step's answer; an admitted T1 request names the grant that covered it.</summary>
+/// <summary>
+/// The policy step's answer; an admitted T1 request names the grant that
+/// covered it, and a T2 answer the approval it concerned (SM-5).
+/// </summary>
 public sealed record OperatorPolicyDecision(
     bool Admitted, string? Reason, OperatorOperation? Operation, string? GrantId, string Message)
 {
+    public string? ApprovalId { get; init; }
+
     public static OperatorPolicyDecision Admit(OperatorOperation operation, string? grantId = null)
         => new(true, null, operation, grantId, grantId is null ? $"{operation.Tier} {operation.Id} admitted."
             : $"{operation.Tier} {operation.Id} admitted under standing grant {grantId}.");
+
+    public static OperatorPolicyDecision AdmitApproved(OperatorOperation operation, string approvalId)
+        => new(true, null, operation, null, $"{operation.Tier} {operation.Id} admitted under the Owner's approval {approvalId}.")
+        { ApprovalId = approvalId };
 
     public static OperatorPolicyDecision Refuse(string reason, OperatorOperation? operation, string message)
         => new(false, reason, operation, null, message);
@@ -35,8 +44,9 @@ public sealed record OperatorPolicyDecision(
 /// T0 is admitted, T1 only under a live standing grant of the principal that
 /// covers the operation, the scope, the time window, and the hourly rate, and
 /// T2 is refused with <see cref="OperatorPolicyReasons.ApprovalRequired"/>
-/// (the approval request is SM-5). An operation outside the catalogue is
-/// refused. The policy reads only grant records.
+/// until the Owner approves the exact request (<see cref="OperatorApprovalPolicy"/>,
+/// SM-5). An operation outside the catalogue is refused. The policy reads
+/// only grant and approval records.
 /// </summary>
 public static class OperatorPolicy
 {
