@@ -47,16 +47,45 @@ public sealed class NetworkedCutoverContractTests
     {
         var stack = Path.Combine(FindRepositoryRoot(), "deploy", "compose", "monolith-networked");
         var rules = File.ReadAllText(Path.Combine(stack, "apply-cloudflare-docker-firewall.sh"));
+        var verifier = File.ReadAllText(Path.Combine(stack, "verify-cloudflare-docker-firewall.sh"));
         var installer = File.ReadAllText(Path.Combine(stack, "install-cloudflare-docker-firewall.sh"));
         var compose = File.ReadAllText(Path.Combine(stack, "compose.yaml"));
         Assert.Contains("-I DOCKER-USER 1 -d 172.30.83.0/24 -j STUDIO-CF-V4", rules);
         Assert.Contains("-i br-studio-web -j RETURN", rules);
         Assert.Contains("-d 172.30.83.2 -p tcp -m multiport --dports 80,443 -j RETURN", rules);
+        Assert.Contains("-A STUDIO-CF-V4 -j REJECT", rules);
+        Assert.Contains("-S DOCKER-USER", verifier);
+        Assert.Contains("172.30.83.0/24 -j STUDIO-CF-V4", verifier);
+        Assert.Contains("-C STUDIO-CF-V4 -j REJECT", verifier);
         Assert.Contains("com.docker.network.bridge.name: br-studio-web", compose);
-        Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(compose,
+        Assert.Contains("subnet: 172.30.83.0/24", compose);
+        var serviceAddresses = new Dictionary<string, string>
+        {
+            ["edge"] = "172.30.83.2",
+            ["frontend"] = "172.30.83.3",
+            ["api"] = "172.30.83.4",
+            ["quality-studio"] = "172.30.83.5",
+            ["operations-server"] = "172.30.83.6",
+            ["operations-agent"] = "172.30.83.7",
+        };
+        foreach (var (service, address) in serviceAddresses)
+        {
+            var block = System.Text.RegularExpressions.Regex.Match(compose,
+                $@"^  {service}:\n(.*?)(?=^  [a-z-]+:|^networks:)",
+                System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Singleline);
+            Assert.True(block.Success, $"Missing Compose service {service}");
+            Assert.Contains("restart: ${STUDIO_RESTART_POLICY:-on-failure}", block.Groups[1].Value);
+            Assert.Contains("ipv4_address: " + address, block.Groups[1].Value);
+        }
+        Assert.Equal(serviceAddresses.Count, System.Text.RegularExpressions.Regex.Matches(compose,
             @"restart: \$\{STUDIO_RESTART_POLICY:-on-failure\}").Count);
+        Assert.Contains("network_mode: none", compose);
+        Assert.Contains("ports: ['127.0.0.1:5081:5081']", compose);
         Assert.Contains("profiles: [quality]", compose);
+        Assert.Contains("Before=agent-studio-website.service", installer);
+        Assert.Contains("Requires=docker.service agent-studio-cloudflare-firewall.service", installer);
         Assert.Contains("After=docker.service agent-studio-cloudflare-firewall.service", installer);
+        Assert.Contains("ExecStartPre=/bin/bash $stack_dir/verify-cloudflare-docker-firewall.sh", installer);
         Assert.Contains("systemctl enable agent-studio-website.service", installer);
     }
 

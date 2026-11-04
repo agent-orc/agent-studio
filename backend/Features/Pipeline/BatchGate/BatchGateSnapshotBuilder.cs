@@ -86,7 +86,9 @@ public sealed class BatchGateSnapshotBuilder
         return new BatchPlanInput(now, ready, reviews.Concat(coding).ToArray(),
             options.MinimumSize, options.MaximumSize, options.DeadlineMinutes,
             options.LookAheadMinutes, options.EffectiveUrgentTags, options.RiskPolicy,
-            options.Overlap, closeNow, idleGateHost, gateBacklog, queuedPartners);
+            options.Overlap, closeNow, idleGateHost, gateBacklog, queuedPartners,
+            options.Calibration, options.Calibration == "empirical"
+                ? _store.ListPlanObservations(project) : null);
     }
 
     /// <summary>
