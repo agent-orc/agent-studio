@@ -247,6 +247,8 @@ public sealed record BuildTestGateResult(
     public string? FailureFingerprint { get; init; }
     public DeliveryFailureDiagnosisResult? Diagnosis { get; init; }
     public IReadOnlyList<BuildTestGateProcessEvidence> Processes { get; init; } = [];
+    /// <summary>Failure names retained when process output is compacted for durable evidence.</summary>
+    public IReadOnlyList<string> RecordedFailedTests { get; init; } = [];
     public IReadOnlyList<BuildTestGateDependencyCacheEvidence> DependencyCache { get; init; } = [];
     public BuildTestGateDependencyCacheDecision? DependencyCacheDecision { get; init; }
     public BuildTestGateBudgetEvidence? ViolatedBudget { get; init; }
