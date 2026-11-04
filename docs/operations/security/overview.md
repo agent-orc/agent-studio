@@ -541,6 +541,27 @@ reports, `runner.events` for the Git setup reports. An empty queue answers
 logs the repeat count when the failure changes or the poll recovers, and goes
 back to 2 seconds after an answer.
 
+### Operator guardrails on card rounds (AGT-3483)
+
+Two guardrails of the
+[operator-agent-level Dossier](../../operator-agent-level/index.html) are
+enforced by the server, for human sessions, API tokens and operator-agent
+sessions alike. No route was added; the existing routes changed as follows.
+
+- `POST /api/tasks/{id}/continue` starts a queued round from the card's latest
+  recorded result ref and returns it as `base`. The optional `baseRef` must be
+  one of the card's own result refs: any other value is refused with
+  `400 base-ref-not-on-card` before the card is written, so a caller cannot
+  point a run at an arbitrary branch of the repository.
+- Continue (every mode), preview feedback, the orchestrator-log steer override
+  and an operator requeue (`move`, `state`, `batch-move` into a run lane) of a
+  member of a batch under isolation answer `409 batch-isolation-active` with
+  the flight id. Batch gate eject stays allowed. The refusal is the same for
+  every principal: it protects the delivery under test, not an access level.
+
+The operator-facing description is in the
+[operator API reference](../../system/contracts/operator-api.md).
+
 ### Runner credential binding (SM-9)
 
 Every runner credential is bound to its host, its role, and an explicit
@@ -747,6 +768,41 @@ diagnostic endpoints are not mapped in the networked profile. Error details are
 disabled. The health response is only `ok` and exposes no version, dependency,
 workspace, or identity information.
 
+### Operator decision stream and watcher lease (operator agent level OP-2)
+
+The [operator agent level Dossier](../../operator-agent-level/index.html)
+(decision OA-D2 option B) replaces board polling with a typed decision
+stream that API tokens may read. SignalR stays closed to tokens.
+
+- `GET /api/operator/decisions?after=<cursor>&limit=<n>` returns a snapshot
+  and `GET /api/operator/decisions/stream` the same events as Server-Sent
+  Events (`id` is the cursor, `event` the type). Both declare
+  `project.read`, resolve as handler-filtered routes, and are open to human
+  sessions, API tokens, and operator agent sessions. Each reader receives only
+  events of the projects it may read. Installation-wide events (no project,
+  for example a provider limit) need an Owner, an all-projects grant, or the
+  local profile. `watcher.heartbeat` names no project data and every reader
+  receives it, because the lease is per installation.
+- `GET /api/operator/watcher/lease` reads the lease. `POST` takes it, `POST
+  .../lease/{leaseId}/heartbeat` renews it, and `DELETE .../lease/{leaseId}`
+  releases it. The writes declare `project.runs.operate` with project
+  bindings sufficing, so a viewer token or a viewer session gets 403. While
+  a lease is active, a second `POST` gets `409 watcher-active` naming the
+  holder actor, its session label, and its last heartbeat. A take-over needs
+  `takeOver: true` in the body and is written to the control plane audit
+  (`operator` stream, operation `watcher.lease.take-over`, the previous
+  holder as target, its lease id and last heartbeat, and the given reason)
+  before the lease changes; when that audit write fails, the take-over does
+  not happen. Grants and releases are audited the same way.
+- The publisher reads facts other features already decided and moves no
+  card: lanes, open decision cards, quota waits and fallbacks from the card
+  records, open watcher stall cases, red and isolating batches, the batch
+  gate's pending-push age alert, and runner provider limits. Events, the
+  published fact keys, and the lease live in `<TaskRepository>/.operator/`
+  (`decision-events.jsonl`, `decision-facts.json`, `watcher-lease.json`) and
+  hold no secret. Event reasons repeat the reason text of the underlying
+  record.
+
 ## Audit and credential handling
 
 Remote claim, event, and completion records are appended under
@@ -767,7 +823,7 @@ and query strings are omitted from that audit. IAM changes go to
 One writer records the control plane audit trail in
 `<TaskRepository>/.security/control-plane-audit.jsonl` (D4 option A2). Each
 line carries `sequence`, `at`, `stream` (`iam`, `service-account`,
-`api-token`, `operator-agent`, `secret`, `run`), `actor`, `session`,
+`api-token`, `operator-agent`, `secret`, `run`, `operator`), `actor`, `session`,
 `delegatedBy`, `operation` (route or operation), `target`, `parameterDigest`
 (`sha256:` over method, path, query, and body for bearer requests; over the
 change details for IAM changes), `outcome`, the producer's full legacy record
@@ -777,6 +833,9 @@ reordered line breaks the chain. The writer never edits or removes a line.
 The IAM, service-account, API-token, secret, and run audits are routed
 through it; their per-stream files above stay as read projections for the
 existing readers.
+The `operator` stream holds the watcher lease records of the operator
+decision stream (`watcher.lease.grant`, `watcher.lease.take-over`,
+`watcher.lease.release`); it has no per-stream file.
 
 Forwarding: `AuditSinkForwarder` copies every entry, unchanged and in order,
 to the configured off-host append-only sink and records the acknowledged

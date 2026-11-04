@@ -1072,6 +1072,24 @@ unreported claim expires with its lease and is queued again.
   integration ends in the existing AGT-2909 dead-end exit
   (`AgentRoundRequired`, `delivery-attribution-ambiguous`). The prompt states
   the base in one sentence and names no SHA.
+- Operator continue, steer and extend rounds carry the result ref (AGT-3483,
+  [operator-agent-level Dossier](../../operator-agent-level/index.html) OP-3).
+  A round queued for a runner claim on a card with a recorded result ref saves
+  the card's latest one (settled run envelopes, review subjects and
+  `review-subject.json`) as `continuation-base.json` with reason
+  `continue-round-result`, writes one `continuation_base_recorded` timeline row
+  with the actor, mode and base SHA, and returns the base on the response as
+  `base { ref, sha, source, resultAttemptId }`. `ContinueJobRequest.BaseRef`
+  names another of the card's refs (full or short form); a ref the card does
+  not own is refused with `400 base-ref-not-on-card` before any write. A fix
+  round keeps its reviewed delivery unless `BaseRef` names another ref, and a
+  base another round already saved (salvage, older-brief starting point) is
+  kept and reported as `existing`. A round that starts locally, or that joins
+  a run still live on the card, keeps today's checkout and names no base; an
+  explicit `BaseRef` there is refused with `409 base-ref-not-applicable`. The
+  runner treats the base like a salvage base: required, with the integration
+  branch merged on top. Pure rule: `ContinueRoundBasePolicy`
+  (`backend/Features/Runner/ContinueRoundBase.cs`).
 - If a fenced remote run finishes after the operator has returned its card to
   Ready and queued another continuation, completion settles the old attempt
   and records its timeline evidence, then leaves the card and pending prompt in

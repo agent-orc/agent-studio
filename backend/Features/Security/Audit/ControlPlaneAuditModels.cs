@@ -11,6 +11,8 @@ public static class ControlPlaneAuditStreams
     public const string OperatorAgent = "operator-agent";
     public const string Secret = "secret";
     public const string Run = "run";
+    /// <summary>Operator surface records, such as the watcher lease (operator agent level OP-2).</summary>
+    public const string Operator = "operator";
 }
 
 /// <summary>

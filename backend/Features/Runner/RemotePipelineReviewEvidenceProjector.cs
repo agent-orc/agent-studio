@@ -2,6 +2,7 @@ using System.Text;
 using AgentStudio.GeneratedFiles;
 using AgentStudio.Pipeline;
 using AgentStudio.Tasks;
+using AgentStudio.QualityStudio;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
@@ -23,13 +24,15 @@ public sealed class RemotePipelineReviewEvidenceProjector
     private readonly FileGenerationIndex _files;
     private readonly AgentStudio.Projects.ProjectSettingsService _settings;
     private readonly TaskMutationService? _mutations;
+    private readonly QualityChangeReviewOutbox? _qualityOutbox;
 
     public RemotePipelineReviewEvidenceProjector(ITokenPricing pricing,
         PipelineExecutionLog pipeline,
         TimelineLog timeline,
         FileGenerationIndex files,
         AgentStudio.Projects.ProjectSettingsService settings,
-        TaskMutationService? mutations = null)
+        TaskMutationService? mutations = null,
+        QualityChangeReviewOutbox? qualityOutbox = null)
     {
         _pricing = pricing;
         _pipeline = pipeline;
@@ -37,6 +40,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
         _files = files;
         _settings = settings;
         _mutations = mutations;
+        _qualityOutbox = qualityOutbox;
     }
 
     /// <summary>Receipt participant prefix for remote review attempt usage.</summary>
@@ -94,6 +98,11 @@ public sealed class RemotePipelineReviewEvidenceProjector
         ProjectSkippedAspects(task, review, report, receivedAt, execution.Attempt);
         ProjectTimeline(task, review, report, evidenceFile, receivedAt);
         RecordReviewUsage(task, review, report);
+        var repositoryId = _settings.Get(task.ProjectName).QualityStudioRepositoryId
+            ?? _settings.Get(task.ProjectName).QualityStudio?.RepositoryId;
+        var qualityRound = QualityChangeReviewStore.Project(task, review, report, repositoryId, receivedAt);
+        if (qualityRound?.Document is { } document && repositoryId is not null)
+            _qualityOutbox?.Enqueue(repositoryId, task.TaskKey, qualityRound, document);
     }
 
     /// <summary>

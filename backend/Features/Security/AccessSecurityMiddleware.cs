@@ -1202,6 +1202,10 @@ public sealed class AccessSecurityMiddleware
         // project against the route's permission in the handler.
         if (path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase))
             return ProjectRouteAddress.DeferredToHandler;
+        // The operator decision stream filters each event by its project; the
+        // watcher lease belongs to the installation (operator agent level OP-2).
+        if (path.StartsWith("/api/operator/", StringComparison.OrdinalIgnoreCase))
+            return ProjectRouteAddress.DeferredToHandler;
         // Report, supervisor, bus, and runtime routes name their project in the
         // segment after the area (/api/drift/{project}/...); their literal
         // routes, such as /api/drift/actions/code-pattern-drift, stay unaddressed.

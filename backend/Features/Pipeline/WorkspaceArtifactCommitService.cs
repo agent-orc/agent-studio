@@ -32,6 +32,8 @@ public sealed class WorkspaceArtifactCommitService
     private readonly int _lockRetryRounds;
     private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<long, Task> _lockRetries = new();
+    private readonly ConcurrentDictionary<string, byte> _refusedFileNotices =
+        new(StringComparer.OrdinalIgnoreCase);
     private long _nextLockRetry;
 
     // Per-repo serialization gate. The punctual job-folder commits and the
@@ -63,8 +65,8 @@ public sealed class WorkspaceArtifactCommitService
         _indexLockRetryBackoffMs = Math.Clamp(
             configuration.GetValue<int?>("WorkspaceEvidence:IndexLockRetryBackoffMs") ?? 100, 0, 5000);
         _maximumFileBytes = Math.Clamp(
-            configuration.GetValue<long?>("WorkspaceArtifacts:MaximumFileBytes") ?? 50L * 1024 * 1024,
-            1L * 1024 * 1024,
+            configuration.GetValue<long?>("WorkspaceArtifacts:MaximumFileBytes") ?? 5L * 1024 * 1024,
+            1L,
             95L * 1024 * 1024);
         _addBytesPerSecond = Math.Clamp(
             configuration.GetValue<long?>("WorkspaceEvidence:GitAddBytesPerSecond")
@@ -735,9 +737,10 @@ public sealed class WorkspaceArtifactCommitService
                     if (size <= _maximumFileBytes) continue;
                     var relative = Path.GetRelativePath(gitRoot, file).Replace('\\', '/');
                     if (!refused.Add(relative)) continue;
-                    _logger.LogWarning(
-                        "workspace-artifact-file-refused path={Path} bytes={Bytes} maximumBytes={MaximumBytes}",
-                        relative, size, _maximumFileBytes);
+                    if (_refusedFileNotices.TryAdd(file, 0))
+                        _logger.LogWarning(
+                            "workspace-artifact-file-refused path={Path} bytes={Bytes} maximumBytes={MaximumBytes}",
+                            relative, size, _maximumFileBytes);
                 }
                 catch (IOException ex)
                 {

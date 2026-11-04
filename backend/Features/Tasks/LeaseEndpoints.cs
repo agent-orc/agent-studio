@@ -415,7 +415,7 @@ public static class LeaseEndpoints
             DossierMaintenanceService dossierMaintenance,
             RemoteDispatchRejectionStore dispatchRejections,
             CliQuotaWaitPolicyService quotaWaitPolicy,
-            QuotaAdmissionService quotaAdmission,
+            IModelSelectionService modelSelection,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
             TaskMutationService mutations,
             ModelRoutingPolicyRegistry modelRouting,
@@ -904,19 +904,35 @@ public static class LeaseEndpoints
                     // fallback family (e.g. claude-only during a codex outage)
                     // can still claim a codex-configured card once quota
                     // routes it to claude.
-                    var quotaPlan = quotaAdmission.Plan(new QuotaAdmissionRequest(
-                        task.CliType,
-                        task.Model,
-                        task.ThinkingLevel,
-                        task.ProjectName,
-                        hostActiveRuns,
+                    // MS-5: the selection service owns the decision, including
+                    // the correctness-floor rule for a fallback; the prompt is
+                    // read only when a fallback has to clear the floor.
+                    var selection = modelSelection.Select(new ModelSelectionCall(
+                        new AgentStudio.TaskServer.Contracts.SelectionRequest
+                        {
+                            Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding,
+                            Project = task.ProjectName,
+                            TaskKey = task.Key ?? (string.IsNullOrEmpty(task.TaskKey) ? task.Id : task.TaskKey),
+                            Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
+                                task.CliType, task.Model, task.ThinkingLevel),
+                            TaskType = task.TaskType,
+                            Host = new AgentStudio.TaskServer.Contracts.SelectionHost(req.RunnerName),
+                        },
                         "remote-coding-claim",
-                        (provider, model) => capabilityRegistry.AcceptsModel(
+                        hostActiveRuns,
+                        HostAccepts: (provider, model) => capabilityRegistry.AcceptsModel(
                             req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model),
-                        req.RunnerName,
-                        (provider, model) => capabilityRegistry.ModelAdmission(
+                        HostAcceptsFallback: (provider, model) => capabilityRegistry.ModelAdmission(
                             req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model)
-                            == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted));
+                            == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted,
+                        CorrectnessFloor: () =>
+                        {
+                            var promptPath = Path.Combine(task.FolderPath, "prompt.md");
+                            var promptText = File.Exists(promptPath)
+                                ? File.ReadAllText(promptPath) : string.Empty;
+                            return modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
+                        }));
+                    var quotaPlan = selection.Admission;
                     if (quotaPlan.IsDeferred)
                     {
                         if (quotaPlan.Outcome == QuotaAdmissionOutcome.HostCapabilityMissing)
@@ -953,33 +969,6 @@ public static class LeaseEndpoints
                             quotaPlan.Outcome,
                             quotaPlan.Reason);
                         continue;
-                    }
-                    if (quotaPlan.IsFallback)
-                    {
-                        var promptPath = Path.Combine(task.FolderPath, "prompt.md");
-                        var promptText = File.Exists(promptPath)
-                            ? File.ReadAllText(promptPath) : string.Empty;
-                        var floor = modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
-                        if (!modelRouting.RouteMeetsFloor(quotaPlan.Model ?? string.Empty, quotaPlan.ThinkingLevel, floor))
-                        {
-                            var held = quotaPlan with
-                            {
-                                Outcome = QuotaAdmissionOutcome.Wait,
-                                IsFallback = false,
-                                Reason = $"waiting: no host-accepted fallback clears this card's correctness floor; next reset {quotaPlan.NextResetAt:O}",
-                            };
-                            QuotaWaitMarker.Write(task.FolderPath, new QuotaWaitRecord
-                            {
-                                CliType = task.CliType ?? "claude",
-                                StartedAt = now,
-                                ResetAt = held.NextResetAt ?? now.AddMinutes(10),
-                                Reason = held.Reason,
-                                Scope = "quota",
-                            });
-                            quotaAdmissionRecorder.EmitAdmissionDecision(task, held, source: "remote-claim");
-                            RecordRejection(task, "quota-admission", held.Reason);
-                            continue;
-                        }
                     }
                     var cliType = quotaPlan.CliType;
                     var modelCapability = capabilityRegistry.CliModelCapabilityFor(

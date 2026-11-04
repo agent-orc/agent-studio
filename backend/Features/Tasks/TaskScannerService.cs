@@ -916,6 +916,8 @@ public class TaskScannerService : ITaskScanner
                     : null,
                 Commit = legacyCommit,
                 Commits = commitChain,
+                QualityStudioVerdict = resolvedState is TaskStates.AutoReview or TaskStates.HumanReview
+                    ? AgentStudio.QualityStudio.QualityChangeReviewStore.LatestVerdict(jobDir) : null,
                 IntegrationRecords = ReadIntegrationRecords(raw),
                 CompletionClaim = ReadCompletionClaim(raw),
                 IntegrationBranch = raw.TryGetProperty("integrationBranch", out var integrationBranch)

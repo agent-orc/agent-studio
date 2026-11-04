@@ -238,6 +238,39 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         catch { }
     }
 
+    // MS-5: the registry dispatch asks the selection service once per call.
+    [Theory]
+    [InlineData("aspect-requirement-fit", "review-aspect", true)]
+    [InlineData("post-code-review-grade", "review-grade", true)]
+    [InlineData("title-generation", "one-shot:title-generation", false)]
+    public async Task One_shot_dispatch_asks_the_model_selection_service(
+        string source, string consumer, bool sameClassOnly)
+    {
+        var spy = new SpyModelSelectionService();
+        var claude = new RecordingOneShot(CliTypes.Claude);
+        var registry = new CliOneShotRegistry([claude], modelSelection: spy);
+        var request = new CliOneShotRequest(CliTypes.Claude, ModelIds.ClaudeOpus5, "bounded prompt")
+        {
+            ThinkingLevel = "high",
+            Project = "quota-test",
+            StepId = source,
+        };
+
+        var result = await registry.Require(CliTypes.Claude).RunAsync(request);
+
+        Assert.True(result.Ok);
+        var call = Assert.Single(spy.Calls);
+        Assert.Equal(source, call.ExecutionPath);
+        Assert.Equal(consumer, call.Request.Consumer);
+        Assert.Equal(sameClassOnly, call.Request.Required.SameClassOnly);
+        Assert.Equal("quota-test", call.Request.Project);
+        Assert.Equal(source, call.Request.StepId);
+        Assert.Equal(
+            new AgentStudio.TaskServer.Contracts.SelectionPins(CliTypes.Claude, ModelIds.ClaudeOpus5, "high"),
+            call.Request.Pins);
+        Assert.Single(claude.Requests);
+    }
+
     private sealed class FixedTimeProvider(DateTime utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => new(utcNow);
