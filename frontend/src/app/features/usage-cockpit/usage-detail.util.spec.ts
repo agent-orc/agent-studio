@@ -170,7 +170,7 @@ describe('live runs and models', () => {
     const codex = buildUsageDetailView(snapshot(), NOW).clis[0];
     expect(codex.windows.map(w => [w.label, w.value, w.reset?.utc ?? null])).toEqual([
       ['Weekly', '15% used', 'Tue 29 Sept, 07:00 UTC'],
-      ['5-hour', 'Not reported', null],
+      ['5-hour', 'N/A', null],
     ]);
   });
 

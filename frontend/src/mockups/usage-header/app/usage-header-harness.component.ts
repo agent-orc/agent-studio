@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 
 import {
-  UsageCockpitHeaderComponent,
+  StudioNavigationHeaderComponent,
   type CockpitNavItem,
   type UsageDetailRequest,
 } from '../../../app/features/usage-cockpit';
@@ -19,7 +19,7 @@ import { FIXTURE_NOW, SCENARIOS } from './usage-header.fixtures';
 @Component({
   selector: 'mockup-usage-header-harness',
   standalone: true,
-  imports: [UsageCockpitHeaderComponent],
+  imports: [StudioNavigationHeaderComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './usage-header-harness.component.html',
   styleUrl: './usage-header-harness.component.scss',

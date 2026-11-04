@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getCliUsage } from '../helpers/quota';
 
-/** CLI usage remains available to projects and the status-bar opens CLI Management. */
+/** CLI usage remains available through Workspace Settings. */
 
 const SCREENSHOT_DIR = (() => {
   const fromEnv = process.env.CLI_USAGE_RESULTS_DIR;
@@ -15,7 +15,7 @@ test.beforeAll(() => {
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 });
 
-test.describe('CLI usage hub (status-bar → settings home)', () => {
+test.describe('CLI usage in settings home', () => {
   test('backend reports the CLI usage section types', async () => {
     const report = await getCliUsage();
     const types = report.sections.map(s => s.cliType).sort();
@@ -25,12 +25,12 @@ test.describe('CLI usage hub (status-bar → settings home)', () => {
     }
   });
 
-  test('status-bar Usage opens CLI Management', async ({ page }) => {
+  test('Settings opens CLI Management', async ({ page }) => {
     await page.goto('/');
 
-    // The Usage button is the only CLI-usage entry point now; it opens the
-    // global Workspace-settings home at the "caps" (CLI Management) section.
-    await page.getByTestId('status-bar-usage').click();
+    // Workspace settings contains the CLI Management section.
+    await page.getByTestId('studio-titlebar-settings').click();
+    await page.getByTestId('workspace-settings-rail-caps').click();
 
     const overlay = page.getByTestId('cli-admin-overlay');
     await expect(overlay).toBeVisible();
@@ -41,22 +41,5 @@ test.describe('CLI usage hub (status-bar → settings home)', () => {
 
   });
 
-  test('the status-bar Usage button reflects the home open state', async ({ page }) => {
-    await page.goto('/');
 
-    const usageBtn = page.getByTestId('status-bar-usage');
-    await expect(usageBtn).toHaveAttribute('aria-pressed', 'false');
-
-    await usageBtn.click();
-    await expect(page.getByTestId('cli-admin-overlay')).toBeVisible();
-    // The trigger reflects the home being open (no parallel modal of its own).
-    await expect(usageBtn).toHaveAttribute('aria-pressed', 'true');
-
-    // The home is a full-screen modal; it closes via its own close control,
-    // after which the Usage trigger goes inactive again — no orphaned overlay.
-    await page.getByTestId('workspace-settings-close').click();
-    await expect(page.getByTestId('cli-admin-overlay')).not.toBeVisible();
-    await expect(page.getByTestId('workspace-settings-overlay')).not.toBeVisible();
-    await expect(usageBtn).toHaveAttribute('aria-pressed', 'false');
-  });
 });

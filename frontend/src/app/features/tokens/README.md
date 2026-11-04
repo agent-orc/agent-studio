@@ -10,8 +10,7 @@ Imports via `from './features/tokens'`. See [`index.ts`](./index.ts).
 
 - `TokenSummaryBlockComponent` — per-project rollup block (totals + per-model breakdown + cost projections); embedded in the orchestrator-feed and the legacy project-detail.
 - `WorkspaceTokenTimelineComponent` — the timeline, now embedded as the "Token usage" section of the Workspace-settings home (status-bar "Settings" entry + `#/workspace/tokens` deep-link).
-- `UsageHoverPanelComponent` — hosts the status-bar quota strip; clicking a CLI card opens that CLI's own `CliUsageModalComponent` (one modal per CLI, no grouped view).
-- `CliUsageModalComponent` — per-CLI usage detail modal (all quota windows + that CLI's top models); its "Manage usage caps" footer opens the CLI-Management panel.
+- Subscription usage is presented once in the Studio footer from `UsageCockpitService`; the footer entries open the shared usage detail surface. This feature retains the token ledger and CLI Management usage tools.
 
 **Types**:
 

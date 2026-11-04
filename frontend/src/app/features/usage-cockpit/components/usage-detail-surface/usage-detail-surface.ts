@@ -165,7 +165,12 @@ export class UsageDetailSurfaceComponent {
     const width = dialog.offsetWidth;
     const margin = 8;
     const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
-    dialog.style.top = `${Math.round(rect.bottom + 4)}px`;
+    const below = rect.bottom + 4;
+    const above = rect.top - dialog.offsetHeight - 4;
+    const top = below + dialog.offsetHeight <= window.innerHeight - margin
+      ? below
+      : Math.max(margin, above);
+    dialog.style.top = `${Math.round(top)}px`;
     dialog.style.left = `${Math.round(left)}px`;
   }
 
