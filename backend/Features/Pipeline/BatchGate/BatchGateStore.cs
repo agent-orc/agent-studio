@@ -118,7 +118,7 @@ public sealed record BatchGateIsolationFinding(
     string ResultSha, string BaseSha, string Status, string EvidencePath,
     DateTimeOffset RecordedAtUtc);
 
-/// <summary>Immutable first candidate outcome, excluding diagnostic child batches.</summary>
+/// <summary>Immutable first candidate outcome for an original batch manifest.</summary>
 public sealed record BatchFirstCandidateFact(
     string BatchId, string Project, DateTimeOffset AtUtc, int Size,
     double MaxRisk, IReadOnlyList<string> Areas, string OverlapGroup,
@@ -144,7 +144,8 @@ public sealed partial class BatchGateStore
     public void RecordFirstCandidate(BatchFirstCandidateFact fact)
     {
         var manifest = ReadManifest(fact.BatchId);
-        if (manifest.Scope.Project != fact.Project || fact.Size != manifest.Members.Count
+        if (manifest.ParentBatchId is not null || manifest.Diagnostic
+            || manifest.Scope.Project != fact.Project || fact.Size != manifest.Members.Count
             || fact.Size < 1 || fact.MaxRisk is < 0 or > 1)
             throw new InvalidDataException("First candidate fact does not match its batch.");
         var folder = Path.Combine(_root, "first-candidates");
