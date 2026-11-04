@@ -23,6 +23,7 @@ public static class PipelineHealthConventions
     public const int ArtifactUploadAfterSettlementAttempts = 3;
     public static readonly TimeSpan ArtifactUploadAfterSettlementWindow = TimeSpan.FromHours(1);
     public const string IntegrationLaneDivergedKind = "integration-lane-diverged";
+    public const string BatchAdmissionFailedKind = "batch-admission-failed";
 }
 
 public sealed record PipelineGateContext(
@@ -340,7 +341,8 @@ public sealed class PipelineHealthService
             || lanes.Any(lane => lane.IsStalled)
             || alerts.Any(alert => alert.Kind is PipelineHealthConventions.EvidenceFlushStalledKind
                 or PipelineHealthConventions.ArtifactUploadAfterSettlementKind
-                or PipelineHealthConventions.IntegrationLaneDivergedKind)
+                or PipelineHealthConventions.IntegrationLaneDivergedKind
+                or PipelineHealthConventions.BatchAdmissionFailedKind)
             || _currentAlerts.ContainsKey(project + "\0" + ReviewClaimStallIdentity);
         return new PipelineHealthSnapshot(
             project,
@@ -439,6 +441,40 @@ public sealed class PipelineHealthService
 
     private static string ArtifactUploadAfterSettlementIdentity(string runnerId)
         => "artifact-after-settlement:" + runnerId;
+
+    public void BatchAdmissionFailed(string project, string watchPath, string jobId,
+        string reviewAttemptId, string reason)
+    {
+        var identity = BatchAdmissionIdentity(jobId, reviewAttemptId);
+        var alert = new PipelineHealthAlert(
+            PipelineHealthConventions.BatchAdmissionFailedKind, "high",
+            $"Batch admission failed for {jobId}",
+            $"Settled review {reviewAttemptId} has no batch entry or completed per-task gate. {reason}",
+            DateTime.UtcNow, jobId);
+        // The feed is durable across restarts. The snapshot is rebuilt by the
+        // admission recovery pass, but the operator receives one entry per card.
+        var alreadyReported = _orchestratorLog.Read(watchPath).Any(entry =>
+            entry.Kind == OrchestratorLogKinds.Alert
+            && entry.Topic == OrchestratorLogTopics.PipelineHealth
+            && entry.JobId == jobId
+            && entry.Reasoning?.Contains(reviewAttemptId, StringComparison.Ordinal) == true);
+        if (alreadyReported)
+        {
+            _currentAlerts[project + "\0" + identity] = alert;
+            return;
+        }
+        EmitAlert(project, watchPath, alert, identity);
+    }
+
+    public void BatchAdmissionRecovered(string project, string jobId, string reviewAttemptId)
+    {
+        var key = project + "\0" + BatchAdmissionIdentity(jobId, reviewAttemptId);
+        _currentAlerts.TryRemove(key, out _);
+        _lastAlertAt.TryRemove(key, out _);
+    }
+
+    private static string BatchAdmissionIdentity(string jobId, string reviewAttemptId)
+        => "batch-admission:" + jobId + ":" + reviewAttemptId;
 
     /// <summary>
     /// Raises <c>integration-lane-diverged</c> (AGT-3215): the lane carries

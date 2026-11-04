@@ -1486,9 +1486,13 @@ public static class V1ReviewPlaneEndpoints
             {
                 var batchSource = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
                 if (batchSource is null)
+                {
+                    batchPilot.ReportAdmissionFailure(task, settled.ReviewAttempt,
+                        "The batch source run is missing.");
                     return Results.Json(new Contract.ApiError(
                         "batch-gate-evidence-missing", "The batch source run is missing."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
                 var hostStopping = context.RequestServices
                     .GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
                 try
@@ -1496,10 +1500,12 @@ public static class V1ReviewPlaneEndpoints
                     await batchPilot.EnqueueAsync(task, settled.ReviewAttempt, batchSource,
                         new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)),
                         hostStopping).ConfigureAwait(false);
+                    batchPilot.ClearAdmissionFailure(task, settled.ReviewAttempt);
                 }
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "batch-gate-enqueue-failed attempt={AttemptId}", attemptId);
+                    Exception? fallbackFailure = null;
                     try
                     {
                         await batchPilot.RunEmergencyFallbackAsync(task,
@@ -1512,15 +1518,22 @@ public static class V1ReviewPlaneEndpoints
                     {
                         logger.LogError(fallbackError,
                             "batch-gate-emergency-fallback-failed attempt={AttemptId}", attemptId);
+                        fallbackFailure = fallbackError;
                     }
                     // AGT-3219: a queue overrun of the emergency gate admits the
                     // review to the batch queue; the card stays in Auto Review.
                     if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated)
                         && !batchPilot.IsQueuedForBatch(settled.ReviewAttempt.AttemptId))
+                    {
+                        batchPilot.ReportAdmissionFailure(task, settled.ReviewAttempt,
+                            $"Queue: {ex.Message}; per-task gate: "
+                            + $"{fallbackFailure?.Message ?? "did not finish"}.");
                         return Results.Json(new Contract.ApiError(
                             "batch-gate-evidence-missing",
                             "The settled review could not enter the durable batch queue or finish its per-task gate."),
                             statusCode: StatusCodes.Status503ServiceUnavailable);
+                    }
+                    batchPilot.ClearAdmissionFailure(task, settled.ReviewAttempt);
                 }
             }
             var reportHash = preparedHash;
