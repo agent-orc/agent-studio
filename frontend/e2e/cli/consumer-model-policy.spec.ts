@@ -5,6 +5,12 @@ import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 test('consumer policy editor renders in light and dark', async ({ page }) => {
   const results = process.env.JOB_RESULTS_DIR ?? 'test-results';
+  let activeSwitches = [{
+    id: 'switch-1', at: '2026-11-04T12:00:00Z', consumer: 'coding', project: 'alpha', taskKey: 'AGT-1',
+    from: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+    to: { cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high' },
+    rule: 'quota-cap', returnToPrimaryAt: '2026-11-07T12:00:00Z',
+  }];
   mkdirSync(results, { recursive: true });
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -20,6 +26,7 @@ test('consumer policy editor renders in light and dark', async ({ page }) => {
       migration: { inheritedSteps: 36, explicitSteps: 36, projects: 12, applied: true },
     };
     const body = path === '/api/model-selection/policy' ? policy
+      : path === '/api/model-selection/active' ? { switches: activeSwitches }
       : path === '/api/model-selection/effective' ? { routes: [
         { consumer: 'coding', stepId: null,
           configured: { cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high' },
@@ -56,10 +63,19 @@ test('consumer policy editor renders in light and dark', async ({ page }) => {
   await expect(editor).toBeVisible();
   await expect(editor.getByTestId('consumer-policy-review-aspect')).toBeVisible();
   await expect(editor.getByTestId('consumer-policy-coding')).toBeVisible();
+  const strip = page.getByTestId('active-model-switches');
+  await expect(strip).toContainText('Active fallbacks (1)');
   await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await expect(editor).toBeVisible();
     await editor.screenshot({ path: join(results, `consumer-model-policy--mocked-${theme}.png`) });
+    await strip.screenshot({ path: join(results, `active-model-switches--mocked-${theme}.png`) });
   }
+  activeSwitches = [];
+  await page.reload();
+  await dismissDevErrorDialog(page);
+  await page.getByTestId('studio-titlebar-settings').click();
+  await page.getByTestId('workspace-settings-rail-caps').click();
+  await expect(page.getByTestId('active-model-switches')).toContainText('Active fallbacks (0)');
 });

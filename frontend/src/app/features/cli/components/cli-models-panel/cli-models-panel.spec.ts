@@ -57,6 +57,13 @@ describe('CliModelsPanelComponent', () => {
       tiers: [],
       taskTypeDefaults: {},
     });
+    http.expectOne('/api/model-selection/active').flush({ switches: [{
+      id: 'switch-1', at: '2026-11-04T12:00:00Z', consumer: 'coding',
+      project: 'alpha', taskKey: 'AGT-1',
+      from: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+      to: { cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high' },
+      rule: 'quota-cap', returnToPrimaryAt: '2026-11-07T12:00:00Z',
+    }] });
     http.expectOne('/api/model-selection/policy').flush({
       version: 1,
       consumers: {
@@ -82,6 +89,8 @@ describe('CliModelsPanelComponent', () => {
     });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="consumer-policy-review-grade"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="active-model-switches"]')?.textContent)
+      .toContain('Active fallbacks (1)');
     expect(fixture.nativeElement.textContent).toContain('36 inherited');
 
     const groups = fixture.componentInstance.groups();

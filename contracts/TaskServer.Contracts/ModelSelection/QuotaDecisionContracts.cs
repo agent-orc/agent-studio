@@ -123,7 +123,10 @@ public sealed record CliRouteDecision(
     string? FallbackReason = null,
     string? FallbackSource = null,
     string? CatalogueVersion = null,
-    string? CapabilityClass = null);
+    string? CapabilityClass = null)
+{
+    public bool TargetQuotaBlocked { get; init; }
+}
 
 /// <summary>One route projected from Token Economy's routing and price catalogues.</summary>
 public sealed record ModelEquivalenceRoute(

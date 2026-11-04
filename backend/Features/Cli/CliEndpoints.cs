@@ -25,6 +25,8 @@ public static class CliEndpoints
         });
 
         app.MapGet("/api/model-selection/policy", (ModelSelectionPolicyStore policy) => Results.Ok(policy.Get()));
+        app.MapGet("/api/model-selection/active", (IModelSelectionLedger ledger) =>
+            Results.Ok(new { switches = ledger.Active() }));
         app.MapPut("/api/model-selection/policy/consumers/{consumer}",
             (string consumer, ConsumerModelPolicy setting, ModelSelectionPolicyStore policy) =>
         {

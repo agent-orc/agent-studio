@@ -44,6 +44,7 @@ instead of a fixed `primary`. Consumer keys include `coding`, `review-aspect`,
 | `GET /api/model-selection/policy` | None. | The full `ModelSelectionPolicy`: `version`, `consumers`, `caps`, `costGuardFactor`, `hysteresis`, `modelFallbacks`, `legacyProfiles`, and `migration`. The first read creates the file and performs the one-time migration. `migration` contains `inheritedSteps`, `explicitSteps`, `projects`, and `applied`. |
 | `PUT /api/model-selection/policy/consumers/{consumer}` | One complete `ConsumerModelPolicy` with optional `primary`, `route`, `fallbacks`, `sameClassOnly`, `stickyWithinCard`, and per-consumer `costGuardFactor`. | The full updated policy. The consumer must exist; route CLI ids must be valid and a supplied cost factor must be positive. |
 | `GET /api/model-selection/effective?project={projectName}&pipelineType={pipelineType}` | Both query parameters are optional; `pipelineType` must be valid when supplied. | `{ "project": ..., "pipelineType": ..., "routes": [...] }`. Each route has `consumer`, nullable `stepId`, `configured`, nullable `effective`, `rule`, and nullable `reason`. `configured` and `effective` use `cliType`, `model`, and `thinkingLevel`; a null `effective` means admission would wait. The preview does not launch a model. |
+| `GET /api/model-selection/active` | None. | `{ "switches": [...] }` lists open switch ledger entries. A `returned` event with `closesId` removes the matching switch from this projection. |
 | `PUT /api/projects/{projectName}/model-selection-overrides/{consumer}` | `{ "pipelineType": null, "override": { "primary": { "cliType": "codex", "model": "gpt-6-sol", "thinkingLevel": "high" }, "fallbacks": [], "pinMode": "preference" } }`. `pipelineType` selects a type-specific override; omit or set it to null for the consumer-wide override. Set `override` to null to clear that scope. | `{ "projectName": ..., "modelSelectionOverrides": ... }`. Unknown projects or consumers are rejected; `pinMode` must be `preference` or `hard`. Overrides can also contain `byPipelineType` and `byStep` maps. |
 | `PUT /api/projects/{projectName}/pipeline-step` | The existing step body with `pipelineType`, `stepId`, optional `cliType`, `model`, `thinkingLevel`, and `pinMode` (default `preference`), alongside the other step settings. | The existing step response gains `modelSelectionOverrides`. A model or CLI selection writes the matching step override; clearing both removes it. The compatibility step fields remain readable. |
 | `PUT /api/tasks/{jobId}/model`, `/thinking-level`, `/cli-type` | Respectively `{ "model": ..., "pinMode": "preference" }`, `{ "thinkingLevel": ..., "pinMode": "preference" }`, and `{ "cliType": ..., "pinMode": "preference", "useOwnSession": ... }`. `pinMode` may be omitted and then defaults to `preference`. | `200 OK` for a saved card pin, `404` when the card is absent; invalid pin modes return `400`. The CLI route also validates `cliType`. These pins affect later attempts, not a running CLI session. |
@@ -68,6 +69,24 @@ records the 10-point, 30-minute return hysteresis; D5 declares the Sol/xhigh to
 Opus 5/xhigh fallback; D8 sets the cost guard factor to 2.0. The consumer
 policy retains D4's same-class review rule and D6's sticky review setting.
 The Dossier implementation log records decisions handled by the other slices.
+
+### Return and cost guard (AGT-3480)
+
+A quota switch remains active while the primary's window is near its cap. It
+returns at the window reset when quota admission allows the primary, or after a
+trusted reading is at least `returnBelowCapPoints` below every cap for
+`minDwellMinutes` since the switch. The defaults are 10 points and 30 minutes.
+Suspicious readings do not clear a switch. The fallback target must also pass
+the projected cap check; a blocked target makes the selection wait.
+
+The planner compares the primary and fallback's input plus output catalogue
+price per million tokens. A route above the consumer's `costGuardFactor`
+(default 2.0) waits with rule `cost-guard`. An explicitly configured policy
+fallback or an operator switch authorizes the higher price. Unpriced routes
+have no ratio to compare. Switches and matching returns are recorded in daily
+JSONL files under `.runtime/model-selection/`; the active projection replays
+the last 14 days at startup. Event files are retained for 90 days; daily
+provider, rule, and consumer summaries are retained for 400 days.
 
 This page is the authoritative answer to two questions:
 

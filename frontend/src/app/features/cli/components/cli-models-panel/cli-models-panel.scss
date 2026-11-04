@@ -30,6 +30,12 @@
   font-size: 10px;
 }
 
+.cli-models__active-route {
+  color: var(--studio-fg);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .cli-models__economy {
   display: grid;
   grid-template-columns: auto auto;
