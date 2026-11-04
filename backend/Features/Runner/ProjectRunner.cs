@@ -893,17 +893,21 @@ public class ProjectRunner
     /// legacy planner adapter with the same rules.
     /// </summary>
     private QuotaAdmissionPlan PlanQuotaAdmission(TaskInfo info)
-        => _modelSelection?.Select(new ModelSelectionCall(
+    {
+        var pending = info.PendingIntent?.ModelFallback;
+        var (cli, model, thinking) = RequestedRoute(
+            info.CliType, info.Model, info.ThinkingLevel, pending);
+        var plan = _modelSelection?.Select(new ModelSelectionCall(
                new AgentStudio.TaskServer.Contracts.SelectionRequest
                {
                    Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding,
                    Project = ProjectName,
                    TaskKey = info.Key ?? (string.IsNullOrEmpty(info.TaskKey) ? info.Id : info.TaskKey),
                    Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
-                       info.CliType,
-                       info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
+                       cli,
+                       pending is not null ? model : info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
                            ? info.PreferenceModel ?? info.Model : info.Model,
-                       info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
+                       pending is not null ? thinking : info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
                            ? info.PreferenceThinkingLevel ?? info.ThinkingLevel : info.ThinkingLevel,
                        info.PinMode == "hard" ? AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard
                            : AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference),
@@ -916,12 +920,30 @@ public class ProjectRunner
                    _modelQualification.CorrectnessFloor(info,
                        ReadPromptText(Path.Combine(info.FolderPath, "prompt.md"))))).Admission
            ?? QuotaAdmissionPlanner.Plan(
-               info.CliType, info.Model, info.ThinkingLevel,
+               cli, model, thinking,
                _quotaFallback, _quotaCaps,
                c => string.IsNullOrWhiteSpace(c) ? null : _quotaService.GetCachedFor(c!),
                DateTime.UtcNow,
                _activeRuns.Count,
                _quotaWaitPolicy?.Resolve(_projectSettings.Get(ProjectName)));
+        return ApplyPendingModelRoute(plan, pending);
+    }
+
+    internal static (string? Cli, string? Model, string? Thinking) RequestedRoute(
+        string? cli, string? model, string? thinking, ModelFallbackInfo? pending)
+        => (pending?.CliType ?? cli, pending?.To ?? model, pending?.ThinkingLevel ?? thinking);
+
+    internal static QuotaAdmissionPlan ApplyPendingModelRoute(
+        QuotaAdmissionPlan plan, ModelFallbackInfo? pending)
+        => pending is not null && plan.ShouldLaunch
+            ? plan with
+            {
+                Outcome = QuotaAdmissionOutcome.LaunchFallback,
+                IsFallback = true,
+                Reason = $"Pending model continuation selected {plan.CliType}/{plan.Model}.",
+                ModelFallback = pending,
+            }
+            : plan;
 
     private void RecordNearbyQuotaWait(TaskInfo info, QuotaAdmissionPlan plan)
     {
@@ -1560,7 +1582,9 @@ public class ProjectRunner
             // next reset (the scheduler re-ticks and wakes on its own). The
             // switch/throttle/wait decision is emitted (de-duplicated per job) so
             // the load-steering is never silent.
-            var providerLimit = ActiveProviderLimit(candidate.Info.CliType, DateTime.UtcNow);
+            var providerLimit = ActiveProviderLimit(
+                candidate.Info.PendingIntent?.ModelFallback?.CliType ?? candidate.Info.CliType,
+                DateTime.UtcNow);
             if (providerLimit is not null)
             {
                 _lastPickReason =

@@ -184,6 +184,17 @@ public static partial class ProviderAccessClassifier
                 rejection.Message);
         }
 
+        // Retry diagnostics can contain HTTP 429 or "too many requests" after
+        // the provider has already identified the selected model as full.
+        // That is a model-scoped refusal unless a reset time identifies an
+        // actual account quota window.
+        if (Contains(text, ModelCapacitySignals)
+            && ParseResetAt(text, observedAt ?? DateTimeOffset.UtcNow, localZone ?? TimeZoneInfo.Local) is null)
+            return new ProviderAccessEvidence(
+                ProviderAccessEvidenceKind.ModelCapacity,
+                FirstMatchingLine(text, ModelCapacitySignals, "selected model is at capacity"),
+                ParseModelRetryAt(text, observedAt ?? DateTimeOffset.UtcNow));
+
         var explicitRefusal = Contains(text, RateLimitSignals) || Http429Regex().IsMatch(text);
         if (explicitRefusal)
         {
@@ -208,7 +219,8 @@ public static partial class ProviderAccessClassifier
         if (Contains(text, ModelCapacitySignals))
             return new ProviderAccessEvidence(
                 ProviderAccessEvidenceKind.ModelCapacity,
-                FirstMatchingLine(text, ModelCapacitySignals, "selected model is at capacity"));
+                FirstMatchingLine(text, ModelCapacitySignals, "selected model is at capacity"),
+                ParseModelRetryAt(text, observedAt ?? DateTimeOffset.UtcNow));
 
         if (Contains(text, AuthenticationSignals)
             || ExplicitHttp401Regex().IsMatch(text)
@@ -292,6 +304,22 @@ public static partial class ProviderAccessClassifier
         return new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(localReset, localZone));
     }
 
+    private static DateTimeOffset? ParseModelRetryAt(string text, DateTimeOffset observedAt)
+    {
+        var match = ModelRetryRegex().Match(text);
+        if (!match.Success || !int.TryParse(match.Groups["amount"].Value,
+                NumberStyles.None, CultureInfo.InvariantCulture, out var amount)
+            || amount <= 0) return null;
+        var unit = match.Groups["unit"].Value.ToLowerInvariant();
+        var delay = unit[0] switch
+        {
+            'h' => TimeSpan.FromHours(amount),
+            'm' => TimeSpan.FromMinutes(amount),
+            _ => TimeSpan.FromSeconds(amount),
+        };
+        return observedAt.Add(delay);
+    }
+
     private static string FirstMatchingLine(
         string text,
         IEnumerable<string> signals,
@@ -331,4 +359,7 @@ public static partial class ProviderAccessClassifier
 
     [GeneratedRegex(@"\bresets?(?:\s+(?:at|on))?\s+(?<value>\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ClockResetRegex();
+
+    [GeneratedRegex(@"\bretry\s+(?:after|in)\s+(?<amount>\d{1,5})\s*(?<unit>seconds?|minutes?|hours?|s|m|h)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ModelRetryRegex();
 }
