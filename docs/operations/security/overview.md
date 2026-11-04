@@ -532,6 +532,27 @@ reports, `runner.events` for the Git setup reports. An empty queue answers
 logs the repeat count when the failure changes or the poll recovers, and goes
 back to 2 seconds after an answer.
 
+### Operator guardrails on card rounds (AGT-3483)
+
+Two guardrails of the
+[operator-agent-level Dossier](../../operator-agent-level/index.html) are
+enforced by the server, for human sessions, API tokens and operator-agent
+sessions alike. No route was added; the existing routes changed as follows.
+
+- `POST /api/tasks/{id}/continue` starts a queued round from the card's latest
+  recorded result ref and returns it as `base`. The optional `baseRef` must be
+  one of the card's own result refs: any other value is refused with
+  `400 base-ref-not-on-card` before the card is written, so a caller cannot
+  point a run at an arbitrary branch of the repository.
+- Continue (every mode), preview feedback, the orchestrator-log steer override
+  and an operator requeue (`move`, `state`, `batch-move` into a run lane) of a
+  member of a batch under isolation answer `409 batch-isolation-active` with
+  the flight id. Batch gate eject stays allowed. The refusal is the same for
+  every principal: it protects the delivery under test, not an access level.
+
+The operator-facing description is in the
+[operator API reference](../../system/contracts/operator-api.md).
+
 ### Runner credential binding (SM-9)
 
 Every runner credential is bound to its host, its role, and an explicit

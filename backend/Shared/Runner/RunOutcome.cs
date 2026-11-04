@@ -51,9 +51,12 @@ public sealed record RunRejection(
 public sealed class TaskOperationException : Exception
 {
     public int Status { get; }
-    public TaskOperationException(string message, int status = 400) : base(message)
+    /// <summary>Stable error code for the response, when the refusal has one.</summary>
+    public string? Code { get; }
+    public TaskOperationException(string message, int status = 400, string? code = null) : base(message)
     {
         Status = status;
+        Code = code;
     }
 }
 

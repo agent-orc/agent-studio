@@ -1010,6 +1010,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.MergeIntoDevelopRunner>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateStore(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gates")));
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchIsolationGuard>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateLeaseService(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gate-leases")));

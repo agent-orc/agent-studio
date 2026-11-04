@@ -765,7 +765,7 @@ public class TaskRunnerService : BackgroundService
     /// continuation they asked for instead of a 400 - at the cost of conversation
     /// memory that wasn't already on disk.
     /// </summary>
-    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, string? author = null, CancellationToken ct = default, string? reason = null, string? triggeredBy = null)
+    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, string? author = null, CancellationToken ct = default, string? reason = null, string? triggeredBy = null, string? baseRef = null)
     {
         _executionAdmission?.Demand(ExecutionAdmissionPath.Continue);
         var info = _scanner.FindJob(jobId, watchPath);
@@ -785,6 +785,23 @@ public class TaskRunnerService : BackgroundService
             && ProjectExecutionPolicy.IsLocalExecution(_projectSettings.Get(info.ProjectName)))
             throw new TaskOperationException(
                 RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message, 400);
+
+        // Admission before spawn (AGT-2747). Evaluated on the card, not on the
+        // runner's slot state: a lane that cannot hold a run, a delivery under
+        // review, or a remote execution location all mean "queue this", because
+        // a process started here would be killed by lane reconciliation within
+        // seconds while the caller had already been told "started". It also runs
+        // before the local CLI check, so a follow-up destined for a remote runner
+        // is never refused because this host lacks the CLI.
+        var admission = FollowUpAdmissionPolicy.Decide(BuildFollowUpAdmissionFacts(info));
+
+        // AGT-3483: the run base is decided before the first write, so a ref the
+        // card does not own leaves the card exactly as it was.
+        var (fixRoundBase, roundBase) = DecideContinueBase(info, admission, baseRef);
+        if (roundBase.Action == ContinueRoundBaseAction.RejectUnknownRef)
+            throw new TaskOperationException(roundBase.Message!, 400, roundBase.Code);
+        if (roundBase.Action == ContinueRoundBaseAction.RejectNotClaimed)
+            throw new TaskOperationException(roundBase.Message!, 409, roundBase.Code);
 
         if (!string.IsNullOrWhiteSpace(cliTypeOverride) && cliTypeOverride != info.CliType)
         {
@@ -806,20 +823,8 @@ public class TaskRunnerService : BackgroundService
 
         var normalizedMode = ContinueModes.Normalize(mode);
 
-        // Admission before spawn (AGT-2747). Evaluated on the card, not on the
-        // runner's slot state: a lane that cannot hold a run, a delivery under
-        // review, or a remote execution location all mean "queue this", because
-        // a process started here would be killed by lane reconciliation within
-        // seconds while the caller had already been told "started". It also runs
-        // before the local CLI check, so a follow-up destined for a remote runner
-        // is never refused because this host lacks the CLI.
-        var admission = FollowUpAdmissionPolicy.Decide(BuildFollowUpAdmissionFacts(info));
-
         // AGT-3056: a queued continue after a ProductFailure is a fix round. It
         // continues on the delivery the review graded, and its prompt says so.
-        var fixRoundBase = admission.Action == FollowUpAdmissionAction.Queue
-            ? DecideOperatorFixRoundBase(info)
-            : null;
         if (fixRoundBase is not null)
             followupPrompt = followupPrompt.TrimEnd() + "\n\n" + ReviewFixRoundBase.PromptSentence(true);
 
@@ -838,10 +843,18 @@ public class TaskRunnerService : BackgroundService
 
         if (admission.Action == FollowUpAdmissionAction.Queue)
         {
-            if (fixRoundBase is null)
-                return QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission, author, triggerMetadata);
-            return QueueFixRoundFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission,
-                author, triggerMetadata, fixRoundBase);
+            if (fixRoundBase is not null)
+                return QueueFixRoundFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission,
+                    author, triggerMetadata, fixRoundBase);
+            if (roundBase is { Action: ContinueRoundBaseAction.Use, Base: { } chosen })
+                return QueueFollowUpWithBase(info, jobId, watchPath, normalizedMode, followupPrompt, admission,
+                    author, triggerMetadata, chosen, roundBase.Source!,
+                    folder => ContinueRoundBasePolicy.RecordOnTimeline(_timeline, folder, chosen,
+                        roundBase.Source!, normalizedMode, author, _time.GetUtcNow().UtcDateTime));
+            var queued = QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission, author, triggerMetadata);
+            return roundBase is { Action: ContinueRoundBaseAction.Keep, Base: { } kept }
+                ? queued with { Base = BaseInfo(kept, roundBase.Source!) }
+                : queued;
         }
 
         var cli = _router.Get(info.CliType);
@@ -1058,6 +1071,38 @@ public class TaskRunnerService : BackgroundService
     }
 
     /// <summary>
+    /// AGT-3483: the base of an operator continue, steer or extend round. A
+    /// fix round (AGT-3056) keeps its reviewed delivery unless the caller names
+    /// another ref; every other round goes through <see cref="ContinueRoundBasePolicy"/>.
+    /// The base only travels through a runner claim, so it applies to a queued
+    /// round on a card without a live run.
+    /// </summary>
+    private (ContinuationBaseRecord? FixRound, ContinueRoundBaseDecision Round) DecideContinueBase(
+        TaskInfo info, FollowUpAdmissionDecision admission, string? baseRef)
+    {
+        var queued = admission.Action == FollowUpAdmissionAction.Queue;
+        var fixRound = queued ? DecideOperatorFixRoundBase(info) : null;
+        if (fixRound is not null
+            && (string.IsNullOrWhiteSpace(baseRef)
+                || ContinueRoundBasePolicy.NormalizeRef(baseRef) == fixRound.Ref))
+            return (fixRound, new ContinueRoundBaseDecision(ContinueRoundBaseAction.None));
+        var taskKey = info.Key ?? info.TaskKey;
+        var projection = _attemptAuthority is null || string.IsNullOrWhiteSpace(taskKey)
+            ? null
+            : _attemptAuthority.GetTaskProjection(taskKey);
+        var decision = ContinueRoundBasePolicy.Decide(
+            baseRef,
+            ContinueRoundBasePolicy.Collect(projection, AgentStudio.Pipeline.ReviewSubjectStore.Read(info.FolderPath)),
+            ContinuationBaseStore.Read(info.FolderPath),
+            startsFromClaim: queued && info.State != TaskStates.Progress,
+            _time.GetUtcNow().UtcDateTime);
+        return (null, decision);
+    }
+
+    private static ContinueRoundBaseInfo BaseInfo(ContinuationBaseRecord record, string source)
+        => new(record.Ref, record.CommitSha, source, record.AttemptId);
+
+    /// <summary>
     /// Queues an operator fix round with its base written in the card folder
     /// first, so the card never reaches Ready without it.
     /// </summary>
@@ -1071,9 +1116,31 @@ public class TaskRunnerService : BackgroundService
         string? author,
         RunTriggerMetadata? triggerMetadata,
         ContinuationBaseRecord fixRoundBase)
+        => QueueFollowUpWithBase(info, jobId, watchPath, mode, prompt, decision, author, triggerMetadata,
+            fixRoundBase, ContinueRoundBaseSources.ReviewFixRound,
+            folder => ReviewFixRoundBase.RecordOnTimeline(_timeline, folder,
+                fixRoundBase, ReviewFixRoundBase.SourceOperatorContinue, _time.GetUtcNow().UtcDateTime));
+
+    /// <summary>
+    /// Queues a round with its base written in the card folder first, so the
+    /// card never reaches Ready without it, then names the base on the
+    /// timeline and in the response.
+    /// </summary>
+    private ContinueJobResponse QueueFollowUpWithBase(
+        TaskInfo info,
+        string jobId,
+        string? watchPath,
+        string mode,
+        string prompt,
+        FollowUpAdmissionDecision decision,
+        string? author,
+        RunTriggerMetadata? triggerMetadata,
+        ContinuationBaseRecord continuationBase,
+        string source,
+        Action<string> recordOnTimeline)
     {
-        if (!ContinuationBaseStore.Save(info.FolderPath, fixRoundBase))
-            throw new TaskOperationException("Could not record the fix round's continuation base.", 500);
+        if (!ContinuationBaseStore.Save(info.FolderPath, continuationBase))
+            throw new TaskOperationException("Could not record the round's continuation base.", 500);
         ContinueJobResponse response;
         try
         {
@@ -1084,9 +1151,8 @@ public class TaskRunnerService : BackgroundService
             ContinuationBaseStore.Clear((_scanner.FindJob(jobId, watchPath) ?? info).FolderPath);
             throw;
         }
-        ReviewFixRoundBase.RecordOnTimeline(_timeline, (_scanner.FindJob(jobId, watchPath) ?? info).FolderPath,
-            fixRoundBase, ReviewFixRoundBase.SourceOperatorContinue, _time.GetUtcNow().UtcDateTime);
-        return response;
+        recordOnTimeline((_scanner.FindJob(jobId, watchPath) ?? info).FolderPath);
+        return response with { Base = BaseInfo(continuationBase, source) };
     }
 
     /// <summary>

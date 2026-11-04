@@ -124,6 +124,12 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   first on the same base. Restart reconstruction uses these findings and the
   closed child verdicts. The state route and report expose the findings as
   `proven-red`, `proven-green`, and `superseded`.
+- While a red batch isolates (latest phase `Red`), continue, steer and requeue
+  of a member that the isolation still holds are refused with
+  `409 batch-isolation-active` naming the flight (AGT-3483). Eject stays the
+  member action. The guard reads the existing ownership, pending record,
+  batch state and isolation findings and does not change isolation itself; see
+  [tasks](../../system/domains/tasks.md).
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
   and member state. The existing report includes observed batch green rate.
 - AGT-3055 (D16 option A): the batch suite is claimable gate work by default.

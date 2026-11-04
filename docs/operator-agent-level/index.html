@@ -663,6 +663,10 @@
 <p>Delivery slices append their current implementation status here. Decision content above remains unchanged. Each slice is one <code>workbench.json</code> <code>implementationTasks</code> entry with a bounded <code>acceptanceScope</code>.</p>
 <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+<li data-implementation-entry="" data-task-key="AGT-3483" data-delivered-at="2026-11-04" data-slice="OP-3 Continue with result ref and the batch isolation guard">
+  <strong>AGT-3483 · OP-3 Continue with result ref and the batch isolation guard</strong>
+  <span>Delivered the two Guardrails rules as recommended. A continue, steer or extend round queued for a runner claim starts from the card's latest result ref (reason <code>continue-round-result</code>), returns it as <code>base</code> and records it on the card timeline as "Run base"; <code>ContinueJobRequest.BaseRef</code> selects another ref of the same card and any other ref is refused with <code>400 base-ref-not-on-card</code> before a write. Continue (every mode), preview feedback, the steer override and operator requeues of a member of a batch under isolation answer <code>409 batch-isolation-active</code> naming the flight; eject stays allowed and batch gate isolation is unchanged. The gap was reproduced first by four HTTP tests failing on the unchanged code; focused backend classes, a MachineBound claim test proving the run's base SHA, the timeline unit spec, lint and the light and dark Playwright captures pass. The standalone Task Server's own continue path is left for a follow-up.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
 </ol>
 </section>

@@ -706,6 +706,7 @@ public static class TaskCrudEndpoints
             AttemptAuthorityService authority,
             TimelineLog timeline,
             AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Pipeline.BatchIsolationGuard isolation,
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
@@ -737,7 +738,7 @@ public static class TaskCrudEndpoints
             // human. Auto paths (runner pickup, orchestrator, sweeps) reach
             // MoveJob without a cause and are recorded as system.
             return await MoveOperatorWithRunIntentAsync(jobId, watchPath, req, ctx,
-                transitions, scanner, leases, authority, timeline, ct);
+                transitions, scanner, leases, authority, timeline, isolation, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         group.MapPost("/{jobId}/move", async (string jobId, string? project, string? watchPath, MoveJobRequest req,
@@ -748,6 +749,7 @@ public static class TaskCrudEndpoints
             AttemptAuthorityService authority,
             TimelineLog timeline,
             AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Pipeline.BatchIsolationGuard isolation,
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
@@ -775,7 +777,7 @@ public static class TaskCrudEndpoints
                 return Results.BadRequest(new { error = OverrideReasonRequired });
 
             return await MoveOperatorWithRunIntentAsync(jobId, watchPath, req, ctx,
-                transitions, scanner, leases, authority, timeline, ct);
+                transitions, scanner, leases, authority, timeline, isolation, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         group.MapPost("/{jobId}/older-brief-delivery/decision", async (
@@ -1525,7 +1527,8 @@ public static class TaskCrudEndpoints
     private static async Task<IResult> MoveOperatorWithRunIntentAsync(
         string jobId, string? watchPath, MoveJobRequest request, HttpContext context,
         TaskTransitionService transitions, TaskScannerService scanner, RunLeaseService leases,
-        AttemptAuthorityService authority, TimelineLog timeline, CancellationToken ct)
+        AttemptAuthorityService authority, TimelineLog timeline,
+        AgentStudio.Pipeline.BatchIsolationGuard isolation, CancellationToken ct)
     {
         // Completion and claim use this same gate. Keep the lane move and its
         // authority decision in one ordering so neither can settle in between.
@@ -1534,6 +1537,12 @@ public static class TaskCrudEndpoints
         {
             var card = scanner.FindJob(jobId, watchPath);
             if (card is null) return Results.NotFound();
+            // AGT-3483: a requeue would replace the delivery an isolating batch
+            // is probing. Eject is the member action until isolation ends.
+            if (AgentStudio.Pipeline.BatchIsolationGuardPolicy.IsRequeue(card.State, request.TargetState)
+                && isolation.Find(card) is { } isolating)
+                return Results.Json(AgentStudio.Pipeline.BatchIsolationGuardPolicy.Body(isolating),
+                    statusCode: StatusCodes.Status409Conflict);
             var live = request.TargetState != card.State
                 ? leases.Peek(card.TaskKey).Lease : null;
             var intent = RunDispositionPolicy.ParseMoveIntent(request.RunIntent);
