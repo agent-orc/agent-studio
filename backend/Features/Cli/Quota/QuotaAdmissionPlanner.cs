@@ -1,4 +1,5 @@
 using AgentStudio.Shared;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -44,6 +45,34 @@ public sealed record QuotaAdmissionPlan(
     /// <summary>Shared run/one-shot fallback receipt, also used by provider rejection continuations.</summary>
     public ModelFallbackInfo? ModelFallback { get; init; }
 
+    /// <summary>The legacy admission view of a selection result; the outcome and receipt carry over unchanged.</summary>
+    public static QuotaAdmissionPlan From(SelectionResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        var outcome = result.Outcome switch
+        {
+            SelectionOutcome.Primary => QuotaAdmissionOutcome.LaunchPrimary,
+            SelectionOutcome.Fallback => QuotaAdmissionOutcome.LaunchFallback,
+            SelectionOutcome.Wait => QuotaAdmissionOutcome.Wait,
+            SelectionOutcome.Throttle => QuotaAdmissionOutcome.Throttle,
+            _ => QuotaAdmissionOutcome.HostCapabilityMissing,
+        };
+        return new QuotaAdmissionPlan(
+            outcome,
+            result.Route.CliType,
+            result.Route.Model,
+            result.Route.ThinkingLevel,
+            result.IsFallback,
+            result.Reason,
+            result.IsFallback ? result.ReturnToPrimaryAt : result.RetryAt,
+            result.Quota?.Projection,
+            result.Quota?.ProjectionWarning,
+            result.NearbyResetWait)
+        {
+            ModelFallback = result.Fallback,
+        };
+    }
+
     /// <summary>True when the runner should proceed to a launch (primary or fallback).</summary>
     public bool ShouldLaunch => Outcome is QuotaAdmissionOutcome.LaunchPrimary or QuotaAdmissionOutcome.LaunchFallback;
 
@@ -61,6 +90,10 @@ public sealed record QuotaAdmissionPlan(
 /// wait for the next reset.
 ///
 /// <para>
+/// Since MS-5 the rules live in <see cref="ModelSelectionPlanner"/> in the
+/// contracts package; this type is the legacy adapter until MS-6.
+/// </para>
+/// <para>
 /// This planner deliberately <b>reuses</b> the merged AGT-2040 routing map
 /// (<see cref="CliQuotaFallbackService"/>) rather than duplicating "which model
 /// replaces which": that map IS the configuration. The planner's own job is
@@ -71,6 +104,12 @@ public sealed record QuotaAdmissionPlan(
 /// </summary>
 public static class QuotaAdmissionPlanner
 {
+    /// <summary>
+    /// Thin adapter over <see cref="ModelSelectionPlanner.Plan"/> (MS-5). The
+    /// admission rules moved unchanged into the shared planner; this keeps the
+    /// legacy signature for callers that have not moved to
+    /// <see cref="ModelSelectionService"/> yet (MS-6).
+    /// </summary>
     public static QuotaAdmissionPlan Plan(
         string? requestedCli,
         string? requestedModel,
@@ -88,177 +127,26 @@ public static class QuotaAdmissionPlanner
         bool sameClassOnly = false,
         Func<string, bool>? fallbackProviderAllowed = null)
     {
-        var cli = string.IsNullOrWhiteSpace(requestedCli)
-            ? CliTypes.Claude
-            : requestedCli!.Trim().ToLowerInvariant();
-        var primarySnapshot = snapshotFor(cli);
-        var projectionWarning = QuotaWindowProjection.FindWarning(primarySnapshot, nowUtc);
-
-        // Strict = already over the configured cap. Admission = strict OR
-        // projected-to-breach-before-reset. The router is fed the admission
-        // view so a primary about to hit the wall routes to the fallback now.
-        CapEvaluation Strict(string? c) => caps.Evaluate(snapshotFor(c));
-        CapEvaluation Admission(string? c)
+        var request = new SelectionRequest
         {
-            var strict = Strict(c);
-            if (strict.Blocked) return strict;
-            return QuotaWindowProjection.EvaluateProjectedBreach(snapshotFor(c), caps, nowUtc)
-                   ?? CapEvaluation.NotBlocked;
-        }
-
-        // 1) The opt-in CAR 0.6 wait policy owns the first decision when the
-        // primary is already capped and its confirmed reset is nearby. This is
-        // intentionally before route resolution: nearby wait -> model switch ->
-        // throttle. Unknown, elapsed, or distant resets fail open to the
-        // existing fallback/admission route.
-        //
-        // Situation awareness (AGT-2751, requirement 4): a nearby reset is
-        // only worth a quiet wait when the card is cheap. An expensive card
-        // (explicit high/xhigh/ultra/max reasoning) switches to an
-        // equal-strength provider immediately instead of sitting in the queue
-        // until the reset, even inside the configured wait threshold.
-        var strictPrimaryEarly = Strict(cli);
-        var nearbyReset = EarliestReset(primarySnapshot, nowUtc, caps, blockedOnly: true);
-        if (waitPolicy?.Enabled == true
-            && preference?.Active != true
-            && strictPrimaryEarly.Blocked
-            && !strictPrimaryEarly.Suspicious
-            && IsCheap(requestedThinking)
-            && nearbyReset?.ResetAt is { } resetAt)
+            Pins = new SelectionPins(requestedCli, requestedModel, requestedThinking),
+            Required = new SelectionRequirements(SameClassOnly: sameClassOnly),
+            Host = claimingHost is null ? null : new SelectionHost(claimingHost),
+        };
+        var facts = new SelectionFacts
         {
-            var remaining = resetAt - nowUtc;
-            if (remaining > TimeSpan.Zero && remaining < TimeSpan.FromMinutes(waitPolicy.ThresholdMinutes))
-            {
-                var minutes = Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes));
-                return new QuotaAdmissionPlan(
-                    QuotaAdmissionOutcome.Wait,
-                    cli,
-                    requestedModel,
-                    requestedThinking,
-                    IsFallback: false,
-                    Reason: $"waiting for quota reset {resetAt:HH:mm} UTC, {minutes} min remaining (threshold {waitPolicy.ThresholdMinutes} min)",
-                    NextResetAt: resetAt,
-                    Projection: QuotaWindowProjection.WorstProjection(primarySnapshot, caps, nowUtc),
-                    ProjectionWarning: projectionWarning,
-                    NearbyResetWait: true);
-            }
-        }
-
-        var preferFallback = preference?.Active == true;
-        var route = fallback?.Resolve(cli, requestedModel, requestedThinking, Admission, preferFallback,
-            fallbackModelAccepted ?? modelAccepted, sameClassOnly, fallbackProviderAllowed);
-
-        if (preferFallback && route?.IsFallback != true)
-            return new QuotaAdmissionPlan(QuotaAdmissionOutcome.Wait, cli,
-                route?.Model ?? requestedModel, route?.ThinkingLevel ?? requestedThinking, false,
-                $"waiting: operator switch cannot use {cli} and {route?.Reason ?? "no equivalent route is available"}",
-                preference?.ExpiresAt,
-                QuotaWindowProjection.WorstProjection(primarySnapshot, caps, nowUtc), projectionWarning);
-
-        // 2) The router switched us to the fallback (primary capped or projected;
-        //    a usable fallback exists). Documented model switch before start.
-        if (route?.IsFallback == true)
-        {
-            var primaryReset = EarliestReset(
-                snapshotFor(cli), nowUtc, caps, blockedOnly: false);
-            var fallbackReason = route.FallbackReason ?? (preferFallback ? "operator-preference" : "quota-cap");
-            var constrainedWindow = primarySnapshot?.Windows
-                .Where(window => window.UsedPct is not null)
-                .OrderByDescending(window => window.UsedPct!.Value
-                    / Math.Max(1, caps.GetCap(cli, window.Label)))
-                .FirstOrDefault();
-            var usedWindow = route.PrimaryCap.WindowLabel ?? constrainedWindow?.Label;
-            var usedPct = route.PrimaryCap.Blocked
-                ? route.PrimaryCap.UsedPct
-                : constrainedWindow?.UsedPct;
-            var plan = new QuotaAdmissionPlan(
-                QuotaAdmissionOutcome.LaunchFallback,
-                route.CliType,
-                route.Model,
-                route.ThinkingLevel,
-                IsFallback: true,
-                Reason: AppendReset(BuildSwitchReason(cli, route), primaryReset),
-                NextResetAt: primaryReset?.ResetAt,
-                Projection: QuotaWindowProjection.WorstProjection(snapshotFor(cli), caps, nowUtc),
-                ProjectionWarning: projectionWarning);
-            return plan with
-            {
-                ModelFallback = new ModelFallbackInfo(
-                    RouteLabel(requestedModel, requestedThinking),
-                    RouteLabel(route.Model, route.ThinkingLevel),
-                    fallbackReason,
-                    route.CliType,
-                    route.ThinkingLevel,
-                    usedWindow,
-                    usedPct,
-                    route.CatalogueVersion),
-            };
-        }
-
-        // Primary path (no fallback taken): resolve the concrete primary model
-        // from the route (which may carry the workspace-configured primary).
-        var model = route?.Model ?? requestedModel;
-        var thinking = route?.ThinkingLevel ?? requestedThinking;
-        var strictPrimary = Strict(cli);
-        var admissionPrimary = route?.PrimaryCap ?? Admission(cli);
-
-        if (modelAccepted is not null && !modelAccepted(cli, model))
-        {
-            var key = string.IsNullOrWhiteSpace(model) ? $"provider-auth:{cli}"
-                : $"model-acceptance:{cli}:{model}";
-            return new QuotaAdmissionPlan(
-                QuotaAdmissionOutcome.HostCapabilityMissing, cli, model, thinking, false,
-                $"Host capability missing on {claimingHost ?? "claiming host"}: {key}.",
-                null, QuotaWindowProjection.WorstProjection(primarySnapshot, caps, nowUtc),
-                projectionWarning);
-        }
-
-        // 3) Primary is ACTUALLY over cap and no fallback saved us: everything is
-        //    exhausted. Wait quietly with a reason and the next reset time.
-        if (strictPrimary.Blocked)
-        {
-            var blockedReset =
-                EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: true)
-                ?? EarliestReset(snapshotFor(route?.CliType ?? cli), nowUtc, caps, blockedOnly: true)
-                ?? EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false);
-            var detail = !string.IsNullOrWhiteSpace(route?.Reason) ? route!.Reason : strictPrimary.DescribeReason();
-            var reason = AppendReset($"waiting: all quotas exhausted ({detail})", blockedReset);
-            return new QuotaAdmissionPlan(
-                QuotaAdmissionOutcome.Wait, cli, model, thinking,
-                IsFallback: false, Reason: reason, NextResetAt: blockedReset?.ResetAt,
-                Projection: QuotaWindowProjection.WorstProjection(snapshotFor(cli), caps, nowUtc),
-                ProjectionWarning: projectionWarning);
-        }
-
-        // 4) Primary is only PROJECTED to breach and there is no usable fallback.
-        //    Throttle (reduce parallelism) rather than block - but never throttle
-        //    to zero: the first/only run always proceeds, else nothing ever runs.
-        if (admissionPrimary.Blocked)
-        {
-            var proj = QuotaWindowProjection.WorstProjection(snapshotFor(cli), caps, nowUtc);
-            var reset = EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false);
-            if (modelAccepted is not null)
-                return new QuotaAdmissionPlan(
-                    QuotaAdmissionOutcome.Wait, cli, model, thinking, false,
-                    AppendReset($"waiting: no accepted fallback on the claiming host ({route?.Reason ?? admissionPrimary.DescribeReason()})", reset),
-                    reset?.ResetAt, proj, projectionWarning);
-            var throttle = occupiedSlots > 0;
-            var verb = throttle ? "throttling" : "launching (projection-flagged)";
-            return new QuotaAdmissionPlan(
-                throttle ? QuotaAdmissionOutcome.Throttle : QuotaAdmissionOutcome.LaunchPrimary,
-                cli, model, thinking, IsFallback: false,
-                Reason: AppendReset($"{verb}: {admissionPrimary.DescribeReason()}", reset),
-                NextResetAt: reset?.ResetAt, Projection: proj, ProjectionWarning: projectionWarning);
-        }
-
-        // 5) Healthy: launch on primary.
-        return new QuotaAdmissionPlan(
-            QuotaAdmissionOutcome.LaunchPrimary, cli, model, thinking,
-            IsFallback: false,
-            Reason: projectionWarning is null ? "launch: quota ok" : $"launch: quota projection ignored ({projectionWarning.Reason})",
-            NextResetAt: null,
-            Projection: QuotaWindowProjection.WorstProjection(snapshotFor(cli), caps, nowUtc),
-            ProjectionWarning: projectionWarning);
+            NowUtc = nowUtc,
+            Caps = caps,
+            SnapshotFor = snapshotFor,
+            Routing = fallback?.RoutingFacts(),
+            OccupiedSlots = occupiedSlots,
+            WaitPolicy = waitPolicy,
+            OperatorSwitch = preference,
+            FallbackProviderAllowed = fallbackProviderAllowed,
+            HostAccepts = modelAccepted,
+            HostAcceptsFallback = fallbackModelAccepted,
+        };
+        return QuotaAdmissionPlan.From(ModelSelectionPlanner.Plan(request, facts));
     }
 
     /// <summary>
@@ -287,59 +175,5 @@ public static class QuotaAdmissionPlanner
         return
             $"burn {p.BurnRatePctPerHour:0.#}%/h, used {p.CurrentUsedPct:0.#}% -> projected {p.ProjectedUsedPct:0.#}% " +
             $"(cap {p.CapPct}%), {budgetLeft:0.#}% budget left, {p.HoursRemaining:0.#}h to reset";
-    }
-
-    /// <summary>
-    /// A card's expected cost class, standing in for "how expensive is this
-    /// card" until a richer signal (task type, expected scope) is available.
-    /// Unset/low/medium reasoning is cheap enough to sit out a nearby reset;
-    /// an explicit high/xhigh/ultra/max pin is not - that card switches to the
-    /// equal-strength fallback instead of waiting.
-    /// </summary>
-    private static bool IsCheap(string? thinkingLevel) => thinkingLevel?.Trim().ToLowerInvariant() switch
-    {
-        null or "" => true,
-        CliThinkingLevels.High or CliThinkingLevels.XHigh or CliThinkingLevels.Ultra or CliThinkingLevels.Max => false,
-        _ => true,
-    };
-
-    private static string BuildSwitchReason(string primaryCli, CliRouteDecision route)
-    {
-        var why = !string.IsNullOrWhiteSpace(route.Reason) ? route.Reason : route.PrimaryCap.DescribeReason();
-        return $"model switched pre-launch: {primaryCli} -> {route.CliType}/{route.Model ?? "<default>"}, reason: {why}";
-    }
-
-    private static string RouteLabel(string? model, string? thinking)
-        => string.IsNullOrWhiteSpace(thinking)
-            ? model ?? "provider default"
-            : $"{model ?? "provider default"} {thinking}";
-
-    /// <summary>Earliest future-resetting window in a snapshot (optionally only over-cap windows).</summary>
-    private static QuotaWindow? EarliestReset(
-        QuotaSnapshot? snapshot, DateTime nowUtc, CliQuotaCapsService caps, bool blockedOnly)
-    {
-        if (snapshot?.Windows == null) return null;
-        QuotaWindow? best = null;
-        foreach (var w in snapshot.Windows)
-        {
-            if (w.ResetAt is null) continue;
-            if (w.ResetAt.Value <= nowUtc) continue;
-            if (blockedOnly)
-            {
-                if (w.UsedPct is null) continue;
-                if (w.UsedPct.Value < caps.GetCap(snapshot.CliType, w.Label)) continue;
-            }
-            if (best is null || w.ResetAt < best.ResetAt) best = w;
-        }
-        return best;
-    }
-
-    private static string AppendReset(string reason, QuotaWindow? resetWindow)
-    {
-        if (resetWindow?.ResetAt is null) return reason;
-        var human = !string.IsNullOrWhiteSpace(resetWindow.ResetLabel)
-            ? resetWindow.ResetLabel!
-            : resetWindow.ResetAt.Value.ToString("HH:mm 'UTC'");
-        return $"{reason}, next reset {human}";
     }
 }
