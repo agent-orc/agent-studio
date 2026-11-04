@@ -2613,12 +2613,7 @@ public sealed partial class BatchGatePilotService
     private void RecordFallbackExecution(BatchGatePendingRecord pending, BuildTestGateResult gate,
         string evidence, DateTimeOffset started, string level)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(evidence)!);
-        using (var stream = new FileStream(evidence, FileMode.Create, FileAccess.Write, FileShare.None))
-        {
-            JsonSerializer.Serialize(stream, gate);
-            stream.Flush(flushToDisk: true);
-        }
+        FallbackGateEvidence.Write(evidence, gate);
         // Every per-task gate that ran costs host minutes, emergency
         // fallbacks included; only the queue mutations depend on recordInStore.
         _store.RecordExecution(new BatchGateExecutionFact(

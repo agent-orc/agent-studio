@@ -107,6 +107,9 @@
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
+/api/operator/decisions	free	-	-	-
+/api/operator/decisions/stream	free	-	-	-
+/api/operator/watcher/lease/	free	-	-	-
 /api/orchestration/decision-receipts/	free	-	-	-
 /api/orchestration/decision-receipts/spend	free	-	-	-
 /api/orchestration/decision-receipts/{receiptId}	free	-	-	-

@@ -67,6 +67,7 @@ public static class EndpointMapping
         app.MapAcceptedIntegrationBackstopEndpoints();
         app.MapAcceptanceRailEndpoints();
         app.MapWatcherEndpoints();
+        app.MapOperatorEndpoints();
         app.MapOrchestratorSessionEndpoints();
         app.MapOrchestratorContextEndpoints();
         app.MapOrchestrationRolloutEndpoints();

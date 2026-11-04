@@ -309,7 +309,7 @@ public sealed partial class BatchGatePilotServiceTests
         await ParkAsLegacyFallback(factory, fromReady, QueueOverrun());
         await ParkAsLegacyFallback(factory, followUp, QueueOverrun());
         SaveContinuation(factory, followUp);
-        await ParkAsLegacyFallback(factory, stalled, QueueOverrun());
+        await ParkAsLegacyFallback(factory, stalled, QueueOverrun(), compact: true);
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
 
         Assert.Equal([stalled.Key], pilot.QueueStallReport(ProjectName).Releasable);
@@ -512,12 +512,15 @@ public sealed partial class BatchGatePilotServiceTests
 
     /// <summary>The escalation the per-task fallback wrote before AGT-3219.</summary>
     private async Task ParkAsLegacyFallback(WebApplicationFactory<Program> factory,
-        SeededMember member, BuildTestGateResult gate)
+        SeededMember member, BuildTestGateResult gate, bool compact = false)
     {
         var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(member.Key, _watchPath)!;
         var evidence = Path.Combine(TaskPaths.LogsDir(task.FolderPath), $"batch-fallback-{member.ReviewAttemptId}.json");
         Directory.CreateDirectory(Path.GetDirectoryName(evidence)!);
-        await File.WriteAllTextAsync(evidence, JsonSerializer.Serialize(gate));
+        if (compact)
+            FallbackGateEvidence.Write(evidence, gate);
+        else
+            await File.WriteAllTextAsync(evidence, JsonSerializer.Serialize(gate));
         var moved = await factory.Services.GetRequiredService<HumanReviewEscalation>().EscalateAsync(task.Id,
             task.WatchPath, task.ProjectName, HumanReviewEscalationCategories.AutoReviewEscalation,
             gate.Reason, CancellationToken.None);
