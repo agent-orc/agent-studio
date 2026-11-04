@@ -23,14 +23,32 @@ function taskInfo(id: string, state: string, title: string, extra: Record<string
     id, key: id, taskKey: `${WATCH_PATH}::${id}`, title, state, order: 1,
     agent: 'codex', cliType: 'codex', createdAt: '2026-11-03T08:00:00Z', lastActivity: '2026-11-03T09:00:00Z',
     watchPath: WATCH_PATH, projectName: PROJECT, folderPath: `${WATCH_PATH}/${state}/${id}`,
-    commits: [], ownerClientId: 'local-default', tags: [], ...extra,
+    commits: [], ownerClientId: 'local-default', tags: [],
+    executionLocation: { state: 'remote-running', executionKind: 'remote', runnerId: 'agent-runner-01',
+      historical: false }, ...extra,
   };
 }
 
 const heldCard = taskInfo('AGT-3403', '2-ready', 'Held by a dependency gate', {
   references: { dependsOn: ['AGT-3402'], relatedTo: [], blockedBy: [], supersedes: [] },
+  pickupHold: { classification: 'stalled', mechanism: 'dependency-gate',
+    reason: 'AGT-3402 must finish before this task can run.', sinceUtc: '2026-11-03T08:30:00Z',
+    unsatisfiable: false, resolutions: [{ kind: 'wait', label: 'Wait for AGT-3402',
+      detail: 'The dependency gate opens when the prerequisite is released.', targetKey: 'AGT-3402' }] },
+  liveStatus: { attempt: 0, activeStep: null,
+    nextSteps: [{ stepId: 'core-agent-run', displayName: 'Agent execution' }],
+    queue: null, latestEventAt: '2026-11-03T08:30:00Z' },
 });
 const memberCard = taskInfo('AGT-3410', '4-auto-review', 'Batch member in auto review');
+const runningCard = taskInfo('AGT-3411', '3-progress', 'Running task', {
+  execution: { jobId: 'AGT-3411', status: 'running', processId: 1234,
+    startedAt: '2026-11-03T09:00:00Z', exitCode: null },
+  liveStatus: { attempt: 1, activeStep: { stepId: 'core-agent-run', kind: 'agent',
+    displayName: 'Agent execution', startedAt: '2026-11-03T09:00:00Z' },
+    nextSteps: [{ stepId: 'post-review', displayName: 'Review' }],
+    queue: null, latestEventAt: '2026-11-03T09:00:00Z' },
+});
+const humanCard = taskInfo('AGT-3412', '5-human-review', 'Task awaiting human review');
 
 const batchState = {
   gateSlots: { busy: 1, total: 3 },
@@ -48,8 +66,8 @@ async function installRoutes(page: Page): Promise<void> {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/v1/studio/board**', route => json(route, {
-    backlog: [], preparation: [], orchestratorPrep: [], ready: [heldCard], progress: [], failedPickup: [],
-    codeNotComplete: [], review: [], autoReview: [memberCard], humanReview: [], escalated: [], completed: [], archive: [],
+    backlog: [], preparation: [], orchestratorPrep: [], ready: [heldCard], progress: [runningCard], failedPickup: [],
+    codeNotComplete: [], review: [], autoReview: [memberCard], humanReview: [humanCard], escalated: [], completed: [], archive: [],
   }));
   await page.route('**/api/watch-paths**', route => json(route, [
     { name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
@@ -61,7 +79,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/runner/orchestrator-feed**', route => json(route, { entries: [], generatedAtUtc: '2026-11-03T09:00:00Z' }));
   await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
   await page.route('**/api/projects/*/batch-gate/state?history=10', route => json(route, batchState));
-  for (const card of [heldCard, memberCard]) {
+  for (const card of [heldCard, memberCard, runningCard, humanCard]) {
     await page.route(new RegExp(`/api/tasks/${card.id}/runs(\\?|$)`), route => json(route, { runs: [] }));
     await page.route(new RegExp(`/api/tasks/${card.id}/session-events(\\?|$)`), route => json(route, { events: [], sessionChain: [] }));
     await page.route(new RegExp(`/api/tasks/${card.id}/pipeline(\\?|$)`), route => json(route, {
@@ -115,6 +133,8 @@ test('a batch member in 4-auto-review shows its batch verification section', asy
   await expect(section.getByTestId('task-batch-summary')).toContainText('Batch batch-12');
   await expect(section.getByTestId('task-batch-summary')).toContainText('1 of 2');
   await expect(section.getByRole('button', { name: 'Open batch panel' })).toHaveClass(/\bbtn--ghost\b/);
+  const openButton = section.getByRole('button', { name: 'Open batch panel' });
+  expect(await openButton.evaluate(element => getComputedStyle(element).borderTopWidth)).toBe('1px');
   await captureThemes(page, 'batch-detail-member-4-auto-review');
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
@@ -122,3 +142,37 @@ test('a batch member in 4-auto-review shows its batch verification section', asy
     await section.screenshot({ path: path.join(RESULTS_DIR, `batch-detail-member-section-${theme}.png`) });
   }
 });
+
+for (const [name, card] of [
+  ['ready-held', heldCard], ['progress-running', runningCard],
+  ['auto-review-batch', memberCard], ['human-review', humanCard],
+] as const) {
+  test(`Studio header facts and screenshots: ${name}`, async ({ page }) => {
+    await installRoutes(page);
+    await openDetail(page, card.id);
+    await expect(page.getByTestId('studio-lane-select')).toBeVisible();
+    await expect(page.locator('[data-testid="execution-location-badge"]:visible')).toHaveCount(1);
+    await expect(page.locator('[data-testid="studio-lane-select"]:visible')).toHaveCount(1);
+
+    const blocks = await page.locator('app-job-detail .detail > *:visible').all();
+    for (const block of blocks) {
+      const content = (await block.innerText().catch(() => '')).trim();
+      expect(content).not.toMatch(/^(not applicable|does not apply|not in a batch|loading batch verification)[.!\s]*$/i);
+    }
+
+    for (const width of [1440, 1024]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.waitForTimeout(200);
+        await expect(page.locator('[data-testid="execution-location-badge"]:visible')).toHaveCount(1);
+        await expect(page.locator('[data-testid="studio-lane-select"]:visible')).toHaveCount(1);
+        await expect(page.getByTestId('studio-tab-list').getByRole('tab', { selected: true }))
+          .toBeInViewport();
+        expect(await page.getByTestId('studio-tab-list').evaluate(
+          element => getComputedStyle(element).scrollbarWidth)).toBe('none');
+        await page.screenshot({ path: path.join(RESULTS_DIR, `header-${name}-${width}-${theme}.png`) });
+      }
+    }
+  });
+}
