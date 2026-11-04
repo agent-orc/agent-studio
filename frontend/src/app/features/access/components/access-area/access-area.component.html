@@ -93,6 +93,11 @@
         @defer (on immediate) { <app-access-operator-kill-switch /> }
       </section>
 
+      <section class="access__section" aria-labelledby="access-break-glass-title">
+        <header><h3 id="access-break-glass-title">Break-glass windows</h3><p class="access-hint">Emergency authority for named sessions, capped at two hours and reviewed after closure.</p></header>
+        @defer (on immediate) { <app-access-break-glass /> }
+      </section>
+
       <section class="access__section" aria-labelledby="access-operator-activity-title">
         <header><h3 id="access-operator-activity-title">Operator activity</h3><p class="access-hint">Audit entries of operator sessions in a hash chain, with its verification and off-host forwarding.</p></header>
         @defer (on immediate) { <app-access-operator-activity /> }

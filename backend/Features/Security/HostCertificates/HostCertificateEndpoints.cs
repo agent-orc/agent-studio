@@ -8,7 +8,8 @@ public static class HostCertificateEndpoints
     public static void MapHostCertificateEndpoints(this WebApplication app)
     {
         app.MapPost("/api/hosts/{id}/certificates", async (string id, HostCertificateRequest request,
-            HttpContext context, HostCertificateAuthority authority, ControlPlaneAuditLog audit, CancellationToken ct) =>
+            HttpContext context, HostCertificateAuthority authority, AccessSecurityStore store,
+            ControlPlaneAuditLog audit, CancellationToken ct) =>
         {
             if (!AdmittedOperator(context)) return Results.Json(new { error = "operator-policy-required" }, statusCode: 403);
             if (request.PublicKey is null) return Results.BadRequest(new { error = "invalid-host-certificate-request" });
@@ -17,7 +18,9 @@ public static class HostCertificateEndpoints
                 audit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.Operator,
                     OperatorActorScope.Current!.Actor, "host.certificate.issue", "issuance-requested", id,
                     ParameterDigest: OperationsProtocol.Digest(request.PublicKey)));
-                var receipt = await authority.IssueAsync(id, OperatorActorScope.Current!.Actor, request.PublicKey, ct);
+                var emergencyWindow = store.ActiveBreakGlassWindow(OperatorActorScope.Current!.SessionId);
+                var receipt = await authority.IssueAsync(id, OperatorActorScope.Current.Actor, request.PublicKey, ct,
+                    emergencyWindow?.ExpiresAt);
                 return Results.Ok(receipt);
             }
             catch (InvalidDataException) { return Results.BadRequest(new { error = "invalid-host-certificate-request" }); }

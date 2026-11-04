@@ -864,6 +864,49 @@ with step-up; an optional push notification only links there).
   link; `OperatorApprovalTests` cover the lifecycle matrix, step-up,
   cancellation, the queue limit, and masking.
 
+### Break-glass windows (SM-7)
+
+Decision SM-D9 option A uses a sealed offline credential and a fresh second
+factor. In Settings > Access > Break-glass windows, the Owner issues a random
+credential after step-up, stores the one-time value offline, then opens a
+window by presenting it with another fresh step-up. Opening consumes that
+credential. The Owner names one to twenty live operator session IDs, a review
+project ID or short code, and a duration of one or two hours. The window is
+refused until an off-host append-only sink is configured. It is
+bounded to those sessions and expires at its recorded end even when the API
+has not yet run its close sweep. Revoking a session or using the kill switch
+still ends that session immediately. The window skips the T1 grant and T2
+approval gates for its named sessions while retaining the operation catalogue,
+the session's role bindings, and the hard denial of access administration,
+audit writes, and Task Server routes.
+Host certificates issued under a window expire no later than that window;
+new issuance stops when it ends.
+
+The control plane records `break-glass.open`, each named session's requests,
+and `break-glass.close` in the distinct `break-glass` audit stream. It also
+appends the exact hashed lines to `.security/break-glass-journal.jsonl` with
+owner-only permissions; the SM-1 forwarder sends them to the configured
+write-once sink. Opening raises an acute operator-feed alert. When the API
+is stopped, `--open-break-glass` accepts the offline credential and a current
+TOTP code from hidden terminal input, writes the opening event to the host
+journal and forwards it to the configured sink. A configured sink is required
+for that host command. `--record-break-glass` requires another current TOTP
+code to record an offline host action in both places while the window is live.
+After recovery, the sweep alerts on any offline opening,
+closes elapsed windows, and creates one deterministic review card in the named
+project's Human review lane. The card lists the window's audit entries and
+asks the reviewer to reconcile the chain with the host journal and sink. A
+retry finds the same card after a crash between card creation and saving its
+ID.
+
+`GET /api/auth/iam/break-glass/windows` lists windows. `POST .../credential`
+issues the one-time credential after step-up. `POST .../windows` opens a window
+with `credential`, `sessionIds`, `project`, and `lifetimeHours`, after another
+step-up. `POST .../windows/{id}/close` closes early and reconciles its review
+card. All routes require an active Owner; bearer principals cannot use them.
+The host command and custody steps are in the
+[operator setup guide](../setup/operator-agent.md#break-glass-custody-and-host-recovery).
+
 ### Host operations and certificates (security model SM-6)
 
 SM-D1 uses option O4 for routine work and option O3 for a bounded transition.
@@ -1204,7 +1247,7 @@ and query strings are omitted from that audit. IAM changes go to
 One writer records the control plane audit trail in
 `<TaskRepository>/.security/control-plane-audit.jsonl` (D4 option A2). Each
 line carries `sequence`, `at`, `stream` (`iam`, `service-account`,
-`api-token`, `operator-agent`, `secret`, `run`, `kill-switch`, `operator`), `actor`, `session`,
+`api-token`, `operator-agent`, `secret`, `run`, `kill-switch`, `operator`, `break-glass`), `actor`, `session`,
 `delegatedBy`, `operation` (route or operation), `target`, `parameterDigest`
 (`sha256:` over method, path, query, and body for bearer requests; over the
 change details for IAM changes), `outcome`, the producer's full legacy record

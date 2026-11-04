@@ -15,6 +15,7 @@ public static class ControlPlaneAuditStreams
     public const string KillSwitch = "kill-switch";
     /// <summary>Operator surface records, such as the watcher lease (operator agent level OP-2).</summary>
     public const string Operator = "operator";
+    public const string BreakGlass = "break-glass";
 }
 
 /// <summary>
