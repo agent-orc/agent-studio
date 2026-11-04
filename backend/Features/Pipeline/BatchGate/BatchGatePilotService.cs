@@ -373,7 +373,7 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null,
             _gateSlots?.Snapshot(),
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
-            _time.GetUtcNow());
+            _time.GetUtcNow(), _services?.GetService<GateRunLedger>());
     }
 
     private bool CodeBatchEnabled(string project)
@@ -1461,7 +1461,8 @@ public sealed partial class BatchGatePilotService
                         lease.Fence, "GateInfra: no healthy host for same-SHA retry");
                     return;
                 }
-                gate = await RunGateAsync(run, repo, cancellation.Token, gated: gated)
+                gate = await RunGateAsync(run, repo, cancellation.Token, gated: gated,
+                    rerunCause: "infrastructure-red")
                     .ConfigureAwait(false);
                 if (MonolithTransitionAdapter.IsGateQueueOverrun(gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase))
                 {
@@ -1844,7 +1845,8 @@ public sealed partial class BatchGatePilotService
                         () => BatchRouteEnabled(diagnostic)
                             && subset.All(member =>
                                 Refresh(pending[member.TaskKey]).Subject.CurrentGeneration),
-                        subset.Select(member => pending[member.TaskKey]).ToArray())
+                        subset.Select(member => pending[member.TaskKey]).ToArray(),
+                        rerunCause: "red-candidate:" + failedManifest.BatchId)
                         .ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested
@@ -1982,9 +1984,10 @@ public sealed partial class BatchGatePilotService
 
     private async Task<BuildTestGateResult> RunGateAsync(BatchGateRunRecord run,
         string repo, CancellationToken ct, Func<bool>? stillCurrent = null,
-        IReadOnlyList<BatchGatePendingRecord>? gated = null)
+        IReadOnlyList<BatchGatePendingRecord>? gated = null, string? rerunCause = null)
     {
         var started = _time.GetUtcNow();
+        var gateHostLoadAtStart = GateRunLedger.HostLoad();
         var manifest = _store.ReadManifest(run.BatchId);
         var level = BatchTestLevel(manifest, repo, run.CandidateSha);
         foreach (var member in gated ?? [])
@@ -2001,6 +2004,12 @@ public sealed partial class BatchGatePilotService
             {
                 Project = project,
                 GateId = "batch-gate",
+                LedgerRunId = run.BatchRunId + (rerunCause == "infrastructure-red" ? "-retry" : ""),
+                LedgerProfile = run.GateProfileDigest,
+                LedgerType = rerunCause is null ? null : "clean-diagnostic-rerun",
+                LedgerBatchId = run.BatchId,
+                LedgerCards = manifest.Members.Select(member => member.TaskKey).ToArray(),
+                LedgerTriggerEvent = rerunCause ?? "batch-formed:" + run.BatchId,
                 SubjectRef = run.CandidateSha,
                 IntegrationRef = run.BaseSha,
                 RequiredTestLevel = level,
@@ -2057,6 +2066,18 @@ public sealed partial class BatchGatePilotService
         if (GateProfile(_settings.Get(project).BuildProfile, repo)
             != run.GateProfileDigest)
             throw new InvalidDataException("Batch gate profile changed during execution.");
+        if (claimed is not null && _services?.GetService<GateRunLedger>() is { } ledger)
+            ledger.Append(GateRunLedger.FromResult(new BuildTestGateRequest(repo, run.CandidateSha, "batch-gate")
+            {
+                Project = project, GateId = "batch-gate", IntegrationRef = run.BaseSha,
+                LedgerRunId = run.BatchRunId + (rerunCause == "infrastructure-red" ? "-retry" : ""),
+                LedgerProfile = run.GateProfileDigest,
+                LedgerBatchId = run.BatchId,
+                LedgerCards = manifest.Members.Select(member => member.TaskKey).ToArray(),
+                LedgerType = rerunCause is null ? null : "clean-diagnostic-rerun",
+                LedgerTriggerEvent = rerunCause ?? "batch-formed:" + run.BatchId,
+            }, result, started, _time.GetUtcNow(), result.GateStartedAtUtc?.AddMilliseconds(result.GateQueueWaitMs),
+                gateHostLoadAtStart, GateRunLedger.HostLoad()));
         using var stream = new FileStream(run.EvidencePath,
             FileMode.Append, FileAccess.Write, FileShare.None);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(result);
@@ -2391,6 +2412,10 @@ public sealed partial class BatchGatePilotService
                         pending.RepositoryPath, subject.TestedSha, "batch-fallback")
                     {
                         Project = pending.Subject.Project,
+                        JobId = pending.Subject.TaskKey,
+                        IntegrationRef = subject.BaseSha,
+                        LedgerTriggerEvent = "fallback:" + pending.ReviewAttemptId,
+                        LedgerProfile = pending.Subject.GateProfileDigest,
                         SubjectRef = subject.Merged ? subject.TestedSha : pending.Subject.ResultRef,
                         RequiredTestLevel = level,
                         ReserveBatchSlot = ConfiguredGateSlots() > 1,
@@ -2618,7 +2643,8 @@ public sealed partial class BatchGatePilotService
             pending.Subject.Project, null, null,
             gate.TestedSha ?? pending.Subject.ResultSha,
             gate.CancellationReason ?? gate.Verdict.ToString(), Environment.MachineName,
-            started, _time.GetUtcNow(), gate.GateQueueWaitMs, 0, evidence));
+            started, _time.GetUtcNow(), gate.GateQueueWaitMs, 0, evidence,
+            gate.DurationMs));
         Lane(pending, "gate-finished", level: level,
             durationMs: gate.DurationMs, queueWaitMs: gate.GateQueueWaitMs,
             outcome: gate.Verdict.ToString(), reason: "per-task-fallback");

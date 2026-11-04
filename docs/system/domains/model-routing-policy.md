@@ -6,6 +6,64 @@ Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical 
 
 Owner: Pipeline and CLI domains
 
+## Consumer policy and project overrides (AGT-3479)
+
+The workspace policy is `model-selection-policy.json` under `TaskRepository`.
+It holds consumer-class primary and ordered fallback routes, cap values, the
+cost-guard factor, and hysteresis parameters. `GET /api/model-selection/policy`
+returns the policy and the one-time migration count. The CLI Management editor
+updates one consumer row with `PUT /api/model-selection/policy/consumers/{consumer}`.
+
+`ProjectSettings.ModelSelectionOverrides` can replace the route for a consumer,
+pipeline type, or step. `PUT /api/projects/{projectName}/pipeline-step` continues
+to store its compatibility fields and writes the matching step override. On the
+first policy read, step model pins equal to the old global primary model become
+inherited; other pins remain explicit. The migration emits `policy-migrated`
+to the selection ledger. The old `cli-model-routing.json` is read once and
+remains read only during this compatibility release.
+
+Card and project pins default to `preference`. A `hard` pin waits with a reason
+when the route cannot launch. Provider-refusal continuation stores a temporary
+preference with an expiry instead of replacing the operator's card pin.
+The policy declares `gpt-6-sol:xhigh` to `claude-opus-5:xhigh` as the explicit
+cross-provider fallback recommended in D5 of the concept Dossier.
+
+### Model selection API contract
+
+The routes below use JSON property names as sent on the wire. A policy route
+uses `{ "cli": "claude", "model": "claude-opus-5", "thinking": "high" }`;
+an effective or project override route uses `cliType` and `thinkingLevel`
+instead. `fallbacks` in a consumer policy is either `"catalogue"` or an
+ordered array of policy routes. A consumer can use `route: "qualification"`
+instead of a fixed `primary`. Consumer keys include `coding`, `review-aspect`,
+`review-deep`, `review-grade`, `concept-fit`, `chat`, `one-shot`,
+`merge-resolver`, and `card-creation`.
+
+| Method and route | Request | Successful response and effect |
+|---|---|---|
+| `GET /api/model-selection/policy` | None. | The full `ModelSelectionPolicy`: `version`, `consumers`, `caps`, `costGuardFactor`, `hysteresis`, `modelFallbacks`, `legacyProfiles`, and `migration`. The first read creates the file and performs the one-time migration. `migration` contains `inheritedSteps`, `explicitSteps`, `projects`, and `applied`. |
+| `PUT /api/model-selection/policy/consumers/{consumer}` | One complete `ConsumerModelPolicy` with optional `primary`, `route`, `fallbacks`, `sameClassOnly`, `stickyWithinCard`, and per-consumer `costGuardFactor`. | The full updated policy. The consumer must exist; route CLI ids must be valid and a supplied cost factor must be positive. |
+| `GET /api/model-selection/effective?project={projectName}&pipelineType={pipelineType}` | Both query parameters are optional; `pipelineType` must be valid when supplied. | `{ "project": ..., "pipelineType": ..., "routes": [...] }`. Each route has `consumer`, nullable `stepId`, `configured`, nullable `effective`, `rule`, and nullable `reason`. `configured` and `effective` use `cliType`, `model`, and `thinkingLevel`; a null `effective` means admission would wait. The preview does not launch a model. |
+| `PUT /api/projects/{projectName}/model-selection-overrides/{consumer}` | `{ "pipelineType": null, "override": { "primary": { "cliType": "codex", "model": "gpt-6-sol", "thinkingLevel": "high" }, "fallbacks": [], "pinMode": "preference" } }`. `pipelineType` selects a type-specific override; omit or set it to null for the consumer-wide override. Set `override` to null to clear that scope. | `{ "projectName": ..., "modelSelectionOverrides": ... }`. Unknown projects or consumers are rejected; `pinMode` must be `preference` or `hard`. Overrides can also contain `byPipelineType` and `byStep` maps. |
+| `PUT /api/projects/{projectName}/pipeline-step` | The existing step body with `pipelineType`, `stepId`, optional `cliType`, `model`, `thinkingLevel`, and `pinMode` (default `preference`), alongside the other step settings. | The existing step response gains `modelSelectionOverrides`. A model or CLI selection writes the matching step override; clearing both removes it. The compatibility step fields remain readable. |
+| `PUT /api/tasks/{jobId}/model`, `/thinking-level`, `/cli-type` | Respectively `{ "model": ..., "pinMode": "preference" }`, `{ "thinkingLevel": ..., "pinMode": "preference" }`, and `{ "cliType": ..., "pinMode": "preference", "useOwnSession": ... }`. `pinMode` may be omitted and then defaults to `preference`. | `200 OK` for a saved card pin, `404` when the card is absent; invalid pin modes return `400`. The CLI route also validates `cliType`. These pins affect later attempts, not a running CLI session. |
+
+The project override map is `ModelSelectionOverrides[consumerClass]`, with
+optional `byPipelineType[pipelineType]` and `byStep[stepId]` entries. Each entry
+may supply `primary`, ordered `fallbacks`, and `pinMode`. The migration compares
+old step models with the old global primary for their CLI. Matching models
+inherit; different models become explicit step overrides. The policy response
+reports the counts, and the selection ledger receives one `policy-migrated`
+entry. `cli-model-routing.json` is only read during that initial migration and
+is not written by the new policy editor.
+
+This slice implements the Dossier's recommended working choices for its scope:
+D2 makes pins preferences with a hard opt-in; D3 keeps the 95 percent cap and
+records the 10-point, 30-minute return hysteresis; D5 declares the Sol/xhigh to
+Opus 5/xhigh fallback; D8 sets the cost guard factor to 2.0. The consumer
+policy retains D4's same-class review rule and D6's sticky review setting.
+The Dossier implementation log records decisions handled by the other slices.
+
 This page is the authoritative answer to two questions:
 
 1. Which model and thinking level should perform a task or bounded pipeline
@@ -15,8 +73,9 @@ This page is the authoritative answer to two questions:
 
 The policy selects the cheapest tier that clears the required capability floor.
 It does not claim that a larger model repairs a vague task, a broken gate, or
-missing evidence. Explicit operator pins still win, but the UI or orchestrator
-should explain when a pin is below the policy floor.
+missing evidence. A preference pin wins over defaults but may switch under
+quota or operator rules. A hard pin waits instead of switching. The UI or
+orchestrator should explain when a pin is below the policy floor.
 
 ## Routing tiers
 
@@ -548,7 +607,8 @@ economy state, correctness floor, and reason.
 Step 3's "equivalent-capability provider route" is code, not operator
 judgment, as of AGT-2751. [CliQuotaFallbackService](../../../backend/Features/Cli/Quota/CliQuotaFallbackService.cs)
 derives it from [IModelEquivalenceCatalog](../../../backend/Features/Cli/Quota/ModelEquivalenceCatalog.cs)
-when no explicit `cli-model-routing.json` fallback is configured, and the
+when no explicit fallback is configured in the workspace policy (including a
+migrated legacy profile), and the
 application-wide [QuotaAdmissionService](../../../backend/Features/Cli/Quota/QuotaAdmissionService.cs)
 applies the same switch, throttle, or wait decision before every execution path
 that launches a coding-agent CLI. The exhaustive path-to-source and

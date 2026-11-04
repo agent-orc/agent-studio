@@ -80,6 +80,10 @@ public record TaskInfo
     /// execution model unexpectedly.
     /// </summary>
     public bool ModelExplicit { get; init; } = true;
+    public string PinMode { get; init; } = "preference";
+    public string? PreferenceModel { get; init; }
+    public string? PreferenceThinkingLevel { get; init; }
+    public DateTime? PreferenceExpiresAt { get; init; }
     /// <summary>Optional thinking / reasoning effort level for the selected CLI model.</summary>
     public string? ThinkingLevel { get; init; }
     /// <summary>

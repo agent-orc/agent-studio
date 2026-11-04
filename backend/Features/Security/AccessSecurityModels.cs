@@ -194,6 +194,8 @@ public sealed record SecurityState
     public List<TelemetryIngestToken> TelemetryIngestTokens { get; init; } = [];
     /// <summary>Operator agents' T1 authority (security model SM-4); only the Owner changes it.</summary>
     public List<StandingGrant> StandingGrants { get; init; } = [];
+    /// <summary>Owner approvals of T2 operator requests (security model SM-5).</summary>
+    public List<OperatorApproval> OperatorApprovals { get; init; } = [];
 }
 
 public sealed record StudioInvitation
@@ -239,7 +241,8 @@ public sealed record TelemetryIngestToken
 }
 
 public sealed record ApiTokenPrincipal(StudioApiToken Token, StudioUser User);
-public sealed record CreateApiTokenRequest(string Name, string Role, IReadOnlyList<string>? Projects, DateTime ExpiresAt);
+/// <summary><see cref="ExpiresAt"/> is optional: without it a token lives 30 days, at most 365 (OP-1).</summary>
+public sealed record CreateApiTokenRequest(string Name, string Role, IReadOnlyList<string>? Projects, DateTime? ExpiresAt = null);
 public sealed record ApiTokenResponse(string Id, string Name, string Role, IReadOnlyList<string> Projects,
     string CreatedBy, DateTime CreatedAt, DateTime ExpiresAt, DateTime? LastUsedAt, DateTime? RevokedAt);
 public sealed record CreatedApiTokenResponse(ApiTokenResponse Token, string Secret);

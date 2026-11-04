@@ -92,6 +92,8 @@ export interface PipelineAdminRow {
   effectiveCliType: string;
   effectiveModel: string;
   effectiveModelSource: string;
+  overridesWorkspace?: boolean;
+  pinMode?: 'preference' | 'hard';
   effectiveThinkingLevel: string;
   /** Inline prompt override text (legacy). Empty = bound to the registry template. */
   prompt: string;

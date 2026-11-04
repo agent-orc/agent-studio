@@ -205,7 +205,10 @@ that is already allowed to edit that project's checkout.
   manage role bindings, groups, and service accounts; create and revoke named
   API tokens; create, list, and revoke runner enrollment codes; and revoke
   enrolled runners. API tokens use the operator or viewer role and an
-  explicit project list (`*` grants all projects). The creation response shows
+  explicit project list (`*` grants all projects). An operator token binds the
+  narrow `operator-agent` role (OP-1, below); Settings > Access shows that role
+  name on the token. Without `expiresAt` a token expires after 30 days; the
+  maximum stays 365 days. The creation response shows
   the secret once; subsequent lists expose metadata only: creator, expiry,
   last use, and revocation. The existing `.security/access-state.json` holds
   their hashes alongside the other access credentials. A disabled creator
@@ -215,8 +218,12 @@ that is already allowed to edit that project's checkout.
   Studio sign-in remains the frontend's auth path.
 - Scripts send an API token as `Authorization: Bearer` in the networked
   profile. The task-api reference scripts accept `TASKBOARD_URL` for the HTTPS
-  origin and `AGENT_STUDIO_API_TOKEN` for the secret. `X-Client-Id` remains
-  attribution only. API tokens cannot call access administration, versioned
+  origin and read the secret only from `~/.config/agent-studio/operator-token`
+  with owner-only permissions. They refuse a file that group or others can
+  access (`token-file-permissions`), the retired `AGENT_STUDIO_API_TOKEN`
+  variable (`token-environment-refused`, no fallback), and a token on the
+  command line (`token-argument-refused`), and redact the token from their
+  output. `X-Client-Id` remains attribution only. API tokens cannot call access administration, versioned
   Task Server, Runner service, or SignalR routes. A viewer token cannot mutate.
   API tokens are service accounts and pass the same named-permission check.
   Routes without a project address, including workspace timelines,
@@ -257,6 +264,7 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 | Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
 | Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
 | Developer | workspace, project, environment | cards, runs, chats, documents, non-production deploys |
+| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys |
 | Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
 | Viewer | workspace, project, environment | reads, secret metadata included |
 | Approver | workspace, project, environment | `environment.production.deploy.approve` and reads |
@@ -439,10 +447,30 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   transition. Runners and the engine keep their enrollment credentials and
   Runner scopes.
 - API tokens (AGT-3186) are service accounts with one `api.` token, created
-  under `/api/auth/api-tokens` with Admin (`operator`) or Viewer bindings for
-  the requested projects. They keep the API-token limits: no
+  under `/api/auth/api-tokens` with Operator agent (`operator`) or Viewer
+  bindings for the requested projects. They keep the API-token limits: no
   installation-wide writes even with `*`, and no use once the creating user is
   disabled.
+- The `operator-agent` role (Dossier operator-agent-level, OP-1, decision
+  OA-D4 B) holds exactly the operator surface: `workspace.read`,
+  `project.read`, `project.cards.write` (create, title, lane moves and
+  acceptance), `project.runs.operate` (continue and steer rounds, batch gate
+  eject and close-now), `project.pipeline.write` (`PUT
+  /api/projects/{project}/pipeline-step`, review step models),
+  `workspace.operate` for reads such as `/api/watcher/*`, and
+  `environment.deploy` (stage releases of gate-verified commits). It holds no
+  `secrets.read`, `secrets.write`, or `secrets.resolve`, no production deploy
+  or approval, no access permission, no `workspace.settings.write` or
+  `workspace.administer`, and no `project.settings.write`. Only service
+  accounts take it. A principal whose strongest granting role is
+  `operator-agent` cannot make an installation-wide (unaddressed) write, so
+  `workspace.operate` stays read-only for it. It does not hold operator
+  authority: an operator override completion and the operator decider of a
+  decision card stay with Admin and Owner. `POST /api/runner/secrets/resolve`
+  answers 403 `secret-resolve-denied` to any service-account bearer.
+  `GET /api/quota/admission/{project}` stays a Task Server and Runner claim
+  route that no session or token reads; operator tokens read quota through
+  `/api/cli/quota` and `/api/cli/quota/model-routes`.
 - Secret routes (AGT-3222) declare `secrets.read` for metadata reads and
   `secrets.write` for put, rotate, revoke, and delete, at the workspace
   (`/api/secrets/workspace`, which needs a workspace binding), project
@@ -465,7 +493,17 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   keep their token id and secret hash, so existing `api.` secrets keep
   working. Sessions, runners, enrollments, and invitations are unchanged. A
   single-user installation migrates its owner and needs no setup; a fresh
-  bootstrap binds the first owner directly.
+  bootstrap binds the first owner directly. Version 3 (OP-1) rebinds every
+  Admin binding of an API-token service account to `operator-agent` in the
+  same scope and writes one `api-token.role-migration` entry per token to
+  `.security/iam-audit.jsonl` (token id, from and to role, bindings). Legacy
+  operator tokens from version 0 or 1 bind `operator-agent` directly and get
+  the same entry. Service accounts created in the Access area keep their
+  bindings. A networked server loads the state at start, so the migration
+  and its audit entries run before the first request; an unreadable state
+  file is logged and does not stop the start, and every request that reads it
+  answers 500 until the file is repaired. An older binary does not know the role and grants such a token
+  nothing until it is upgraded again.
 - Each user record keeps `role`, `projects`, and `productionApprovalProjects`
   as a downgrade-safe summary: only Admin is summarized as `operator` (with
   the Admin projects), Product as `contributor`, everything else as `viewer`,
@@ -475,7 +513,7 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   restore the migration backup to return to the old state. A later upgrade
   migrates again from that summary, so bindings, groups, and service accounts
   made under the rights model would be lost. Before a downgrade, copy the
-  current `.security/access-state.json` (version 2) aside; before upgrading
+  current `.security/access-state.json` (version 3) aside; before upgrading
   again, restore that copy.
 - The legacy user endpoint keeps working: `PUT /api/auth/users/{id}` renames
   or disables without touching bindings when `role`, `projects`, and
@@ -531,8 +569,9 @@ D1, D4, and D11).
 ### Operator operation catalogue, tiers, and standing grants (SM-4)
 
 Every operator session request passes the policy step in
-`AccessSecurityMiddleware` before any role binding is read (security model
-SM-4, decisions SM-D2 option A, SM-D3 option A, and SM-D7 option A).
+`AccessSecurityMiddleware` (security model SM-4, decisions SM-D2 option A,
+SM-D3 option A, and SM-D7 option A). A request outside the catalogue is
+refused before any role binding is read.
 
 - The operation catalogue (`OperatorOperationCatalog`) gives each operation an
   id, exactly one tier, and a scope kind (workspace, project, environment, or
@@ -552,9 +591,12 @@ SM-4, decisions SM-D2 option A, SM-D3 option A, and SM-D7 option A).
   catalogued delete), `history.rewrite`, `gate.bypass` (merge, external
   completion, a move into Human review or Completed), `keys.rotate`,
   `host.enrollment`, `access.change`, `grant.change`, and `catalogue.change`.
-  The policy step refuses every T2 request with `approval-required`; the
-  approval request itself is SM-5. Changing the catalogue is a code change
-  through a card, so it is T2 by construction.
+  A T2 request runs only under the Owner's approval of exactly that request
+  (SM-5, next section); without one it is refused with `approval-required`.
+  A T2 request on access administration or the Task Server plane
+  (`/api/auth/*`, `/api/v1/*`) is refused there and never becomes an approval
+  request, because no operator session may call those routes. Changing the
+  catalogue is a code change through a card, so it is T2 by construction.
 - The operator agent has no operation that pushes a protected branch (D3). A
   change reaches `develop` or `main` as a card through the gate.
 - A T1 request is admitted only under a live standing grant of the operator
@@ -631,6 +673,89 @@ reports, `runner.events` for the Git setup reports. An empty queue answers
 1 minute. It logs the status and refusal code once for each distinct failure,
 logs the repeat count when the failure changes or the poll recovers, and goes
 back to 2 seconds after an answer.
+
+### Owner approval with step-up (SM-5)
+
+A T2 operator request becomes an approval request instead of an effect
+(security model SM-5, decision SM-D8 option A: the Owner decides in Studio
+with step-up; an optional push notification only links there).
+
+- **When it opens.** The policy step defers a T2 request until the route
+  floors and the session's role bindings admit it, so the Owner is asked only
+  about requests that could run. Without an `X-Operator-Approval` header the
+  store opens an approval request and the answer is 403
+  `approval-required` with `approvalId`, `operation`, and `tier`. A retry of
+  the same request from the same session while the request is pending
+  answers the same `approvalId`. One session holds at most 20 open (pending
+  or approved) requests; the next answers 429 `approval-queue-full`. A body
+  too large to digest in full (over 16 MB) answers 403 `approval-unbindable`.
+- **What the Owner sees.** The operation and its tier, the request line
+  (method, path, query), the parameters (the JSON body indented, with the
+  values of secret-like fields such as `value`, `token`, `password`, `key`,
+  or `credential` masked, other bodies through the credential redactor), the
+  parameter digest, the target (project and task), the session actor
+  `operator-agent:<id>/session:<sid>`, the instruction source, and the
+  agent's stated reason. The agent states the source in
+  `X-Operator-Instruction-Source` (`owner-chat`, `card`, `repository-file`,
+  `web-page`, or `log`; anything else is recorded as `unstated`) and the
+  reason in `X-Operator-Reason` (percent-encoded UTF-8, at most 500
+  characters). Every source except `owner-chat` is shown as untrusted
+  content that can propose but never authorize. The masked view is for
+  review only; the digest binds the exact bytes.
+- **Deciding.** Only an active Owner approves or rejects, in Settings →
+  Access → Approval requests. Each decision consumes a fresh step-up
+  (`POST /api/auth/step-up` within the five minutes before, single use);
+  without one the decision is refused with 403 `step-up-required`. The
+  deciding actor is the user of the authenticated Studio session. No header
+  (`X-Client-Id` included) and no body field names it; a bearer principal
+  (service account, API token, or operator session) is refused on these
+  routes even if it sends the Owner's id. The Owner has 15 minutes from the
+  request to decide; afterwards the request is `expired` and a decision
+  answers 409 `approval-expired`. A decision is final (409
+  `approval-decided`).
+- **Running it.** The agent repeats the exact request with
+  `X-Operator-Approval: <id>`. It runs only when the approval belongs to the
+  same operator agent and session, names the same operation, matches the
+  parameter digest (method, path, query, and body), is approved, unused, and
+  within 15 minutes of the decision. The store marks it used under its lock
+  before the handler runs, so a replay or a concurrent copy finds it used.
+  The role bindings still apply. Refusals answer 403 with
+  `approval-not-found` (unknown, or another session's), `approval-pending`,
+  `approval-rejected`, `approval-used`, `approval-expired`,
+  `approval-cancelled`, or `approval-digest-mismatch` (a changed card, query,
+  or body); the approval check answers before the target is resolved, so a
+  replay after the target was deleted still answers `approval-used`. The
+  response status of the admitted request is recorded against the approval
+  (`resultStatus`).
+- **Cancelling.** Revoking the session or disabling the operator agent
+  cancels its open approvals.
+- **Audit.** The IAM stream records `operator-approval.request` (session
+  actor), `.approve` and `.reject` (`human:<owner id>`), `.execute` (with the
+  answer status), and `.cancel`. Every operator request entry that concerned
+  an approval carries `approvalId` next to `policyReason` and the parameter
+  digest.
+- **Notification.** A new request emits one operator-feed event
+  (`operator_approval_requested`) with a link to
+  `#/workspace/settings/access?approval=<id>`. When
+  `OperatorApprovals:Push:Url` is set (HTTPS, or HTTP on loopback), the
+  notifier also posts `approvalId`, `title`, `message`, and `url` as JSON to
+  that endpoint, with the bearer from `OperatorApprovals:Push:TokenFile` if
+  set; `OperatorApprovals:StudioUrl` gives the link its address. The
+  notification carries no token, digest, or decision route, so receiving it
+  approves nothing. Delivery runs off the request path from a bounded queue;
+  a failed delivery is logged and the request stays in Studio.
+
+  | Method and route | Permission | Body and answer |
+  |---|---|---|
+  | `GET /api/auth/iam/operator-approvals?principalId=<opa id>` | `access.read` | Answers every approval, newest first: `id` (`apr_*`), `principalId`, `principalName`, `sessionId`, `actor`, `delegatedBy`, `operation`, `operationTitle`, `tier`, `method`, `path`, `query`, `parameters`, `parameterDigest`, `target`, `instructionSource`, `reason`, `requestedAt`, `expiresAt`, `state` (`pending`, `approved`, `rejected`, `used`, `expired`, or `cancelled`), `decidedBy`, `decidedAt`, `decisionNote`, `approvalExpiresAt`, `usedAt`, `resultStatus`, `cancelledAt`, and `cancelReason`. |
+  | `POST /api/auth/iam/operator-approvals/{id}/approve` | `access.manage`, active Owner, fresh step-up | Takes optional `note` (at most 500 characters). Answers the approval. Refusals: 403 `owner-required`, `step-up-required`, or `human-session-required`; 404 `approval-not-found`; 409 `approval-expired`, `approval-decided`, `approval-cancelled`, or `approval-used`; 400 `invalid-note`. |
+  | `POST /api/auth/iam/operator-approvals/{id}/reject` | `access.manage`, active Owner, fresh step-up | As approve. |
+
+  Settled approvals stay in the identity store for 30 days.
+  `OperatorApprovalFlowTests` cover the end-to-end flow, replay, a changed
+  parameter, another session, expiry, a forged actor header, and the push
+  link; `OperatorApprovalTests` cover the lifecycle matrix, step-up,
+  cancellation, the queue limit, and masking.
 
 ### Operator guardrails on card rounds (AGT-3483)
 

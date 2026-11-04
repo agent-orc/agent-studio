@@ -17,6 +17,8 @@ export interface IamRole {
   permissions: readonly string[];
   bindableScopes: readonly IamScopeKind[];
   serviceAccountBindable: boolean;
+  /** False for a role only service accounts take (`operator-agent`); absent from older servers. */
+  userBindable?: boolean;
 }
 
 export interface IamPermission {
@@ -213,7 +215,7 @@ export function principalKindLabel(kind: IamPrincipalKind): string {
 /** Roles that may be bound to this principal kind in this scope kind. */
 export function bindableRoles(roles: readonly IamRole[], kind: IamPrincipalKind, scope: IamScopeKind): IamRole[] {
   return roles.filter(role => role.bindableScopes.includes(scope)
-    && (kind !== 'service-account' || role.serviceAccountBindable));
+    && (kind === 'service-account' ? role.serviceAccountBindable : role.userBindable !== false));
 }
 
 /** A UTC timestamp for access records; locale and zone are fixed so every reader sees the same value. */

@@ -734,13 +734,14 @@ public sealed class WorkspaceArtifactCommitService
                 try
                 {
                     var size = new FileInfo(file).Length;
-                    if (size <= _maximumFileBytes) continue;
                     var relative = Path.GetRelativePath(gitRoot, file).Replace('\\', '/');
+                    var limit = IsSettlementJournal(relative) ? 5L * 1024 * 1024 : _maximumFileBytes;
+                    if (size <= limit) continue;
                     if (!refused.Add(relative)) continue;
                     if (_refusedFileNotices.TryAdd(file, 0))
                         _logger.LogWarning(
                             "workspace-artifact-file-refused path={Path} bytes={Bytes} maximumBytes={MaximumBytes}",
-                            relative, size, _maximumFileBytes);
+                            relative, size, limit);
                 }
                 catch (IOException ex)
                 {
@@ -750,6 +751,10 @@ public sealed class WorkspaceArtifactCommitService
         }
         return refused.ToList();
     }
+
+    internal static bool IsSettlementJournal(string path)
+        => path.Replace('\\', '/').Contains("/logs/remote-review-settlement-", StringComparison.Ordinal)
+           && path.EndsWith(".json", StringComparison.Ordinal);
 
     private void UnstageRefusedFiles(string gitRoot, IReadOnlyList<string> refused)
     {

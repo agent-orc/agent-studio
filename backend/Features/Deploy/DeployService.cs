@@ -46,6 +46,7 @@ public sealed class DeployService
     private readonly ReleaseCardAttributionSource _attribution;
     private readonly PostMergeRunStore? _postMerge;
     private readonly ProjectRegistry? _registry;
+    private readonly AgentStudio.Projects.ProjectSettingsService? _projectSettings;
 
     /// <summary>
     /// Ancestry answers between release commits. Commits are immutable, so a
@@ -65,7 +66,8 @@ public sealed class DeployService
     public DeployService(ProjectEnvironmentService environments, DeployStore store, GitService git,
         TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger,
         TaskMutationService? mutations, ReleaseCardAttributionSource? attribution = null,
-        PostMergeRunStore? postMerge = null, ProjectRegistry? registry = null)
+        PostMergeRunStore? postMerge = null, ProjectRegistry? registry = null,
+        AgentStudio.Projects.ProjectSettingsService? projectSettings = null)
     {
         _environments = environments;
         _store = store;
@@ -77,6 +79,7 @@ public sealed class DeployService
         _attribution = attribution ?? new ReleaseCardAttributionSource(scanner);
         _postMerge = postMerge;
         _registry = registry;
+        _projectSettings = projectSettings;
     }
 
     /// <summary>
@@ -296,8 +299,9 @@ public sealed class DeployService
     {
         lock (_gate)
         {
-            return SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
+            var releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
                 .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
+            return releases is null ? null : WithQuality(project, releases);
         }
     }
 
@@ -312,12 +316,15 @@ public sealed class DeployService
         lock (_gate)
         {
             var digest = artifact is null ? null : DigestOf(artifact);
-            var releases = SyncLocked(project)?.Releases
+            var allReleases = SyncLocked(project)?.Releases;
+            var releases = allReleases?
                 .Where(item => digest is null || item.ArtifactDigests.Any(value => DigestOf(value) == digest))
                 .Where(item => notAfterUtc is null || item.CreatedAtUtc <= notAfterUtc)
                 .OrderByDescending(item => item.CreatedAtUtc)
                 .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
-            return releases is null ? null : Page(releases, offset, limit);
+            if (releases is null || allReleases is null) return null;
+            var page = Page(releases, offset, limit);
+            return page with { Items = WithQuality(project, allReleases, page.Items) };
         }
     }
 
@@ -331,8 +338,23 @@ public sealed class DeployService
             var index = Array.FindIndex(releases, item => item.Id == releaseId);
             if (index < 0) return null;
             var pageSize = Math.Clamp(limit, 1, 50);
-            return Page(releases, index / pageSize * pageSize, pageSize);
+            var page = Page(releases, index / pageSize * pageSize, pageSize);
+            return page with { Items = WithQuality(project, releases, page.Items) };
         }
+    }
+
+    private IReadOnlyList<Release> WithQuality(string project, IReadOnlyList<Release> releases,
+        IReadOnlyList<Release>? visible = null)
+    {
+        if (visible is { Count: 0 }) return [];
+        var tasks = _scanner.ScanAllJobsWithArchive()
+            .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase));
+        var config = _projectSettings?.Get(project);
+        var repositoryId = config?.QualityStudioRepositoryId ?? config?.QualityStudio?.RepositoryId;
+        var repo = _git.ResolveRepoRootForProject(project);
+        return ReleaseQualityProjection.Project(releases, tasks, repositoryId,
+            (previous, current) => repo is null ? null : _git.GetMergeBase(repo, previous, current), visible,
+            head => repo is null ? null : _git.GetRootCommit(repo, head));
     }
 
     private static string DigestOf(string artifact)
