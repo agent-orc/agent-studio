@@ -43,6 +43,8 @@ public enum BatchExclusionReason
     ActivePerTaskGate,
     NotDocumentationOnly,
     NextBatch,
+    OverlapSeparate,
+    MaximumSize,
 }
 
 public sealed record BatchGateScope(
@@ -59,7 +61,8 @@ public sealed record BatchGateSubject(
     bool DocumentationOnly, DateTimeOffset ReviewCompletedAtUtc,
     long EnqueueSequence);
 
-public sealed record BatchGateExclusion(string TaskKey, BatchExclusionReason Reason);
+public sealed record BatchGateExclusion(string TaskKey, BatchExclusionReason Reason,
+    string? Detail = null);
 
 public sealed record BatchGateFormationOptions(
     bool Enabled = false, int CloseSize = 4, int MaximumSize = 8,
@@ -111,7 +114,7 @@ public sealed record BatchGateManifest(
     DateTimeOffset ClosedAtUtc, IReadOnlyList<BatchGateSubject> Members,
     IReadOnlyList<BatchGateExclusion> Exclusions,
     IReadOnlyList<string> EligibleKeys,
-    string? ParentBatchId = null);
+    string? ParentBatchId = null, string? FormationReason = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,
@@ -152,7 +155,8 @@ public static class BatchGatePolicy
         string baseSha, BatchGateFormationOptions options,
         DateTimeOffset now, int reviewQueueLength = 0, bool loadThrottled = false,
         bool gateBacklog = false, bool baseRed = false,
-        IReadOnlySet<string>? priorityKeys = null, int queuedPartners = 0)
+        IReadOnlySet<string>? priorityKeys = null, int queuedPartners = 0,
+        bool projectGateBusy = false)
     {
         if (!options.IsValid) throw new ArgumentOutOfRangeException(nameof(options));
         var eligible = new List<BatchGateSubject>();
@@ -190,6 +194,10 @@ public static class BatchGatePolicy
         // AGT-3466: a lone card past its deadline waits for queued cards that
         // only lack their pre-check; they join it at their own deadline.
         if (eligible.Count == 1 && deadline && queuedPartners > 0)
+            return new(null, exclusions, keys, false);
+        // A gate already using this project's slot gives a due card time to
+        // meet the next partner. Starting its own gate would queue another run.
+        if (eligible.Count == 1 && deadline && projectGateBusy)
             return new(null, exclusions, keys, false);
         if (eligible.Count == 1 && deadline)
             return new(null, exclusions, keys, !gateBacklog || reviewQueueLength == 0

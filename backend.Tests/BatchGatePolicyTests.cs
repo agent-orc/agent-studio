@@ -120,6 +120,20 @@ public sealed class BatchGatePolicyTests
     }
 
     [Fact]
+    public void Due_single_card_waits_for_a_partner_while_the_project_gate_is_busy()
+    {
+        var options = Enabled with { Scope = "code", DeadlineMinutes = 45 };
+        var due = Subject("a", -46) with { DocumentationOnly = false };
+
+        var held = BatchGatePolicy.Form([due], Scope, Sha, options, Now,
+            projectGateBusy: true);
+
+        Assert.Null(held.Manifest);
+        Assert.False(held.UsePerTaskGate);
+        Assert.True(BatchGatePolicy.Form([due], Scope, Sha, options, Now).UsePerTaskGate);
+    }
+
+    [Fact]
     public void Forced_close_below_minimum_explains_its_per_task_fallback()
     {
         var code = Enabled with { Scope = "code", MinimumSize = 2 };

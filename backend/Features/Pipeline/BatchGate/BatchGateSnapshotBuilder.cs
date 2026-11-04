@@ -125,6 +125,11 @@ public sealed class BatchGateSnapshotBuilder
             Diff(item.RepositoryPath, branch, item.Subject.TaskKey, item.Subject.ResultSha, now);
     }
 
+    /// <summary>Planner-owned changed paths, including the unknown-diff case.</summary>
+    public IReadOnlyList<string>? Paths(BatchGatePendingRecord item, DateTimeOffset now)
+        => Diff(item.RepositoryPath, item.Subject.IntegrationBranch,
+            item.Subject.TaskKey, item.Subject.ResultSha, now)?.Paths;
+
     internal string? PendingExclusion(BatchGatePendingRecord pending)
     {
         var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);

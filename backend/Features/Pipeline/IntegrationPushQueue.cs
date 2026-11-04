@@ -31,7 +31,9 @@ public sealed record IntegrationPushRequest(
 /// the background merge post-step (<see cref="MergeIntoDevelopRunner"/>) drops a
 /// released SHA here after merge + gate. <see cref="IntegrationPushWorker"/>
 /// drains it and performs the push (with the AGT-1944 environmental retry) on a
-/// background thread.
+/// background thread for legacy and unwired publication paths. Per-task code
+/// integrations with the batch publication lease publish within their merge
+/// transaction, before reporting integration success.
 /// <see cref="IntegrationPushBackstopHostedService"/> re-drives a lost channel
 /// item from its persisted pending-push marker and approved merge step.
 /// <para>

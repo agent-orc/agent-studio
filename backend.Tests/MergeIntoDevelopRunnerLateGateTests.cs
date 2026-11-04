@@ -11,6 +11,102 @@ namespace AgentStudio.Tests;
 
 public sealed partial class MergeIntoDevelopRunnerTests
 {
+    [Fact]
+    public async Task Rejected_push_on_disjoint_origin_replays_under_the_green_gate()
+    {
+        var fixture = SeedLateGateFixture("rejected-push-disjoint", "replay", publishDelivery: false);
+        var (repo, remote) = (fixture.Repo, RunGit(fixture.Repo, "remote get-url origin").Out.Trim());
+        var publishedDuringGate = false;
+        var gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 10, "", "green", true, false), duringRun: () =>
+        {
+            if (publishedDuringGate) return;
+            publishedDuringGate = true;
+            File.WriteAllText(Path.Combine(repo, "batch.txt"), "batch publication");
+            Commit(repo, "chore: publish unrelated batch file");
+            RunGit(repo, "push -q origin develop");
+        });
+        var runner = PublicationRunner(fixture, gate);
+
+        var result = await runner.RunAsync("Fixture", "replay", fixture.Folder,
+            fixture.WatchPath, "develop", CancellationToken.None);
+
+        Assert.True(result.Outcome.IsSuccessfulIntegration(), result.Error);
+        Assert.Equal(1, gate.Invocations);
+        var rejected = gate.Request!.ExpectedSha;
+        Assert.Equal(rejected, RunGit(repo,
+            $"rev-parse {GitService.IntegrationLaneBackupRef("develop", rejected)}").Out.Trim());
+        Assert.Equal(result.MergedSha, RemoteSha(remote, "develop"));
+        Assert.Equal(result.MergedSha, Lane(repo, "develop"));
+        Assert.Equal(result.MergedSha, IntegrationVerificationStore.Read(fixture.Folder)?.Sha);
+        Assert.Single(fixture.Timeline.ReadAll(fixture.Folder),
+            item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded);
+    }
+
+    [Fact]
+    public async Task Rejected_push_on_overlapping_origin_restores_lane_and_requeues_card()
+    {
+        var fixture = SeedLateGateFixture("rejected-push-overlap", "overlap", publishDelivery: false);
+        var repo = fixture.Repo;
+        var publishedDuringGate = false;
+        var gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 10, "", "green", true, false), duringRun: () =>
+        {
+            if (publishedDuringGate) return;
+            publishedDuringGate = true;
+            File.WriteAllText(Path.Combine(repo, "delivery.txt"), "different batch content");
+            Commit(repo, "chore: publish overlapping batch file");
+            RunGit(repo, "push -q origin develop");
+        });
+        var store = new BatchGateStore(Path.Combine(_tempDir, "rejected-push-queue"));
+        var subject = ReviewSubjectStore.Read(fixture.Folder)!;
+        var pendingSubject = new BatchGateSubject(subject.TaskKey, "Fixture", repo, "develop",
+            "complete-suite", "profile", "test", subject.ImmutableResultRef!, subject.ResultSha,
+            subject.RunAttemptId, 1, 1, subject.ResultSha, true, true, true, true,
+            false, null, false, fixture.Clock.GetUtcNow(), 0);
+        const string reviewAttempt = "review-rejected-push";
+        store.Enqueue(new BatchGatePendingRecord(reviewAttempt, pendingSubject, repo,
+            fixture.WatchPath, fixture.Folder, IntegrationStrategies.DirectMerge,
+            PipelineTypes.Task, fixture.Clock.GetUtcNow()));
+        store.ResolvePending(reviewAttempt, "per-task-gate");
+        BatchGateOwnershipStore.Write(fixture.Folder,
+            new BatchGateOwnership(reviewAttempt, pendingSubject));
+        var runner = PublicationRunner(fixture, gate, store);
+
+        var result = await runner.RunAsync("Fixture", "overlap", fixture.Folder,
+            fixture.WatchPath, "develop", CancellationToken.None);
+
+        Assert.Equal(AcceptedIntegrationFailureCodes.IntegrationPushBlocked, result.FailureCode);
+        Assert.True(store.IsQueued(reviewAttempt));
+        var rejected = gate.Request!.ExpectedSha;
+        Assert.Equal(rejected, RunGit(repo,
+            $"rev-parse {GitService.IntegrationLaneBackupRef("develop", rejected)}").Out.Trim());
+        Assert.Equal(RunGit(repo, "rev-parse origin/develop").Out.Trim(), Lane(repo, "develop"));
+        Assert.Null(IntegrationVerificationStore.Read(fixture.Folder));
+        Assert.Equal(PipelineStepStatus.Failed, ReadMergeStep(fixture.Log, fixture.Folder)?.Status);
+        Assert.Equal(PipelineStepStatus.Failed, ReadPushStep(fixture.Log, fixture.Folder)?.Status);
+
+        RunGit(repo, "checkout -q -b task/next develop");
+        File.WriteAllText(Path.Combine(repo, "next.txt"), "later delivery");
+        Commit(repo, "feat: later delivery");
+        RunGit(repo, "checkout -q develop");
+        var nextFolder = BeginRun(fixture.Log, repo, "next");
+        var next = await runner.RunAsync("Fixture", "next", nextFolder, repo,
+            "develop", CancellationToken.None);
+        Assert.True(next.Outcome.IsSuccessfulIntegration(), next.Error);
+        Assert.Equal(next.MergedSha, RunGit(repo, "rev-parse origin/develop").Out.Trim());
+    }
+
+    private MergeIntoDevelopRunner PublicationRunner(LateGateFixture fixture,
+        IBuildTestGateRunner gate, BatchGateStore? store = null)
+        => new(fixture.Git, fixture.Log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: new IntegrationPushQueue(), projectSettings: fixture.Settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gate),
+            taskScanner: fixture.Scanner, timeline: fixture.Timeline,
+            batchReservations: new BatchIntegrationReservationService(),
+            refMutationLeases: new RefMutationLeaseService(Path.Combine(_tempDir, "publication-leases")),
+            batchGates: store);
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -40,6 +40,8 @@ public static class BatchGateStateSnapshotReader
                 manifest.ParentBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseReason = phase.Reason,
+                manifest.FormationReason,
+                exclusions = manifest.Exclusions,
                 manifest.BaseSha,
                 baseVerdict = store.ReadBaseVerdict(project, manifest.BaseSha,
                     manifest.Scope.GateProfileDigest),

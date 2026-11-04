@@ -25,6 +25,8 @@ export const redHalvingState: BatchGateState = {
     runs: [{ batchRunId: 'run-7', host: 'agent-runner-01', outcome: 'failed', classification: 'test-failure', startedAtUtc: '2026-10-11T13:00:00Z', finishedAtUtc: '2026-10-11T13:05:00Z' }],
   }, {
     batchId: 'batch-8', parentBatchId: 'batch-7', phase: 'running', baseSha: 'b'.repeat(40), candidateSha: 'd'.repeat(40),
+    formationReason: 'new batch: overlap separate from waiting batch batch-7, files src/shared.cs',
+    exclusions: [{ taskKey: 'AGT-3', reason: 'overlapSeparate', detail: 'overlap separate: src/shared.cs' }],
     members: [{ taskKey: 'AGT-2', replay: 'applied', released: false }],
     runs: [{ batchRunId: 'run-8', host: 'agent-runner-02', startedAtUtc: '2026-10-11T13:06:00Z' }],
   }],
