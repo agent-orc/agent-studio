@@ -2225,9 +2225,18 @@ public sealed partial class BatchGatePilotService
             run.EvidencePath, _time.GetUtcNow(),
             baseAnswer?.Source, baseAnswer?.Minutes);
         _store.RecordVerdict(verdict);
-        var manifest = _store.ReadManifest(run.BatchId);
-        if (!manifest.Diagnostic && manifest.Members.Count > 0)
+        RecordFirstCandidateOutcome(_store, run.BatchId, verdict, _logger);
+        return verdict;
+    }
+
+    internal static void RecordFirstCandidateOutcome(BatchGateStore store, string batchId,
+        BatchGateRunVerdict verdict, ILogger logger)
+    {
+        try
         {
+            var manifest = store.ReadManifest(batchId);
+            if (manifest.Diagnostic || manifest.ParentBatchId is not null
+                || manifest.Members.Count == 0) return;
             var cards = manifest.PlanningCards ?? [];
             var areas = cards.SelectMany(card => card.Paths)
                 .Select(path => path.Split('/', 2)[0].ToLowerInvariant())
@@ -2236,13 +2245,17 @@ public sealed partial class BatchGatePilotService
                 ? "unknown" : cards.SelectMany(card => card.Paths)
                     .GroupBy(path => path, StringComparer.OrdinalIgnoreCase)
                     .Any(group => group.Count() > 1) ? "shared-path" : "disjoint";
-            _store.RecordFirstCandidate(new BatchFirstCandidateFact(run.BatchId,
+            store.RecordFirstCandidate(new BatchFirstCandidateFact(batchId,
                 manifest.Scope.Project, verdict.CompletedAtUtc, manifest.Members.Count,
                 cards.Count == 0 ? BatchGateRiskModel.UnknownDiff : cards.Max(card => card.Risk),
                 areas, overlap, verdict.Outcome == "fail",
                 verdict.Classification));
         }
-        return verdict;
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            logger.LogError(exception,
+                "batch-first-candidate-recording-failed batch_id={BatchId}", batchId);
+        }
     }
 
     private async Task ReleaseMemberAsync(BatchGateManifest manifest,

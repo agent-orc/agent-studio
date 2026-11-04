@@ -3,6 +3,7 @@ using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -61,6 +62,57 @@ public sealed class BatchGateStoreTests : IDisposable
         Assert.Equal(3, row.IsolationRuns);
         Assert.Equal(24.5, row.IsolationMinutes);
         Assert.Empty(_store.ListPlanObservations("other"));
+    }
+
+    [Fact]
+    public void First_candidate_recorder_skips_successor_manifest()
+    {
+        var original = Close();
+        var successor = original with { BatchId = "successor", ParentBatchId = original.BatchId };
+        _store.CloseManifest(successor);
+        var verdict = new BatchGateRunVerdict("run", successor.BatchId,
+            successor.MembershipDigest, Next, "profile", "fail",
+            "deterministic-suite-red", "evidence", Now);
+
+        BatchGatePilotService.RecordFirstCandidateOutcome(_store, successor.BatchId,
+            verdict, new RecordingLogger());
+
+        Assert.Empty(_store.ListPlanObservations("project"));
+        Assert.Throws<InvalidDataException>(() => _store.RecordFirstCandidate(
+            new BatchFirstCandidateFact(successor.BatchId, "project", Now,
+                successor.Members.Count, .42, ["backend"], "disjoint", true,
+                "deterministic-suite-red")));
+    }
+
+    [Fact]
+    public void Invalid_first_candidate_fact_is_logged_without_throwing()
+    {
+        var original = Close();
+        var malformed = original with
+        {
+            BatchId = "invalid-risk",
+            PlanningCards = [new BatchPlanCard("task-0", Now, 2, ["backend/a.cs"], [])],
+        };
+        _store.CloseManifest(malformed);
+        var verdict = new BatchGateRunVerdict("run", malformed.BatchId,
+            malformed.MembershipDigest, Next, "profile", "pass", "pass", "evidence", Now);
+        var logger = new RecordingLogger();
+
+        BatchGatePilotService.RecordFirstCandidateOutcome(_store, malformed.BatchId,
+            verdict, logger);
+
+        Assert.IsType<InvalidDataException>(logger.Exception);
+        Assert.Empty(_store.ListPlanObservations("project"));
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        public Exception? Exception { get; private set; }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+            => Exception = exception;
     }
 
     [Fact]
