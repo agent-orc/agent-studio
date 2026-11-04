@@ -507,6 +507,77 @@ D1, D4, and D11).
   without the Owner's SSH agent, keys, or credential files (D11). See the
   [operator agent setup guide](../setup/operator-agent.md).
 
+### Operator kill switch (security model SM-2)
+
+The Owner ends operator access in one step
+([security model Dossier](../../security-model/index.html), decisions D1 and
+D7, both option A as recommended). The switch only removes authority, so it
+asks for no step-up; resuming means creating a new operator agent and
+starting a session, which only the Owner can do.
+
+- **End all operator access** in Settings → Access → Kill switch
+  (`POST /api/auth/iam/operator-kill-switch/end-all`, Owner only) disables
+  every operator agent and revokes every session in one save of the access
+  state. The next request of any session is refused (`401`), and no new
+  session can be started for a disabled principal. The same step then revokes
+  the operator's Operations Server principals and cancels their queued
+  operations (running ones are asked to stop). Standing grants (SM-4),
+  approval requests (SM-5), and host certificates (SM-6) join this step when
+  those slices exist; until then a session holds no other credential.
+- **End session** on one session row
+  (`POST /api/auth/iam/operator-agents/{id}/sessions/{sid}/kill`) refuses that
+  session at once while the agent and its other sessions keep working.
+- Every use writes one entry in the control plane audit chain with stream
+  `kill-switch` and its own event type: `operator-kill.all`,
+  `operator-kill.session`, or `operator-kill.drill`. The Operations Server
+  revocation that follows a kill writes `operator-kill.operations-server`
+  (`ok`, or `failed` for its first failure). Each use also posts an
+  `operator_kill_switch` event to the operator feed for the Owner; ending all
+  access is an acute event, a passed drill a quiet one.
+- **Operations Server.** A principal in the Operations Server principal file
+  belongs to an operator agent when it names it in `operatorAgentId`. Studio
+  calls `POST /api/operations/v1/principals/revoke-operators` with its own
+  control plane principal, which needs the scope `principals.revoke`; an
+  operator principal can never call it. The Operations Server adds the
+  principals and their operator agent ids to its revocation list
+  (`Operations:RevocationsFile`, default `operator-revocations.json` in its
+  data directory), replaced atomically and read on every request like the
+  principal file, which stays read-only. A principal added later for a revoked
+  operator agent is refused too. A failed call stays pending and is retried with backoff from 2 to
+  30 seconds until it succeeds; the Settings view shows it as pending.
+
+  | Setting | Meaning |
+  | --- | --- |
+  | `Security:OperatorKillSwitch:OperationsServer:Url` | Base URL of the Operations Server; HTTPS only, no redirects. |
+  | `Security:OperatorKillSwitch:OperationsServer:CredentialFile` | File with the control plane principal's bearer; read per call. |
+  | `Security:OperatorKillSwitch:DrillIntervalHours` | Scheduled drill interval (default 720, one drill per 30 days; `0` turns it off). |
+  | `Security:OperatorKillSwitch:PollSeconds` | How often the API checks the out-of-band latch and retries (default 2). |
+
+- **Out of band.** When the UI is unreachable, the command on the control
+  plane host `dotnet OrchestratorApi.dll --end-operator-access [--reason TEXT]`
+  first writes the latch `.security/operator-kill-switch.request.json`; while
+  it exists every operator session is refused. With the API stopped (the
+  command takes the API's exclusive `.security/control-plane.lock`) the
+  command applies the kill itself through the same coordinator, so the audit
+  gets the same `operator-kill.all` entry with trigger `out-of-band` and actor
+  `system:control-plane-host`; the Owner notice and any pending Operations
+  Server revocation follow when the API starts, and the API re-enforces the
+  kill on the state it loaded before removing the latch. With the API running
+  the API applies the latch within one poll interval and the command waits for
+  that. When the Operations Server is not reachable, `operations-server
+  revoke-operators <principals-file> <data-directory> [operator agent ids]` on
+  its host does the same revocation and cancellation locally.
+- **Drill.** A drill creates a test principal with one session (hidden from
+  the operator list), checks that the session is admitted, runs the same kill
+  for that principal alone, and measures the time until Studio refuses the
+  session and the Operations Server revocation returns. It passes when both
+  happen within 60 seconds and every real operator session is still live. The
+  scheduled drill runs one interval after the schedule starts and then every
+  interval; **Run drill now** runs one on request. Each result (duration,
+  Studio and Operations Server times, pass or the named failure) is kept in
+  `.security/operator-kill-switch.json` and in the `operator-kill.drill` audit
+  entry; a failed drill is an acute operator feed event.
+
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,
 `runner.events`, `runner.artifacts`, and `runner.completion`. Reading the prompt
 and the attachments of a claimed task is covered by `runner.claim` and needs
@@ -673,7 +744,7 @@ and query strings are omitted from that audit. IAM changes go to
 One writer records the control plane audit trail in
 `<TaskRepository>/.security/control-plane-audit.jsonl` (D4 option A2). Each
 line carries `sequence`, `at`, `stream` (`iam`, `service-account`,
-`api-token`, `operator-agent`, `secret`, `run`), `actor`, `session`,
+`api-token`, `operator-agent`, `secret`, `run`, `kill-switch`), `actor`, `session`,
 `delegatedBy`, `operation` (route or operation), `target`, `parameterDigest`
 (`sha256:` over method, path, query, and body for bearer requests; over the
 change details for IAM changes), `outcome`, the producer's full legacy record

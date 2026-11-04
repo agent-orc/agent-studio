@@ -1,5 +1,6 @@
 <div class="operators" data-testid="access-operator-agents">
   @if (operators.error(); as message) { <p class="access-error" role="alert" data-testid="access-operator-error">{{ message }}</p> }
+  @if (operators.killSwitchError(); as message) { <p class="access-error" role="alert" data-testid="access-operator-kill-error">{{ message }}</p> }
   @if (issued(); as session) {
     <div class="operators__issued" data-testid="access-operator-session-issued" role="status">
       <p>Copy this session token now. It is not shown again. It is valid until {{ time(session.expiresAt) }}, and only the Owner can renew it.</p>
@@ -55,7 +56,7 @@
                     <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-activity-' + session.id" (click)="showActivity(session)">Activity</button>
                     @if (session.state === 'active' && !agent.disabledAt) {
                       <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-renew-' + session.id" [disabled]="operators.busy()" (click)="renew(agent, session)">Renew</button>
-                      <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-revoke-' + session.id" [disabled]="operators.busy()" (click)="revoke(agent, session)">Revoke</button>
+                      <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-kill-' + session.id" [disabled]="operators.busy() || operators.killing()" (click)="end(agent, session)">End session</button>
                     }
                   </td>
                 </tr>

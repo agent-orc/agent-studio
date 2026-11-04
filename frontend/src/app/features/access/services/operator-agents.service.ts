@@ -6,10 +6,14 @@ import type {
   OneTimeOperatorSession,
   OperatorActivity,
   OperatorAgent,
+  OperatorKillDrill,
+  OperatorKillRecord,
+  OperatorKillSwitchStatus,
   OperatorSession,
 } from '../models/operator-agent.model';
 
 const OPERATORS = '/api/auth/iam/operator-agents';
+const KILL_SWITCH = '/api/auth/iam/operator-kill-switch';
 const AUDIT = '/api/auth/audit';
 /** Newest entries the activity view reads per request. */
 export const OPERATOR_ACTIVITY_LIMIT = 200;
@@ -39,6 +43,11 @@ export class OperatorAgentsService {
   /** The session the activity view is narrowed to; null shows every session. */
   readonly sessionFilter = signal<string | null>(null);
   readonly verifying = signal(false);
+
+  readonly killSwitch = signal<OperatorKillSwitchStatus | null>(null);
+  readonly killSwitchError = signal<string | null>(null);
+  /** True while the switch or a drill runs; both are rare and must not be started twice. */
+  readonly killing = signal(false);
 
   async load(): Promise<void> {
     this.state.set('loading');
@@ -114,9 +123,47 @@ export class OperatorAgentsService {
       `${OPERATORS}/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/renew`, { lifetimeHours }));
   }
 
-  revokeSession(agentId: string, sessionId: string): Promise<unknown> {
-    return this.mutate(this.http.delete(
-      `${OPERATORS}/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}`));
+  async loadKillSwitch(): Promise<void> {
+    try {
+      this.killSwitch.set(await firstValueFrom(this.http.get<OperatorKillSwitchStatus>(KILL_SWITCH)));
+      this.killSwitchError.set(null);
+    } catch (failure: unknown) {
+      if (!this.refused(failure)) this.killSwitchError.set(message(failure, 'The kill switch state could not be loaded.'));
+    }
+  }
+
+  /** Ends every operator principal, session, and Operations Server principal at once. */
+  endAllAccess(reason: string): Promise<OperatorKillRecord | null> {
+    return this.kill(this.http.post<OperatorKillRecord>(`${KILL_SWITCH}/end-all`, reason ? { reason } : {}),
+      'All operator access could not be ended.');
+  }
+
+  /** Ends one session; the agent and its other sessions keep working. */
+  killSession(agentId: string, sessionId: string): Promise<OperatorKillRecord | null> {
+    return this.kill(this.http.post<OperatorKillRecord>(
+      `${OPERATORS}/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/kill`, {}),
+      'The session could not be ended.');
+  }
+
+  runDrill(): Promise<OperatorKillDrill | null> {
+    return this.kill(this.http.post<OperatorKillDrill>(`${KILL_SWITCH}/drills`, {}), 'The drill could not be run.');
+  }
+
+  /** One kill switch call, then a reload of the agents, the switch state, and an open activity view. */
+  private async kill<T>(request: Observable<T>, fallback: string): Promise<T | null> {
+    this.killing.set(true);
+    this.killSwitchError.set(null);
+    try {
+      const result = await firstValueFrom(request);
+      await Promise.all([this.load(), this.loadKillSwitch(),
+        this.activityState() === 'idle' ? Promise.resolve() : this.loadActivity()]);
+      return result;
+    } catch (failure: unknown) {
+      if (!this.refused(failure, false)) this.killSwitchError.set(message(failure, fallback));
+      return null;
+    } finally {
+      this.killing.set(false);
+    }
   }
 
   /** Runs one mutation, then reloads the agents and an already open activity view. */
@@ -145,6 +192,7 @@ export class OperatorAgentsService {
     if (status !== 401 && status !== 403 && !(missingHides && status === 404)) return false;
     this.agents.set([]);
     this.activity.set(null);
+    this.killSwitch.set(null);
     this.available.set(false);
     this.state.set('denied');
     this.activityState.set('denied');

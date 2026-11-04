@@ -12,7 +12,9 @@ public static class OperationsServerHost
             ?? throw new InvalidOperationException("Operations:PrincipalsFile is required.");
         var directory = configuration["Operations:DataDirectory"]
             ?? throw new InvalidOperationException("Operations:DataDirectory is required.");
-        services.AddSingleton(new OperationsAccess(principals));
+        // The kill switch's revocation list lives with the server's data, so the principal file can stay read-only.
+        var revocations = configuration["Operations:RevocationsFile"] ?? Path.Combine(directory, OperationsAccess.RevocationsFileName);
+        services.AddSingleton(new OperationsAccess(principals, revocations));
         services.AddSingleton(new OperationsStore(directory));
         services.AddSingleton<TimeProvider>(TimeProvider.System);
         services.AddHttpClient<IOperationPermitAuthority, OperationPermitAuthority>(client =>
@@ -67,6 +69,19 @@ public static class OperationsServerHost
         {
             var denial = OperationsAccessPolicy.Denial(Principal(context), "service", "operations.read");
             return denial is null ? Results.Ok(OperationCatalogue.All) : Results.Json(new OperationError(denial), statusCode: 403);
+        });
+        app.MapPost("/" + OperatorPrincipalRevocation.Path, async (OperatorPrincipalRevocationRequest request, HttpContext context,
+            OperationsAccess access, OperationsCoordinator operations) =>
+        {
+            var denial = OperationsAccessPolicy.RevocationDenial(Principal(context));
+            if (denial is not null) return Results.Json(new OperationError(denial), statusCode: 403);
+            if (request.OperatorAgentIds is null || request.OperatorAgentIds.Length > 1000
+                || (!request.AllOperators && request.OperatorAgentIds.Length == 0)
+                || request.OperatorAgentIds.Any(string.IsNullOrWhiteSpace))
+                return Results.Json(new OperationError("invalid-revocation"), statusCode: 400);
+            var revoked = access.RevokeOperators(request.OperatorAgentIds, request.AllOperators);
+            var cancelled = await operations.CancelForPrincipalsAsync(revoked);
+            return Results.Ok(new OperatorPrincipalRevocationResponse(revoked, cancelled));
         });
         app.MapPost("/api/operations/v1/agents/register", (AgentCapability capability, HttpContext context, OperationsCoordinator operations) =>
             operations.RegisterAsync(Principal(context), capability));

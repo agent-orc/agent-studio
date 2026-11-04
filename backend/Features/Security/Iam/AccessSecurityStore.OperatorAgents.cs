@@ -17,7 +17,7 @@ public sealed partial class AccessSecurityStore
     public IReadOnlyList<ServiceAccount> ListOperatorAgents()
     {
         lock (_gate)
-            return StateLocked().ServiceAccounts.Where(IsOperatorAgent)
+            return StateLocked().ServiceAccounts.Where(account => IsOperatorAgent(account) && !IsDrillPrincipal(account))
                 .OrderBy(account => account.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
@@ -55,6 +55,7 @@ public sealed partial class AccessSecurityStore
     {
         var name = ValidateTokenName(request.Name);
         var lifetime = OperatorSessionLifetime(request.LifetimeHours);
+        RequireNoOperatorKillRequest();
         lock (_gate)
         {
             var next = Copy(StateLocked());
@@ -147,6 +148,8 @@ public sealed partial class AccessSecurityStore
     public ServiceAccountPrincipal? AuthenticateOperatorSession(string? bearer)
     {
         if (!TryTokenParts(bearer, OperatorSessionTokenPrefix, out var sessionId)) return null;
+        // An out-of-band kill refuses every session from the moment the command writes its latch.
+        if (OperatorKillRequested) return null;
         lock (_gate)
         {
             var state = StateLocked();

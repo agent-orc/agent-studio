@@ -8,6 +8,7 @@ import { AccessGroupsComponent } from '../access-groups/access-groups.component'
 import { AccessInviteFormComponent } from '../access-invite-form/access-invite-form.component';
 import { AccessOperatorActivityComponent } from '../access-operator-activity/access-operator-activity.component';
 import { AccessOperatorAgentsComponent } from '../access-operator-agents/access-operator-agents.component';
+import { AccessOperatorKillSwitchComponent } from '../access-operator-kill-switch/access-operator-kill-switch.component';
 import { AccessRunnersComponent } from '../access-runners/access-runners.component';
 import { AccessServiceAccountsComponent } from '../access-service-accounts/access-service-accounts.component';
 import { SessionManagerComponent } from '../session-manager/session-manager.component';
@@ -17,15 +18,15 @@ import { StatusIndicatorComponent, type StatusTone } from '../../../../component
  * The one Access area: users with their role bindings, groups, service
  * accounts (API tokens included), runner enrollments, and runners. A
  * single-user installation sees the same views with its one Owner. The
- * Owner also sees operator agents and their audit trail; the server refuses
- * those reads for everyone else, which hides the two sections.
+ * Owner also sees operator agents, their kill switch, and their audit trail; the server refuses
+ * those reads for everyone else, which hides the three sections.
  */
 @Component({
   selector: 'app-access-area',
   standalone: true,
   imports: [
     AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
-    AccessOperatorAgentsComponent, AccessRunnersComponent, AccessServiceAccountsComponent, SessionManagerComponent,
+    AccessOperatorAgentsComponent, AccessOperatorKillSwitchComponent, AccessRunnersComponent, AccessServiceAccountsComponent, SessionManagerComponent,
     StatusIndicatorComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -74,6 +75,7 @@ export class AccessAreaComponent implements OnInit {
   reload(): void {
     void this.access.load();
     void this.operators.load();
+    if (this.operators.killSwitch()) void this.operators.loadKillSwitch();
     const activity = this.operators.activityState();
     if (activity === 'ready' || activity === 'error') void this.operators.loadActivity();
   }

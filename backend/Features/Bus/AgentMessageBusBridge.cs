@@ -819,6 +819,29 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// Tells the Owner about one use of the operator kill switch (security
+    /// model SM-2): all operator access ended, one session ended, or a drill
+    /// that passed or failed. One use is one event. Returns whether the event
+    /// was appended, so the caller can send it again later.
+    /// </summary>
+    public Task<bool> EmitOperatorKillSwitchAsync(string kind, string trigger, string summary, bool acute, object payload,
+        CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "observation",
+            severity: acute ? "High" : "Info",
+            project: null,
+            jobId: null,
+            topic: "operator_kill_switch",
+            summary: TruncateSummary(summary),
+            payload: payload,
+            tags: new[] { "operator-kill-switch", $"kind:{kind}", $"trigger:{trigger}" });
+        return TryEmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Emits one operator-feed alarm for an execution host whose agent-host
     /// release has been older than the Stable release for longer than the grace
     /// window (AGT-2826). The caller de-duplicates, so one drift is one event.

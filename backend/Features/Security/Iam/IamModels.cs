@@ -125,6 +125,14 @@ public sealed record ServiceAccount
     public List<ServiceAccountToken> Tokens { get; init; } = [];
     /// <summary>Operator agent sessions; <c>null</c> for every other origin.</summary>
     public List<OperatorAgentSession>? Sessions { get; init; }
+    /// <summary><see cref="ServiceAccountPurposes.KillSwitchDrill"/> for a drill's test principal; <c>null</c> otherwise.</summary>
+    public string? Purpose { get; init; }
+}
+
+public static class ServiceAccountPurposes
+{
+    /// <summary>The test principal a kill switch drill creates and ends (security model SM-2); hidden from the operator list.</summary>
+    public const string KillSwitchDrill = "kill-switch-drill";
 }
 
 /// <summary>

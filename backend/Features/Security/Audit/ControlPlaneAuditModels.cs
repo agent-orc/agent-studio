@@ -11,6 +11,8 @@ public static class ControlPlaneAuditStreams
     public const string OperatorAgent = "operator-agent";
     public const string Secret = "secret";
     public const string Run = "run";
+    /// <summary>Every use of the operator kill switch and its drills (security model SM-2).</summary>
+    public const string KillSwitch = "kill-switch";
 }
 
 /// <summary>

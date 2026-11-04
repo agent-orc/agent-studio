@@ -117,3 +117,86 @@ export function formatAuditTime(value: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) return value;
   return `${date.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'medium', timeZone: 'UTC' })} UTC`;
 }
+
+/**
+ * The operator kill switch (SM-2, `/api/auth/iam/operator-kill-switch`): every
+ * use, the revocation of the operator's Operations Server principals, and the
+ * drills that exercise the switch against a test principal.
+ */
+export type OperatorKillKind = 'all' | 'session' | 'drill';
+export type OperatorKillTrigger = 'studio' | 'out-of-band' | 'scheduled-drill' | 'manual-drill';
+export type OperatorKillPropagationState = 'not-configured' | 'not-required' | 'pending' | 'revoked';
+
+export interface OperatorKillPropagation {
+  state: OperatorKillPropagationState;
+  attempts: number;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
+  revokedPrincipalIds?: readonly string[] | null;
+  cancelledOperations: number;
+  completedAt?: string | null;
+}
+
+export interface OperatorKillRecord {
+  id: string;
+  kind: OperatorKillKind;
+  trigger: OperatorKillTrigger;
+  actor: string;
+  reason?: string | null;
+  at: string;
+  operatorAgentIds: readonly string[];
+  sessionIds: readonly string[];
+  allOperators: boolean;
+  operationsServer: OperatorKillPropagation;
+  notifiedAt?: string | null;
+}
+
+export interface OperatorKillDrill {
+  id: string;
+  trigger: OperatorKillTrigger;
+  startedAt: string;
+  durationMs: number;
+  studioRefusedMs: number | null;
+  operationsServerState: OperatorKillPropagationState;
+  operationsServerMs: number | null;
+  otherSessionsKept: boolean;
+  passed: boolean;
+  failure: string | null;
+}
+
+export interface OperatorKillSwitchStatus {
+  kills: readonly OperatorKillRecord[];
+  drills: readonly OperatorKillDrill[];
+  nextDrillAt: string | null;
+  drillIntervalHours: number;
+  operationsServerConfigured: boolean;
+  outOfBandRequestPending: boolean;
+}
+
+export function killTriggerLabel(trigger: OperatorKillTrigger): string {
+  switch (trigger) {
+    case 'studio': return 'Studio';
+    case 'out-of-band': return 'Host command';
+    case 'scheduled-drill': return 'Scheduled drill';
+    case 'manual-drill': return 'Manual drill';
+  }
+}
+
+export function killKindLabel(kind: OperatorKillKind): string {
+  return kind === 'all' ? 'All operator access' : kind === 'session' ? 'One session' : 'Drill';
+}
+
+export function propagationLabel(state: OperatorKillPropagationState): string {
+  switch (state) {
+    case 'revoked': return 'Operations Server principals revoked';
+    case 'pending': return 'Operations Server revocation pending';
+    case 'not-configured': return 'No Operations Server configured';
+    case 'not-required': return 'Operations Server unchanged';
+  }
+}
+
+/** Milliseconds below one second, else seconds with one decimal. */
+export function formatDuration(milliseconds: number | null | undefined): string {
+  if (milliseconds === null || milliseconds === undefined || Number.isNaN(milliseconds)) return '';
+  return milliseconds < 1000 ? `${Math.round(milliseconds)} ms` : `${(milliseconds / 1000).toFixed(1)} s`;
+}

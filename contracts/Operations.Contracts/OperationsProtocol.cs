@@ -70,3 +70,20 @@ public static class OperationCatalogue
 public sealed record IssueOperationPermitRequest(string PrincipalId, string Actor, OperationSubject Subject,
     string OperationId, int Version, string InputDigest, string AgentId, string ResultAudience, string CorrelationId, DateTimeOffset Deadline);
 public sealed record IssuedOperationPermitResponse(string Permit, DateTimeOffset ValidUntil);
+
+/// <summary>
+/// Security model SM-2: the control plane's kill switch revokes the
+/// Operations Server principals that belong to operator agents. With
+/// <see cref="AllOperators"/> every principal that names an operator agent is
+/// revoked; otherwise those of <see cref="OperatorAgentIds"/>. Queued
+/// operations of a revoked principal are cancelled and running ones asked to stop.
+/// </summary>
+public sealed record OperatorPrincipalRevocationRequest(string[] OperatorAgentIds, bool AllOperators, string CorrelationId);
+public sealed record OperatorPrincipalRevocationResponse(string[] RevokedPrincipalIds, int CancelledAttempts);
+
+public static class OperatorPrincipalRevocation
+{
+    public const string Path = "api/operations/v1/principals/revoke-operators";
+    /// <summary>The scope of the control plane principal that may revoke operator principals.</summary>
+    public const string Scope = "principals.revoke";
+}
