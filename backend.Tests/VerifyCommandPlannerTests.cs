@@ -552,6 +552,28 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Equal(VerifyPlan.SourceProjectDefinition, plan.Source);
         Assert.Contains(plan.Commands, c =>
             c.Kind == VerifyCommandKind.Build && c.Command == "dotnet build agent-taskboard.sln --no-restore");
+        var release = Assert.Single(plan.Commands, c =>
+            c.Kind == VerifyCommandKind.Build && c.Command == "bash scripts/check-release-build.sh");
+        Assert.Equal(VerifyCommandShell.Bash, release.Shell);
+        var script = File.ReadAllText(Path.Combine(repoRoot!, "scripts", "check-release-build.sh"));
+        foreach (var project in new[]
+                 {
+                     "backend/OrchestratorApi.csproj", "runner/AgentRunner.csproj",
+                     "task-server/TaskServer.csproj",
+                 })
+            Assert.Contains(project, script, StringComparison.Ordinal);
+        Assert.Contains("--configuration Release --no-restore", script, StringComparison.Ordinal);
+        Assert.Contains("-p:UseSharedCompilation=false", script, StringComparison.Ordinal);
+        var preCheck = BatchPreCheckPlanner.Plan(repoRoot!, plan, ["backend/OrchestratorApi.csproj"],
+            "batch-pre-check");
+        Assert.Contains(release, preCheck.Commands);
+        var perTask = TestSelectionPlanner.Plan(repoRoot!, plan, ["backend/OrchestratorApi.csproj"],
+            null, "integration-gate", TestExecutionLevels.Full);
+        Assert.Contains(release, perTask.Commands);
+        var review = V1ReviewPlaneEndpoints.FallbackPlan(repoRoot!, null, "refs/heads/develop",
+            ["backend/OrchestratorApi.csproj"]);
+        Assert.Contains(review.Commands, command => command.Aspect == "build-tests"
+            && command.Arguments.Contains(release.Command));
         Assert.Contains(plan.Commands, c =>
             c.Kind == VerifyCommandKind.Test && c.Command.Contains("OrchestratorApi.Tests.csproj", StringComparison.Ordinal));
         // frontend/package.json declares build/test/lint scripts.
@@ -784,6 +806,23 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
 
         Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
         Assert.Contains("output: stderr: exact gate cause", result.Reason);
+        Assert.True(result.Reason.Length <= BuildTestGateRunner.MaxFailureExcerptChars + 500);
+    }
+
+    [Fact]
+    public async Task ReleaseBuildFailure_KeepsMsBuildErrorInGateReason()
+    {
+        var profile = new BuildProfile
+        {
+            BuildCmds = ["echo 'error : No Six Labors license found.'; "
+                + "i=0; while [ $i -lt 150 ]; do echo build-summary-line; i=$((i+1)); done; exit 1"],
+        };
+
+        var result = await Run(profile);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(VerifyCommandKind.Build, result.FailedStepKind);
+        Assert.Contains("No Six Labors license found", result.Reason, StringComparison.Ordinal);
         Assert.True(result.Reason.Length <= BuildTestGateRunner.MaxFailureExcerptChars + 500);
     }
 
