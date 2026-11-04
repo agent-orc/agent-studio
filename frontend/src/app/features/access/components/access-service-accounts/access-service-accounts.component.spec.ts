@@ -23,7 +23,8 @@ describe('AccessServiceAccountsComponent', () => {
         ] },
       ],
       bindings: [...accessOverview().bindings,
-        { id: 'rb_sa', principalKind: 'service-account', principalId: 'sa_ci', role: 'viewer', scope: { kind: 'workspace' }, source: 'manual', createdAt: '2026-10-20T09:00:00Z' }],
+        { id: 'rb_sa', principalKind: 'service-account', principalId: 'sa_ci', role: 'viewer', scope: { kind: 'workspace' }, source: 'manual', createdAt: '2026-10-20T09:00:00Z' },
+        { id: 'rb_api', principalKind: 'service-account', principalId: 'sa_api', role: 'operator-agent', scope: { kind: 'workspace' }, source: 'migration', createdAt: '2026-10-20T09:00:00Z' }],
     }));
     await TestBed.configureTestingModule({
       imports: [AccessServiceAccountsComponent],
@@ -45,6 +46,16 @@ describe('AccessServiceAccountsComponent', () => {
     expect(ci).toContain('Never');
     expect(ci).not.toContain('gone');
     expect(element.querySelector('[data-testid="access-service-account-sa_off"]')?.textContent).toContain('Disabled');
+  });
+
+  it('names the role an API token is bound to', () => {
+    const fixture = TestBed.createComponent(AccessServiceAccountsComponent);
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+    const api = element.querySelector('[data-testid="access-service-account-sa_api"]')?.textContent ?? '';
+    expect(element.querySelector('[data-testid="access-api-token-role-sa_api"]')?.textContent).toContain('Role: Operator agent');
+    expect(api).toContain('Operator agent · Workspace');
+    expect(element.querySelector('[data-testid="access-api-token-role-sa_ci"]')).toBeNull();
   });
 
   it('issues a token with the chosen lifetime and shows it once', async () => {
