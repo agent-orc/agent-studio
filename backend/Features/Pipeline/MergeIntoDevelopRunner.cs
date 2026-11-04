@@ -81,6 +81,7 @@ public sealed partial class MergeIntoDevelopRunner
     public const string SupersededReviewGenerationError = "superseded-review-generation";
     private int _mergeGateUsers;
     private readonly AsyncLocal<long?> _mergeLockWaitMs = new();
+    private readonly AsyncLocal<bool> _holdsBatchReservation = new();
     private string? _integrationGateHolder;
 
     public MergeIntoDevelopRunner(
@@ -234,12 +235,6 @@ public sealed partial class MergeIntoDevelopRunner
             await WaitForHostGitCredentialsAsync(project, jobId, ct).ConfigureAwait(false);
             var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
-            using var batchReservation = _batchReservations is null
-                || string.IsNullOrWhiteSpace(reservationRepo)
-                || IsDocumentationDelivery(reservationRepo, integrationBranch,
-                    ReviewSubjectStore.Read(jobFolderPath))
-                ? null
-                : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
             // Deliberately NOT the caller's token. Merge + gate + rollback form
             // one consistency boundary after acceptance is already durable.
             var mergeWait = System.Diagnostics.Stopwatch.StartNew();
@@ -253,6 +248,13 @@ public sealed partial class MergeIntoDevelopRunner
                 mergeLockWaitMs: mergeWait.ElapsedMilliseconds, holdingProject: holdingProject);
             try
             {
+                using var batchReservation = _batchReservations is null
+                    || string.IsNullOrWhiteSpace(reservationRepo)
+                    || IsDocumentationDelivery(reservationRepo, integrationBranch,
+                        ReviewSubjectStore.Read(jobFolderPath))
+                    ? null
+                    : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
+                _holdsBatchReservation.Value = batchReservation is not null;
                 return await RunSerializedAsync(
                     project, jobId, jobFolderPath, watchPath,
                     integrationBranch, integrationStrategy, pipelineType, publicationFence,
@@ -267,6 +269,7 @@ public sealed partial class MergeIntoDevelopRunner
         }
         finally
         {
+            _holdsBatchReservation.Value = false;
             Interlocked.Decrement(ref _mergeGateUsers);
         }
     }
@@ -1388,6 +1391,8 @@ public sealed partial class MergeIntoDevelopRunner
                     JobFolderPath = jobFolderPath,
                     SubjectRef = integrationBranch,
                     TimeoutBudgetSource = preDevelopTimeoutSource,
+                    QueueWaitTimeout = _holdsBatchReservation.Value
+                        ? BatchIntegrationReservationService.IntegrationGateQueueCap : null,
                     InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
                     CoveredRequirements = reuse.Reused ? reuse.CoveredRequirements : [],
                     OnMachineGateWaiting = IntegrationGateWaiting(jobFolderPath, project, jobId),
@@ -1606,19 +1611,25 @@ public sealed partial class MergeIntoDevelopRunner
     /// </summary>
     private (TimeSpan Timeout, string Source) ResolveGateTimeout(string project, TimeSpan? explicitTimeout)
     {
+        (TimeSpan Timeout, string Source) Cap(TimeSpan requested, string source)
+        {
+            var capped = BatchIntegrationReservationService.GateBudget(
+                requested, _holdsBatchReservation.Value);
+            return (capped, capped < requested ? source + ";batch-reservation-cap" : source);
+        }
         if (explicitTimeout is { } configured && configured > TimeSpan.Zero)
-            return (configured, "explicit-override");
+            return Cap(configured, "explicit-override");
 
         var configuredSeconds = _configuration?.GetValue<int?>(GateTimeoutConfigKey);
         if (configuredSeconds is { } fromConfig)
-            return (TimeSpan.FromSeconds(Math.Max(1, fromConfig)), $"config:{GateTimeoutConfigKey}");
+            return Cap(TimeSpan.FromSeconds(Math.Max(1, fromConfig)), $"config:{GateTimeoutConfigKey}");
 
         var projectOverrideSeconds = ProjectGateTimeoutOverrideSecondsFor(project);
         var resolvedSeconds = GateRunBudgetPolicy.ResolveSeconds(projectOverrideSeconds);
         var source = projectOverrideSeconds is not null
             ? "project-override:ProjectSettings.BuildTestGateTimeoutSeconds"
             : "policy-default:GateRunBudgetPolicy";
-        return (TimeSpan.FromSeconds(resolvedSeconds), source);
+        return Cap(TimeSpan.FromSeconds(resolvedSeconds), source);
     }
 
     private TimeSpan ResolveGateInfrastructureTimeout() => TimeSpan.FromSeconds(Math.Max(1,
@@ -1719,6 +1730,8 @@ public sealed partial class MergeIntoDevelopRunner
                     JobFolderPath = jobFolderPath,
                     SubjectRef = workBranch,
                     TimeoutBudgetSource = preMainTimeoutSource,
+                    QueueWaitTimeout = _holdsBatchReservation.Value
+                        ? BatchIntegrationReservationService.IntegrationGateQueueCap : null,
                     InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
                 },
                 settings.BuildProfile,
@@ -1888,6 +1901,8 @@ public sealed partial class MergeIntoDevelopRunner
                 JobFolderPath = jobFolderPath,
                 SubjectRef = taskBranch,
                 TimeoutBudgetSource = preMainTimeoutSource,
+                QueueWaitTimeout = _holdsBatchReservation.Value
+                    ? BatchIntegrationReservationService.IntegrationGateQueueCap : null,
                 InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
             },
             settings.BuildProfile,

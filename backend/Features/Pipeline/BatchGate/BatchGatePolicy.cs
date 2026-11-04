@@ -115,7 +115,7 @@ public sealed record BatchGateManifest(
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,
-    IReadOnlyList<string> EligibleKeys, bool UsePerTaskGate);
+    IReadOnlyList<string> EligibleKeys, bool UsePerTaskGate, string? Reason = null);
 
 public static class BatchGatePolicy
 {
@@ -138,7 +138,7 @@ public static class BatchGatePolicy
             .Select(key => eligible[key]).ToArray();
         if (selected.Length < options.MinimumSize)
             return new(null, exclusions, selected.Select(item => item.TaskKey).ToArray(),
-                selected.Length > 0);
+                selected.Length > 0, "close requested below minimum batch size");
         exclusions.AddRange(eligible.Keys.Except(selected.Select(item => item.TaskKey), StringComparer.Ordinal)
             .Select(key => new BatchGateExclusion(key, BatchExclusionReason.NextBatch)));
         var digest = MembershipDigest(baseSha, scope, selected);
@@ -190,7 +190,8 @@ public static class BatchGatePolicy
         if (eligible.Count == 1 && deadline)
             return new(null, exclusions, keys, !gateBacklog || reviewQueueLength == 0
                 || AgentStudio.Runner.MonolithTransitionAdapter.BatchBacklogAgedOut(
-                    eligible[0].ReviewCompletedAtUtc, now, options.DeadlineMinutes));
+                    eligible[0].ReviewCompletedAtUtc, now, options.DeadlineMinutes),
+                "oldest eligible card reached deadline without a batch partner");
 
         var selected = eligible.Take(options.MaximumSize).ToArray();
         exclusions.AddRange(eligible.Skip(options.MaximumSize)

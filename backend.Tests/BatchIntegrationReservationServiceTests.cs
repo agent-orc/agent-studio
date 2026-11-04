@@ -19,6 +19,26 @@ public sealed class BatchIntegrationReservationServiceTests
     }
 
     [Fact]
+    public void Batch_state_exposes_the_bounded_direct_integration_gate_reservation()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-state-cap-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var state = BatchGateStateSnapshotReader.Read(new BatchGateStore(root),
+                "project", new BatchGateFormationOptions(Enabled: true));
+            var json = JsonSerializer.SerializeToElement(state,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+            Assert.Equal(27, json.GetProperty("integrationGateLeaseCapMinutes").GetDouble());
+            Assert.Equal(TimeSpan.FromMinutes(25), BatchIntegrationReservationService.GateBudget(
+                TimeSpan.FromMinutes(40), reservationHeld: true));
+            Assert.Equal(TimeSpan.FromMinutes(40), BatchIntegrationReservationService.GateBudget(
+                TimeSpan.FromMinutes(40), reservationHeld: false));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task Crash_window_marker_is_reconciled_before_batch_wait()
     {
         var root = Path.Combine(Path.GetTempPath(), "batch-push-" + Guid.NewGuid().ToString("N"));

@@ -56,6 +56,34 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
     }
 
     [Fact]
+    public async Task Finished_orphan_is_removed_once_without_a_cancel_retry()
+    {
+        var previous = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('b', 32));
+        previous.Record(new string('c', 32), "gate-a", "/srv/gates");
+        var current = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('d', 32));
+        var commands = new List<string>();
+        Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
+            CancellationToken ct, Action<string>? output)
+        {
+            var command = args.Last();
+            commands.Add(command);
+            if (command.Contains("response.json", StringComparison.Ordinal))
+                output?.Invoke("REMOTE_GATE_FINISHED");
+            if (command.StartsWith("rm -rf --", StringComparison.Ordinal))
+                throw new IOException("cleanup unavailable");
+            return Task.CompletedTask;
+        }
+        var transport = Transport(current, Run);
+
+        await transport.CancelOrphanedRunsAsync();
+        await transport.CancelOrphanedRunsAsync();
+
+        Assert.Equal(2, commands.Count);
+        Assert.DoesNotContain(commands, command => command.Contains("/cancel", StringComparison.Ordinal));
+        Assert.Empty(current.ReadAll());
+    }
+
+    [Fact]
     public async Task Never_started_orphan_directory_is_removed_before_record_is_deleted()
     {
         var previous = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('b', 32));
