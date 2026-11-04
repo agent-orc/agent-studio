@@ -153,6 +153,96 @@ public sealed class TaskIntegrationStatusService
     public TaskIntegrationStatus BuildForCompletion(TaskInfo job)
         => BuildLookupCore([job], deliveredOnly: false)[job.TaskKey];
 
+    /// <summary>Acceptance also checks gates on publications after the delivery's verified tree.</summary>
+    public TaskIntegrationStatus BuildForAcceptance(TaskInfo job)
+    {
+        var status = BuildForCompletion(job);
+        var verification = status.Verification;
+        if (status.Status != IntegrationStatuses.Integrated
+            || verification?.State != IntegrationVerificationStates.Verified
+            || !ReviewSubjectStore.IsValidResultSha(verification.Sha)) return status;
+
+        var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
+        if (root is null) return status with { Verification = UnverifiedAcceptance(status.Sha,
+            "The integration repository is unavailable for publication gate verification.") };
+        var branch = status.IntegrationBranch;
+        var tip = _git.GetBranchTip(root, _git.HasOriginRemote(root)
+            ? $"refs/remotes/origin/{branch}" : $"refs/heads/{branch}");
+        if (!ReviewSubjectStore.IsValidResultSha(tip)) return status with { Verification = UnverifiedAcceptance(status.Sha,
+            "The published integration tip is unavailable for publication gate verification.") };
+        if (string.Equals(verification.Sha, tip, StringComparison.OrdinalIgnoreCase)) return status;
+
+        try
+        {
+            var publications = new List<IntegrationPublicationGatePolicy.Publication>();
+            foreach (var gate in PublishedGateEvidenceStore.Read(job.WatchPath))
+            {
+                if (!gate.Passed || !IntegrationVerificationProjection.SameBranch(gate.IntegrationBranch, branch)
+                    || !ReviewSubjectStore.IsValidResultSha(gate.TreeSha)
+                    || !string.Equals(gate.TreeSha, gate.PublishedSha, StringComparison.OrdinalIgnoreCase)) continue;
+                var parent = _git.GetFirstParent(root, gate.TreeSha);
+                if (parent is not null)
+                    publications.Add(new(gate.TreeSha, parent, gate.Describe()));
+            }
+            var batches = new BatchGateStore();
+            var firstPublishedBatch = (string?)null;
+            foreach (var manifest in batches.ListManifests()
+                .Where(item => string.Equals(item.Scope.Project, job.ProjectName, StringComparison.Ordinal)
+                    && IntegrationVerificationProjection.SameBranch(item.Scope.IntegrationBranch, branch)))
+            {
+                var publication = batches.ReadPublication(manifest.BatchId);
+                if (publication is null || publication.MembershipDigest != manifest.MembershipDigest
+                    || publication.PreTipSha != manifest.BaseSha
+                    || publication.VerifiedRemoteSha != publication.TestedCandidateSha
+                    || batches.ReadVerdict(manifest.BatchId, publication.BatchRunId) is not { Outcome: "pass" } verdict
+                    || verdict.BatchRunId != publication.BatchRunId
+                    || verdict.MembershipDigest != publication.MembershipDigest
+                    || verdict.TestedCandidateSha != publication.TestedCandidateSha
+                    || !File.Exists(verdict.EvidencePath)) continue;
+                publications.Add(new(publication.TestedCandidateSha, publication.PreTipSha,
+                    $"batch gate {manifest.BatchId} run {publication.BatchRunId}"));
+                // A batch replay can place the card's mapped commit inside
+                // the published candidate. Its gate verifies the candidate,
+                // which becomes the starting tree for later publications.
+                if (_git.IsAncestor(root, verification.Sha!, publication.TestedCandidateSha)
+                    && !_git.IsAncestor(root, verification.Sha!, publication.PreTipSha)
+                    && _git.IsAncestor(root, publication.TestedCandidateSha, tip!))
+                    firstPublishedBatch = publication.TestedCandidateSha;
+            }
+            var verifiedTree = firstPublishedBatch ?? verification.Sha!;
+            var decision = IntegrationPublicationGatePolicy.Check(verifiedTree, tip!,
+                sha => _git.GetFirstParent(root, sha), publications);
+            if (!decision.Verified)
+                return status with { Verification = UnverifiedAcceptance(tip,
+                    $"The later publication {decision.MissingTree} has no passed gate on the first-parent integration line.") };
+            if (firstPublishedBatch is not null)
+            {
+                var batchGate = publications.Last(item => string.Equals(item.TreeSha,
+                    firstPublishedBatch, StringComparison.OrdinalIgnoreCase));
+                return status with { Verification = verification with
+                {
+                    Reason = $"{verification.Reason} {batchGate.Gate} verified published tree {firstPublishedBatch}.",
+                } };
+            }
+            return status;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
+            or System.Text.Json.JsonException)
+        {
+            SilentCatch.Note(ex, "TaskIntegrationStatusService: publication gate evidence is unavailable");
+            return status with { Verification = UnverifiedAcceptance(tip,
+                "Later publication gate evidence could not be read.") };
+        }
+    }
+
+    private static TaskIntegrationVerification UnverifiedAcceptance(string? sha, string reason) => new()
+    {
+        State = IntegrationVerificationStates.Unverified,
+        Sha = sha,
+        Evidence = IntegrationVerificationEvidence.None,
+        Reason = reason,
+    };
+
     private Dictionary<string, TaskIntegrationStatus> BuildLookupCore(
         IReadOnlyCollection<TaskInfo> jobs, bool deliveredOnly)
     {
