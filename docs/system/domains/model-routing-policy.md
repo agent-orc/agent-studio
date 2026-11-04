@@ -18,6 +18,18 @@ It does not claim that a larger model repairs a vague task, a broken gate, or
 missing evidence. Explicit operator pins still win, but the UI or orchestrator
 should explain when a pin is below the policy floor.
 
+## Provider model health during coding claims
+
+A capacity refusal marks the selected model on its execution host for 15 minutes,
+or until a later provider retry hint. It does not mark the provider account as
+rate limited. A model-unavailable refusal stays scoped to that model and host
+until a successful acceptance probe; an unauthorized provider response holds
+that provider on the affected host until a successful provider probe. After
+bounded same-session capacity retries, a fresh attempt first tries the declared
+same-provider sibling, then a host-accepted cross-provider equivalent that
+clears the card's correctness floor. Sol/xhigh uses the declared Opus 5/xhigh
+policy route. A running process keeps its selected model.
+
 ## Routing tiers
 
 | Route | Default use | Do not use for | Evidence and rationale |

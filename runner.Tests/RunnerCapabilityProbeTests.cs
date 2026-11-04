@@ -232,6 +232,39 @@ public sealed class RunnerCapabilityProbeTests
             new ProcessResult(1, "", message)));
     }
 
+    [Theory]
+    [InlineData("Selected model is at capacity.\nRetry failed: too many requests (HTTP 429).")]
+    [InlineData("Retry failed: too many requests (HTTP 429).\nSelected model is at capacity.")]
+    public void November_capacity_fixture_is_model_scoped_in_either_line_order(string output)
+    {
+        // Synthetic fixture: the 2 November 2026 raw run log is absent from the job folder.
+        var evidence = ProviderAccessClassifier.ClassifyRun(1, null, output);
+        Assert.Equal(ProviderAccessEvidenceKind.ModelCapacity, evidence.Kind);
+        Assert.Null(evidence.LimitedUntil);
+        Assert.Null(AgentStudio.Runner.ProviderLimitDetector.Detect("codex", [output],
+            new DateTime(2026, 11, 2, 15, 37, 0, DateTimeKind.Utc)));
+    }
+
+    [Fact]
+    public void Capacity_with_explicit_quota_reset_is_account_rate_limit()
+    {
+        var evidence = ProviderAccessClassifier.ClassifyRun(1, null,
+            "Selected model is at capacity.\nHTTP 429: usage limit; resets at 2026-11-02T16:00:00Z.");
+        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, evidence.Kind);
+        Assert.True(evidence.ResetTimeReported);
+    }
+
+    [Fact]
+    public void Capacity_uses_provider_retry_hint_without_a_provider_limit()
+    {
+        var now = new DateTimeOffset(2026, 11, 2, 15, 37, 0, TimeSpan.Zero);
+        var evidence = ProviderAccessClassifier.ClassifyRun(1, null,
+            "Selected model is at capacity. Retry after 20 minutes. HTTP 429 too many requests.",
+            observedAt: now);
+        Assert.Equal(ProviderAccessEvidenceKind.ModelCapacity, evidence.Kind);
+        Assert.Equal(now.AddMinutes(20), evidence.LimitedUntil);
+    }
+
     [Fact]
     public void Unsupported_provider_parameter_is_not_authentication_or_transient_access_failure()
     {
