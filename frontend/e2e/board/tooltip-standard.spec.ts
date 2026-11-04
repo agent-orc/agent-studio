@@ -196,7 +196,7 @@ test('canonical tooltip layer is lazy, instant, singleton, and visually shared a
 
   await expectTooltip(
     page,
-    page.getByTestId('status-bar-settings'),
+    page.getByTestId('studio-titlebar-settings'),
     /Workspace settings/i,
     'tooltip-standard-statusbar',
     testInfo,

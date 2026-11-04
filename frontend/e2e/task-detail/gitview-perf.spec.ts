@@ -87,10 +87,8 @@ async function installRoutes(page: Page, counters: Counters): Promise<void> {
   await page.route('**/api/environment**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } }) }));
   await page.route('**/api/clients', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/cli/usage**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) }));
-  // Must be a valid QuotaReport ({ snapshots: [] }); an `{items:[]}` body
-  // leaves `snapshots` undefined and HeaderQuotaComponent.cards throws
-  // `.find of undefined`, popping a full-screen error-dialog overlay that
-  // eats the hover/click pointer events this spec relies on.
+  // Token analysis still uses a valid QuotaReport ({ snapshots: [] });
+  // malformed quota data can open a runtime error dialog over this spec.
   await page.route('**/api/cli/quota**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ttlSeconds: 600, snapshots: [] }) }));
   await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } } }) }));
   await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}/output(\\?|$)`), (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
