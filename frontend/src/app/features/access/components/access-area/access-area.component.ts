@@ -3,6 +3,7 @@ import { scopeLabel, type AccessUser } from '../../models/access.model';
 import { isOperatorAgentAccount } from '../../models/operator-agent.model';
 import { AccessService } from '../../services/access.service';
 import { OperatorAgentsService } from '../../services/operator-agents.service';
+import { StandingGrantsService } from '../../services/standing-grants.service';
 import { AccessBindingsComponent } from '../access-bindings/access-bindings.component';
 import { AccessGroupsComponent } from '../access-groups/access-groups.component';
 import { AccessInviteFormComponent } from '../access-invite-form/access-invite-form.component';
@@ -10,6 +11,7 @@ import { AccessOperatorActivityComponent } from '../access-operator-activity/acc
 import { AccessOperatorAgentsComponent } from '../access-operator-agents/access-operator-agents.component';
 import { AccessRunnersComponent } from '../access-runners/access-runners.component';
 import { AccessServiceAccountsComponent } from '../access-service-accounts/access-service-accounts.component';
+import { AccessStandingGrantsComponent } from '../access-standing-grants/access-standing-grants.component';
 import { SessionManagerComponent } from '../session-manager/session-manager.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
@@ -17,16 +19,16 @@ import { StatusIndicatorComponent, type StatusTone } from '../../../../component
  * The one Access area: users with their role bindings, groups, service
  * accounts (API tokens included), runner enrollments, and runners. A
  * single-user installation sees the same views with its one Owner. The
- * Owner also sees operator agents and their audit trail; the server refuses
- * those reads for everyone else, which hides the two sections.
+ * Owner also sees operator agents, their standing grants, and their audit
+ * trail; the server refuses those reads for everyone else, which hides them.
  */
 @Component({
   selector: 'app-access-area',
   standalone: true,
   imports: [
     AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
-    AccessOperatorAgentsComponent, AccessRunnersComponent, AccessServiceAccountsComponent, SessionManagerComponent,
-    StatusIndicatorComponent,
+    AccessOperatorAgentsComponent, AccessRunnersComponent, AccessServiceAccountsComponent, AccessStandingGrantsComponent,
+    SessionManagerComponent, StatusIndicatorComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-area.component.html',
@@ -35,6 +37,7 @@ import { StatusIndicatorComponent, type StatusTone } from '../../../../component
 export class AccessAreaComponent implements OnInit {
   readonly access = inject(AccessService);
   readonly operators = inject(OperatorAgentsService);
+  readonly standingGrants = inject(StandingGrantsService);
   readonly overview = this.access.overview;
   readonly temporaryPassword = signal<{ username: string; value: string } | null>(null);
 
@@ -68,12 +71,14 @@ export class AccessAreaComponent implements OnInit {
   ngOnInit(): void {
     void this.access.load();
     void this.operators.load();
+    void this.standingGrants.load();
   }
 
   /** Reloads everything, including an open operator activity view. */
   reload(): void {
     void this.access.load();
     void this.operators.load();
+    void this.standingGrants.load();
     const activity = this.operators.activityState();
     if (activity === 'ready' || activity === 'error') void this.operators.loadActivity();
   }
