@@ -7,6 +7,23 @@ The shared `/tmp` on an agent host is **not** a cache root and not a workspace
 root. Everything the product writes there must be either short-lived and
 self-removing, or it must live somewhere product-owned instead.
 
+Per-task batch fallback evidence in the workspace repository stores verdicts,
+hashes, budgets, shard counts and outcomes, failing test names, and at most
+64 KiB of output. The card folder receives no full-output copy. Workspace artifact
+commits refuse files above `WorkspaceArtifacts:MaximumFileBytes` (5 MiB by
+default) before staging. Repository maintenance untracks legacy fallback
+records above 1 MiB, adds their exact paths to `.git/info/exclude`, and uses
+the ordinary tracked sweep to commit the removal. The files stay on disk;
+the Task Server classifies these JSON files as evidence and moves originals
+after 180 terminal days (see [Task Server retention](setup/task-server.md#retention-against-the-sqlite-store)).
+Historical Git objects remain reachable through old commits, so a repack alone
+cannot reclaim their bytes. They become reclaimable only after the old refs
+expire or an explicitly authorized history rewrite.
+When a deterministic gate also has full result evidence in `GateResultCache`,
+the compact record links its `OriginEvidencePath`. That cache lives in local
+application data outside the workspace, caps entries at 2 MB, keeps at most
+128 per project, and expires entries after 30 days.
+
 ## The finding this page exists for (AGT-2858, 17.09.2026)
 
 The review host's `/tmp` held **19,313 entries and 42 GB**; 15,959 entries were

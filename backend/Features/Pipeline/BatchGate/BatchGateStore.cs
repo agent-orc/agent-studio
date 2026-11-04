@@ -335,6 +335,18 @@ public sealed partial class BatchGateStore
                 .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
                 .ToArray();
 
+    /// <summary>
+    /// Folders that hold a closed manifest. A manifest is written once, so a
+    /// caller that polls can read each folder's manifest once and cache it.
+    /// </summary>
+    public IReadOnlyList<string> ListManifestFolders()
+        => !Directory.Exists(_root) ? []
+            : Directory.EnumerateDirectories(_root)
+                .Where(dir => File.Exists(Path.Combine(dir, "manifest.json"))).ToArray();
+
+    public BatchGateManifest ReadManifestIn(string folder)
+        => Read<BatchGateManifest>(Path.Combine(folder, "manifest.json"));
+
     public IReadOnlyList<BatchGateRunRecord> ListRuns(string batchId)
     {
         var folder = Path.Combine(BatchDirectory(batchId), "runs");

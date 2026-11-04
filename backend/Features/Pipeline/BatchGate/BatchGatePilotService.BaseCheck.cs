@@ -267,7 +267,7 @@ public sealed partial class BatchGatePilotService
                 throw new IOException("The base verification did not produce an exact-SHA verdict.");
             Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
             var attemptEvidence = attempt == 0 ? evidencePath : evidencePath + ".retry";
-            File.WriteAllText(attemptEvidence, JsonSerializer.Serialize(result));
+            FallbackGateEvidence.Write(attemptEvidence, result);
             baseline = new BatchGateBaseVerdict(project, baseSha, gateProfileDigest,
                 result.Verdict == BuildTestGateVerdict.Ok ? "pass" : "fail",
                 result.Verdict == BuildTestGateVerdict.Fail
