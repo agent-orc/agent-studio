@@ -124,9 +124,9 @@ not moved either; the gated result stays on the integration lane until a later
 push publishes it.
 
 A lane that diverged from origin heals itself when origin already holds every
-unpublished lane merge (AGT-3215). Each lane merge is classified: its delivery
-is contained in origin (ancestor, full tree, or patch-equivalent per
-`git cherry`), superseded by a newer delivery of the same card that origin
+unpublished lane delivery (AGT-3215). Each lane merge or net-change commit is
+classified: its delivery is contained in origin (ancestor, full tree, or patch
+equivalence per `git cherry`), superseded by a newer delivery of the same card that origin
 contains (the card is read from the board), or genuinely unpublished. When
 nothing is unpublished, the old lane tip is kept under
 `refs/agent-studio/integration-backup/<branch>/<old-tip>`, the lane restarts at
@@ -134,12 +134,17 @@ nothing is unpublished, the old lane tip is kept under
 backup ...; dropped: ...`) names each dropped commit and why. Integration then
 continues without a human step.
 
+Net-change commits record their source delivery in an
+`Agent-Studio-Net-Change-Of` trailer. Older commits resolve the abbreviated
+source SHA from their subject. A commit with no resolvable source remains
+unpublished and keeps the lane in place.
+
 When genuinely unpublished work remains, nothing is dropped. Every refused card
 fails with `branch-sync-failed` and joins one `integration-lane-diverged` pipeline
 health alarm: one Activity feed entry per hour, and the health snapshot names the
-unpublished commits and the blocked cards with their count until a lane sync
-succeeds again. To recover, publish the named merges, or, after checking that
-their work is not needed, drop the lane with
+unpublished commits, their cards, and only cards still blocked with their count
+until a lane sync succeeds again. To recover, publish the named deliveries, or,
+after checking that their work is not needed, drop the lane with
 `git update-ref -d refs/agent-studio/integration/<branch>` in the project
 checkout; the next integration seeds it from `origin/<branch>` again, and the
 affected cards retry their integration.
