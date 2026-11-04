@@ -131,6 +131,56 @@ public sealed partial class BatchGatePilotServiceTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Due_card_with_no_compatible_waiting_batch_gets_a_per_task_fallback()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        ConfigureThresholdWaiting(factory);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = false;
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.BatchAsync = async (request, ct) =>
+        {
+            await release.Task.WaitAsync(ct);
+            return Green(request.ExpectedSha);
+        };
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        try
+        {
+            SeedMember(factory, "CODE-BUSY-FALLBACK-A", "src/busy-a.cs");
+            SeedMember(factory, "CODE-BUSY-FALLBACK-B", "src/busy-b.cs");
+            pilot.RequestCloseNow(ProjectName);
+            await pilot.TickAsync(CancellationToken.None);
+            await _gate.FirstBatchStarted.WaitAsync(TimeSpan.FromSeconds(45));
+
+            SeedMember(factory, "CODE-WAIT-FALLBACK-A", "src/shared.cs");
+            SeedMember(factory, "CODE-WAIT-FALLBACK-B", "src/other.cs");
+            pilot.RequestCloseNow(ProjectName);
+            await pilot.TickAsync(CancellationToken.None);
+            Assert.Single(store.ListRecoverableManifests(), manifest =>
+                store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed);
+
+            var started = _clock;
+            _clock = started.AddMinutes(-46);
+            var lone = SeedMember(factory, "CODE-WAIT-FALLBACK-C", "src/shared.cs");
+            _clock = started.AddSeconds(1);
+            await pilot.TickAsync(CancellationToken.None);
+
+            var state = System.Text.Json.JsonSerializer.SerializeToElement(pilot.State(ProjectName))
+                .GetProperty("members").GetProperty(lone.Key);
+            Assert.Equal("fallback", state.GetProperty("status").GetString());
+            Assert.Equal(PerTaskFallbackRules.PlannerPerTask,
+                state.GetProperty("fallbackRule").GetString());
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+    }
+
     private static void ConfigureThresholdWaiting(
         Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> factory)
     {

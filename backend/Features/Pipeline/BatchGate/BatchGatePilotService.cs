@@ -643,7 +643,12 @@ public sealed partial class BatchGatePilotService
                             _store.ReadBaseVerdict(first.Subject.Project, baseSha,
                                 first.Subject.GateProfileDigest)?.Outcome == "fail",
                             provenGreenKeys, queuedPartners,
-                            ProjectGateBusy(scope));
+                            ProjectGateBusy(scope) && (!_store.ListRecoverableManifests()
+                                .Any(manifest => manifest.Scope == scope
+                                    && manifest.BaseSha == baseSha
+                                    && _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
+                                || current.Any(item => CanJoinWaitingBatch(item,
+                                    scope, baseSha, options))));
                     }
                     formed = SeparateThresholdOverlap(formed, current, scope,
                         baseSha, options);
@@ -666,17 +671,16 @@ public sealed partial class BatchGatePilotService
                 }
                 if (formed.UsePerTaskGate)
                 {
-                    // A formed batch can absorb this card when the project gate is
-                    // busy. Do not enqueue a separate per-task gate before repacking.
-                    if (options.Planner == "threshold"
-                        && _store.ListRecoverableManifests().Any(manifest =>
-                            manifest.Scope == scope && manifest.BaseSha == baseSha
-                            && _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed))
-                        continue;
                     foreach (var item in current.Where(item =>
                                  formed.EligibleKeys.Contains(item.Subject.TaskKey)))
+                    {
+                        // Only a batch that can actually absorb this card holds
+                        // its per-task fallback while repacking runs.
+                        if (options.Planner == "threshold" && CanJoinWaitingBatch(item,
+                                scope, baseSha, options)) continue;
                         ScheduleFallback(item, ct, new PerTaskFallbackCause(PerTaskFallbackRules.PlannerPerTask,
                             $"{options.Planner} plan: {planReason}"));
+                    }
                     continue;
                 }
                 if (formed.Manifest is null) continue;

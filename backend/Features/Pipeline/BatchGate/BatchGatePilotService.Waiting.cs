@@ -17,6 +17,48 @@ public sealed partial class BatchGatePilotService
         return _leases.IsBusy(scope);
     }
 
+    private bool CanJoinWaitingBatch(BatchGatePendingRecord item, BatchGateScope scope,
+        string baseSha, BatchGateFormationOptions options)
+    {
+        var waiting = _store.ListRecoverableManifests()
+            .Where(manifest => manifest.Scope == scope && manifest.BaseSha == baseSha
+                && _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
+            .ToArray();
+        if (waiting.Length == 0) return false;
+        var activeKeys = _store.ListRecoverableManifests()
+            .SelectMany(manifest => manifest.Members)
+            .Select(member => member.TaskKey).ToHashSet(StringComparer.Ordinal);
+        if (!EligibleForWaitingBatch(item, scope, baseSha, options, activeKeys)) return false;
+        var pending = _store.ListPending().Select(Refresh)
+            .ToDictionary(candidate => candidate.Subject.TaskKey, StringComparer.Ordinal);
+        var card = new BatchGateWaitingPolicy.Card(item.Subject.TaskKey,
+            _snapshots.Paths(item, _time.GetUtcNow()));
+        return waiting.Any(manifest => manifest.Members.Count < options.MaximumSize
+            && manifest.Members.All(member => pending.TryGetValue(member.TaskKey, out var other)
+                && (options.Overlap != "separate" || BatchGateWaitingPolicy.ConflictingFiles(
+                    card, new(member.TaskKey, _snapshots.Paths(other, _time.GetUtcNow()))).Count == 0)));
+    }
+
+    private bool EligibleForWaitingBatch(BatchGatePendingRecord item,
+        BatchGateScope scope, string baseSha, BatchGateFormationOptions options,
+        IReadOnlySet<string> activeKeys)
+        => item.Subject.Project == scope.Project
+            && item.Subject.Repository == scope.Repository
+            && item.Subject.IntegrationBranch == scope.IntegrationBranch
+            && item.Subject.GateProfileDigest == scope.GateProfileDigest
+            && item.Subject.PlatformVersion == scope.PlatformVersion
+            && item.Subject.OwningBatchId is null
+            && !activeKeys.Contains(item.Subject.TaskKey)
+            && _snapshots.PendingExclusion(item) is null
+            && !HeldOnRedBase(item)
+            && BatchGatePolicy.Exclusion(item.Subject, scope, options) is null
+            && (!options.PreCheckFor(scope.Project)
+                || BatchGatePreCheckPolicy.Decide(true,
+                    _store.ReadPreCheck(scope.Project, item.Subject.ResultSha,
+                        baseSha, item.Subject.GateProfileDigest)?.Outcome,
+                    item.EnqueuedAtUtc, _time.GetUtcNow(), options.DeadlineMinutes,
+                    false) == BatchGatePreCheckAction.Admit);
+
     private string? WaitingFormationReason(BatchGateManifest proposed,
         BatchGateFormationOptions options)
     {
@@ -111,22 +153,8 @@ public sealed partial class BatchGatePilotService
                 .ThenBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
             var ownedKeys = waitingManifests.SelectMany(manifest => manifest.Members)
                 .Select(member => member.TaskKey).ToHashSet(StringComparer.Ordinal);
-            var eligible = pending.Where(item => item.Subject.Project == scope.Project
-                    && item.Subject.Repository == scope.Repository
-                    && item.Subject.IntegrationBranch == scope.IntegrationBranch
-                    && item.Subject.GateProfileDigest == scope.GateProfileDigest
-                    && item.Subject.PlatformVersion == scope.PlatformVersion
-                    && item.Subject.OwningBatchId is null
-                    && !activeKeys.Contains(item.Subject.TaskKey)
-                    && _snapshots.PendingExclusion(item) is null
-                    && !HeldOnRedBase(item)
-                    && BatchGatePolicy.Exclusion(item.Subject, scope, options) is null
-                    && (!options.PreCheckFor(scope.Project)
-                        || BatchGatePreCheckPolicy.Decide(true,
-                            _store.ReadPreCheck(scope.Project, item.Subject.ResultSha,
-                                baseSha, item.Subject.GateProfileDigest)?.Outcome,
-                            item.EnqueuedAtUtc, _time.GetUtcNow(), options.DeadlineMinutes,
-                            false) == BatchGatePreCheckAction.Admit))
+            var eligible = pending.Where(item => EligibleForWaitingBatch(item,
+                    scope, baseSha, options, activeKeys))
                 .OrderBy(item => item.Subject.EnqueueSequence).ToArray();
             if (waitingManifests.Length == 1 && eligible.Length == 0) continue;
             var all = waitingManifests.SelectMany(manifest => manifest.Members)
