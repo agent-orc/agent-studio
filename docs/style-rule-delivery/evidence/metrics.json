@@ -1,0 +1,24 @@
+{
+  "capturedAt": "2026-11-03",
+  "host": "agent-runner-01",
+  "source": "Claude Code 2.1.305 and Codex 0.155.0 session transcripts under the runner clean-context state, plus salvage refs on origin for delivered file lists",
+  "window": {"firstSession": "2026-10-21", "lastSession": "2026-11-03", "cards": 178, "sessions": 524, "codexSessions": 372, "claudeSessions": 152, "cardsWithDeliveredFiles": 163, "enrichedCards": 145},
+  "areaFiringOnAuthoredPrompt": {"backend": 0.71, "runner": 0.80, "frontend": 0.97, "git": 0.83, "filesystem": 0.68, "refactor": 0.15, "delegation": 0.02},
+  "needleHits": {"frontend:ui": 142, "frontend:card": 134, "runner:agent": 101, "git:commit": 91, "backend:api": 64, "frontend:token": 54},
+  "frontendAreaVsDeliveredFrontendFiles": {"tp": 55, "fp": 103, "fn": 0, "precision": 0.35, "recall": 1.0},
+  "backendAreaVsDeliveredBackendFiles": {"tp": 99, "fp": 22, "fn": 29, "precision": 0.82, "recall": 0.77},
+  "appendedBlocks": {"repo-instructions-source": 145, "style-guide:angular-components": 126, "style-guide:dotnet-backend": 121, "frontend-design-tokens-components": 8, "git-handling-api-not-cli": 8, "delegation-economy": 6, "style-guide:frontend-styling": 1},
+  "frontendStylingReach": {"enrichedFrontendCards": 45, "receivedFrontendStyling": 1},
+  "angularComponentsPrecision": {"appendedOnCardsWithDiff": 120, "touchedFrontend": 39},
+  "guideOpenedByFrontendCards": {"cards": 45, "angular-components.md": 15, "frontend-styling.md": 0, "style-guide-hard-rules.md": 23, "frontend/AGENTS.md": 39, "noneOfFourStyleSources": 19, "citedGuideOpened": {"cardsWithStyleGuideBlock": 39, "opened": 18}, "byCli": {"claude": {"cards": 10, "angular": 1, "hardRules": 2, "frontendAgents": 6}, "codex": {"cards": 35, "angular": 14, "hardRules": 21, "frontendAgents": 33}}},
+  "otherProjects": {"unenrichedCards": 33, "enrichedWithOnlyRepoInstructions": 10, "frontendCardsWithoutStyleRule": 12},
+  "enrichmentSectionTokens": {"median": 346, "max": 386, "estimator": "characters/4"},
+  "selectorBacktestFrontend": {
+    "currentNeedles": {"precision": 0.35, "recall": 1.0},
+    "pathOnly": {"precision": 0.73, "recall": 0.44},
+    "twoStrongWordsOnly": {"precision": 0.70, "recall": 0.55},
+    "pathOrTwoStrongWords": {"precision": 0.65, "recall": 0.58}
+  },
+  "promptSignals": {"cardsNamingRepoPath": 108, "reviewFixCards": 13, "of": 163},
+  "headerZoneCardsPerIsoWeek": {"2026-W35": 2, "2026-W36": 1, "2026-W37": 9, "2026-W38": 2, "2026-W39": 3, "2026-W40": 5, "2026-W41": 4, "2026-W42": 7, "2026-W43": 11, "2026-W44": 3, "2026-W45 (Mon-Tue)": 7}
+}
