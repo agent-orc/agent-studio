@@ -959,7 +959,7 @@ public static class LeaseEndpoints
                                 ? File.ReadAllText(promptPath) : string.Empty;
                             return modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
                         },
-                        DecisionKey: req.IdempotencyKey));
+                        DecisionKey: req.IdempotencyKey);
                     var selection = modelSelection.Select(SelectionCall(
                         requestedCli, requestedModel, requestedThinking, "remote-coding-claim"));
                     var quotaPlan = selection.Admission;
