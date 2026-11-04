@@ -884,20 +884,42 @@ public class ProjectRunner
     /// spawns anything. See <see cref="QuotaAdmissionPlanner"/>.
     /// </summary>
     private QuotaAdmissionPlan PlanQuotaAdmission(TaskInfo info)
-        => _quotaAdmission?.Plan(new QuotaAdmissionRequest(
-               info.CliType,
-               info.Model,
-               info.ThinkingLevel,
+    {
+        var pending = info.PendingIntent?.ModelFallback;
+        var (cli, model, thinking) = RequestedRoute(
+            info.CliType, info.Model, info.ThinkingLevel, pending);
+        var plan = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+               cli,
+               model,
+               thinking,
                ProjectName,
                _activeRuns.Count,
                "local-coding-launch"))
            ?? QuotaAdmissionPlanner.Plan(
-               info.CliType, info.Model, info.ThinkingLevel,
+               cli, model, thinking,
                _quotaFallback, _quotaCaps,
                c => string.IsNullOrWhiteSpace(c) ? null : _quotaService.GetCachedFor(c!),
                DateTime.UtcNow,
                _activeRuns.Count,
                _quotaWaitPolicy?.Resolve(_projectSettings.Get(ProjectName)));
+        return ApplyPendingModelRoute(plan, pending);
+    }
+
+    internal static (string? Cli, string? Model, string? Thinking) RequestedRoute(
+        string? cli, string? model, string? thinking, ModelFallbackInfo? pending)
+        => (pending?.CliType ?? cli, pending?.To ?? model, pending?.ThinkingLevel ?? thinking);
+
+    internal static QuotaAdmissionPlan ApplyPendingModelRoute(
+        QuotaAdmissionPlan plan, ModelFallbackInfo? pending)
+        => pending is not null && plan.ShouldLaunch
+            ? plan with
+            {
+                Outcome = QuotaAdmissionOutcome.LaunchFallback,
+                IsFallback = true,
+                Reason = $"Pending model continuation selected {plan.CliType}/{plan.Model}.",
+                ModelFallback = pending,
+            }
+            : plan;
 
     private void RecordNearbyQuotaWait(TaskInfo info, QuotaAdmissionPlan plan)
     {
@@ -1496,7 +1518,9 @@ public class ProjectRunner
             // next reset (the scheduler re-ticks and wakes on its own). The
             // switch/throttle/wait decision is emitted (de-duplicated per job) so
             // the load-steering is never silent.
-            var providerLimit = ActiveProviderLimit(candidate.Info.CliType, DateTime.UtcNow);
+            var providerLimit = ActiveProviderLimit(
+                candidate.Info.PendingIntent?.ModelFallback?.CliType ?? candidate.Info.CliType,
+                DateTime.UtcNow);
             if (providerLimit is not null)
             {
                 _lastPickReason =

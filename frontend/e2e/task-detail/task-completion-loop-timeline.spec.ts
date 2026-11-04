@@ -1,6 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { api } from '../helpers/api';
 import { createJob } from '../helpers/jobs';
+import { setTheme } from '../helpers/theme';
+import { join } from 'node:path';
 
 /**
  * Completion-loop visible representation (ASS-566 / ADR-0049).
@@ -54,6 +56,49 @@ const REOPEN_2 = {
 };
 
 test.describe('Task completion loop — Overview indicator + Timeline tab', () => {
+  test('capacity health mark and model switch remain readable in both themes', async ({ page }) => {
+    const watchPath = await pickWatchPath();
+    await seedTimeline(page, [
+      {
+        ts: '2026-11-02T15:37:00Z', kind: 'model.health-marked', actor: 'system',
+        summary: 'gpt-6-sol is at capacity on this host for 15 minutes.',
+        details: { provider: 'codex', model: 'gpt-6-sol', kind: 'capacity' },
+      },
+      {
+        ts: '2026-11-02T15:38:00Z', kind: 'model.switched', actor: 'system',
+        summary: 'Switched from gpt-6-sol to gpt-5.6-sol after capacity retries.',
+        details: { fromModel: 'gpt-6-sol', toModel: 'gpt-5.6-sol' },
+      },
+      {
+        ts: '2026-11-02T15:52:00Z', kind: 'model.health-cleared', actor: 'system',
+        summary: 'The capacity retry window ended for gpt-6-sol on this host.',
+        details: { provider: 'codex', model: 'gpt-6-sol' },
+      },
+    ]);
+    const { id } = await createJob({
+      title: `capacity-model-switch-${Date.now()}`, watchPath,
+      promptMarkdown: '# Capacity model switch timeline', targetState: '4-auto-review',
+    });
+    try {
+      await page.goto(`/?job=${encodeURIComponent(id)}&watchPath=${encodeURIComponent(watchPath)}`);
+      await page.getByTestId('prompt-tab-timeline').click();
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        const timeline = page.getByTestId('timeline-list');
+        await expect(timeline).toContainText('gpt-6-sol is at capacity');
+        await expect(timeline).toContainText('Switched from gpt-6-sol to gpt-5.6-sol');
+        await expect(timeline).toContainText('The capacity retry window ended for gpt-6-sol');
+        await page.screenshot({
+          path: join(process.env['JOB_RESULTS_DIR'] ?? 'test-results', `capacity-switch-timeline-${theme}.png`),
+          fullPage: false,
+        });
+      }
+    } finally {
+      await api(`/api/tasks/${encodeURIComponent(id)}?watchPath=${encodeURIComponent(watchPath)}`,
+        { method: 'DELETE' });
+    }
+  });
+
   test('escalation path: Overview shows attempt budget exhausted; Timeline pins the escalate verdict', async ({ page }) => {
     const watchPath = await pickWatchPath();
     await seedTimeline(page, [

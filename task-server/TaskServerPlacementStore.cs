@@ -196,7 +196,7 @@ public sealed partial class TaskServerStore
         {
             var held = await ReadHeldModelRoutesAsync(connection, transaction, task.TaskId, runnerId, now, ct);
             if (held.Count > 0
-                && await ReadEffectiveModelRouteAsync(connection, transaction, task.TaskId, ct) is { Model: { } model } route
+                && await ReadEffectiveModelRouteAsync(connection, transaction, task.TaskId, runnerId, ct) is { Model: { } model } route
                 && held.Contains((route.Provider.Trim().ToLowerInvariant(), model.Trim().ToLowerInvariant())))
                 continue;
             yield return task;
