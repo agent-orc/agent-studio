@@ -46,6 +46,24 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void First_candidate_and_isolation_cost_survive_store_restart()
+    {
+        var manifest = Close();
+        _store.RecordFirstCandidate(new BatchFirstCandidateFact(manifest.BatchId,
+            "project", Now, manifest.Members.Count, .42, ["backend"],
+            "disjoint", true, "deterministic-suite-red"));
+        _store.RecordIsolationCost(new BatchIsolationCostFact(manifest.BatchId, 3, 24.5, Now));
+
+        var row = Assert.Single(new BatchGateStore(_root).ListPlanObservations("project"));
+        Assert.Equal(manifest.BatchId, row.BatchId);
+        Assert.Equal(4, row.Size);
+        Assert.True(row.Red);
+        Assert.Equal(3, row.IsolationRuns);
+        Assert.Equal(24.5, row.IsolationMinutes);
+        Assert.Empty(_store.ListPlanObservations("other"));
+    }
+
+    [Fact]
     public async Task Readers_never_observe_a_partially_written_state()
     {
         var manifest = Close();
