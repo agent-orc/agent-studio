@@ -3,18 +3,22 @@ import { TestBed } from '@angular/core/testing';
 import { describe, expect, it } from 'vitest';
 import { AccessService } from '../../services/access.service';
 import { OperatorAgentsService } from '../../services/operator-agents.service';
+import { StandingGrantsService } from '../../services/standing-grants.service';
 import { accessOverview, fakeAccessService } from '../../testing/access-fixtures';
+import { fakeStandingGrantsService } from '../../testing/grant-fixtures';
 import { fakeOperatorAgentsService } from '../../testing/operator-fixtures';
 import { AccessAreaComponent } from './access-area.component';
 
 describe('AccessAreaComponent', () => {
-  async function render(access: ReturnType<typeof fakeAccessService>, operators = fakeOperatorAgentsService()) {
+  async function render(access: ReturnType<typeof fakeAccessService>, operators = fakeOperatorAgentsService(),
+    grants = fakeStandingGrantsService()) {
     await TestBed.configureTestingModule({
       imports: [AccessAreaComponent],
       providers: [
         provideZonelessChangeDetection(),
         { provide: AccessService, useValue: access },
         { provide: OperatorAgentsService, useValue: operators },
+        { provide: StandingGrantsService, useValue: grants },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(AccessAreaComponent);
@@ -36,7 +40,7 @@ describe('AccessAreaComponent', () => {
     expect([invited.dataset['tone'], invited.dataset['icon'], invited.textContent?.trim()]).toEqual(['info', 'info', 'Invited']);
     expect(element.querySelector('[data-testid="access-single-user"]')).toBeNull();
     for (const section of ['access-users', 'access-bindings', 'access-groups', 'access-service-accounts', 'access-invite-form', 'access-runners',
-      'access-operator-agents', 'access-operator-activity'])
+      'access-operator-agents', 'access-standing-grants', 'access-operator-activity'])
       expect(element.querySelector(`[data-testid="${section}"]`)).toBeTruthy();
   });
 
@@ -48,6 +52,15 @@ describe('AccessAreaComponent', () => {
     expect(element.querySelector('[data-testid="access-operator-agents"]')).toBeNull();
     expect(element.querySelector('[data-testid="access-operator-activity"]')).toBeNull();
     expect(element.querySelector('[data-testid="access-service-accounts"]')).toBeTruthy();
+  });
+
+  it('loads standing grants for the Owner and hides them when the server refuses', async () => {
+    const grants = fakeStandingGrantsService();
+    grants.state.set('denied');
+    const element = await render(fakeAccessService(), fakeOperatorAgentsService(), grants);
+    expect(grants.load).toHaveBeenCalledTimes(1);
+    expect(element.querySelector('[data-testid="access-standing-grants"]')).toBeNull();
+    expect(element.querySelector('[data-testid="access-operator-agents"]')).toBeTruthy();
   });
 
   it('counts service accounts without the ones behind operator agents', async () => {

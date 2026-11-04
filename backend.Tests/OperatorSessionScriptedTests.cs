@@ -16,7 +16,7 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// Security model SM-1 acceptance on the real networked host: a scripted
 /// operator session of mixed requests (reads, card writes that produce
-/// timeline events, and refused calls) is attributed to the operator agent
+/// timeline events under a standing grant, and refused calls) is attributed to the operator agent
 /// session in every audit entry and timeline event, and never to the Owner.
 /// The Owner manages the agent and reads the activity view over HTTP; the
 /// session token is refused on access administration, audit, and grants.
@@ -48,6 +48,14 @@ public sealed class OperatorSessionScriptedTests : IDisposable
         var actor = $"operator-agent:{agentId}/session:{sessionId}";
         Assert.Equal(actor, started.GetProperty("actor").GetString());
         Assert.Equal($"human:{ownerId}", started.GetProperty("delegatedBy").GetString());
+        // SM-4: requeues are routine (T1) and need the Owner's standing grant.
+        using (var stepUp = await SendRawAsync(owner, HttpMethod.Post, "/api/auth/step-up", new { code = CurrentCode(factory) }))
+            Assert.Equal(HttpStatusCode.NoContent, stepUp.StatusCode);
+        await SendAsync(owner, HttpMethod.Post, "/api/auth/iam/standing-grants", new
+        {
+            principalId = agentId, operations = new[] { OperatorOperationIds.CardRequeue },
+            scope = new { kind = "project", project = "alpha" }, ratePerHour = 20, reason = "Scripted session requeues",
+        });
 
         var audit = store.ControlPlaneAudit;
         var firstSequence = audit.HeadSequence + 1;
@@ -74,9 +82,11 @@ public sealed class OperatorSessionScriptedTests : IDisposable
             await Record(operatorClient.GetAsync("/api/auth/audit/operator-activity"));
         }
 
+        // Reads and granted requeues succeed; the uncatalogued preview comment,
+        // the other project, the binding change (T2), and the audit read are refused.
         Assert.Equal(60, statuses.Count);
-        Assert.Equal(30, statuses.Count(status => status == HttpStatusCode.Forbidden));
-        Assert.Equal(30, statuses.Count(status => status == HttpStatusCode.OK));
+        Assert.Equal(40, statuses.Count(status => status == HttpStatusCode.Forbidden));
+        Assert.Equal(20, statuses.Count(status => status == HttpStatusCode.OK));
 
         // Every audit entry the session produced names the session and the
         // delegating Owner; none names the Owner as actor.
@@ -100,8 +110,8 @@ public sealed class OperatorSessionScriptedTests : IDisposable
         var card = scanner.FindJob("alpha-card", ProjectPath("alpha"))!;
         var events = factory.Services.GetRequiredService<TimelineLog>().ReadAll(card.FolderPath)
             .Where(evt => evt.Ts >= sessionStart).ToList();
-        Assert.True(events.Count >= 20, $"Expected comment and move events, found {events.Count}.");
-        Assert.Contains(events, evt => evt.Kind == "preview-comment");
+        Assert.True(events.Count >= 10, $"Expected move events, found {events.Count}.");
+        Assert.DoesNotContain(events, evt => evt.Kind == "preview-comment");
         Assert.Contains(events, evt => evt.Kind == TimelineEventKinds.LaneChanged);
         Assert.All(events, evt => Assert.Equal((actor, $"human:{ownerId}"), (evt.Actor, evt.DelegatedBy)));
         Assert.DoesNotContain(events, evt => evt.Actor.Contains(ownerId, StringComparison.Ordinal)
@@ -220,13 +230,15 @@ public sealed class OperatorSessionScriptedTests : IDisposable
         var response = await client.PostAsJsonAsync("/api/auth/login", new
         {
             username = "first.owner", password = Password,
-            secondFactorCode = SecondFactorCodes.CurrentTotp(_ownerTotpSecret,
-                factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime),
+            secondFactorCode = CurrentCode(factory),
         });
         response.EnsureSuccessStatusCode();
         client.DefaultRequestHeaders.Add("X-CSRF-Token", (await response.Content.ReadFromJsonAsync<AuthStatusResponse>())!.CsrfToken!);
         return client;
     }
+
+    private string CurrentCode(WebApplicationFactory<Program> factory)
+        => SecondFactorCodes.CurrentTotp(_ownerTotpSecret, factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime);
 
     private static HttpClient BearerClient(WebApplicationFactory<Program> factory, string token)
     {

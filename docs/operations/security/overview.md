@@ -509,7 +509,7 @@ D1, D4, and D11).
   actor the handler named is kept as `reportedActor`. Queued batch moves keep
   the scope. The Owner never appears as the actor of a session's action.
 - A session token is refused (403) on every `/api/auth/*` route (access
-  administration, role bindings, which are today's grants, and the audit view
+  administration, role bindings, standing grants, and the audit view
   and verification), on the versioned Task Server plane `/api/v1/*`, and on any
   route that needs `access.*`, `workspace.administer`, or `secrets.resolve`,
   whatever its bindings say. The standalone Task Server has no operator
@@ -517,6 +517,61 @@ D1, D4, and D11).
 - The operator agent runs on the Owner's machine under its own OS user,
   without the Owner's SSH agent, keys, or credential files (D11). See the
   [operator agent setup guide](../setup/operator-agent.md).
+
+### Operator operation catalogue, tiers, and standing grants (SM-4)
+
+Every operator session request passes the policy step in
+`AccessSecurityMiddleware` before any role binding is read (security model
+SM-4, decisions SM-D2 option A, SM-D3 option A, and SM-D7 option A).
+
+- The operation catalogue (`OperatorOperationCatalog`) gives each operation an
+  id, exactly one tier, and a scope kind (workspace, project, environment, or
+  host). Every read (GET, HEAD, OPTIONS, and the read-only reference-status
+  POST) is `observe` (T0). A write is catalogued only by a narrow route rule;
+  any other write is refused with `operation-not-catalogued`. The typed host
+  operations of the Operations Server are catalogued too: `host.inspect` is T0
+  and `service.restart` is T1.
+- T1 routine: `card.requeue` (a move into Backlog, Preparation, orchestrator
+  prep, or Ready, and the failed-pickup restore), `card.steer` (continue),
+  `service.restart`, `host.drain` and `host.resume`, `gate.rerun` (integration
+  retry and a pipeline step run), `stage.deploy`, and `production.promote`.
+  A stage deploy or promotion is T1 only when the commit has full gate
+  evidence: a green post-merge run on exactly that commit in which every
+  command passed (D2). Without it the same request is `gate.bypass`.
+- T2 high risk: `secrets.change`, `exposure.change`, `data.delete` (every
+  catalogued delete), `history.rewrite`, `gate.bypass` (merge, external
+  completion, a move into Human review or Completed), `keys.rotate`,
+  `host.enrollment`, `access.change`, `grant.change`, and `catalogue.change`.
+  The policy step refuses every T2 request with `approval-required`; the
+  approval request itself is SM-5. Changing the catalogue is a code change
+  through a card, so it is T2 by construction.
+- The operator agent has no operation that pushes a protected branch (D3). A
+  change reaches `develop` or `main` as a card through the gate.
+- A T1 request is admitted only under a live standing grant of the operator
+  agent that names the operation, covers the request's scope (a workspace
+  grant covers everything, a project grant its project and environments, an
+  environment grant one project environment, a host grant one host), is inside
+  its optional daily UTC window, and has hourly rate left. Otherwise it is
+  refused with `grant-required`, `grant-outside-window`, or
+  `grant-rate-exceeded`. A refusal answers 403 with `error`, `operation`, and
+  `tier`. The role bindings still apply after the policy step.
+- A standing grant (`/api/auth/iam/standing-grants`) records the principal,
+  tier T1, operation set, scope, rate per hour, optional window, issuer, issue
+  time, expiry (default 7 days, at most 30), renewal, revocation, and reason.
+  Only an active Owner issues, renews, or revokes one in Settings → Access →
+  Standing grants. Issuing and renewing consume a fresh step-up (five minutes,
+  single use); revoking needs none. Disabling the operator agent revokes its
+  grants. The policy step reads the grant records under the store lock on
+  every request, so a grant stops admitting at its expiry and on the first
+  request after its revocation, well inside 60 seconds. The rate counts
+  admitted requests of the last hour and is persisted with the grant, so a
+  restart does not reset it.
+- Grant changes are written to the IAM audit (`standing-grant.create`,
+  `.renew`, `.revoke`). Each operator request's audit entry names the
+  operation, its tier, the admitting grant id, or the policy refusal.
+  `OperatorOperationCatalogInventoryTests` fails for a route matched by two
+  rules, a rule that matches no mapped route, or a typed operation without a
+  catalogue entry.
 
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,
 `runner.events`, `runner.artifacts`, and `runner.completion`. Reading the prompt
