@@ -236,6 +236,8 @@ public sealed record SelectionLedgerEntry(
     DateTime? ReturnToPrimaryAt)
 {
     public string? ClosesId { get; init; }
+    public decimal? FromPricePerMTok { get; init; }
+    public decimal? ToPricePerMTok { get; init; }
     /// <summary>The ledger event for a result, or null for a plain primary launch.</summary>
     public static SelectionLedgerEntry? For(
         SelectionRequest request, SelectionResult result, string executionPath, string id, DateTime at)

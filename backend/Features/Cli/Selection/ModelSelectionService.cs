@@ -174,7 +174,7 @@ public sealed class ModelSelectionService : IModelSelectionService
         var result = ModelSelectionPlanner.Plan(request, facts);
         var entry = result.Outcome == SelectionOutcome.Primary && active is not null
             ? new SelectionLedgerEntry(
-                Guid.CreateVersion7(new DateTimeOffset(now, TimeSpan.Zero)).ToString("N"), now,
+                ModelSelectionLedger.NewId(), now,
                 SelectionLedgerKinds.Returned, request.Consumer, request.Host?.HostId,
                 request.Project, request.PipelineType, request.StepId, request.TaskKey,
                 request.AttemptId, request.Round, call.ExecutionPath, active.To, result.Route,
@@ -184,9 +184,14 @@ public sealed class ModelSelectionService : IModelSelectionService
                 ? null
                 : SelectionLedgerEntry.For(
             request, result, call.ExecutionPath,
-            Guid.CreateVersion7(new DateTimeOffset(now, TimeSpan.Zero)).ToString("N"), now);
+            ModelSelectionLedger.NewId(), now);
         if (entry is not null && _ledger is not null)
         {
+            entry = entry with
+            {
+                FromPricePerMTok = facts.PricePerMTok(entry.From.Model),
+                ToPricePerMTok = facts.PricePerMTok(entry.To.Model),
+            };
             _ledger.Record(entry);
             result = result with { LedgerId = entry.Id };
         }

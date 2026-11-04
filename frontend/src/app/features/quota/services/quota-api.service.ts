@@ -62,6 +62,7 @@ export interface SelectionRoute { cliType: string; model: string | null; thinkin
 export interface ActiveModelSwitch {
   id: string;
   at: string;
+  kind: string;
   consumer: string;
   project: string | null;
   taskKey: string | null;
@@ -234,7 +235,7 @@ export class QuotaApiService {
   }
 
   getActiveModelSwitches() {
-    return this.http.get<{ switches: ActiveModelSwitch[] }>(`${this.baseUrl}/model-selection/active`);
+    return this.http.get<ActiveModelSwitch[]>(`${this.baseUrl}/model-selection/active`);
   }
 
   setConsumerPolicy(consumer: string, setting: ConsumerModelPolicy) {

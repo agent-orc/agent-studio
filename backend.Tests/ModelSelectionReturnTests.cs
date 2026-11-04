@@ -56,6 +56,10 @@ public sealed class ModelSelectionReturnTests
         Assert.Empty(ledger.Active());
         var replayed = new LoggingModelSelectionLedger(NullLogger<LoggingModelSelectionLedger>.Instance, Config(directory.Path), clock);
         Assert.Empty(replayed.Active());
+        var canonical = new ModelSelectionLedger(Config(directory.Path), clock);
+        Assert.Empty(canonical.Active());
+        var returned = Assert.Single(canonical.Query().Events, entry => entry.Kind == SelectionLedgerKinds.Returned);
+        Assert.Equal("switch-0", returned.ClosesId);
     }
 
     [Theory]
@@ -103,6 +107,25 @@ public sealed class ModelSelectionReturnTests
         var result = ModelSelectionPlanner.Plan(Request, facts);
         Assert.Equal(SelectionOutcome.Wait, result.Outcome);
         Assert.Equal(SelectionRules.QuotaCap, result.Rule);
+    }
+
+    [Fact]
+    public void Selection_receipt_keeps_prices_in_the_shared_ledger()
+    {
+        using var directory = new TestDirectory();
+        var config = Config(directory.Path);
+        var clock = new FakeTimeProvider(new DateTimeOffset(Start));
+        var result = ModelSelectionPlanner.Plan(Request, Facts(Start, 96, 10));
+        var receipt = SelectionLedgerEntry.For(Request, result, "simulation", "priced-switch", Start)! with
+        {
+            FromPricePerMTok = 10m,
+            ToPricePerMTok = 20m,
+        };
+        var adapter = new LoggingModelSelectionLedger(NullLogger<LoggingModelSelectionLedger>.Instance, config, clock);
+        adapter.Record(receipt);
+        var stored = Assert.Single(new ModelSelectionLedger(config, clock).Query().Events);
+        Assert.Equal(10d, stored.PricePerMTok?.From);
+        Assert.Equal(20d, stored.PricePerMTok?.To);
     }
 
     [Fact]

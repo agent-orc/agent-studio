@@ -82,7 +82,7 @@ public sealed class ModelSelectionPolicyStoreTests
                 FallbackCliType = "codex", FallbackModel = "gpt-6-sol",
             } });
             File.WriteAllText(oldPath, oldContent);
-            var ledger = new LoggingModelSelectionLedger(NullLogger<LoggingModelSelectionLedger>.Instance);
+            var ledger = new LoggingModelSelectionLedger(NullLogger<LoggingModelSelectionLedger>.Instance, config);
 
             var policy = new ModelSelectionPolicyStore(config, projects, ledger).Get();
             var reloaded = new ModelSelectionPolicyStore(config, projects, ledger).Get();

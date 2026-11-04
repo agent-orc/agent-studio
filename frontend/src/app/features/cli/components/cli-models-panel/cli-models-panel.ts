@@ -115,7 +115,8 @@ export class CliModelsPanelComponent implements OnInit {
     });
     this.refreshEffectiveRoutes();
     this.routesApi.getActiveModelSwitches().subscribe({
-      next: response => this.activeSwitches.set(response.switches ?? []),
+      next: response => this.activeSwitches.set(response.filter(item =>
+        (item.kind === 'switched' || item.kind === 'operator-switch') && item.from && item.to)),
     });
     this.loadWorkspaceAutoApply();
   }

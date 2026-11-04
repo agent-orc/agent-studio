@@ -6,7 +6,7 @@ import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 test('consumer policy editor renders in light and dark', async ({ page }) => {
   const results = process.env.JOB_RESULTS_DIR ?? 'test-results';
   let activeSwitches = [{
-    id: 'switch-1', at: '2026-11-04T12:00:00Z', consumer: 'coding', project: 'alpha', taskKey: 'AGT-1',
+    id: 'switch-1', kind: 'switched', at: '2026-11-04T12:00:00Z', consumer: 'coding', project: 'alpha', taskKey: 'AGT-1',
     from: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
     to: { cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high' },
     rule: 'quota-cap', returnToPrimaryAt: '2026-11-07T12:00:00Z',
@@ -26,7 +26,7 @@ test('consumer policy editor renders in light and dark', async ({ page }) => {
       migration: { inheritedSteps: 36, explicitSteps: 36, projects: 12, applied: true },
     };
     const body = path === '/api/model-selection/policy' ? policy
-      : path === '/api/model-selection/active' ? { switches: activeSwitches }
+      : path === '/api/model-selection/active' ? activeSwitches
       : path === '/api/model-selection/effective' ? { routes: [
         { consumer: 'coding', stepId: null,
           configured: { cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high' },
