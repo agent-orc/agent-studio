@@ -300,6 +300,8 @@ public sealed class TaskTransitionService
                 OperatorOverride = operatorOverride,
                 OverrideReason = reason,
             });
+            if (contentEvidence.Settlement is { } settlement)
+                ReportUnusableSettlement(info, settlement, contentDecision);
             if (!contentDecision.Accepted)
                 return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath);
         }
@@ -1662,6 +1664,29 @@ public sealed class TaskTransitionService
     /// Matches the card's review subject against the attempt authority store.
     /// Null when there is no subject or no authority to match against.
     /// </summary>
+    /// <summary>
+    /// AGT-3467: completion and the acceptance backstop name the settlement
+    /// that gave no content verdict. A journal that reads as repair also
+    /// leaves one timeline diagnostic on the card.
+    /// </summary>
+    private void ReportUnusableSettlement(
+        TaskInfo info, CompletionSettlementProblem settlement, CompletionContentDecision decision)
+    {
+        _logger.LogWarning(
+            "completion-content-settlement-unusable job={JobId} review={ReviewAttemptId} kind={Kind} reason={Reason} accepted={Accepted}",
+            info.Id, settlement.ReviewAttemptId, settlement.Kind, settlement.Reason, decision.Accepted);
+        if (settlement.Kind != CompletionSettlementProblem.JournalRepair
+            || settlement.ReviewAttemptId is not { } attemptId || _timeline is null) return;
+        try
+        {
+            RemoteReviewSettlementDiagnostics.RecordRepairOnce(_timeline, info.FolderPath, attemptId, settlement.Reason);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "TaskTransitionService: the settlement repair diagnostic is best-effort");
+        }
+    }
+
     private AcceptanceLineageDecision? DecideAcceptanceLineage(TaskInfo reviewed, bool operatorOverride)
     {
         var reviewSubject = TaskIntegrationStatusService.CurrentReviewSubject(reviewed);

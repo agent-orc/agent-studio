@@ -31,6 +31,7 @@
     <None Include="Fixtures\cause-breaker\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\gate-environment-retry\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\gate-failure-triage\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\review-settlement\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\token-aggregation\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\summary-assessment\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\otlp\*.pb;Fixtures\otlp\*.json" CopyToOutputDirectory="PreserveNewest" />

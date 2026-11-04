@@ -39,9 +39,9 @@ public static class CompletionContentEvidence
                     { State: AttemptLifecycleState.Completed or AttemptLifecycleState.Failed or AttemptLifecycleState.Cancelled } candidate
                     && candidate.SourceRunAttemptId == run.AttemptId
                     ? candidate : null;
-                var settlement = review is null ? null
-                    : RemoteReviewSettlementJournal.Read(task.FolderPath, review.AttemptId).Entry;
-                var report = settlement?.Report;
+                var read = review is null ? null
+                    : RemoteReviewSettlementJournal.Read(task.FolderPath, review.AttemptId);
+                var report = read?.Entry?.Report;
                 var content = report?.Verdicts.LastOrDefault(item =>
                     string.Equals(item.Aspect, required, StringComparison.OrdinalIgnoreCase));
                 var ran = report?.Verdicts.Select(item => item.Aspect)
@@ -55,7 +55,8 @@ public static class CompletionContentEvidence
                     required, content?.Status, ran, skipped,
                     ContentSummary: content?.Summary,
                     EvidenceChecked: content?.EvidenceChecked,
-                    Missing: content?.Missing);
+                    Missing: content?.Missing,
+                    Settlement: Settlement(run.AttemptId, projection.CurrentReviewAttempt, review, read));
             }
         }
 
@@ -92,5 +93,30 @@ public static class CompletionContentEvidence
             }
         }
         return new(task.Mode, current, null, null, required, null, [], []);
+    }
+
+    /// <summary>
+    /// Why the current run has no usable settled report, or null when it has
+    /// one. Completion names this instead of "only no aspects ran" (AGT-3467).
+    /// </summary>
+    private static CompletionSettlementProblem? Settlement(
+        string runAttemptId,
+        ReviewAttemptDto? currentReview,
+        ReviewAttemptDto? review,
+        RemoteReviewSettlementRead? read)
+    {
+        if (review is null)
+            return new(currentReview?.AttemptId, currentReview is null
+                ? CompletionSettlementProblem.NoReview
+                : currentReview.SourceRunAttemptId != runAttemptId
+                    ? CompletionSettlementProblem.ReviewForOtherRun
+                    : CompletionSettlementProblem.ReviewNotSettled, null);
+        return read!.Status switch
+        {
+            RemoteReviewSettlementReadStatus.Ready => null,
+            RemoteReviewSettlementReadStatus.Missing => new(review.AttemptId,
+                CompletionSettlementProblem.JournalMissing, null),
+            _ => new(review.AttemptId, CompletionSettlementProblem.JournalRepair, read.Reason),
+        };
     }
 }
