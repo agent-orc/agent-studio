@@ -763,8 +763,12 @@ SM-D1 uses option O4 for routine work and option O3 for a bounded transition.
 The supported networked Compose stack starts the Operations Server and an
 outbound local Operations Agent on the private website network. The Operations
 Server has separate service and agent principals, no browser credentials, and
-a loopback-only host port for private tunnels to other enrolled hosts. Studio's
-public Docker firewall covers their addresses in the full website subnet;
+a loopback-only host port for private tunnels to other enrolled hosts. An
+existing installation needs the Operations image digests, a Studio host CA
+outside the data directory, and a certificate receipt directory before the
+new Compose stack starts; follow the
+[website update procedure](../setup/studio-website.md#first-update-that-adds-operations-server).
+The public Docker firewall covers their addresses in the full website subnet;
 the website systemd unit verifies that the subnet rule is first in
 `DOCKER-USER` before Compose starts the public edge. Studio's
 service credential is readable only by the API's dedicated Operations group
