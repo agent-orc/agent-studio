@@ -192,6 +192,8 @@ public sealed partial class BatchGatePilotService
         await BatchGateOwnershipStore.WriteAsync(live!.FolderPath, queued is null
             ? new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject, FallbackGateActive: true)
             : new BatchGateOwnership(pending.ReviewAttemptId, queued.Subject), ct).ConfigureAwait(false);
+        // A review back in the batch queue is no per-task fallback any more (AGT-3466).
+        if (queued is not null) _store.ClearFallbackCause(pending.Subject.Project, pending.ReviewAttemptId);
         Lane(queued ?? pending, "gate-queue-stalled", queueWaitMs: waitedMs,
             outcome: queued is null ? "resume-per-task" : "requeued", reason: gate.Reason);
         _logger.LogWarning(
