@@ -99,6 +99,36 @@ public sealed class WorkspaceRepositoryMaintenanceServiceTests : IDisposable
         Assert.Empty(Git("status", "--porcelain").Split('\n', StringSplitOptions.RemoveEmptyEntries));
     }
 
+    [Fact]
+    public async Task RunOnceUntracksOnlyLargeLegacyFallbackEvidenceThroughWorkspaceSweep()
+    {
+        var logs = Path.Combine(_root, "projects", "Example", "tasks", "AGT-1", "logs");
+        Directory.CreateDirectory(logs);
+        var large = Path.Combine(logs, "batch-fallback-old.json");
+        var compact = Path.Combine(logs, "batch-fallback-new.json");
+        using (var stream = File.Create(large)) stream.SetLength(1024 * 1024 + 1);
+        File.WriteAllText(compact, "{\"Verdict\":0}\n");
+        RunGit("add", "projects");
+        RunGit("commit", "-q", "-m", "legacy fallback evidence");
+
+        var configuration = Config();
+        var commits = new WorkspaceArtifactCommitService(
+            configuration, NullLogger<WorkspaceArtifactCommitService>.Instance);
+        var service = new WorkspaceRepositoryMaintenanceService(
+            configuration, commits, new ReadyLoadGate(),
+            NullLogger<WorkspaceRepositoryMaintenanceService>.Instance);
+
+        var result = await service.RunOnceAsync();
+
+        Assert.True(result.Success, $"{result.Phase}: {result.Error}");
+        Assert.Empty(Git("ls-files", "--", "projects/**/logs/batch-fallback-old.json"));
+        Assert.Contains("batch-fallback-new.json", Git("ls-files", "--", "projects"));
+        Assert.True(File.Exists(large));
+        Assert.Contains("batch-fallback-old.json", Git("show", "--name-only", "--format=", "HEAD"));
+        Assert.Contains("batch-fallback-old.json", Git("check-ignore", large));
+        Assert.Empty(Git("status", "--porcelain"));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); }

@@ -420,6 +420,41 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
     }
 
     [Fact]
+    public void ArtifactCommit_DefaultLimitRefusesSixMegabytes()
+    {
+        var logger = new RefusalLogger();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })
+            .Build();
+        var service = new WorkspaceArtifactCommitService(config, logger);
+        var job = JobFolder("ASS-DEFAULT-LIMIT");
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "small.txt"), "small\n");
+        var large = Path.Combine(job, "large.bin");
+        using (var stream = File.Create(large)) stream.SetLength(6 * 1024 * 1024);
+
+        var result = service.TryCommitArtifactUpload(_root, "ASS-DEFAULT-LIMIT", job,
+            ["small.txt", "large.bin"]);
+        service.TryCommitArtifactUpload(_root, "ASS-DEFAULT-LIMIT", job, ["large.bin"]);
+
+        Assert.True(result.DidCommit, result.Error);
+        Assert.Contains("small.txt", RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD"));
+        Assert.Empty(RunGitCapture(_root, "ls-files", Relative(large)));
+        Assert.Single(logger.Messages, message => message.Contains("workspace-artifact-file-refused"));
+    }
+
+    private sealed class RefusalLogger : Microsoft.Extensions.Logging.ILogger<WorkspaceArtifactCommitService>
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Messages.Add(formatter(state, exception));
+    }
+
+    [Fact]
     public void TrackedSweep_CommitsOrdinaryDriftButLeavesRuntimeStateUnstaged()
     {
         Directory.CreateDirectory(Path.Combine(_root, "logs", "bus"));
@@ -556,7 +591,11 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
     {
         var logger = new GitStaleLockGuardTests.CapturingLogger<WorkspaceArtifactCommitService>();
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["WorkspaceArtifacts:MaximumFileBytes"] = (10 * 1024 * 1024).ToString(),
+            })
             .Build();
         var service = new WorkspaceArtifactCommitService(config, logger);
         var job = JobFolder("ASS-SIZED");
