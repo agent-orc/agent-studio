@@ -381,8 +381,11 @@ public static class RunnerEndpoints
                 var entry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name == projectName);
                 if (entry == null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
                 var turns = await chatService.ReadAsync(projectName, entry.Path, context: null, 1000, ct);
-                var executionContext = chatService.ResolveExecutionContext(projectName, entry.Path);
-                return Results.Ok(new { project = projectName, turns, executionContext });
+                var executionReadiness = chatService.ResolveExecutionReadiness(projectName, entry.Path);
+                var executionContext = executionReadiness.Ready
+                    ? chatService.ResolveExecutionContext(projectName, entry.Path)
+                    : null;
+                return Results.Ok(new { project = projectName, turns, executionContext, executionReadiness });
             });
 
         runnerGroup.MapPost("/{projectName}/orchestrator-chat",
@@ -432,8 +435,11 @@ public static class RunnerEndpoints
             var entry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name == key.ProjectId);
             if (entry == null) return Results.NotFound(new { error = $"Unknown project '{key.ProjectId}'" });
             var turns = await chatService.ReadAsync(key.ProjectId!, entry.Path, key, 1000, ct);
-            var executionContext = chatService.ResolveExecutionContext(key.ProjectId!, entry.Path, key);
-            return Results.Ok(new { contextKey = key.Value, project = key.ProjectId, turns, executionContext });
+            var executionReadiness = chatService.ResolveExecutionReadiness(key.ProjectId!, entry.Path);
+            var executionContext = executionReadiness.Ready
+                ? chatService.ResolveExecutionContext(key.ProjectId!, entry.Path, key)
+                : null;
+            return Results.Ok(new { contextKey = key.Value, project = key.ProjectId, turns, executionContext, executionReadiness });
         }
 
         static async Task<IResult> SendContextChat(

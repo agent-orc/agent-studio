@@ -17,6 +17,7 @@ import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from 
 import type { WatchPathEntry } from '../../../../models/task.model';
 import type {
   ChatExecutionContext,
+  ChatExecutionReadiness,
   ComposerLocationContext,
   OrchestratorChatTurn,
   OrchestratorContextSourceOption,
@@ -356,6 +357,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   });
   readonly errorMsg = signal<string | null>(null);
   readonly executionContext = signal<ChatExecutionContext | null>(null);
+  readonly executionReadiness = signal<ChatExecutionReadiness | null>(null);
   /** Project scope may explicitly omit context once. Task and Dossier scope are mandatory. */
   readonly contextDismissed = signal(false);
   readonly contextAttachments = signal<OrchestratorContextSourceOption[]>([]);
@@ -498,6 +500,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
       this.open();
       if (this.open() && key) {
         this.localTurns.set([]);
+        this.executionReadiness.set(null);
         untracked(() => this.contextDigestState.load(key, false));
         if (proj) this.refresh(false);
       }
@@ -834,6 +837,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         if (this.contextKey() !== key) return;
         this.turns.set(resp.turns ?? []);
         this.executionContext.set(resp.executionContext ?? null);
+        this.executionReadiness.set(resp.executionReadiness ?? null);
         this.errorMsg.set(null);
         if (reconcileMissingSession
           && !this.contextSessions().some((session) => session.contextKey === key)) {
@@ -845,6 +849,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         if (this.contextKey() !== key) return;
         const message = orchestratorContextErrorMessage(err, 'Failed to load orchestrator chat');
         this.errorMsg.set(message);
+        this.executionReadiness.set({ ready: false, code: 'readiness-unavailable',
+          reason: 'Chat readiness could not be checked. Refresh to try again.' });
         if (!silent) this.loading.set(false);
       }
     });
@@ -859,6 +865,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   private readonly bugEventTargets = new Map<string, { jobId: string; watchPath: string }>();
 
   async onSubmit(event: ChatSubmitEvent): Promise<void> {
+    if (this.loading() || this.executionReadiness()?.ready === false) return;
     const proj = this.effectiveProject();
     if (!proj) return;
     // Snapshot once so a navigation change during the request cannot split

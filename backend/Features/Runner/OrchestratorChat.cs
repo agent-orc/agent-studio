@@ -465,6 +465,8 @@ public sealed record ChatNavigationContext(
 /// both routes and the switch reason remain visible on the persisted turn.
 /// </para>
 /// </summary>
+public sealed record ChatExecutionReadiness(bool Ready, string Code, string? Reason);
+
 public class OrchestratorChatService
 {
     private readonly ITokenPricing _pricing;
@@ -479,6 +481,7 @@ public class OrchestratorChatService
     private readonly ProjectSettingsService? _projectSettings;
     private readonly ProjectRegistry? _projects;
     private readonly RemoteChatWorkBroker? _remoteWork;
+    private readonly V1ReviewExecutorRegistry? _remoteHosts;
     private readonly GitService? _git;
     private readonly OrchestratorTaskPromptContextComposer? _taskPromptContext;
     private readonly OrchestratorWorkbenchPromptContextComposer? _workbenchPromptContext;
@@ -521,7 +524,8 @@ public class OrchestratorChatService
         OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null,
         AgentMessageBusBridge? bus = null,
         AdHocUsageRecorder? chatUsage = null,
-        LocalChatUsageTracker? localChatUsage = null)
+        LocalChatUsageTracker? localChatUsage = null,
+        V1ReviewExecutorRegistry? remoteHosts = null)
     {
         _pricing = pricing;
         _chat = chat;
@@ -540,6 +544,7 @@ public class OrchestratorChatService
         _projectSettings = projectSettings;
         _projects = projects;
         _remoteWork = remoteWork;
+        _remoteHosts = remoteHosts;
         _git = git;
         _taskPromptContext = taskPromptContext;
         _persistence = persistence;
@@ -1957,6 +1962,38 @@ public class OrchestratorChatService
             _git?.ReadHeadShaAt(root),
             "ready",
             DateTime.UtcNow);
+    }
+
+    public ChatExecutionReadiness ResolveExecutionReadiness(string projectName, string watchPath)
+    {
+        if (!_networked) return new ChatExecutionReadiness(true, "local", null);
+
+        RemoteChatWorkRoute? route;
+        try { route = ResolveRemoteRoute(projectName, watchPath); }
+        catch (InvalidOperationException)
+        {
+            return new ChatExecutionReadiness(false, "repository-unavailable",
+                "The configured Runner needs a repository URL for this project.");
+        }
+        if (route is null)
+            return new ChatExecutionReadiness(false, "runner-not-configured",
+                "No Runner is configured for this project.");
+        if (_remoteWork?.IsRunnerReachable(route.RunnerId) != true)
+            return new ChatExecutionReadiness(false, "runner-unreachable",
+                "The configured Runner is not reachable.");
+
+        var host = _remoteHosts?.ListCapabilitySnapshots().FirstOrDefault(snapshot =>
+            string.Equals(snapshot.RunnerId, route.RunnerId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(snapshot.Name, route.RunnerId, StringComparison.OrdinalIgnoreCase));
+        var cli = host?.Capabilities.FirstOrDefault(capability =>
+            capability.Key == AgentStudio.TaskServer.Contracts.CapabilityProtocol.CliExecution(CliTypes.Codex));
+        var login = host?.Capabilities.FirstOrDefault(capability =>
+            capability.Key == AgentStudio.TaskServer.Contracts.CapabilityProtocol.ProviderAuthentication(CliTypes.Codex));
+        if (cli?.IsFresh != true || cli.AdvertisedStatus != "ready"
+            || login?.IsFresh != true || login.AdvertisedStatus != "ready")
+            return new ChatExecutionReadiness(false, "cli-login-unavailable",
+                "The Runner needs an available Codex CLI and a verified login.");
+        return new ChatExecutionReadiness(true, "runner-ready", null);
     }
 
     private RemoteChatWorkRoute? ResolveRemoteRoute(string projectName, string watchPath)
