@@ -1283,7 +1283,10 @@ public static class V1ReviewPlaneEndpoints
                     return Results.Json(new Contract.ApiError("review-settlement-repair-required",
                         replayJournal.Reason ?? "The settled report has no recoverable journal or evidence."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
-                if (replayJournal.Entry is { } prior && RemoteReviewSettlementJournal.ReportHash(prior) != preparedHash)
+                if (replayJournal.Entry is { } prior
+                    && (prior.Version >= RemoteReviewSettlementJournal.CurrentVersion
+                        ? RemoteReviewSettlementJournal.Hash(prior.Report)
+                        : RemoteReviewSettlementJournal.ReportHash(prior)) != preparedHash)
                     return Results.Conflict(new Contract.ApiError("idempotency-conflict",
                         "The review report key is bound to a different payload."));
             }
@@ -1537,7 +1540,9 @@ public static class V1ReviewPlaneEndpoints
                     batchPilot.ClearAdmissionFailure(task, settled.ReviewAttempt);
                 }
             }
-            var reportHash = preparedHash;
+            var reportHash = replay && priorReport is not null
+                ? RemoteReviewSettlementJournal.ReportHash(priorReport)
+                : preparedHash;
 
             // The authority already settled this delivery. Requeue unfinished
             // journaled evidence, then return without repeating integration.

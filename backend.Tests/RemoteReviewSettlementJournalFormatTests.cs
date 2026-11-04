@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text;
 using AgentStudio.Runner;
 using AgentStudio.Tasks;
 using AgentStudio.Tests.Architecture;
@@ -128,13 +129,14 @@ public sealed class RemoteReviewSettlementJournalFormatTests : IDisposable
 
         Assert.Equal(RemoteReviewSettlementReadStatus.Ready, read.Status);
         Assert.Equal(RemoteReviewSettlementJournal.CurrentVersion, read.Entry!.Version);
-        Assert.Equal(RemoteReviewSettlementJournal.Hash(legacy.Report), read.Entry.ReportSha256);
+        Assert.Equal(RemoteReviewSettlementJournal.Hash(legacy.Report),
+            RemoteReviewSettlementJournal.ReportHash(read.Entry));
         Assert.Null(read.Entry.SubmittedReportSha256);
         Assert.Equal(1, read.Entry.EvidenceFailures);
     }
 
     [Fact]
-    public void Format_2_hash_is_stable_when_a_release_adds_members_at_their_default()
+    public void Current_hash_is_stable_when_a_release_adds_members_at_their_default()
     {
         var folder = Seed(ReleaseFixture, ReleaseAttempt);
         RemoteReviewSettlementJournal.Write(folder, RemoteReviewSettlementJournal.Read(folder, ReleaseAttempt).Entry!);
@@ -151,7 +153,7 @@ public sealed class RemoteReviewSettlementJournalFormatTests : IDisposable
     }
 
     [Fact]
-    public void Format_2_entry_with_a_set_member_is_refused()
+    public void Current_entry_with_a_set_member_is_refused()
     {
         var folder = Seed(ReleaseFixture, ReleaseAttempt);
         RemoteReviewSettlementJournal.Write(folder, RemoteReviewSettlementJournal.Read(folder, ReleaseAttempt).Entry!);
@@ -164,13 +166,104 @@ public sealed class RemoteReviewSettlementJournalFormatTests : IDisposable
     }
 
     [Fact]
+    public void Format_2_entry_still_verifies_after_format_3_is_current()
+    {
+        var folder = Seed(ReleaseFixture, ReleaseAttempt);
+        RemoteReviewSettlementJournal.Write(folder, RemoteReviewSettlementJournal.Read(folder, ReleaseAttempt).Entry!);
+        var compact = RemoteReviewSettlementJournal.Read(folder, ReleaseAttempt).Entry!;
+        Edit(folder, ReleaseAttempt, stored =>
+        {
+            stored["version"] = RemoteReviewSettlementJournal.CanonicalVersion;
+            stored["reportSha256"] = RemoteReviewSettlementJournal.Hash(compact.Report);
+            stored.Remove("acceptedReportSha256");
+        });
+
+        Assert.Equal(RemoteReviewSettlementReadStatus.Ready,
+            RemoteReviewSettlementJournal.Read(folder, ReleaseAttempt).Status);
+        Edit(folder, ReleaseAttempt, stored => stored["report"]!["outcome"] = "ProductFailure");
+        Assert.Equal(RemoteReviewSettlementReadStatus.Repair,
+            RemoteReviewSettlementJournal.Read(folder, ReleaseAttempt).Status);
+    }
+
+    [Fact]
     public void Unknown_format_is_refused()
     {
         var folder = Seed(ReleaseFixture, ReleaseAttempt);
-        Edit(folder, ReleaseAttempt, stored => stored["version"] = 3);
+        Edit(folder, ReleaseAttempt, stored => stored["version"] = 4);
 
-        Assert.Equal("corrupt-review-settlement-journal:unsupported-format-3",
+        Assert.Equal("corrupt-review-settlement-journal:unsupported-format-4",
             RemoteReviewSettlementJournal.Read(folder, ReleaseAttempt).Reason);
+    }
+
+    [Fact]
+    public void Large_artifacts_leave_a_bounded_journal_with_failed_step_tails()
+    {
+        var (task, _, attemptId) = SettledReview();
+        var original = RemoteReviewSettlementJournal.Read(task.FolderPath, attemptId).Entry!;
+        var bytes = Encoding.UTF8.GetBytes(new string('x', 2 * 1024 * 1024));
+        var digest = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+        var command = new Contract.ReviewCommandEvidenceDto(
+            "verify", "build-tests", "dotnet", ["test"], "expected", "head", "tree",
+            new DateTime(2026, 11, 3, 11, 3, 0, DateTimeKind.Utc),
+            new DateTime(2026, 11, 3, 11, 4, 0, DateTimeKind.Utc),
+            1, null, digest, digest);
+        var report = original.Report with
+        {
+            Commands = [command],
+            Artifacts = [new Contract.ReviewArtifactEvidenceDto("stdout", "text/plain", digest,
+                bytes.Length, Convert.ToBase64String(bytes))],
+        };
+        RemoteReviewSettlementJournal.Write(task.FolderPath, original with
+        {
+            Report = report,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            AcceptedReportSha256 = null,
+        });
+
+        var path = RemoteReviewSettlementJournal.PathFor(task.FolderPath, attemptId);
+        Assert.InRange(new FileInfo(path).Length, 1, RemoteReviewSettlementJournal.MaximumFileBytes);
+        var read = RemoteReviewSettlementJournal.Read(task.FolderPath, attemptId);
+        Assert.Equal(RemoteReviewSettlementReadStatus.Ready, read.Status);
+        Assert.Null(Assert.Single(read.Entry!.Report.Artifacts).ContentBase64);
+        var tail = Assert.Single(read.Entry.Report.Commands).OutputTail!;
+        Assert.InRange(Encoding.UTF8.GetByteCount(tail.Stdout) + Encoding.UTF8.GetByteCount(tail.Stderr),
+            1, RemoteReviewSettlementJournal.MaximumStepTailBytes);
+        Assert.True(tail.StdoutTruncated);
+        Assert.True(tail.StderrTruncated);
+        Assert.Equal(RemoteReviewSettlementJournal.Hash(report),
+            RemoteReviewSettlementJournal.ReportHash(read.Entry));
+        File.AppendAllText(path, new string(' ', RemoteReviewSettlementJournal.MaximumFileBytes));
+        Assert.Equal("corrupt-review-settlement-journal:journal-size-limit",
+            RemoteReviewSettlementJournal.Read(task.FolderPath, attemptId).Reason);
+    }
+
+    [Theory]
+    [InlineData("reportSha256")]
+    [InlineData("deliverySha256")]
+    [InlineData("reviewBudgetSha256")]
+    [InlineData("continuationSha256")]
+    [InlineData("acceptedReportSha256")]
+    public void Current_entry_refuses_tampered_hash_fields(string field)
+    {
+        var folder = Seed(ReleaseFixture, ReleaseAttempt);
+        RemoteReviewSettlementJournal.Write(folder, RemoteReviewSettlementJournal.Read(folder, ReleaseAttempt).Entry!);
+        Edit(folder, ReleaseAttempt, stored => stored[field] = new string('f', 64));
+        Assert.Equal(RemoteReviewSettlementReadStatus.Repair,
+            RemoteReviewSettlementJournal.Read(folder, ReleaseAttempt).Status);
+    }
+
+    [Fact]
+    public void Unbounded_metadata_is_refused_without_replacing_a_valid_journal()
+    {
+        var (task, _, attemptId) = SettledReview();
+        var path = RemoteReviewSettlementJournal.PathFor(task.FolderPath, attemptId);
+        var before = File.ReadAllText(path);
+        var entry = RemoteReviewSettlementJournal.Read(task.FolderPath, attemptId).Entry!;
+        var report = entry.Report with { Summary = new string('a', RemoteReviewSettlementJournal.MaximumFileBytes) };
+
+        Assert.Throws<IOException>(() => RemoteReviewSettlementJournal.Write(task.FolderPath,
+            entry with { Report = report, AcceptedReportSha256 = RemoteReviewSettlementJournal.Hash(report) }));
+        Assert.Equal(before, File.ReadAllText(path));
     }
 
     [Fact]
