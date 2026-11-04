@@ -85,6 +85,8 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Global search palette and API | [domains/frontend.md#global-search](../system/domains/frontend.md#global-search) |
 | Global search is slow because one repository has a long history | [common-problems/global-search-slow-repository/](../system/common-problems/global-search-slow-repository/) |
 | Frontend navigation style guide | [frontend/style-guide/navigation.md](../quality/frontend/style-guide/navigation.md) |
+| Studio app and task header style guide | [frontend/style-guide/header.md](../quality/frontend/style-guide/header.md) |
+| Selectable Studio header prompt guide | [header-zones.md](../quality/header-zones.md) |
 | CLI | [domains/cli.md](../system/domains/cli.md) |
 | Model routing policy (model, thinking level, risk floors, benchmark evidence) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
 | Model routing by assessed complexity: analysis and implementation plan as pipeline steps, Token Economy as the measuring authority for the (complexity class, model, level) pair table, reported-versus-achieved feedback (AGT-2815) | [decision dossier](../model-routing-by-complexity/index.html) |
