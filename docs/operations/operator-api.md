@@ -26,15 +26,15 @@ context receipt.
 `POST /api/tasks/{id}/attention` grants or renews a 10-minute attention lease
 and returns its `lease` and current `revision`. The active holder appears on
 the card header. Operator sessions need a `card.attention` standing grant (T1).
-An operator token or operator session must hold the lease and
-send `If-Match: <revision>` on card writes. No lease returns 409
+An operator API token must hold the lease and send
+`If-Match: <revision>` on card writes. No lease returns 409
 `attention-lease-required`; an absent revision returns 428; a stale revision
 returns 412 `stale-card-revision`. Read the card's `ETag` or acquire attention
 to get the current revision. The Owner can act at any time; an Owner action
 ends an operator lease and appends a `handoff` entry to the log. An operator
 cannot replace another actor's active lease.
-Operator credentials use the single-card move route; the batch move route
-cannot carry a separate revision for each card and refuses operator credentials.
+Operator API tokens use the single-card move route; the batch move route
+cannot carry a separate revision for each card and refuses API tokens.
 
 ## Deploy and restart preflight
 

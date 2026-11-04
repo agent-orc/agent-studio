@@ -22,9 +22,9 @@ public static class BatchMoveEndpoints
                 return Results.BadRequest(new { error = "items must contain no more than 500 entries" });
 
             // A batch has one HTTP revision header but may touch many cards.
-            // Operator credentials use the single-card route for each guarded move.
+            // API tokens use the single-card route for each guarded move.
             var service = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] as ServiceAccountPrincipal;
-            if (service is { Origin: ServiceAccountOrigins.ApiToken } || service?.Operator is not null)
+            if (service is { Origin: ServiceAccountOrigins.ApiToken })
                 return Results.Conflict(new { error = "attention-lease-required",
                     message = "Use a single-card move with attention and If-Match." });
 

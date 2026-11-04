@@ -1573,7 +1573,8 @@ public static class TaskCrudEndpoints
             var actor = AgentStudio.Operator.OperatorEndpoints.Actor(context);
             var owner = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 && human.User.Role == StudioRoles.Owner;
-            if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal)
+            if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem]
+                is ServiceAccountPrincipal { Origin: ServiceAccountOrigins.ApiToken })
             {
                 if (attention.Current(card.TaskKey)?.Holder != actor)
                     return Results.Conflict(new { error = "attention-lease-required" });

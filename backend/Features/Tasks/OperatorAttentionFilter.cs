@@ -3,7 +3,7 @@ using AgentStudio.Security;
 
 namespace AgentStudio.Tasks;
 
-/// <summary>Card write precondition for API-token and operator-session actors.</summary>
+/// <summary>Card write precondition for API-token actors.</summary>
 public sealed class OperatorAttentionFilter : IEndpointFilter
 {
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext invocation,
@@ -28,7 +28,11 @@ public sealed class OperatorAttentionFilter : IEndpointFilter
         if (card is null) return await next(invocation);
         var store = context.RequestServices.GetRequiredService<OperatorCoordinationStore>();
         var service = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] as ServiceAccountPrincipal;
-        var operatorWrite = service is { Origin: ServiceAccountOrigins.ApiToken } || service?.Operator is not null;
+        // SM-1 operator sessions still pass through the operation catalogue,
+        // standing-grant and Owner-approval policy in access middleware. The
+        // OP-7 card precondition is for API tokens, whose project writes use
+        // the attention lease and card revision contract.
+        var operatorWrite = service is { Origin: ServiceAccountOrigins.ApiToken };
         if (operatorWrite)
         {
             if (store.Current(card.TaskKey)?.Holder != service!.ActorId)

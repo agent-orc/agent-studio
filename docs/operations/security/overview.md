@@ -243,12 +243,13 @@ that is already allowed to edit that project's checkout.
 The [operator log and attention routes](../operator-api.md#operator-log-and-card-attention)
 use `project.read` for log reads and `project.cards.write` for log and lease
 writes, with project scope checked by the handler. Only an Owner may append an
-installation-wide (`*`) entry. API-token and operator-session card writes
+installation-wide (`*`) entry. Operator API-token card writes
 require an active 10-minute attention lease and `If-Match` card revision; a
 stale revision is refused with 412. Owner card actions end the operator lease
 and record a handoff. Token-shaped text is redacted before the Task Server
 persists it. Operator sessions use T1 `operator-log.append` and
-`card.attention` grants for the two write routes.
+`card.attention` grants for the two write routes. Their card writes continue
+through the SM-4 standing-grant and SM-5 Owner-approval policy.
 In the standalone profile, Studio forwards log reads and appends to the Task
 Server's `/api/v1/studio/operator-log` route with `tasks:read` and
 `tasks:write` scopes respectively.
