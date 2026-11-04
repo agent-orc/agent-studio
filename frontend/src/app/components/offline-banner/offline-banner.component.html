@@ -1,8 +1,7 @@
 @if (conn.offline()) {
   <div class="offline-banner" role="alert" aria-live="assertive" data-testid="offline-banner">
-    <span class="offline-banner__dot" aria-hidden="true"></span>
+    <app-status-indicator class="offline-banner__state" tone="danger" label="Backend not reachable." [compact]="true" testId="offline-banner-state" />
     <span class="offline-banner__text">
-      <strong>Backend not reachable.</strong>
       The connection is down - data shown may be stale and actions are blocked until the
       connection returns. Reconnecting automatically...
     </span>

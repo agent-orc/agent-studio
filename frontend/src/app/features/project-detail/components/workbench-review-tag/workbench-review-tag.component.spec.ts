@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
-import { WorkbenchReviewTagComponent } from './workbench-review-tag.component';
+import { WorkbenchReviewTagComponent, reviewTone } from './workbench-review-tag.component';
 
 describe('WorkbenchReviewTagComponent', () => {
   it('shows a neutral never-reviewed tag and an immediate detailed tooltip with links', async () => {
@@ -39,5 +39,16 @@ describe('WorkbenchReviewTagComponent', () => {
     expect(tag.textContent).toContain('Never reviewed');
     fixture.destroy();
     vi.useRealTimers();
+  });
+});
+
+describe('reviewTone', () => {
+  it('maps verdicts to tones and lets a due review win', () => {
+    expect(reviewTone('current', false)).toBe('success');
+    expect(reviewTone('partially-superseded', false)).toBe('warning');
+    expect(reviewTone('superseded', false)).toBe('neutral');
+    expect(reviewTone('historical', false)).toBe('neutral');
+    expect(reviewTone(null, false)).toBe('neutral');
+    expect(reviewTone('current', true)).toBe('warning');
   });
 });

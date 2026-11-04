@@ -177,8 +177,7 @@
                   @for (d of orchestratorDecisions(); track d.id) {
                     <div class="vdbg__decision">
                       <header>
-                        <span class="vdbg__decision-kind"
-                              [attr.data-tone]="d.severity ?? 'info'">{{ d.decisionType }}</span>
+                        <app-status-indicator class="vdbg__decision-kind" [tone]="severityTone(d.severity)" [label]="d.decisionType" [compact]="true" testId="verbose-debug-decision-kind" />
                         <span class="vdbg__decision-action">→ {{ d.action || '—' }}</span>
                         <span class="vdbg__decision-time">{{ formatTime(d.timestamp) }}</span>
                       </header>
@@ -220,7 +219,7 @@
                       <i class="vdbg__row-bar"><em [style.width.%]="row.percent"></em></i>
                       <b class="vdbg__row-value">{{ row.count }}</b>
                       @if (row.failures > 0) {
-                        <span class="vdbg__row-failures" [cacTooltip]="'Failed tool invocations in this family'">{{ row.failures }} ✗</span>
+                        <app-status-indicator tone="danger" [label]="'' + row.failures" [compact]="true" detail="Failed tool invocations in this family" [testId]="'verbose-debug-tool-failures-' + row.family" />
                       }
                     </div>
                   }
@@ -250,7 +249,7 @@
                     <div class="vdbg__row" [attr.data-testid]="'verbose-debug-warning-row-' + row.key" [attr.data-tone]="row.tone">
                       <span class="vdbg__row-label">{{ row.label }}</span>
                       <span class="vdbg__row-meta">{{ row.description }}</span>
-                      <b class="vdbg__row-value">{{ row.count }}</b>
+                      <app-status-indicator class="vdbg__row-value" [tone]="warningTone(row.tone)" [label]="'' + row.count" [compact]="true" [testId]="'verbose-debug-warning-count-' + row.key" />
                     </div>
                   }
                 </div>
@@ -274,7 +273,8 @@
                       <span class="vdbg__row-icon" aria-hidden="true">▶</span>
                       <span class="vdbg__row-label">Run #{{ run.index }} · {{ run.intent }}</span>
                       <span class="vdbg__row-meta">
-                        {{ run.cli || '?' }} · {{ run.status }} · {{ formatDuration(run.durationSeconds ?? 0) }}
+                        {{ run.cli || '?' }} · <app-status-indicator [tone]="runStatusTone(run.status)" [label]="run.status" [compact]="true" [testId]="'verbose-debug-run-status-' + run.index" />
+                        · {{ formatDuration(run.durationSeconds ?? 0) }}
                         @if (run.exitCode !== null) {
                           · exit {{ run.exitCode }}
                         }
@@ -339,7 +339,7 @@
                         <strong>{{ row.caption || 'screenshot' }}</strong>
                         <code>{{ row.durablePath || row.sourcePath }}</code>
                         @if (row.status) {
-                          <span class="vdbg__artifact-status" [attr.data-status]="row.status">{{ row.status }}</span>
+                          <app-status-indicator class="vdbg__artifact-status" [attr.data-status]="row.status" [tone]="artifactTone(row.status)" [label]="row.status" [compact]="true" testId="verbose-debug-artifact-status" />
                         }
                       </figcaption>
                     </figure>

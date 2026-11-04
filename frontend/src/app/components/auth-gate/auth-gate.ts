@@ -4,11 +4,12 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Observable, firstValueFrom } from 'rxjs';
 import { AuthService } from '../../services/auth.service';
 import { createPasskey, getPasskey } from '../../services/webauthn';
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 export { AuthService } from '../../services/auth.service';
 
 @Component({
   selector: 'app-auth-gate',
-  imports: [FormsModule],
+  imports: [FormsModule, StatusIndicatorComponent],
   templateUrl: './auth-gate.html',
   styleUrl: './auth-gate.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

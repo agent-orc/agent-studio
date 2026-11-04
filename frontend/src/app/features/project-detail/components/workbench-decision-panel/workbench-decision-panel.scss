@@ -36,34 +36,9 @@
 .decision-panel__separator { color: var(--studio-fg-muted); }
 
 .decision-panel__stage {
-  display: inline-flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--studio-accent-3) 12%, transparent);
   font-size: 0.68rem;
-  white-space: nowrap;
 }
-
-.decision-panel__stage i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--studio-accent-3);
-}
-
-.decision-panel[data-stage='failed'] .decision-panel__stage {
-  background: color-mix(in srgb, var(--studio-error) 12%, transparent);
-}
-.decision-panel[data-stage='failed'] .decision-panel__stage i { background: var(--studio-error); }
-.decision-panel[data-stage='succeeded'] .decision-panel__stage,
-.decision-panel[data-stage='archived'] .decision-panel__stage {
-  background: color-mix(in srgb, var(--studio-success) 10%, transparent);
-}
-.decision-panel[data-stage='succeeded'] .decision-panel__stage i,
-.decision-panel[data-stage='archived'] .decision-panel__stage i { background: var(--studio-success); }
 
 .decision-panel__owner {
   display: inline-flex;
@@ -103,18 +78,6 @@
   font-size: 0.72rem;
 }
 
-.decision-panel__draft > span {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-2);
-}
-
-.decision-panel__draft i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--studio-accent-3);
-}
 
 .decision-panel__actions {
   display: flex;

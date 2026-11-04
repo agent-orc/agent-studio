@@ -15,7 +15,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface RunnerExpiry {
   label: string;
-  tone: 'attention' | 'muted' | null;
+  /** Null renders the date as plain text: a distant expiry is a fact, not a state. */
+  tone: StatusTone | null;
   notice: string | null;
 }
 
@@ -124,14 +125,14 @@ export class AccessRunnersComponent {
     const active = runner.credentials.filter(credential => !credential.revokedAt);
     const unexpiring = active.find(credential => !credential.expiresAt);
     if (unexpiring)
-      return { label: 'No expiry', tone: 'muted', notice: unexpiring.expiryNotice ?? null };
+      return { label: 'No expiry', tone: 'neutral', notice: unexpiring.expiryNotice ?? null };
     const ends = active.map(credential => Date.parse(credential.expiresAt!)).filter(value => !Number.isNaN(value));
     if (ends.length === 0) return { label: '', tone: null, notice: null };
     const soonest = Math.min(...ends);
     const days = Math.ceil((soonest - this.now()) / DAY_MS);
-    if (days <= 0) return { label: 'Expired', tone: 'attention', notice: null };
+    if (days <= 0) return { label: 'Expired', tone: 'danger', notice: null };
     if (days <= EXPIRY_WARNING_DAYS)
-      return { label: days === 1 ? 'Expires in 1 day' : `Expires in ${days} days`, tone: 'attention', notice: null };
+      return { label: days === 1 ? 'Expires in 1 day' : `Expires in ${days} days`, tone: 'warning', notice: null };
     return { label: `Expires ${formatAccessTime(new Date(soonest).toISOString())}`, tone: null, notice: null };
   }
 

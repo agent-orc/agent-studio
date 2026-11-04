@@ -28,6 +28,7 @@ import {
   WorkbenchDecisionDraftStore,
 } from '../../state/workbench-decision-draft.store';
 import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
   actionErrorMessage,
   bounded,
@@ -40,10 +41,16 @@ import {
 
 type ActionMode = 'feature-spawn' | 'rework' | null;
 
+/** Answer progress of the inline decision points, e.g. "3 inline decision points · ready". */
+export function decisionAnswerCountLabel(count: number, complete: boolean): string {
+  const points = `${count} inline decision point${count === 1 ? '' : 's'}`;
+  return `${points} · ${complete ? 'ready' : 'answer every point in the document'}`;
+}
+
 @Component({
   selector: 'app-workbench-decision-actions',
   standalone: true,
-  imports: [CliModelSelectorComponent, PendingButtonDirective],
+  imports: [CliModelSelectorComponent, PendingButtonDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-decision-actions.component.html',
   styleUrl: './workbench-decision-actions.component.scss',
@@ -85,6 +92,8 @@ export class WorkbenchDecisionActionsComponent {
     return this.decisionPoints().every(point =>
       (responses.get(point.id)?.selectedOptionIds.length ?? 0) > 0);
   });
+  readonly answerCountLabel = computed(() =>
+    decisionAnswerCountLabel(this.decisionPoints().length, this.answersComplete()));
   readonly selectedSummary = computed(() => selectedDecisionText(
     this.decisionPoints(), this.responses()));
   readonly hasReworkComment = computed(() =>

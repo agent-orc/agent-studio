@@ -38,9 +38,11 @@ import {
   type ProjectUrlSettingsValue,
 } from '../project-url-settings-dialog/project-url-settings-dialog';
 import { buildEmbedMenuItems, httpErrorMessage, projectPreviewProxyUrl, type StartFailure } from './project-url-preview-tab.helpers';
-import { diagnosticText, presentProjectUrlDiagnosis } from './project-url-diagnostic.model';
-
-type PreviewPill = 'running' | 'offline' | 'checking' | 'building' | 'blocked' | 'failed' | 'local-only' | 'custom';
+import { diagnosticText, presentProjectUrlDiagnosis, projectUrlDiagnosisTone } from './project-url-diagnostic.model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import {
+  previewPillTone, previewStateBadgeLabel, previewStateBadgeStatus, type PreviewPill, type PreviewStateBadgeInput,
+} from './project-url-preview-status';
 
 /** Readiness kinds that warrant loading the full backend diagnosis. */
 const DIAGNOSABLE_KINDS: ReadonlySet<ProjectUrlReadiness['kind']> =
@@ -83,6 +85,7 @@ const DIAGNOSABLE_KINDS: ReadonlySet<ProjectUrlReadiness['kind']> =
     ProjectUrlProcessConsoleComponent,
     ProjectUrlSettingsDialogComponent,
     ProjectUrlStatusLabelPipe,
+    StatusIndicatorComponent,
   ],
   providers: [ProjectUrlProcessController, ProjectUrlEmbedNavigationController],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -199,14 +202,12 @@ export class ProjectUrlPreviewTabComponent {
     return s === 'unknown' ? 'checking' : s;
   });
 
-  readonly stateBadgeStatus = computed<PreviewPill>(() => {
-    if (this.startFailure()) return 'failed';
-    if (this.building()) return 'building';
-    if (this.diagnostic()?.startupFailureReason) return 'failed';
-    if (this.readiness().kind === 'frame-blocked') return 'blocked';
-    if (this.readiness().kind === 'http-error') return 'failed';
-    return this.readiness().kind === 'local-only' ? 'local-only' : 'offline';
-  });
+  private readonly stateBadgeInput = computed<PreviewStateBadgeInput>(() => ({ startFailed: !!this.startFailure(), building: this.building(),
+    consoleActive: this.consoleActive(), startupFailed: !!this.diagnostic()?.startupFailureReason, readiness: this.readiness() }));
+  readonly stateBadgeStatus = computed(() => previewStateBadgeStatus(this.stateBadgeInput()));
+  readonly stateBadgeLabel = computed(() => previewStateBadgeLabel(this.stateBadgeInput()));
+  readonly pillTone = previewPillTone;
+  readonly diagnosisTone = computed(() => projectUrlDiagnosisTone(this.diagnostic()));
 
   readonly canReload = computed(() => this.resolveState() === 'resolved' && !this.building());
   /** While the console shows command/cwd below, the card skips its copy. */

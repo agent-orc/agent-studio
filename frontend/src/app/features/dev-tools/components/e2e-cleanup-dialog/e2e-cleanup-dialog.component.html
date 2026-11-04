@@ -53,10 +53,12 @@
     }
     @case ('report') {
       <div class="report">
-        <div class="report__line"><strong>{{ report()?.deletedCount ?? 0 }}</strong> deleted</div>
+        <div class="report__line">
+          <app-status-indicator tone="success" [label]="(report()?.deletedCount ?? 0) + ' deleted'" [compact]="true" testId="e2e-cleanup-report-deleted" />
+        </div>
         @if ((report()?.failedCount ?? 0) > 0) {
-          <div class="report__line report__line--err">
-            <strong>{{ report()?.failedCount }}</strong> failed:
+          <div class="report__line report__line--failed">
+            <app-status-indicator tone="danger" [label]="report()?.failedCount + ' failed'" [compact]="true" testId="e2e-cleanup-report-failed" />
             <ul>
               @for (k of report()?.failed ?? []; track k) { <li><code>{{ k }}</code></li> }
             </ul>

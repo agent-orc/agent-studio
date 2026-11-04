@@ -16,7 +16,21 @@ import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import { stateLabel as fmtStateLabel } from '../../../../services/format.util';
 import type { RunActivityBadge } from '../../../../services/run-activity.util';
-import type { TaskDetail } from '../../../../models/task.model';
+import type { TaskDetail, TaskRunActivityKind } from '../../../../models/task.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+const RUN_ACTIVITY_TONES: Readonly<Record<TaskRunActivityKind, StatusTone>> = {
+  active: 'running',
+  'continuing-after-restart': 'running',
+  'failed-backoff': 'danger',
+  'failed-idle': 'danger',
+  'no-active-run': 'neutral',
+};
+
+/** Tone of the run-activity state in the tab bar; an unknown kind reads neutral. */
+export function runActivityTone(kind: string): StatusTone {
+  return RUN_ACTIVITY_TONES[kind as TaskRunActivityKind] ?? 'neutral';
+}
 
 /** Which of the task detail panes the shell currently shows. */
 export interface ShellPanesVisible {
@@ -77,6 +91,7 @@ export interface StudioTabTriage {
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     CredentialAlertsComponent,
+    StatusIndicatorComponent,
     TooltipDirective,
     MenuComponent,
     StudioIconComponent,
@@ -107,6 +122,7 @@ export class StudioTabActionsComponent {
    */
   readonly task = input.required<TaskDetail | null>();
   readonly runActivity = input.required<RunActivityBadge | null>();
+  readonly runActivityTone = runActivityTone;
   readonly panes = input.required<ShellPanesVisible>();
   readonly pager = input.required<StudioTabPager>();
   readonly laneOptions = input.required<readonly StudioLaneOption[]>();

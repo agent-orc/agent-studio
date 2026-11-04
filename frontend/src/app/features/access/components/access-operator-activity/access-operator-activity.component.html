@@ -3,15 +3,13 @@
   @if (activity(); as data) {
     <div class="activity__status" data-testid="access-audit-status">
       <p class="activity__line" data-testid="access-audit-integrity" [attr.data-state]="data.integrity.state" [attr.data-tone]="data.integrity.alert ? 'alert' : null" [attr.role]="data.integrity.alert ? 'alert' : null">
-        <span class="activity__dot" [attr.data-tone]="tone(data.integrity.alert, data.integrity.state === 'verified')" aria-hidden="true"></span>
-        <strong class="access-numeric">{{ integrityLabel(data.integrity) }}</strong>
+        <app-status-indicator class="access-numeric" [tone]="tone(data.integrity.alert, data.integrity.state === 'verified')" [label]="integrityLabel(data.integrity)" [compact]="true" />
         @if (data.integrity.checkedAt) { <span class="activity__meta access-numeric">Checked {{ shortTime(data.integrity.checkedAt) }}</span> }
         @if (data.integrity.message) { <span class="activity__meta">{{ data.integrity.message }}</span> }
         <button type="button" class="access-secondary activity__action" data-testid="access-audit-verify" [disabled]="operators.verifying()" (click)="verify()">{{ operators.verifying() ? 'Verifying' : 'Verify now' }}</button>
       </p>
       <p class="activity__line" data-testid="access-audit-forwarding" [attr.data-configured]="data.forwarding.configured" [attr.data-tone]="data.forwarding.alert ? 'alert' : null" [attr.role]="data.forwarding.alert ? 'alert' : null">
-        <span class="activity__dot" [attr.data-tone]="tone(data.forwarding.alert, data.forwarding.configured && data.forwarding.pending === 0)" aria-hidden="true"></span>
-        <strong class="access-numeric">{{ forwardingLabel(data.forwarding) }}</strong>
+        <app-status-indicator class="access-numeric" [tone]="tone(data.forwarding.alert, data.forwarding.configured && data.forwarding.pending === 0)" [label]="forwardingLabel(data.forwarding)" [compact]="true" />
         @if (data.forwarding.configured) {
           <span class="activity__meta access-numeric">{{ data.forwarding.pending }} pending@if (data.forwarding.oldestPendingAt) {, oldest {{ shortTime(data.forwarding.oldestPendingAt) }}}</span>
           @if (data.forwarding.lastForwardedAt) { <span class="activity__meta access-numeric">Last forwarded {{ shortTime(data.forwarding.lastForwardedAt) }}</span> }
@@ -26,11 +24,11 @@
       <nav class="activity__sessions" aria-label="Operator sessions" data-testid="access-operator-activity-sessions">
         <button type="button" class="activity__session" data-testid="access-activity-session-all" [attr.aria-current]="selected() ? null : 'true'" (click)="select(null)">All sessions</button>
         @for (agent of agents(); track agent.id) {
-          <h4 class="activity__agent">{{ agent.name }} @if (agent.disabledAt) { <span class="access-badge" data-tone="muted">Disabled</span> }</h4>
+          <h4 class="activity__agent">{{ agent.name }} @if (agent.disabledAt) { <app-status-indicator tone="neutral" label="Disabled" [compact]="true" /> }</h4>
           @for (session of sessions(agent); track session.id) {
             <button type="button" class="activity__session" [attr.data-testid]="'access-activity-session-' + session.id" [attr.aria-current]="selected() === session.id ? 'true' : null" [attr.title]="session.actor" (click)="select(session.id)">
               <span class="activity__session-name">{{ session.name || session.id }}</span>
-              <span class="access-badge" [attr.data-tone]="session.state === 'active' ? 'active' : 'muted'">{{ stateLabel(session.state) }}</span>
+              <app-status-indicator [tone]="session.state === 'active' ? 'success' : 'neutral'" [label]="stateLabel(session.state)" [compact]="true" />
             </button>
           } @empty {
             <p class="access-hint">No sessions</p>

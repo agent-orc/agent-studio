@@ -78,17 +78,18 @@
     <section class="model-picker__section">
       <div class="model-picker__section-label">Model</div>
       @if (catalogLoading()) {
-        <div
+        <app-status-indicator
           class="model-picker__hint"
-          [attr.data-testid]="pickerTestidPrefix() + '-loading'">
-          Loading model catalog...
-        </div>
+          tone="running"
+          label="Loading model catalog..."
+          [testId]="pickerTestidPrefix() + '-loading'" />
       } @else if (catalogError(); as error) {
-        <div
-          class="model-picker__hint model-picker__hint--error"
-          [attr.data-testid]="pickerTestidPrefix() + '-error'">
-          {{ error }}
-        </div>
+        <app-status-indicator
+          class="model-picker__hint"
+          tone="danger"
+          [label]="error"
+          [detail]="error"
+          [testId]="pickerTestidPrefix() + '-error'" />
       } @else {
         <div
           class="model-picker__model-list"
@@ -126,7 +127,7 @@
               @if (modelOption.isDefault) {
                 <span class="model-picker__pill-hint">default</span>
               } @else if (modelAvailabilityNote(modelOption); as unavailableNote) {
-                <span class="model-picker__pill-note">{{ unavailableNote }}</span>
+                <app-status-indicator class="model-picker__pill-note" tone="warning" [label]="unavailableNote" [compact]="true" [testId]="pickerTestidPrefix() + '-note-' + modelOption.id" />
               }
             </button>
           }
@@ -157,17 +158,17 @@
                 <span class="model-picker__pill-label">
                   {{ modelOption.label || modelOption.id }}
                 </span>
-                <span class="model-picker__pill-note">{{ olderModelNote(modelOption) }}</span>
+                <app-status-indicator class="model-picker__pill-note" [tone]="olderModelNoteTone(modelOption)" [label]="olderModelNote(modelOption)" [compact]="true" [testId]="pickerTestidPrefix() + '-note-' + modelOption.id" />
               </button>
             }
           }
 
           @if (draftAvailableModels().length === 0) {
-            <div
+            <app-status-indicator
               class="model-picker__hint"
-              [attr.data-testid]="pickerTestidPrefix() + '-empty'">
-              No models reported for this CLI.
-            </div>
+              tone="neutral"
+              label="No models reported for this CLI."
+              [testId]="pickerTestidPrefix() + '-empty'" />
           }
         </div>
       }
@@ -195,7 +196,11 @@
             </button>
           }
         </div>
-        @if (levelMappingNote(); as note) { <div class="model-picker__hint" role="note" [attr.data-testid]="pickerTestidPrefix() + '-level-mapped'">{{ note }}</div> }
+        @if (levelMappingNote(); as note) {
+          <div class="model-picker__hint" role="note">
+            <app-status-indicator tone="info" [label]="note" [detail]="note" [compact]="true" [testId]="pickerTestidPrefix() + '-level-mapped'" />
+          </div>
+        }
       </section>
     }
 

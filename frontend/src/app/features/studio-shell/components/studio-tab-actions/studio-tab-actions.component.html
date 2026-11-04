@@ -36,12 +36,10 @@
 @if (task(); as detail) {
   @if (runActivity(); as ra) {
     <span class="studio-tab-action__run-activity"
-          [class]="'studio-tab-action__run-activity studio-tab-action__run-activity--' + ra.tone"
           [cacTooltip]="ra.tooltip"
           data-testid="studio-run-activity"
           [attr.data-run-activity-kind]="ra.kind">
-      <span class="studio-tab-action__run-activity-dot"></span>
-      {{ ra.label }}
+      <app-status-indicator [tone]="runActivityTone(ra.kind)" [label]="ra.label" testId="studio-run-activity-state" />
     </span>
     <span class="studio-tab-actions-sep" aria-hidden="true"></span>
   }

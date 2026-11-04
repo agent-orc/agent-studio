@@ -139,7 +139,7 @@
                     <span class="studio-settings-project-id mono">{{ p.id }}</span>
                     <span class="studio-settings-project-code mono">{{ p.shortCode }}</span>
                     <span class="studio-settings-project-name">{{ p.displayName }}</span>
-                    @if (p.archived) { <span class="studio-settings-project-tag">archived</span> }
+                    @if (p.archived) { <app-status-indicator tone="neutral" label="archived" [compact]="true" testId="settings-project-archived" /> }
                     <div class="studio-settings-project-actions">
                       <button type="button"
                               class="studio-settings-workspace-action"

@@ -10,10 +10,20 @@ import {
   type RetentionPolicy,
 } from '../../models/retention.model';
 import { RetentionService } from '../../services/retention.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+export interface RetentionStatus { tone: StatusTone; label: string }
+
+/** Backup verification cell: verified in this session, warnings recorded, or not checked yet. */
+export function backupVerificationStatus(verified: boolean, warningCount: number): RetentionStatus {
+  if (verified) return { tone: 'success', label: 'Verified' };
+  return warningCount > 0 ? { tone: 'warning', label: 'Needs attention' } : { tone: 'neutral', label: 'Not checked' };
+}
 
 @Component({
   selector: 'app-retention-backups',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './retention-backups.component.html',
   styleUrl: './retention-backups.component.scss',
@@ -146,9 +156,8 @@ export class RetentionBackupsComponent implements OnInit {
 
   bytes(value: number): string { return formatRetentionBytes(value); }
 
-  verification(backup: FullBackupSummary): string {
-    if (this.verified().has(backup.id)) return 'Verified';
-    return backup.warnings.length ? 'Needs attention' : 'Not checked';
+  verification(backup: FullBackupSummary): RetentionStatus {
+    return backupVerificationStatus(this.verified().has(backup.id), backup.warnings.length);
   }
 
   shortHash(hash: string): string { return hash ? hash.slice(0, 12) : '–'; }

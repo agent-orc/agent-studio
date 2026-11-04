@@ -74,12 +74,9 @@
       background: var(--workbench-project);
     }
   }
-  &__status {
+  &__tagging {
     color: var(--studio-fg-muted);
     font-weight: 560;
-  }
-  &__suggestion {
-    color: var(--studio-success);
   }
   &__open-count {
     color: var(--studio-fg-muted);

@@ -43,33 +43,7 @@
 }
 
 .process-console__status {
-  display: inline-flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  color: var(--studio-fg-dim);
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.process-console__status > span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--studio-fg-muted);
-}
-
-.process-console__status[data-state='running'] > span {
-  background: var(--studio-accent-success);
-}
-
-.process-console__status[data-state='starting'] > span {
-  background: var(--studio-accent);
-}
-
-.process-console__status[data-state='failed'] > span,
-.process-console__status[data-state='exited'] > span {
-  background: var(--studio-error);
 }
 
 .process-console__facts {

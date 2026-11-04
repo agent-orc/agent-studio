@@ -44,8 +44,7 @@
 
 .watcher-strip__backlog {
   grid-column: 1 / -1;
-  font-size: 11px;
-  color: var(--studio-error);
+  justify-self: start;
 }
 
 .watcher-strip__row--week {
@@ -53,10 +52,8 @@
   border-top: 1px solid var(--studio-border);
 }
 
-.watcher-strip__disabled,
-.watcher-strip__empty {
-  font-size: 12px;
-  color: var(--studio-fg-dim);
+.watcher-strip__state {
+  align-self: flex-start;
 }
 
 .watcher-strip__error {

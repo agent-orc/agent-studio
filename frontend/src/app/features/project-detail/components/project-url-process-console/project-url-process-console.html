@@ -2,10 +2,9 @@
   <section class="process-console" data-testid="url-preview-process-console" aria-label="Live server output">
     <header class="process-console__header">
       <div class="process-console__identity">
-        <span class="process-console__status" [attr.data-state]="process.state"
-              data-testid="url-preview-process-status">
-          <span aria-hidden="true"></span>{{ statusLabel(process) }}
-        </span>
+        <app-status-indicator class="process-console__status" [attr.data-state]="process.state"
+                              [tone]="statusTone(process)" [label]="statusLabel(process)" [compact]="true"
+                              testId="url-preview-process-status" />
         <strong>{{ label() }}</strong>
         <span class="process-console__guidance">Owned by Studio until stopped or the backend shuts down</span>
       </div>

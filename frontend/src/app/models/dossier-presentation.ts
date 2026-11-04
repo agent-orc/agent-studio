@@ -1,4 +1,5 @@
 import type { StudioIconName } from '../components/studio-icon/studio-icon.component';
+import type { StatusTone } from '../components/status-indicator/status-indicator.component';
 import type { ArticlePattern, WorkbenchStatus } from './project-docs.model';
 
 /**
@@ -26,6 +27,25 @@ export function dossierStatusLabel(item: DossierPresentationInput): string {
     case 'archived': return 'Discarded';
     default: return item.status;
   }
+}
+
+const DOSSIER_STATUS_TONES: Readonly<Record<string, StatusTone>> = {
+  'decision-pending': 'warning',
+  active: 'info',
+  decided: 'success',
+  documented: 'success',
+  archived: 'neutral',
+  invalid: 'danger',
+};
+
+/**
+ * One status tone per Dossier state (AGT-3403), shared by the reference chip,
+ * the Explorer rail, the overview card and the viewer header. An invalid
+ * Dossier needs attention whatever its status; an unknown status reads neutral.
+ */
+export function dossierStatusTone(item: Pick<DossierPresentationInput, 'status' | 'valid'>): StatusTone {
+  if (item.valid === false) return 'danger';
+  return DOSSIER_STATUS_TONES[item.status] ?? 'neutral';
 }
 
 /** Presentation-variant glyph: UI dossiers read as a surface, concepts as a document. */

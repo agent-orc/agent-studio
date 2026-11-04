@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { WatcherApiService } from '../../services/watcher-api.service';
 import type { WatcherStatusResponse } from '../../models/watcher.model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 /**
  * Watcher contingent strip (orchestrator-waechter dossier §10.4): the
@@ -13,7 +14,7 @@ import type { WatcherStatusResponse } from '../../models/watcher.model';
 @Component({
   selector: 'app-watcher-contingent-strip',
   standalone: true,
-  imports: [],
+  imports: [StatusIndicatorComponent],
   templateUrl: './watcher-contingent-strip.html',
   styleUrl: './watcher-contingent-strip.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

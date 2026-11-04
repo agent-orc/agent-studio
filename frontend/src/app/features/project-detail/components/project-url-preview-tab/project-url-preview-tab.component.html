@@ -15,7 +15,10 @@
         (navigate)="onNavigate($event)" />
       <span class="url-preview__pill"
             [attr.data-status]="statusPill()"
-            data-testid="url-preview-status">{{ statusPill() | projectUrlStatusLabel }}</span>
+            data-testid="url-preview-status">
+        <app-status-indicator [tone]="pillTone(statusPill())" [label]="statusPill() | projectUrlStatusLabel" [compact]="true"
+                              testId="url-preview-status-state" />
+      </span>
     </div>
     <button type="button" class="url-preview__nav"
             data-testid="url-preview-open-external"
@@ -149,22 +152,11 @@
                     }
                   </h2>
                 </div>
-                <span class="url-preview__state-badge"
-                      [attr.data-status]="stateBadgeStatus()">
-                  @if (startFailure()) {
-                    Failed
-                  } @else if (building()) {
-                    {{ consoleActive() ? 'Console active' : 'Waiting' }}
-                  } @else if (diagnostic()?.startupFailureReason) {
-                    Failed
-                  } @else if (readiness().kind === 'frame-blocked') {
-                    Blocked
-                  } @else if (readiness().kind === 'http-error') {
-                    HTTP {{ readiness().statusCode }}
-                  } @else {
-                    {{ readiness().kind === 'local-only' ? 'Local only' : 'Offline' }}
-                  }
-                </span>
+                <app-status-indicator class="url-preview__state-badge"
+                                      [attr.data-status]="stateBadgeStatus()"
+                                      [tone]="pillTone(stateBadgeStatus())"
+                                      [label]="stateBadgeLabel()"
+                                      testId="url-preview-state-badge" />
               </header>
 
               @if (!startFailure() && !building() && !diagnostic()?.startupFailureReason) {
@@ -190,17 +182,18 @@
                 </div>
               } @else if (building()) {
                 <div class="url-preview__progress" role="status" data-testid="url-preview-starting">
-                  <span class="url-preview__spinner url-preview__spinner--small" aria-hidden="true"></span>
-                  <span>
-                    {{ consoleActive() ? 'Console output is active.' : 'Waiting for console output.' }}
-                    Waiting for <code>{{ urlRecord()?.url }}</code> to accept connections…
-                  </span>
+                  <app-status-indicator tone="running" [compact]="true"
+                                        [label]="consoleActive() ? 'Console output is active.' : 'Waiting for console output.'"
+                                        testId="url-preview-starting-state" />
+                  <span>Waiting for <code>{{ urlRecord()?.url }}</code> to accept connections…</span>
                 </div>
               }
 
               @if (!building() && diagnostic(); as diag) {
                 <div class="url-preview__recommendation" data-testid="url-preview-recommendation">
-                  <span class="url-preview__recommendation-label">{{ diagnosis().status }} — {{ diagnosis().title }}</span>
+                  <app-status-indicator class="url-preview__recommendation-label" [tone]="diagnosisTone()"
+                                        [label]="diagnosis().status + ' — ' + diagnosis().title" [compact]="true"
+                                        testId="url-preview-recommendation-status" />
                   <p class="url-preview__recommendation-summary">{{ diag.summary }}</p>
                   <p class="url-preview__recommendation-action">{{ diag.recommendedAction }}</p>
                 </div>

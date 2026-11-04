@@ -37,16 +37,11 @@
 }
 
 .studio-workbench-topic__status {
-  color: var(--studio-fg-muted);
+  display: inline-flex;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   line-height: 1;
   flex: none;
-}
-
-.tree-row--active .studio-workbench-topic__status {
-  color: var(--studio-nav-active-fg);
-  opacity: 0.78;
 }
 
 .studio-workbench-status-dot {

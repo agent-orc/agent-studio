@@ -35,6 +35,7 @@ import {
   flattenGrouped,
   type BoardLane,
   type BoardLaneGroup,
+  type ProjectRunnerIndicator,
   projectAutoInfo,
   projectRunnerIndicator,
 } from './features/board';
@@ -2048,7 +2049,7 @@ export class App implements OnInit, OnDestroy {
     return buildProjectTokenChip(this.jobService.jobs(), name);
   }
 
-  getRunnerIndicator(name: string): { icon: string; cls: string } | null {
+  getRunnerIndicator(name: string): ProjectRunnerIndicator | null {
     return projectRunnerIndicator(this.jobService.runnerStatus(), name);
   }
 

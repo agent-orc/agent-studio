@@ -161,9 +161,9 @@
                   <app-studio-icon name="grid" [size]="10"></app-studio-icon>
                 </button>
                 @if (!p.projectId) {
-                  <span class="studio-explorer-tree__registry-hint"
-                        [attr.data-testid]="'studio-explorer-project-register-hint-' + p.name"
-                        cacTooltip="Use + on the destination workspace to onboard this project">Register first</span>
+                  <span class="studio-explorer-tree__registry-hint" [attr.data-testid]="'studio-explorer-project-register-hint-' + p.name" cacTooltip="Use + on the destination workspace to onboard this project">
+                    <app-status-indicator tone="neutral" label="Register first" [compact]="true" [testId]="'studio-explorer-project-register-state-' + p.name" />
+                  </span>
                 }
               </app-tree-row>
             }

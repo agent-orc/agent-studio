@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { DossierReferenceNavigationService } from '../../services/dossier-reference-navigation.service';
 import type { DossierReference } from '../../services/dossier-reference.util';
+import { dossierStatusTone } from '../../models/dossier-presentation';
 import { DossierReferenceChipComponent } from './dossier-reference-chip';
 
 const reference: DossierReference = {
@@ -45,6 +46,8 @@ describe('DossierReferenceChipComponent', () => {
     expect(link.textContent).toContain('AGT-W54');
     expect(link.textContent).toContain('Decision cards');
     expect(link.textContent).toContain('Decision pending');
+    const status = link.querySelector('[data-testid="dossier-reference-chip-status"]') as HTMLElement;
+    expect(status.dataset['tone']).toBe('warning');
     expect(link.getAttribute('href')).toBe('#/projects/AGENT-STUDIO/workbenches/decision-cards');
     expect(link.getAttribute('aria-label')).toBe('Open Dossier AGT-W54: Decision cards');
 
@@ -83,5 +86,17 @@ describe('DossierReferenceChipComponent', () => {
 
     expect(fixture.componentInstance.label()).toBe('decision-cards');
     expect(fixture.componentInstance.statusLabel()).toBe('Active');
+  });
+});
+
+describe('dossierStatusTone', () => {
+  it('maps every Dossier state to one tone and falls back to neutral', () => {
+    expect(dossierStatusTone({ status: 'decision-pending', valid: true })).toBe('warning');
+    expect(dossierStatusTone({ status: 'active', valid: true })).toBe('info');
+    expect(dossierStatusTone({ status: 'decided', valid: true })).toBe('success');
+    expect(dossierStatusTone({ status: 'documented', valid: true })).toBe('success');
+    expect(dossierStatusTone({ status: 'archived', valid: true })).toBe('neutral');
+    expect(dossierStatusTone({ status: 'documented', valid: false })).toBe('danger');
+    expect(dossierStatusTone({ status: 'later-state' })).toBe('neutral');
   });
 });

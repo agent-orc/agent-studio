@@ -162,9 +162,6 @@
 }
 .model-picker__pill-note {
   max-width: 55%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .model-picker__older-heading {
   display: flex;
@@ -183,10 +180,6 @@
   padding-inline: var(--studio-spacing-1);
   color: var(--studio-fg-muted);
   font-size: 12px;
-
-  &--error {
-    color: var(--studio-accent-6-strong);
-  }
 }
 
 .model-picker__footer {

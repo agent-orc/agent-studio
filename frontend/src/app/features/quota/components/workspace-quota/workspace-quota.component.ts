@@ -4,6 +4,7 @@ import { HttpClient } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { AuthSessionState } from '../../../../services/auth.service';
 import type { WorkspaceQuotaStatus } from '../../state/workspace-quota-board-state.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 interface QuotaLimits {
   modelTokensPerWeek: number | null;
@@ -22,14 +23,26 @@ interface QuotaSnapshot {
 
 const DAY_MS = 86_400_000;
 const NO_LIMITS: QuotaLimits = { modelTokensPerWeek: null, computeCoreHoursPerWeek: null, hostingSlots: null };
-const STATE_LABELS: Record<WorkspaceQuotaStatus, string> = {
-  ok: 'Within quota', warning: 'Warning', blocked: 'Blocked', 'hosting-full': 'Hosting slots full',
+const QUOTA_STATES: Readonly<Record<WorkspaceQuotaStatus, { tone: StatusTone; label: string }>> = {
+  ok: { tone: 'success', label: 'Within quota' },
+  warning: { tone: 'warning', label: 'Warning' },
+  blocked: { tone: 'danger', label: 'Blocked' },
+  'hosting-full': { tone: 'warning', label: 'Hosting slots full' },
 };
+
+/** Header state of a quota scope: the override, else the status; a scope without any limit reads "No limit". */
+export function workspaceQuotaState(
+  quota: { status: WorkspaceQuotaStatus; limits: QuotaLimits | null; overrideActive: boolean },
+): { tone: StatusTone; label: string } {
+  if (quota.overrideActive) return { tone: 'info', label: 'Owner override active' };
+  if (!quota.limits && quota.status === 'ok') return { tone: 'neutral', label: 'No limit' };
+  return QUOTA_STATES[quota.status] ?? { tone: 'neutral', label: quota.status };
+}
 
 @Component({
   selector: 'app-workspace-quota',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-quota.component.html',
   styleUrl: './workspace-quota.component.scss',
@@ -46,11 +59,9 @@ export class WorkspaceQuotaComponent {
   readonly limits = signal<QuotaLimits>(NO_LIMITS);
   readonly overrideReason = signal('');
   /** Header state: the override, else the status; a scope without any limit reads "No limit". */
-  readonly stateLabel = computed(() => {
+  readonly state = computed(() => {
     const quota = this.snapshot();
-    if (!quota) return null;
-    if (quota.overrideActive) return 'Owner override active';
-    return !quota.limits && quota.status === 'ok' ? 'No limit' : STATE_LABELS[quota.status] ?? quota.status;
+    return quota ? workspaceQuotaState(quota) : null;
   });
   /** One row per UTC day of the quota week, dated from the week start. */
   readonly trend = computed(() => {

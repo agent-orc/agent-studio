@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { WorkspaceQuotaComponent } from './workspace-quota.component';
+import { WorkspaceQuotaComponent, workspaceQuotaState } from './workspace-quota.component';
 
 const usage = (modelTokens: number) => ({ modelTokens, modelCostUsd: 0, computeCoreHours: 0, hostingSlots: 0 });
 // fixed-date: quota week fixture (Monday 12 Oct 2026 UTC), not a clock read
@@ -68,6 +68,7 @@ describe('WorkspaceQuotaComponent', () => {
 
     expect(component.snapshot()?.status).toBe('warning');
     expect(text(root, 'workspace-quota-state')).toBe('Warning');
+    expect((root.querySelector('[data-testid="workspace-quota-state"]') as HTMLElement).dataset['tone']).toBe('warning');
   });
 
   it('ignores the previous scope once the project input changes', async () => {
@@ -121,5 +122,17 @@ describe('WorkspaceQuotaComponent', () => {
     expect(root.querySelector('[data-testid="workspace-quota"]')?.getAttribute('data-status')).toBe('hosting-full');
     expect(text(root, 'workspace-quota-state')).toBe('Hosting slots full');
     expect(root.textContent).toContain(message);
+  });
+});
+
+describe('workspaceQuotaState', () => {
+  const limits = { modelTokensPerWeek: 10, computeCoreHoursPerWeek: null, hostingSlots: null };
+  it('maps quota states to tones', () => {
+    expect(workspaceQuotaState({ status: 'ok', limits, overrideActive: false })).toEqual({ tone: 'success', label: 'Within quota' });
+    expect(workspaceQuotaState({ status: 'ok', limits: null, overrideActive: false })).toEqual({ tone: 'neutral', label: 'No limit' });
+    expect(workspaceQuotaState({ status: 'warning', limits, overrideActive: false }).tone).toBe('warning');
+    expect(workspaceQuotaState({ status: 'hosting-full', limits, overrideActive: false }).tone).toBe('warning');
+    expect(workspaceQuotaState({ status: 'blocked', limits, overrideActive: false }).tone).toBe('danger');
+    expect(workspaceQuotaState({ status: 'blocked', limits, overrideActive: true })).toEqual({ tone: 'info', label: 'Owner override active' });
   });
 });

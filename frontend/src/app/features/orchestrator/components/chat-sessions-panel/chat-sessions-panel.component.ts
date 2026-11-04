@@ -12,6 +12,7 @@ import { NgTemplateOutlet } from '@angular/common';
 import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
 import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { TaskService } from '../../../../services/task.service';
 import { clearVisibleInterval, setVisibleInterval, type VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import { CliCatalogStore } from '../../../cli/catalog';
@@ -19,6 +20,7 @@ import { StudioTabStateService } from '../../../studio-shell/services/studio-tab
 import type { OrchestratorContextSession } from '../../models/orchestrator.model';
 import {
   buildChatSessionGroups,
+  type ChatSessionLiveState,
   type ChatSessionRow,
   type ChatSessionScopeFilter,
 } from '../../state/chat-session-list';
@@ -28,6 +30,18 @@ import {
   buildWorkbenchContextKey,
   parseOrchestratorContextKey,
 } from '../orchestrator-side-sheet/orchestrator-context-key.util';
+
+const LIVE_STATE_TONES: Readonly<Record<ChatSessionLiveState, StatusTone>> = {
+  running: 'running',
+  waiting: 'running',
+  queued: 'warning',
+  parked: 'neutral',
+};
+
+/** Tone of a chat's live state word; an unknown state reads neutral. */
+export function chatLiveTone(live: string | null | undefined): StatusTone {
+  return LIVE_STATE_TONES[live as ChatSessionLiveState] ?? 'neutral';
+}
 
 const SCOPE_OPTIONS: readonly { value: ChatSessionScopeFilter; label: string }[] = [
   { value: 'all', label: 'All scopes' },
@@ -51,12 +65,14 @@ const SCOPE_OPTIONS: readonly { value: ChatSessionScopeFilter; label: string }[]
     MenuComponent,
     SectionHeaderComponent,
     StudioIconComponent,
+    StatusIndicatorComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './chat-sessions-panel.component.html',
   styleUrl: './chat-sessions-panel.component.scss',
 })
 export class ChatSessionsPanelComponent implements OnInit, OnDestroy {
+  readonly liveTone = chatLiveTone;
   /** Watched project names; each one is a "New chat" scope. */
   readonly projects = input<readonly string[]>([]);
 

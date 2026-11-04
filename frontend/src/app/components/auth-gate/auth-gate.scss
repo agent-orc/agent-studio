@@ -32,6 +32,7 @@
 h1, p { margin: 0; }
 h1 { color: var(--studio-fg-strong); font-size: 1.5rem; }
 .auth-gate__muted { color: var(--studio-fg-dim); line-height: 1.5; }
+app-status-indicator { justify-self: start; }
 
 label {
   display: grid;

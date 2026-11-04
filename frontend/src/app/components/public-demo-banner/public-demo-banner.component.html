@@ -1,8 +1,7 @@
 @if (mode.readOnly()) {
   <div class="public-demo-banner" role="status" aria-live="polite" data-testid="public-demo-banner">
-    <span class="public-demo-banner__dot" aria-hidden="true"></span>
+    <app-status-indicator class="public-demo-banner__state" tone="info" label="Read-only public demo." [compact]="true" testId="public-demo-banner-state" />
     <span class="public-demo-banner__text">
-      <strong>Read-only public demo.</strong>
       Everything shown is pinned sample data. Every action is disabled and every write is denied by the server.
     </span>
   </div>

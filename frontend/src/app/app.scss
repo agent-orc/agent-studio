@@ -216,7 +216,6 @@
       filter: brightness(1.15);
     }
     .runner-dot { font-size: 10px; margin-right: 2px; }
-    .runner-dot--running { animation: pulse-runner 1.5s infinite; }
     /* Per-project token total badge in the chip. Aggregates every job's
        token count for the project so the user sees AI spend at the board
        level without opening any drilldown. The badge only renders when the
@@ -245,10 +244,6 @@
     .filter-chip__tokens-icon {
       opacity: 0.7;
       font-size: 9px;
-    }
-    @keyframes pulse-runner {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
     }
     .project-tab {
       display: inline-flex;

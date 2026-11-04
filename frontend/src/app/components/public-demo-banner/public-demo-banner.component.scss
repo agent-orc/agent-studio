@@ -17,14 +17,6 @@
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
 }
 
-.public-demo-banner__text strong {
-  color: var(--notify-info-icon-fg);
-}
-
-.public-demo-banner__dot {
+.public-demo-banner__state {
   flex: 0 0 auto;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--notify-info-icon-fg);
 }

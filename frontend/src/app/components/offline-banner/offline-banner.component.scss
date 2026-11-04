@@ -22,18 +22,8 @@
   color: var(--studio-text, inherit);
 }
 
-.offline-banner__text strong {
-  color: var(--notify-error-icon-fg, rgb(248, 113, 113));
-}
-
-.offline-banner__dot {
+.offline-banner__state {
   flex: 0 0 auto;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--notify-error-icon-fg, rgb(248, 113, 113));
-  box-shadow: 0 0 0 0 var(--notify-error-icon-fg, rgb(248, 113, 113));
-  animation: offline-banner-pulse 1.6s ease-out infinite;
 }
 
 @keyframes offline-banner-in {
@@ -41,15 +31,8 @@
   to { transform: translateY(0); opacity: 1; }
 }
 
-@keyframes offline-banner-pulse {
-  0% { box-shadow: 0 0 0 0 var(--notify-error-border, rgba(248, 113, 113, 0.45)); }
-  70% { box-shadow: 0 0 0 6px transparent; }
-  100% { box-shadow: 0 0 0 0 transparent; }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .offline-banner,
-  .offline-banner__dot {
+  .offline-banner {
     animation: none;
   }
 }

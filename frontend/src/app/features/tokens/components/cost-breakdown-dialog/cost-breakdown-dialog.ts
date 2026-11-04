@@ -1,11 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { DialogComponent } from '../../../../components/dialog/dialog.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { CostBreakdownService, type CostBreakdownResultItem } from '../../services/cost-breakdown.service';
 
 @Component({
   selector: 'app-cost-breakdown-dialog',
   standalone: true,
-  imports: [DialogComponent],
+  imports: [DialogComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './cost-breakdown-dialog.html',
   styleUrl: './cost-breakdown-dialog.scss',

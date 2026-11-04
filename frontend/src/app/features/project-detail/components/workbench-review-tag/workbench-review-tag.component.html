@@ -1,6 +1,5 @@
 <span
   class="review-tag"
-  [class.review-tag--due]="reviewDue()"
   [attr.data-verdict]="review()?.verdict ?? 'never-reviewed'"
   [appTooltip]="tooltip()"
   [appTooltipDelay]="0"
@@ -9,5 +8,6 @@
   tabindex="0"
   data-testid="workbench-review-tag"
 >
-  {{ reviewDue() ? 'Review due · ' + label() : label() }}
+  <app-status-indicator [tone]="tone()" [label]="reviewDue() ? 'Review due · ' + label() : label()" [compact]="true"
+                        testId="workbench-review-state" />
 </span>

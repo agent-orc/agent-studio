@@ -5,6 +5,7 @@ import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import type { QuotaHistoryResponse, QuotaHistoryWindow } from '../../models/quota-history.model';
 import { QuotaApiService, type CliModelRoutesResponse } from '../../services/quota-api.service';
 import { QuotaCurveComponent } from '../quota-curve/quota-curve';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   type QuotaFallbackStatus,
   forecastSentence,
@@ -21,6 +22,24 @@ interface WeeklyRow {
   sentence: string;
   warn: boolean;
   fallback: QuotaFallbackStatus | null;
+}
+
+export type QuotaFallbackState = 'engaged' | 'armed' | 'unarmed';
+
+const FALLBACK_STATES: Readonly<Record<QuotaFallbackState, { tone: StatusTone; label: string }>> = {
+  engaged: { tone: 'info', label: 'Engaged' },
+  armed: { tone: 'success', label: 'Armed' },
+  unarmed: { tone: 'danger', label: 'Not armed' },
+};
+
+/** Fallback state of a weekly window: engaged wins over armed; a missing fallback is not armed. */
+export function quotaFallbackState(fallback: Pick<QuotaFallbackStatus, 'engaged' | 'armed'>): QuotaFallbackState {
+  if (fallback.engaged) return 'engaged';
+  return fallback.armed ? 'armed' : 'unarmed';
+}
+
+export function quotaFallbackIndicator(state: string): { tone: StatusTone; label: string } {
+  return FALLBACK_STATES[state as QuotaFallbackState] ?? { tone: 'neutral', label: state };
 }
 
 interface ForecastCard {
@@ -43,7 +62,7 @@ interface ForecastCard {
 @Component({
   selector: 'app-quota-forecast-panel',
   standalone: true,
-  imports: [QuotaCurveComponent],
+  imports: [QuotaCurveComponent, StatusIndicatorComponent],
   templateUrl: './quota-forecast-panel.html',
   styleUrl: './quota-forecast-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -57,6 +76,8 @@ export class QuotaForecastPanelComponent implements OnInit {
   readonly histories = signal<QuotaHistoryResponse[]>([]);
   readonly routes = signal<CliModelRoutesResponse | null>(null);
   readonly loaded = signal(false);
+  readonly fallbackState = quotaFallbackState;
+  readonly fallbackIndicator = quotaFallbackIndicator;
 
   readonly cards = computed<ForecastCard[]>(() => {
     const routes = this.routes();

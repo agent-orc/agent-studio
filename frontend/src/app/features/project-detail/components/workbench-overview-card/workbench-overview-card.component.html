@@ -17,9 +17,11 @@
             [attr.title]="project().displayName" [attr.aria-label]="'Project ' + project().displayName">
         <i aria-hidden="true"></i>{{ project().shortCode || project().displayName }}
       </span>
-      <span class="workbench-overview__status" [attr.data-status]="item().workbench.status">{{ statusLabel() }}</span>
+      <app-status-indicator class="workbench-overview__status" [attr.data-status]="item().workbench.status"
+                            [tone]="statusTone()" [label]="statusLabel()" [compact]="true"
+                            [testId]="'workbench-overview-status-' + item().projectName + '-' + item().workbench.id" />
       @if (item().workbench.taggingStatus === 'tagged') {
-        <span class="workbench-overview__status" data-testid="workbench-tagging-status">
+        <span class="workbench-overview__tagging" data-testid="workbench-tagging-status">
           Auto-tagged
         </span>
       }
@@ -30,7 +32,8 @@
                                   [reviewDue]="item().workbench.reviewDue ?? false"
                                   [projectName]="item().projectName" />
         @if (mode() === 'current' && item().workbench.documentation?.eligible) {
-          <span class="workbench-overview__suggestion">Ready to document</span>
+          <app-status-indicator tone="success" label="Ready to document" [compact]="true"
+                                [testId]="'workbench-overview-ready-' + item().projectName + '-' + item().workbench.id" />
         }
         <time [attr.datetime]="item().workbench.updatedAtUtc">{{ updatedLabel() }}</time>
         @if (mode() === 'decision') {

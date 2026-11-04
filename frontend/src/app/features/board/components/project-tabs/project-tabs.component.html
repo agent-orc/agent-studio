@@ -11,7 +11,8 @@
               (click)="toggleRequest.emit({ name, additive: $event.ctrlKey || $event.metaKey })">
         <span class="filter-chip__disk" aria-hidden="true">{{ identityFor(name).initial }}</span>
         @if (runnerIndicator()(name); as indicator) {
-          <span class="runner-dot" [class]="'runner-dot--' + indicator.cls">{{ indicator.icon }}</span>
+          <app-status-indicator class="runner-dot" [attr.data-runner-state]="indicator.cls" [tone]="indicator.tone"
+                                [label]="indicator.label" [compact]="true" [testId]="'project-runner-' + name" />
         }
         {{ name }}
         @if (projectTokens(); as fn) {

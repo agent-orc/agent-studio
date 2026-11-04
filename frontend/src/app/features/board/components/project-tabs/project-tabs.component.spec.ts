@@ -84,9 +84,9 @@ describe('ProjectTabsComponent (smoke)', () => {
       },
     };
 
-    expect(projectRunnerIndicator(status, 'alpha')).toEqual({ icon: '🟢', cls: 'idle' });
+    expect(projectRunnerIndicator(status, 'alpha')).toEqual({ cls: 'idle', tone: 'success', label: 'Auto idle' });
     expect(projectAutoInfo(status, 'alpha')).toMatchObject({ state: 'on', readyCount: 2 });
-    expect(projectRunnerIndicator(status, 'beta')).toEqual({ icon: '🔵', cls: 'running' });
+    expect(projectRunnerIndicator(status, 'beta')).toEqual({ cls: 'running', tone: 'running', label: 'Running' });
     expect(projectAutoInfo(status, 'beta')).toMatchObject({ state: 'stopping', label: 'Stopping' });
   });
 });

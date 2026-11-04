@@ -21,12 +21,12 @@
       <header class="cli-contracts__head">
         <span class="cli-contracts__icon" aria-hidden="true">{{ icon(c.cliType) }}</span>
         <span class="cli-contracts__name">{{ label(c.cliType) }}</span>
-        <span class="cli-contracts__badge"
-              [class.cli-contracts__badge--typed]="c.typed"
-              [class.cli-contracts__badge--heuristic]="!c.typed"
-              [attr.data-testid]="'cli-contract-typed-' + c.cliType">
-          {{ c.typed ? 'typed adapter' : 'exit-based' }}
-        </span>
+        @let detection = completionDetection(c.typed);
+        <app-status-indicator class="cli-contracts__detection"
+                              [tone]="detection.tone"
+                              [label]="detection.label"
+                              [compact]="true"
+                              [testId]="'cli-contract-typed-' + c.cliType" />
       </header>
 
       <dl class="cli-contracts__grid">

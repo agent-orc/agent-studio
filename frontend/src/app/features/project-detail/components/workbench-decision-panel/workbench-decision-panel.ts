@@ -6,10 +6,12 @@ import {
   effect,
   inject,
   input,
+  LOCALE_ID,
   output,
   signal,
 } from '@angular/core';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   TaskReferenceMicrocardComponent,
   TaskReferenceStatus,
@@ -29,6 +31,8 @@ import { WorkbenchDecisionStore } from '../../state/workbench-decision.store';
 import { WorkbenchDecisionActionsComponent } from '../workbench-decision-actions/workbench-decision-actions.component';
 import {
   createOperationId,
+  decisionOutcomeTone,
+  decisionStageTone,
   laneLabel,
   selectedDecisionText,
 } from './workbench-decision-panel.util';
@@ -41,6 +45,7 @@ import {
     PendingButtonDirective,
     TaskReferenceMicrocardComponent,
     WorkbenchDecisionActionsComponent,
+    StatusIndicatorComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-decision-panel.html',
@@ -59,6 +64,7 @@ export class WorkbenchDecisionPanelComponent {
   private readonly drafts = inject(WorkbenchDecisionDraftStore);
   private readonly tasks = inject(TaskService);
   private readonly publicDemo = inject(PublicDemoModeService);
+  private readonly datePipe = new DatePipe(inject(LOCALE_ID));
   private readonly operationId = signal('');
 
   readonly actor = signal('Operator');
@@ -190,6 +196,21 @@ export class WorkbenchDecisionPanelComponent {
   outcomeLabel(decision: WorkbenchDecisionProjection): string {
     if (decision.outcome === 'rework') return 'Rework requested';
     return decision.outcome === 'archive' ? 'Archived' : 'Created card';
+  }
+
+  /** Receipt headline: the outcome, and for a rework when and with which model it was requested. */
+  receiptLabel(decision: WorkbenchDecisionProjection): string {
+    if (decision.outcome !== 'rework') return this.outcomeLabel(decision);
+    const requestedAt = this.datePipe.transform(decision.confirmedAt, 'medium') ?? '';
+    return `Rework requested on ${requestedAt} with ${decision.model || 'the selected model'}`;
+  }
+
+  outcomeTone(decision: WorkbenchDecisionProjection): StatusTone {
+    return decisionOutcomeTone(decision.outcome);
+  }
+
+  stageTone(): StatusTone {
+    return decisionStageTone(this.stage(), this.document().workbench.status === 'documented');
   }
 
   stageLabel(): string {

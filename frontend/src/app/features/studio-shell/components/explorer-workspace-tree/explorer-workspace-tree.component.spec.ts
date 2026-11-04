@@ -160,6 +160,8 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     const hintTestId = 'studio-explorer-project-register-hint-Local only';
     expect(root.querySelector(`[data-testid="${hintTestId}"]`)?.textContent)
       .toContain('Register first');
+    expect(root.querySelector<HTMLElement>('[data-testid="studio-explorer-project-register-state-Local only"]')
+      ?.dataset['tone']).toBe('neutral');
     const hint = fixture.debugElement
       .queryAll(By.directive(TooltipDirective))
       .find(node => (node.nativeElement as HTMLElement).dataset['testid'] === hintTestId);

@@ -10,7 +10,8 @@ import { StudioIconComponent, type StudioIconName } from '../../../../components
 import type { ArticlePattern, WorkbenchOverviewItem } from '../../../../models/project-docs.model';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { WorkbenchReviewTagComponent } from '../workbench-review-tag/workbench-review-tag.component';
-import { dossierStatusLabel } from '../../../../models/dossier-presentation';
+import { dossierStatusLabel, dossierStatusTone } from '../../../../models/dossier-presentation';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 type OverviewCardMode = 'decision' | 'current' | 'invalid' | 'history';
 
@@ -24,6 +25,7 @@ type OverviewCardMode = 'decision' | 'current' | 'invalid' | 'history';
     StudioIconComponent,
     TaskReferenceMicrocardComponent,
     WorkbenchReviewTagComponent,
+    StatusIndicatorComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-overview-card.component.html',
@@ -59,6 +61,10 @@ export class WorkbenchOverviewCardComponent {
 
   statusLabel(): string {
     return dossierStatusLabel(this.item().workbench);
+  }
+
+  statusTone(): StatusTone {
+    return dossierStatusTone(this.item().workbench);
   }
 
   updatedLabel(): string {

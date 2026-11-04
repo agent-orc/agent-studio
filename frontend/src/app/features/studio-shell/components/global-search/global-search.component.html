@@ -34,10 +34,14 @@
                     @if (group.items.length) { <span>{{ group.items.length }}</span> }
                     @switch (state.status) {
                       @case ('searching') {
-                        @if (state.total) { <span>Searching {{ state.completed }} of {{ state.total }} repositories</span> }
-                        @else { <span>Searching…</span> }
+                        <app-status-indicator tone="running" [compact]="true"
+                                              [label]="state.total ? 'Searching ' + state.completed + ' of ' + state.total + ' repositories' : 'Searching…'"
+                                              [testId]="'global-search-state-' + group.domain" />
                       }
-                      @case ('failed') { <span>{{ state.error }}</span> }
+                      @case ('failed') {
+                        <app-status-indicator tone="danger" [compact]="true" [label]="state.error || 'Search failed'"
+                                              [detail]="state.error" [testId]="'global-search-state-' + group.domain" />
+                      }
                     }
                   </span>
                 </header>

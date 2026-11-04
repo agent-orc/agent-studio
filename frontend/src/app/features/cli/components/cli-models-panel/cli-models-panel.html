@@ -104,7 +104,10 @@
                  [checked]="fallbackStates()[g.cliType]?.state === 'fallback-preferred'"
                  [disabled]="preferenceSaving() !== null || !hasFallback(g.cliType)"
                  (change)="setPreferFallback(g.cliType, $any($event.target).checked)" />
-          <span>{{ fallbackStateLabel(g.cliType) }}</span>
+          <app-status-indicator [tone]="fallbackStateTone(g.cliType)"
+                                [label]="fallbackStateLabel(g.cliType)"
+                                [compact]="true"
+                                [testId]="'cli-models-fallback-state-' + g.cliType" />
         </label>
         <app-model-migration-badge [model]="primaryModel(g.cliType)" [pending]="savingCli() === g.cliType"
           testId="cli-models-migration" (apply)="setPrimary(g.cliType, $event)" />
@@ -168,8 +171,12 @@
                   @if (m.vendor) { <span class="cli-models__model-vendor">{{ m.vendor }}</span> }
                   @if (m.multiplier !== null) { <span class="cli-models__model-mult">{{ m.multiplier }}×</span> }
                   @if (thinkingSummary(m); as th) { <span class="cli-models__model-thinking">{{ th }}</span> }
-                  @if (m.available === false) { <span class="cli-models__model-flag">unavailable</span> }
-                  @if (m.deprecated) { <span class="cli-models__model-flag">deprecated</span> }
+                  @if (m.available === false) {
+                    <app-status-indicator tone="danger" label="unavailable" [compact]="true" testId="cli-models-model-unavailable" />
+                  }
+                  @if (m.deprecated) {
+                    <app-status-indicator tone="warning" label="deprecated" [compact]="true" testId="cli-models-model-deprecated" />
+                  }
                 </li>
               }
             </ul>

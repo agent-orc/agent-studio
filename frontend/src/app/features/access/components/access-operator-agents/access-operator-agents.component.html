@@ -15,7 +15,7 @@
     <article class="operators__item" [attr.data-testid]="'access-operator-agent-' + agent.id">
       <header class="operators__head">
         <div>
-          <h4>{{ agent.name }} @if (agent.disabledAt) { <span class="access-badge" data-tone="muted">Disabled</span> }</h4>
+          <h4>{{ agent.name }} @if (agent.disabledAt) { <app-status-indicator tone="neutral" label="Disabled" [compact]="true" /> }</h4>
           @if (agent.description) { <p class="access-hint">{{ agent.description }}</p> }
           <p class="access-hint access-numeric">Created {{ time(agent.createdAt) }}@if (agent.createdBy) { by {{ person(agent.createdBy) }}}</p>
         </div>
@@ -45,7 +45,7 @@
               @for (session of sessions(agent); track session.id) {
                 <tr [attr.data-testid]="'access-operator-session-' + session.id" [attr.data-state]="session.state">
                   <td>{{ session.name || session.id }}</td>
-                  <td><span class="access-badge" [attr.data-tone]="session.state === 'active' ? 'active' : 'muted'" [attr.title]="session.revokedAt ? 'Revoked ' + time(session.revokedAt) : null">{{ stateLabel(session.state) }}</span></td>
+                  <td><app-status-indicator [tone]="session.state === 'active' ? 'success' : 'neutral'" [label]="stateLabel(session.state)" [detail]="session.revokedAt ? 'Revoked ' + time(session.revokedAt) : null" [compact]="true" /></td>
                   <td><code class="operators__actor">{{ session.actor }}</code></td>
                   <td>{{ person(session.delegatedBy) }}</td>
                   <td class="access-numeric">{{ time(session.createdAt) }}</td>

@@ -9,6 +9,7 @@ import {
   StudioTabActionsComponent,
   StudioTabPager,
   StudioTabTriage,
+  runActivityTone,
 } from './studio-tab-actions.component';
 import type { RunActivityBadge } from '../../../../services/run-activity.util';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
@@ -275,6 +276,16 @@ describe('StudioTabActionsComponent - the open task', () => {
     });
     expect(query(badge, 'studio-run-activity')?.textContent).toContain('Running');
     expect(query(badge, 'studio-run-activity')?.getAttribute('data-run-activity-kind')).toBe('active');
+    expect(query(badge, 'studio-run-activity-state')?.getAttribute('data-tone')).toBe('running');
+  });
+
+  it('maps run-activity kinds to tones and falls back to neutral', () => {
+    expect(runActivityTone('active')).toBe('running');
+    expect(runActivityTone('continuing-after-restart')).toBe('running');
+    expect(runActivityTone('failed-backoff')).toBe('danger');
+    expect(runActivityTone('failed-idle')).toBe('danger');
+    expect(runActivityTone('no-active-run')).toBe('neutral');
+    expect(runActivityTone('later-kind')).toBe('neutral');
   });
 
   it('hides the execution-location badge while nothing is executing', async () => {

@@ -5,6 +5,20 @@ import { projectIdentity } from '../../services/project-identity.util';
 import { cliTypeLabel } from '../../services/format.util';
 import { InfoButtonComponent } from '../info-button/info-button.component';
 import { laneDocTopic } from '../info-button/lane-doc-topic';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
+
+const RUN_STATUS_TONES: Readonly<Record<string, StatusTone>> = {
+  running: 'running',
+  completed: 'success',
+  failed: 'danger',
+  stopped: 'neutral',
+  cancelled: 'neutral',
+};
+
+/** Tone of a CLI execution status; an unknown status reads neutral. */
+export function runStatusTone(status: string | null | undefined): StatusTone {
+  return RUN_STATUS_TONES[(status ?? '').toLowerCase()] ?? 'neutral';
+}
 
 /**
  * Shared compact task status card. Used as:
@@ -18,7 +32,7 @@ import { laneDocTopic } from '../info-button/lane-doc-topic';
 @Component({
   selector: 'app-task-status-card',
   standalone: true,
-  imports: [InfoButtonComponent],
+  imports: [InfoButtonComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './task-status-card.component.html',
@@ -63,6 +77,8 @@ export class TaskStatusCardComponent {
     }
     return parts.join(' · ');
   });
+
+  readonly runTone = computed(() => runStatusTone(this.job().execution?.status));
 
   readonly relativeLastActivity = computed(() => formatRelative(this.job().lastActivity));
   readonly absoluteLastActivity = computed(() => formatAbsolute(this.job().lastActivity));

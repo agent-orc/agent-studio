@@ -65,13 +65,9 @@
 }
 
 .viewer-head__implementation-status {
+  display: inline-flex;
   flex: 0 0 auto;
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--studio-accent-3) 14%, transparent);
-  color: var(--studio-fg);
   font-size: 0.68rem;
-  font-weight: 600;
 }
 
 .viewer-head__tasks {
@@ -116,15 +112,6 @@
   color: var(--studio-fg-muted);
   font-size: 0.68rem;
   font-variant-numeric: tabular-nums;
-}
-
-.viewer-head__freshness i,
-.viewer-details__live-heading i {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--studio-warn);
 }
 
 .viewer-head__details-trigger,
@@ -276,9 +263,6 @@
   font-size: 0.76rem;
 }
 
-.viewer-details__live[data-connected='true'] .viewer-details__live-heading i {
-  background: var(--studio-success);
-}
 
 .viewer-details__live dl {
   display: grid;

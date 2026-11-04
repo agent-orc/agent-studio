@@ -191,6 +191,8 @@ describe('WorkbenchViewerHeaderComponent', () => {
     expect(popover.querySelector('[data-testid="workbench-decision-panel"]')).toBeTruthy();
     expect(popover.querySelector('[data-testid="workbench-viewer-connection-state"]')?.textContent)
       .toContain('Connected since');
+    expect(popover.querySelector('[data-testid="workbench-viewer-connection-state"]')?.getAttribute('data-tone'))
+      .toBe('success');
     expect(popover.querySelector('[data-testid="workbench-viewer-manual-refresh"]')).toBeNull();
     expect(header.querySelector('[data-testid="workbench-viewer-refresh"]')).toBeNull();
     expect(header.querySelector('[data-testid="workbench-viewer-stale-as-of"]')).toBeNull();
@@ -202,6 +204,8 @@ describe('WorkbenchViewerHeaderComponent', () => {
 
     expect(header.querySelector('[data-testid="workbench-viewer-stale-as-of"]')?.textContent)
       .toContain('Updates paused · as of');
+    expect(header.querySelector('[data-testid="workbench-viewer-stale-state"]')?.getAttribute('data-tone'))
+      .toBe('warning');
     expect(popover.querySelector('[data-testid="workbench-viewer-connection-state"]')?.textContent)
       .toContain('Disconnected since');
     const fallback = popover.querySelector(

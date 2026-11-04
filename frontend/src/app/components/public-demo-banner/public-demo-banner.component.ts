@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 import { PublicDemoModeService } from '../../services/public-demo-mode.service';
 
 /**
@@ -12,6 +13,7 @@ import { PublicDemoModeService } from '../../services/public-demo-mode.service';
 @Component({
   selector: 'app-public-demo-banner',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './public-demo-banner.component.html',
   styleUrl: './public-demo-banner.component.scss',

@@ -104,6 +104,8 @@ describe('ExplorerWorkbenchListComponent', () => {
     );
     expect(pendingStatus?.getAttribute('data-status')).toBe('decision-pending');
     expect(pendingStatus?.textContent?.trim()).toBe('3 open');
+    expect(root.querySelector<HTMLElement>('[data-testid="studio-explorer-workbench-open-Demo-pending"]')?.dataset['tone'])
+      .toBe('warning');
     expect(pending?.querySelectorAll('[data-status]')).toHaveLength(1);
     expect(root.querySelector('[data-testid="studio-explorer-workbench-history-Demo"]')
       ?.getAttribute('aria-expanded')).toBe('true');

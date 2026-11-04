@@ -92,7 +92,7 @@ describe('AccessOperatorActivityComponent', () => {
     expect(forwarding.textContent).toContain('No off-host sink configured');
     expect(forwarding.textContent).not.toContain('pending');
     expect(forwarding.getAttribute('data-tone')).toBeNull();
-    expect(forwarding.querySelector('.activity__dot')?.getAttribute('data-tone')).toBe('neutral');
+    expect((forwarding.querySelector('[data-testid="status-indicator"]') as HTMLElement).dataset['tone']).toBe('neutral');
   });
 
   it('verifies the chain on request', () => {

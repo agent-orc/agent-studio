@@ -1145,16 +1145,6 @@
   white-space: nowrap;
 }
 
-.studio-settings-project-tag {
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--studio-fg-muted);
-  padding: 0 4px;
-  background: var(--studio-bg-elevated);
-  border-radius: 6px;
-}
-
 .studio-settings-project-actions {
   display: flex;
   gap: 2px;
@@ -1650,52 +1640,12 @@
    still relabels to "Accept" once the work has landed, and its hover tooltip
    carries the merge detail. */
 
-/* ASS-1751: run-activity pill in the slim tab-bar header (the studio shell
+/* ASS-1751: run-activity state in the slim tab-bar header (the studio shell
    hides <app-detail-header>, so the open task's run state surfaces here).
-   Mirrors the board-card / detail-header pill — quiet, no alarm design.
-   Blue for a live run, calm red for a failed run waiting out backoff,
-   muted neutral for an orphan/idle card. Central design tokens only. */
+   The shared status indicator carries the tone (AGT-3403). */
 .studio-tab-action__run-activity {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  border: 1px solid transparent;
-}
-.studio-tab-action__run-activity-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: currentColor;
-  flex: 0 0 auto;
-}
-.studio-tab-action__run-activity--active {
-  color: var(--studio-accent-3-strong);
-  background: color-mix(in srgb, var(--studio-accent-3) 14%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-accent-3) 34%, transparent);
-}
-.studio-tab-action__run-activity--active .studio-tab-action__run-activity-dot {
-  animation: studio-run-activity-pulse 1.3s infinite;
-}
-.studio-tab-action__run-activity--failed {
-  color: var(--studio-accent-6-strong);
-  background: color-mix(in srgb, var(--studio-accent-6) 12%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-accent-6) 32%, transparent);
-}
-.studio-tab-action__run-activity--idle {
-  color: var(--studio-fg-muted);
-  background: color-mix(in srgb, var(--studio-fg-dim) 10%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-fg-dim) 26%, transparent);
-}
-@keyframes studio-run-activity-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
 }
 
 .studio-tab-action__pager {

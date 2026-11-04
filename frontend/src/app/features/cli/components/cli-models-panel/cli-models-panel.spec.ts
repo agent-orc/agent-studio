@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { CliModelsPanelComponent } from './cli-models-panel';
+import { CliModelsPanelComponent, fallbackStateTone } from './cli-models-panel';
 import { CLI_TYPES } from '../../../../models/task.model';
 import type { CliModelFallbackRoute } from '../../../quota';
 
@@ -103,5 +103,18 @@ describe('CliModelsPanelComponent', () => {
     fixture.detectChanges();
     expect(fixture.componentInstance.fallbackStateLabel('claude'))
       .toContain('fallback preferred by operator until');
+    const state = fixture.nativeElement.querySelector('[data-testid="cli-models-fallback-state-claude"]') as HTMLElement;
+    expect(state.dataset['tone']).toBe('warning');
+    expect(state.textContent).toContain('fallback preferred by operator until');
+  });
+});
+
+describe('fallbackStateTone', () => {
+  it('maps fallback states to tones and falls back to neutral', () => {
+    expect(fallbackStateTone('normal')).toBe('neutral');
+    expect(fallbackStateTone('fallback-active')).toBe('warning');
+    expect(fallbackStateTone('fallback-preferred')).toBe('warning');
+    expect(fallbackStateTone('something-new')).toBe('neutral');
+    expect(fallbackStateTone(undefined)).toBe('neutral');
   });
 });

@@ -5,6 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { VerboseDebugOverlayComponent } from './verbose-debug-overlay.component';
+import { artifactStatusTone, debugRunStatusTone, decisionSeverityTone, warningRowTone } from './verbose-debug-status';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -64,5 +65,23 @@ describe('VerboseDebugOverlayComponent (smoke)', () => {
     fixture.detectChanges();
     await new Promise<void>((r) => queueMicrotask(r));
     expect(fixture.componentInstance.activeTab()).toBe('overview');
+  });
+});
+
+describe('verbose debug status tones', () => {
+  it('maps decision severity, warning thresholds, run status and artifact status', () => {
+    expect(decisionSeverityTone(null)).toBe('info');
+    expect(decisionSeverityTone('warn')).toBe('warning');
+    expect(decisionSeverityTone('error')).toBe('danger');
+    expect(warningRowTone('info')).toBe('neutral');
+    expect(warningRowTone('warn')).toBe('warning');
+    expect(warningRowTone('danger')).toBe('danger');
+    expect(debugRunStatusTone('running')).toBe('running');
+    expect(debugRunStatusTone('completed')).toBe('success');
+    expect(debugRunStatusTone('failed')).toBe('danger');
+    expect(debugRunStatusTone('cancelled')).toBe('neutral');
+    expect(artifactStatusTone('passed')).toBe('success');
+    expect(artifactStatusTone('failed')).toBe('danger');
+    expect(artifactStatusTone('pending')).toBe('neutral');
   });
 });

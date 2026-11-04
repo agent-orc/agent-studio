@@ -7,6 +7,7 @@ import { DossierReferenceChipComponent } from '../../../../components/dossier-re
 import { DossierCatalogueService } from '../../../../services/dossier-catalogue.service';
 import { resolveDossierReference, type DossierReference } from '../../../../services/dossier-reference.util';
 import { GlobalSearchItem, GlobalSearchService, SEARCH_DOMAINS, SearchDomain } from './global-search.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 /** Debounce before a keystroke turns into a request. */
 const DEBOUNCE_MS = 250;
@@ -33,7 +34,7 @@ const DOMAIN_LABELS: Readonly<Record<SearchDomain, string>> = {
 @Component({
   selector: 'app-global-search',
   standalone: true,
-  imports: [FormsModule, DossierReferenceChipComponent],
+  imports: [FormsModule, DossierReferenceChipComponent, StatusIndicatorComponent],
   templateUrl: './global-search.component.html',
   styleUrl: './global-search.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

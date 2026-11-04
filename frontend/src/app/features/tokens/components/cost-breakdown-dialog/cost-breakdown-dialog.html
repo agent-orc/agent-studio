@@ -54,7 +54,7 @@
                 <div><dt>Usage calculation date</dt><dd>{{ formatDate(item.calculatedAt) }}</dd></div>
               </dl>
               @if (price.note) { <p class="cost-breakdown__note">{{ price.note }}</p> }
-              @if (price.unconfirmed) { <p class="cost-breakdown__warning">This catalog price is marked unconfirmed.</p> }
+              @if (price.unconfirmed) { <app-status-indicator class="cost-breakdown__unconfirmed" tone="warning" label="This catalog price is marked unconfirmed." testId="cost-breakdown-unconfirmed" /> }
             }
           </section>
         }

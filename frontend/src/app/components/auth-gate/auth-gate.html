@@ -2,7 +2,7 @@
   <form class="auth-gate__panel" (ngSubmit)="submit()">
     <div class="auth-gate__brand">Agent Software Studio</div>
     @if (auth.loading()) {
-      <p class="auth-gate__muted">Connecting securely...</p>
+      <app-status-indicator tone="running" label="Connecting securely..." testId="auth-gate-connecting" />
     } @else if (auth.ownerRecoveryCode(); as recoveryCode) {
       <h1>Store the owner recovery code</h1>
       <p class="auth-gate__muted">This code is shown once. Keep it with the installation recovery set, outside this browser.</p>

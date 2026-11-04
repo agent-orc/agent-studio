@@ -29,6 +29,7 @@ import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { TaskService } from '../../../../services/task.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
 import { WorkbenchReviewTagComponent } from '../workbench-review-tag/workbench-review-tag.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 const MAX_INLINE_TASKS = 8;
 
@@ -42,6 +43,7 @@ const MAX_INLINE_TASKS = 8;
     TaskReferenceMicrocardComponent,
     WorkbenchDecisionPanelComponent,
     WorkbenchReviewTagComponent,
+    StatusIndicatorComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-viewer-header.component.html',

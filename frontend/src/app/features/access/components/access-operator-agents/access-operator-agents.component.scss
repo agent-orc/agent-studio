@@ -13,5 +13,4 @@
 // A one-time secret is a calm attention tint, never an alarm; the whole surface carries it (R1).
 .operators__issued { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding: var(--studio-spacing-2); border-radius: 4px; background: var(--studio-card-attention-bg); color: var(--studio-fg); font-size: 0.78rem; }
 .operators__create { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }
-.access-badge[data-tone='active'] { background: color-mix(in srgb, var(--studio-success) 16%, transparent); color: var(--studio-fg-strong); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

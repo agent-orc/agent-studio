@@ -59,7 +59,8 @@
                     <span class="studio-workbench-topic__status"
                           [attr.data-status]="workbench.status"
                           [attr.data-testid]="'studio-explorer-workbench-status-' + projectName() + '-' + workbench.id">
-                      {{ openCount(workbench) }} open
+                      <app-status-indicator tone="warning" [label]="openCount(workbench) + ' open'" [compact]="true"
+                                            [testId]="'studio-explorer-workbench-open-' + projectName() + '-' + workbench.id" />
                     </span>
                   } @else {
                     <i class="studio-workbench-status-dot" aria-hidden="true"

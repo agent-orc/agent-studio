@@ -78,10 +78,10 @@ export function projectRunnerIndicator(
 ): ProjectRunnerIndicator | null {
   const runner = status.projects[name];
   if (!runner) return null;
-  if (runner.activeJobId) return { icon: '🔵', cls: 'running' };
-  if (runner.mode === 'paused') return { icon: '⏸', cls: 'paused' };
+  if (runner.activeJobId) return { cls: 'running', tone: 'running', label: 'Running' };
+  if (runner.mode === 'paused') return { cls: 'paused', tone: 'warning', label: 'Paused' };
   if (runner.mode === 'auto-continuous' || runner.mode === 'auto-single') {
-    return { icon: '🟢', cls: 'idle' };
+    return { cls: 'idle', tone: 'success', label: 'Auto idle' };
   }
   return null;
 }

@@ -131,8 +131,6 @@
   font-size: 9px;
   white-space: nowrap;
 }
-.cli-models__prefer[data-state='fallback-preferred'],
-.cli-models__prefer[data-state='fallback-active'] { color: var(--studio-accent-warn-strong); }
 .cli-models__prefer input { accent-color: var(--studio-accent-warn-strong); }
 
 .cli-models__toggle {
@@ -286,13 +284,6 @@
   color: var(--studio-fg-dim);
   font-family: var(--font-mono, monospace);
 }
-.cli-models__model-flag {
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--studio-accent-warn-strong);
-}
-
 @media (max-width: 720px) {
   .cli-models__policy {
     align-items: flex-start;

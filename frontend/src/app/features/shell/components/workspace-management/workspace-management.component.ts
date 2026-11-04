@@ -22,6 +22,7 @@ import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { WorkspaceSettingsService } from '../../state/workspace-settings.service';
 import { WorkspaceQuotaDisclosureComponent } from '../../../quota';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 interface WorkspaceProjectDragData {
   projectId: string;
@@ -48,7 +49,7 @@ interface WorkspaceManagementRow extends RegistryWorkspaceListItem {
 @Component({
   selector: 'app-workspace-management',
   standalone: true,
-  imports: [CdkDrag, CdkDropList, CdkDropListGroup, FormsModule, TooltipDirective, SectionHeaderComponent, MenuComponent, WorkspaceQuotaDisclosureComponent],
+  imports: [CdkDrag, CdkDropList, CdkDropListGroup, FormsModule, TooltipDirective, SectionHeaderComponent, MenuComponent, WorkspaceQuotaDisclosureComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-management.component.html',
   styleUrl: './workspace-management.component.scss',

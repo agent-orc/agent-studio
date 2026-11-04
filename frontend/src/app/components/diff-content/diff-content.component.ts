@@ -9,6 +9,7 @@ import {
 } from '@angular/core';
 import { DomSanitizer, type SafeHtml } from '@angular/platform-browser';
 import { currentDiff2Html, hasDiff2HtmlLoaded, loadDiff2Html } from '../../utils/diff2html-lazy';
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 
 /**
  * Shared unified-diff renderer. The single place a diff string is turned into
@@ -26,6 +27,7 @@ import { currentDiff2Html, hasDiff2HtmlLoaded, loadDiff2Html } from '../../utils
 @Component({
   selector: 'app-diff-content',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './diff-content.component.html',
   styleUrl: './diff-content.component.scss',

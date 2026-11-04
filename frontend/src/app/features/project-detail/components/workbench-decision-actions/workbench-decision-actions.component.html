@@ -59,9 +59,9 @@
   </form>
 } @else {
   <div class="decision-actions__bar">
-    <span data-testid="workbench-decision-answer-count">
-      {{ decisionPoints().length }} inline decision point{{ decisionPoints().length === 1 ? '' : 's' }}
-      · {{ answersComplete() ? 'ready' : 'answer every point in the document' }}
+    <span class="decision-actions__answers" data-testid="workbench-decision-answer-count">
+      <app-status-indicator [tone]="answersComplete() ? 'success' : 'warning'" [label]="answerCountLabel()" [compact]="true"
+                            testId="workbench-decision-answer-state" />
     </span>
     <div class="decision-actions__buttons">
       @if (!inline()) {

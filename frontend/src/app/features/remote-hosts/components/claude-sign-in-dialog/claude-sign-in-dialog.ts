@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, effect, inject, signal, untracked } from '@angular/core';
 import { Subscription, switchMap, takeWhile, timer } from 'rxjs';
 import { DialogComponent } from '../../../../components/dialog/dialog.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { NotificationService } from '../../../../services/notification.service';
 import type {
   ClaudeSignInStartResponse,
@@ -15,7 +16,7 @@ type ClaudeSignInPhase = 'starting' | 'pending' | 'verifying' | 'failed';
 @Component({
   selector: 'app-claude-sign-in-dialog',
   standalone: true,
-  imports: [DialogComponent],
+  imports: [DialogComponent, StatusIndicatorComponent],
   templateUrl: './claude-sign-in-dialog.html',
   styleUrl: './claude-sign-in-dialog.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
