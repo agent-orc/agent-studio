@@ -1,7 +1,7 @@
 <article class="env-card" [attr.aria-labelledby]="headingId()" [attr.data-testid]="'deploy-environment-' + environment().id">
   <header class="env-card__head">
     <h3 [id]="headingId()">{{ environment().name }}</h3>
-    <p class="env-card__health"><span class="env-card__sr">Health: </span><span class="env-card__badge" [attr.data-tone]="health().tone" data-testid="deploy-environment-health">{{ health().label }}</span></p>
+    <p class="env-card__health"><span class="env-card__sr">Health: </span><app-status-indicator [tone]="health().tone" [label]="health().label" testId="deploy-environment-health" /></p>
   </header>
   @if (environment().address; as address) { <p class="env-card__address">{{ address }}</p> }
   <dl class="env-card__facts">
@@ -24,7 +24,7 @@
     <dt>Last run</dt>
     <dd data-testid="deploy-environment-last-run">
       @if (environment().lastRun; as run) {
-        <span class="env-card__badge" [attr.data-tone]="run.state">{{ lastRunLabel() }}</span>&ngsp;<span class="env-card__muted env-card__numeric">{{ lastRunAge() }}</span>
+        <app-status-indicator [tone]="runTone(run.state)" [label]="lastRunLabel() ?? ''" [compact]="true" testId="deploy-environment-last-run-state" />&ngsp;<span class="env-card__muted env-card__numeric">{{ lastRunAge() }}</span>
       } @else { No runs yet }
     </dd>
   </dl>

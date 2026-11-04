@@ -7,11 +7,13 @@ import type { ProjectDeploymentSummary, ProjectDeploymentTarget, ProjectEnvironm
 import { VisibleCliTaskService, type VisibleCliTaskCreated } from '../../../visible-cli-task';
 import type { WatchPathEntry } from '../../../../models/task.model';
 import { DeploymentDefinitionEditorComponent } from '../deployment-definition-editor/deployment-definition-editor';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { TARGET_READINESS, deploymentHistoryTone, environmentHealthTone, type TargetReadiness } from './deployment-status-tone';
 
 @Component({
   selector: 'app-project-deployment-panel',
   standalone: true,
-  imports: [DatePipe, DecimalPipe, FormsModule, PendingButtonDirective, DeploymentDefinitionEditorComponent],
+  imports: [DatePipe, DecimalPipe, FormsModule, PendingButtonDirective, DeploymentDefinitionEditorComponent, StatusIndicatorComponent],
   templateUrl: './project-deployment-panel.component.html',
   styleUrl: './project-deployment-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -108,15 +110,17 @@ export class ProjectDeploymentPanelComponent {
     return target.targetHostId || 'Repository environment';
   }
 
-  targetStatus(target: ProjectDeploymentTarget): string {
-    if (target.template === 'deploy-stable') {
-      return this.parameterValues()['stableIdle'] === true ? 'Idle confirmed' : 'Idle required';
-    }
-    return target.runnable ? 'Ready' : 'Setup required';
-  }
+  readonly environmentHealthTone = environmentHealthTone;
+  readonly historyTone = deploymentHistoryTone;
 
-  targetStatusReady(target: ProjectDeploymentTarget): boolean {
-    return target.template !== 'deploy-stable' || this.parameterValues()['stableIdle'] === true;
+  targetReadiness(target: ProjectDeploymentTarget): { tone: StatusTone; label: string } {
+    let readiness: TargetReadiness;
+    if (target.template === 'deploy-stable') {
+      readiness = this.parameterValues()['stableIdle'] === true ? 'idle-confirmed' : 'idle-required';
+    } else {
+      readiness = target.runnable ? 'ready' : 'setup-required';
+    }
+    return TARGET_READINESS[readiness];
   }
 
   parameterLabel(name: string): string {

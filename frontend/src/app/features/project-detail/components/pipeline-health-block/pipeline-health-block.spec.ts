@@ -72,6 +72,10 @@ describe('PipelineHealthBlockComponent', () => {
       .toContain('Gate hanging since 150 min');
     expect(host.querySelector('[data-testid="pipeline-health-fingerprint"]')?.textContent)
       .toContain('Systemic gate problem');
+    const tone = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id}"]`)?.dataset['tone'];
+    expect(tone('pipeline-health-state')).toBe('danger');
+    expect(tone('pipeline-health-gate-state')).toBe('danger');
+    expect(tone('pipeline-health-fingerprint-state')).toBe('danger');
     const drain = host.querySelector('[data-testid="pipeline-health-drain"] [data-lane="4-auto-review"]');
     expect(drain?.textContent).toContain('0/h');
     expect(drain?.textContent).toContain('4 queued');

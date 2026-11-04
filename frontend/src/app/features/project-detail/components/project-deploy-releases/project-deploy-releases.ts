@@ -4,12 +4,19 @@ import { EmptyStateComponent } from '../../../../components/empty-state/empty-st
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { ProjectDeployReleaseNotesComponent } from '../project-deploy-release-notes/project-deploy-release-notes';
 import { formatAge, type DeployPanel, type EnvironmentCardView, type Release } from '../../state/deploy-area.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Pre-delivery full-suite verdict (raw wire value) onto the shared tones; anything else stays neutral. */
+const VERDICT_TONE: Readonly<Record<string, StatusTone>> = { green: 'success', red: 'danger' };
+export function verdictTone(status: string): StatusTone {
+  return Object.hasOwn(VERDICT_TONE, status) ? VERDICT_TONE[status] : 'neutral';
+}
 
 /** Release list with the selected release's cards, artifacts, and where it runs. */
 @Component({
   selector: 'app-project-deploy-releases',
   standalone: true,
-  imports: [DatePipe, EmptyStateComponent, LoadingSurfaceComponent, ProjectDeployReleaseNotesComponent],
+  imports: [DatePipe, EmptyStateComponent, LoadingSurfaceComponent, ProjectDeployReleaseNotesComponent, StatusIndicatorComponent],
   templateUrl: './project-deploy-releases.html',
   styleUrl: './project-deploy-releases.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -23,6 +30,7 @@ export class ProjectDeployReleasesComponent {
   readonly highlightedReleaseId = input<string | null>(null);
   readonly pageChange = output<number>();
   readonly selectedId = signal<string | null>(null);
+  protected readonly verdictTone = verdictTone;
 
   constructor() { effect(() => this.selectedId.set(this.highlightedReleaseId())); }
 

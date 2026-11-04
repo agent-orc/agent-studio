@@ -38,19 +38,6 @@
 
 /* `data-tone` carries the state: succeeded/healthy, failed/unhealthy,
    running/queued/awaiting-approval, everything else neutral. */
-@mixin tone-badge {
-  @include m.chip(var(--studio-fg-dim));
-  text-transform: none;
-  letter-spacing: 0;
-
-  &[data-tone='succeeded'], &[data-tone='healthy'], &[data-tone='up'] { @include m.chip(var(--studio-success)); text-transform: none; letter-spacing: 0; }
-  &[data-tone='failed'], &[data-tone='unhealthy'], &[data-tone='down'], &[data-tone='invalid'] { @include m.chip(var(--studio-error)); text-transform: none; letter-spacing: 0; }
-  &[data-tone='degraded'] { @include m.chip(var(--studio-warn)); text-transform: none; letter-spacing: 0; }
-  &[data-tone='running'], &[data-tone='queued'], &[data-tone='awaiting-approval'], &[data-tone='waiting-for-intervention'] {
-    @include m.chip(var(--studio-accent)); text-transform: none; letter-spacing: 0;
-  }
-}
-
 @mixin fact-list {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);

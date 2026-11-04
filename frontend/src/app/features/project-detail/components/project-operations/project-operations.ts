@@ -6,9 +6,11 @@ import { metric, ratio, type OperationsLogResult, type ProjectOperations } from 
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { historyRunStateTone } from '../../state/deploy-status-tone';
 
 @Component({
-  selector: 'app-project-operations', standalone: true, imports: [DatePipe, OperationsTrendComponent, LoadingSurfaceComponent],
+  selector: 'app-project-operations', standalone: true, imports: [DatePipe, OperationsTrendComponent, LoadingSurfaceComponent, StatusIndicatorComponent],
   templateUrl: './project-operations.html', styleUrl: './project-operations.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -32,6 +34,8 @@ export class ProjectOperationsComponent {
   readonly telemetryAvailable = computed(() => this.snapshot()?.environments.some(row => row.telemetryAvailable) ?? false);
   readonly metric = metric;
   readonly ratio = ratio;
+  /** Markers list past runs, so a past failure stays calm (R4). */
+  readonly markerTone = historyRunStateTone;
   readonly projectSlug = computed(() => studioProjectSlug(this.projectName()));
 
   constructor() { effect(() => this.load(this.projectName())); }

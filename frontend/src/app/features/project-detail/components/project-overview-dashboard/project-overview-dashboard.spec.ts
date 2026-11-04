@@ -6,7 +6,7 @@ import { provideRouter } from '@angular/router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TaskInfo } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
-import { ProjectOverviewDashboardComponent } from './project-overview-dashboard';
+import { ProjectOverviewDashboardComponent, syncDirectionTone } from './project-overview-dashboard';
 
 describe('ProjectOverviewDashboardComponent', () => {
   afterEach(() => {
@@ -80,6 +80,12 @@ describe('ProjectOverviewDashboardComponent', () => {
     const branchState = host.querySelector('[data-testid="project-overview-remote-truth"]')?.textContent ?? '';
     expect(branchState).toContain('2 to push');
     expect(branchState).toContain('3 to pull');
+    const syncTones = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="project-overview-sync-push"], [data-testid="project-overview-sync-pull"]'))
+      .map(item => `${item.textContent?.trim()}:${item.dataset['tone']}`);
+    expect(syncTones).toContain('2 to push:warning');
+    expect(syncTones).toContain('3 to pull:warning');
+    expect(syncTones).toContain('Unavailable:neutral');
+    expect(host.querySelector<HTMLElement>('[data-testid="project-overview-deployment-state"]')?.dataset['tone']).toBe('warning');
     expect(branchState).toContain('No upstream · local-only, remote comparison unavailable');
     expect(host.querySelector('[data-testid="project-overview-branch-task-agt-2200"]')).toBeTruthy();
     host.querySelector<HTMLButtonElement>('[data-testid="project-overview-planning-agt-2200"]')!.click();
@@ -176,6 +182,12 @@ describe('ProjectOverviewDashboardComponent', () => {
     fixture.destroy();
     hidden.mockRestore();
     vi.useRealTimers();
+  });
+
+  it('gives each sync direction its own tone', () => {
+    expect(syncDirectionTone(true, 0)).toBe('success');
+    expect(syncDirectionTone(true, 4)).toBe('warning');
+    expect(syncDirectionTone(false, 0)).toBe('neutral');
   });
 });
 

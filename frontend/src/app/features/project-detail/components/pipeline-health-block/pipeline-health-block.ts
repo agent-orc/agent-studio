@@ -5,11 +5,23 @@ import type { PipelineHealthAlert, PipelineHealthSnapshot, PipelineLaneDrainHeal
 import { OperatorSweepsBlockComponent } from '../operator-sweeps-block/operator-sweeps-block';
 import { GateEconomicsBlockComponent } from '../gate-economics-block/gate-economics-block';
 import type { GateEconomicsResponse } from '../../../task-pipeline/models/gate-economics.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Pipeline health header status onto the shared tones (AGT-3403); unknown values read as healthy, as before. */
+const PIPELINE_HEALTH_STATUS: Readonly<Record<string, { tone: StatusTone; label: string }>> = {
+  alarm: { tone: 'danger', label: 'Attention needed' },
+  running: { tone: 'running', label: 'Gate running' },
+  healthy: { tone: 'success', label: 'Healthy' },
+};
+
+export function pipelineHealthStatus(status: string): { tone: StatusTone; label: string } {
+  return Object.hasOwn(PIPELINE_HEALTH_STATUS, status) ? PIPELINE_HEALTH_STATUS[status] : PIPELINE_HEALTH_STATUS['healthy'];
+}
 
 @Component({
   selector: 'app-pipeline-health-block',
   standalone: true,
-  imports: [OperatorSweepsBlockComponent, GateEconomicsBlockComponent],
+  imports: [OperatorSweepsBlockComponent, GateEconomicsBlockComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './pipeline-health-block.html',
   styleUrl: './pipeline-health-block.scss',
@@ -22,6 +34,7 @@ export class PipelineHealthBlockComponent implements OnDestroy {
   readonly economics = computed(() => this.economicsResponse()?.rows
     .find(row => row.project === this.projectName()) ?? null);
   readonly economicsWindow = signal('7d');
+  readonly headerStatus = pipelineHealthStatus;
   /** Workspace repositories whose evidence flush keeps failing (AGT-3000). */
   readonly evidenceFlushStalls = computed<PipelineHealthAlert[]>(() =>
     (this.health()?.alerts ?? []).filter(alert => alert.kind === 'evidence-flush-stalled'));

@@ -58,7 +58,7 @@
                   </td>
                   <td>{{ run.environmentName }}</td>
                   <td [title]="run.releaseId">{{ run.releaseVersion ?? run.releaseId }}</td>
-                  <td><span class="history__badge" [attr.data-tone]="run.state">{{ stateLabel[run.state] }}</span></td>
+                  <td><app-status-indicator [tone]="runTone(run.state)" [label]="stateLabel[run.state]" [compact]="true" testId="deploy-run-outcome-cell" /></td>
                   <td>{{ run.requestedBy ?? 'Not recorded' }}</td>
                   <td class="history__numeric"><time [attr.datetime]="run.createdAt">{{ run.createdAt | date:'MMM d, HH:mm' }}</time></td>
                   <td class="history__numeric">{{ duration(run.startedAt, run.finishedAt) ?? 'Not finished' }}</td>

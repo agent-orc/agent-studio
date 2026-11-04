@@ -53,7 +53,7 @@
           @for (marker of row.markers; track marker.deploymentId) {
             <li>
               <time [attr.datetime]="marker.atUtc">{{ marker.atUtc | date:'medium':'UTC' }} UTC</time>
-              <span>{{ marker.trigger }} · {{ marker.state }}</span>
+              <app-status-indicator [tone]="markerTone(marker.state)" [label]="marker.trigger + ' · ' + marker.state" [compact]="true" testId="operations-marker-state" />
               <button type="button" [attr.data-testid]="'operations-release-' + marker.releaseId" (click)="openRelease.emit(marker.releaseId)">Release {{ marker.version }}</button>
               <span class="project-operations__cards">@for (card of marker.cardKeys; track card) { <button type="button" (click)="openCard.emit(card)">{{ card }}</button> }</span>
             </li>

@@ -33,11 +33,13 @@ import { GateSlotBoardComponent } from '../gate-slot-board/gate-slot-board';
 import { PipelineStepExecutionComponent } from './pipeline-step-execution/pipeline-step-execution.component';
 import { PipelineTypePickerComponent } from './pipeline-type-picker/pipeline-type-picker.component';
 import { PipelineStepRowStateComponent } from './pipeline-step-row-state/pipeline-step-row-state.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 /** Per-type project pipeline editor for ordering, activation, agents, prompts, gates, and usage. */
 @Component({
   selector: 'app-project-pipeline-panel', standalone: true,
   imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, GateSlotBoardComponent,
-    PipelineStepExecutionComponent, PipelineTypePickerComponent, PipelineStepRowStateComponent, ModelMigrationBadgeComponent],
+    PipelineStepExecutionComponent, PipelineTypePickerComponent, PipelineStepRowStateComponent, ModelMigrationBadgeComponent,
+    StatusIndicatorComponent],
   hostDirectives: [{ directive: PipelineStepFocusDirective, inputs: ['focusStepId'] }],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-pipeline-panel.component.html',

@@ -180,6 +180,7 @@ describe('ProjectPipelinePanelComponent (render)', () => {
     const promptCell = host.querySelector('[data-testid="pipeline-step-prompt-aspect-requirement-fit"]');
     expect(promptCell?.textContent).toContain('aspect-requirement-fit');
     expect(host.querySelector('[data-testid="pipeline-step-prompt-clear-aspect-requirement-fit"]')).toBeTruthy();
+    expect(host.querySelector<HTMLElement>('[data-testid="pipeline-step-prompt-inline-aspect-requirement-fit"]')?.dataset['tone']).toBe('warning');
     expect(host.querySelector('[data-testid="pipeline-step-prompt-manage-aspect-requirement-fit"]')).toBeTruthy();
 
     // Per-step token sum: the aspect step shows its 90-day token total with the

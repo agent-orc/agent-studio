@@ -62,7 +62,6 @@ input.is-invalid, input[aria-invalid='true'], .definition__parameter.is-invalid 
 .definition__parameters { display: grid; gap: var(--studio-spacing-3); }
 .definition__parameters > header,
 .definition__action-row,
-.definition__result > header { display: flex; align-items: center; justify-content: space-between; gap: var(--studio-spacing-3); }
 .definition__parameter-empty { padding: var(--studio-spacing-4); border-radius: 8px; background: var(--studio-card-muted-bg); }
 .definition__parameter-empty span { color: var(--studio-fg-dim); }
 .definition__parameter-list { display: grid; gap: var(--studio-spacing-3); }
@@ -109,12 +108,10 @@ button:disabled { cursor: default; opacity: 0.65; }
 .definition__advanced code { font-family: var(--font-mono); }
 
 .definition__action-row { justify-content: flex-start; }
+.definition__result > app-status-indicator { justify-self: start; }
 .definition__result { min-height: 84px; padding: var(--studio-spacing-4); border: 1px solid var(--studio-card-muted-border); border-radius: 8px; background: var(--studio-card-muted-bg); }
 .definition__result[data-state='valid'] { border-color: color-mix(in srgb, var(--studio-success) 36%, var(--studio-card-border)); background: color-mix(in srgb, var(--studio-success) 8%, var(--studio-card-bg)); }
 .definition__result[data-state='invalid'] { @include m.deck-panel-attention; }
-.definition__result > header { justify-content: flex-start; }
-.definition__status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--studio-success); }
-.definition__result[data-state='invalid'] .definition__status-dot { background: var(--studio-danger, var(--severity-high)); }
 .definition__preview { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--studio-spacing-3); margin-top: var(--studio-spacing-2); }
 .definition__preview label { padding: var(--studio-spacing-3); border: 1px solid var(--studio-card-muted-border); border-radius: 6px; background: var(--studio-card-muted-bg); }
 .definition__preview input[type='checkbox'] { justify-self: start; }

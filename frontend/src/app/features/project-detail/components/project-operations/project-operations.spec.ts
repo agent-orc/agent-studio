@@ -32,6 +32,7 @@ describe('ProjectOperationsComponent', () => {
     const host = fixture.nativeElement as HTMLElement;
     expect(host.textContent).toContain('Telemetry is not available yet');
     expect(host.textContent).toContain('rollback · succeeded');
+    expect(host.querySelector<HTMLElement>('[data-testid="operations-marker-state"]')?.dataset['tone']).toBe('success');
     expect(host.textContent).toContain('0.5 per week');
     expect(host.textContent).toContain('25%');
     const releases: string[] = [];

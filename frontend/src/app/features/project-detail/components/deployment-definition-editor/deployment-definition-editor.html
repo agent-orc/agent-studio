@@ -143,13 +143,12 @@
 
   <div class="definition__result" [attr.data-state]="state()" [attr.aria-busy]="state() === 'loading'"
     aria-live="polite" data-testid="deployment-definition-result">
+    <app-status-indicator [tone]="resultStatus().tone" [label]="resultStatus().label" testId="deployment-definition-status" />
     @switch (state()) {
       @case ('loading') {
-        <strong>Validating definition...</strong>
         <p>Checking the repository command and building its operator fields.</p>
       }
       @case ('valid') {
-        <header><span class="definition__status-dot" aria-hidden="true"></span><strong>Definition valid</strong></header>
         <p>The generated form is ready to review before this definition is saved or run.</p>
         <div class="definition__preview" data-testid="deployment-form-preview">
           @for (parameter of preview(); track parameter.id) {
@@ -170,14 +169,12 @@
         </div>
       }
       @case ('invalid') {
-        <header><span class="definition__status-dot" aria-hidden="true"></span><strong>Definition needs attention</strong></header>
         <p>Correct the highlighted command or parameter fields, then preview again.</p>
         @if (generalErrors().length) {
           <ul role="alert">@for (error of generalErrors(); track error) { <li>{{ error }}</li> }</ul>
         }
       }
       @default {
-        <strong>Preview not generated</strong>
         <p>Enter a repository script, add any operator values, then preview to validate the definition.</p>
       }
     }

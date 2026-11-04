@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, computed, effect, inject, input, signal } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import { laneName } from '../../../../models/lane-presentation';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import type {
   OperatorSweepCardState,
   OperatorSweepProjection,
@@ -12,6 +13,15 @@ const SWEEP_LABELS: Record<string, string> = {
   'gate-triage': 'Gate triage',
   salvage: 'Salvage',
 };
+
+/** Header status of the sweeps block (AGT-3403); paused and disabled are settled choices, not health. */
+const SWEEPS_STATUS_TONE: Readonly<Record<string, StatusTone>> = {
+  healthy: 'success', alarm: 'danger', paused: 'neutral', disabled: 'neutral',
+};
+
+export function sweepsStatusTone(status: string): StatusTone {
+  return Object.hasOwn(SWEEPS_STATUS_TONE, status) ? SWEEPS_STATUS_TONE[status] : 'neutral';
+}
 
 const SWEEP_ROLES: Record<string, string> = {
   'fix-rounds': 'ProductFailure review to fix round',
@@ -29,6 +39,7 @@ const SWEEP_ROLES: Record<string, string> = {
   selector: 'app-operator-sweeps-block',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [StatusIndicatorComponent],
   templateUrl: './operator-sweeps-block.html',
   styleUrl: './operator-sweeps-block.scss',
 })
@@ -71,6 +82,16 @@ export class OperatorSweepsBlockComponent implements OnDestroy {
       case 'disabled': return 'Disabled';
       default: return 'Healthy';
     }
+  }
+
+  readonly stateTone = sweepsStatusTone;
+
+  sweepState(sweep: OperatorSweepStatus): { tone: StatusTone; label: string } {
+    if (sweep.paused) return { tone: 'neutral', label: 'Paused' };
+    if (sweep.lastRunError) return { tone: 'danger', label: 'Last tick failed' };
+    if (sweep.isOverdue) return { tone: 'danger', label: 'Overdue' };
+    if (!sweep.lastRunFinishedAtUtc) return { tone: 'neutral', label: this.lastRun(sweep) };
+    return { tone: 'success', label: this.lastRun(sweep) };
   }
 
   lastRun(sweep: OperatorSweepStatus): string {

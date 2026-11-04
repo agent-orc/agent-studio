@@ -156,21 +156,6 @@ tbody th {
   }
 }
 
-.fh__badge {
-  --fh-tone: var(--studio-fg-muted);
-
-  display: inline-block;
-  padding: 0 var(--studio-spacing-2);
-  border: 1px solid color-mix(in srgb, var(--fh-tone) 45%, var(--studio-border));
-  border-radius: var(--studio-card-pill-radius);
-  background: color-mix(in srgb, var(--fh-tone) 14%, transparent);
-  color: var(--studio-fg-strong);
-  white-space: nowrap;
-
-  &[data-status='met'] { --fh-tone: var(--studio-success); }
-  &[data-status='missed'] { --fh-tone: var(--studio-error); }
-}
-
 .fh__trend {
   color: var(--studio-fg-muted);
 

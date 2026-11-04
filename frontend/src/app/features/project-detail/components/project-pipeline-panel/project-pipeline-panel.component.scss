@@ -234,7 +234,6 @@
 .pp__toggle,
 .pp__locked,
 .pp__prompt-ref,
-.pp__prompt-inline,
 .pp__link {
   min-height: var(--pp-control-h);
   display: inline-flex;
@@ -511,14 +510,6 @@
   border-color: var(--studio-card-muted-border);
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg-muted);
-}
-
-.pp__prompt-inline {
-  padding: 0 var(--studio-card-pill-padding-x);
-  border: 1px solid color-mix(in srgb, var(--studio-accent-strong) 28%, transparent);
-  background: color-mix(in srgb, var(--studio-accent-strong) 12%, transparent);
-  color: var(--studio-accent-strong);
-  font-weight: 600;
 }
 
 .pp__link {

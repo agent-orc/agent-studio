@@ -55,6 +55,8 @@ describe('ProjectEnvironmentOverviewComponent', () => {
     expect(host.querySelector('[data-testid="project-environment-stage"]')?.textContent).toContain('Healthy');
     expect(host.querySelector('[data-testid="project-environment-stage"]')?.textContent).toContain('Running sha-abc');
     expect(host.querySelector('[data-testid="project-environment-preview"]')?.textContent).toContain('Health unknown');
+    expect(host.querySelector<HTMLElement>('[data-testid="project-environment-stage"] [data-testid="project-environment-health"]')?.dataset['tone']).toBe('success');
+    expect(host.querySelector<HTMLElement>('[data-testid="project-environment-preview"] [data-testid="project-environment-health"]')?.dataset['tone']).toBe('neutral');
     expect(host.querySelector('[data-testid="project-environment-stage"] [data-testid="environment-runbooks"]')).toBeTruthy();
     expect(host.querySelector('[data-testid="project-environment-preview"] [data-testid="environment-runbooks"]')).toBeNull();
   });

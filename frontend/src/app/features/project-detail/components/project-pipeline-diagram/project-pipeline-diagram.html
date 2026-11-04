@@ -32,7 +32,7 @@
       <span class="pipeline-diagram__muted">No artifact declared</span>
     }
     @if (artifactIssues() > 0) {
-      <span class="pipeline-diagram__issues">{{ artifactIssues() }} {{ artifactIssues() === 1 ? 'issue' : 'issues' }}</span>
+      <app-status-indicator class="pipeline-diagram__issues" tone="warning" [label]="artifactIssues() + ' ' + (artifactIssues() === 1 ? 'issue' : 'issues')" [compact]="true" testId="pipeline-node-issues" />
     }
   </li>
 
@@ -84,7 +84,7 @@
         </ul>
       }
       @if (count > 0) {
-        <span class="pipeline-diagram__issues">{{ count }} {{ count === 1 ? 'issue' : 'issues' }}</span>
+        <app-status-indicator class="pipeline-diagram__issues" tone="warning" [label]="count + ' ' + (count === 1 ? 'issue' : 'issues')" [compact]="true" testId="pipeline-node-issues" />
       }
     </li>
   } @empty {

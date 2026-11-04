@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { describe, expect, it } from 'vitest';
 import { CardDeploymentService } from '../../services/card-deployment.service';
-import { CardEnvironmentBadgesComponent } from './card-environment-badges';
+import { CardEnvironmentBadgesComponent, cardEnvironmentTone } from './card-environment-badges';
 import type { TaskInfo } from '../../../../models/task.model';
 
 describe('CardEnvironmentBadgesComponent', () => {
@@ -24,5 +24,15 @@ describe('CardEnvironmentBadgesComponent', () => {
       .toContain('Staging · rolled back · 1.0 · 2026-10-16');
     expect(host.querySelector('[data-testid="card-environment-production"]')?.textContent)
       .toContain('Not yet in Production');
+    expect(host.querySelector<HTMLElement>('[data-testid="card-environment-staging"]')?.dataset['tone']).toBe('warning');
+    expect(host.querySelector<HTMLElement>('[data-testid="card-environment-production"]')?.dataset['tone']).toBe('neutral');
+  });
+
+  it('maps every card environment state onto a tone', () => {
+    const matrix: Record<string, string> = {
+      succeeded: 'success', failed: 'danger', 'rolled-back': 'warning', 'awaiting-approval': 'warning',
+      running: 'running', queued: 'neutral', cancelled: 'neutral', 'not-deployed': 'neutral', later: 'neutral',
+    };
+    for (const [state, tone] of Object.entries(matrix)) expect(cardEnvironmentTone(state)).toBe(tone);
   });
 });

@@ -2,6 +2,8 @@ import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
 import { forkJoin } from 'rxjs';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { historyRunStateTone } from '../../state/deploy-status-tone';
 
 interface RunbookDefinition { name: string; steps: string[]; environments: string[] }
 interface RunbookStep { name: string; state: string; logRef: string }
@@ -14,13 +16,15 @@ interface RunbookLog { lines: { step: string; message: string }[] }
 @Component({
   selector: 'app-project-runbooks',
   standalone: true,
-  imports: [DisclosureMarkerComponent],
+  imports: [DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './project-runbooks.html',
   styleUrl: './project-runbooks.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ProjectRunbooksComponent {
   private readonly http = inject(HttpClient);
+  /** Runbook history: a past failure stays calm (R4); a waiting approval reads as info. */
+  readonly runTone = historyRunStateTone;
   readonly projectName = input.required<string>();
   readonly environmentId = input.required<string>();
   readonly environmentKind = input.required<string>();

@@ -30,7 +30,7 @@
     <div class="pse__output" aria-live="polite" [attr.data-status]="probe.status"
          [attr.data-testid]="'pipeline-step-probe-output-' + step().id">
       <div class="pse__output-meta">
-        <strong>{{ probe.status }}</strong>
+        <app-status-indicator [tone]="probeTone(probe.status)" [label]="probe.status" [compact]="true" testId="pipeline-step-probe-status" />
         <span>{{ probe.durationMs }} ms</span>
         @if (probe.exitCode !== null && probe.exitCode !== undefined) { <span>exit {{ probe.exitCode }}</span> }
         @if (probe.queueWaitMs > 0) { <span>lock wait {{ probe.queueWaitMs }} ms</span> }

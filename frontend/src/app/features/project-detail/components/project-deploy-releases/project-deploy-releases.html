@@ -35,7 +35,7 @@
             <article class="releases__detail" data-testid="deploy-release-detail" aria-labelledby="deploy-release-detail-title">
               <h3 id="deploy-release-detail-title">Release {{ release.version }}</h3>
               @if (release.preDeliveryVerdict; as verdict) {
-                <p class="releases__verdict" data-testid="deploy-release-verdict">Full suite: {{ verdict.status }} · SHA <code>{{ verdict.commitSha }}</code></p>
+                <p class="releases__verdict" data-testid="deploy-release-verdict"><app-status-indicator [tone]="verdictTone(verdict.status)" [label]="'Full suite: ' + verdict.status" [compact]="true" testId="deploy-release-verdict-state" /> · SHA <code>{{ verdict.commitSha }}</code></p>
               }
               <dl class="releases__facts">
                 <dt>Created</dt><dd><time [attr.datetime]="release.createdAtUtc">{{ release.createdAtUtc | date:'medium' }}</time></dd>

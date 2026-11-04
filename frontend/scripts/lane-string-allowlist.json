@@ -63,5 +63,15 @@
     "file": "src/app/features/task-timeline/models/task-timeline.model.ts",
     "literal": "Accepted",
     "reason": "Completion-loop verdict label (Accepted / Re-opened). Not the 6-completed lane."
+  },
+  {
+    "file": "src/app/features/project-detail/components/project-deployment-panel/deployment-status-tone.ts",
+    "literal": "Ready",
+    "reason": "Deployment-target runnability label ('Ready' / 'Setup required') moved into the status tone map (AGT-3403). Not the 2-ready lane."
+  },
+  {
+    "file": "src/app/features/orchestrator/components/orchestrator-panel-header/orchestrator-panel-header.component.ts",
+    "literal": "Ready",
+    "reason": "Chat execution context state ('Active' / 'Ready' / 'Resolving') on the status indicator (AGT-3403). Not the 2-ready lane."
   }
 ]

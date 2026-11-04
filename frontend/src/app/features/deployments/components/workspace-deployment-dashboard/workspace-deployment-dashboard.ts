@@ -7,6 +7,33 @@ import type { DeploymentState, EnvironmentStatus } from '../../models/deployment
 import { DEPLOYMENT_CLOCK, DeploymentStatusService } from '../../services/deployment-status.service';
 import type { DeployMatrixResponse } from '../../services/deployment-status.service';
 import { DeliveryLanesComponent } from '../delivery-lanes/delivery-lanes';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Current deployment state per cell (AGT-3403); unknown states stay neutral. */
+const DASHBOARD_STATE_TONE: Readonly<Record<DeploymentState, StatusTone>> = {
+  queued: 'neutral',
+  running: 'running',
+  succeeded: 'success',
+  failed: 'danger',
+  cancelled: 'neutral',
+  'awaiting-approval': 'warning',
+};
+
+export function dashboardStateTone(state: string | null | undefined): StatusTone {
+  return state && Object.hasOwn(DASHBOARD_STATE_TONE, state) ? DASHBOARD_STATE_TONE[state as DeploymentState] : 'neutral';
+}
+
+type DashboardHealth = EnvironmentStatus['health'];
+const DASHBOARD_HEALTH: Readonly<Record<DashboardHealth, { tone: StatusTone; label: string }>> = {
+  healthy: { tone: 'success', label: 'Healthy' },
+  unhealthy: { tone: 'danger', label: 'Unhealthy' },
+  unknown: { tone: 'neutral', label: 'Unknown' },
+};
+
+export function dashboardHealth(health: string): { tone: StatusTone; label: string } {
+  return Object.hasOwn(DASHBOARD_HEALTH, health) ? DASHBOARD_HEALTH[health as DashboardHealth]
+    : { tone: 'neutral', label: health.charAt(0).toUpperCase() + health.slice(1) };
+}
 
 interface DashboardRow {
   id: string;
@@ -19,7 +46,7 @@ interface DashboardRow {
 @Component({
   selector: 'app-workspace-deployment-dashboard',
   standalone: true,
-  imports: [DeliveryLanesComponent],
+  imports: [DeliveryLanesComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-deployment-dashboard.html',
   styleUrl: './workspace-deployment-dashboard.scss',
@@ -85,6 +112,10 @@ export class WorkspaceDeploymentDashboardComponent {
   cellLabel(row: DashboardRow, environment: string): string {
     return [row.name, row.tenant, environment, 'deployment'].filter(Boolean).join(' ');
   }
+
+  readonly stateTone = dashboardStateTone;
+  healthTone(health: string): StatusTone { return dashboardHealth(health).tone; }
+  healthLabel(health: string): string { return dashboardHealth(health).label; }
 
   stateLabel(state: DeploymentState | undefined): string {
     if (!state) return 'Unknown';

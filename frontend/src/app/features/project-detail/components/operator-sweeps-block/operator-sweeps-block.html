@@ -4,8 +4,8 @@
            [attr.data-status]="p.status"
            data-testid="operator-sweeps">
     <header class="os__head">
-      <span class="os__title"><i aria-hidden="true"></i>Operator sweeps</span>
-      <span class="os__state">{{ stateLabel(p.status) }}</span>
+      <span class="os__title">Operator sweeps</span>
+      <app-status-indicator [tone]="stateTone(p.status)" [label]="stateLabel(p.status)" testId="operator-sweeps-state" />
     </header>
     <div class="os__grid">
       @for (sweep of p.sweeps; track sweep.sweep) {
@@ -22,17 +22,14 @@
                     (click)="toggle(sweep)">{{ sweep.paused ? 'Resume' : 'Pause' }}</button>
           </div>
           <small class="os__role">{{ sweepRole(sweep.sweep) }}</small>
+          <app-status-indicator [tone]="sweepState(sweep).tone" [label]="sweepState(sweep).label" testId="operator-sweep-state" />
           @if (sweep.paused) {
-            <strong>Paused</strong>
             <small>{{ sweep.pausedBy }}{{ sweep.pauseReason ? ' · ' + sweep.pauseReason : '' }}</small>
           } @else if (sweep.lastRunError) {
-            <strong>Last tick failed</strong>
             <small>{{ sweep.lastRunError }}</small>
           } @else if (sweep.isOverdue) {
-            <strong>Overdue</strong>
             <small>No finished tick for two intervals</small>
           } @else {
-            <strong>{{ lastRun(sweep) }}</strong>
             <small class="os__counts">{{ lastResult(sweep) }}</small>
           }
         </section>

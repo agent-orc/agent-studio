@@ -23,8 +23,7 @@
   border-bottom: 1px solid var(--studio-card-muted-border);
 }
 
-.os__title,
-.os__state {
+.os__title {
   display: inline-flex;
   align-items: center;
   gap: var(--studio-spacing-1);
@@ -32,16 +31,6 @@
   font-size: var(--studio-card-meta-size);
   font-weight: 650;
 }
-
-.os__title i {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--severity-pass);
-}
-
-.os--alarm .os__title i { background: var(--severity-high); }
-.os--alarm .os__state { color: var(--severity-high); }
 
 .os__grid {
   display: grid;
@@ -81,11 +70,7 @@
   line-height: 1.2;
 }
 
-.os__sweep > strong {
-  color: var(--studio-fg-strong);
-  font-size: var(--studio-card-compact-title-size);
-  line-height: 1.3;
-}
+.os__sweep > app-status-indicator { align-self: flex-start; }
 
 .os__sweep small,
 .os__row small {

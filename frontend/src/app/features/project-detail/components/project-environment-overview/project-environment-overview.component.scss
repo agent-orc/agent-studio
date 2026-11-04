@@ -42,24 +42,6 @@
   padding: var(--studio-spacing-4);
 }
 
-.project-environments__state {
-  display: inline-block;
-  color: var(--studio-fg-muted);
-  background: var(--studio-bg-hover);
-  border-radius: 4px;
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-}
-
-.project-environments__state[data-health='healthy'] {
-  color: var(--studio-success);
-  background: color-mix(in srgb, var(--studio-success) 12%, var(--studio-surface));
-}
-
-.project-environments__state[data-health='failed'] {
-  color: var(--studio-accent-6);
-  background: color-mix(in srgb, var(--studio-accent-6) 12%, var(--studio-surface));
-}
-
 @media (max-width: 700px) {
   .project-environments__card { grid-template-columns: minmax(0, 1fr); }
 }

@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, output, sign
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import { TaskService } from '../../../../services/task.service';
 import { ProjectRunbooksComponent } from '../project-runbooks/project-runbooks';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ProjectOperationsRailComponent } from '../project-operations-rail/project-operations-rail';
 
 type EnvironmentStatus = ProjectEnvironments['environments'][number];
@@ -10,7 +11,7 @@ type EnvironmentStatus = ProjectEnvironments['environments'][number];
 @Component({
   selector: 'app-project-environment-overview',
   standalone: true,
-  imports: [ProjectRunbooksComponent, ProjectOperationsRailComponent],
+  imports: [ProjectRunbooksComponent, ProjectOperationsRailComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-environment-overview.component.html',
   styleUrl: './project-environment-overview.component.scss',
@@ -44,6 +45,12 @@ export class ProjectEnvironmentOverviewComponent {
       });
       onCleanup(() => subscription.unsubscribe());
     });
+  }
+
+  healthTone(health: string): StatusTone {
+    if (health === 'healthy') return 'success';
+    if (health === 'failed') return 'danger';
+    return 'neutral';
   }
 
   healthLabel(health: string): string {

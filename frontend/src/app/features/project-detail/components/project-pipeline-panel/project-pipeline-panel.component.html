@@ -64,7 +64,7 @@
                         (click)="$event.preventDefault(); $event.stopPropagation()">i</button>
                 <span class="pp__summary-chips">
                   @if (!step.applicable) {
-                    <span class="pp__state pp__state--off">not applicable</span>
+                    <app-status-indicator tone="neutral" label="not applicable" [compact]="true" [testId]="'pipeline-step-not-applicable-chip-' + step.id" />
                   }
                   @if (hasTokenUsage(step)) {
                     <span class="pp__chip pp__chip--tokens"
@@ -202,10 +202,9 @@
                           </span>
                         }
                         @if (step.prompt) {
-                          <span class="pp__prompt-inline"
-                                [cacTooltip]="'A legacy inline override is set on this project. Prompt content should live in the registry — clear this to fall back to the bound template.'">
-                            inline override
-                          </span>
+                          <app-status-indicator tone="warning" label="inline override" [compact]="true"
+                                                detail="A legacy inline override is set on this project. Prompt content should live in the registry — clear this to fall back to the bound template."
+                                                [testId]="'pipeline-step-prompt-inline-' + step.id" />
                           <button type="button" class="pp__link"
                                   [attr.data-testid]="'pipeline-step-prompt-clear-' + step.id"
                                   [cacTooltip]="'Remove the inline override and use the registry / catalogue prompt.'"
@@ -289,7 +288,7 @@
                          [attr.data-testid]="'pipeline-step-setting-state-' + step.id">
                       <span class="pp__settings-label" role="cell">State</span>
                       <span class="pp__settings-value" role="cell">
-                        <span class="pp__setting-readonly">{{ step.deferred ? 'Deferred' : 'Planned slot' }}</span>
+                        <app-status-indicator tone="neutral" [label]="step.deferred ? 'Deferred' : 'Planned slot'" [compact]="true" [testId]="'pipeline-step-state-' + step.id" />
                       </span>
                       <span class="pp__settings-note" role="cell">{{ step.deferred ? 'Triggered by an operator action instead of automatic pickup.' : 'The slot is recorded, but implementation sits outside this executor bracket.' }}</span>
                     </div>

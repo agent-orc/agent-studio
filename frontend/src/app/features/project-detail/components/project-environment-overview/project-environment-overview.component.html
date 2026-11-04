@@ -20,7 +20,7 @@
         @for (environment of environments(); track environment.declaration.id) {
           <article class="project-environments__card" [attr.data-testid]="'project-environment-' + environment.declaration.id">
             <h3>{{ environment.declaration.name }}</h3>
-            <span class="project-environments__state" [attr.data-health]="environment.health">{{ healthLabel(environment.health) }}</span>
+            <app-status-indicator [tone]="healthTone(environment.health)" [label]="healthLabel(environment.health)" testId="project-environment-health" />
             <p>{{ environment.deployedArtifact ? 'Running ' + environment.deployedArtifact : 'Nothing deployed yet' }}</p>
             @if (environment.declaration.kind === 'stage' || environment.declaration.kind === 'production') {
               @defer (on immediate) {

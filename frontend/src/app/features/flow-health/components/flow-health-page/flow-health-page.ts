@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import type { Subscription } from 'rxjs';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { laneTone } from '../../../../models/lane-presentation';
 import { RemoteHostsService } from '../../../remote-hosts';
 import { FlowHealthService, hostPlaneSlots, type FlowHealthLoad } from '../../services/flow-health.service';
@@ -18,8 +19,12 @@ const BLOCK_DETAIL: Readonly<Record<FlowBlockKey | 'now', DetailLink>> = {
   review: { target: 'overview', label: 'Review economics' },
 };
 
-const STATUS_LABELS: Readonly<Record<FlowStatus, string>> = {
-  met: 'Met', missed: 'Missed', unknown: 'Unknown', 'not-applicable': 'Not applicable',
+/** A missed target is behind, not broken: warning, never danger (status-indicator.md). */
+const STATUS_INDICATORS: Readonly<Record<FlowStatus, { tone: StatusTone; label: string }>> = {
+  met: { tone: 'success', label: 'Met' },
+  missed: { tone: 'warning', label: 'Missed' },
+  unknown: { tone: 'neutral', label: 'Unknown' },
+  'not-applicable': { tone: 'neutral', label: 'Not applicable' },
 };
 
 const TREND_LABELS: Readonly<Record<FlowTrend, string>> = {
@@ -38,6 +43,7 @@ const LIVE_POLL_MS = 60_000;
   selector: 'app-flow-health-page',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [StatusIndicatorComponent],
   providers: [FlowHealthService],
   templateUrl: './flow-health-page.html',
   styleUrl: './flow-health-page.scss',
@@ -113,7 +119,9 @@ export class FlowHealthPageComponent implements OnDestroy {
   target(item: FlowFigure): string { return formatTarget(item.target); }
   age(minutes: number | null): string { return minutes == null ? '–' : formatAge(minutes); }
   waitTarget(minutes: number): string { return `≤ ${formatAge(minutes)}`; }
-  status(status: FlowStatus): string { return STATUS_LABELS[status]; }
+  status(status: FlowStatus): { tone: StatusTone; label: string } {
+    return STATUS_INDICATORS[status] ?? STATUS_INDICATORS.unknown;
+  }
   trendLabel(trend: FlowTrend): string { return TREND_LABELS[trend]; }
   tone(lane: string | null): string | null { return lane ? laneTone(lane) : null; }
 }
