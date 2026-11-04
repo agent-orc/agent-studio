@@ -764,6 +764,9 @@ The supported networked Compose stack starts the Operations Server and an
 outbound local Operations Agent on the private website network. The Operations
 Server has separate service and agent principals, no browser credentials, and
 a loopback-only host port for private tunnels to other enrolled hosts. Studio's
+public Docker firewall covers their addresses in the full website subnet;
+the website systemd unit verifies that the subnet rule is first in
+`DOCKER-USER` before Compose starts the public edge. Studio's
 service credential is readable only by the API's dedicated Operations group
 inside its mounted secret volume; the agent credential has a separate volume.
 Studio's `POST /api/hosts/{id}/{inspect|restart|drain|resume|logs|configuration}`
