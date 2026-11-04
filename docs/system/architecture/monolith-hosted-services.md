@@ -83,6 +83,8 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | EngineApplierCanaryService | always | apply-recover | Authority. Probes the effects of the first engine decisions after a rollout switch (AGT-3218), passes the applier canary, or rolls the profile back to the monolith and raises an operator alert with the card and its manual redrive when an effect is missing after its deadline (apply deadline while the applier runs, effect window after completion). |
 | LinkSupervisor | always | infra | Authority host |
 | GitHubAppHostCredentialService | !PD | infra | Authority host |
+| QualityStudioRevokeOutbox | always | infra | Authority host. Delivers persisted Quality Studio session revocations with bounded retries; makes no task transition decision. |
+| QualityChangeReviewOutbox | always | infra | Authority host. Delivers persisted Review Plane verdicts to Quality Studio with a seven-day retry bound; makes no task transition decision. |
 | OrchestratorChatLegacyMigrationHostedService | !PD | infra | Authority host |
 | DecisionReminderSweepHostedService | always | report | Authority host |
 | DeliveryChainReconciler | always | decide, operator | AI Operator decider `delivery-chain` (`DeliveryChainPolicy`). Effect: `DeliveryChainReconciler` moves the card; a red merge gate is still routed by `GateFailureRouter` before it may park (gate triage, a host rule in the baseline). |
@@ -149,6 +151,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | GateEnvironmentRetryHostedService | !PD | decide, operator | AI Operator decider `gate-environment-retry` (`GateEnvironmentRetryPolicy`). Effect: `GateEnvironmentRetryService` replays or parks. The operator's Retry integration intent is validated, not decided. |
 | OperatorSweepHostedService | !PD | decide, switched | `OperatorSweep` profile (`OperatorSweepPolicy`). Effect: `MonolithOrchestrationApplier` with `OperatorSweepActions`. |
 | WatcherHostedService | !PD, off by default | report | Authority host (drafts proposals, no lane move) |
+| OperatorDecisionPublisher | !PD | report | Authority host. Publishes existing facts (lanes, decision cards, watcher stall cases, batch gate, pending-push age alert, quota) as the operator decision stream (OP-2); reads the published task index generation only, so a sweep never refreshes the index or starts a scan or a git process; no lane move. |
 | EnvironmentHealthWorker | !PD, not Test | report | Authority host (IP-14 environment health checks; opens incident and certificate cards in Backlog and comments on them, no lane move) |
 | StallInterventionHostedService | !PD | decide, operator | AI Operator decider `stall-intervention` (`StallInterventionPolicy`, AGT-3207) on the AGT-3206 stall cases and due follow-up checks. Effect: `StallInterventionEffect` lowers or restores coding admission, restarts an allowlisted service through the Operations Server, reroutes a provider, reconciles the batch gate queue or pins the last delivery; it records A2 proposals and escalations. `StallIntervention:Mode` `observe` (default, "would do" receipts only), `act` or `off`; per-action switches. Held decisions are evaluated in process and never submitted. |
 | HostedVolumeBackupWorker | !PD, not Test | infra | Authority host (IP-D5 daily declared-volume backups through the host adapter; no lane decision) |

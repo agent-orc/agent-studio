@@ -185,6 +185,19 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   The `queued.reason` field is a string reason code, including
   `project-busy`, `lane-not-runnable`, `remote-execution`, and
   `delivery-under-review`; clients must not assume only `project-busy`.
+  A queued round also returns `base` when it starts from a result ref
+  (AGT-3483); `BaseRef` on the request selects another ref of the same card,
+  see the [runner domain](runner.md) for the rule and its error codes.
+- Continue (every mode), preview feedback, the orchestrator-log steer override,
+  and an operator requeue (a move or batch move into Backlog, Preparation,
+  Ready or In Progress) refuse a card that is a member of a batch under
+  isolation with `409 batch-isolation-active`, naming the flight
+  (`{ error, message, flight, project, taskKey }`; a batch move item reports
+  `rejected` with the same code). A member is under isolation while its
+  ownership names a batch whose latest phase is `Red`, its pending record is
+  active and no isolation finding released it. Eject
+  (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
+  allowed (AGT-3483, `BatchIsolationGuard`).
 
 ## Entry Points
 
@@ -1380,7 +1393,11 @@ review for that run must contain a passed `requirement-fit` verdict for coding
 or `concept-fit` for concept cards, bound to that same brief. Build and lint
 alone cannot establish content fit. A stale delivery, missing content verdict,
 failed content verdict, or verdict for an older brief refuses completion with
-the particular gap. A written `operatorOverride` records the reason, actor,
+the particular gap. When no settled report backs the check, the refusal names
+why: no review, a review for another run, an unsettled review, or a
+settlement journal that is missing or needs repair, with the journal's reason
+(AGT-3467). A journal that reads as repair also writes one
+`review_settlement_repair_required` timeline entry per card and review. A written `operatorOverride` records the reason, actor,
 current/delivery/review brief versions, and content finding in the completion
 claim and a `completion_content_overridden` timeline entry. The Human Review
 delivery panel displays these grounds, the content citations, and ran/skipped

@@ -9,13 +9,13 @@ import { dismissDevErrorDialog, setTheme, type Theme } from '../helpers/theme';
  * The formerly scattered workspace overlays (CLI usage caps, token
  * timeline, visual-evidence reel, executive summary) now live with
  * system prompts as sections of one rail+panel home, mirroring the
- * project-level settings layout. The status bar exposes a single
+ * project-level settings layout. The header exposes a single
  * "Settings" entry instead of three separate buttons; deep-links still
  * resolve to the right section.
  *
  * This spec stubs every backend route the sections poll so it runs
  * against a clean dev frontend with no backend up. It asserts:
- *   - The status-bar "Settings" button opens the home on the overview.
+ *   - The header "Settings" button opens the home on the overview.
  *   - The overview lists a card per content section.
  *   - The rail navigates between sections and each section keeps its
  *     legacy outer test id + inner component (so old deep-links/specs
@@ -86,6 +86,11 @@ async function stubBackgroundApis(page: Page) {
         defaultChangedSinceOverride: false,
         slots: [],
         usageCount: 0,
+        calls: {
+          totalCalls: 0, calls7d: 0, lastCalledAt: null, inputTokens: 0,
+          costUsd: 0, costUsd7d: 0, unpricedCalls: 0, unpricedCalls7d: 0,
+          currentVersionCalls: 0, isDead: true, daily: [], versions: [],
+        },
       },
     ],
   }));
@@ -165,7 +170,7 @@ test.describe('Workspace settings home (Dach)', () => {
   });
 
   test('Settings button opens the home; overview lists every section', async ({ page }) => {
-    const trigger = page.getByTestId('status-bar-settings');
+    const trigger = page.getByTestId('studio-titlebar-settings');
     await expect(trigger).toBeVisible();
     await trigger.click();
 
@@ -187,15 +192,15 @@ test.describe('Workspace settings home (Dach)', () => {
   });
 
   test('visual settings rail evidence in both themes', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
     if (SETTINGS_SHOT_PHASE === 'after') {
       const rail = page.getByTestId('workspace-settings-rail');
-      const rows = rail.locator('app-tree-row[data-testid^="workspace-settings-rail-"]');
+      const rows = rail.locator('app-tree-row > button[data-testid^="workspace-settings-rail-"]');
       await expect(page.getByTestId('workspace-settings-group-general')).toBeVisible();
       await expect(page.getByTestId('workspace-settings-group-global')).toBeVisible();
       await expect(page.getByTestId('workspace-settings-group-workspace')).toBeVisible();
-      await expect(rows).toHaveCount(15);
+      await expect(rows).toHaveCount(20);
       for (const row of await rows.all()) {
         await expect(row.locator('app-studio-icon')).toHaveCount(1);
         await expect(row.locator('svg')).toHaveAttribute('stroke', 'currentColor');
@@ -213,7 +218,7 @@ test.describe('Workspace settings home (Dach)', () => {
   });
 
   test('rail navigates between sections, each keeping its legacy hook', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
 
     for (const { key, overlayTestid, innerTestid } of SECTIONS) {
@@ -232,7 +237,7 @@ test.describe('Workspace settings home (Dach)', () => {
   });
 
   test('overview card jumps straight into its section', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-card-tokens').click();
     await expect(page.getByTestId('workspace-tokens-overlay')).toBeVisible();
     await expect(page.getByTestId('workspace-token-timeline')).toBeVisible({ timeout: 5_000 });
@@ -257,7 +262,7 @@ test.describe('Workspace settings home (Dach)', () => {
     }
 
     await page.getByTestId('token-usage-nav-codex').click();
-    await expect(page).toHaveURL(/#\/workspace\/tokens\/codex$/);
+    await expect(page).toHaveURL(/#\/workspace\/settings\/tokens\/codex$/);
     await expect(page.getByTestId('cli-window-analysis-codex')).toContainText('Codex usage windows');
     await page.getByTestId('cli-window-period-7d').click();
     await expect(page.getByTestId('cli-window-period-7d')).toHaveAttribute('aria-pressed', 'true');
@@ -288,7 +293,7 @@ test.describe('Workspace settings home (Dach)', () => {
   });
 
   test('legacy modal close button dismisses the home when modal layout is active', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
     test.skip(await page.getByTestId('workspace-settings-close').count() === 0, 'Studio layout renders Settings inline');
     await page.getByTestId('workspace-settings-close').click();

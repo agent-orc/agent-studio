@@ -120,6 +120,9 @@
 
       @case ('evidence') {
         <section class="evidence-view" data-testid="evidence-view">
+          @if (job(); as j) {
+            <app-quality-panel [job]="j" [evidence]="reviewEvidence()" />
+          }
           @if (screenshots().length > 0) {
             <div class="ev-section" data-testid="ev-section-visual">
               <div class="ev-section-head">
@@ -147,7 +150,7 @@
               </div>
             }
             <app-review-evidence-panel
-              [entries]="reviewEvidence()"
+              [entries]="otherReviewEvidence()"
               [job]="j"
               (acknowledge)="evidenceAcknowledge.emit($event)"
               (createFollowup)="evidenceCreateFollowup.emit($event)" />

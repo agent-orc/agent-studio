@@ -4,6 +4,10 @@ Canonical entrypoint: [index.html](index.html). Source concept: AGT-2913.
 
 The five operator decisions dated 25 September 2026 are settled. Human sight review remains pending. `decision-pending` is the required delivery descriptor status.
 
+## Placement superseded
+
+On 2026-11-01 the operator moved subscription usage to the Studio footer. The production header is a single navigation row; the header usage row and responsive chip fit described by this historical Dossier no longer govern production placement. Its screenshots remain concept evidence for the earlier decision.
+
 ## Files
 
 - `index.html`: house article, usage/data/state/responsive contracts, evidence and decisions.

@@ -8,8 +8,8 @@ import type {
 import type { UsageAlarm } from './usage-alarm.policy';
 
 /**
- * Pure view models for the header usage chips (HUC-S2,
- * docs/header-usage-cockpit/index.html "Chip states").
+ * Pure view models for the footer usage entries and usage detail. The
+ * historical gallery also uses the chip variants below.
  *
  * The rules that matter live here, not in templates:
  * - percentages mean quota used, keep at most one decimal and are never clamped;
@@ -23,6 +23,13 @@ import type { UsageAlarm } from './usage-alarm.policy';
  * present the latched alarms they are given.
  */
 export type UsageChipState = 'normal' | 'loading' | 'unknown' | 'stale' | 'suspicious' | 'partial';
+/** Historical chip variants used only by the static usage gallery. */
+export type UsageChipFit = 'full' | 'compact' | 'abbreviated' | 'bare';
+
+export function cliAbbreviation(cliId: string): string {
+  const names: Record<string, string> = { claude: 'CL', codex: 'CX', copilot: 'CP', gemini: 'GM' };
+  return names[cliId.toLowerCase()] ?? cliId.slice(0, 3).toUpperCase();
+}
 
 /** Visible replacement for a value the source did not report. */
 export const NOT_AVAILABLE = 'N/A';

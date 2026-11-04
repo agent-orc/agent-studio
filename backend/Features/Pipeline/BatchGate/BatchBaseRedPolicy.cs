@@ -8,10 +8,10 @@ internal static class BatchBaseRedPolicy
                 process.Resources?.AverageExternalCpuPercent >= 25);
 
     internal static IReadOnlyList<string> FailedTests(BuildTestGateResult result)
-        => result.Processes.Where(process => process.ExitCode != 0)
+        => result.RecordedFailedTests.Concat(result.Processes.Where(process => process.ExitCode != 0)
             .SelectMany(process => (process.TestReport?.FailedTests ?? [])
                 .Concat(GateFlakyRerunPolicy.ParseFailedTests(
-                    process.StandardOutput + "\n" + process.StandardError)))
+                    process.StandardOutput + "\n" + process.StandardError))))
             .Concat(result.TestShards.SelectMany(suite => suite.Shards)
                 .SelectMany(shard => shard.FailedTests))
             .Except(result.FlakyQuarantinedFailures, StringComparer.Ordinal)

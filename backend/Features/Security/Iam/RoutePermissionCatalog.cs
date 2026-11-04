@@ -179,6 +179,12 @@ public static class RoutePermissionCatalog
         // The move tool reads this health probe from inside the API container;
         // the endpoint itself rejects non-loopback callers before returning host facts.
         Add("GET", IamPermissions.Anonymous, "/healthz/readiness");
+        Add("R", IamPermissions.Anonymous, "/.well-known/agent-studio/jwks.json");
+        Add("R", IamPermissions.WorkspaceAdminister, "/api/integrations/quality-studio/connection");
+        Add("W", IamPermissions.WorkspaceAdminister, "/api/integrations/quality-studio/connection", "/api/integrations/quality-studio/token",
+            "/api/integrations/quality-studio/projects/{}/repository");
+        AddProjectChecked("R", IamPermissions.ProjectRead, "/api/integrations/quality-studio/status",
+            "/api/integrations/quality-studio/open");
         Add("*", IamPermissions.Anonymous, "/healthz/**");
         Add("R", IamPermissions.Anonymous, "/api/auth/status", "/recovery");
         Add("POST", IamPermissions.Anonymous,
@@ -329,6 +335,15 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.ProjectRead, "/api/orchestration/decision-receipts/**");
         AddProjectChecked("POST", IamPermissions.ProjectRunsOperate,
             "/api/orchestration/decision-receipts/{}/operator-intent");
+
+        // Operator decision stream and watcher lease (operator agent level
+        // OP-2). The stream handlers filter events per readable project. The
+        // lease is one per installation; holding it needs a binding that may
+        // operate runs in at least one project.
+        Add("R", IamPermissions.ProjectRead,
+            "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease");
+        AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
+            "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
 
         // --- Workspace administration, settings, and operation -------------
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/usage-calendar");

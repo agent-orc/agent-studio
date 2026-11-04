@@ -1,0 +1,66 @@
+.quality-panel {
+  display: grid;
+  gap: var(--studio-spacing-3);
+  padding: var(--studio-spacing-4) 0;
+  border-bottom: 1px solid var(--studio-border);
+  color: var(--studio-fg);
+}
+.quality-panel__header,
+.quality-panel__actions,
+.quality-panel__counts,
+.quality-panel__finding-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+}
+.quality-panel__header h3 { margin: 0; font-size: 1rem; }
+.quality-panel__context,
+.quality-panel__range,
+.quality-panel__delta,
+.quality-panel__landed { color: var(--studio-fg-muted); font-size: .84rem; margin: 0; }
+.quality-panel__range,
+.quality-panel__count { font-variant-numeric: tabular-nums; }
+.quality-panel__badge,
+.quality-panel__count {
+  border-radius: 999px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  background: var(--studio-bg-hover);
+  color: var(--studio-fg);
+  font-size: .76rem;
+}
+.quality-panel__badge[data-state="block"],
+.quality-panel__count[data-severity="critical"],
+.quality-panel__count[data-severity="high"] {
+  background: color-mix(in srgb, var(--studio-error) 14%, transparent);
+  color: var(--studio-error);
+}
+.quality-panel__badge[data-state="concerns"],
+.quality-panel__count[data-severity="medium"] {
+  background: color-mix(in srgb, var(--studio-warn) 14%, transparent);
+  color: var(--studio-warn);
+}
+.quality-panel__badge[data-state="pass"] {
+  background: color-mix(in srgb, var(--studio-success) 14%, transparent);
+  color: var(--studio-success);
+}
+.quality-panel__findings { display: grid; gap: var(--studio-spacing-2); padding: 0; margin: 0; list-style: none; }
+.quality-panel__finding {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-spacing-2);
+  background: var(--studio-bg-hover);
+  border-radius: var(--studio-spacing-2);
+  font-size: .84rem;
+}
+.quality-panel__finding code { overflow-wrap: anywhere; }
+.quality-panel__actions button,
+.quality-panel__landed button,
+.quality-panel__actions select {
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-spacing-1);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg);
+  padding: var(--studio-spacing-2);
+  cursor: pointer;
+}

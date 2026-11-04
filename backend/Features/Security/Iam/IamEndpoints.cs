@@ -40,32 +40,51 @@ public static class IamEndpoints
                     decision.GrantingBindings.Select(binding => binding.Id).ToList(), decision.Reason));
             })).RequirePermission(IamPermissions.AccessRead);
 
-        iam.MapPost("/groups", (CreateGroupRequest request, HttpContext context, AccessSecurityStore store) =>
+        iam.MapPost("/groups", (CreateGroupRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             AccessSecurityEndpoints.Execute(() =>
-                Results.Ok(store.CreateGroup(request, Require(context, store, IamPermissions.AccessManage)))))
+            {
+                var result = store.CreateGroup(request, Require(context, store, IamPermissions.AccessManage));
+                RevokeUsers(store, revokes);
+                return Results.Ok(result);
+            }))
             .RequirePermission(IamPermissions.AccessManage);
 
-        iam.MapPut("/groups/{id}", (string id, UpdateGroupRequest request, HttpContext context, AccessSecurityStore store) =>
+        iam.MapPut("/groups/{id}", (string id, UpdateGroupRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             AccessSecurityEndpoints.Execute(() =>
-                Results.Ok(store.UpdateGroup(id, request, Require(context, store, IamPermissions.AccessManage)))))
+            {
+                var result = store.UpdateGroup(id, request, Require(context, store, IamPermissions.AccessManage));
+                RevokeUsers(store, revokes);
+                return Results.Ok(result);
+            }))
             .RequirePermission(IamPermissions.AccessManage);
 
-        iam.MapDelete("/groups/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+        iam.MapDelete("/groups/{id}", (string id, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             AccessSecurityEndpoints.Execute(() =>
             {
                 store.DeleteGroup(id, Require(context, store, IamPermissions.AccessManage));
+                RevokeUsers(store, revokes);
                 return Results.NoContent();
             })).RequirePermission(IamPermissions.AccessManage);
 
-        iam.MapPost("/bindings", (IamBindingRequest request, HttpContext context, AccessSecurityStore store) =>
+        iam.MapPost("/bindings", (IamBindingRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             AccessSecurityEndpoints.Execute(() =>
-                Results.Ok(store.AddBinding(request, Require(context, store, IamPermissions.AccessManage)))))
+            {
+                var result = store.AddBinding(request, Require(context, store, IamPermissions.AccessManage));
+                RevokeUsers(store, revokes);
+                return Results.Ok(result);
+            }))
             .RequirePermission(IamPermissions.AccessManage);
 
-        iam.MapDelete("/bindings/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+        iam.MapDelete("/bindings/{id}", (string id, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             AccessSecurityEndpoints.Execute(() =>
             {
                 store.RemoveBinding(id, Require(context, store, IamPermissions.AccessManage));
+                RevokeUsers(store, revokes);
                 return Results.NoContent();
             })).RequirePermission(IamPermissions.AccessManage);
 
@@ -102,6 +121,11 @@ public static class IamEndpoints
 
         iam.MapOperatorAgentEndpoints();
         iam.MapOperatorKillSwitchEndpoints();
+    }
+
+    private static void RevokeUsers(AccessSecurityStore store, AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes)
+    {
+        foreach (var user in store.ReadIamSnapshot().Users) revokes.EnqueueSub(user.Id);
     }
 
     /// <summary>Returns the acting user's id once the workspace-level permission holds.</summary>

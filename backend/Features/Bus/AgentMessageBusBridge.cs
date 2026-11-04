@@ -749,6 +749,24 @@ public sealed class AgentMessageBusBridge
         return EmitAsync(msg, ct);
     }
 
+    public Task EmitQualityChangeReviewDeliveryExpiredAsync(string cardKey, string repositoryId,
+        string key, CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "error",
+            severity: "Warn",
+            project: null,
+            jobId: cardKey,
+            topic: "quality-change-review-delivery-expired",
+            summary: TruncateSummary($"Quality Studio verdict delivery expired for {cardKey}."),
+            body: $"Repository: {repositoryId}\nVerdict key: {key}\nThe seven-day retry window ended.",
+            payload: new { cardKey, repositoryId, key },
+            tags: ["quality-studio", "change-review-delivery-expired"]);
+        return EmitAsync(msg, ct);
+    }
+
     /// <summary>Signals a blocked acceptance lane once per observed lane incident.</summary>
     public Task EmitAcceptanceLaneBlockedAsync(string project, string branch, string? repository,
         string deliverySha, string containment, CancellationToken ct = default)

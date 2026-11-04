@@ -174,7 +174,7 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
     group: 'quality',
     label: 'Quality Studio',
     panelTitle: 'Quality Studio',
-    description: 'Repository registration and Quality Studio connection',
+    description: 'Repository registration, status, and dashboard jump',
     empty: 'Repository registration is pending.',
     icon: '✓',
     railIcon: 'check',

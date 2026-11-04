@@ -24,7 +24,9 @@
     <PackageReference Include="HtmlSanitizer" Version="9.2.1039" />
     <!-- Used directly by the docs and pipeline HTML parsers; pinned past GHSA-pgww-w46g-26qg (patched in 1.5.0). -->
     <PackageReference Include="AngleSharp" Version="1.7.2" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <!-- Decodes uploaded artifact images; 3.2.0 patches GHSA-v76p-62qx-wwq2, GHSA-gwg2-r3hj-4w44,
+         GHSA-j3p4-wp97-rph4, GHSA-j9gm-c75j-xc9q, GHSA-wmxv-xphr-5c9g and GHSA-jjfr-hcj7-qf5w. -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.2.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <ProjectReference Include="..\contracts\TaskServer.Contracts\TaskServer.Contracts.csproj" />
@@ -121,6 +123,7 @@
     <Using Include="AgentStudio.Git" />
     <Using Include="AgentStudio.Host" />
     <Using Include="AgentStudio.Management" />
+    <Using Include="AgentStudio.Operator" />
     <Using Include="AgentStudio.Orchestrator" />
     <Using Include="AgentStudio.Persistence" />
     <Using Include="AgentStudio.Pipeline" />

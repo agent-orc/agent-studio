@@ -32,11 +32,11 @@ public partial class GitService
 
         if (decision.Action == LaneDivergenceAction.Stall)
         {
-            var unpublished = decision.Unpublished
-                .Select(commit => commit.DeliverySha is null
+            var unpublished = decision.Unpublished.Select(commit =>
+                commit.DeliverySha is null
                     ? commit.CommitSha
-                    : $"{commit.CommitSha} (delivery {commit.DeliverySha})")
-                .ToArray();
+                    : $"{commit.CommitSha}{(commit.CardKey is null ? "" : " " + commit.CardKey)} " +
+                      $"(delivery {commit.DeliverySha})").ToArray();
             _logger.LogWarning(
                 "Integration lane {Lane} ({LaneSha}) at {Path} diverged from {Published} ({PublishedSha}); unpublished commits: {Unpublished}",
                 lane,
@@ -91,13 +91,17 @@ public partial class GitService
         {
             var (parents, _, parentCode) = RunGitArgs(repoRoot, "show", "-s", "--format=%P", commit);
             var pair = parents.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parentCode != 0 || pair.Length != 2)
+            var delivery = parentCode == 0 && pair.Length == 2
+                ? pair[1]
+                : parentCode == 0 && pair.Length == 1
+                    ? NetChangeSource(repoRoot, commit)
+                    : null;
+            if (delivery is null)
             {
                 facts.Add(new LaneCommitFacts(commit, null, false));
                 continue;
             }
 
-            var delivery = pair[1];
             if (IsDeliveryInPublished(repoRoot, delivery, publishedTip))
             {
                 facts.Add(new LaneCommitFacts(commit, delivery, true));
@@ -118,6 +122,35 @@ public partial class GitService
                 successor is not null && IsDeliveryInPublished(repoRoot, successor, publishedTip)));
         }
         return facts;
+    }
+
+    private static string? NetChangeSource(string repoRoot, string commit)
+    {
+        var (message, _, code) = RunGitArgs(repoRoot, "show", "-s", "--format=%B", commit);
+        if (code != 0) return null;
+        const string trailer = "Agent-Studio-Net-Change-Of: ";
+        var source = message.Split('\n', StringSplitOptions.TrimEntries)
+            .LastOrDefault(line => line.StartsWith(trailer, StringComparison.Ordinal));
+        if (source is not null)
+        {
+            var sha = source[trailer.Length..];
+            return ReviewSubjectStore.IsValidResultSha(sha) && CommitExists(repoRoot, sha) ? sha : null;
+        }
+
+        const string legacySubject = "Integrate net change from ";
+        var subject = message.Split('\n', 2)[0].Trim();
+        if (!subject.StartsWith(legacySubject, StringComparison.Ordinal)) return null;
+        var abbreviated = subject[legacySubject.Length..];
+        if (abbreviated.Length is < 7 or > 40 || !abbreviated.All(Uri.IsHexDigit)) return null;
+        var (resolved, _, resolveCode) = RunGitArgs(repoRoot, "rev-parse", "--verify", abbreviated + "^{commit}");
+        var full = resolved.Trim();
+        return resolveCode == 0 && ReviewSubjectStore.IsValidResultSha(full) ? full : null;
+    }
+
+    private static bool CommitExists(string repoRoot, string sha)
+    {
+        var (_, _, code) = RunGitArgs(repoRoot, "cat-file", "-e", sha + "^{commit}");
+        return code == 0;
     }
 
     /// <summary>Ancestry, full-tree containment, or patch equivalence of every delivery commit.</summary>

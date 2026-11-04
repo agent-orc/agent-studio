@@ -165,7 +165,8 @@ public sealed class BatchMoveItemExecutor(
     TaskScannerService scanner,
     RunLeaseService leases,
     AttemptAuthorityService authority,
-    TimelineLog timeline) : IBatchMoveItemExecutor
+    TimelineLog timeline,
+    AgentStudio.Pipeline.BatchIsolationGuard isolation) : IBatchMoveItemExecutor
 {
     public async Task<BatchMoveItemResult> ExecuteAsync(
         BatchMoveItem item,
@@ -176,6 +177,15 @@ public sealed class BatchMoveItemExecutor(
         try
         {
             var card = scanner.FindJob(item.JobId, item.WatchPath);
+            if (card is not null
+                && AgentStudio.Pipeline.BatchIsolationGuardPolicy.IsRequeue(card.State, item.TargetState)
+                && isolation.Find(card) is { } isolating)
+                return new BatchMoveItemResult
+                {
+                    JobId = item.JobId,
+                    Status = "rejected",
+                    Message = $"{AgentStudio.Pipeline.BatchIsolationGuardPolicy.Code}: flight {isolating.FlightId}",
+                };
             var live = card is not null && item.TargetState != card.State
                 ? leases.Peek(card.TaskKey).Lease : null;
             var intent = RunDispositionPolicy.ParseMoveIntent(item.RunIntent);

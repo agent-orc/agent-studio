@@ -319,13 +319,20 @@ public static class RunnerEndpoints
         // continuable state, routes the new direction through the existing
         // Continue path so the override actually takes effect on the agent.
         runnerGroup.MapPost("/{projectName}/orchestrator-log/override",
-            async (string projectName, OrchestratorOverrideRequest req, TaskScannerService scanner, OrchestratorLog log, TaskRunnerService runner, CancellationToken ct) =>
+            async (string projectName, OrchestratorOverrideRequest req, TaskScannerService scanner, OrchestratorLog log, TaskRunnerService runner, AgentStudio.Pipeline.BatchIsolationGuard isolation, CancellationToken ct) =>
             {
                 if (string.IsNullOrWhiteSpace(req?.NewDirection))
                     return Results.BadRequest(new { error = "newDirection is required" });
 
                 var watchEntry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name == projectName);
                 if (watchEntry == null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+                // AGT-3483: the override is a steer; a member of an isolating
+                // batch takes no steer until isolation ends.
+                if (!string.IsNullOrWhiteSpace(req.JobId)
+                    && scanner.FindJob(req.JobId, watchEntry.Path) is { } steered
+                    && isolation.Find(steered) is { } isolating)
+                    return Results.Json(AgentStudio.Pipeline.BatchIsolationGuardPolicy.Body(isolating),
+                        statusCode: StatusCodes.Status409Conflict);
 
                 // Always record the intervention in the feed, regardless of
                 // whether we can route the follow-up. The audit trail is

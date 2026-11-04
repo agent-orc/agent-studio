@@ -168,7 +168,7 @@ public static class TaskRunnerEndpoints
                 : Results.NotFound();
         });
 
-        group.MapPost("/{jobId}/continue", async (string jobId, string? project, string? watchPath, ContinueJobRequest req, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, MonolithOrchestrationStore orchestration, TaskScannerService scanner, HttpContext context, CancellationToken ct) =>
+        group.MapPost("/{jobId}/continue", async (string jobId, string? project, string? watchPath, ContinueJobRequest req, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, MonolithOrchestrationStore orchestration, TaskScannerService scanner, AgentStudio.Pipeline.BatchIsolationGuard isolation, HttpContext context, CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (string.IsNullOrWhiteSpace(req?.Prompt))
@@ -176,6 +176,11 @@ public static class TaskRunnerEndpoints
 
             var mode = ContinueModes.Normalize(req.Mode);
             var prior = scanner.FindJob(jobId, watchPath);
+            // AGT-3483: no continue, steer or extend round for a member of a
+            // batch under isolation; eject stays allowed.
+            if (prior is not null && isolation.Find(prior) is { } isolating)
+                return Results.Json(AgentStudio.Pipeline.BatchIsolationGuardPolicy.Body(isolating),
+                    statusCode: StatusCodes.Status409Conflict);
             IReadOnlyList<string> openDecisions = prior is null
                 ? [] : orchestration.OpenLaneDecisionIds(prior.ProjectName, prior.Id);
             try
@@ -183,13 +188,17 @@ public static class TaskRunnerEndpoints
                 var caller = context.User.Identity?.Name
                     ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
                     ?? "local-default";
-                var resp = await runner.ContinueJobAsync(jobId, req.Prompt, watchPath, req.Model, req.CliType, req.ThinkingLevel, mode, req.ModeOverride, author: TimelineActors.Human(caller), ct: ct, reason: req.Reason, triggeredBy: caller);
+                var resp = await runner.ContinueJobAsync(jobId, req.Prompt, watchPath, req.Model, req.CliType, req.ThinkingLevel, mode, req.ModeOverride, author: TimelineActors.Human(caller), ct: ct, reason: req.Reason, triggeredBy: caller, baseRef: req.BaseRef);
                 if (prior is not null && scanner.FindJob(jobId, watchPath) is { } current)
                     await orchestration.SupersedeRunsAsync(prior.ProjectName, prior.Id,
                         openDecisions, current.State, "operator-continue", ct);
                 return resp.Status is "queued" or "saved"
                     ? Results.Accepted(value: resp)
                     : Results.Ok(resp);
+            }
+            catch (TaskOperationException ex) when (ex.Code is not null)
+            {
+                return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status);
             }
             catch (TaskOperationException ex)
             {
@@ -200,10 +209,14 @@ public static class TaskRunnerEndpoints
         group.MapPost("/{jobId}/preview-feedback", async (
             string jobId, string? project, string? watchPath, HttpContext context,
             TaskScannerService scanner, TaskMutationService mutations, TaskRunnerService runner,
-            AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) =>
+            AgentStudio.Registry.ProjectRegistry projects, AgentStudio.Pipeline.BatchIsolationGuard isolation,
+            CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            if (scanner.FindJob(jobId, watchPath) is null) return Results.NotFound();
+            if (scanner.FindJob(jobId, watchPath) is not { } card) return Results.NotFound();
+            if (isolation.Find(card) is { } isolating)
+                return Results.Json(AgentStudio.Pipeline.BatchIsolationGuardPolicy.Body(isolating),
+                    statusCode: StatusCodes.Status409Conflict);
             if (!context.Request.HasFormContentType)
                 return Results.BadRequest(new { error = "A screenshot crop and comment are required." });
 
