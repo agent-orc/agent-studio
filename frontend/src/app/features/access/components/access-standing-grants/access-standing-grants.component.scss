@@ -1,0 +1,26 @@
+@use '../../access-controls' as access;
+
+:host { display: block; min-width: 0; }
+@include access.controls;
+@include access.table;
+.grants { display: flex; flex-direction: column; gap: var(--studio-spacing-3); }
+.grants__catalogue { display: flex; flex-direction: column; gap: var(--studio-spacing-1); margin: 0; padding: 0; list-style: none; font-size: 0.78rem; }
+.grants__catalogue li { display: flex; align-items: baseline; gap: var(--studio-spacing-2); }
+.grants__catalogue .access-badge { flex: none; min-width: 6.5rem; text-align: center; }
+.grants__operations { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1) var(--studio-spacing-3); color: var(--studio-fg); }
+// Tiers read as a quiet ladder through tint, never as an alarm (R1, R4).
+.access-badge[data-tier='T0'] { background: var(--studio-surface-muted); color: var(--studio-fg); }
+.access-badge[data-tier='T1'] { background: color-mix(in srgb, var(--studio-accent-teal) 18%, transparent); color: var(--studio-fg-strong); }
+.access-badge[data-tier='T2'] { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-fg-strong); }
+.access-badge[data-tone='active'] { background: color-mix(in srgb, var(--studio-success) 16%, transparent); color: var(--studio-fg-strong); }
+.grants__scroll { overflow-x: auto; }
+.grants__reason { max-width: 18rem; }
+.grants__create { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }
+.grants__choices { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1) var(--studio-spacing-3); margin: 0; padding: 0; border: 0; }
+.grants__choices legend { padding: 0; margin-bottom: var(--studio-spacing-1); font-size: 0.78rem; color: var(--studio-fg-muted); }
+// The shared label stacks its control; a checkbox choice reads as one line.
+.grants__choice { flex-direction: row; align-items: center; gap: var(--studio-spacing-1); color: var(--studio-fg); font-size: 0.78rem; }
+.grants__choice input { width: auto; min-width: 0; min-height: 0; margin: 0; padding: 0; }
+.grants__scope { color: var(--studio-fg-dim); }
+.grants__wide { flex: 1; min-width: 16rem; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
