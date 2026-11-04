@@ -47,7 +47,9 @@ public sealed class OperatorKillSwitchIntegrationTests(ITestOutputHelper output)
         Directory.CreateDirectory(OperationsDirectory);
         File.WriteAllText(RevokerCredentialFile, _revokerToken);
         SavePrincipals(operatorAgentId: "not-created-yet");
-        var builder = WebApplication.CreateBuilder();
+        // Its own content root: the test output folder holds the Studio appsettings.json, whose
+        // AllowedHosts would make host filtering answer 400 to every Operations Server request.
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { ContentRootPath = OperationsDirectory });
         builder.WebHost.UseTestServer();
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -215,10 +217,10 @@ public sealed class OperatorKillSwitchIntegrationTests(ITestOutputHelper output)
 
         // Studio is stopped. The command on the control plane host applies the kill itself. The in-process
         // Operations Server is not reachable from it, so the host revocation stays pending for the API.
-        var output = new StringWriter();
-        var exit = await OperatorKillSwitchCommand.RunAsync(["--reason", "Studio unreachable"], output, StudioConfiguration());
+        var commandOutput = new StringWriter();
+        var exit = await OperatorKillSwitchCommand.RunAsync(["--reason", "Studio unreachable"], commandOutput, StudioConfiguration());
         Assert.Equal(OperatorKillSwitchCommand.ExitOperationsServerPending, exit);
-        Assert.Contains("The Studio API is stopped", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains("The Studio API is stopped", commandOutput.ToString(), StringComparison.Ordinal);
         var offline = new AccessSecurityStore(StudioConfiguration(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<AccessSecurityStore>.Instance);
         var entry = Assert.Single(offline.ControlPlaneAudit.ReadNewest(candidate => candidate.Operation == "operator-kill.all", 10));
