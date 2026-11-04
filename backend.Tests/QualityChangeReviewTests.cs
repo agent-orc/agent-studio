@@ -6,6 +6,8 @@ using AgentStudio.Pipeline;
 using AgentStudio.QualityStudio;
 using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -104,6 +106,47 @@ public sealed class QualityChangeReviewTests : IDisposable
         Assert.Equal("unavailable", QualityChangeReviewProjection.State("repo", round.HeadSha, round, "4-review"));
         Assert.Equal("outdated", QualityChangeReviewProjection.State("repo", new string('c', 40), round, "4-review"));
         Assert.Equal("not-registered", QualityChangeReviewProjection.State(null, round.HeadSha, round, "4-review"));
+        Assert.Equal("not-reviewed", QualityChangeReviewProjection.State("repo", round.HeadSha,
+            round with { Document = JsonSerializer.SerializeToElement(new { findings = Array.Empty<object>() }) },
+            "4-review"));
+    }
+
+    [Fact]
+    public void Board_scan_uses_latest_indexes_for_many_review_cards_without_round_files()
+    {
+        var watch = Path.Combine(root, "watch");
+        var lane = Path.Combine(watch, TaskStates.AutoReview);
+        Directory.CreateDirectory(lane);
+        const int cardCount = 120;
+        for (var i = 0; i < cardCount; i++)
+        {
+            var id = $"card-{i:000}";
+            var folder = Path.Combine(lane, id);
+            Directory.CreateDirectory(Path.Combine(folder, "logs"));
+            File.WriteAllText(Path.Combine(folder, "task.json"),
+                JsonSerializer.Serialize(new { id, title = id, state = TaskStates.AutoReview,
+                    order = i, agent = "claude", ownerClientId = "test-client" }));
+            var head = i.ToString("x40");
+            var task = new TaskInfo { FolderPath = folder, TaskKey = id };
+            Assert.NotNull(QualityChangeReviewStore.Project(task, Review("review-" + id, "run-" + id, head),
+                Report(new string('a', 40), head, "block"), "repo", Now));
+            // The full board scan must retain the verdict from its small index
+            // even when the detailed round documents are no longer readable.
+            foreach (var roundPath in Directory.EnumerateFiles(
+                         Path.Combine(folder, "results", "quality-studio"), "review-*.json"))
+                File.Delete(roundPath);
+        }
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["WatchPaths:0:Name"] = "test",
+            ["WatchPaths:0:Path"] = watch,
+        }).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var cards = scanner.ScanAllJobsRaw();
+        Assert.Equal(cardCount, cards.Count);
+        Assert.All(cards, card => Assert.Equal("block", card.QualityStudioVerdict));
     }
 
     private void Init()
