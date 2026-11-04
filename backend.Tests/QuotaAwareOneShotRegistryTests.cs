@@ -4,6 +4,7 @@ using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -147,12 +148,24 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
 
         var jobFolder = Path.Combine(_root, "aspect-job");
         Directory.CreateDirectory(jobFolder);
-        await aspect.RunAsync(new AspectRunInputs(
+        var deferredEnvelope = await aspect.RunViaOneShotAsync(
+            "requirement-fit", CliTypes.Gemini, "gemini-review-model", "review this change",
+            null, TimeSpan.FromSeconds(2), jobFolder, "quota-test", "aspect-job",
+            CancellationToken.None);
+        using (var deferred = JsonDocument.Parse(deferredEnvelope))
+        {
+            Assert.True(deferred.RootElement.GetProperty("quotaDeferred").GetBoolean());
+            Assert.Contains("[quota-deferred]",
+                deferred.RootElement.GetProperty("error").GetString());
+        }
+        var report = await aspect.RunAsync(new AspectRunInputs(
                 Project: "quota-test", JobId: "aspect-job", JobTitle: "Review a change",
                 JobFolderPath: jobFolder, TaskBody: "Review this change.", RecentLog: "",
                 DiffSummary: "One file changed.", StatusSummary: "Done."),
             ["requirement-fit"], CliTypes.Gemini, "gemini-review-model",
             TimeSpan.FromSeconds(2), CancellationToken.None);
+        Assert.True(report.HasQuotaDeferred);
+        Assert.False(report.HasInfraFailure);
 
         var decision = registry.SelectDirect(new CliOneShotRequest(
             CliTypes.Gemini, "gemini-review-model", "review this change")
@@ -169,6 +182,18 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
             && entry.Kind == SelectionLedgerKinds.Waiting
             && entry.Project == "quota-test"
             && entry.TaskKey == "aspect-job");
+
+        preference.Set(CliTypes.Gemini, active: false, resetAt: null);
+        aspect.CliRunner = (_, _, _, _, _, _) =>
+            Task.FromResult("[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]");
+        var resumed = await aspect.RunAsync(new AspectRunInputs(
+                Project: "quota-test", JobId: "aspect-job", JobTitle: "Review a change",
+                JobFolderPath: jobFolder, TaskBody: "Review this change.", RecentLog: "",
+                DiffSummary: "One file changed.", StatusSummary: "Done."),
+            ["requirement-fit"], CliTypes.Gemini, "gemini-review-model",
+            TimeSpan.FromSeconds(2), CancellationToken.None);
+        Assert.False(resumed.HasQuotaDeferred);
+        Assert.Equal(AspectStatus.Pass, Assert.Single(resumed.Verdicts).Status);
     }
 
     [Fact]

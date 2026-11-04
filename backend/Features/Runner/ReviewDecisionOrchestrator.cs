@@ -2745,6 +2745,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         };
         var report = await _aspectRunner.RunAsync(inputs, enabledAspects, cliBinary, aspectModel, perAspectTimeout, ct,
             modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect, modelSourceForAspect);
+        if (report.HasQuotaDeferred) return;
         if (ReviewResultWasSuperseded(current, entry, aspectSubject, report)) return;
         if (scopedReview.CarriedVerdicts.Count > 0)
         {
