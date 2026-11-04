@@ -389,6 +389,15 @@ public static class ModelSelectionPlanner
         var holdSwitch = ShouldHoldSwitch(facts, primarySnapshot, cli);
         var preferFallback = preference?.Active == true || holdSwitch;
         var route = facts.Routing is null ? null : ResolveConfiguredRoute();
+        if (holdSwitch && preference?.Active != true && route?.IsFallback == true)
+            route = route with
+            {
+                Reason = "holding the quota fallback until the primary return rule clears",
+                FallbackReason = "quota-cap",
+                FallbackSource = facts.ActiveSwitch?.Equivalence?.Source ?? route.FallbackSource,
+                CatalogueVersion = facts.ActiveSwitch?.Equivalence?.CatalogueVersion ?? route.CatalogueVersion,
+                CapabilityClass = facts.ActiveSwitch?.Equivalence?.CapabilityClass ?? route.CapabilityClass,
+            };
 
         CliRouteDecision ResolveConfiguredRoute()
         {

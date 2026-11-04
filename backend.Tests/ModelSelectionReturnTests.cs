@@ -142,6 +142,22 @@ public sealed class ModelSelectionReturnTests
         Assert.Equal(SelectionOutcome.Fallback, ModelSelectionPlanner.Plan(Request, facts).Outcome);
     }
 
+    [Fact]
+    public void Held_quota_switch_keeps_the_quota_reason()
+    {
+        var first = ModelSelectionPlanner.Plan(Request, Facts(Start, 96, 10));
+        var active = SelectionLedgerEntry.For(Request, first, "simulation", "switch", Start)!;
+        var held = ModelSelectionPlanner.Plan(Request, Facts(Start.AddMinutes(10), 94, 10) with
+        {
+            ActiveSwitch = active,
+        });
+
+        Assert.Equal(SelectionOutcome.Fallback, held.Outcome);
+        Assert.Equal(SelectionRules.QuotaCap, held.Rule);
+        Assert.Equal("quota-cap", held.Fallback?.Reason);
+        Assert.Equal(first.Equivalence?.Source, held.Equivalence?.Source);
+    }
+
     private static SelectionFacts Facts(DateTime at, double primary, double target) => new()
     {
         NowUtc = at,
