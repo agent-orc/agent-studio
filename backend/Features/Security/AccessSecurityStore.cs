@@ -1180,7 +1180,7 @@ public sealed partial class AccessSecurityStore
         // unchanged file on the next load.
         var fromVersion = loaded.IamVersion;
         var migrated = Copy(loaded);
-        MigrateToRoleBindings(migrated);
+        var tokenMigrations = MigrateToRoleBindings(migrated);
         if (!persisted)
         {
             _state = migrated;
@@ -1193,6 +1193,7 @@ public sealed partial class AccessSecurityStore
             users = migrated.Users.Count, bindings = migrated.RoleBindings.Count,
             serviceAccounts = migrated.ServiceAccounts.Count, backup = Path.GetFileName(backup),
         });
+        AuditApiTokenRoleMigrations(tokenMigrations);
         _logger.LogInformation(
             "Migrated access state from IAM version {From} to {To}: {Users} users, {Bindings} bindings, {Accounts} service accounts; legacy copy at {Backup}",
             fromVersion, CurrentIamVersion, migrated.Users.Count, migrated.RoleBindings.Count, migrated.ServiceAccounts.Count, backup);
