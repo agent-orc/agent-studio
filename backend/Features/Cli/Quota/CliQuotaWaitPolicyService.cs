@@ -117,11 +117,4 @@ public sealed class CliQuotaWaitPolicyService
 
 public sealed record CliQuotaWaitPolicy(bool Enabled, int ThresholdMinutes);
 
-public sealed record ResolvedCliQuotaWaitPolicy(
-    bool Enabled,
-    int ThresholdMinutes,
-    string Source,
-    bool? ProjectEnabled,
-    int? ProjectThresholdMinutes,
-    bool GlobalEnabled,
-    int GlobalThresholdMinutes);
+// ResolvedCliQuotaWaitPolicy lives in the contracts package (ModelSelection/QuotaDecisionContracts.cs).

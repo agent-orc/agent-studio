@@ -84,6 +84,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | LinkSupervisor | always | infra | Authority host |
 | GitHubAppHostCredentialService | !PD | infra | Authority host |
 | QualityStudioRevokeOutbox | always | infra | Authority host. Delivers persisted Quality Studio session revocations with bounded retries; makes no task transition decision. |
+| QualityChangeReviewOutbox | always | infra | Authority host. Delivers persisted Review Plane verdicts to Quality Studio with a seven-day retry bound; makes no task transition decision. |
 | OrchestratorChatLegacyMigrationHostedService | !PD | infra | Authority host |
 | DecisionReminderSweepHostedService | always | report | Authority host |
 | DeliveryChainReconciler | always | decide, operator | AI Operator decider `delivery-chain` (`DeliveryChainPolicy`). Effect: `DeliveryChainReconciler` moves the card; a red merge gate is still routed by `GateFailureRouter` before it may park (gate triage, a host rule in the baseline). |

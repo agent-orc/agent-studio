@@ -49,6 +49,14 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.followUpConsumed]: 'Follow-up delivered',
   [TIMELINE_KIND.followUpSuperseded]: 'Follow-up superseded',
   [TIMELINE_KIND.steeringFeedback]: 'Steering receipt',
+  [TIMELINE_KIND.continuationBaseRecorded]: 'Run base recorded',
+};
+
+/** Where a round's run base came from (AGT-3483), keyed by the event's `base` or `reason` detail. */
+const RUN_BASE_ORIGINS: Readonly<Record<string, string>> = {
+  'latest-result': 'latest result',
+  explicit: 'requested ref',
+  'review-fix-round': 'reviewed delivery',
 };
 
 const HIDDEN_DETAILS = new Set([
@@ -67,6 +75,23 @@ const HIDDEN_BY_KIND: Readonly<Record<string, ReadonlySet<string>>> = {
   [TIMELINE_KIND.taskSpawned]: new Set(['targetProject', 'targetKey', 'targetJobId']),
   [TIMELINE_KIND.externalCompletion]: new Set(['source']),
   [TIMELINE_KIND.steeringFeedback]: new Set(['identity', 'current']),
+  // The title names the origin and the summary the mode; `source` is the entry point.
+  [TIMELINE_KIND.continuationBaseRecorded]: new Set(['source', 'base', 'mode']),
+};
+
+/** Details shown even when the prose already carries them: the fact the row exists for. */
+const ALWAYS_SHOWN_BY_KIND: Readonly<Record<string, ReadonlySet<string>>> = {
+  // A fenced result ref embeds the SHA, but the run base SHA is what the operator checks.
+  [TIMELINE_KIND.continuationBaseRecorded]: new Set(['sha']),
+};
+
+const DETAIL_LABELS_BY_KIND: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  [TIMELINE_KIND.continuationBaseRecorded]: {
+    ref: 'Base ref',
+    sha: 'Base SHA',
+    resultAttemptId: 'Result attempt',
+    reviewAttemptId: 'Review attempt',
+  },
 };
 
 const DEFAULT_VALUES = new Set(['', '0', 'false', 'none', 'null', 'unknown', 'yolo']);
@@ -177,6 +202,12 @@ export function timelineEventTitle(event: TaskTimelineEvent): string {
     return 'Follow-up superseded by completion';
   }
 
+  if (event.kind === TIMELINE_KIND.continuationBaseRecorded) {
+    const origin = RUN_BASE_ORIGINS[clean(event.details?.['base']) ?? '']
+      ?? RUN_BASE_ORIGINS[clean(event.details?.['reason']) ?? ''];
+    return origin ? `Run base · ${origin}` : 'Run base recorded';
+  }
+
   return timelineKindLabel(event.kind);
 }
 
@@ -222,6 +253,8 @@ export function timelineEventSummary(event: TaskTimelineEvent): string | null {
 }
 
 export function timelineEventReason(event: TaskTimelineEvent): string | null {
+  // A run base's `reason` is its machine reason code; the title already says it in words.
+  if (event.kind === TIMELINE_KIND.continuationBaseRecorded) return null;
   const reason = clean(event.details?.['reason']);
   if (!reason || DEFAULT_VALUES.has(reason.toLowerCase())) return null;
   const story = normalize(`${timelineEventTitle(event)} ${timelineEventSummary(event) ?? ''}`);
@@ -232,6 +265,8 @@ export function timelineDetailEntries(event: TaskTimelineEvent): TimelineDetailE
   const details = event.details;
   if (!details) return [];
   const hiddenForKind = HIDDEN_BY_KIND[event.kind] ?? new Set<string>();
+  const labels = DETAIL_LABELS_BY_KIND[event.kind] ?? {};
+  const alwaysShown = ALWAYS_SHOWN_BY_KIND[event.kind] ?? new Set<string>();
   const story = normalize(`${timelineEventTitle(event)} ${timelineEventSummary(event) ?? ''}`);
 
   return Object.entries(details)
@@ -241,9 +276,10 @@ export function timelineDetailEntries(event: TaskTimelineEvent): TimelineDetailE
       if (!cleaned || DEFAULT_VALUES.has(cleaned.toLowerCase())) return false;
       if (cliIsImpliedByModel(key, details)) return false;
       if (COUNT_KEY.test(key) && /^\d+$/.test(cleaned)) return false;
+      if (alwaysShown.has(key)) return true;
       return normalize(cleaned).length < 3 || !story.includes(normalize(cleaned));
     })
-    .map(([key, value]) => ({ key, label: humanize(key), value: value.trim() }));
+    .map(([key, value]) => ({ key, label: labels[key] ?? humanize(key), value: value.trim() }));
 }
 
 export function executionContextDisclosure(
