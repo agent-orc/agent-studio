@@ -75,7 +75,7 @@ public sealed class ModelSelectionEffectiveService(
             configuration["TitleGeneration:Model"] ?? configuration["ClaudeCli:SummaryModel"]
                 ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku),
             null, project, false));
-        rows.Add(Select("one-shot:tag-maintenance", "periodic-tag-maintenance", CliTypes.Claude,
+        rows.Add(Select("one-shot:tags", "periodic-tag-maintenance", CliTypes.Claude,
             ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet), "high", project, false));
         var autoTag = AgentStudio.Tags.AutoTagClassifier.ResolveRoute(
             string.IsNullOrWhiteSpace(project) ? null : projects.Get(project));
