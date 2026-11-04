@@ -1351,6 +1351,7 @@ public sealed partial class BatchGatePilotService
         IReadOnlyDictionary<string, BatchGatePendingRecord> pending,
         string repo, CancellationToken ct)
     {
+        var leaseRequestedAtUtc = _time.GetUtcNow();
         var fallbackKeys = new HashSet<string>(StringComparer.Ordinal);
         var conflictKeys = new HashSet<string>(StringComparer.Ordinal);
         var deferredKeys = new HashSet<string>(StringComparer.Ordinal);
@@ -1462,8 +1463,9 @@ public sealed partial class BatchGatePilotService
             _store.RecordRun(run);
             State(manifest, BatchPhase.Running, assembly.CandidateSha, lease.Fence);
             var gated = assembly.AdmittedKeys.Select(key => pending[key]).ToArray();
-            var gate = await RunGateAsync(run, repo, cancellation.Token,
-                () => MembersCurrent() && RouteEnabled(), gated).ConfigureAwait(false);
+            var gate = await RunGateAsync(run, repo, cancellation.Token, lease.AcquiredAtUtc,
+                () => MembersCurrent() && RouteEnabled(), gated,
+                requestedAtUtc: leaseRequestedAtUtc).ConfigureAwait(false);
             if (!RouteEnabled())
             {
                 AbandonRollback();
@@ -1494,7 +1496,7 @@ public sealed partial class BatchGatePilotService
                         lease.Fence, "GateInfra: no healthy host for same-SHA retry");
                     return;
                 }
-                gate = await RunGateAsync(run, repo, cancellation.Token, gated: gated,
+                gate = await RunGateAsync(run, repo, cancellation.Token, null, gated: gated,
                     rerunCause: "infrastructure-red")
                     .ConfigureAwait(false);
                 if (MonolithTransitionAdapter.IsGateQueueOverrun(gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase))
@@ -1875,7 +1877,7 @@ public sealed partial class BatchGatePilotService
                 BuildTestGateResult gate;
                 try
                 {
-                    gate = await RunGateAsync(probeRun, repo, token,
+                    gate = await RunGateAsync(probeRun, repo, token, null,
                         () => BatchRouteEnabled(diagnostic)
                             && subset.All(member =>
                                 Refresh(pending[member.TaskKey]).Subject.CurrentGeneration),
@@ -2017,8 +2019,10 @@ public sealed partial class BatchGatePilotService
     }
 
     private async Task<BuildTestGateResult> RunGateAsync(BatchGateRunRecord run,
-        string repo, CancellationToken ct, Func<bool>? stillCurrent = null,
-        IReadOnlyList<BatchGatePendingRecord>? gated = null, string? rerunCause = null)
+        string repo, CancellationToken ct, DateTimeOffset? leaseAcquiredAtUtc,
+        Func<bool>? stillCurrent = null,
+        IReadOnlyList<BatchGatePendingRecord>? gated = null, string? rerunCause = null,
+        DateTimeOffset? requestedAtUtc = null)
     {
         var started = _time.GetUtcNow();
         var gateHostLoadAtStart = GateRunLedger.HostLoad();
@@ -2040,6 +2044,8 @@ public sealed partial class BatchGatePilotService
                 GateId = "batch-gate",
                 LedgerRunId = run.BatchRunId + (rerunCause == "infrastructure-red" ? "-retry" : ""),
                 LedgerProfile = run.GateProfileDigest,
+                LedgerRequestedAtUtc = requestedAtUtc,
+                LedgerLeaseAcquiredAtUtc = leaseAcquiredAtUtc,
                 LedgerType = rerunCause is null ? null : "clean-diagnostic-rerun",
                 LedgerBatchId = run.BatchId,
                 LedgerCards = manifest.Members.Select(member => member.TaskKey).ToArray(),
@@ -2100,18 +2106,29 @@ public sealed partial class BatchGatePilotService
         if (GateProfile(_settings.Get(project).BuildProfile, repo)
             != run.GateProfileDigest)
             throw new InvalidDataException("Batch gate profile changed during execution.");
-        if (claimed is not null && _services?.GetService<GateRunLedger>() is { } ledger)
-            ledger.Append(GateRunLedger.FromResult(new BuildTestGateRequest(repo, run.CandidateSha, "batch-gate")
+        if (claimed is not null)
+        {
+            try
             {
-                Project = project, GateId = "batch-gate", IntegrationRef = run.BaseSha,
-                LedgerRunId = run.BatchRunId + (rerunCause == "infrastructure-red" ? "-retry" : ""),
-                LedgerProfile = run.GateProfileDigest,
-                LedgerBatchId = run.BatchId,
-                LedgerCards = manifest.Members.Select(member => member.TaskKey).ToArray(),
-                LedgerType = rerunCause is null ? null : "clean-diagnostic-rerun",
-                LedgerTriggerEvent = rerunCause ?? "batch-formed:" + run.BatchId,
-            }, result, started, _time.GetUtcNow(), result.GateStartedAtUtc?.AddMilliseconds(result.GateQueueWaitMs),
-                gateHostLoadAtStart, GateRunLedger.HostLoad()));
+                if (_services?.GetService<GateRunLedger>() is { } ledger)
+                    ledger.Append(GateRunLedger.FromResult(new BuildTestGateRequest(repo, run.CandidateSha, "batch-gate")
+                    {
+                        Project = project, GateId = "batch-gate", IntegrationRef = run.BaseSha,
+                        LedgerRunId = run.BatchRunId + (rerunCause == "infrastructure-red" ? "-retry" : ""),
+                        LedgerProfile = run.GateProfileDigest,
+                        LedgerLeaseAcquiredAtUtc = leaseAcquiredAtUtc,
+                        LedgerBatchId = run.BatchId,
+                        LedgerCards = manifest.Members.Select(member => member.TaskKey).ToArray(),
+                        LedgerType = rerunCause is null ? null : "clean-diagnostic-rerun",
+                        LedgerTriggerEvent = rerunCause ?? "batch-formed:" + run.BatchId,
+                    }, result, requestedAtUtc ?? started, _time.GetUtcNow(), result.GateStartedAtUtc?.AddMilliseconds(result.GateQueueWaitMs),
+                        gateHostLoadAtStart, GateRunLedger.HostLoad()));
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "gate-run-ledger-append-failed run_id={RunId}", run.BatchRunId);
+            }
+        }
         using var stream = new FileStream(run.EvidencePath,
             FileMode.Append, FileAccess.Write, FileShare.None);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(result);

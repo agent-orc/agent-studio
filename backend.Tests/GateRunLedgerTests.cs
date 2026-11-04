@@ -19,12 +19,15 @@ public sealed class GateRunLedgerTests : IDisposable
         { TriggerEvent = "red-candidate:first" });
         ledger.Append(Row("third", "batch-gate", day.AddDays(-1)));
 
-        Assert.Throws<IOException>(() => ledger.Append(first));
+        ledger.Append(first);
+        ledger.Append(first with { Outcome = "Fail" });
         var page = ledger.Read("PROJ-002", DateOnly.FromDateTime(day.UtcDateTime), null, 1, 1);
         Assert.Equal(2, page.Total);
         Assert.Equal("second", Assert.Single(page.Rows).RunId);
         var basePage = ledger.Read("PROJ-002", DateOnly.FromDateTime(day.UtcDateTime), "batch-base");
         Assert.Equal("red-candidate:first", Assert.Single(basePage.Rows).TriggerEvent);
+        Assert.Equal("Ok", Assert.Single(ledger.Read("PROJ-002", DateOnly.FromDateTime(day.UtcDateTime),
+            "batch-gate").Rows).Outcome);
     }
 
     [Fact]
@@ -90,6 +93,65 @@ public sealed class GateRunLedgerTests : IDisposable
         var row = GateRunLedger.FromResult(request, result, start, start.AddSeconds(75), start, null, null);
         Assert.Equal("red-candidate:original", row.RerunCause);
         Assert.Equal(75_000, row.RerunDurationMs);
+    }
+
+    [Fact]
+    public async Task Repeated_run_id_does_not_change_gate_verdict_or_first_row()
+    {
+        var ledger = new GateRunLedger(_root);
+        var runner = new LedgeredBuildTestGateRunner(new FixedGate(BuildTestGateVerdict.Ok), ledger);
+        var request = Request("repeat");
+        Assert.Equal(BuildTestGateVerdict.Ok, (await Run(runner, request)).Verdict);
+        Assert.Equal(BuildTestGateVerdict.Ok, (await Run(runner, request)).Verdict);
+        var page = ledger.Read("PROJ-002", null, null);
+        Assert.Equal(1, page.Total);
+        Assert.Equal("repeat", Assert.Single(page.Rows).RunId);
+    }
+
+    [Fact]
+    public async Task Failing_ledger_store_does_not_change_gate_verdict()
+    {
+        Directory.CreateDirectory(_root);
+        var file = Path.Combine(_root, "unwritable-root");
+        File.WriteAllText(file, "occupied");
+        var runner = new LedgeredBuildTestGateRunner(new FixedGate(BuildTestGateVerdict.Fail),
+            new GateRunLedger(file));
+        Assert.Equal(BuildTestGateVerdict.Fail, (await Run(runner, Request("failed-write"))).Verdict);
+    }
+
+    [Fact]
+    public void Lease_timestamp_comes_from_coordinator_acquisition_and_differs_from_slot()
+    {
+        var acquired = new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
+        var scope = new BatchGateScope("PROJ-002", "repo", "develop", "full", "digest", "v1");
+        var leases = new BatchGateLeaseService(Path.Combine(_root, "leases"), () => acquired);
+        var lease = leases.TryAcquire(scope, "host")!;
+        var slot = acquired.AddSeconds(12);
+        var requested = acquired.AddSeconds(-4);
+        var row = GateRunLedger.FromResult(Request("lease") with
+        { LedgerRequestedAtUtc = requested, LedgerLeaseAcquiredAtUtc = lease.AcquiredAtUtc },
+            new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 1000, "", "", false, false),
+            requested, slot.AddSeconds(1), slot, null, null);
+        Assert.Equal(TimeSpan.FromSeconds(4), row.LeaseAcquiredAtUtc!.Value - row.RequestedAtUtc);
+        Assert.Equal(acquired, row.LeaseAcquiredAtUtc);
+        Assert.Equal(slot, row.SlotAcquiredAtUtc);
+        Assert.NotEqual(row.LeaseAcquiredAtUtc, row.SlotAcquiredAtUtc);
+    }
+
+    private static BuildTestGateRequest Request(string runId) => new("/tmp/repo", new string('a', 40), "batch-gate")
+    { Project = "PROJ-002", GateId = "batch-gate", LedgerRunId = runId };
+
+    private static Task<BuildTestGateResult> Run(IBuildTestGateRunner runner, BuildTestGateRequest request)
+        => runner.RunAsync(request, null, null, PostStepMode.Fail, TimeSpan.FromMinutes(1),
+            CancellationToken.None);
+
+    private sealed class FixedGate(BuildTestGateVerdict verdict) : IBuildTestGateRunner
+    {
+        public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode,
+            TimeSpan timeout, CancellationToken ct)
+            => Task.FromResult(new BuildTestGateResult(verdict, verdict == BuildTestGateVerdict.Ok ? 0 : 1,
+                1000, "", "fixed", false, false));
     }
 
     private static GateRunLedgerRow Row(string id, string type, DateTimeOffset at)
