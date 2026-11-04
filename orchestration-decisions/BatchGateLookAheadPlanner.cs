@@ -2,7 +2,7 @@ using AgentStudio.TaskServer.Contracts.BatchGate;
 
 namespace AgentStudio.OrchestrationDecisions;
 
-/// <summary>Pure batch membership and wait decision. Risk is the chance a card adds a red gate.</summary>
+/// <summary>Pure batch membership and wait decision. Card risk is a relative scale.</summary>
 public static class BatchGateLookAheadPlanner
 {
     /// <summary>Reason of a batch closed instead of a per-task gate because the gate queue is backlogged.</summary>
@@ -74,9 +74,12 @@ public static class BatchGateLookAheadPlanner
                 ? new("wait", QueuedPartnersReason, null, [], 0, upcoming)
                 : new("idle", "no eligible cards", null, [], 0, upcoming);
 
-        var riskLimit = HighRiskLimit(input.RiskPolicy);
+        var empirical = input.Calibration == "empirical"
+            ? EmpiricalBatchPolicy.Resolve(input, waiting) : null;
+        var riskLimit = empirical?.AdmissionLimit ?? HighRiskLimit(input.RiskPolicy);
         var ordered = Order(waiting, input.Overlap)
-            .Where(card => card.Risk < riskLimit).ToArray();
+            .Where(card => card.Risk < riskLimit
+                && (empirical is null || KnownDiff(card))).ToArray();
         var candidates = (input.Overlap == "separate"
                 ? Separate(ordered) : ordered)
             .Take(input.MaximumSize).ToArray();
@@ -85,19 +88,21 @@ public static class BatchGateLookAheadPlanner
                 && eta >= input.NowUtc
                 && eta <= input.NowUtc.AddMinutes(input.LookAheadMinutes)
                 && card.Risk < riskLimit
+                && (empirical is null || card.Paths.Count > 0)
                 && (input.Overlap != "separate" || candidates.All(ready =>
                     !Overlaps(ready.Paths, card.Paths))))
             .OrderBy(card => card.EtaUtc)
             .Select(card => new BatchPlanCard(card.TaskKey, card.EtaUtc!.Value,
                 card.Risk, card.Paths, []));
-        var target = TargetSize(candidates.Concat(arriving).Take(input.MaximumSize).ToArray(),
-            input.MinimumSize, input.MaximumSize,
-            input.RiskPolicy);
+        var target = empirical?.TargetSize ?? TargetSize(
+            candidates.Concat(arriving).Take(input.MaximumSize).ToArray(),
+            input.MinimumSize, input.MaximumSize, input.RiskPolicy);
         var oldest = waiting[0];
         var closeAt = oldest.ReadyAtUtc.AddMinutes(input.DeadlineMinutes);
         var urgent = waiting.Any(card => card.Tags.Any(tag => input.UrgentTags.Contains(tag,
             StringComparer.OrdinalIgnoreCase)));
-        var highRisk = waiting[0].Risk >= riskLimit;
+        var highRisk = waiting[0].Risk >= riskLimit
+            || empirical is not null && !KnownDiff(waiting[0]);
         var agedOut = AgedOut(oldest.ReadyAtUtc, input.NowUtc, input.DeadlineMinutes);
         // AGT-3219: behind a gate backlog a per-task gate only joins the slot
         // queue and can overrun its wait budget. A batch of the other cards
@@ -192,6 +197,9 @@ public static class BatchGateLookAheadPlanner
 
     private static bool Overlaps(IReadOnlyList<string> left, IReadOnlyList<string> right)
         => left.Any(path => right.Contains(path, StringComparer.OrdinalIgnoreCase));
+
+    private static bool KnownDiff(BatchPlanCard card)
+        => card.Paths.Count > 0 || card.Risk < BatchGateRiskModel.UnknownDiff;
 
     private static double HighRiskLimit(string policy) => policy switch
     {

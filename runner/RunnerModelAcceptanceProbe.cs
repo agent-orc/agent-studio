@@ -10,6 +10,7 @@ namespace AgentRunner;
 internal sealed class RunnerModelAcceptanceProbe
 {
     internal static RunnerModelAcceptanceProbe Shared { get; } = new();
+    internal static readonly TimeSpan CapacityTtl = TimeSpan.FromMinutes(15);
 
     private readonly object _sync = new();
     private readonly SemaphoreSlim _refresh = new(1, 1);
@@ -19,6 +20,7 @@ internal sealed class RunnerModelAcceptanceProbe
     private Func<string, string?> _generation = _ => null;
     private Func<DateTimeOffset> _clock = () => DateTimeOffset.UtcNow;
     private IReadOnlyList<(string Provider, string Model)> _configured = [];
+    private readonly Dictionary<string, string> _catalogueRevision = new(StringComparer.Ordinal);
     // Causal order for the server: a verdict written after the server saw a
     // non-ready entry carries a larger sequence than that entry did.
     private long _sequence;
@@ -59,6 +61,7 @@ internal sealed class RunnerModelAcceptanceProbe
             _clock = clock ?? (() => DateTimeOffset.UtcNow);
             _verdicts.Clear();
             _invalidationSequences.Clear();
+            _catalogueRevision.Clear();
         }
     }
 
@@ -72,7 +75,8 @@ internal sealed class RunnerModelAcceptanceProbe
             return models.Select(model =>
             {
                 _verdicts.TryGetValue(CapabilityProtocol.ModelAcceptance(provider, model), out var verdict);
-                var current = verdict is not null && verdict.Generation == currentGeneration;
+                var current = verdict is not null && verdict.Generation == currentGeneration
+                    && (verdict.ExpiresAt is null || verdict.ExpiresAt > _clock());
                 var status = current ? verdict!.Status : "unknown";
                 return new AdvertisedCapabilityDto(
                     CapabilityProtocol.ModelAcceptance(provider, model), "model-acceptance",
@@ -93,6 +97,39 @@ internal sealed class RunnerModelAcceptanceProbe
             _verdicts[CapabilityProtocol.ModelAcceptance(provider, model)] = new ModelVerdict(
                 generation, "unavailable", "The provider refused this model for the host login.", _clock(),
                 ++_sequence);
+    }
+
+    internal void NoteCatalogueRefresh(string provider, string revision)
+    {
+        lock (_sync)
+        {
+            if (_catalogueRevision.TryGetValue(provider, out var previous)
+                && previous != revision)
+            {
+                var prefix = $"model-acceptance:{provider.Trim().ToLowerInvariant()}:";
+                foreach (var key in _verdicts.Where(item =>
+                             item.Key.StartsWith(prefix, StringComparison.Ordinal)
+                             && item.Value.Status == "unavailable"
+                             && item.Value.ExpiresAt is null)
+                         .Select(item => item.Key).ToArray())
+                    _verdicts.Remove(key);
+                _sequence++;
+            }
+            _catalogueRevision[provider] = revision;
+        }
+    }
+
+    internal void RecordCapacity(string provider, string model, DateTimeOffset? retryAt = null)
+    {
+        var generation = _generation(provider);
+        lock (_sync)
+        {
+            var now = _clock();
+            var expiresAt = retryAt is { } hint && hint > now ? hint : now.Add(CapacityTtl);
+            _verdicts[CapabilityProtocol.ModelAcceptance(provider, model)] = new ModelVerdict(
+                generation, "unavailable", $"This model is at capacity until {expiresAt:O}.", now,
+                ++_sequence, expiresAt);
+        }
     }
 
     internal void Invalidate(string provider)
@@ -126,6 +163,7 @@ internal sealed class RunnerModelAcceptanceProbe
                     generation = _generation(provider);
                     cached = _verdicts.TryGetValue(CapabilityProtocol.ModelAcceptance(provider, model), out var prior)
                         && prior.Generation == generation
+                        && (prior.ExpiresAt is null || prior.ExpiresAt > _clock())
                         && (prior.Status == "unavailable"
                             || _clock() - prior.ObservedAt < (prior.Status == "ready"
                                 ? generation?.StartsWith("daemon-session:", StringComparison.Ordinal) == true
@@ -180,5 +218,6 @@ internal sealed class RunnerModelAcceptanceProbe
            && ProviderRequestRejectionClassifier.IsModelUnavailable(rejection, model);
 
     private sealed record ModelVerdict(
-        string? Generation, string Status, string Detail, DateTimeOffset ObservedAt, long Sequence);
+        string? Generation, string Status, string Detail, DateTimeOffset ObservedAt, long Sequence,
+        DateTimeOffset? ExpiresAt = null);
 }

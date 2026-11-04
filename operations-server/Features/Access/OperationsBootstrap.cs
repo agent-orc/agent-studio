@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using AgentStudio.Operations.Contracts;
 
 namespace AgentStudio.Operations.Server.Features.Access;
@@ -24,15 +25,26 @@ public static class OperationsBootstrap
             Directory.CreateDirectory(directory);
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(clientDirectory,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute);
+        if (principalsExist && !OperatingSystem.IsWindows()) File.SetUnixFileMode(clientPath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        GrantStudioGroup(clientDirectory, clientPath, principalsExist);
         if (principalsExist) return;
 
         var agent = Credential(agentPath);
         var client = Credential(clientPath);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(clientPath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        GrantStudioGroup(clientDirectory, clientPath, true);
         var principals = new OperationsAccessDocument([
             new("diagnostics-client", OperationsProtocol.Audience, OperationsProtocol.Digest(client), "service",
-                ["host.inspect", "maintenance.execute", "operations.read"], ["container-agent"], []),
+                ["host.inspect", "service.restart", "host.drain", "host.resume", "host.logs.collect",
+                    "host.configuration.apply", "maintenance.execute", "operations.read", "certificates.revoke"], ["container-agent"], []),
             new("container-agent", OperationsProtocol.Audience, OperationsProtocol.Digest(agent), "agent",
-                ["agents.connect", "host.inspect"], ["container-agent"], []),
+                ["agents.connect", "host.inspect", "service.restart", "host.drain", "host.resume",
+                    "host.logs.collect", "host.configuration.apply"], ["container-agent"], []),
         ]);
         WriteNew(path, JsonSerializer.Serialize(principals, OperationsProtocol.Json));
     }
@@ -61,4 +73,19 @@ public static class OperationsBootstrap
         writer.Flush();
         stream.Flush(flushToDisk: true);
     }
+
+    private static void GrantStudioGroup(string directory, string tokenPath, bool tokenExists)
+    {
+        if (OperatingSystem.IsWindows() || GetEffectiveUserId() != 0) return;
+        // The API container runs with this credential group.
+        // Only that group can traverse the volume and read the service token.
+        if (Chown(directory, 0, 1654) != 0 || (tokenExists && Chown(tokenPath, 0, 1654) != 0))
+            throw new IOException("Cannot assign the Operations service credential group.");
+    }
+
+    [DllImport("libc", EntryPoint = "geteuid")]
+    private static extern uint GetEffectiveUserId();
+
+    [DllImport("libc", EntryPoint = "chown", SetLastError = true)]
+    private static extern int Chown(string path, uint owner, uint group);
 }

@@ -1606,6 +1606,14 @@ public sealed class RemoteTaskRunner
                             if (!recorded) _log("model-selection health receipt could not reach Studio after bounded retry");
                         }
                     }
+                    else if (providerAccess.Kind == ProviderAccessEvidenceKind.ModelCapacity
+                             && !string.IsNullOrWhiteSpace(invocation.Model))
+                    {
+                        RunnerModelAcceptanceProbe.Shared.RecordCapacity(
+                            invocation.CliType, invocation.Model, providerAccess.LimitedUntil);
+                        shipper.Add("system",
+                            $"[runner] model-health-marked provider={invocation.CliType} model={invocation.Model} kind=capacity ttl=15m; provider-auth capability unchanged");
+                    }
                     var capacityRetry = classified.Decision.Outcome == ExecutionOutcomeKind.TransientModelCapacity
                         && classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession;
                     if (classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession

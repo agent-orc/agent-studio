@@ -39,6 +39,9 @@ public sealed record PermitIntrospectionRequest(string Permit, string PrincipalI
     string ResultAudience, string CorrelationId, DateTimeOffset Deadline);
 public sealed record PermitIntrospectionResponse(bool Active, DateTimeOffset ValidUntil);
 public sealed record OperationError(string Code);
+public sealed record HostJournalEntry(string AttemptId, string Actor, string AgentId,
+    string OperationId, string InputDigest, DateTimeOffset At, string Outcome);
+public sealed record HostRevocationList(long Version, string Sha256, string Base64Krl);
 
 public static class OperationCatalogue
 {
@@ -56,7 +59,21 @@ public static class OperationCatalogue
         OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"service\"],\"maxProperties\":1}"),
         OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"service\",\"restarted\",\"configurationValid\"]}"), 180, 4096);
 
-    public static readonly IReadOnlyList<OperationDefinition> All = [HostInspect, ServiceRestart];
+    public static readonly OperationDefinition HostDrain = new("host.drain", 1, "host.drain", "claim-barrier",
+        OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"role\"],\"maxProperties\":1}"),
+        OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"role\",\"drained\"]}"), 60, 4096);
+    public static readonly OperationDefinition HostResume = new("host.resume", 1, "host.resume", "claim-barrier",
+        OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"role\"],\"maxProperties\":1}"),
+        OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"role\",\"drained\"]}"), 60, 4096);
+    public static readonly OperationDefinition HostLogsCollect = new("host.logs.collect", 1, "host.logs.collect", "bounded-read",
+        OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"source\"],\"maxProperties\":1}"),
+        OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"source\",\"text\"]}"), 30, 16384);
+    public static readonly OperationDefinition HostConfigurationApply = new("host.configuration.apply", 1, "host.configuration.apply", "reviewed-file-copy",
+        OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"configuration\",\"sha256\"],\"maxProperties\":2}"),
+        OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"configuration\",\"applied\"]}"), 60, 4096);
+
+    public static readonly IReadOnlyList<OperationDefinition> All = [HostInspect, ServiceRestart, HostDrain,
+        HostResume, HostLogsCollect, HostConfigurationApply];
 
     public static OperationDefinition? Find(string id, int version) =>
         All.FirstOrDefault(definition => definition.Id == id && definition.Version == version);
@@ -65,6 +82,9 @@ public static class OperationCatalogue
     public static bool ValidServiceName(string? value) =>
         value is { Length: >= 2 and <= 63 } && value[0] is >= 'a' and <= 'z'
         && value.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
+
+    public static bool ValidSha256(string? value) => value is { Length: 64 }
+        && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
 }
 
 public sealed record IssueOperationPermitRequest(string PrincipalId, string Actor, OperationSubject Subject,
