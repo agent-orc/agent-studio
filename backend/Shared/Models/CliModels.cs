@@ -134,15 +134,7 @@ public record PendingIntent
     public ModelFallbackInfo? ModelFallback { get; init; }
 }
 
-public sealed record ModelFallbackInfo(
-    [property: JsonPropertyName("from")] string From,
-    [property: JsonPropertyName("to")] string To,
-    [property: JsonPropertyName("reason")] string Reason,
-    [property: JsonPropertyName("cliType")] string? CliType = null,
-    [property: JsonPropertyName("thinkingLevel")] string? ThinkingLevel = null,
-    [property: JsonPropertyName("window")] string? Window = null,
-    [property: JsonPropertyName("usedPct")] double? UsedPct = null,
-    [property: JsonPropertyName("catalogueVersion")] string? CatalogueVersion = null);
+// ModelFallbackInfo lives in the contracts package (ModelSelection/QuotaSnapshotContracts.cs).
 
 /// <summary>
 /// String values accepted on <see cref="ContinueJobRequest.Mode"/>. Kept as
