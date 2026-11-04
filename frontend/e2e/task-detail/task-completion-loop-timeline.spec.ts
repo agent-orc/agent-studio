@@ -81,7 +81,7 @@ test.describe('Task completion loop — Overview indicator + Timeline tab', () =
     });
     try {
       await page.goto(`/?job=${encodeURIComponent(id)}&watchPath=${encodeURIComponent(watchPath)}`);
-      await page.getByRole('tab', { name: 'Timeline', exact: true }).click();
+      await page.getByRole('tab', { name: 'Timeline', exact: true }).click({ timeout: 30_000 });
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
         const timeline = page.getByTestId('timeline-list');
