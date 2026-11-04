@@ -60,7 +60,11 @@
   @if (hasEntries()) {
     @if (olderGrade(); as prior) {
       <p class="cr-prior-grade" data-testid="code-review-older-grade">
-        <span class="cr-verdict cr-verdict-{{ gradeTone(prior.grade) }}">Grade {{ prior.grade }}</span>
+        <app-status-indicator
+          [tone]="olderGradeStatusTone(prior.grade)"
+          [label]="'Grade ' + prior.grade"
+          [compact]="true"
+          testId="code-review-older-grade-verdict" />
         <span>Review from {{ formatTimestamp(prior.runAt) }}, older delivery</span>
       </p>
     }
@@ -73,9 +77,12 @@
             (click)="toggle(entry)"
             [attr.aria-expanded]="expandedFile() === entry.fileName"
           >
-            <span class="cr-verdict cr-verdict-{{ verdictTone(entry.verdict) }}">
-              {{ entry.grade ? 'Grade ' + entry.grade : entry.verdict }}
-            </span>
+            <app-status-indicator
+              class="cr-verdict"
+              [tone]="verdictStatusTone(entry.verdict)"
+              [label]="entry.grade ? 'Grade ' + entry.grade : entry.verdict"
+              [compact]="true"
+              testId="code-review-row-verdict" />
             <span class="cr-summary">{{ entry.summary || '(no summary)' }}</span>
             <span class="cr-meta">
               {{ entry.model }}
@@ -113,9 +120,11 @@
                   <strong>{{ entry.summary || 'Code review result' }}</strong>
                 </div>
                 <div class="cr-body-meta" aria-label="Code review metadata">
-                  <span class="cr-body-chip cr-body-chip--{{ verdictTone(entry.verdict) }}">
-                    {{ entry.verdict || 'unknown' }}
-                  </span>
+                  <app-status-indicator
+                    [tone]="verdictStatusTone(entry.verdict)"
+                    [label]="entry.verdict || 'unknown'"
+                    [compact]="true"
+                    testId="code-review-body-verdict" />
                   <span class="cr-body-chip">{{ entry.model || 'unknown model' }}</span>
                   @if (entry.thinkingLevel) {
                     <span class="cr-body-chip">{{ entry.thinkingLevel }}</span>

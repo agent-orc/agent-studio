@@ -4,14 +4,19 @@
     <header class="result__head">
       <div class="result__meta" role="group" aria-label="Run summary" data-testid="result-summary-meta">
         <span class="result__case"
-              [attr.data-tone]="outcomeTone()"
               [attr.data-lane-tone]="laneTone()"
               [attr.data-outcome]="verdict().status || verdict().kind"
               data-testid="result-case-badge"
               [cacTooltip]="verdict().tooltip"
               tooltipPosition="right">
-          <span class="result__case-dot" data-testid="result-case-dot" aria-hidden="true"></span>
-          <span class="result__case-label">{{ verdict().label }}</span>
+          @if (laneTone()) {
+            <!-- R9: when the lane leads, the badge wears the lane tone from
+                 lane-presentation.ts, never a status tone. -->
+            <span class="result__case-dot" data-testid="result-case-dot" aria-hidden="true"></span>
+            <span class="result__case-label">{{ verdict().label }}</span>
+          } @else {
+            <app-status-indicator [tone]="caseTone()" [label]="verdict().label" [compact]="true" testId="result-case-state" />
+          }
         </span>
         @for (m of d.metrics; track m.id) {
           @if (m.id === 'grade') {
@@ -22,7 +27,7 @@
                     [attr.data-testid]="'result-metric-' + m.id"
                     [cacTooltip]="(m.tooltip || m.label) + ' Open the review document.'"
                     (click)="navigateMetric.emit(m.id)">
-              <span class="result__metric-value">{{ m.value }}</span>
+              <ng-container *ngTemplateOutlet="metricValue; context: { $implicit: m }" />
             </button>
           } @else {
             <span class="result__metric"
@@ -30,7 +35,7 @@
                   [attr.data-tone]="m.tone || 'neutral'"
                   [attr.data-testid]="'result-metric-' + m.id"
                   [cacTooltip]="m.tooltip || m.label">
-              <span class="result__metric-value">{{ m.value }}</span>
+              <ng-container *ngTemplateOutlet="metricValue; context: { $implicit: m }" />
             </span>
           }
         }
@@ -69,7 +74,7 @@
         <p class="result__inconsistencies-title">
           {{ inconsistencies().length === 1 ? '1 signal pair disagrees' : inconsistencies().length + ' signal pairs disagree' }}
           @if (assessmentOutcome(); as outcome) {
-            <span class="result__inconsistencies-outcome" data-testid="result-assessment-outcome">assessed as {{ outcome }}</span>
+            <span class="result__inconsistencies-outcome" data-testid="result-assessment-outcome">assessed as <app-status-indicator [tone]="assessmentTone()" [label]="outcome" [compact]="true" testId="result-assessment-outcome-state" /></span>
           }
         </p>
         <ul class="result__inconsistencies-list">
@@ -79,9 +84,11 @@
                 <span class="result__inconsistency-signal">{{ item.signalA }}</span>
                 <span class="result__inconsistency-vs" aria-hidden="true">vs</span>
                 <span class="result__inconsistency-signal">{{ item.signalB }}</span>
-                <span class="result__inconsistency-badge"
-                      [attr.data-tone]="item.workMayBeLost ? 'problem' : 'neutral'"
-                      data-testid="result-inconsistency-loss">{{ item.workMayBeLost ? 'work may be lost' : 'no work lost' }}</span>
+                <app-status-indicator
+                  [tone]="item.workMayBeLost ? 'danger' : 'neutral'"
+                  [label]="item.workMayBeLost ? 'work may be lost' : 'no work lost'"
+                  [compact]="true"
+                  testId="result-inconsistency-loss" />
               </div>
               @if (item.explanation) {
                 <p class="result__inconsistency-explanation" data-testid="result-inconsistency-explanation">{{ item.explanation }}</p>
@@ -130,7 +137,7 @@
                   [attr.data-status]="aspect.status"
                   [cacTooltip]="aspect.summary"
                   (click)="openDocument.emit('aspect-' + aspect.aspect + '.md')">
-            <span class="result__aspect-status">{{ aspect.status }}</span>
+            <app-status-indicator [tone]="aspectTone(aspect.status)" [label]="aspect.status" [compact]="true" testId="result-aspect-status" />
             <span class="result__aspect-name">{{ aspect.aspect }}</span>
             <span class="result__aspect-summary">{{ aspect.summary }}</span>
             <span>Report</span>
@@ -192,3 +199,13 @@
     }
   </article>
 }
+
+<!-- Quality metrics: a toned stat (grade, review, tests) is a state and wears
+     the shared indicator; plain stats (duration, tokens, files) stay text. -->
+<ng-template #metricValue let-m>
+  @if (metricTone(m.tone); as tone) {
+    <app-status-indicator [tone]="tone" [label]="m.value" [compact]="true" [testId]="'result-metric-state-' + m.id" />
+  } @else {
+    <span class="result__metric-value">{{ m.value }}</span>
+  }
+</ng-template>

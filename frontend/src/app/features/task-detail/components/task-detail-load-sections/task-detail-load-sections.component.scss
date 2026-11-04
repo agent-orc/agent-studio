@@ -156,23 +156,6 @@
   font-weight: 600;
 }
 
-.task-load-section__state {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  color: var(--studio-fg-dim);
-  font-size: 0.7rem;
-  font-variant-numeric: tabular-nums;
-  text-transform: uppercase;
-}
-
-.task-load-section__state-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--studio-fg-muted);
-}
-
 .task-load-section__skeleton {
   display: grid;
   gap: var(--studio-spacing-3);

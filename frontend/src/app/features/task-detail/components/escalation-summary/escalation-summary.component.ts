@@ -31,8 +31,13 @@ import {
 } from '../../state/triage-actions.model';
 import {
   buildEscalationSummaryView,
+  ESCALATION_HEAD_TONES,
+  ESCALATION_RECOMMENDATION_TONES,
+  type EscalationHeadKind,
+  type EscalationRecommendation,
   type EscalationSummaryView,
 } from './escalation-summary.util';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 /**
  * Escalation summary panel (AGT-2019). Renders — prominently, above the panes —
@@ -57,6 +62,7 @@ import {
     EscalationDetailsComponent,
     DisclosureMarkerComponent,
     GateQueueReleaseComponent,
+    StatusIndicatorComponent,
   ],
   templateUrl: './escalation-summary.component.html',
   styleUrl: './escalation-summary.component.scss',
@@ -183,6 +189,18 @@ export class EscalationSummaryComponent {
       ? (this.hasQueuedAnswer() ? 'Answer queued' : 'Agent needs input')
       : this.view().escalation?.kind === 'gave-up' ? 'Orchestrator gave up' : 'Escalation',
   );
+
+  /** Header state behind {@link headTitle}, for the shared status tone (AGT-3403). */
+  readonly headKind = computed<EscalationHeadKind>(() => {
+    if (this.detail().info.needsInput) return this.hasQueuedAnswer() ? 'answer-queued' : 'needs-input';
+    return this.view().escalation?.kind === 'gave-up' ? 'gave-up' : 'needs-review';
+  });
+
+  readonly headTone = computed<StatusTone>(() => ESCALATION_HEAD_TONES[this.headKind()] ?? 'neutral');
+
+  recommendationTone(tone: EscalationRecommendation['tone']): StatusTone {
+    return ESCALATION_RECOMMENDATION_TONES[tone] ?? 'neutral';
+  }
 
   readonly hasQueuedAnswer = computed(() =>
     this.detail().info.pendingIntent?.mode === 'steer'

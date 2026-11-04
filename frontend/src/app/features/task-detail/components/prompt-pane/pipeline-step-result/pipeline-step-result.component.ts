@@ -10,6 +10,8 @@ import { TaskService } from '../../../../../services/task.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { FileSourceHistoryComponent } from '../../../../../components/file-source-history/file-source-history.component';
 import { cleanStepResultMarkdown } from './pipeline-step-result.util';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { stepVerdictTone } from './step-status-tone';
 
 /**
  * Compact header for a step-result card: the step name plus its outcome and
@@ -19,7 +21,8 @@ import { cleanStepResultMarkdown } from './pipeline-step-result.util';
  */
 export interface PipelineStepResultHeader {
   label: string;
-  statusIcon: string;
+  /** Status tone of the step or attempt (see `step-status-tone.ts`). */
+  statusTone: StatusTone;
   statusLabel: string;
   /** Raw status token (`passed` | `failed` | …) for the tone data-attribute. */
   status: string;
@@ -51,12 +54,13 @@ export interface PipelineStepResultHeader {
   selector: 'app-pipeline-step-result',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FileSourceHistoryComponent, TooltipDirective],
+  imports: [FileSourceHistoryComponent, StatusIndicatorComponent, TooltipDirective],
   templateUrl: './pipeline-step-result.component.html',
   styleUrl: './pipeline-step-result.component.scss',
 })
 export class PipelineStepResultComponent {
   readonly header = input.required<PipelineStepResultHeader>();
+  readonly verdictTone = stepVerdictTone;
   readonly jobId = input.required<string>();
   readonly watchPath = input<string>();
   /** Job-root markdown file to render (e.g. `status.md`, `aspect-code-quality.md`). */

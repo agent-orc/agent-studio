@@ -8,9 +8,11 @@
           Release
         </span>
         <div class="rel__body">
-          <span class="rel__state"
-                [class.rel__state--granted]="released()"
-                data-testid="release-gate-state">{{ releaseStateLabel() }}</span>
+          <app-status-indicator
+            [tone]="releaseStateTone()"
+            [label]="releaseStateLabel()"
+            [compact]="true"
+            testId="release-gate-state" />
           <button type="button"
                   class="rel__action"
                   data-testid="release-gate-toggle"

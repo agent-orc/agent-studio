@@ -303,10 +303,6 @@ html[data-studio-theme='light'] {
     .outcome-dialog { background: #ffffff; color: #1a1a1a; border-color: #e1e1e1; }
     // Triage panel internals.
     .triage { background: #ffffff; border-color: #e1e1e1; }
-    // Hygiene strip badges.
-    .project-hygiene-badge { color: #1a1a1a; background: rgba(0,0,0,0.04); border-color: #d4d4d4; }
-    .project-hygiene-badge--dirty { background: rgba(234,179,8,0.10); color: #854d0e; }
-    .project-hygiene-badge--unpushed { background: rgba(59,130,246,0.10); color: #1d4ed8; }
   }
 
   // ---- Activity log / Chat (Protocol pane right side) light bridge ----

@@ -133,33 +133,6 @@
 
 .file-card__verdict {
   flex: 0 0 auto;
-  padding: calc(var(--studio-spacing-1) / 4) var(--studio-spacing-2);
-  border: 1px solid var(--studio-border);
-  border-radius: 999px;
-  background: var(--studio-bg-elevated);
-  color: var(--studio-fg-dim);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-
-  &[data-tone='pass'] {
-    border-color: color-mix(in srgb, var(--severity-pass) 42%, var(--studio-border));
-    background: color-mix(in srgb, var(--severity-pass) 12%, transparent);
-    color: var(--severity-pass);
-  }
-
-  &[data-tone='concerns'] {
-    border-color: color-mix(in srgb, var(--severity-warn) 42%, var(--studio-border));
-    background: color-mix(in srgb, var(--severity-warn) 12%, transparent);
-    color: color-mix(in srgb, var(--severity-warn) 78%, var(--studio-fg-strong));
-  }
-
-  &[data-tone='block'] {
-    border-color: color-mix(in srgb, var(--severity-high) 42%, var(--studio-border));
-    background: color-mix(in srgb, var(--severity-high) 12%, transparent);
-    color: var(--severity-high);
-  }
 }
 
 .file-card__model {
@@ -307,15 +280,8 @@
 }
 
 .file-card__preview-empty,
-.file-card__loading,
-.file-card__error {
-  font-size: 12px;
-  color: var(--studio-fg-dim);
+.file-card__state {
   padding: 6px 0;
-}
-
-.file-card__error {
-  color: var(--severity-warn, var(--studio-fg-dim));
 }
 
 .files-pane__hint {

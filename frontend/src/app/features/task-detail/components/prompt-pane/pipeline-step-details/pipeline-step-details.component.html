@@ -80,8 +80,10 @@
         <section class="step-details__section step-details__section--concern"
                  data-testid="overview-pipeline-step-concerns-detail">
           <h3 class="step-details__heading">
-            <app-studio-icon name="warn" [size]="14" />
-            {{ concernTitle() || 'Concerns' }}
+            <app-status-indicator
+              tone="warning"
+              [label]="concernTitle() || 'Concerns'"
+              testId="overview-pipeline-step-concerns-state" />
           </h3>
           <p>{{ concern }}</p>
         </section>

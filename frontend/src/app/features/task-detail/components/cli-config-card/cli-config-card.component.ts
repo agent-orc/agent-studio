@@ -1,5 +1,16 @@
 import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
 import { CliSettings } from '../../../../models/task.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** CLI path availability: found is success, not found is danger (AGT-3403). */
+export function cliAvailabilityTone(available: boolean | null | undefined): StatusTone {
+  return available ? 'success' : 'danger';
+}
+
+/** GitHub token presence: configured is success, missing needs an operator step (AGT-3403). */
+export function cliTokenTone(hasToken: boolean | null | undefined): StatusTone {
+  return hasToken ? 'success' : 'warning';
+}
 
 /**
  * Inline CLI configuration card surfaced when the active CLI is
@@ -11,6 +22,7 @@ import { CliSettings } from '../../../../models/task.model';
 @Component({
   selector: 'app-cli-config-card',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './cli-config-card.component.html'
 })
@@ -31,4 +43,14 @@ export class CliConfigCardComponent {
 
   // Local-only: whether the token input is in clear-text mode.
   readonly showToken = signal(false);
+  readonly availabilityTone = cliAvailabilityTone;
+  readonly tokenTone = cliTokenTone;
+
+  availabilityLabel(status: CliSettings): string {
+    return status.available ? `${status.version ?? ''}, ${status.path}` : `Not found at: ${status.path}`;
+  }
+
+  testResultLabel(result: CliSettings): string {
+    return result.available ? `Found: ${result.version ?? ''}` : result.version || 'Not found at this path';
+  }
 }

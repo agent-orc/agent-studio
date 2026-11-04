@@ -41,14 +41,6 @@
 }
 
 .review-attempts__count,
-.review-attempts__state {
-  padding: 0 var(--studio-spacing-1);
-  border-radius: 999px;
-  background: var(--studio-bg-hover);
-  color: var(--studio-fg-muted);
-  font-size: 10.5px;
-}
-
 .review-attempts__list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -71,19 +63,6 @@
 .review-attempts__cycle--current {
   border-color: color-mix(in srgb, var(--studio-accent) 55%, var(--studio-border));
   background: color-mix(in srgb, var(--studio-accent) 10%, var(--studio-bg-elevated));
-}
-
-.review-attempts__dot {
-  width: 8px;
-  height: 8px;
-  margin-top: var(--studio-spacing-1);
-  border-radius: 50%;
-  background: var(--studio-fg-dim);
-  flex: 0 0 auto;
-}
-
-.review-attempts__cycle--current .review-attempts__dot {
-  background: var(--studio-accent);
 }
 
 .review-attempts__body {

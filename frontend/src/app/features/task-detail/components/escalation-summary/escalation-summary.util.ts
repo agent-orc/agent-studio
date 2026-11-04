@@ -41,6 +41,7 @@ import {
   type AspectFinding,
   type AspectVerdictTone,
 } from '../../../../components/aspect-findings';
+import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import type { SteeringInfo } from '../../../../components/steering-detail';
 import { buildMergeSignal, type MergeSignalView } from '../../../board';
 import type { TaskTimelineEvent } from '../../../task-timeline';
@@ -272,6 +273,28 @@ export interface EscalationRecommendation {
   /** Tone driving the pill colour. */
   tone: 'ok' | 'warn' | 'danger';
 }
+
+/** Header state of the escalation panel (AGT-3403). */
+export type EscalationHeadKind = 'needs-review' | 'gave-up' | 'needs-input' | 'answer-queued';
+
+/**
+ * Header state to shared status tone: a quality escalation a human must judge
+ * is danger; a system give-up or an agent question needs an operator step
+ * (warning); a queued answer is an informative fact.
+ */
+export const ESCALATION_HEAD_TONES: Readonly<Record<EscalationHeadKind, StatusTone>> = {
+  'needs-review': 'danger',
+  'gave-up': 'warning',
+  'needs-input': 'warning',
+  'answer-queued': 'info',
+};
+
+/** Recommendation pill tone to shared status tone. */
+export const ESCALATION_RECOMMENDATION_TONES: Readonly<Record<EscalationRecommendation['tone'], StatusTone>> = {
+  ok: 'success',
+  warn: 'warning',
+  danger: 'danger',
+};
 
 /** The full aggregated view model the panel renders. */
 export interface EscalationSummaryView {

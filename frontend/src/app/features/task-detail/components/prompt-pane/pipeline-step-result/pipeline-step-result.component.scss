@@ -100,49 +100,6 @@
     min-width: 0;
   }
 
-  &__status {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--studio-fg-dim);
-  }
-
-  &__verdict {
-    display: inline-flex;
-    align-items: center;
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    padding: 0 var(--studio-spacing-1);
-    border-radius: 999px;
-    border: 1px solid var(--studio-border);
-    color: var(--studio-fg-dim);
-    background: transparent;
-
-    &[data-verdict='pass'],
-    &[data-verdict='success'] {
-      color: var(--severity-pass);
-      border-color: color-mix(in srgb, var(--severity-pass) 34%, transparent);
-    }
-
-    &[data-verdict='concerns'],
-    &[data-verdict='concern'],
-    &[data-verdict='looping'] {
-      color: var(--severity-warn);
-      border-color: color-mix(in srgb, var(--severity-warn) 34%, transparent);
-    }
-
-    &[data-verdict='block'],
-    &[data-verdict='blocked'],
-    &[data-verdict='loop-detected'] {
-      color: var(--severity-high);
-      border-color: color-mix(in srgb, var(--severity-high) 34%, transparent);
-    }
-  }
-
   &__meta {
     grid-column: 1 / -1;
     display: inline-flex;
@@ -186,8 +143,6 @@
     margin: 0;
     color: var(--studio-fg-dim);
     font-size: 12px;
-
-    &--error { color: var(--severity-high); }
   }
 }
 

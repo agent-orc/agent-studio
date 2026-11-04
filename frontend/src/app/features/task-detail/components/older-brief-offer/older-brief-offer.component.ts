@@ -2,13 +2,14 @@ import { ChangeDetectionStrategy, Component, inject, input, output, signal } fro
 import type { TaskInfo } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 type OlderBriefDecision = 'accept' | 'starting-point' | 'discard';
 
 @Component({
   selector: 'app-older-brief-offer',
   standalone: true,
-  imports: [PendingButtonDirective],
+  imports: [PendingButtonDirective, StatusIndicatorComponent],
   templateUrl: './older-brief-offer.component.html',
   styleUrl: './older-brief-offer.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

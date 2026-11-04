@@ -35,22 +35,6 @@
   gap: var(--studio-spacing-1);
 }
 
-// Status reads via background tint, never a left accent bar (style-guide R1).
-.rel__state {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 55%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-accent-warn) 14%, var(--studio-bg-elevated));
-  border-radius: 999px;
-  padding: 2px 9px;
-  font-size: 11px;
-  color: var(--studio-fg);
-}
-.rel__state--granted {
-  border-color: color-mix(in srgb, var(--studio-accent-success) 55%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-accent-success) 14%, var(--studio-bg-elevated));
-}
-
 .rel__action {
   border: 1px solid var(--studio-border);
   background: var(--studio-bg-elevated);

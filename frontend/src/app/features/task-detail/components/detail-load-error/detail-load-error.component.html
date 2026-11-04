@@ -1,7 +1,8 @@
 <section class="detail-load-error" data-testid="task-detail-load-error" role="alert">
   <div class="detail-load-error__panel">
-    <span class="detail-load-error__status-dot" aria-hidden="true"></span>
-    <p class="detail-load-error__eyebrow">Task detail unavailable</p>
+    <p class="detail-load-error__state">
+      <app-status-indicator tone="danger" label="Task detail unavailable" testId="task-detail-load-error-state" />
+    </p>
     <h2>Task details could not be loaded</h2>
     <p>{{ message() }}</p>
     <p class="detail-load-error__task">Task: <strong>{{ taskLabel() }}</strong></p>

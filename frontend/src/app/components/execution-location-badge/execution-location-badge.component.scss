@@ -1,48 +1,12 @@
+/*
+ * Execution location (AGT-3403): the shared status indicator carries tone and
+ * icon. The wrapper keeps the multi-line host tooltip and the state hooks
+ * (`data-execution-state`, `--acute`, `--history`) that specs read.
+ */
 :host { display: inline-flex; min-width: 0; }
 
 .execution-location {
   display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
   min-width: 0;
-  padding: 2px var(--studio-spacing-2);
-  border: 1px solid var(--studio-border-subtle);
-  border-radius: 999px;
-  background: var(--studio-bg-elevated);
-  color: var(--studio-fg-muted);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 18px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 100%;
 }
-
-.execution-location__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--studio-success, var(--studio-accent-3));
-  flex: 0 0 auto;
-}
-
-.execution-location[data-execution-state='queued-remote'] .execution-location__dot,
-.execution-location[data-execution-state='recovering'] .execution-location__dot {
-  background: var(--studio-fg-dim);
-}
-
-.execution-location--acute {
-  background: color-mix(in srgb, var(--studio-error) 12%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-error) 42%, var(--studio-border));
-  color: var(--studio-error);
-}
-
-.execution-location--acute .execution-location__dot { background: var(--studio-error); }
-
-.execution-location--history {
-  background: var(--studio-bg-elevated);
-  border-color: var(--studio-border-subtle);
-  color: var(--studio-fg-dim);
-}
-
-.execution-location--history .execution-location__dot { background: var(--studio-fg-dim); }

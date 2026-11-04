@@ -62,14 +62,13 @@
 
             <span class="overview-runs__fact">
               <span class="overview-runs__label">Result</span>
-              <span
+              <app-status-indicator
                 class="overview-runs__result"
                 [attr.data-status]="row.record.status"
-                data-testid="overview-run-result"
-              >
-                <span class="overview-runs__result-dot" aria-hidden="true"></span>
-                {{ row.result }}
-              </span>
+                [tone]="row.resultTone"
+                [label]="row.result"
+                [compact]="true"
+                testId="overview-run-result" />
             </span>
 
             <span class="overview-runs__fact overview-runs__fact--numeric">

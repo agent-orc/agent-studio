@@ -1,10 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import {
+  aspectToneStatusTone,
   aspectVerdictLabel,
   aspectVerdictTone,
   type AspectVerdictTone,
 } from '../../../../../../components/aspect-findings/aspect-findings.model';
+import { StatusIndicatorComponent } from '../../../../../../components/status-indicator/status-indicator.component';
 import type { AspectDocument } from '../aspect-document.model';
 
 /**
@@ -22,7 +24,7 @@ import type { AspectDocument } from '../aspect-document.model';
   selector: 'app-aspect-json-card',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [MarkdownViewComponent],
+  imports: [MarkdownViewComponent, StatusIndicatorComponent],
   templateUrl: './aspect-json-card.component.html',
   styleUrl: './aspect-json-card.component.scss',
 })
@@ -32,6 +34,7 @@ export class AspectJsonCardComponent {
   readonly compact = input(false);
 
   readonly tone = computed<AspectVerdictTone>(() => aspectVerdictTone(this.doc().status));
+  readonly statusTone = computed(() => aspectToneStatusTone(this.tone()));
   readonly statusLabel = computed(() => aspectVerdictLabel(this.doc().status));
 
   /** Human title for the aspect id, e.g. `code-quality` → `Code quality`. */

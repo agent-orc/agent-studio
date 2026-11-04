@@ -735,7 +735,8 @@ test.describe('Pipeline: per-step metric column headers', () => {
     const aspectSummary = aspectPhase.getByTestId('overview-pipeline-phase-summary');
     await expect(aspectSummary).toContainText('Attention');
     await expect(aspectSummary.getByTestId('overview-pipeline-phase-ran')).toHaveText('4/4');
-    await expect(aspectSummary.getByTestId('overview-pipeline-phase-concern')).toHaveText('⚠ 2');
+    await expect(aspectSummary.getByTestId('overview-pipeline-phase-concern')).toHaveText('2');
+    await expect(aspectSummary.getByTestId('overview-pipeline-phase-concern')).toHaveAttribute('data-tone', 'warning');
     await expect(aspectSummary).toContainText('95.8k');
 
     if (RESULTS_DIR) {

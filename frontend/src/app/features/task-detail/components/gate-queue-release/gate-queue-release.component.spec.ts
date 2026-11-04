@@ -44,6 +44,7 @@ describe('GateQueueReleaseComponent', () => {
 
     const outcome = fixture.nativeElement.querySelector('[data-testid="gate-queue-release-outcome"]') as HTMLElement;
     expect(outcome.textContent).toContain('Released 2 cards to the gate queue; 1 stayed escalated: AGT-3215');
+    expect(outcome.querySelector('[data-testid="gate-queue-release-outcome-state"]')?.getAttribute('data-tone')).toBe('warning');
     expect(fixture.nativeElement.querySelector('[data-testid="gate-queue-release-action"]')).toBeNull();
     http.verify();
   });

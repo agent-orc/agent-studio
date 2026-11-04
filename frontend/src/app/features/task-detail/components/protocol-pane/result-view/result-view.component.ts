@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { SummaryOutcome, TaskDetail } from '../../../../../models/task.model';
 import { laneTone } from '../../../../../models/lane-presentation';
@@ -8,6 +9,9 @@ import { RESULT_CASE_META } from '../result-case';
 import { BeautifulResultsComponent } from '../../beautiful-results/beautiful-results.component';
 import type { GeneratedFileProvenanceView } from '../../generated-file-provenance.util';
 import { TestEvidenceStatusComponent } from '../../../../test-evidence';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { protocolVerdictTone } from '../protocol-verdict-banner/protocol-verdict-tone';
+import type { ResultMetric } from '../result-document';
 
 const SUMMARY_OUTCOME_LABELS: Record<SummaryOutcome, string> = {
   'delivered': 'delivered',
@@ -16,6 +20,40 @@ const SUMMARY_OUTCOME_LABELS: Record<SummaryOutcome, string> = {
   'failed': 'failed',
   'no-op': 'no change needed',
 };
+
+const SUMMARY_OUTCOME_TONES: Record<SummaryOutcome, StatusTone> = {
+  'delivered': 'success',
+  'delivered-via-operator-merge': 'success',
+  'parked-on-decision': 'warning',
+  'failed': 'danger',
+  'no-op': 'neutral',
+};
+
+const METRIC_TONES: Readonly<Record<NonNullable<ResultMetric['tone']>, StatusTone | null>> = {
+  ok: 'success',
+  warn: 'warning',
+  problem: 'danger',
+  neutral: null,
+};
+
+const ASPECT_STATUS_TONES: Readonly<Record<string, StatusTone>> = {
+  pass: 'success',
+  warn: 'warning',
+  concerns: 'warning',
+  fail: 'danger',
+  block: 'danger',
+};
+
+/** Indicator tone of a quality metric, or null for a plain neutral stat (AGT-3403). */
+export function resultMetricTone(tone: ResultMetric['tone'] | null | undefined): StatusTone | null {
+  return tone ? METRIC_TONES[tone] ?? null : null;
+}
+
+/** Tone of a raw aspect status in the Result aspect table; unknown stays neutral. */
+export function resultAspectTone(status: string | null | undefined): StatusTone {
+  const key = (status ?? '').trim().toLowerCase();
+  return Object.hasOwn(ASPECT_STATUS_TONES, key) ? ASPECT_STATUS_TONES[key] : 'neutral';
+}
 
 /**
  * The Result view (Protocol -> Result redesign).
@@ -42,7 +80,7 @@ const SUMMARY_OUTCOME_LABELS: Record<SummaryOutcome, string> = {
   selector: 'app-result-view',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, BeautifulResultsComponent, TestEvidenceStatusComponent],
+  imports: [TooltipDirective, NgTemplateOutlet, BeautifulResultsComponent, TestEvidenceStatusComponent, StatusIndicatorComponent],
   templateUrl: './result-view.component.html',
   styleUrl: './result-view.component.scss',
 })
@@ -66,13 +104,9 @@ export class ResultViewComponent {
   readonly textScanHint = computed(() => this.verdict().signals.find(
     signal => signal.sourceLabel === 'text scan' && signal.label.startsWith('status text mentions:'),
   ) ?? null);
-  readonly outcomeTone = computed(() => {
-    const status = this.verdict().status;
-    if (status === 'failed') return 'problem';
-    if (status === 'needs-decision') return 'warn';
-    if (status === 'succeeded') return 'accent';
-    return 'neutral';
-  });
+  readonly caseTone = computed(() => protocolVerdictTone(this.verdict()));
+  readonly metricTone = resultMetricTone;
+  readonly aspectTone = resultAspectTone;
 
   /**
    * Lane tone when the lane itself is the leading signal, else null. A card
@@ -93,6 +127,10 @@ export class ResultViewComponent {
   readonly assessmentOutcome = computed(() => {
     const outcome = this.detail().summaryAssessment?.outcome;
     return outcome ? SUMMARY_OUTCOME_LABELS[outcome] ?? outcome : null;
+  });
+  readonly assessmentTone = computed<StatusTone>(() => {
+    const outcome = this.detail().summaryAssessment?.outcome;
+    return (outcome && SUMMARY_OUTCOME_TONES[outcome]) || 'neutral';
   });
   readonly anyWorkMayBeLost = computed(() => this.inconsistencies().some(item => item.workMayBeLost));
 

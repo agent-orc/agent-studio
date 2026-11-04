@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, input, output, signal } f
 import { commitSupersessionState, isReplacedCommit, type TaskCommitInfo } from '../../../../git';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { formatCompactDateTime, formatDateTime } from '../../../../../services/format.util';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
 
 /**
  * AGT-2817 - this block used to be the only place a card's supersession was
@@ -20,7 +21,7 @@ interface SupersededRound {
   selector: 'app-task-commit-rounds',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   templateUrl: './task-commit-rounds.component.html',
   styleUrl: './task-commit-rounds.component.scss',
 })
@@ -87,8 +88,9 @@ export class TaskCommitRoundsComponent {
     }
   }
 
-  pushStatusKindOf(entry: TaskCommitInfo): string {
-    return pushStatusKind(entry) ?? '';
+  pushStatusTone(entry: TaskCommitInfo): StatusTone {
+    const kind = pushStatusKind(entry);
+    return kind ? PUSH_STATUS_TONES[kind] : 'neutral';
   }
 
   private pushStatusTooltip(entry: TaskCommitInfo): string | null {
@@ -106,6 +108,17 @@ export class TaskCommitRoundsComponent {
 }
 
 type PushStatusKind = 'superseded' | 'rejected' | 'backing-off';
+
+/**
+ * Push backstop state to shared status tone (AGT-3403): a permanently skipped
+ * commit is settled (neutral), a stopped rejection is danger, a backoff that
+ * still retries is a warning.
+ */
+const PUSH_STATUS_TONES: Readonly<Record<PushStatusKind, StatusTone>> = {
+  'superseded': 'neutral',
+  'rejected': 'danger',
+  'backing-off': 'warning',
+};
 
 function pushStatusKind(entry: TaskCommitInfo): PushStatusKind | null {
   if (entry.pushStatus === 'superseded') return 'superseded';

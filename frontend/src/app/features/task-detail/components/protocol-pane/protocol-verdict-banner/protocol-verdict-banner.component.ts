@@ -2,6 +2,8 @@ import { ChangeDetectionStrategy, Component, computed, effect, input, output, si
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
 import type { ProtocolVerdict } from '../protocol-verdict';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { protocolSignalTone, protocolVerdictTone } from './protocol-verdict-tone';
 /**
  * The single run outcome banner plus its raw-signal disclosure.
  *
@@ -13,7 +15,7 @@ import type { ProtocolVerdict } from '../protocol-verdict';
   selector: 'app-protocol-verdict-banner',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, DisclosureMarkerComponent],
+  imports: [TooltipDirective, DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './protocol-verdict-banner.component.html',
   styleUrl: './protocol-verdict-banner.component.scss',
 })
@@ -29,6 +31,9 @@ export class ProtocolVerdictBannerComponent {
   /** Whether the reason and raw signals are shown in full. */
   readonly expanded = signal(false);
   readonly dismissed = signal(false);
+
+  readonly tone = computed(() => protocolVerdictTone(this.verdict(), this.running()));
+  readonly signalTone = protocolSignalTone;
 
   readonly hasSignals = computed<boolean>(() => (this.verdict().signals?.length ?? 0) > 0);
 

@@ -55,6 +55,7 @@ describe('AcceptanceAttemptGapNoticeComponent (AGT-3076)', () => {
     const { host } = await mount({ acceptanceAttemptGap: GAP });
     const notice = host.querySelector('[data-testid="acceptance-attempt-gap"]');
     expect(notice?.textContent).toContain('Acceptance needs an operator override');
+    expect(host.querySelector('[data-testid="acceptance-attempt-gap-state"]')?.getAttribute('data-tone')).toBe('warning');
     expect(host.querySelector('[data-testid="acceptance-attempt-gap-epoch"]')?.textContent?.trim()).toBe('2');
     expect(host.querySelector('[data-testid="acceptance-attempt-gap-reason"]')?.textContent)
       .toContain('no run attempt in the current authority epoch');

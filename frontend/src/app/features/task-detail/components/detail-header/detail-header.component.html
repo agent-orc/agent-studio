@@ -119,10 +119,8 @@
     <span class="detail__loading"
           data-testid="detail-loading"
           role="status"
-          aria-live="polite"
-          [cacTooltip]="'Loading task…'"
-          aria-label="Loading task">
-      <span class="detail__loading-ring" aria-hidden="true"></span>
+          aria-live="polite">
+      <app-status-indicator tone="running" label="Loading task…" [compact]="true" testId="detail-loading-state" />
     </span>
   }
   <select #stateSelect

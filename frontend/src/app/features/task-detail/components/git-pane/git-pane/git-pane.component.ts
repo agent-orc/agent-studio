@@ -9,7 +9,6 @@ import { GitFileTreeComponent } from '../git-file-tree/git-file-tree.component';
 import type { TaskLandedLadder } from '../../../../git';
 import type { CodeReviewListEntry } from '../../../../../services/task.service';
 import {
-  codeReviewVerdictGlyph,
   codeReviewVerdictLabel,
   codeReviewVerdictTone,
   type CodeReviewVerdictTone,
@@ -21,6 +20,15 @@ import { coalesceDiffByFile } from '../../../../../utils/coalesce-diff';
 import { currentDiff2Html, hasDiff2HtmlLoaded, loadDiff2Html } from '../../../../../utils/diff2html-lazy';
 import { ResizableSplitterDirective } from '../../../../../components/resizable-splitter/resizable-splitter.directive';
 import { TaskCommitRoundsComponent } from '../task-commit-rounds/task-commit-rounds.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+
+/** Code review verdict tone to shared status tone (AGT-3403); unknown verdicts are neutral. */
+export const CODE_REVIEW_STATUS_TONES: Readonly<Record<CodeReviewVerdictTone, StatusTone>> = {
+  pass: 'success',
+  concerns: 'warning',
+  block: 'danger',
+  unknown: 'neutral',
+};
 // Cycle 7f: diff2html (~120 KB minified, includes its own theme CSS) is
 // loaded lazily the first time a non-empty diff arrives. The pre-Cycle-7f
 // import was static, which dragged the whole library into the initial
@@ -47,7 +55,7 @@ import { TaskCommitRoundsComponent } from '../task-commit-rounds/task-commit-rou
   selector: 'app-git-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [SegmentedControlComponent, DatePipe, NgTemplateOutlet, GitFileTreeComponent, TaskCommitRoundsComponent, TooltipDirective, AppTooltipDirective, MarkdownViewComponent, ResizableSplitterDirective],
+  imports: [SegmentedControlComponent, DatePipe, NgTemplateOutlet, GitFileTreeComponent, TaskCommitRoundsComponent, TooltipDirective, AppTooltipDirective, MarkdownViewComponent, ResizableSplitterDirective, StatusIndicatorComponent],
   templateUrl: './git-pane.component.html',
   styleUrls: ['./git-pane.component.scss']
 })
@@ -366,8 +374,13 @@ export class GitPaneComponent {
     return codeReviewVerdictLabel(verdict);
   }
 
-  reviewGlyph(verdict: string | null | undefined): string {
-    return codeReviewVerdictGlyph(verdict);
+  reviewStatusTone(verdict: string | null | undefined): StatusTone {
+    return CODE_REVIEW_STATUS_TONES[codeReviewVerdictTone(verdict)] ?? 'neutral';
+  }
+
+  /** Landed-ladder rung: reached is success, pending is neutral (not a finding). */
+  ladderTone(reached: boolean): StatusTone {
+    return reached ? 'success' : 'neutral';
   }
 
   /** Tooltip for the rating badge: verdict + one-line summary + affordance. */

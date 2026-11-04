@@ -15,6 +15,7 @@ import {
   TaskReferenceMicrocardComponent,
   type TaskReferenceStatus,
 } from '../../../../components/task-reference-microcard/task-reference-microcard';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 
@@ -43,7 +44,7 @@ interface ReferenceStatusResponse {
   selector: 'app-planning-spawn-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, TaskReferenceMicrocardComponent],
+  imports: [FormsModule, TaskReferenceMicrocardComponent, StatusIndicatorComponent],
   templateUrl: './planning-spawn-panel.component.html',
   styleUrl: './planning-spawn-panel.component.scss',
 })

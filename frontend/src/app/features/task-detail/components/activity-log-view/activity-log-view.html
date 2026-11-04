@@ -90,6 +90,7 @@
                   @case ('system') {
                     <header class="convo-turn__head">
                       <span class="convo-turn__role">System</span>
+                      @if (item.turn.status === 'error') { <app-status-indicator tone="danger" label="Error" [compact]="true" testId="convo-turn-error" /> }
                       <span class="convo-turn__time">{{ formatTime(item.turn.timestamp) }}</span>
                     </header>
                     <div class="convo-turn__body convo-turn__body--system"
@@ -100,8 +101,7 @@
                       <article class="steer-card"
                                data-testid="orchestrator-steer-card">
                         <header class="steer-card__head">
-                          <span class="steer-card__icon" aria-hidden="true">?</span>
-                          <span class="steer-card__role">Orchestrator needs your input</span>
+                          <app-status-indicator tone="warning" label="Orchestrator needs your input" [compact]="true" testId="orchestrator-steer-state" />
                           <span class="convo-turn__time">{{ formatTime(item.turn.timestamp) }}</span>
                         </header>
                         <dl class="steer-card__fields">
@@ -166,6 +166,7 @@
                           </span>
                         }
                       </span>
+                      @if (item.turn.status === 'error') { <app-status-indicator tone="danger" label="Error" [compact]="true" testId="convo-turn-error" /> }
                       @if (item.toolDuration) {
                         <span class="convo-tools__duration"
                               data-testid="convo-tools-duration"
@@ -215,6 +216,7 @@
                   <span class="trace-group__kind">{{ kindLabel(group.kind) }}</span>
                   <span class="trace-group__title">{{ group.title }}</span>
                   <span class="trace-group__count">{{ group.lines.length }}</span>
+                  @if (group.status === 'error') { <app-status-indicator tone="danger" label="Error" [compact]="true" testId="trace-group-error" /> }
                 </button>
                 @if (group.subtitle) {
                   <div class="trace-group__subtitle">{{ group.subtitle }}</div>
@@ -259,10 +261,7 @@
                data-testid="activity-log-live-status"
                role="status"
                aria-live="polite">
-            <span class="live-status__pulse" aria-hidden="true">
-              <span></span><span></span><span></span>
-            </span>
-            <span class="live-status__verb" data-testid="activity-log-live-verb">{{ ls.verb }}</span>
+            <app-status-indicator [tone]="liveStatusTone(ls.kind)" [label]="ls.verb" testId="activity-log-live-verb" />
             @if (ls.detail) {
               <span class="live-status__detail" data-testid="activity-log-live-detail">{{ ls.detail }}</span>
             }

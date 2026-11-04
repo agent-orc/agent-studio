@@ -27,17 +27,23 @@
     </ng-container>
     <ng-container trailing>
       @if (sessionChip(); as chip) {
-        <span class="pane__telemetry pane__session-chip pane__session-chip--{{ chip.kind }}"
-              [cacTooltip]="chip.tooltip"
-              [attr.data-testid]="'session-chip-' + chip.kind">
-          {{ chip.emoji }} {{ chip.label }}
-        </span>
+        <app-status-indicator
+          class="pane__telemetry pane__session-chip"
+          [tone]="sessionChipTone(chip.kind)"
+          [label]="chip.label"
+          [detail]="chip.tooltip"
+          [compact]="true"
+          [testId]="'session-chip-' + chip.kind" />
       }
       @if (claudeSession(); as cs) {
         @if (cs.error && !cs.turnCount) {
-          <span class="pane__telemetry pane__telemetry--err"
-                [cacTooltip]="'Claude session telemetry: ' + cs.error"
-                data-testid="claude-telemetry-error">⚠ no session yet</span>
+          <app-status-indicator
+            class="pane__telemetry"
+            tone="warning"
+            label="no session yet"
+            [detail]="'Claude session telemetry: ' + cs.error"
+            [compact]="true"
+            testId="claude-telemetry-error" />
         } @else if (cs.turnCount > 0) {
           <!-- Single-badge telemetry: tooltip carries the full breakdown
                (input / output / cache / turns / model) so no info is lost. -->
@@ -52,24 +58,30 @@
       }
       @if (watchdogPill(); as wp) {
         @if (wp.visible) {
-          <span class="pane__watchdog"
-                [attr.data-state]="wp.state"
-                [cacTooltip]="wp.tooltip"
-                data-testid="watchdog-chip">{{ wp.label }}</span>
+          <app-status-indicator
+            class="pane__watchdog"
+            [attr.data-state]="wp.state"
+            [tone]="watchdogTone(wp.state)"
+            [label]="wp.label"
+            [detail]="wp.tooltip"
+            [compact]="true"
+            testId="watchdog-chip" />
         }
       }
       @if (claudeRateLimit(); as rl) {
         <span class="pane__telemetry pane__telemetry-rate"
-              [class.pane__telemetry-rate--ok]="rl.status === 'allowed'"
-              [class.pane__telemetry-rate--warn]="rl.status && rl.status !== 'allowed'"
               [cacTooltip]="rateLimitTooltip()"
               data-testid="claude-rate-limit">
-          <span class="pane__telemetry-chip">⏱ {{ formatRateWindow(rl.window) }} · {{ rl.status || '?' }}</span>
+          <app-status-indicator
+            [tone]="rateLimitTone(rl.status)"
+            [label]="formatRateWindow(rl.window) + ' · ' + (rl.status || '?')"
+            [compact]="true"
+            testId="claude-rate-limit-status" />
           @if (rl.resetsAt > 0) {
             <span class="pane__telemetry-chip">reset {{ formatResetIn(rl.resetsAt) }}</span>
           }
           @if (rl.isUsingOverage) {
-            <span class="pane__telemetry-chip pane__telemetry-chip--overage">overage</span>
+            <app-status-indicator tone="warning" label="overage" [compact]="true" testId="claude-rate-limit-overage" />
           }
         </span>
       }
@@ -113,14 +125,10 @@
              role="status">
           <div class="interim-summary__head">
             <span class="interim-summary__title">
-              <span aria-hidden="true">📊</span>
-              @if (s.status === 'pending') {
-                Interim status — running ({{ interimElapsedSeconds() }}s)
-              } @else if (s.status === 'ready') {
-                Interim status
-              } @else {
-                Interim status failed
-              }
+              <app-status-indicator
+                [tone]="interimTone(s.status)"
+                [label]="interimTitle(s.status)"
+                testId="protocol-interim-state" />
             </span>
             <button type="button"
                     class="interim-summary__close"
@@ -130,7 +138,6 @@
           </div>
           @if (s.status === 'pending') {
             <div class="interim-summary__body interim-summary__body--pending">
-              <span class="spinner-ring" aria-hidden="true"></span>
               <span>Haiku is reading the current cli-output.log…</span>
             </div>
           } @else if (s.status === 'ready' && s.markdown) {
@@ -185,8 +192,9 @@
             @if (summaryStatus() === 'failed') {
               <div class="summary-error" role="alert" data-testid="protocol-summary-error">
                 <div class="summary-error__head">
-                  <span class="summary-error__icon" aria-hidden="true">⚠</span>
-                  <h4 class="summary-error__title">Result could not be generated</h4>
+                  <h4 class="summary-error__title">
+                    <app-status-indicator tone="danger" label="Result could not be generated" testId="protocol-summary-error-state" />
+                  </h4>
                 </div>
                 <pre class="summary-error__body" data-testid="protocol-summary-error-message">{{ detail().summaryState?.errorMessage || 'Unknown error — no detail from backend.' }}</pre>
                 <div class="summary-error__actions">
@@ -202,13 +210,12 @@
             }
             @if (summaryStatus() === 'generating' && !detail().statusMarkdown) {
               <div class="notes-panel__placeholder" data-testid="protocol-generating-placeholder">
-                <span class="spinner-ring spinner-ring--lg"></span>
-                <p>Haiku is summarizing the CLI output…</p>
+                <app-status-indicator tone="running" label="Haiku is summarizing the CLI output…" testId="protocol-generating-state" />
               </div>
             } @else if (!detail().statusMarkdown && summaryStatus() !== 'failed') {
               <div class="notes-panel__placeholder">
                 @if (canRegenerate()) {
-                  <p>No result was generated for this activity yet.</p>
+                  <app-status-indicator tone="neutral" label="No result was generated for this activity yet." testId="protocol-no-result-state" />
                   <button type="button" class="btn-regen btn-regen--placeholder" data-testid="protocol-regenerate-summary"
                           [cacTooltip]="'Generate a short result from the recorded CLI activity'" [disabled]="regenerating()" [attr.aria-busy]="regenerating()"
                           (click)="regenerateSummary.emit()">
@@ -216,7 +223,7 @@
                     <span>{{ regenerating() ? 'Generating…' : 'Generate result' }}</span>
                   </button>
                 } @else {
-                  <p>No result yet. There is no CLI activity to summarize.</p>
+                  <app-status-indicator tone="neutral" label="No result yet. There is no CLI activity to summarize." testId="protocol-no-result-state" />
                 }
               </div>
             } @else if (detail().statusMarkdown) {

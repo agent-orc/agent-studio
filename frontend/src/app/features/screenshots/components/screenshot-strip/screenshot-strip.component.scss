@@ -58,22 +58,16 @@
   background: var(--studio-bg-elevated);
 }
 
-// Status badge sits on top of the screenshot image, so it keeps fixed pastel
-// fills + dark text that stay legible regardless of the active app theme.
+// The status sits on top of the screenshot image, so the indicator gets an
+// opaque surface backing that stays legible on any image in both themes.
 .strip__badge {
   position: absolute;
   top: 4px;
   right: 4px;
+  display: inline-flex;
   padding: 0 6px;
   border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.4;
-  color: #1e1e2e;
-
-  &--ok   { background: #a6e3a1; }
-  &--bad  { background: #f38ba8; color: #1e1e2e; }
-  &--skip { background: #cdd6f4; }
+  background: var(--studio-surface);
 }
 
 .strip__caption {
@@ -205,16 +199,12 @@
   font-weight: 600;
 }
 
+/* The lightbox backdrop stays dark on both themes, so the status indicator
+   sits on an opaque surface backing that follows the active theme tokens. */
 .lightbox__status {
-  padding: 2px 8px;
+  display: inline-flex;
   border-radius: 9999px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  background: rgba(255, 255, 255, 0.1);
-
-  &[data-status="passed"]  { background: #a6e3a1; color: #1e1e2e; }
-  &[data-status="failed"]  { background: #f38ba8; color: #1e1e2e; }
-  &[data-status="skipped"] { background: #cdd6f4; color: #1e1e2e; }
+  background: var(--studio-surface);
 }
 
 /* Text-only provenance label in the lightbox; no fill, matching the strip. */

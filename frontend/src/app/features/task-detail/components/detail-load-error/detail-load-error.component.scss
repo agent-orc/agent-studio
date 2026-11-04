@@ -24,21 +24,8 @@
   box-shadow: var(--studio-card-shadow);
 }
 
-.detail-load-error__status-dot {
-  width: 0.75rem;
-  height: 0.75rem;
-  margin-bottom: var(--studio-spacing-3);
-  border-radius: 50%;
-  background: var(--studio-accent-6);
-}
-
-.detail-load-error__eyebrow {
-  margin: 0 0 var(--studio-spacing-2);
-  color: var(--studio-error);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.detail-load-error .detail-load-error__state {
+  margin: 0 0 var(--studio-spacing-3);
 }
 
 .detail-load-error h2 {

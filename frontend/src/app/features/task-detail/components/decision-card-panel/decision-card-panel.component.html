@@ -6,16 +6,19 @@
              aria-labelledby="decision-card-question">
       <header class="decision-card__header">
         <span class="decision-card__kind">Decision</span>
-        <span class="decision-card__stage" data-testid="decision-card-stage">
-          <i aria-hidden="true"></i>{{ open() ? 'Waiting for the decider' : 'Decided' }}
-        </span>
+        <app-status-indicator [tone]="stage().tone"
+                              [label]="stage().label"
+                              testId="decision-card-stage" />
         <span class="decision-card__meta" data-testid="decision-card-decider">
           Decider <strong>{{ decider() }}</strong>
         </span>
         @if (d.dueDate && open()) {
           <span class="decision-card__meta decision-card__num"
                 data-testid="decision-card-due"
-                [attr.data-overdue]="overdue()">{{ overdue() ? 'Overdue since' : 'Due' }} {{ dueLabel() }}</span>
+                [attr.data-overdue]="overdue()"><app-status-indicator [tone]="dueState().tone"
+                                                                      [label]="dueState().label"
+                                                                      [compact]="true"
+                                                                      testId="decision-card-due-state" /></span>
         }
       </header>
 
@@ -29,7 +32,10 @@
 
       @if (dependants().length > 0) {
         <p class="decision-card__blocks" data-testid="decision-card-dependants">
-          <span>{{ open() ? 'Blocks' : 'Unblocked' }}</span>
+          <app-status-indicator [tone]="blocksState().tone"
+                                [label]="blocksState().label"
+                                [compact]="true"
+                                testId="decision-card-dependants-state" />
           @for (key of dependants(); track key) {
             <button type="button" class="decision-card__link" (click)="openDependant(key, $event)">{{ key }}</button>
           }
@@ -66,7 +72,7 @@
                 <span class="decision-card__tag" data-testid="decision-card-recommended">Recommended</span>
               }
               @if (isChosen(option)) {
-                <span class="decision-card__tag decision-card__tag--chosen" data-testid="decision-card-chosen">Chosen</span>
+                <app-status-indicator tone="success" label="Chosen" [compact]="true" testId="decision-card-chosen" />
               }
               @if (open()) {
                 <button type="button"

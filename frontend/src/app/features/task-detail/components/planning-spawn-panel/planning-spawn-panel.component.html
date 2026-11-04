@@ -23,21 +23,19 @@
     } @else if (noFollowUpDeclared()) {
       <div class="spawn__declared" data-testid="planning-no-followup-declared">
         <p class="spawn__declared-line">
-          <span class="spawn__status-dot spawn__status-dot--ok" aria-hidden="true"></span>
-          No follow-up intended
+          <app-status-indicator tone="success" label="No follow-up intended" testId="planning-no-followup-declared-state" />
         </p>
         @if (noFollowUpReason(); as reason) {
           <p class="spawn__declared-reason">“{{ reason }}”</p>
         }
       </div>
     } @else {
-      <span class="spawn__risk-status"
-            data-testid="planning-no-followups-status"
-            role="status"
-            title="A planning task is complete after it creates the proposed follow-up work or records that none is intended.">
-        <span class="spawn__status-dot" aria-hidden="true"></span>
-        No follow-up cards created
-      </span>
+      <p class="spawn__risk-status" role="status">
+        <app-status-indicator tone="warning"
+                              label="No follow-up cards created"
+                              detail="A planning task is complete after it creates the proposed follow-up work or records that none is intended."
+                              testId="planning-no-followups-status" />
+      </p>
 
       @if (declaring()) {
         <div class="spawn__declare-form" data-testid="planning-declare-form">

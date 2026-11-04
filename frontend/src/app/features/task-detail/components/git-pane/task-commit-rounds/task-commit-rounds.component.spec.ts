@@ -98,9 +98,10 @@ describe('TaskCommitRoundsComponent', () => {
 
     const badges = root.querySelectorAll('[data-testid="git-commit-push-status"]');
     expect(badges).toHaveLength(2);
-    expect(badges[0].textContent).toBe('not pushed');
-    expect(badges[1].textContent).toBe('push rejected');
-    expect(badges[1].className).toContain('commit-chain__push-status--rejected');
+    expect(badges[0].textContent?.trim()).toBe('not pushed');
+    expect(badges[0].getAttribute('data-tone')).toBe('neutral');
+    expect(badges[1].textContent?.trim()).toBe('push rejected');
+    expect(badges[1].getAttribute('data-tone')).toBe('danger');
   });
 
   it('badges a commit backing off after a non-fast-forward rejection', async () => {
@@ -118,7 +119,7 @@ describe('TaskCommitRoundsComponent', () => {
     fixture.detectChanges();
 
     const badge = root.querySelector('[data-testid="git-commit-push-status"]');
-    expect(badge?.textContent).toBe('push retrying');
-    expect(badge?.className).toContain('commit-chain__push-status--backing-off');
+    expect(badge?.textContent?.trim()).toBe('push retrying');
+    expect(badge?.getAttribute('data-tone')).toBe('warning');
   });
 });

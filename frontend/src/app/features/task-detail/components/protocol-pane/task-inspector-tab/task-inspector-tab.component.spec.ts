@@ -124,6 +124,7 @@ describe('TaskInspectorTabComponent', () => {
     );
     const report = element.querySelector('[data-testid="enrichment-report"]');
     expect(report?.textContent).toContain('Enriched');
+    expect(report?.querySelector('[data-testid="enrichment-report-status"]')?.getAttribute('data-tone')).toBe('success');
     expect(report?.textContent).toContain('120 +41 → 161');
     expect(report?.textContent).toContain('1 decision');
     expect(report?.textContent).toContain('1 appended');

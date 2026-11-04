@@ -38,8 +38,8 @@ describe('SteeringDetailComponent', () => {
     const el = fixture.nativeElement as HTMLElement;
     const chip = el.querySelector('[data-testid="steering-detail-verdict"]');
     expect(chip?.textContent?.trim()).toBe('Re-issue');
-    expect(chip?.getAttribute('data-verdict')).toBe('reissue');
-    expect(chip?.classList.contains('steer__chip--warn')).toBe(true);
+    expect(chip?.closest('[data-verdict]')?.getAttribute('data-verdict')).toBe('reissue');
+    expect(chip?.getAttribute('data-tone')).toBe('warning');
     expect(el.querySelector('[data-testid="steering-detail-reason"]')?.textContent)
       .toContain('requirement-fit not met');
   });

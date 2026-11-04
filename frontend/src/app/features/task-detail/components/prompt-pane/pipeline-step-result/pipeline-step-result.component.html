@@ -17,14 +17,18 @@
       <header class="step-result__header" [attr.data-status]="h.status">
         <span class="step-result__title">{{ h.label }}</span>
         <span class="step-result__outcome">
-          <span class="step-result__status" data-testid="pipeline-step-result-status">
-            <span aria-hidden="true">{{ h.statusIcon }}</span>
-            {{ h.statusLabel }}
-          </span>
+          <app-status-indicator
+            [tone]="h.statusTone"
+            [label]="h.statusLabel"
+            [compact]="true"
+            testId="pipeline-step-result-status" />
           @if (h.verdict) {
-            <span class="step-result__verdict"
-                  [attr.data-verdict]="h.verdict"
-                  data-testid="pipeline-step-result-verdict">{{ h.verdict }}</span>
+            <app-status-indicator
+              [attr.data-verdict]="h.verdict"
+              [tone]="verdictTone(h.verdict)"
+              [label]="h.verdict"
+              [compact]="true"
+              testId="pipeline-step-result-verdict" />
           }
         </span>
         <span class="step-result__meta" aria-label="Step metadata">
@@ -45,10 +49,12 @@
 
       <div class="step-result__body studio-measure studio-measure--prose" data-testid="pipeline-step-result-body">
         @if (loading()) {
-          <p class="step-result__state">Loading result…</p>
+          <p class="step-result__state">
+            <app-status-indicator tone="running" label="Loading result…" [compact]="true" testId="pipeline-step-result-loading" />
+          </p>
         } @else if (failed()) {
-          <p class="step-result__state step-result__state--error">
-            Could not load this step’s result.
+          <p class="step-result__state">
+            <app-status-indicator tone="danger" label="Could not load this step’s result." [compact]="true" testId="pipeline-step-result-error" />
           </p>
         } @else if (hasContent()) {
           <app-file-source-history data-testid="pipeline-step-result-markdown"
@@ -59,7 +65,9 @@
                                    [contentTransform]="cleanTransform"
                                    [dense]="true" />
         } @else {
-          <p class="step-result__state">No structured result was written for this step.</p>
+          <p class="step-result__state">
+            <app-status-indicator tone="neutral" label="No structured result was written for this step." [compact]="true" testId="pipeline-step-result-empty" />
+          </p>
         }
       </div>
     </div>

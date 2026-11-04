@@ -181,6 +181,11 @@ describe('PostStepControlsComponent', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].textContent).toContain('#2');
     expect(rows[1].textContent).toContain('#1');
+    for (const row of rows) {
+      const state = row.querySelector('[data-testid="overview-post-step-attempt-status"]');
+      expect(state?.getAttribute('data-tone')).toBe(
+        ({ ok: 'success', warn: 'warning', failed: 'danger' } as Record<string, string>)[row.getAttribute('data-status') ?? ''] ?? 'neutral');
+    }
     const artifacts = Array.from(root.querySelectorAll('[data-testid="overview-post-step-artifact"]'))
       .map(element => element.textContent?.trim());
     expect(artifacts).toEqual([

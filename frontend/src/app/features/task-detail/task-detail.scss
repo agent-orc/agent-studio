@@ -543,7 +543,6 @@
       color: var(--studio-fg-dim);
       flex-wrap: wrap;
     }
-    .pane__telemetry--err { color: var(--severity-warn); }
     .pane__telemetry-chip {
       display: inline-flex;
       align-items: center;
@@ -555,13 +554,6 @@
       font-family: var(--font-mono, monospace);
     }
     .pane__telemetry-chip--cache { color: var(--severity-pass); }
-    .pane__telemetry-chip--overage {
-      color: var(--severity-high);
-      background: color-mix(in srgb, var(--severity-high) 15%, transparent);
-      border-color: color-mix(in srgb, var(--severity-high) 35%, transparent);
-    }
-    .pane__telemetry-rate--ok   .pane__telemetry-chip { border-color: color-mix(in srgb, var(--severity-pass) 35%, transparent); }
-    .pane__telemetry-rate--warn .pane__telemetry-chip { border-color: color-mix(in srgb, var(--severity-warn) 45%, transparent); color: var(--severity-warn); }
     .pane__hide,
     .pane__maximize {
       width: 22px;
@@ -1082,18 +1074,7 @@
       border-color: var(--studio-accent-3);
     }
     .cli-config__status {
-      font-size: 12px;
-      padding: 6px 10px;
-      border-radius: 6px;
       margin-top: 8px;
-    }
-    .cli-config__status--ok {
-      background: color-mix(in srgb, var(--severity-pass) 10%, transparent);
-      color: var(--severity-pass);
-    }
-    .cli-config__status--err {
-      background: color-mix(in srgb, var(--severity-high) 10%, transparent);
-      color: var(--severity-high);
     }
     .cli-config__separator {
       border-top: 1px solid var(--alpha-white-08);

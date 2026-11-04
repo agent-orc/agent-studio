@@ -33,7 +33,7 @@
                       (click)="select(entry)">
                 <span class="previous-results__timestamp">{{ timestamp(entry.timestamp) }}</span>
                 <span class="previous-results__producer">{{ entry.producer }}</span>
-                <span class="previous-results__field">Result: {{ entry.result }}</span>
+                <span class="previous-results__field">Result: <app-status-indicator [tone]="resultTone(entry.result)" [label]="entry.result" [compact]="true" testId="previous-result-outcome" /></span>
                 <span class="previous-results__field">Case: {{ entry.case }}</span>
               </button>
             </li>

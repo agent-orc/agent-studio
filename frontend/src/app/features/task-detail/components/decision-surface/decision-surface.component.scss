@@ -34,25 +34,6 @@
   }
 }
 
-.decision-surface__eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-2);
-  color: var(--studio-accent-warn-strong);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
-.decision-surface__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--studio-accent-warn);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-accent-warn) 18%, transparent);
-}
-
 .decision-surface__question,
 .decision-surface__context {
   margin: 0;
@@ -312,10 +293,7 @@
   background: color-mix(in srgb, var(--severity-high) 8%, var(--studio-bg-surface));
   color: var(--studio-fg);
   font-size: 11px;
-
-  strong {
-    color: var(--studio-accent-6-strong);
-  }
+  align-items: flex-start;
 }
 
 @media (max-width: 760px) {

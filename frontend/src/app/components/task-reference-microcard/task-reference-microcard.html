@@ -50,8 +50,11 @@
       @if (variant() === 'lane-dot') {
         <i class="task-ref__lane-dot" data-tone="ghost" aria-hidden="true"></i>
       } @else {
-        <i class="task-ref__project" aria-hidden="true"></i><strong>{{ status().key }}</strong
-        ><span aria-hidden="true">◇</span>
+        <i class="task-ref__project" aria-hidden="true"></i><strong>{{ status().key }}</strong>
+        <app-status-indicator tone="neutral"
+                              [label]="ghostLabel"
+                              [compact]="true"
+                              [testId]="testId() + '-ghost'" />
       }
     </span>
   }

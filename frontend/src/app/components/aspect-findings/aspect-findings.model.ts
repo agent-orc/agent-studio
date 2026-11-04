@@ -16,6 +16,8 @@
  * surface reads findings the same way and the tones come from one place.
  */
 
+import type { StatusTone } from '../status-indicator/status-indicator.component';
+
 /** One parsed aspect finding: which aspect, its verdict token, and why. */
 export interface AspectFinding {
   aspect: string;
@@ -46,6 +48,24 @@ export function aspectVerdictTone(verdict: string | null | undefined): AspectVer
     default:
       return 'neutral';
   }
+}
+
+/** Shared status indicator tone per aspect verdict tone (AGT-3403). */
+const ASPECT_VERDICT_STATUS_TONES: Readonly<Record<AspectVerdictTone, StatusTone>> = {
+  ok: 'success',
+  warn: 'warning',
+  danger: 'danger',
+  neutral: 'neutral',
+};
+
+/** Map an aspect verdict tone (`ok` / `warn` / `danger` / `neutral`) to a shared status tone; unknown is neutral. */
+export function aspectToneStatusTone(tone: AspectVerdictTone | null | undefined): StatusTone {
+  return (tone && ASPECT_VERDICT_STATUS_TONES[tone]) || 'neutral';
+}
+
+/** Map an aspect verdict token to a shared status indicator tone; unknown tokens are neutral. */
+export function aspectVerdictStatusTone(verdict: string | null | undefined): StatusTone {
+  return aspectToneStatusTone(aspectVerdictTone(verdict));
 }
 
 /** Short, stable chip label for a verdict token (the token itself, normalised). */

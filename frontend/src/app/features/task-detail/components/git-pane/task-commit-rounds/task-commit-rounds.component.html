@@ -46,12 +46,16 @@
             <span class="commit-chain__meta"
                   data-testid="git-commit-chain-meta">{{ entry.filesChanged }}f · {{ timestamp(entry) }}</span>
             @if (pendingReplacementLabel(entry); as pendingLabel) {
-              <span class="commit-chain__pending-replacement"
-                    data-testid="git-commit-pending-replacement">{{ pendingLabel }}</span>
+              <app-status-indicator tone="info"
+                                    [label]="pendingLabel"
+                                    [compact]="true"
+                                    testId="git-commit-pending-replacement" />
             }
             @if (pushStatusLabel(entry); as pushLabel) {
-              <span class="commit-chain__push-status commit-chain__push-status--{{ pushStatusKindOf(entry) }}"
-                    data-testid="git-commit-push-status">{{ pushLabel }}</span>
+              <app-status-indicator [tone]="pushStatusTone(entry)"
+                                    [label]="pushLabel"
+                                    [compact]="true"
+                                    testId="git-commit-push-status" />
             }
           </button>
         </li>

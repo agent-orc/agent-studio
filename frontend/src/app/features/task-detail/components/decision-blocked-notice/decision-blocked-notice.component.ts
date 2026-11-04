@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input } from '@an
 import type { TaskInfo } from '../../../../models/task.model';
 import { decisionBlockers } from '../../../../models/decision-card-presentation';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 interface BlockingDecision {
   key: string;
@@ -16,6 +17,7 @@ interface BlockingDecision {
 @Component({
   selector: 'app-decision-blocked-notice',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './decision-blocked-notice.component.html',
   styleUrl: './decision-blocked-notice.component.scss',

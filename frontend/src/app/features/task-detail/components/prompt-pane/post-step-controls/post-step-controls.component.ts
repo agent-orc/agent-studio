@@ -10,6 +10,8 @@ import {
   PipelineStepResultComponent,
   type PipelineStepResultHeader,
 } from '../pipeline-step-result/pipeline-step-result.component';
+import { postStepAttemptTone } from '../pipeline-step-result/step-status-tone';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
 
 const SUPPORTED_STEP_IDS = new Set([
   'post-wiki-maintenance',
@@ -20,7 +22,7 @@ const SUPPORTED_STEP_IDS = new Set([
 @Component({
   selector: 'app-post-step-controls',
   standalone: true,
-  imports: [TooltipDirective, PendingButtonDirective, PipelineStepResultComponent],
+  imports: [TooltipDirective, PendingButtonDirective, PipelineStepResultComponent, StatusIndicatorComponent],
   templateUrl: './post-step-controls.component.html',
   styleUrl: './post-step-controls.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -94,12 +96,14 @@ export class PostStepControlsComponent {
     });
   }
 
+  readonly attemptTone = postStepAttemptTone;
+
   attemptHeader(attempt: OnDemandPostStepAttempt): PipelineStepResultHeader {
     const status = attempt.status.toLowerCase();
     const passed = status === 'ok' || status === 'warn';
     return {
       label: `${this.label()} attempt #${attempt.attempt}`,
-      statusIcon: passed ? '✓' : status === 'failed' ? '×' : '–',
+      statusTone: postStepAttemptTone(status),
       statusLabel: attempt.status,
       status: passed ? 'passed' : status,
       verdict: null,

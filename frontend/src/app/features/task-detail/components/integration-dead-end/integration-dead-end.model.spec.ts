@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskIntegrationStatus } from '../../../git';
 import type { ReviewProjectionView } from '../../../../models/task.model';
-import { integrationDeadEnd } from './integration-dead-end.model';
+import { integrationDeadEnd, integrationDeadEndTone } from './integration-dead-end.model';
 
 function status(code: string, detail = 'The gate reported a failure.'): TaskIntegrationStatus {
   return {
@@ -84,5 +84,19 @@ describe('integrationDeadEnd', () => {
     expect(integrationDeadEnd({ ...status('merge-conflict'), status: 'integrated' }, false, {
       blockingAspects: [{ aspect: 'code-quality', reason: 'Old review concern' }],
     } as ReviewProjectionView)).toBeNull();
+  });
+});
+
+describe('integrationDeadEndTone', () => {
+  it('maps every dead-end kind onto the shared status tones', () => {
+    expect(integrationDeadEndTone('host-unavailable')).toBe('warning');
+    expect(integrationDeadEndTone('review-concerns')).toBe('warning');
+    expect(integrationDeadEndTone('push-blocked')).toBe('warning');
+    expect(integrationDeadEndTone('delivery-pending')).toBe('info');
+    expect(integrationDeadEndTone('delivery-gate-failed')).toBe('danger');
+    expect(integrationDeadEndTone('build-gate-failed')).toBe('danger');
+    expect(integrationDeadEndTone('gate-environment-failure')).toBe('danger');
+    expect(integrationDeadEndTone('merge-conflict')).toBe('danger');
+    expect(integrationDeadEndTone('something-new')).toBe('danger');
   });
 });

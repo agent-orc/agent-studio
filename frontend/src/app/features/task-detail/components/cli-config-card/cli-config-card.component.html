@@ -5,13 +5,10 @@
       <button class="detail__error-close" (click)="closeRequest.emit()">✕</button>
     </div>
     @if (status()) {
-      <div class="cli-config__status" [class.cli-config__status--ok]="status()!.available"
-           [class.cli-config__status--err]="!status()!.available">
-        @if (status()!.available) {
-          ✅ {{ status()!.version }} — {{ status()!.path }}
-        } @else {
-          ❌ Not found at: {{ status()!.path }}
-        }
+      <div class="cli-config__status">
+        <app-status-indicator [tone]="availabilityTone(status()!.available)"
+                              [label]="availabilityLabel(status()!)"
+                              testId="cli-config-availability" />
       </div>
     }
     <div class="cli-config__row">
@@ -20,18 +17,19 @@
              (input)="pathDraftChange.emit($any($event.target).value)"
              placeholder="z.B. claude, C:\\Program Files\\Claude\\claude.exe" />
       <button class="btn-sm" (click)="testPath.emit()" [disabled]="testing()">
-        {{ testing() ? '⏳' : '🧪 Test' }}
+        @if (testing()) {
+          <app-status-indicator tone="running" label="Testing" [compact]="true" testId="cli-config-testing" />
+        } @else {
+          🧪 Test
+        }
       </button>
       <button class="btn-sm btn-sm--primary" (click)="savePath.emit()" [disabled]="testing()">💾 Save</button>
     </div>
     @if (testResult(); as result) {
-      <div class="cli-config__status" [class.cli-config__status--ok]="result.available"
-           [class.cli-config__status--err]="!result.available">
-        @if (result.available) {
-          ✅ Found: {{ result.version }}
-        } @else {
-          ❌ {{ result.version || 'Not found at this path' }}
-        }
+      <div class="cli-config__status">
+        <app-status-indicator [tone]="availabilityTone(result.available)"
+                              [label]="testResultLabel(result)"
+                              testId="cli-config-test-result" />
       </div>
     }
     <div class="cli-config__separator"></div>
@@ -48,9 +46,10 @@
       </button>
     </div>
     @if (status()) {
-      <div class="cli-config__status" [class.cli-config__status--ok]="status()!.hasToken"
-           [class.cli-config__status--err]="!status()!.hasToken">
-        {{ status()!.hasToken ? '🔑 Token configured' : '⚠️ No token — CLI may fail to authenticate' }}
+      <div class="cli-config__status">
+        <app-status-indicator [tone]="tokenTone(status()!.hasToken)"
+                              [label]="status()!.hasToken ? 'Token configured' : 'No token, CLI may fail to authenticate'"
+                              testId="cli-config-token" />
       </div>
     }
   </div>

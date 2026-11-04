@@ -2,10 +2,11 @@
 <div class="steer" [class]="'steer--' + i.tone" data-testid="steering-detail">
   @if (showVerdictChip()) {
     <div class="steer__head" data-testid="steering-detail-head">
-      <span class="steer__chip"
-            [class]="'steer__chip--' + i.tone"
-            [attr.data-verdict]="i.verdict"
-            data-testid="steering-detail-verdict">{{ i.verdictLabel }}</span>
+      <app-status-indicator class="steer__chip"
+                            [attr.data-verdict]="i.verdict"
+                            [tone]="verdictTone()"
+                            [label]="i.verdictLabel"
+                            testId="steering-detail-verdict" />
       @if (i.reason) {
         <span class="steer__reason" data-testid="steering-detail-reason">{{ i.reason }}</span>
       }

@@ -3,10 +3,29 @@ import type {
   ActivityLogGroup,
   ActivityLogKind,
   ConversationTurn,
+  LiveStatusKind,
   ParsedSteer,
   ToolBurstBin,
 } from '../activity-log.parser';
 import type { ParsedRuntimeSentinels } from '../runtime-sentinel.parser';
+import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/**
+ * Live activity kind to status tone (AGT-3403): every live kind is work in
+ * progress except recovering from an error. Unknown kinds fall back to neutral.
+ */
+const LIVE_STATUS_TONES: Readonly<Record<LiveStatusKind, StatusTone>> = {
+  starting: 'running',
+  tool: 'running',
+  agent: 'running',
+  user: 'running',
+  orchestrator: 'running',
+  recovering: 'danger',
+};
+
+export function liveStatusTone(kind: LiveStatusKind | string | null | undefined): StatusTone {
+  return LIVE_STATUS_TONES[kind as LiveStatusKind] ?? 'neutral';
+}
 
 export interface ToolChip {
   kind: ActivityLogKind;

@@ -4,6 +4,7 @@
     data-testid="escalation-summary"
     [class.escalation--collapsed]="collapsed()"
     [class.escalation--gave-up]="v.escalation?.kind === 'gave-up'"
+    [class.escalation--needs-input]="headKind() === 'needs-input'"
     [attr.data-escalation-kind]="v.escalation?.kind ?? null"
     aria-label="Escalation summary">
     <div class="escalation__head">
@@ -15,9 +16,8 @@
         aria-controls="escalation-body"
         (click)="toggleCollapsed()">
         <app-disclosure-marker [open]="!collapsed()" [size]="10" />
-        <span class="escalation__eyebrow" aria-hidden="true">{{ v.escalation?.kind === 'gave-up' ? '⚙' : '⚠' }}</span>
         <span class="escalation__headline">
-          <span class="escalation__title" data-testid="escalation-title">{{ headTitle() }}</span>
+          <app-status-indicator class="escalation__title" [tone]="headTone()" [label]="headTitle()" testId="escalation-title" />
           <span class="escalation__essence" data-testid="escalation-essence">
             <span class="escalation__essence-copy">{{ v.latestAttempt ?? v.essence.label }}</span>
             @if (v.delivery.merge; as m) {
@@ -28,11 +28,13 @@
                 [attr.aria-label]="m.ariaLabel">
                 @for (segment of m.segments; track segment.key) {
                   <span class="escalation__seg"
-                        [class.escalation__seg--in]="segment.merged"
                         [attr.data-branch]="segment.label"
                         [attr.data-state]="segment.merged ? 'merged' : 'pending'"
                         data-testid="escalation-merge-segment">
-                    {{ segment.label }} {{ segment.merged ? '✓ merged' : '· pending' }}
+                    <app-status-indicator [tone]="segment.merged ? 'success' : 'neutral'"
+                                          [label]="segment.label + (segment.merged ? ' merged' : ' pending')"
+                                          [compact]="true"
+                                          testId="escalation-merge-segment-state" />
                   </span>
                 }
               </span>
@@ -44,12 +46,15 @@
       <div class="escalation__decision">
         @if (v.recommendation; as rec) {
           <span
-            class="escalation__rec escalation__rec--{{ rec.tone }}"
+            class="escalation__rec"
             data-testid="escalation-recommendation"
             data-label-kind="status"
             [attr.aria-label]="'Recommendation: ' + rec.label"
             [cacTooltip]="'The completion gate\'s recommendation for this card.'">
-            {{ rec.label }}
+            <app-status-indicator [tone]="recommendationTone(rec.tone)"
+                                  [label]="rec.label"
+                                  [compact]="true"
+                                  testId="escalation-recommendation-state" />
           </span>
         }
         <div class="escalation__actions" role="group" aria-label="Escalation decisions">

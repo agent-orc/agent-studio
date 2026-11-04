@@ -243,6 +243,7 @@ describe('EscalationSummaryComponent', () => {
     expect(recommendation?.tagName).toBe('SPAN');
     expect(recommendation?.getAttribute('data-label-kind')).toBe('status');
     expect(recommendation?.getAttribute('aria-label')).toBe('Recommendation: Needs decision');
+    expect(recommendation?.querySelector('[data-testid="escalation-recommendation-state"]')?.getAttribute('data-tone')).toBe('danger');
     expect(el.querySelector('[data-testid="escalation-reissue-1"]')?.textContent).toContain('npm test exit 1');
   });
 
@@ -346,8 +347,9 @@ describe('EscalationSummaryComponent', () => {
     const segments = el.querySelectorAll('[data-testid="escalation-merge-segment"]');
 
     expect(segments).toHaveLength(1);
-    expect(segments[0].textContent?.trim()).toBe('main · pending');
+    expect(segments[0].textContent?.trim()).toBe('main pending');
     expect(segments[0].getAttribute('data-state')).toBe('pending');
+    expect(segments[0].querySelector('[data-testid="escalation-merge-segment-state"]')?.getAttribute('data-tone')).toBe('neutral');
     expect(el.querySelector('[data-testid="escalation-essence-merge"]')?.getAttribute('aria-label')).toBe(
       'Merge status: not in main',
     );
@@ -371,8 +373,9 @@ describe('EscalationSummaryComponent', () => {
     const segments = el.querySelectorAll('[data-testid="escalation-merge-segment"]');
 
     expect(segments).toHaveLength(1);
-    expect(segments[0].textContent?.trim()).toBe('main ✓ merged');
+    expect(segments[0].textContent?.trim()).toBe('main merged');
     expect(segments[0].getAttribute('data-state')).toBe('merged');
+    expect(segments[0].querySelector('[data-testid="escalation-merge-segment-state"]')?.getAttribute('data-tone')).toBe('success');
   });
 
   it('renders delivery context per repository and includes the missing reason', () => {

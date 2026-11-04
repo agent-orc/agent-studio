@@ -1,6 +1,10 @@
 <div class="pipeline-history-notice"
      role="status"
      data-testid="overview-pipeline-superseded">
-  <strong>Attempt #{{ attempt() }} · superseded</strong>
+  <app-status-indicator
+    tone="neutral"
+    [label]="'Attempt #' + attempt() + ' · superseded'"
+    [compact]="true"
+    testId="overview-pipeline-superseded-state" />
   <span>Historical state only. Current status colours belong to Attempt #{{ currentAttempt() }}.</span>
 </div>

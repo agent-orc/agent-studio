@@ -80,6 +80,9 @@ describe('PlanStripComponent', () => {
     expect(host.querySelector('[data-testid="plan-item-latest"]')?.textContent).toContain('Build frontend');
     expect(host.querySelector('[data-testid="plan-item-band"]')?.textContent?.trim()).toBe('~2');
     expect(host.querySelector('[data-testid="plan-item-heartbeat"]')?.getAttribute('data-state')).toBe('pulsing');
+    const heartbeat = host.querySelector('[data-testid="plan-item-heartbeat-indicator"]');
+    expect(heartbeat?.getAttribute('data-tone')).toBe('running');
+    expect(heartbeat?.textContent?.trim()).toBe('Working');
   });
 
   it('expands completed sub-actions so finished internal tasks stay inspectable', async () => {

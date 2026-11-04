@@ -2,6 +2,7 @@ export { SteeringDetailComponent } from './steering-detail.component';
 export {
   isSteeringKind,
   steeringInfoFromEvent,
+  steeringStatusTone,
   steeringTone,
   steeringVerdictLabel,
   type SteeringContextLine,

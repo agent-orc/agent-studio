@@ -29,6 +29,7 @@ describe('IntegrationDeadEndComponent', () => {
     fixture.detectChanges();
     const panel = fixture.nativeElement as HTMLElement;
     expect(panel.textContent).toContain('Delivery pending');
+    expect(panel.querySelector('[data-testid="integration-dead-end-state"]')?.getAttribute('data-tone')).toBe('info');
     (panel.querySelector('.dead-end__primary') as HTMLButtonElement).click();
     expect(continueFromFailure).toHaveBeenCalledWith('task-2909', '/project/tasks');
     expect(refresh).toHaveBeenCalledWith(true);

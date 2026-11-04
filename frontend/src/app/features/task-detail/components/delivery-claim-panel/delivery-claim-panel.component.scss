@@ -17,8 +17,8 @@
 /*
  * Acute only when the check genuinely found an unintegrated delivery on a card
  * that claims one. "Not checked yet" and "nothing to integrate" stay quiet:
- * neither is a finding. Status is carried by a background tint and a dot, per
- * the hard design rules - no left accent bar.
+ * neither is a finding. Status is carried by a background tint and the shared
+ * status indicator, per the hard design rules - no left accent bar.
  */
 .claim[data-integration='not-integrated'] {
   @include section.surface(var(--studio-warn));
@@ -45,59 +45,10 @@
   white-space: nowrap;
 }
 
-.claim__dot {
-  font-size: 0.6rem;
-  line-height: 1;
-}
-
-.claim__state[data-state='integrated'] .claim__dot,
-.claim__state[data-state='released'] .claim__dot {
-  color: var(--studio-success);
-}
-
-.claim__state[data-state='not-integrated'] .claim__dot {
-  color: var(--studio-warn);
-}
-
-/* Not a finding: not checked, nothing to integrate, or simply not released yet. */
-.claim__state[data-state='unknown'] .claim__dot,
-.claim__state[data-state='nothing-to-integrate'] .claim__dot,
-.claim__state[data-state='unreleased'] .claim__dot {
-  color: var(--studio-fg-strong);
-}
-
-.claim__state[data-state='unknown'],
-.claim__state[data-state='nothing-to-integrate'],
-.claim__state[data-state='unreleased'] {
-  color: var(--studio-fg-strong);
-}
-
 .claim__merge {
   font-family: var(--font-mono, monospace);
   font-variant-numeric: tabular-nums;
   color: var(--studio-fg-strong);
-}
-
-.claim__supersession,
-.claim__basis {
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--studio-bg-elevated);
-  color: var(--studio-fg-strong);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-/*
- * The marker only reads `replaced` when every attributed delivery has a named
- * successor, which is the contradiction AGT-2743 exhibits: the card claims a
- * delivery that was replaced. That is acute. A pending placeholder is not a
- * verdict at all and reads quietly.
- */
-.claim__supersession[data-state='replaced'] {
-  background: color-mix(in srgb, var(--studio-warn) 14%, var(--studio-bg-elevated));
-  color: var(--studio-warn);
 }
 
 .claim__reason {
@@ -127,4 +78,3 @@
 }
 
 .claim__comparison span { display: grid; gap: var(--studio-spacing-1); }
-.claim__contradiction { color: var(--studio-warn); font-weight: 600; }

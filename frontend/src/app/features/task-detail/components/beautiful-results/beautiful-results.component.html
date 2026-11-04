@@ -6,9 +6,8 @@
          [attr.data-kind]="b.kind"
          data-testid="results-sentinel-banner"
          role="status">
-      <span class="results-banner__icon" aria-hidden="true">{{ b.icon }}</span>
       <div class="results-banner__text">
-        <span class="results-banner__label">{{ b.label }}</span>
+        <app-status-indicator [tone]="b.tone" [label]="b.label" testId="results-sentinel-state" />
         @if (b.reason) {
           <span class="results-banner__reason">{{ b.reason }}</span>
         }

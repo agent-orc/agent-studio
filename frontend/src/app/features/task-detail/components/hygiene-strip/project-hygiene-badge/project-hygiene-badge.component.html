@@ -1,14 +1,7 @@
-@if (visible()) {
-  <span class="project-hygiene-badge"
-        [class.project-hygiene-badge--dirty]="isDirty()"
-        [class.project-hygiene-badge--unpushed]="!isDirty() && isAhead()"
-        [cacTooltip]="tooltip()"
-        data-testid="project-hygiene-badge">
-    @if (isDirty()) {
-      ⚠ dirty
-    } @else if (isAhead()) {
-      ↑ {{ aheadCount() }} unpushed
-    }
-  </span>
+@if (indicator(); as state) {
+  <app-status-indicator [tone]="state.tone"
+                        [label]="state.label"
+                        [detail]="tooltip()"
+                        [compact]="true"
+                        testId="project-hygiene-badge" />
 }
-  

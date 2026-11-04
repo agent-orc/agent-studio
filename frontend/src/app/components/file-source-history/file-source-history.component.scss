@@ -35,13 +35,7 @@
 .fsh__state {
   border: 1px dashed var(--studio-border);
   border-radius: 6px;
-  color: var(--studio-fg-dim);
-  font-size: 0.78rem;
   padding: var(--studio-spacing-3);
-}
-
-.fsh__state--error {
-  color: var(--severity-warn);
 }
 
 .fsh__history {
@@ -115,32 +109,9 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Run grade: the shared status indicator carries tone and icon (AGT-3403). */
 .fsh__verdict {
-  border: 1px solid var(--studio-border);
-  border-radius: 999px;
-  background: var(--studio-bg);
-  color: var(--studio-fg-dim);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  line-height: 1.5;
-  padding: 0 var(--studio-spacing-2);
-  text-transform: uppercase;
-}
-
-.fsh__verdict[data-verdict='pass'] {
-  border-color: color-mix(in srgb, var(--severity-pass) 46%, var(--studio-border));
-  color: var(--severity-pass);
-}
-
-.fsh__verdict[data-verdict='warn'] {
-  border-color: color-mix(in srgb, var(--severity-warn) 46%, var(--studio-border));
-  color: var(--severity-warn);
-}
-
-.fsh__verdict[data-verdict='block'] {
-  border-color: color-mix(in srgb, var(--severity-high) 46%, var(--studio-border));
-  color: var(--severity-high);
+  justify-self: start;
 }
 
 .fsh__history-layout {

@@ -90,6 +90,9 @@ describe('DecisionCardPanelComponent (AGT-2795)', () => {
     expect(qa('decision-card-choose')).toHaveLength(2);
     expect(q('decision-card-rationale-input')).not.toBeNull();
     expect(q('decision-card-dependants')?.textContent).toContain('AGT-2793');
+    expect(q('decision-card-dependants-state')?.getAttribute('data-tone')).toBe('warning');
+    expect(q('decision-card-stage')?.getAttribute('data-tone')).toBe('warning');
+    expect(q('decision-card-stage')?.textContent?.trim()).toBe('Waiting for the decider');
   });
 
   it('records the chosen option with the typed rationale in one click and shows the receipt', async () => {
@@ -119,7 +122,9 @@ describe('DecisionCardPanelComponent (AGT-2795)', () => {
     expect(q('decision-card-decided-at')?.textContent).toContain('2026-09-25 07:52Z');
     expect(q('decision-card-record-link')?.getAttribute('href'))
       .toBe('#/projects/proj-002/wiki?page=operations%2Fdecisions%2FAGT-2792.md');
-    expect(q('decision-card-chosen')).not.toBeNull();
+    expect(q('decision-card-chosen')?.getAttribute('data-tone')).toBe('success');
+    expect(q('decision-card-stage')?.getAttribute('data-tone')).toBe('success');
+    expect(q('decision-card-stage')?.textContent?.trim()).toBe('Decided');
   });
 
   it('shows the backend refusal inline when the caller is not the named decider', async () => {

@@ -3,6 +3,8 @@ import type { TaskInfo, ReviewEvidenceEntry, ReviewProjectionView, ReviewAttempt
 import type { CodeReviewListEntry } from '../../../../services/task.service';
 import type { SteeringInfo } from '../../../../components/steering-detail';
 import {
+  ESCALATION_HEAD_TONES,
+  ESCALATION_RECOMMENDATION_TONES,
   buildDelivery,
   buildEscalationEssence,
   buildEscalationSummaryView,
@@ -616,5 +618,17 @@ describe('deriveEscalationClass', () => {
         ...noSteer,
       }),
     ).toBeNull();
+  });
+});
+
+describe('escalation status tones (AGT-3403)', () => {
+  it('maps header states and recommendations onto the shared status tones', () => {
+    expect(ESCALATION_HEAD_TONES).toEqual({
+      'needs-review': 'danger',
+      'gave-up': 'warning',
+      'needs-input': 'warning',
+      'answer-queued': 'info',
+    });
+    expect(ESCALATION_RECOMMENDATION_TONES).toEqual({ ok: 'success', warn: 'warning', danger: 'danger' });
   });
 });

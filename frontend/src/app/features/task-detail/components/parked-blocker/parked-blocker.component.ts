@@ -8,7 +8,9 @@ import type { SessionEvent, SessionEventsResponse } from '../../../../features/s
 import {
   buildParkedBlockerView,
   type ParkedBlockerView,
+  type ParkedRecallTone,
 } from '../../../../models/parked-blocker-presentation';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { formatDateTimeUtc } from '../../../../services/format.util';
 import { NowTickService } from '../../../../services/now-tick.service';
 import { TaskService } from '../../../../services/task.service';
@@ -16,7 +18,6 @@ import { DisclosureMarkerComponent } from '../../../../components/disclosure-mar
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import { ActivityLogViewComponent } from '../activity-log-view/activity-log-view';
 import { resolveTaskArtifactLink } from '../task-artifact-links/task-artifact-link';
-import { TooltipDirective } from 'coding-agent-chat/shared';
 
 const EXPANDED_STORAGE_KEY = 'taskboard.parkedSession.expanded.v1';
 const COLLAPSE_KEY = 'taskboard.parkedBlocker.collapsed';
@@ -58,6 +59,17 @@ export function resolveRunPrompt(
   return promptEntries.find(item => item.runIndex === run.index)?.promptPreview?.trim() || null;
 }
 
+/** Sweep recall verdict tone to shared status tone (AGT-3403); unknown is neutral. */
+const RECALL_STATUS_TONES: Readonly<Record<ParkedRecallTone, StatusTone>> = {
+  ok: 'success',
+  warn: 'warning',
+  neutral: 'neutral',
+};
+
+export function parkedRecallStatusTone(tone: ParkedRecallTone | null | undefined): StatusTone {
+  return (tone && RECALL_STATUS_TONES[tone]) || 'neutral';
+}
+
 /**
  * The authoritative statement about why a parked card is not moving (AGT-2816).
  *
@@ -76,7 +88,7 @@ export function resolveRunPrompt(
   selector: 'app-parked-blocker',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, ActivityLogViewComponent, DisclosureMarkerComponent],
+  imports: [ActivityLogViewComponent, DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './parked-blocker.component.html',
   styleUrl: './parked-blocker.component.scss',
 })
@@ -143,6 +155,7 @@ export class ParkedBlockerComponent {
   /** Null when the card is not parked; the template renders nothing then. */
   private readonly now = inject(NowTickService).now;
   readonly view = computed<ParkedBlockerView | null>(() => buildParkedBlockerView(this.info(), this.now()));
+  readonly recallTone = parkedRecallStatusTone;
 
   readonly parkedAtLabel = computed(() => {
     const view = this.view();

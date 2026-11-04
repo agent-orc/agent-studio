@@ -1,8 +1,21 @@
+import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
 import type { TaskArtifact } from '../../../../../models/task.model';
 import { cleanStepResultMarkdown } from '../pipeline-step-result/pipeline-step-result.util';
 import type { AspectDocument } from './aspect-document.model';
 
 export type DocumentVerdictTone = 'pass' | 'concerns' | 'block' | 'neutral';
+
+/** Status tone of a document verdict (AGT-3403); anything else stays neutral. */
+const DOCUMENT_VERDICT_STATUS_TONES: Readonly<Record<DocumentVerdictTone, StatusTone>> = {
+  pass: 'success',
+  concerns: 'warning',
+  block: 'danger',
+  neutral: 'neutral',
+};
+
+export function documentVerdictStatusTone(tone: DocumentVerdictTone | null | undefined): StatusTone {
+  return (tone && DOCUMENT_VERDICT_STATUS_TONES[tone]) || 'neutral';
+}
 
 export interface DocumentPresentation {
   title: string;

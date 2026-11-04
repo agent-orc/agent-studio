@@ -1,5 +1,28 @@
 import type { TaskIntegrationStatus } from '../../../git';
 import type { ReviewProjectionView } from '../../../../models/task.model';
+import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/**
+ * Dead-end kind to shared status tone (AGT-3403). Blocked reach, review
+ * concerns and a blocked push need an operator step (warning); a pending
+ * delivery is informative; a failed gate, conflict or other failure is danger.
+ */
+const DEAD_END_TONES: Readonly<Record<string, StatusTone>> = {
+  'host-unavailable': 'warning',
+  'review-concerns': 'warning',
+  'push-blocked': 'warning',
+  'integration-push-blocked': 'warning',
+  'delivery-pending': 'info',
+  'delivery-gate-failed': 'danger',
+  'build-gate-failed': 'danger',
+  'gate-environment-failure': 'danger',
+  'merge-conflict': 'danger',
+};
+
+/** Tone of a dead-end kind; any other failure code is a failure (danger). */
+export function integrationDeadEndTone(kind: string): StatusTone {
+  return DEAD_END_TONES[kind] ?? 'danger';
+}
 
 export interface IntegrationDeadEnd {
   kind: string;

@@ -12,11 +12,13 @@ import { cleanStepResultMarkdown } from '../pipeline-step-result/pipeline-step-r
 import {
   compareDocuments,
   documentAnchor,
+  documentVerdictStatusTone,
   isResultDocument,
   presentDocument,
   type DocumentPresentation,
 } from './document-presentation.util';
 import { DocumentDetailsMenuComponent } from './document-details-menu/document-details-menu.component';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
 import { ArchivedFilesManifestComponent } from '../../../../retention/components/archived-files-manifest/archived-files-manifest.component';
 
 /**
@@ -46,11 +48,12 @@ import { ArchivedFilesManifestComponent } from '../../../../retention/components
   host: { '(click)': 'onDocumentBodyClick($event)' },
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FileSourceHistoryComponent, MarkdownRichEditorComponent, MarkdownViewComponent, TooltipDirective, AspectJsonCardComponent, DocumentDetailsMenuComponent, ArchivedFilesManifestComponent],
+  imports: [FileSourceHistoryComponent, MarkdownRichEditorComponent, MarkdownViewComponent, TooltipDirective, AspectJsonCardComponent, DocumentDetailsMenuComponent, ArchivedFilesManifestComponent, StatusIndicatorComponent],
   templateUrl: './files-pane.component.html',
   styleUrl: './files-pane.component.scss',
 })
 export class FilesPaneComponent {
+  readonly verdictStatusTone = documentVerdictStatusTone;
   private readonly jobs = inject(TaskService);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);

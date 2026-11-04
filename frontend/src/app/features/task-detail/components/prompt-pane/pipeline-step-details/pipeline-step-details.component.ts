@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
 import { DialogComponent } from '../../../../../components/dialog/dialog.component';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { PipelineStepResultComponent, type PipelineStepResultHeader } from '../pipeline-step-result/pipeline-step-result.component';
 import { TaskPromptPopoverComponent } from '../task-prompt-popover/task-prompt-popover.component';
@@ -10,7 +11,7 @@ import type { PipelineAspectEvidence } from '../../../../task-pipeline';
   selector: 'app-pipeline-step-details',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DialogComponent, PipelineStepResultComponent, StudioIconComponent, TaskPromptPopoverComponent, TooltipDirective],
+  imports: [DialogComponent, PipelineStepResultComponent, StatusIndicatorComponent, StudioIconComponent, TaskPromptPopoverComponent, TooltipDirective],
   templateUrl: './pipeline-step-details.component.html',
   styleUrl: './pipeline-step-details.component.scss',
 })

@@ -66,11 +66,6 @@
 .run-card__chip--intent[data-intent="reissue"] { background: color-mix(in srgb, var(--severity-warn) 30%, transparent); color: var(--severity-warn); }
 .run-card__chip--intent[data-intent="continue"] { background: color-mix(in srgb, var(--severity-info) 25%, transparent); color: var(--severity-info); }
 .run-card__chip--intent[data-intent="restart"] { background: color-mix(in srgb, var(--studio-accent-4) 30%, transparent); color: var(--studio-accent-4); }
-.run-card__chip--status[data-status="completed"] { background: color-mix(in srgb, var(--severity-pass) 28%, transparent); color: var(--severity-pass); }
-.run-card__chip--status[data-status="failed"] { background: color-mix(in srgb, var(--severity-high) 40%, transparent); color: var(--severity-high); }
-.run-card__chip--status[data-status="stopped"],
-.run-card__chip--status[data-status="cancelled"] { background: color-mix(in srgb, var(--severity-warn) 30%, transparent); color: var(--severity-warn); }
-.run-card__chip--status[data-status="running"] { background: color-mix(in srgb, var(--severity-info) 30%, transparent); color: var(--severity-info); }
 
 .run-detail { min-width: 0; }
 .run-detail__panel,

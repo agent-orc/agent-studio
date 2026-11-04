@@ -15,6 +15,18 @@ import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/** Screenshot test status to status tone (AGT-3403); unknown states are neutral. */
+const SCREENSHOT_STATUS_TONES: Readonly<Record<string, StatusTone>> = {
+  passed: 'success',
+  failed: 'danger',
+  skipped: 'neutral',
+};
+
+export function screenshotStatusTone(status: string | null | undefined): StatusTone {
+  return SCREENSHOT_STATUS_TONES[status ?? ''] ?? 'neutral';
+}
 /**
  * Visual-evidence strip + lightbox. Two surfaces share this component:
  *
@@ -40,7 +52,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
   selector: 'app-screenshot-strip',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   templateUrl: './screenshot-strip.component.html',
   styleUrl: './screenshot-strip.component.scss',
 })
@@ -152,6 +164,8 @@ export class ScreenshotStripComponent {
         return '';
     }
   }
+
+  readonly statusTone = screenshotStatusTone;
 
   statusLabel(status: string): string {
     switch (status) {

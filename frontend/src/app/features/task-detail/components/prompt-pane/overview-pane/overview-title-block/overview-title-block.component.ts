@@ -18,6 +18,8 @@ import { ModalStackService } from '../../../../../../services/modal-stack.servic
 import { projectIdentity } from '../../../../../../services/project-identity.util';
 import { TaskService } from '../../../../../../services/task.service';
 import { laneLabel } from '../overview-pane-formatters';
+import { StatusIndicatorComponent } from '../../../../../../components/status-indicator/status-indicator.component';
+import { lifecyclePhaseTone } from './lifecycle-phase-tone';
 
 /** Short unique id for a seeded create-modal attachment (mirrors the dialog's own). */
 function makeAttachmentId(): string {
@@ -48,6 +50,7 @@ function makeAttachmentId(): string {
     CopyableTaskKeyComponent,
     ExecutionLocationBadgeComponent,
     TaskPromptPopoverComponent,
+    StatusIndicatorComponent,
   ],
   templateUrl: './overview-title-block.component.html',
   styleUrl: './overview-title-block.component.scss',
@@ -55,6 +58,7 @@ function makeAttachmentId(): string {
 export class OverviewTitleBlockComponent {
   readonly laneLabel = laneLabel;
   readonly laneTone = laneTone;
+  readonly phaseTone = lifecyclePhaseTone;
 
   readonly job = input.required<TaskInfo>();
   /** Raw task prompt markdown, surfaced through the sub-line's popover. */

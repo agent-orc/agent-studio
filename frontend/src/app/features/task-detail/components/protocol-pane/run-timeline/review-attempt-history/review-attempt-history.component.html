@@ -16,11 +16,14 @@
       <li class="review-attempts__cycle"
           [class.review-attempts__cycle--current]="cycle.isCurrent"
           [attr.data-testid]="'review-attempt-cycle-' + cycle.epoch">
-        <span class="review-attempts__dot" aria-hidden="true"></span>
         <div class="review-attempts__body">
           <div class="review-attempts__cycle-head">
             <strong>Epoch {{ cycle.epoch }}</strong>
-            <span class="review-attempts__state">{{ cycleLabel(cycle) }}</span>
+            <app-status-indicator
+              [tone]="cycle.isCurrent ? 'info' : 'neutral'"
+              [label]="cycleLabel(cycle)"
+              [compact]="true"
+              [testId]="'review-attempt-state-' + cycle.epoch" />
             <time [attr.datetime]="cycle.startedAt">{{ formatWhen(cycle.startedAt) }}</time>
           </div>
           <p>{{ cycle.reason || 'Operator reason was not recorded.' }}</p>

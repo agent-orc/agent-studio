@@ -43,9 +43,12 @@
           <span class="file-card__icon" aria-hidden="true">{{ fileIcon(file.kind) }}</span>
           <span class="file-card__topic" data-testid="file-card-topic">{{ doc.title }}</span>
           @if (doc.verdict) {
-            <span class="file-card__verdict"
-                  [attr.data-tone]="doc.verdictTone"
-                  data-testid="file-card-verdict">{{ doc.verdict }}</span>
+            <app-status-indicator
+              class="file-card__verdict"
+              [tone]="verdictStatusTone(doc.verdictTone)"
+              [label]="doc.verdict"
+              [compact]="true"
+              testId="file-card-verdict" />
           }
           @if (doc.model) {
             <span class="file-card__model" data-testid="file-card-model">{{ doc.model }}</span>
@@ -114,20 +117,20 @@
               <app-aspect-json-card class="file-card__aspect-json" [doc]="aspect" />
             } @else {
               @if (isLoading(file.name)) {
-                <div class="file-card__loading">Loading...</div>
+                <div class="file-card__state"><app-status-indicator tone="running" label="Loading..." [compact]="true" testId="file-card-loading" /></div>
               } @else if (doc.body) {
                 <cac-markdown class="file-card__markdown"
                               [source]="doc.body"
                               [dense]="true" />
               } @else {
-                <div class="file-card__error">Could not load this file.</div>
+                <div class="file-card__state"><app-status-indicator tone="danger" label="Could not load this file." [compact]="true" testId="file-card-error" /></div>
               }
             }
           </div>
         } @else {
           <div class="file-card__preview">
             @if (isLoading(file.name)) {
-              <div class="file-card__loading">Loading preview...</div>
+              <div class="file-card__state"><app-status-indicator tone="running" label="Loading preview..." [compact]="true" testId="file-card-loading" /></div>
             } @else if (isHtmlFile(file)) {
               <div class="file-card__preview-empty">Interactive HTML. Open it in an isolated sandbox.</div>
               <button type="button" class="file-card__expand-link"

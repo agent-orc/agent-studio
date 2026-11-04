@@ -10,7 +10,7 @@
   border-radius: 8px;
 }
 
-.older-brief-offer strong { font-size: 0.95rem; }
+.older-brief-offer > app-status-indicator { justify-self: start; }
 .older-brief-offer p { margin: 0; color: var(--studio-fg-dim); font-size: 0.82rem; }
 .older-brief-offer__reference code { overflow-wrap: anywhere; color: var(--studio-fg-strong); }
 .older-brief-offer__actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }

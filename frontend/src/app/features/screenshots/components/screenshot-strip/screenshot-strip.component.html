@@ -12,12 +12,11 @@
               [cacTooltip]="thumbTitle(s)"
               (click)="openLightbox(i)">
         <img class="strip__img" [src]="s.url" [alt]="s.caption" loading="lazy" />
-        @if (s.status === 'passed') {
-          <span class="strip__badge strip__badge--ok" aria-label="Passed">✓</span>
-        } @else if (s.status === 'failed') {
-          <span class="strip__badge strip__badge--bad" aria-label="Failed">✗</span>
-        } @else if (s.status === 'skipped') {
-          <span class="strip__badge strip__badge--skip" aria-label="Skipped">⊘</span>
+        @if (s.status === 'passed' || s.status === 'failed' || s.status === 'skipped') {
+          <span class="strip__badge">
+            <app-status-indicator [tone]="statusTone(s.status)" [label]="statusLabel(s.status)" [compact]="true"
+                                  testId="screenshot-thumb-status" />
+          </span>
         }
         <span class="strip__caption">
           <span class="strip__caption-spec">{{ s.caption }}</span>
@@ -61,8 +60,10 @@
           <div class="lightbox__caption-main">
             <span class="lightbox__caption-spec" data-testid="screenshot-lightbox-caption">{{ c.caption }}</span>
             @if (c.status) {
-              <span class="lightbox__status"
-                    [attr.data-status]="c.status">{{ statusLabel(c.status) }}</span>
+              <span class="lightbox__status" [attr.data-status]="c.status">
+                <app-status-indicator [tone]="statusTone(c.status)" [label]="statusLabel(c.status)"
+                                      testId="screenshot-lightbox-status" />
+              </span>
             }
             @if (sourceLabel(c); as src) {
               <span class="lightbox__source"

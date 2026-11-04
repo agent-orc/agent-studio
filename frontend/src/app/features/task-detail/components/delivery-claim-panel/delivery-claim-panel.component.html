@@ -15,8 +15,10 @@
           data-testid="delivery-claim-integration"
           [attr.data-state]="integration()"
           [cacTooltip]="integrationTooltip()">
-      <span class="claim__dot" aria-hidden="true">●</span>
-      {{ integrationLabel() }}
+      <app-status-indicator [tone]="integrationTone()"
+                            [label]="integrationLabel()"
+                            [compact]="true"
+                            testId="delivery-claim-integration-state" />
     </span>
 
     @if (mergeLabel(); as merge) {
@@ -28,21 +30,30 @@
     <span class="claim__state"
           data-testid="delivery-claim-release"
           [attr.data-state]="releaseState()">
-      <span class="claim__dot" aria-hidden="true">●</span>
-      {{ releaseLabel() }}
+      <app-status-indicator [tone]="releaseTone()"
+                            [label]="releaseLabel()"
+                            [compact]="true"
+                            testId="delivery-claim-release-state" />
     </span>
 
     @if (supersessionLabel(); as marker) {
-      <span class="claim__supersession"
+      <span class="claim__state"
             data-testid="delivery-claim-supersession"
             [attr.data-state]="supersession()"
-            [cacTooltip]="supersessionTooltip()">{{ marker }}</span>
+            [cacTooltip]="supersessionTooltip()">
+        <app-status-indicator [tone]="supersessionTone()"
+                              [label]="marker"
+                              [compact]="true"
+                              testId="delivery-claim-supersession-state" />
+      </span>
     }
 
     @if (claimLabel(); as basis) {
-      <span class="claim__basis"
-            data-testid="delivery-claim-basis"
-            [cacTooltip]="claim()?.evidence ?? ''">{{ basis }}</span>
+      <app-status-indicator [tone]="claimTone()"
+                            [label]="basis"
+                            [detail]="claim()?.evidence"
+                            [compact]="true"
+                            testId="delivery-claim-basis" />
     }
 
     @if (overrideReason(); as reason) {
@@ -55,7 +66,9 @@
     @if (contentReview(); as review) {
       <div class="claim__review" data-testid="completion-content-review"
            [attr.data-state]="contentPassed() ? 'pass' : 'gap'">
-        <strong>Acceptance grounds</strong>
+        <app-status-indicator [tone]="contentPassed() ? 'success' : 'warning'"
+                              label="Acceptance grounds"
+                              testId="completion-content-review-state" />
         <span>Delivery brief {{ briefLabel(review.deliveryBriefVersion) }} · Current brief {{ briefLabel(review.currentBriefVersion) }}</span>
         <span>{{ review.requiredAspect }}: {{ review.contentStatus ?? 'no verdict' }} · Reviewed brief {{ briefLabel(review.reviewBriefVersion) }}</span>
         @if (review.contentSummary) { <span>{{ review.contentSummary }}</span> }
@@ -65,7 +78,10 @@
             <span><strong>Dossier statement or gap</strong>{{ review.missing || review.contentSummary || 'No statement cited' }}</span>
           </div>
           @if (review.contentStatus === 'block' || review.contentStatus === 'concerns') {
-            <span class="claim__contradiction">Contradiction or gap flagged by concept fit</span>
+            <app-status-indicator [tone]="contradictionTone(review.contentStatus)"
+                                  label="Contradiction or gap flagged by concept fit"
+                                  [compact]="true"
+                                  testId="completion-content-contradiction" />
           }
         }
         <span>Ran: {{ review.ranAspects.join(', ') || 'none' }} · Skipped: {{ review.skippedAspects.join(', ') || 'none' }}</span>

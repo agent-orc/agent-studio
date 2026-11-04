@@ -8,13 +8,6 @@
   min-height: var(--studio-row-min-h-interactive);
   padding: var(--studio-space-2) var(--studio-space-4);
 }
-.archive-notice__dot {
-  background: var(--studio-info);
-  border-radius: 50%;
-  flex: 0 0 7px;
-  height: 7px;
-  width: 7px;
-}
-.archive-notice p { flex: 1; margin: 0; }
+.archive-notice p { display: flex; flex: 1; margin: 0; min-width: 0; }
 .archive-notice button { min-height: var(--studio-control-min-h); }
 .archive-notice__error { color: var(--studio-danger); font-size: var(--studio-font-size-xs); }

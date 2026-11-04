@@ -106,20 +106,6 @@
   .commandbar__cli-btn { padding: 2px 5px; }
 }
 
-.commandbar__status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--studio-fg-dim);
-  font-variant-numeric: tabular-nums;
-}
-.commandbar__pulse {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: var(--severity-info);
-  animation: cdpulse 1.5s infinite;
-}
 .commandbar__action { padding: 4px 10px; font-size: 12px; border-radius: 3px; }
 .commandbar__spacer { flex: 1 1 auto; }
 .commandbar__compact-meta {
@@ -178,7 +164,3 @@
 .btn-exec--stop:hover { background: color-mix(in srgb, var(--severity-high) 28%, transparent); }
 .btn-exec:disabled { opacity: 0.5; cursor: wait; }
 
-@keyframes cdpulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--severity-info) 40%, transparent); }
-  50% { opacity: 0.7; box-shadow: 0 0 0 6px color-mix(in srgb, var(--severity-info) 0%, transparent); }
-}

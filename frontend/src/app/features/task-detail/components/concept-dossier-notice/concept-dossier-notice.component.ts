@@ -13,6 +13,7 @@ import { TaskInfo, TaskState, type ConceptDossierSummary } from '../../../../mod
 import { NotificationService } from '../../../../services/notification.service';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 import { TaskService } from '../../../../services/task.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 type EditorKind = 'path' | 'no-dossier' | null;
 
@@ -20,7 +21,7 @@ type EditorKind = 'path' | 'no-dossier' | null;
   selector: 'app-concept-dossier-notice',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, StatusIndicatorComponent],
   templateUrl: './concept-dossier-notice.component.html',
   styleUrl: './concept-dossier-notice.component.scss',
 })

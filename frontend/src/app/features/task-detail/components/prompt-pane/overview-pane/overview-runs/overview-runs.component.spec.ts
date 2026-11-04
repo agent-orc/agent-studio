@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { RunRecord } from '../../../../../run-timeline';
 import { formatCompactDateTime } from '../../../../../../services/format.util';
-import { OverviewRunsComponent } from './overview-runs.component';
+import { OverviewRunsComponent, overviewRunResultTone } from './overview-runs.component';
 
 describe('OverviewRunsComponent', () => {
   beforeEach(() => {
@@ -42,6 +42,9 @@ describe('OverviewRunsComponent', () => {
     expect(testText(rows[0], 'overview-run-duration')).toBe('In progress');
     expect(testText(rows[1], 'overview-run-trigger')).toBe('Operator continue by local-default');
     expect(testText(rows[1], 'overview-run-result')).toContain('Failed');
+    expect(rows[0].querySelector('[data-testid="overview-run-result"]')?.getAttribute('data-tone')).toBe('running');
+    // An older failure is history, not an acute state (R4).
+    expect(rows[1].querySelector('[data-testid="overview-run-result"]')?.getAttribute('data-tone')).toBe('warning');
     expect(testText(rows[1], 'overview-run-duration')).toBe('1m 5s');
     expect(testText(rows[2], 'overview-run-trigger')).toBe('Initial start');
   });
@@ -351,3 +354,16 @@ function all(fixture: { nativeElement: HTMLElement }, testId: string): HTMLEleme
 function testText(root: HTMLElement, testId: string): string {
   return root.querySelector<HTMLElement>(`[data-testid="${testId}"]`)?.textContent?.trim() ?? '';
 }
+
+describe('overviewRunResultTone', () => {
+  it('maps record statuses and keeps only the latest failure acute', () => {
+    expect(overviewRunResultTone('completed', true)).toBe('success');
+    expect(overviewRunResultTone('failed', true)).toBe('danger');
+    expect(overviewRunResultTone('failed', false)).toBe('warning');
+    expect(overviewRunResultTone('running', true)).toBe('running');
+    expect(overviewRunResultTone('cancelled', true)).toBe('warning');
+    expect(overviewRunResultTone('unknown', true)).toBe('neutral');
+    expect(overviewRunResultTone('something-new', true)).toBe('neutral');
+    expect(overviewRunResultTone('failed', true, true)).toBe('neutral');
+  });
+});

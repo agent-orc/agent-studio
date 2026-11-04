@@ -1,10 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import type { ReviewAttemptCycle } from '../../../../../../features/run-timeline';
 import { formatDateTime } from '../../../../../../services/format.util';
+import { StatusIndicatorComponent } from '../../../../../../components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-review-attempt-history',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './review-attempt-history.component.html',
   styleUrl: './review-attempt-history.component.scss',

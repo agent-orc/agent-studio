@@ -48,16 +48,10 @@
   white-space: nowrap;
   cursor: help;
 
-  &[data-tone="accent"]  { --result-tone: var(--studio-accent-success); }
-  &[data-tone="warn"]    { --result-tone: var(--studio-accent-warn); }
-  &[data-tone="info"]    { --result-tone: var(--studio-accent-3); }
-  &[data-tone="problem"] { --result-tone: var(--severity-high); }
-  &[data-tone="neutral"] { --result-tone: var(--studio-fg-muted); }
-
   // When the lane itself is the leading signal, the header wears the lane's
-  // one tone instead of the generic status tone, so Human review reads in the
-  // same colour here, on the header chip, and on the board column (AGT-2715).
-  // Declared after the status tones so it wins on equal specificity.
+  // one tone instead of a status tone, so Human review reads in the same
+  // colour here, on the header chip, and on the board column (AGT-2715, R9).
+  // Otherwise the shared status indicator inside carries the tone (AGT-3403).
   @include lane-tone.vars;
 
   &[data-lane-tone] { --result-tone: var(--lane-tone-fg); }
@@ -225,19 +219,6 @@
   font-size: 11px;
 }
 
-.result__inconsistency-badge {
-  padding: 0 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--studio-fg-muted) 14%, transparent);
-  color: var(--studio-fg-muted);
-  font-size: 11px;
-
-  &[data-tone="problem"] {
-    background: color-mix(in srgb, var(--severity-high) 16%, transparent);
-    color: var(--severity-high);
-  }
-}
-
 .result__inconsistency-explanation {
   margin: 2px 0 0;
   color: var(--studio-fg-muted);
@@ -393,15 +374,6 @@
   color: var(--studio-fg);
   text-align: left;
   cursor: pointer;
-}
-
-.result__aspect-status {
-  padding: 1px var(--studio-spacing-2);
-  border-radius: 999px;
-  background: var(--studio-bg-elevated);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
 }
 
 .result__aspect-name { font-weight: 650; }

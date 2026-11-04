@@ -19,7 +19,7 @@
       <p class="batch-panel__pre-check-counters" data-testid="batch-pre-check-counters">Pre-checks: {{ data.preChecksRun ?? 0 }} run · {{ data.preChecksRed ?? 0 }} red · {{ data.preCheckMinutesSaved ?? 0 }} estimated gate minutes saved</p>
       <section aria-labelledby="batch-plan-title">
         <h3 id="batch-plan-title">Current plan</h3>
-        <p><strong>{{ data.plan.decision }}</strong> · {{ data.plan.reason }}</p>
+        <p><app-status-indicator [tone]="decisionTone(data.plan.decision)" [label]="data.plan.decision" [compact]="true" testId="batch-plan-decision" /> · {{ data.plan.reason }}</p>
         <p>Target {{ data.plan.targetSize }} · Closes {{ data.plan.closeAtUtc ? date(data.plan.closeAtUtc) : 'when ready' }}</p>
         <p>Proposed: {{ data.plan.proposedMembers.length ? data.plan.proposedMembers.join(', ') : 'No members yet' }}</p>
         @if (data.plan.decision !== 'disabled') {
@@ -39,7 +39,7 @@
       @if (data.plan.advisor; as advisor) {
         <section aria-labelledby="batch-advisor-title" data-testid="batch-advisor">
           <h3 id="batch-advisor-title">LLM advisor</h3>
-          <p><strong>{{ advisor.verdict }}</strong> · {{ advisor.mode }} · {{ advisor.model }} · {{ date(advisor.atUtc) }}</p>
+          <p><app-status-indicator [tone]="advisorTone(advisor.verdict)" [label]="advisor.verdict" [compact]="true" testId="batch-advisor-verdict" /> · {{ advisor.mode }} · {{ advisor.model }} · {{ date(advisor.atUtc) }}</p>
           <ul>@for (reason of advisor.reasons; track reason) { <li>{{ reason }}</li> }</ul>
         </section>
       }
@@ -66,13 +66,17 @@
               }</p>
               @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
               <p><strong>{{ batch.phase }}</strong>@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
-              <p>Members: @for (member of batch.members; track member.taskKey) { <span>{{ member.taskKey }} ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }}) </span> }</p>
+              <p>Members: @for (member of batch.members; track member.taskKey) {
+                @let replay = replayLabel(member.replay);
+                <span>{{ member.taskKey }} (<app-status-indicator [tone]="outcomeTone(replay)" [label]="replay" [compact]="true" testId="batch-member-replay" />{{ member.released ? ', released' : '' }}) </span>
+              }</p>
               <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
                 @if (publishedSha(batch.publication); as sha) { · Published {{ sha }} }
               </p>
               @if (batch.runs.length) {
                 <ul>@for (run of batch.runs; track run.batchRunId) {
-                  <li>{{ run.host }} · {{ run.outcome ?? 'running' }} @if (run.classification) { · {{ run.classification }} }
+                  @let runOutcome = run.outcome ?? 'running';
+                  <li>{{ run.host }} · <app-status-indicator [tone]="outcomeTone(runOutcome)" [label]="runOutcome" [compact]="true" testId="batch-run-outcome" /> @if (run.classification) { · {{ run.classification }} }
                     · {{ duration(run.startedAtUtc, run.finishedAtUtc) }}</li>
                 }</ul>
               }

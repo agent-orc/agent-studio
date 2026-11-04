@@ -8,14 +8,15 @@ import { MediaLightboxService } from '../../services/media-lightbox.service';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from '../menu';
-type EditorState = 'idle' | 'dirty' | 'saved';
+import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
+import { DEFAULT_EDITOR_LOCK_REASON, editorSaveState, resolveEditorState, type EditorState } from './markdown-rich-editor-status';
 
 const ATTACHMENTS_PREFIX = 'attachments/';
 
 @Component({
   selector: 'app-markdown-rich-editor',
   standalone: true,
-  imports: [FormsModule, TooltipDirective, MenuComponent],
+  imports: [FormsModule, TooltipDirective, MenuComponent, StatusIndicatorComponent],
   templateUrl: './markdown-rich-editor.html',
   styleUrl: './markdown-rich-editor.scss',
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -52,10 +53,9 @@ export class MarkdownRichEditorComponent implements AfterViewInit, OnDestroy {
 
   readonly canAttach = computed(() => !!this.jobId());
 
-  readonly state = computed<EditorState>(() => {
-    if (this.savedAt() > 0) return 'saved';
-    return this.sourceValue() !== this.committedValue() ? 'dirty' : 'idle';
-  });
+  readonly state = computed<EditorState>(() => resolveEditorState(this.savedAt(), this.sourceValue(), this.committedValue()));
+  readonly saveState = computed(() => editorSaveState(this.state()));
+  readonly lockReason = computed(() => this.readOnlyReason() || DEFAULT_EDITOR_LOCK_REASON);
 
   @ViewChild('editorHost') private editorHost?: ElementRef<HTMLElement>;
   @ViewChild('fileInput') private fileInput?: ElementRef<HTMLInputElement>;

@@ -14,6 +14,7 @@ describe('ArchivedTaskNoticeComponent', () => {
     const fixture = TestBed.createComponent(ArchivedTaskNoticeComponent);
     fixture.componentRef.setInput('taskId', 'task-1'); fixture.componentRef.setInput('lane', '6-completed'); fixture.componentRef.setInput('archiveState', 'cold'); fixture.detectChanges(); await fixture.whenStable(); fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('2.0 KiB in cold storage');
+    expect(fixture.nativeElement.querySelector('[data-testid="archived-task-notice-state"]').dataset['tone']).toBe('info');
     fixture.nativeElement.querySelector('[data-testid="archived-task-restore"]').click();
     await fixture.whenStable(); fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="archived-task-notice"]')).toBeNull();

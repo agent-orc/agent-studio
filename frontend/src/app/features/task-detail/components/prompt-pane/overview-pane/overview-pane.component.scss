@@ -383,28 +383,13 @@
     color: var(--studio-fg-muted);
   }
 
-  &__status {
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    color: var(--studio-fg-dim);
-
-    &[data-tone='ok']     { color: var(--severity-pass); }
-    &[data-tone='warn']   { color: var(--severity-warn); }
-    &[data-tone='concern'] { color: var(--severity-warn); }
-    &[data-tone='danger'] { color: var(--severity-high); }
-    // No numbers yet: muted, and no bolder than the data-carrying tones.
-    &[data-tone='muted'], &[data-tone='not-applicable'], &[data-tone='not-run'], &[data-tone='neutral'] { color: var(--studio-fg-muted); }
-  }
-
   &__count {
     font-variant-numeric: tabular-nums;
     color: var(--studio-fg-muted);
   }
 
   &__concern {
-    font-weight: 700;
-    color: var(--severity-warn);
+    display: inline-flex;
     cursor: help;
   }
 
@@ -573,41 +558,6 @@
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    min-width: 38px;
-    font-size: 9.5px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    padding: 2px 7px;
-    border-radius: 5px;
-    border: 1px solid var(--studio-border);
-    background: transparent;
-    color: var(--studio-fg-dim);
-
-    &[data-verdict='pass'] {
-      color: var(--severity-pass);
-      border-color: color-mix(in srgb, var(--severity-pass) 56%, var(--studio-border));
-      background: color-mix(in srgb, var(--severity-pass) 16%, transparent);
-    }
-    &[data-verdict='concerns'] { color: var(--severity-warn); }
-    &[data-verdict='block'] {
-      color: var(--severity-high);
-      border-color: color-mix(in srgb, var(--severity-high) 58%, var(--studio-border));
-      background: color-mix(in srgb, var(--severity-high) 18%, transparent);
-    }
-
-    // Regression-radar spec-change categories (reporting only - the step
-    // status stays Passed; the pill carries the signal).
-    &[data-verdict='clean']    { color: var(--lane-completed); }
-    &[data-verdict='intended'] { color: var(--lane-completed); }
-    &[data-verdict='at-risk']  { color: var(--severity-warn); }
-    &[data-verdict='drift']    { color: var(--severity-high); }
-
-    // Auto-mode Ralph-loop guard (pre-loop-guard step): a forming loop warns,
-    // a circuit-broken loop reads as a hard stop.
-    &[data-verdict='looping']       { color: var(--severity-warn); }
-    &[data-verdict='loop-detected'] { color: var(--severity-high); }
 
     // Hover affordance: the pill carries the concrete concern in a tooltip.
     &--concern { cursor: help; }
@@ -628,24 +578,6 @@
     line-height: 1;
     white-space: nowrap;
     cursor: help;
-
-    &[data-tone='ok'] {
-      color: var(--severity-pass);
-      border-color: color-mix(in srgb, var(--severity-pass) 56%, var(--studio-border));
-      background: color-mix(in srgb, var(--severity-pass) 16%, transparent);
-    }
-
-    &[data-tone='warn'] {
-      color: var(--severity-warn);
-      border-color: color-mix(in srgb, var(--severity-warn) 56%, var(--studio-border));
-      background: color-mix(in srgb, var(--severity-warn) 16%, transparent);
-    }
-
-    &[data-tone='danger'] {
-      color: var(--severity-high);
-      border-color: color-mix(in srgb, var(--severity-high) 58%, var(--studio-border));
-      background: color-mix(in srgb, var(--severity-high) 18%, transparent);
-    }
 
     &:focus-visible {
       outline: 2px solid var(--studio-accent-2);
@@ -699,6 +631,11 @@
     // The name carries the "what does this step do" explanation tooltip;
     // the help cursor signals it is hoverable.
     cursor: help;
+  }
+
+  &__round-status {
+    flex: 0 1 auto;
+    min-width: 0;
   }
 
   &__skip-hint {
@@ -868,12 +805,6 @@
     filter: grayscale(1);
     opacity: 0.72;
   }
-
-  .ov-pl-step__verdict, .ov-pl-step__final-decision {
-    border-color: var(--studio-border);
-    background: transparent;
-    color: var(--studio-fg-muted);
-  }
 }
 
 // Responsive degradation, driven by the pipeline block's own inline-size (it
@@ -1003,34 +934,10 @@
   }
 }
 
-// Restart badge in the Pipeline section header. A re-run / re-issue starts a
-// fresh execution record; this pill makes the current run unmistakably a new
-// attempt so the steps below are not mistaken for the original run. Uses the
-// warning accent (distinct from the running accent) since a restart is a state
-// the operator usually wants to notice, not the happy path.
+// Restart badge in the Pipeline section header: the shared status indicator
+// (info tone) marks the current run as a new attempt (AGT-3403).
 .ov-pl-restart-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
   margin-left: 8px;
-  vertical-align: middle;
-  font-size: 9.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 1px 7px;
-  border-radius: 999px;
-  color: var(--studio-accent-2-strong, var(--studio-fg-strong));
-  background: color-mix(in srgb, var(--studio-accent-2, var(--lane-progress)) 18%, var(--studio-bg-elevated));
-  border: 1px solid color-mix(in srgb, var(--studio-accent-2, var(--lane-progress)) 40%, transparent);
-
-  &__dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 999px;
-    background: currentColor;
-    flex: 0 0 auto;
-  }
 }
 
 // Segmented pipeline run switcher. The current run stays first, archived runs
@@ -1102,15 +1009,6 @@
     }
   }
 
-  &__dot {
-    font-size: 9px;
-    line-height: 1;
-    color: var(--studio-fg-dim);
-
-    &[data-kind='pass'] { color: var(--studio-success); }
-    &[data-kind='fail'] { color: var(--studio-error); }
-  }
-
   &__num {
     font-size: 12px;
     font-weight: 600;
@@ -1138,14 +1036,6 @@
     gap: var(--studio-spacing-2);
     font-size: 11px;
     font-weight: 600;
-  }
-
-  &__pass { color: var(--studio-success); }
-  &__fail { color: var(--studio-error); }
-
-  &__pending {
-    color: var(--studio-fg-dim);
-    font-style: italic;
   }
 
   &__duration {
@@ -1204,13 +1094,6 @@
   &__chip-num {
     font-weight: 600;
     color: inherit;
-  }
-
-  &__chip-state {
-    color: var(--studio-fg-muted);
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
   }
 
   &__ellipsis {

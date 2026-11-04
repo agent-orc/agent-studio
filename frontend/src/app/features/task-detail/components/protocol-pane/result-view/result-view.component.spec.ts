@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { ResultViewComponent } from './result-view.component';
+import { ResultViewComponent, resultAspectTone, resultMetricTone } from './result-view.component';
 import type { SummaryAssessment, TaskDetail } from '../../../../../models/task.model';
 import type { ProtocolVerdict } from '../protocol-verdict';
 
@@ -185,9 +185,13 @@ describe('ResultViewComponent', () => {
     expect(el.querySelectorAll('[data-testid="result-case-badge"]')).toHaveLength(1);
     expect(el.querySelector('[data-testid="result-metric-verdict"]')).toBeNull();
     expect(el.querySelector('[data-testid="result-metric-grade"]')?.textContent).toContain('Grade A');
+    expect(el.querySelector('[data-testid="result-metric-state-grade"]')?.getAttribute('data-tone')).toBe('success');
+    expect(el.querySelector('[data-testid="result-metric-duration"] app-status-indicator')).toBeNull();
     expect(el.querySelector('[data-testid="result-metric-duration"]')?.textContent).toContain('4m');
     expect(el.querySelector('[data-testid="result-metric-tokens"]')?.textContent).toContain('12.0k tokens');
-    expect(el.querySelector('[data-testid="result-case-dot"]')).not.toBeNull();
+    const state = el.querySelector('[data-testid="result-case-state"]');
+    expect(state?.getAttribute('data-tone')).toBe('success');
+    expect(state?.textContent?.trim()).toBe('Success');
   });
 
   it('emits grade navigation and keeps provenance in the same head row', async () => {
@@ -309,6 +313,7 @@ describe('ResultViewComponent', () => {
     expect(block?.textContent).toContain('2 signal pairs disagree');
     expect(el.querySelector('[data-testid="result-assessment-outcome"]')?.textContent)
       .toContain('delivered via operator merge');
+    expect(el.querySelector('[data-testid="result-assessment-outcome-state"]')?.getAttribute('data-tone')).toBe('success');
     const rows = el.querySelectorAll('[data-testid="result-inconsistency"]');
     expect(rows.length).toBe(2);
     expect(rows[0].getAttribute('data-kind')).toBe('files-vs-no-code');
@@ -337,7 +342,7 @@ describe('ResultViewComponent', () => {
 
     expect(el.querySelector('[data-testid="result-inconsistencies"]')?.textContent).toContain('1 signal pair disagrees');
     const badge = el.querySelector('[data-testid="result-inconsistency-loss"]');
-    expect(badge?.getAttribute('data-tone')).toBe('problem');
+    expect(badge?.getAttribute('data-tone')).toBe('danger');
     expect(badge?.textContent?.trim()).toBe('work may be lost');
     expect(el.querySelector('[data-testid="result-inconsistency-explanation"]')).toBeNull();
   });
@@ -350,5 +355,21 @@ describe('ResultViewComponent', () => {
     TestBed.resetTestingModule();
     const legacy = await build(detail(HEAD_ONLY), verdict());
     expect((legacy.nativeElement as HTMLElement).querySelector('[data-testid="result-inconsistencies"]')).toBeNull();
+  });
+});
+
+describe('result view tones', () => {
+  it('maps metric tones and keeps neutral stats plain', () => {
+    expect(resultMetricTone('ok')).toBe('success');
+    expect(resultMetricTone('warn')).toBe('warning');
+    expect(resultMetricTone('problem')).toBe('danger');
+    expect(resultMetricTone('neutral')).toBeNull();
+    expect(resultMetricTone(undefined)).toBeNull();
+  });
+
+  it.each([
+    ['pass', 'success'], ['warn', 'warning'], ['concerns', 'warning'], ['fail', 'danger'], ['block', 'danger'], ['skip', 'neutral'],
+  ])('maps aspect status %s to %s', (status, tone) => {
+    expect(resultAspectTone(status)).toBe(tone);
   });
 });

@@ -1,12 +1,19 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { NowTickService } from '../../services/now-tick.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent, type StatusTone } from '../../components/status-indicator/status-indicator.component';
 import type { TaskPlanView, TaskPlanItemView, TaskPlanSubAction } from './plan.model';
 
 /** A ticker mark with a flag for whether it sits past the soft-estimate band. */
 interface TickerMark {
   past: boolean;
 }
+
+/** Heartbeat state to status indicator (AGT-3403): live work runs, a quiet item needs a look. */
+export const PLAN_HEARTBEAT_INDICATOR: Readonly<Record<'pulsing' | 'dim', { tone: StatusTone; label: string; detail: string }>> = {
+  pulsing: { tone: 'running', label: 'Working', detail: 'Actively working' },
+  dim: { tone: 'warning', label: 'Quiet', detail: 'Quiet for a while - thinking or stuck' },
+};
 
 /**
  * Plan strip: a meta-level view above the activity log that surfaces the
@@ -25,13 +32,13 @@ interface TickerMark {
  *  2. Latest sub-action label - the most recent tool's verb-plus-arg.
  *  3. Soft estimate band - a reference mark at the median sub-action count of
  *     already-done siblings; marks past it read as "taking longer than usual".
- *  4. Heartbeat pulse - pulses while work is recent, goes dim after 30 s idle.
+ *  4. Heartbeat - running while work is recent, quiet (warning) after 30 s idle.
  */
 @Component({
   selector: 'app-plan-strip',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   templateUrl: './plan-strip.component.html',
   styleUrl: './plan-strip.component.scss',
 })
@@ -39,6 +46,8 @@ export class PlanStripComponent {
   readonly plan = input.required<TaskPlanView | null>();
   readonly isRunning = input(false);
   readonly variant = input<'activity' | 'context'>('activity');
+
+  readonly heartbeatIndicator = PLAN_HEARTBEAT_INDICATOR;
 
   private readonly nowTick = inject(NowTickService).now;
   private readonly destroyRef = inject(DestroyRef);

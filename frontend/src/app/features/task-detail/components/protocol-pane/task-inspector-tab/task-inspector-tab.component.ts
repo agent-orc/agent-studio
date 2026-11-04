@@ -3,6 +3,8 @@ import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import type { PromptEnrichmentReport } from '../../../../../models/task.model';
 import type { TaskRefinementEntry } from '../../../../run-timeline';
 import { resolveProtocolImageSrc } from '../protocol-image-resolver';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { enrichmentStatusTone } from './task-inspector-status';
 
 const ENRICHMENT_EXPANDED_KEY = 'taskboard.taskInspector.enrichmentExpanded';
 
@@ -10,7 +12,7 @@ const ENRICHMENT_EXPANDED_KEY = 'taskboard.taskInspector.enrichmentExpanded';
   selector: 'app-task-inspector-tab',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [MarkdownViewComponent],
+  imports: [MarkdownViewComponent, StatusIndicatorComponent],
   templateUrl: './task-inspector-tab.component.html',
   styleUrl: './task-inspector-tab.component.scss',
 })
@@ -50,6 +52,8 @@ export class TaskInspectorTabComponent {
     const date = new Date(iso);
     return Number.isNaN(date.getTime()) ? iso : date.toLocaleString('en-US');
   }
+
+  readonly statusTone = enrichmentStatusTone;
 
   statusLabel(status: PromptEnrichmentReport['status']): string {
     switch (status) {

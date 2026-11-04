@@ -132,6 +132,7 @@ describe('PreviousResultsControlComponent', () => {
     expect(fixture.nativeElement.querySelectorAll('[data-testid^="previous-result-local-"]').length).toBe(2);
     expect(fixture.nativeElement.textContent).toContain('review attempt #2');
     expect(fixture.nativeElement.textContent).toContain('Result: Success');
+    expect(fixture.nativeElement.querySelector('[data-testid="previous-result-outcome"]')?.getAttribute('data-tone')).toBe('success');
     expect(fixture.nativeElement.textContent).toContain('Case: blocked');
 
     const first: HTMLButtonElement = fixture.nativeElement.querySelector('[data-testid="previous-result-local-0001"]');

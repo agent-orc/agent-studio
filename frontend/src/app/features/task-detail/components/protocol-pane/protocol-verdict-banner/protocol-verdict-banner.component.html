@@ -6,7 +6,6 @@
      [class.protocol-verdict--expanded]="expanded()"
      [attr.data-testid]="'protocol-verdict-' + v.kind"
      role="status">
-  <span class="protocol-verdict__emoji" aria-hidden="true">{{ v.emoji }}</span>
   @if (expandable()) {
     <!-- ADM-17: the status line itself is the disclosure control. It carries
          the shared leading marker, the whole sentence is the hit area, and it
@@ -21,11 +20,11 @@
             [attr.aria-controls]="expanded() && hasSignals() ? 'protocol-verdict-signals-list' : null"
             (click)="toggle()">
       <app-disclosure-marker [open]="expanded()" />
-      <span class="protocol-verdict__label">{{ v.label }}</span>
+      <app-status-indicator class="protocol-verdict__label" [tone]="tone()" [label]="v.label" [compact]="true" testId="protocol-verdict-state" />
       <span class="protocol-verdict__detail-text">{{ v.detail }}</span>
     </button>
   } @else {
-    <span class="protocol-verdict__label">{{ v.label }}</span>
+    <app-status-indicator class="protocol-verdict__label" [tone]="tone()" [label]="v.label" [compact]="true" testId="protocol-verdict-state" />
     <span class="protocol-verdict__detail"
           data-testid="protocol-verdict-detail"
           [cacTooltip]="v.tooltip">
@@ -66,9 +65,8 @@
         data-testid="protocol-verdict-signals-list">
       @for (signal of v.signals; track signal.source + signal.label) {
         <li class="protocol-verdict-signals__item" [attr.data-status]="signal.status">
-          <span class="protocol-verdict-signals__dot" aria-hidden="true"></span>
           <span class="protocol-verdict-signals__source">{{ signal.source }}</span>
-          <strong>{{ signal.label }}</strong>
+          <app-status-indicator [tone]="signalTone(signal.status)" [label]="signal.label" [compact]="true" testId="protocol-verdict-signal-state" />
           <span>{{ signal.detail }}</span>
         </li>
       }

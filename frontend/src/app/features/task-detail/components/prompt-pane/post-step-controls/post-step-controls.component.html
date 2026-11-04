@@ -44,7 +44,11 @@
                 [attr.data-status]="attempt.status.toLowerCase()"
                 data-testid="overview-post-step-attempt-row">
             <span class="post-step-controls__attempt-number">#{{ attempt.attempt }}</span>
-            <span class="post-step-controls__attempt-status">{{ attempt.status }}</span>
+            <app-status-indicator
+              [tone]="attemptTone(attempt.status)"
+              [label]="attempt.status"
+              [compact]="true"
+              testId="overview-post-step-attempt-status" />
             <span class="post-step-controls__attempt-summary">{{ attempt.summary }}</span>
             @if (attempt.artifactRef) {
               <code class="post-step-controls__artifact" data-testid="overview-post-step-artifact">

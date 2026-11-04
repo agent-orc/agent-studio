@@ -10,6 +10,7 @@ import {
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import {
   TaskState,
+  type CompletionClaimBasis,
   type TaskCompletionClaim,
   type TaskDeliveryClaimAnswer,
   type TaskInfo,
@@ -17,6 +18,7 @@ import {
 import { TaskService } from '../../../../services/task.service';
 import { IntegrationDeadEndComponent } from '../integration-dead-end/integration-dead-end.component';
 import { AcceptanceAttemptGapNoticeComponent } from '../acceptance-attempt-gap-notice/acceptance-attempt-gap-notice.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 /** Tri-state containment answer. `unknown` is a question, never a negative. */
 export type DeliveryIntegrationState =
@@ -24,6 +26,41 @@ export type DeliveryIntegrationState =
   | 'not-integrated'
   | 'nothing-to-integrate'
   | 'unknown';
+
+/**
+ * Delivery claim states to shared status tones (AGT-3403). Unchecked or
+ * absent answers are neutral; only a found gap is a warning.
+ */
+export const DELIVERY_INTEGRATION_TONES: Readonly<Record<DeliveryIntegrationState, StatusTone>> = {
+  'integrated': 'success',
+  'not-integrated': 'warning',
+  'nothing-to-integrate': 'neutral',
+  'unknown': 'neutral',
+};
+
+export const DELIVERY_RELEASE_TONES: Readonly<Record<'released' | 'unreleased' | 'unknown', StatusTone>> = {
+  released: 'success',
+  unreleased: 'neutral',
+  unknown: 'neutral',
+};
+
+export const DELIVERY_SUPERSESSION_TONES: Readonly<Record<'replacement-pending' | 'replaced', StatusTone>> = {
+  'replacement-pending': 'info',
+  'replaced': 'warning',
+};
+
+export const COMPLETION_BASIS_TONES: Readonly<Record<CompletionClaimBasis, StatusTone>> = {
+  'integrated-delivery': 'success',
+  'deliverable-without-code': 'success',
+  'operator-override': 'warning',
+};
+
+/** Concept-fit contradiction: block is danger, concerns is warning, anything else neutral. */
+export function contentContradictionTone(status: string | null | undefined): StatusTone {
+  if (status === 'block') return 'danger';
+  if (status === 'concerns') return 'warning';
+  return 'neutral';
+}
 
 const DELIVERED_LANES: readonly string[] = [
   TaskState.AutoReview,
@@ -57,7 +94,7 @@ const DELIVERED_LANES: readonly string[] = [
   selector: 'app-delivery-claim-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, IntegrationDeadEndComponent, AcceptanceAttemptGapNoticeComponent],
+  imports: [TooltipDirective, IntegrationDeadEndComponent, AcceptanceAttemptGapNoticeComponent, StatusIndicatorComponent],
   templateUrl: './delivery-claim-panel.component.html',
   styleUrl: './delivery-claim-panel.component.scss',
 })
@@ -130,6 +167,8 @@ export class DeliveryClaimPanelComponent {
     }
   });
 
+  readonly integrationTone = computed(() => DELIVERY_INTEGRATION_TONES[this.integration()] ?? 'neutral');
+
   readonly integrationTooltip = computed(() => {
     const detail = this.answer()?.detail ?? this.job().integration?.detail ?? null;
     switch (this.integration()) {
@@ -169,6 +208,8 @@ export class DeliveryClaimPanelComponent {
     return released ? `In ${this.releaseBranch()}` : `Not in ${this.releaseBranch()}`;
   });
 
+  readonly releaseTone = computed(() => DELIVERY_RELEASE_TONES[this.releaseState()] ?? 'neutral');
+
   readonly mergeCommit = computed(() => this.answer()?.mergeCommit ?? null);
 
   readonly mergeLabel = computed(() => {
@@ -203,6 +244,11 @@ export class DeliveryClaimPanelComponent {
       case 'replaced': return 'Delivery replaced';
       default: return null;
     }
+  });
+
+  readonly supersessionTone = computed<StatusTone>(() => {
+    const state = this.supersession();
+    return state ? DELIVERY_SUPERSESSION_TONES[state] ?? 'neutral' : 'neutral';
   });
 
   readonly supersessionTooltip = computed(() => {
@@ -242,6 +288,13 @@ export class DeliveryClaimPanelComponent {
       default: return null;
     }
   });
+
+  readonly claimTone = computed<StatusTone>(() => {
+    const basis = this.claim()?.basis;
+    return basis ? COMPLETION_BASIS_TONES[basis] ?? 'neutral' : 'neutral';
+  });
+
+  readonly contradictionTone = contentContradictionTone;
 
   /** An override's written reason is shown wherever the card claims completion. */
   readonly overrideReason = computed(() =>

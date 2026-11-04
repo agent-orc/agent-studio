@@ -67,6 +67,7 @@ describe('ConceptDossierNoticeComponent', () => {
 
     expect(host.querySelectorAll('[data-testid="concept-dossier-notice"]')).toHaveLength(1);
     expect(host.querySelector('[data-testid="concept-dossier-missing"]')?.textContent).toContain('No dossier linked');
+    expect(host.querySelector('[data-testid="concept-dossier-missing"]')?.getAttribute('data-tone')).toBe('warning');
     expect(host.querySelector('[data-testid="concept-dossier-add-path"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="concept-dossier-no-need"]')).not.toBeNull();
   });

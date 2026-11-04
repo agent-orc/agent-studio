@@ -3,11 +3,13 @@ import type { TaskIntegrationStatus } from '../../../git';
 import type { ReviewProjectionView } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
-import { integrationDeadEnd } from './integration-dead-end.model';
+import { integrationDeadEnd, integrationDeadEndTone } from './integration-dead-end.model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-integration-dead-end',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './integration-dead-end.component.html',
   styleUrl: './integration-dead-end.component.scss',
@@ -18,6 +20,7 @@ export class IntegrationDeadEndComponent {
   readonly jobId = input.required<string>();
   readonly watchPath = input<string | null>(null);
   readonly containmentUnknown = input(false);
+  readonly tone = integrationDeadEndTone;
   readonly escalated = input(false);
   readonly recheckRequested = output<void>();
   readonly model = computed(() => integrationDeadEnd(this.status(), this.containmentUnknown(), this.review()));

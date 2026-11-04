@@ -104,6 +104,7 @@ describe('AgentWorkDetailComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     expect(html(fixture).querySelector('[data-testid="agent-work-detail-empty"]')).not.toBeNull();
+    expect(html(fixture).querySelector('[data-testid="agent-work-detail-empty-state"]')?.getAttribute('data-tone')).toBe('neutral');
   });
 
   it('builds an HTML tooltip with the argument and result line', () => {

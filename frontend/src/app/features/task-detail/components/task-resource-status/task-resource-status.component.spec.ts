@@ -62,7 +62,11 @@ describe('TaskResourceStatusComponent', () => {
     const root = fixture.nativeElement as HTMLElement;
 
     expect(root.querySelector('[aria-live="polite"]')).not.toBeNull();
-    expect(root.textContent).toContain('Git information unavailable: The Git snapshot is still warming.');
+    const git = root.querySelector('[data-resource="git"]')!;
+    expect(git.querySelector('[data-testid="task-resource-state-git"]')?.textContent).toContain('Git information unavailable');
+    expect(git.querySelector('[data-testid="task-resource-state-git"]')?.getAttribute('data-tone')).toBe('warning');
+    expect(git.textContent).toContain('The Git snapshot is still warming.');
+    expect(root.querySelector('[data-testid="task-resource-state-documents"]')?.getAttribute('data-tone')).toBe('danger');
     expect(root.querySelectorAll('[data-testid^="task-resource-retry-"]')).toHaveLength(2);
     root.querySelector<HTMLButtonElement>('[data-testid="task-resource-retry-git"]')!.click();
     root.querySelector<HTMLButtonElement>('[data-testid="task-resource-retry-documents"]')!.click();
@@ -79,7 +83,10 @@ describe('TaskResourceStatusComponent', () => {
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
 
-    expect(root.textContent).toContain('Review information pending: The review projection is still warming.');
+    const review = root.querySelector('[data-testid="task-resource-state-review"]')!;
+    expect(review.textContent).toContain('Review information pending');
+    expect(review.getAttribute('data-tone')).toBe('running');
+    expect(root.textContent).toContain('The review projection is still warming.');
     root.querySelector<HTMLButtonElement>('[data-testid="task-resource-retry-review"]')!.click();
     expect(retry).toHaveBeenCalledWith('review');
   });

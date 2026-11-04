@@ -2,11 +2,12 @@
   <span class="execution-location"
         [class.execution-location--acute]="acute()"
         [class.execution-location--history]="value.historical"
-        [class.execution-location--compact]="compact()"
         [attr.data-execution-state]="value.state"
         data-testid="execution-location-badge"
         [cacTooltip]="tooltip()">
-    <span class="execution-location__dot" aria-hidden="true"></span>
-    <span>{{ label() }}</span>
+    <app-status-indicator [tone]="tone()"
+                          [label]="label()"
+                          [compact]="compact()"
+                          testId="execution-location-indicator" />
   </span>
 }

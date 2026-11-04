@@ -38,6 +38,9 @@ describe('BeautifulResultsComponent', () => {
     const banner = host.querySelector('[data-testid="results-sentinel-banner"]');
     expect(banner).not.toBeNull();
     expect(banner?.getAttribute('data-kind')).toBe('done');
+    const state = banner?.querySelector('[data-testid="results-sentinel-state"]');
+    expect(state?.getAttribute('data-tone')).toBe('success');
+    expect(state?.textContent?.trim()).toBe('Task complete');
     // Body should not contain the raw sentinel any more.
     const body = host.querySelector('[data-testid="results-rendered"]');
     expect(body?.textContent ?? '').not.toMatch(/TASK_DONE/);

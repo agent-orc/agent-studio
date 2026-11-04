@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input, signal } f
 import type { TaskInfo } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 /**
  * AGT-3076: a Human Review card whose run attempt the attempt authority store
@@ -13,6 +14,7 @@ import { NotificationService } from '../../../../services/notification.service';
 @Component({
   selector: 'app-acceptance-attempt-gap-notice',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './acceptance-attempt-gap-notice.component.html',
   styleUrl: './acceptance-attempt-gap-notice.component.scss',

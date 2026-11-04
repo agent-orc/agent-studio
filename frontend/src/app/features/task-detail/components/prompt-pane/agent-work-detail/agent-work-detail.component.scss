@@ -33,8 +33,6 @@
   margin: 2px 0;
   font-size: 11px;
   color: var(--studio-fg-dim);
-
-  &--error { color: var(--severity-high); }
 }
 
 .awd-groups,
@@ -96,17 +94,7 @@
 
   &:hover { background: var(--studio-bg-hover); }
 
-  &__status {
-    flex: none;
-    width: 18px;
-    text-align: center;
-    font-size: 9px;
-    font-family: var(--font-mono);
-    color: var(--severity-pass);
-
-    &--error { color: var(--severity-high); }
-    &--pending { color: var(--studio-fg-dim); }
-  }
+  &__status { flex: none; }
 
   &__arg {
     flex: 1 1 auto;

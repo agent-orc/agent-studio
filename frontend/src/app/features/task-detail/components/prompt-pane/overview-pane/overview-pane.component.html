@@ -85,15 +85,9 @@
             [cacTooltip]="'Pre steps, core agent work, and post steps for this task. Per-step model and enable/disable are configured in project Settings.'">
           Pipeline
           @if (isPipelineRestart()) {
-            <span class="ov-pl-restart-badge"
-                  data-testid="overview-pipeline-restart-badge"
-                  [attr.data-attempt]="pipelineAttempt()"
-                  [cacTooltip]="pipelineStartedAt()
-                    ? 'Restarted — current run started ' + formatAbsoluteTime(pipelineStartedAt()!)
-                    : 'This pipeline was restarted; the steps below are the latest run.'">
-              <span class="ov-pl-restart-badge__dot" aria-hidden="true"></span>
-              Restarted · Run #{{ pipelineAttempt() }}
-            </span>
+            <app-status-indicator class="ov-pl-restart-badge" [attr.data-attempt]="pipelineAttempt()" tone="info" [compact]="true"
+              [label]="'Restarted · Run #' + pipelineAttempt()" testId="overview-pipeline-restart-badge"
+              [detail]="pipelineStartedAt() ? 'Restarted — current run started ' + formatAbsoluteTime(pipelineStartedAt()!) : 'This pipeline was restarted; the steps below are the latest run.'" />
           }
         </h3>
         @if (disabledPipelineStepCount() > 0) {
@@ -147,20 +141,19 @@
                     [attr.aria-selected]="selectedPipelineAttemptNumber() === cur.attempt"
                     [cacTooltip]="cur.tooltip"
                     (click)="selectPipelineRun(cur.attempt)">
-              <span class="ov-runs-strip__dot" [attr.data-kind]="cur.kind" aria-hidden="true">●</span>
               <span class="ov-runs-strip__num">#{{ cur.attempt }}</span>
               <span class="ov-runs-strip__current-badge"
                     data-testid="overview-pipeline-run-current">Current</span>
               <span class="ov-runs-strip__sep" aria-hidden="true">·</span>
               <span class="ov-runs-strip__outcome ov-value--mono">
                 @if (cur.passed > 0) {
-                  <span class="ov-runs-strip__pass">{{ cur.passed }} OK</span>
+                  <app-status-indicator [tone]="runOutcomeTone('pass')" [label]="cur.passed + ' OK'" [compact]="true" testId="overview-pipeline-run-passed" />
                 }
                 @if (cur.failed > 0) {
-                  <span class="ov-runs-strip__fail">{{ cur.failed }} fail</span>
+                  <app-status-indicator [tone]="runOutcomeTone('fail')" [label]="cur.failed + ' fail'" [compact]="true" testId="overview-pipeline-run-failed" />
                 }
                 @if (cur.passed === 0 && cur.failed === 0) {
-                  <span class="ov-runs-strip__pending">{{ cur.emptyOutcomeLabel }}</span>
+                  <app-status-indicator [tone]="runOutcomeTone('pending')" [label]="cur.emptyOutcomeLabel" [compact]="true" testId="overview-pipeline-run-pending" />
                 }
               </span>
               @if (cur.durationMs > 0) {
@@ -179,7 +172,7 @@
                         [attr.aria-selected]="selectedPipelineAttemptNumber() === run.attempt"
                         data-testid="overview-pipeline-run-option" [cacTooltip]="run.tooltip"
                         (click)="selectPipelineRun(run.attempt)">
-                  <span class="ov-runs-strip__chip-num">Attempt #{{ run.attempt }}</span><span class="ov-runs-strip__chip-state">superseded</span>
+                  <span class="ov-runs-strip__chip-num">Attempt #{{ run.attempt }}</span><app-status-indicator tone="neutral" label="superseded" [compact]="true" testId="overview-pipeline-run-superseded" />
                 </button>
               }
               @if (hiddenRunCount() > 0) {
@@ -247,7 +240,8 @@
               <span class="ov-pl-phase__summary"
                     data-testid="overview-pipeline-phase-summary"
                     [attr.data-tone]="group.tone">
-                <span class="ov-pl-phase__status" [attr.data-tone]="group.tone">{{ groupToneLabel(group.tone) }}</span>
+                <app-status-indicator class="ov-pl-phase__status" [attr.data-group-tone]="group.tone" [tone]="groupStatusTone(group.tone)"
+                                      [label]="groupToneLabel(group.tone)" [compact]="true" testId="overview-pipeline-phase-status" />
                 @if (group.ranCount > 0) {
                   <span class="ov-pl-phase__count"
                         data-testid="overview-pipeline-phase-ran">{{ group.ranCount }}/{{ group.stepCount }}</span>
@@ -256,12 +250,12 @@
                 }
                 @if (group.concernCount > 0) {
                   <span class="ov-pl-phase__concern"
-                        data-testid="overview-pipeline-phase-concern"
                         [cacTooltip]="group.concernCount === 1
                           ? '1 step in this section flagged a concern'
                           : group.concernCount + ' steps in this section flagged concerns'"
-                        tooltipSeverity="warn"
-                        [attr.aria-label]="group.concernCount === 1 ? '1 concern' : group.concernCount + ' concerns'">⚠ {{ group.concernCount }}</span>
+                        tooltipSeverity="warn">
+                    <app-status-indicator tone="warning" [label]="'' + group.concernCount" [compact]="true" testId="overview-pipeline-phase-concern" />
+                  </span>
                 }
                 @if (group.offCount > 0) {
                   <span class="ov-pl-phase__off"
@@ -302,7 +296,7 @@
               @if (row.skipHint) {
                 <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-skip-hint">{{ row.skipHint }}</span>
               }
-              @if (row.reviewRoundStatus) { <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-review-round-status">{{ row.reviewRoundStatus }}</span> }
+              @if (row.reviewRoundStatus) { <app-status-indicator class="ov-pl-step__round-status" [tone]="roundTone(row)" [label]="row.reviewRoundStatus" [compact]="true" testId="overview-pipeline-review-round-status" /> }
               @if (row.batchGateSummary) { <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-batch-gate">{{ row.batchGateSummary }}</span> }
               @else if (row.reviewAttemptId && row.kind !== 'aspect' && row.remoteReviewDetail) { <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-review-summary">{{ row.remoteReviewDetail }}</span> }
               @if (row.reviewAttemptId) { <button type="button" class="ov-pl-step__review-link" data-testid="overview-pipeline-review-attempt" (click)="reviewAttemptRequested.emit(row.reviewAttemptId)">Review attempt@if (row.reviewAttemptNumber && row.reviewAttemptNumber > 1) { #{{ row.reviewAttemptNumber }} }</button> }
@@ -342,9 +336,8 @@
                     [tooltipSeverity]="badge?.severity ?? 'info'"
                     [attr.aria-label]="badge ? 'Final verdict: ' + badge.label : 'Final verdict'"
                     data-testid="overview-pipeline-step-final-verdict">
-                Final verdict@if (badge) { → <span class="ov-pl-step__final-decision-route"
-                                               [attr.data-verdict]="badge.verdict"
-                                               data-testid="overview-pipeline-step-decision">{{ badge.label }}@if (row.historical) { · superseded }</span>
+                Final verdict@if (badge) { → <app-status-indicator class="ov-pl-step__final-decision-route" [attr.data-verdict]="badge.verdict"
+                                               [tone]="decisionTone(badge.tone, row.historical)" [label]="historicalLabel(row, badge.label)" [compact]="true" testId="overview-pipeline-step-decision" />
                 } @else if (row.historical) { · superseded }
               </span>
             }
@@ -355,7 +348,11 @@
                     [attr.data-verdict]="visibleVerdict"
                     [cacTooltip]="row.concernTooltip"
                     [tooltipSeverity]="visibleVerdict === 'block' || visibleVerdict === 'loop-detected' ? 'error' : 'warn'"
-                    data-testid="overview-pipeline-step-verdict">{{ visibleVerdict }}@if (row.historical) { · superseded }</span>
+                    data-testid="overview-pipeline-step-verdict"><app-status-indicator
+                      [tone]="stepVerdictStatusTone(row, visibleVerdict)"
+                      [label]="historicalLabel(row, visibleVerdict)"
+                      [compact]="true"
+                      testId="overview-pipeline-step-verdict-state" /></span>
             } @if (row.kind === 'aspect') { <app-pipeline-aspect-result [row]="row" [reportFile]="resultForRow(row)?.fileName ?? null" (documentRequested)="documentRequested.emit($event)" /> }
             @if (selectedPipelineIsCurrent() && row.kind === 'core' && agentRunCount() > 0) {
               <app-pipeline-run-history

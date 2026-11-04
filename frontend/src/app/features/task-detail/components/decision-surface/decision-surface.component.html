@@ -2,10 +2,7 @@
   <section class="decision-surface" data-testid="decision-surface" aria-labelledby="decision-surface-title">
     <header class="decision-surface__header">
       <div class="decision-surface__identity">
-        <span class="decision-surface__eyebrow">
-          <span class="decision-surface__dot" aria-hidden="true"></span>
-          Decision required
-        </span>
+        <app-status-indicator tone="warning" label="Decision required" testId="decision-surface-state" />
         <h3 id="decision-surface-title" data-testid="decision-surface-title">
           {{ document()?.title || 'Operator decision context' }}
         </h3>
@@ -34,13 +31,13 @@
 
     @if (contractError(); as error) {
       <div class="decision-surface__error" role="alert" data-testid="decision-surface-error">
-        <strong>Decision contract could not be used.</strong>
+        <app-status-indicator tone="danger" label="Decision contract could not be used." testId="decision-surface-error-state" />
         <span>{{ error }} The generic escalation actions remain available.</span>
       </div>
     } @else if (document(); as decision) {
       @if (actionError(); as error) {
         <div class="decision-surface__error" role="alert" data-testid="decision-action-error">
-          <strong>Decision was not applied.</strong>
+          <app-status-indicator tone="danger" label="Decision was not applied." testId="decision-action-error-state" />
           <span>{{ error }}</span>
         </div>
       }

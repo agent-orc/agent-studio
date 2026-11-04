@@ -176,6 +176,8 @@ describe('ParkedBlockerComponent', () => {
     const el = render(park());
 
     expect(text(el, 'parked-blocker-type')).toBe('Agent needs input');
+    expect(el.querySelector('[data-testid="parked-blocker-type"]')?.getAttribute('data-tone')).toBe('info');
+    expect(el.querySelector('[data-testid="parked-blocker-recall"]')?.getAttribute('data-tone')).toBe('warning');
     expect(text(el, 'parked-blocker-since')).toContain('3 days');
     expect(text(el, 'parked-blocker-since')).toContain('2026-09-11');
     expect(text(el, 'parked-blocker-question')).toBe(

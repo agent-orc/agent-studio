@@ -1,6 +1,6 @@
 @if (task().olderBriefDelivery?.status === 'pending') {
   <section class="older-brief-offer" data-testid="older-brief-delivery-offer" aria-label="Older brief delivery">
-    <strong>Delivered against an older brief</strong>
+    <app-status-indicator tone="warning" label="Delivered against an older brief" testId="older-brief-delivery-state" />
     <p>This run used an earlier version of the task prompt. Its result is retained for your decision.</p>
     @if (task().olderBriefDelivery?.resultRef || task().olderBriefDelivery?.salvageBranch) {
       <p class="older-brief-offer__reference">Retained reference:

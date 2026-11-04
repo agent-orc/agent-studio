@@ -8,6 +8,7 @@ import {
   signal,
 } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { TaskInfo, TaskReferenceLink, WaitsOnItem } from '../../../../models/task.model';
 import { NotificationService } from '../../../../services/notification.service';
 import { TaskService } from '../../../../services/task.service';
@@ -40,7 +41,7 @@ import {
   selector: 'app-release-gate-section',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   templateUrl: './release-gate-section.component.html',
   styleUrl: './release-gate-section.component.scss',
 })
@@ -69,6 +70,11 @@ export class ReleaseGateSectionComponent {
 
   releaseStateLabel(): string {
     return this.released() ? 'Released' : 'Release pending';
+  }
+
+  /** Released reads as done; a pending release awaits an operator step. */
+  releaseStateTone(): StatusTone {
+    return this.released() ? 'success' : 'warning';
   }
 
   releaseButtonLabel(): string {

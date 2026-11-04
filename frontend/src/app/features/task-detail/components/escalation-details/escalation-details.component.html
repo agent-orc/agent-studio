@@ -14,7 +14,11 @@
             <li [class.escalation-details__finding--done]="item.checked">
               <span class="escalation-details__check" aria-hidden="true">{{ item.checked ? '☑' : '☐' }}</span>
               @if (item.verdict; as verdict) {
-                <span class="escalation-details__verdict" [attr.data-tone]="item.tone">{{ verdict }}</span>
+                <app-status-indicator class="escalation-details__verdict"
+                                      [tone]="verdictTone(item.tone)"
+                                      [label]="verdict"
+                                      [compact]="true"
+                                      testId="escalation-finding-verdict" />
               }
               <span class="escalation-details__finding-copy">
                 <strong>{{ item.text }}</strong>

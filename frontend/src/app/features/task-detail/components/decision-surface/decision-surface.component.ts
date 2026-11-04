@@ -19,6 +19,7 @@ import { TaskService } from '../../../../services/task.service';
 import { ErrorDialogService } from '../../../../services/error-dialog.service';
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { needsPlanningAcceptWarning } from '../../state/triage-actions.model';
 import { buildIsolatedHtmlSrcdoc } from '../../../../services/sandboxed-html.util';
 import {
@@ -36,7 +37,7 @@ const JSON_PATH = 'results/decision.json' as const;
   selector: 'app-decision-surface',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [PendingButtonDirective],
+  imports: [PendingButtonDirective, StatusIndicatorComponent],
   templateUrl: './decision-surface.component.html',
   styleUrl: './decision-surface.component.scss',
 })

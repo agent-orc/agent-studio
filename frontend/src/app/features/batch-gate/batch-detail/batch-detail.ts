@@ -3,11 +3,13 @@ import type { TaskInfo } from '../../../models/task.model';
 import { batchMemberFor, batchPublishedSha } from '../../../models/batch-gate.model';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { BatchPanelComponent } from '../batch-panel/batch-panel';
+import { batchMemberStatusTone, batchOutcomeTone } from '../batch-panel/batch-status-tones';
+import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-batch-detail',
   standalone: true,
-  imports: [BatchPanelComponent],
+  imports: [BatchPanelComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-detail.html',
   styleUrl: './batch-detail.scss',
@@ -16,6 +18,8 @@ export class BatchDetailComponent {
   readonly task = input.required<TaskInfo>();
   readonly panelOpen = signal(false);
   readonly publishedSha = batchPublishedSha;
+  readonly memberTone = batchMemberStatusTone;
+  readonly outcomeTone = batchOutcomeTone;
   readonly closePanel = () => this.panelOpen.set(false);
   private readonly gate = inject(BatchGateService);
   readonly project = computed(() => this.task().projectName);

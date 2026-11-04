@@ -5,15 +5,25 @@ import type { TaskFileHistoryEntry, TaskFileSourceScope } from '../../models/tas
 import { TaskService } from '../../services/task.service';
 import { formatDateTimeUtc, formatRelativeTime } from '../../services/format.util';
 import { NowTickService } from '../../services/now-tick.service';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
 
 type PaneMode = 'file' | 'history';
 type LoadState = 'idle' | 'loading' | 'loaded' | 'error';
+type VerdictTone = 'pass' | 'warn' | 'block' | 'unknown';
+
+/** Run grade family to shared status tone (AGT-3403). */
+const VERDICT_STATUS_TONES: Readonly<Record<VerdictTone, StatusTone>> = {
+  pass: 'success',
+  warn: 'warning',
+  block: 'danger',
+  unknown: 'neutral',
+};
 
 @Component({
   selector: 'app-file-source-history',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [SegmentedControlComponent, MarkdownViewComponent],
+  imports: [SegmentedControlComponent, MarkdownViewComponent, StatusIndicatorComponent],
   templateUrl: './file-source-history.component.html',
   styleUrl: './file-source-history.component.scss',
 })
@@ -94,7 +104,11 @@ export class FileSourceHistoryComponent {
     return entry.runIndex ? `Run #${entry.runIndex}` : 'Unmapped run';
   }
 
-  verdictTone(verdict: string | null | undefined): string {
+  verdictStatusTone(verdict: string | null | undefined): StatusTone {
+    return VERDICT_STATUS_TONES[this.verdictTone(verdict)];
+  }
+
+  verdictTone(verdict: string | null | undefined): VerdictTone {
     const lower = (verdict ?? '').toLowerCase();
     if (lower === 'pass' || lower === 'accept' || lower === 'accepted') return 'pass';
     if (lower === 'concerns' || lower === 'defer' || lower === 'reissue') return 'warn';

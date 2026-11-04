@@ -4,19 +4,18 @@
            data-testid="concept-dossier-notice"
            [attr.data-state]="missing() ? 'missing' : 'satisfied'">
     @if (dossierPath(); as path) {
-      <span class="dossier__label">Dossier</span>
+      <app-status-indicator tone="success" label="Dossier" [compact]="true" testId="concept-dossier-linked" />
       <a class="dossier__link"
          data-testid="concept-dossier-link"
          [href]="wikiHref()">{{ path }}</a>
     } @else if (summary()?.noDossierNeeded) {
-      <span class="dossier__label">No dossier needed</span>
+      <app-status-indicator tone="neutral" label="No dossier needed" [compact]="true" testId="concept-dossier-not-needed" />
       <span class="dossier__reason" data-testid="concept-dossier-no-need-reason">
         {{ summary()?.noDossierReason }}
       </span>
       <button type="button" class="dossier__action" (click)="openPathEditor()">Add dossier path</button>
     } @else {
-      <span class="dossier__signal" aria-hidden="true">!</span>
-      <span class="dossier__label" data-testid="concept-dossier-missing">No dossier linked</span>
+      <app-status-indicator tone="warning" label="No dossier linked" [compact]="true" testId="concept-dossier-missing" />
       <button type="button"
               class="dossier__action"
               data-testid="concept-dossier-add-path"

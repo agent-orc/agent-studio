@@ -90,7 +90,9 @@ test.describe('@mockup result-view (real component)', () => {
       // All four case cards render, plus the AGT-3046 assessment card.
       await expect(page.getByTestId('gallery-card')).toHaveCount(5);
       // The compact summary keeps outcome emphasis and renders quiet stats.
-      await expect(page.getByTestId('result-case-dot').first()).toBeVisible();
+      // AGT-3403: the outcome wears the shared status indicator; a lane-led
+      // outcome keeps its lane-toned dot (R9).
+      await expect(page.locator('[data-testid="result-case-state"], [data-testid="result-case-dot"]').first()).toBeVisible();
       await expect(page.getByTestId('result-metric-files').first()).toBeVisible();
       await expect(page.getByTestId('result-metric-tests').first()).toBeVisible();
       await expect(page.getByTestId('result-metric-duration').first()).toHaveText('4m');
@@ -140,7 +142,7 @@ test.describe('@mockup result-view (real component)', () => {
       expect(placement.borderLeft).toBe(placement.borderRight);
 
       const badges = card.getByTestId('result-inconsistency-loss');
-      await expect(badges.nth(2)).toHaveAttribute('data-tone', 'problem');
+      await expect(badges.nth(2)).toHaveAttribute('data-tone', 'danger');
       await expect(badges.nth(0)).toHaveAttribute('data-tone', 'neutral');
 
       await card.screenshot({ path: path.join(RESULTS_DIR, `result-assessment-inconsistencies-${theme}--mocked.png`) });

@@ -103,6 +103,7 @@ describe('DeliveryClaimPanelComponent', () => {
     expect(host.querySelector('[data-testid="concept-fit-comparison"]')?.textContent)
       .toContain('Dossier: replace the workflow.');
     expect(grounds?.textContent).toContain('Contradiction or gap');
+    expect(grounds?.querySelector('[data-testid="completion-content-review-state"]')?.getAttribute('data-tone')).toBe('warning');
   });
   /**
    * AGT-2706: contained in develop and in main, integrated by an operator
@@ -119,6 +120,8 @@ describe('DeliveryClaimPanelComponent', () => {
     const release = host.querySelector('[data-testid="delivery-claim-release"]');
     expect(release?.textContent).toContain('In main');
     expect(release?.getAttribute('data-state')).toBe('released');
+    expect(release?.querySelector('[data-testid="delivery-claim-release-state"]')?.getAttribute('data-tone')).toBe('success');
+    expect(host.querySelector('[data-testid="delivery-claim-integration-state"]')?.getAttribute('data-tone')).toBe('success');
   });
 
   it('says "not checked yet" instead of pending when containment is unanswered', async () => {
@@ -131,6 +134,7 @@ describe('DeliveryClaimPanelComponent', () => {
 
     expect(integration?.textContent).toContain('Not checked yet');
     expect(integration?.textContent).not.toContain('pending');
+    expect(integration?.querySelector('[data-testid="delivery-claim-integration-state"]')?.getAttribute('data-tone')).toBe('neutral');
     expect(host.querySelector('[data-testid="delivery-claim-release"]')?.textContent)
       .toContain('Release not checked');
   });
@@ -153,6 +157,7 @@ describe('DeliveryClaimPanelComponent', () => {
 
     expect(marker?.textContent).toContain('Replacement pending');
     expect(marker?.getAttribute('data-state')).toBe('replacement-pending');
+    expect(marker?.querySelector('[data-testid="delivery-claim-supersession-state"]')?.getAttribute('data-tone')).toBe('info');
   });
 
   /** AGT-2795: the override's written reason travels with the completion claim. */
@@ -180,6 +185,7 @@ describe('DeliveryClaimPanelComponent', () => {
 
     expect(host.querySelector('[data-testid="delivery-claim-basis"]')?.textContent)
       .toContain('Completed by operator override');
+    expect(host.querySelector('[data-testid="delivery-claim-basis"]')?.getAttribute('data-tone')).toBe('warning');
     // Not yet released is the ordinary case between two releases, so it stays
     // quiet instead of borrowing the integration row's acute treatment.
     expect(host.querySelector('[data-testid="delivery-claim-release"]')?.getAttribute('data-state'))

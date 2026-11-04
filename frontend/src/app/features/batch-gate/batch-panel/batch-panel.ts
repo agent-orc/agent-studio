@@ -1,11 +1,14 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, OnDestroy, afterNextRender, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
+import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { batchAdvisorVerdictTone, batchDecisionTone, batchOutcomeTone } from './batch-status-tones';
 import { batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../../../models/batch-gate.model';
 
 @Component({
   selector: 'app-batch-panel',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-panel.html',
   styleUrl: './batch-panel.scss',
@@ -22,6 +25,9 @@ export class BatchPanelComponent implements OnDestroy {
   readonly riskLabel = batchRiskLabel;
   readonly replayLabel = batchReplayLabel;
   readonly publishedSha = batchPublishedSha;
+  readonly decisionTone = batchDecisionTone;
+  readonly advisorTone = batchAdvisorVerdictTone;
+  readonly outcomeTone = batchOutcomeTone;
   readonly phases = ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing', 'published', 'red', 'paused', 'abandoned'];
   private readonly closeButton = viewChild<ElementRef<HTMLButtonElement>>('closeButton');
   private readonly confirmButton = viewChild<ElementRef<HTMLButtonElement>>('confirmButton');

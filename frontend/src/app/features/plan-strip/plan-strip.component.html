@@ -36,20 +36,18 @@
 
             <span class="plan-item__title" data-testid="plan-item-title">{{ item.title }}</span>
 
-            <!-- Heartbeat pulse (cue 4): pulses while work is recent, dims when idle. -->
+            <!-- Heartbeat (cue 4): running while work is recent, warning once the item goes quiet. -->
             @if (heartbeat(item); as hb) {
               @if (hb !== 'off') {
-                <span
-                  class="plan-item__heartbeat"
-                  [class.plan-item__heartbeat--pulsing]="hb === 'pulsing'"
-                  [class.plan-item__heartbeat--dim]="hb === 'dim'"
-                  data-testid="plan-item-heartbeat"
-                  [attr.data-state]="hb"
-                  [cacTooltip]="
-                    hb === 'pulsing' ? 'Actively working' : 'Quiet for a while - thinking or stuck'
-                  "
-                  aria-hidden="true"
-                ></span>
+                <span class="plan-item__heartbeat" data-testid="plan-item-heartbeat" [attr.data-state]="hb">
+                  <app-status-indicator
+                    [tone]="heartbeatIndicator[hb].tone"
+                    [label]="heartbeatIndicator[hb].label"
+                    [detail]="heartbeatIndicator[hb].detail"
+                    [compact]="true"
+                    testId="plan-item-heartbeat-indicator"
+                  />
+                </span>
               }
             }
 

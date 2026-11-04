@@ -9,7 +9,7 @@
         </p>
       }
       @if (member(); as item) {
-        <p><strong>{{ item.status }}</strong>
+        <p><app-status-indicator [tone]="memberTone(item.status)" [label]="item.status" testId="task-batch-member-status" />
           @if (item.batchId) { · Batch {{ item.batchId }} }
           @if (item.position && item.size) { · {{ item.position }} of {{ item.size }} }
           @if (item.phase) { · {{ item.phase }} }
@@ -19,7 +19,10 @@
           @if (check.outcome === 'red') { <p>{{ check.reason }}</p> }
         }
         @if (record(); as batch) {
-          <p>Phase: {{ batch.phase }} · Latest run: {{ batch.runs[batch.runs.length - 1]?.outcome ?? 'waiting' }}</p>
+          @let latestRun = batch.runs[batch.runs.length - 1]?.outcome ?? 'waiting';
+          <p>Phase: {{ batch.phase }} · Latest run:
+            <app-status-indicator [tone]="outcomeTone(latestRun)" [label]="latestRun" [compact]="true" testId="task-batch-latest-run" />
+          </p>
           @if (publishedSha(batch.publication); as sha) { <p>Published candidate: <code>{{ sha }}</code></p> }
         }
       } @else {

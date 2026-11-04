@@ -542,7 +542,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await expect(page.getByTestId('escalation-essence')).not.toContainText('Council finding 1');
     const mergeSegments = page.getByTestId('escalation-merge-segment');
     await expect(mergeSegments).toHaveCount(1);
-    await expect(mergeSegments).toHaveText('main ✓ merged');
+    await expect(mergeSegments).toHaveText('main merged');
     await expect(mergeSegments).toHaveAttribute('data-state', 'merged');
     // Recommendation stays on the header.
     await expect(page.getByTestId('escalation-recommendation')).toHaveText('Needs decision');

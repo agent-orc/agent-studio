@@ -51,16 +51,11 @@
     }
   }
 
-  &__status,
-  &__error {
+  &__status {
     flex: 1 1 100%;
+    min-width: 0;
     margin: 0;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
   }
-
-  &__status { color: var(--studio-fg-dim); }
-  &__error { color: var(--severity-high); }
 
   @media (prefers-reduced-motion: reduce) {
     &__action { transition-duration: 0s; }

@@ -68,6 +68,9 @@ describe('ProtocolVerdictBannerComponent', () => {
     expect(disclosure?.textContent).toContain('Watchdog timeout');
     expect(disclosure?.textContent).toContain('Review accepted');
     expect(disclosure?.textContent).toContain('Partial');
+    const signalTones = Array.from(disclosure?.querySelectorAll('[data-testid="protocol-verdict-signal-state"]') ?? [])
+      .map(el => el.getAttribute('data-tone'));
+    expect(signalTones).toEqual(['danger', 'success', 'warning']);
     expect(line.getAttribute('aria-controls')).toBe('protocol-verdict-signals-list');
   });
 
@@ -79,6 +82,7 @@ describe('ProtocolVerdictBannerComponent', () => {
     expect(detail).not.toBeNull();
     expect(detail!.tagName).toBe('SPAN');
     expect(detail!.textContent).toContain('completed successfully');
+    expect(html.querySelector('[data-testid="protocol-verdict-state"]')?.textContent?.trim()).toBe('Success');
   });
 
   it('keeps interim status in the running banner and allows dismissing it', async () => {

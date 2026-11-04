@@ -29,18 +29,18 @@ describe('AspectFindingsListComponent', () => {
     expect(rows[0].textContent).toContain('missing edge-case test');
   });
 
-  it('tones the chip by verdict via the central tone classes', async () => {
+  it('tones the chip by verdict through the shared status indicator', async () => {
     const fixture = await mount([
       { aspect: 'a', verdict: 'pass', reason: 'ok' },
       { aspect: 'b', verdict: 'concerns', reason: 'meh' },
       { aspect: 'c', verdict: 'block', reason: 'no' },
     ]);
     const chips = fixture.nativeElement.querySelectorAll('[data-testid="aspect-finding-chip"]');
-    expect(chips[0].getAttribute('data-tone')).toBe('ok');
-    expect(chips[1].getAttribute('data-tone')).toBe('warn');
+    expect(chips[0].getAttribute('data-tone')).toBe('success');
+    expect(chips[1].getAttribute('data-tone')).toBe('warning');
     expect(chips[2].getAttribute('data-tone')).toBe('danger');
-    expect(chips[0].classList.contains('aspect-findings__chip--ok')).toBe(true);
-    expect(chips[2].classList.contains('aspect-findings__chip--danger')).toBe(true);
+    expect(chips[0].textContent?.trim()).toBe('pass');
+    expect(chips[2].classList.contains('status-indicator--compact')).toBe(true);
   });
 
   it('renders no raw ** or [] markdown — the chip shows the bare token', async () => {

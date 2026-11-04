@@ -23,6 +23,15 @@ import type {
 import { TaskState } from '../../../../../models/task.model';
 import type { RunRecord } from '../../../../../features/run-timeline';
 import { deriveWatchdogPill } from '../watchdog-state';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import {
+  interimTone,
+  rateLimitTone,
+  sessionChipTone,
+  watchdogTone,
+  type InterimSummaryStatus,
+  type SessionChipKind,
+} from './protocol-pane-status-tones';
 import { ActivityLogViewComponent } from '../../activity-log-view/activity-log-view';
 import { buildConversationTurns, parseActivityLog, sanitizeProjectionLines } from '../../activity-log.parser';
 import { classifyLatestActivityOutcome, OutcomeAssessment, QuickReply } from '../../agent-outcome.util';
@@ -100,7 +109,7 @@ export type ActivityView = 'conversation' | 'trace';
  * never written to status.md (the final summary owns that file).
  */
 interface InterimSummaryState {
-  status: 'idle' | 'pending' | 'ready' | 'failed';
+  status: InterimSummaryStatus;
   markdown: string | null;
   error: string | null;
   startedAt: number | null;
@@ -118,6 +127,7 @@ interface InterimSummaryState {
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    StatusIndicatorComponent,
     ActivityLogViewComponent,
     PlanStripComponent,
     ConversationViewComponent,
@@ -411,6 +421,18 @@ export class ProtocolPaneComponent implements OnDestroy {
    *   - tooltip: human-readable summary of the latest event
    * Returns null when there are no events yet (never been started).
    */
+  readonly sessionChipTone = sessionChipTone;
+  readonly watchdogTone = watchdogTone;
+  readonly rateLimitTone = rateLimitTone;
+  readonly interimTone = interimTone;
+
+  /** Visible title of the interim status banner (the indicator carries the tone). */
+  interimTitle(status: InterimSummaryStatus): string {
+    if (status === 'pending') return `Interim status — running (${this.interimElapsedSeconds()}s)`;
+    if (status === 'failed') return 'Interim status failed';
+    return 'Interim status';
+  }
+
   readonly sessionChip = computed(() => {
     const r = this.sessionEventsPoll.response();
     if (!r || r.events.length === 0) return null;
@@ -419,20 +441,16 @@ export class ProtocolPaneComponent implements OnDestroy {
     const segmentCount =
       r.sessionChain.filter((s) => s === '(recovery)').length + (chainLength > 0 ? 1 : 0);
 
-    let kind: 'continued' | 'lost' | 'fresh';
+    let kind: SessionChipKind;
     let label: string;
-    let emoji: string;
     if (last.kind === 'recovery') {
       kind = 'lost';
-      emoji = '⚠';
       label = 'session lost — recovered';
     } else if (last.kind === 'continue') {
       kind = 'continued';
-      emoji = '✓';
       label = `session continued${chainLength > 1 ? ` (chain: ${chainLength})` : ''}`;
     } else {
       kind = 'fresh';
-      emoji = '●';
       label = 'session started';
     }
 
@@ -451,7 +469,7 @@ export class ProtocolPaneComponent implements OnDestroy {
       .filter(Boolean)
       .join('\n');
 
-    return { kind, label, emoji, tooltip, chainLength, segmentCount };
+    return { kind, label, tooltip, chainLength, segmentCount };
   });
 
   readonly summaryStatus = computed<TaskSummaryStatus>(

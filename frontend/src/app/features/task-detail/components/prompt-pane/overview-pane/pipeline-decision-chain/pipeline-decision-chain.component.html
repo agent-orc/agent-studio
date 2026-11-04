@@ -53,7 +53,8 @@
                     <section class="decision-chain__operator" data-testid="decision-operator-ask" aria-label="Human Operator response">
                       <strong>Human Operator · run limit decision</strong>
                       @if (operatorIntent(); as intent) {
-                        <p data-testid="decision-operator-recorded">{{ intent.action }}@if (intent.requestedEmergencyMinutes) { to {{ intent.requestedEmergencyMinutes }} min } · {{ intent.reason }} · {{ intent.actor }} · {{ intentOutcomeText(intent) }}</p>
+                        @let outcome = intentOutcome(intent);
+                        <p data-testid="decision-operator-recorded">{{ intent.action }}@if (intent.requestedEmergencyMinutes) { to {{ intent.requestedEmergencyMinutes }} min } · {{ intent.reason }} · {{ intent.actor }} · <app-status-indicator [tone]="outcome.tone" [label]="outcome.label" [compact]="true" testId="decision-operator-outcome" /></p>
                       } @else {
                         <label>Reason <input type="text" maxlength="500" [value]="intentReason()"
                           (input)="intentReason.set($any($event.target).value)" /></label>
@@ -90,8 +91,13 @@
               <span class="decision-chain__arrow" aria-hidden="true">→</span>
               <span class="decision-chain__step">{{ item.decisionLabel }}@if (item.occurrences > 1) { <span class="decision-chain__occurrence"> #{{ item.occurrence }}/{{ item.occurrences }}</span> }</span>
             </span>
-            <span class="decision-chain__verdict" data-testid="overview-decision-verdict"
-                  [cacTooltip]="item.summary">{{ item.verdict ?? 'n/a' }}</span>
+            <app-status-indicator
+              class="decision-chain__verdict"
+              [tone]="verdictTone(item.verdict)"
+              [label]="item.verdict ?? 'n/a'"
+              [detail]="item.summary"
+              [compact]="true"
+              testId="overview-decision-verdict" />
             <span class="decision-chain__model" data-testid="overview-decision-model"
                   [cacTooltip]="modelTooltip(item)">{{ item.model ? 'AI Operator · ' : 'Decision step · ' }}{{ item.model ?? 'rule' }}@if (item.thinkingLevel) { · {{ item.thinkingLevel }} }</span>
             <span class="decision-chain__num decision-chain__duration">{{ formatStepDuration(item.durationMs) }}</span>
