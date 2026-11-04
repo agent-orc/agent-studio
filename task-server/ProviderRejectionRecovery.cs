@@ -87,9 +87,12 @@ public sealed partial class TaskServerStore
         var cli = decision.RawFacts.EffectiveCliType?.Trim() ?? string.Empty;
         var model = decision.RawFacts.EffectiveModel?.Trim() ?? string.Empty;
         var thinking = decision.RawFacts.EffectiveThinkingLevel?.Trim();
-        var declared = ModelRoutingPolicyDocument.Value.ProviderRejectionFallbacks.FirstOrDefault(item =>
-            string.Equals(item.CliType, cli, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(item.From, model, StringComparison.OrdinalIgnoreCase));
+        // The sibling rule is the shared model-selection planner's (MS-5).
+        var declared = ModelSelectionPlanner.RejectionSibling(
+            ModelRoutingPolicyDocument.Value.ProviderRejectionFallbacks,
+            item => (item.CliType, item.From),
+            cli,
+            model);
         var count = await CountProviderRefusalsAsync(connection, transaction, taskId, model, ct);
         var safeReason = $"Provider refused the request ({DescribeProviderRejection(rejection)}): {rejection.Message}";
         if (ProviderRequestRejectionClassifier.IsModelUnavailable(rejection, model)

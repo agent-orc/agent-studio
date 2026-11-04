@@ -28,6 +28,40 @@ describe('task timeline presentation', () => {
     }
   });
 
+  it('names where a continue round starts and keeps the base SHA visible', () => {
+    const sha = 'b'.repeat(40);
+    const ref = `refs/heads/agent-studio/results/run_demo/fence-3/${sha}`;
+    const latest = event({
+      kind: TIMELINE_KIND.continuationBaseRecorded,
+      actor: 'human:operator',
+      summary: `The steer round starts from the card's latest result ${ref} at bbbbbbbbbbbb.`,
+      details: {
+        ref,
+        sha,
+        reason: 'continue-round-result',
+        resultAttemptId: 'run_demo',
+        source: 'operator-continue',
+        base: 'latest-result',
+        mode: 'steer',
+      },
+    });
+    const fixRound = event({
+      kind: TIMELINE_KIND.continuationBaseRecorded,
+      summary: `The fix round starts from the reviewed delivery ${ref} at bbbbbbbbbbbb.`,
+      details: { ref, sha, reason: 'review-fix-round', reviewAttemptId: 'rev_demo', source: 'operator-continue' },
+    });
+
+    expect(timelineEventTitle(latest)).toBe('Run base · latest result');
+    expect(timelineEventTitle(event({ ...latest, details: { ...latest.details, base: 'explicit' } })))
+      .toBe('Run base · requested ref');
+    expect(timelineEventTitle(fixRound)).toBe('Run base · reviewed delivery');
+    expect(timelineEventSummary(latest)).toContain(ref);
+    expect(timelineEventReason(latest)).toBeNull();
+    // The result attempt is already part of the fenced ref in the summary.
+    expect(timelineDetailEntries(latest)).toEqual([{ key: 'sha', label: 'Base SHA', value: sha }]);
+    expect(timelineDetailEntries(fixRound).map(entry => entry.label)).toEqual(['Base SHA', 'Review attempt']);
+  });
+
   it('folds a generated run-finish summary and status into one title', () => {
     const completed = event({
       kind: TIMELINE_KIND.agentRunFinished,

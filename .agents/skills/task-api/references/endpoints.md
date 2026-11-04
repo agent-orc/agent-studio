@@ -331,3 +331,81 @@ backend start; restart picks it up. See
 - `GET /api/bus/{project}/token-aggregate?since=&until=` - canonical token roll-up
 
 Use these after triggering work to verify it actually landed.
+
+## Operator
+
+Routes for an operator agent: the coding-agent CLI session the owner runs
+to operate Studio (operator agent level Dossier, OP-2). In the networked
+profile they accept a human session, an API token, or an operator agent
+session as `Authorization: Bearer`. Each caller receives only events of the
+projects it may read.
+
+### `GET /api/operator/decisions?after=<cursor>&limit=<n>`
+
+Snapshot of the decision stream after `after`, oldest first (`limit` 1 to
+1000, default 200). Without `after` it returns every event still retained.
+
+```json
+{
+  "events": [{
+    "id": "opd_...", "cursor": "42", "type": "escalation.opened",
+    "time": "...", "project": "demo", "cardKey": "DEMO-9", "cards": [],
+    "reason": "...", "suggestedOperations": ["card.inspect", "card.continue", "card.move"],
+    "evidence": [{ "label": "card", "href": "/api/tasks/DEMO-9" }],
+    "fact": "escalation.opened|demo|DEMO-9|...", "observedAt": "..."
+  }],
+  "cursor": "42", "headCursor": "42", "oldestCursor": "1",
+  "hasMore": false, "gap": false, "retentionHours": 72
+}
+```
+
+Store `cursor` and pass it as `after` next time. `gap: true` means events
+after that cursor were dropped by retention (at least 24 hours,
+`OperatorDecisions:RetentionHours`, default 72) or the cursor comes from
+another installation. `observedAt` is when the underlying fact began; `time`
+is when the stream published it.
+
+Event types, the fact each one publishes, and the suggested operations:
+
+| Type | Published when | Suggested operations |
+|---|---|---|
+| `escalation.opened` | A card enters `5e-escalated` | `card.inspect`, `card.continue`, `card.move` |
+| `human-review.ready` | A card enters `5-human-review` | `card.inspect`, `card.accept`, `card.continue` |
+| `decision-card.opened` | A decision card is pending | `card.inspect`, `owner.decide` |
+| `backend.stalled` | The watcher opened a stall case of kind `host-offline`, `host-overload`, `memory-pressure`, `deploy-drift`, `claim-refusal`, or `batch-gate-stuck` | `stalls.inspect`, `capacity.read` |
+| `progress.idle-with-ready` | The watcher opened a stall case of kind `idle-capacity` or `fleet-claim-stall` | `stalls.inspect`, `capacity.read` |
+| `batch.red` | A batch gate flight turned red | `batch.triage`, `batch.eject` |
+| `batch.isolating` | A red flight has diagnostic child batches still running | `batch.triage`, `batch.eject` |
+| `push.pending-overdue` | A pending integration push passed `BatchGate:PendingPushAlertMinutes` | `push.inspect`, `batch.triage` |
+| `quota.exhausted` | A card waits for a quota reset, or a CLI hit its provider limit (installation-wide) | `capacity.read`, `routing.change` |
+| `quota.fallback-active` | A running card uses a quota fallback | `capacity.read`, `routing.change` |
+| `watcher.heartbeat` | The watcher lease was granted, taken over, renewed, or released | `watcher.status` |
+
+Each occurrence is published once. A fact that ends and returns later (a
+card escalated again) is a new event.
+
+### `GET /api/operator/decisions/stream`
+
+The same events as Server-Sent Events: `id:` is the cursor, `event:` the
+type, `data:` the event JSON. Resume with `?after=<cursor>` or the
+`Last-Event-ID` header; every event after it arrives once, in order. Without
+a cursor the stream starts at the head and sends only new events. A
+`stream.gap` frame first means the cursor was older than the retained events.
+A `: keep-alive` comment follows every 15 seconds without events.
+
+### `GET|POST /api/operator/watcher/lease`
+
+One watcher per installation. `POST` with
+`{ "session": "<label>", "takeOver": false, "reason": "..." }` returns
+`{ "outcome": "granted", "lease": { "leaseId", "holder", "session", "lastHeartbeatUtc", "expiresAtUtc", "heartbeatSeconds" } }`.
+While another watcher holds an active lease the answer is
+`409 { "error": "watcher-active", "holder", "session", "lastHeartbeatUtc" }`.
+Only an explicit `"takeOver": true` replaces the holder; the take-over is
+recorded in the control plane audit with the previous holder.
+
+- `POST /api/operator/watcher/lease/{leaseId}/heartbeat` renews the lease;
+  send it every `heartbeatSeconds`. A lease without a heartbeat for
+  `OperatorDecisions:WatcherLeaseSeconds` (default 90) expires.
+  `409 watcher-lease-lost` names the new holder after a take-over.
+- `DELETE /api/operator/watcher/lease/{leaseId}` releases it.
+- Viewer tokens may read the lease and the stream but not take the lease.

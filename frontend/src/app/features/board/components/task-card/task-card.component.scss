@@ -1454,3 +1454,11 @@
 .task-card__better-candidates {
   margin-block: var(--studio-spacing-1);
 }
+.task-card__quality-block-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--studio-error);
+  flex: none;
+}

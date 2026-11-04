@@ -631,21 +631,125 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         Assert.Equal(resultRef, recorded.Details["ref"]);
     }
 
-    [Fact]
-    public async Task ContinueAfterAPassingReview_KeepsTodaysBase()
+    /// <summary>
+    /// AGT-3483: a continue round on a card with a recorded result ref starts
+    /// from that ref without the prompt naming it. Before, this round started
+    /// from the integration branch and lost the delivery the operator meant.
+    /// </summary>
+    [Theory]
+    [InlineData(ContinueModes.Continue)]
+    [InlineData(ContinueModes.Steer)]
+    [InlineData(ContinueModes.Extend)]
+    public async Task ContinueAfterAPassingReview_StartsFromTheLatestResultRef(string mode)
     {
         WriteJob("passed", TaskStates.HumanReview);
         var harness = Build();
-        SeedSettledReview(harness, "passed", ReviewTerminalOutcome.Pass);
+        var (_, resultRef, sha) = SeedSettledReview(harness, "passed", ReviewTerminalOutcome.Pass);
         harness.Settings.SetExecutionRunner(ProjectName, "agent-runner-01", remoteExecutionEnabled: true);
 
         var response = await harness.Service.ContinueJobAsync(
-            "passed", "Tighten the wording.", _watchPath, mode: ContinueModes.Extend);
+            "passed", "Tighten the wording.", _watchPath, mode: mode, author: "human:operator");
 
         Assert.Equal("queued", response.Status);
+        Assert.Equal(resultRef, response.Base!.Ref);
+        Assert.Equal(sha, response.Base.Sha);
+        Assert.Equal(ContinueRoundBaseSources.LatestResult, response.Base.Source);
         var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "passed");
-        Assert.Null(ContinuationBaseStore.Read(readyFolder));
+        var claimed = ContinuationBaseStore.ConsumeForClaim(readyFolder)!;
+        Assert.Equal(resultRef, claimed.Ref);
+        Assert.Equal(sha, claimed.CommitSha);
+        Assert.Equal(AgentStudio.TaskServer.Contracts.ContinuationBaseReasons.ContinueRoundResult, claimed.Reason);
+        // A plain round keeps its prompt; only a fix round adds the base sentence.
         Assert.Equal("Tighten the wording.", ReadIntent(readyFolder)!.Prompt.Trim());
+        var recorded = Assert.Single(harness.Timeline.ReadAll(readyFolder),
+            row => row.Kind == TimelineEventKinds.ContinuationBaseRecorded);
+        Assert.Equal("human:operator", recorded.Actor);
+        Assert.Equal(sha, recorded.Details!["sha"]);
+        Assert.Equal(ContinueRoundBaseSources.LatestResult, recorded.Details["base"]);
+        Assert.Equal(mode, recorded.Details["mode"]);
+    }
+
+    [Fact]
+    public async Task ContinueWithAnOlderResultRefOfTheCard_StartsFromThatRef()
+    {
+        WriteJob("two-results", TaskStates.HumanReview);
+        var harness = Build();
+        var older = SettleRunWithEnvelope(harness, "two-results", "older", new string('1', 40));
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        var latest = SettleRunWithEnvelope(harness, "two-results", "latest", new string('2', 40));
+        harness.Settings.SetExecutionRunner(ProjectName, "agent-runner-01", remoteExecutionEnabled: true);
+
+        var response = await harness.Service.ContinueJobAsync(
+            "two-results", "Start over from the first delivery.", _watchPath, baseRef: older.Ref);
+
+        Assert.Equal("queued", response.Status);
+        Assert.Equal(older.Ref, response.Base!.Ref);
+        Assert.Equal(older.Sha, response.Base.Sha);
+        Assert.Equal(ContinueRoundBaseSources.Explicit, response.Base.Source);
+        Assert.NotEqual(latest.Ref, ContinuationBaseStore.Read(
+            Path.Combine(_watchPath, TaskStates.Ready, "two-results"))!.Ref);
+    }
+
+    [Fact]
+    public async Task ContinueWithARefTheCardDoesNotOwn_IsRefusedBeforeAnyWrite()
+    {
+        WriteJob("foreign-ref", TaskStates.HumanReview);
+        var harness = Build();
+        SeedSettledReview(harness, "foreign-ref", ReviewTerminalOutcome.Pass);
+        harness.Settings.SetExecutionRunner(ProjectName, "agent-runner-01", remoteExecutionEnabled: true);
+        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, "foreign-ref");
+        var promptBefore = File.ReadAllText(Path.Combine(folder, "prompt.md"));
+
+        var refused = await Assert.ThrowsAsync<TaskOperationException>(() => harness.Service.ContinueJobAsync(
+            "foreign-ref", "Continue from somewhere else.", _watchPath,
+            modelOverride: "other-model", baseRef: "refs/heads/agent-studio/results/someone-else"));
+
+        Assert.Equal(400, refused.Status);
+        Assert.Equal(ContinueRoundBasePolicy.UnknownRefCode, refused.Code);
+        Assert.True(Directory.Exists(folder), "a refused round must not move the card");
+        Assert.Null(ReadIntent(folder));
+        Assert.Null(ContinuationBaseStore.Read(folder));
+        Assert.Equal(promptBefore, File.ReadAllText(Path.Combine(folder, "prompt.md")));
+        Assert.DoesNotContain("other-model", File.ReadAllText(Path.Combine(folder, "task.json")), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExplicitRefForARoundThatJoinsALiveRun_IsRefused()
+    {
+        WriteJob("live-remote", TaskStates.Progress, phase: LifecyclePhases.LoopWaiting);
+        var harness = Build();
+        var delivered = SettleRunWithEnvelope(harness, "live-remote", "earlier", new string('3', 40));
+        harness.Settings.SetExecutionRunner(ProjectName, "agent-runner-01", remoteExecutionEnabled: true);
+
+        var refused = await Assert.ThrowsAsync<TaskOperationException>(() => harness.Service.ContinueJobAsync(
+            "live-remote", "Steer it.", _watchPath, mode: ContinueModes.Steer, baseRef: delivered.Ref));
+        Assert.Equal(409, refused.Status);
+        Assert.Equal(ContinueRoundBasePolicy.NotClaimedCode, refused.Code);
+
+        // Without a ref the steer joins the live run as before and names no base.
+        var response = await harness.Service.ContinueJobAsync(
+            "live-remote", "Steer it.", _watchPath, mode: ContinueModes.Steer);
+        Assert.Equal("queued", response.Status);
+        Assert.Null(response.Base);
+        Assert.Null(ContinuationBaseStore.Read(Path.Combine(_watchPath, TaskStates.Ready, "live-remote")));
+    }
+
+    private (string Ref, string Sha) SettleRunWithEnvelope(Harness harness, string slug, string label, string sha)
+    {
+        var job = harness.Scanner.FindJob(slug, _watchPath)!;
+        var taskKey = job.Key ?? job.TaskKey;
+        var run = harness.Authority.AcquireRun(taskKey, "repo", null, "runner", "host", 600, $"run-{slug}-{label}").RunAttempt!;
+        var resultRef = AgentStudio.TaskServer.Contracts.FencedGitRefs.ImmutableResult(run.AttemptId, run.LastFence, sha);
+        var settled = harness.Authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, $"run-done-{slug}-{label}"),
+            Outcome = "done",
+            ResultSha = sha,
+            ResultEnvelope = new AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope(
+                "repo", run.AttemptId, new string('0', 40), sha, resultRef, null, new string('c', 64)),
+        });
+        Assert.True(settled.Accepted, settled.Message);
+        return (resultRef, sha);
     }
 
     private (string ReviewAttemptId, string ResultRef, string Sha) SeedSettledReview(

@@ -13,6 +13,14 @@ public static class ContinuationBaseReasons
     /// </summary>
     public const string ReviewFixRound = "review-fix-round";
 
+    /// <summary>
+    /// The card's recorded result ref, or the ref the operator named, that an
+    /// operator continue, steer or extend round starts from (AGT-3483). The
+    /// runner treats it like a salvage base: required, with the integration
+    /// branch merged on top.
+    /// </summary>
+    public const string ContinueRoundResult = "continue-round-result";
+
     public const string Missing = "continuation-base-missing";
     public const string Moved = "continuation-base-moved";
     public const string Unreadable = "continuation-base-unreadable";

@@ -635,6 +635,40 @@ and remote task execution, and orchestrator chat, pass through
 `QuotaAdmissionService` directly or through the quota-aware `ICliOneShot`
 registry.
 
+### Selection service and shared planner
+
+`ModelSelectionPlanner` in the contracts package
+(`contracts/TaskServer.Contracts/ModelSelection/`) is the one place that
+decides CLI, model and thinking level (Dossier
+[model-selection-and-fallback](../../model-selection-and-fallback/index.html),
+MS-5). It is pure: a consumer sends a `SelectionRequest` (consumer class,
+scope, pins with `preference` or `hard` mode, correctness floor, required
+capabilities, host, same-session continuation) with typed `SelectionFacts`
+(cached quota snapshots, caps, wait policy, operator switch, routing profile,
+Token Economy catalogue, host acceptance, policy tiers) and receives a
+`SelectionResult` with outcome (`primary`, `fallback`, `wait`, `throttle`,
+`refused`), route, primary route, the deciding rule, the reason, equivalence,
+the deciding quota numbers, `retryAt` and `returnToPrimaryAt`.
+
+The quota admission, primary/fallback resolve, provider-refusal sibling,
+correctness-floor and fresh-round floor rules moved into the planner without a
+behaviour change; `backend.Tests/Golden/model-selection-planner.jsonl` records
+the old results over a quota, pin, preference and host matrix.
+`QuotaAdmissionPlanner`, `CliQuotaFallbackService.Resolve`,
+`ModelRoutingPolicyRegistry.RouteMeetsFloor`/`ProviderRejectionFallback`,
+`MechanicalFreshRunRoutePolicy` and `QuotaAdmissionService` remain as thin
+adapters until MS-6. A hard pin and a same-session continuation never switch;
+they wait with rule `pin`.
+
+`ModelSelectionService` (`IModelSelectionService`) collects the facts, asks
+the planner and writes every non-primary result to the selection ledger seam
+(`IModelSelectionLedger`; an interim `model_selection_event` log line until the
+MS-2 store). Local runs, remote coding claims and the one-shot registry
+dispatch call it. The Task Server takes the refusal sibling and the runner the
+claimed run route from the same planner. `ModelSelectionBoundaryTests` fails on
+a CLI start or `CliRouter.Get(...)` outside its allow-lists; the pending list
+names the merge resolver for MS-6.
+
 ### Provider request refusals
 
 A provider-side HTTP 400, 403, or 404 model-request refusal is distinct from

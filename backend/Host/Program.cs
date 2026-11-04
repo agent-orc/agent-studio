@@ -1010,6 +1010,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.MergeIntoDevelopRunner>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateStore(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gates")));
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchIsolationGuard>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateLeaseService(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gate-leases")));
@@ -1198,6 +1199,8 @@ builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityStudioConnectionS
 builder.Services.AddHttpClient("quality-studio-integration", client => client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityStudioRevokeOutbox>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.QualityStudio.QualityStudioRevokeOutbox>());
+builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityChangeReviewOutbox>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.QualityStudio.QualityChangeReviewOutbox>());
 builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
@@ -1328,6 +1331,40 @@ builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStud
 builder.Services.AddSingleton<AgentStudio.Watcher.WatcherHostedService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Watcher.WatcherHostedService>());
+// Operator agent level OP-2: the decision stream publishes facts the
+// sources below already hold as typed events, and keeps the installation's
+// one watcher lease. It moves no card; transition rules stay in
+// orchestration-decisions.
+builder.Services.AddSingleton(sp => OperatorDecisionOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton(sp => new OperatorDecisionLog(
+    OperatorDecisionOptions.Folder(sp.GetRequiredService<IConfiguration>()),
+    sp.GetRequiredService<OperatorDecisionOptions>().Retention, sp.GetRequiredService<TimeProvider>(),
+    sp.GetService<ILogger<OperatorDecisionLog>>()));
+builder.Services.AddSingleton(sp => new WatcherLeaseService(
+    OperatorDecisionOptions.Folder(sp.GetRequiredService<IConfiguration>()),
+    sp.GetRequiredService<OperatorDecisionOptions>(), sp.GetRequiredService<OperatorDecisionLog>(),
+    sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<TimeProvider>(),
+    sp.GetService<ILogger<WatcherLeaseService>>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorTaskFactSource(
+    () => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live,
+    task => sp.GetRequiredService<TaskRunnerService>().GetQuotaFallbackForJob(task.Id, task.ProjectName)
+        ?? task.QuotaFallback));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorWatcherCaseFactSource(
+    sp.GetRequiredService<AgentStudio.Watcher.WatcherCaseStore>(), sp.GetRequiredService<IConfiguration>()["TaskRepository"]));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBatchGateFactSource(
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPendingPushFactSource(
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchIntegrationReservationService>(),
+    // The card key comes from the published board, like the task facts
+    // above, so a sweep never refreshes the task index.
+    jobId => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
+        && TaskScannerService.FindMatches(live, jobId, null) is [var task, ..]
+        ? OperatorDecisionFacts.CardKey(task) : null));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
+    sp.GetRequiredService<ProviderLimitRegistry>()));
+builder.Services.AddSingleton<OperatorDecisionPublisher>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());
 // AGT-3207: the AI Operator acts on the stall events (A0/A1), proposes A2
 // actions and never takes A3 ones; receipts, follow-up checks, rate limits.
 builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionStore>();
@@ -1471,7 +1508,15 @@ builder.Services.AddSingleton<CliFallbackPreferenceService>();
 builder.Services.AddSingleton<ModelSelectionEffectiveService>();
 builder.Services.AddSingleton<AgentStudio.Cli.IModelEquivalenceCatalog, AgentStudio.Cli.ModelEquivalenceCatalog>();
 builder.Services.AddSingleton<CliQuotaFallbackService>();
-builder.Services.AddSingleton<AgentStudio.Cli.QuotaAdmissionService>();
+// MS-5: one selection service decides CLI, model and thinking level for every
+// launch path; QuotaAdmissionService is its legacy adapter until MS-6. MS-2
+// replaces the interim logging ledger with the JSONL store.
+builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionLedger, AgentStudio.Cli.LoggingModelSelectionLedger>();
+builder.Services.AddSingleton<AgentStudio.Cli.ModelSelectionService>();
+builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionService>(sp =>
+    sp.GetRequiredService<AgentStudio.Cli.ModelSelectionService>());
+builder.Services.AddSingleton(sp =>
+    new AgentStudio.Cli.QuotaAdmissionService(sp.GetRequiredService<AgentStudio.Cli.IModelSelectionService>()));
 builder.Services.AddSingleton<AgentStudio.Cli.QuotaAdmissionRecorder>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<TaskWatcherService>());
 if (!publicDemoExecutionProfile)
@@ -2310,6 +2355,11 @@ transitionsForRunner.OnJobMoved += (projectName, jobId, fromState, toState) =>
 // PUB-2 automation ladder. Package targets are clamped to suggest; only the
 // website auto rung subscribes to acceptance and waits for the asynchronous
 // integration merge before dispatching the existing deploy workflow.
+// OP-2: a lane move starts the next decision sweep at once, so an escalation
+// or a human review reaches the stream before the sweep interval ends.
+var operatorDecisionsForTransitions = app.Services.GetRequiredService<OperatorDecisionPublisher>();
+transitionsForRunner.OnJobMoved += (_, _, _, _) => operatorDecisionsForTransitions.Wake();
+
 var publishActionsForTransitions = app.Services.GetRequiredService<PublishActionService>();
 transitionsForRunner.OnJobMoved += (projectName, jobId, _, toState) =>
 {

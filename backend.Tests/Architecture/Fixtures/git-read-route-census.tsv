@@ -108,6 +108,9 @@
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
 /api/operator/batch-triage	free	-	-	-
+/api/operator/decisions	free	-	-	-
+/api/operator/decisions/stream	free	-	-	-
+/api/operator/watcher/lease/	free	-	-	-
 /api/orchestration/decision-receipts/	free	-	-	-
 /api/orchestration/decision-receipts/spend	free	-	-	-
 /api/orchestration/decision-receipts/{receiptId}	free	-	-	-
@@ -367,6 +370,7 @@
 /api/tasks/{jobId}/promote-concept	free	-	-	-
 /api/tasks/{jobId}/promote-to-coding	free	-	-	-
 /api/tasks/{jobId}/provenance	free	-	-	-
+/api/tasks/{jobId}/quality-studio	reachable	gap	Quality Studio card ranges	Landed patch facts from the Git fact store
 /api/tasks/{jobId}/regression-radar	reachable	gap	Tasks	Task reads from the Git fact store
 /api/tasks/{jobId}/result-history	reachable	measured-zero	-	-
 /api/tasks/{jobId}/result-history/{versionId}	reachable	measured-zero	-	-

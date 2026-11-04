@@ -94,6 +94,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Proposed tagging golden set: 60 cards, 20 Dossiers, item rationales and area glossaries (AGT-2804) | [quality/tagging-golden-set/index.html](../quality/tagging-golden-set/index.html) |
 | Operator decision on the proposed tagging golden set and glossaries (AGT-2804) | [operations/tagging-golden-set-approval/index.html](../operations/tagging-golden-set-approval/index.html) |
 | Remote execution outcome and recovery | [contracts/run-outcome.md](../system/contracts/run-outcome.md#remote-execution-outcome-adapter) |
+| Operator API reference: continue with the card's result ref (`baseRef`, resolved `base`), the `batch-isolation-active` guard on continue, steer and requeue, and eject (AGT-3483) | [contracts/operator-api.md](../system/contracts/operator-api.md) |
 | Review Plane claim/report/replay contract (two-phase report hand-off, idempotent replay, stale-lease claim requeue; AGT-2762) | [contracts/review-plane.md](../system/contracts/review-plane.md) |
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
 | Deployment regression scenario (one seeded fixture, three targets, the gate every deployment card and release proves itself against; AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |

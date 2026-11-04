@@ -280,6 +280,54 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(resultRef, AgentStudio.Runner.ContinuationBaseStore.Read(progressFolder)?.Ref);
     }
 
+    /// <summary>
+    /// AGT-3483: an operator continue without a ref in the prompt starts the
+    /// next run from the card's latest result ref. The continue route answers
+    /// with that base, and the runner's own claim receives it as the run base
+    /// SHA.
+    /// </summary>
+    [Fact]
+    public async Task Remote_claim_after_a_plain_continue_starts_from_the_cards_latest_result()
+    {
+        SeedTask(TaskStates.HumanReview, TaskKey, "Continue round", "Original prompt.");
+        var reviewFolder = Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey);
+        var resultSha = new string('d', 40);
+        var resultRef = Contract.FencedGitRefs.ImmutableResult("run_delivered", 2, resultSha);
+        ReviewSubjectStore.Write(reviewFolder, new ReviewSubjectRecord
+        {
+            TaskKey = TaskKey,
+            RunAttemptId = "run_delivered",
+            AttemptChainId = "chain-delivered",
+            Project = ProjectName,
+            ResultSha = resultSha,
+            ImmutableResultRef = resultRef,
+            // clock-independent: persisted metadata, never compared with the clock.
+            CompletedAtUtc = new DateTimeOffset(2026, 11, 4, 8, 0, 0, TimeSpan.Zero),
+        });
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/continue-round.git");
+
+        var continued = await http.PostAsJsonAsync(
+            $"/api/tasks/{TaskKey}/continue?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { prompt = "Tighten the error messages.", mode = "steer" });
+        Assert.Equal(HttpStatusCode.Accepted, continued.StatusCode);
+        var resolved = (await continued.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("base");
+        Assert.Equal(resultSha, resolved.GetProperty("sha").GetString());
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal(resultRef, claim.ContinuationBaseRef);
+        Assert.Equal(resultSha, claim.ContinuationBaseSha);
+        Assert.Equal(Contract.ContinuationBaseReasons.ContinueRoundResult, claim.ContinuationBaseReason);
+        Assert.Equal("Tighten the error messages.", claim.RunSpec!.FollowUp!.Prompt.Trim());
+    }
+
     [Fact]
     public async Task A_runner_credential_claims_no_card_outside_its_bound_projects()
     {
