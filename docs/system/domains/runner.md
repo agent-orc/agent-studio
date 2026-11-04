@@ -1646,10 +1646,14 @@ unreported claim expires with its lease and is queued again.
   metadata is available, and Ready-card wait reasons. One shared classifier
   accepts only explicit provider-login signatures as authentication failures.
   Tool failures and indeterminate non-zero exits retain last-good; rate limits
-  use the limited state. Two consecutive explicit failures are required before
-  sign-in is blocked, and a later positive probe clears that provider circuit
-  without a runner restart. Provider-limit evidence is suppressed only by an
-  independently recorded termination fact. The legacy process boundary records
+  use the limited state. Two consecutive explicit login-probe failures are
+  required before sign-in is blocked, and a later positive probe clears that
+  provider circuit without a runner restart. Provider-limit evidence is
+  suppressed only by an independently recorded termination fact. A run classified
+  `ProviderUnauthorized` drains only that provider's capability on the
+  reporting host immediately; `GET /api/v1/management/remote-hosts` shows
+  `healthState: draining` until a positive provider-auth probe clears it.
+  Other providers and hosts remain claimable. The legacy process boundary records
   Bash's child wait status before it returns a conventional high exit code;
   CAR does not infer a signal from an exit number. A voluntary exit 137 remains
   eligible evidence, while recorded SIGTERM, SIGKILL, operator stop, and host
