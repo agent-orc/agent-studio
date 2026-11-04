@@ -1838,6 +1838,16 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     internal static string FailureOutputExcerpt(BuildTestGateProcessEvidence process)
     {
         var parts = new List<string>();
+        // Build output often places the decisive MSBuild/compiler error before
+        // a long summary. Keep that line in the durable gate reason.
+        var error = Regex.Match(process.StandardError + "\n" + process.StandardOutput,
+            @"^.*\berror(?:\s+[A-Z]+\d+)?\s*:.*$",
+            RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (error.Success)
+        {
+            var line = Whitespace.Replace(error.Value, " ").Trim();
+            parts.Add("error: " + (line.Length <= 900 ? line : line[..897] + "..."));
+        }
         Append("stderr", process.StandardError);
         Append("stdout", process.StandardOutput);
         Append("launch", process.LaunchError);

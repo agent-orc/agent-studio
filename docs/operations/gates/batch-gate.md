@@ -7,6 +7,18 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
 
 ## Delivered
 
+- The Agent Studio project definition runs `bash scripts/check-release-build.sh`
+  as a build step after the Debug solution build. It builds the published API,
+  runner, and Task Server projects with `--configuration Release --no-restore`.
+  It disables shared compilation so a busy compiler server cannot hold the
+  gate behind unrelated builds.
+  Batch pre-checks, batch and per-task gates, and package-reference delivery
+  reviews inherit this command from the same project definition. It does not
+  repeat the test suites. A failing command makes the gate red; the durable
+  reason retains the first compiler or MSBuild error line. The Release build
+  shares the existing gate run budget and is measured separately from the
+  Debug build in the gate process evidence.
+
 - A reviewed, batch-deferred delivery gets an opportunistic pre-check on its
   result SHA: project build commands, `.NET` guards, and touched frontend lint
   and format scripts. Regular batches retain the first gate slot; the pre-check

@@ -83,6 +83,35 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.False(plan.BuildTestDeferredToBatch);
     }
 
+    [Theory]
+    [InlineData("backend/OrchestratorApi.csproj")]
+    [InlineData("runner/AgentRunner.csproj")]
+    public void PackageReferenceDeliveryKeepsReleaseBuildInReviewPlans(string project)
+    {
+        Git("switch", "-qc", "agent-studio/results/task");
+        Write(project, "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup>"
+            + "<PackageReference Include=\"Example\" Version=\"2.0\" />"
+            + "</ItemGroup></Project>\n");
+        Git("add", ".");
+        Git("commit", "-qm", "package reference change");
+        var sha = Git("rev-parse", "HEAD").Trim();
+        Git("switch", "-q", "develop");
+
+        var affected = Build(Settings(PerCardTestModes.Affected), sha, project);
+        var batch = Build(new ProjectSettings
+        {
+            BatchGate = new(Enabled: true, Scope: "code", ReviewTestLevel: "build-only"),
+        }, sha, project);
+
+        foreach (var plan in new[] { affected, batch })
+        {
+            var release = Assert.Single(plan.Commands, command => command.Arguments.Contains(
+                "bash scripts/check-release-build.sh"));
+            Assert.Contains(release.Aspect, new[] { "build-tests", "review-verification" });
+            Assert.Equal(Contract.ReviewBaselineModes.ExitStatus, release.BaselineMode);
+        }
+    }
+
     [Fact]
     public void BackendReviewRunsDeclaredGuardsWhenClassSelectionFindsNoTest()
     {
@@ -341,18 +370,21 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Write(".agent-studio/prepare", "#!/bin/sh\nexit 0\n");
         Write(".agent-studio/project.yml",
             "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
-            + "  prepare: .agent-studio/prepare\n  build:\n    - echo build\n  test:\n"
+            + "  prepare: .agent-studio/prepare\n  build:\n    - echo build\n"
+            + "    - bash scripts/check-release-build.sh\n  test:\n"
             + $"    - {BackendTest}\n    - {FrontendUnit}\n"
             + "  lint:\n    - bash scripts/npm-frontend.sh run lint\n"
             + "testSuites:\n  - id: frontend-unit\n    category: routine\n    expectedDurationSeconds: 360\n"
             + $"    command: {FrontendUnit}\n"
             + "cachePaths:\ncapabilities: [linux]\nenvironment:\n");
         Write("scripts/npm-frontend.sh", "#!/bin/sh\nexit 0\n");
+        Write("scripts/check-release-build.sh", "#!/bin/sh\nexit 0\n");
         Write("frontend/package.json",
             "{\"scripts\":{\"lint\":\"ng lint\",\"typecheck\":\"tsc --noEmit\",\"test:ci\":\"ng test\"}}");
         Write("frontend/src/app.ts", "export const app = 1;\n");
         Write("global.json", "{}\n");
         Write("backend/OrchestratorApi.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+        Write("runner/AgentRunner.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
         Write("backend/FooService.cs", "namespace AgentStudio;\npublic sealed class FooService { }\n");
         Write("backend.Tests/OrchestratorApi.Tests.csproj",
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
