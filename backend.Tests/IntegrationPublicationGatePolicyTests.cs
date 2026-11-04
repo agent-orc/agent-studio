@@ -13,7 +13,7 @@ public sealed class IntegrationPublicationGatePolicyTests
     [Fact]
     public void FirstParentAncestor_WithPassedBatchAndPerTaskPublications_IsAccepted()
     {
-        var decision = IntegrationPublicationGatePolicy.Check(Verified, Later, Parent,
+        var decision = IntegrationPublicationGatePolicy.Check(Verified, Later, FirstParentLine,
         [
             new(Batch, Verified, "batch gate"),
             new(Later, Batch, "per-task gate"),
@@ -25,7 +25,7 @@ public sealed class IntegrationPublicationGatePolicyTests
     [Fact]
     public void LaterPublicationWithoutGate_IsRefused()
     {
-        var decision = IntegrationPublicationGatePolicy.Check(Verified, Later, Parent,
+        var decision = IntegrationPublicationGatePolicy.Check(Verified, Later, FirstParentLine,
             [new(Batch, Verified, "batch gate")]);
 
         Assert.False(decision.Verified);
@@ -35,21 +35,21 @@ public sealed class IntegrationPublicationGatePolicyTests
     [Fact]
     public void VerificationTreeOutsideFirstParentBranch_IsRefused()
     {
-        var decision = IntegrationPublicationGatePolicy.Check(Outside, Later, Parent,
+        var decision = IntegrationPublicationGatePolicy.Check(Outside, Later, FirstParentLine,
         [
-            new(Batch, Verified, "batch gate"),
+            new(Batch, Outside, "batch gate"),
             new(Later, Batch, "per-task gate"),
         ]);
 
         Assert.False(decision.Verified);
-        Assert.Equal(Verified, decision.MissingTree);
+        Assert.True(decision.MissingAncestry);
+        Assert.Equal(Replay, decision.MissingTree);
     }
 
-    private static string? Parent(string sha) => sha switch
-    {
-        Later => Batch,
-        Batch => Replay,
-        Replay => Verified,
-        _ => null,
-    };
+    private static readonly IntegrationPublicationGatePolicy.FirstParentCommit[] FirstParentLine =
+    [
+        new(Later, Batch),
+        new(Batch, Replay),
+        new(Replay, Verified),
+    ];
 }
