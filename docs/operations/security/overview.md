@@ -234,6 +234,15 @@ that is already allowed to edit that project's checkout.
   [operator API reference](../operator-api.md#batch-triage).
 - A Runner never receives a human password or session cookie.
 
+#### Operator chat readiness read
+
+`GET /api/runner/{contextKey}/orchestrator-chat` and the legacy project form
+return `executionReadiness` alongside the transcript. The read reports whether
+the configured Runner is polling and advertises a fresh Codex CLI and login;
+it returns a reason code without exposing credentials. It grants no execution
+authority. The browser disables chat submission when the read says the Runner
+cannot execute. The POST route retains its server-side placement refusal.
+
 ### Rights model: role bindings per scope (IP-8)
 
 The networked profile authorizes every human and service-account request

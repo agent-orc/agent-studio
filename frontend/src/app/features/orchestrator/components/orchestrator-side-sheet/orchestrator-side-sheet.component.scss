@@ -258,6 +258,16 @@
   font-size: 12px;
 }
 
+.sheet__setup {
+  padding: var(--studio-spacing-4);
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-bg-hover);
+  color: var(--studio-fg);
+}
+
+.sheet__setup p { margin: var(--studio-spacing-2) 0; color: var(--studio-fg-dim); }
+
 .sheet__chat {
   flex: 1 1 0;
   min-height: 0;

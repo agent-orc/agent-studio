@@ -207,6 +207,21 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public void Clean_repeat_preserves_pre_existing_failures_from_the_first_run()
+    {
+        var initial = BaselineComparison.Create(new string('a', 40),
+            ["Product.Tests.OldFailure"], ["Product.Tests.OldFailure"],
+            cacheHit: false, baselineExitCode: 1);
+
+        var retried = initial.Reclassify([], new ReviewFlakyTestIndex(methods: []), repeatPassed: true);
+
+        Assert.Empty(retried.NewFailures);
+        Assert.Equal(["Product.Tests.OldFailure"], retried.PreExistingFailures);
+        Assert.Equal("pass", RemoteReviewWorkspace.BaselineVerdict(
+            BaselineCommand("exit 0"), retried).Status);
+    }
+
+    [Fact]
     public async Task Exact_sha_workspace_records_head_tree_commands_environment_and_clean_after()
     {
         var sha = await SeedOriginAsync();
@@ -690,7 +705,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "verify-2",
             "build-tests",
             PosixShell.RequirePath(),
-            ["-c", "test -f node_modules/prepared || exit 127; if grep -q subject product.txt; then exit 1; fi"],
+            ["-c", "test -f node_modules/prepared || exit 127; if grep -q subject product.txt; then exit 1; fi; printf 'Total tests: 1\\n'"],
             CompareToBaseline: true);
         var (workspace, _) = Workspace(
             "attempt-symmetry",
@@ -751,10 +766,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             item.StepId == "verify-6" && item.WorkspaceRole == "candidate").ExitCode);
         Assert.Contains(evidence.Commands, item => item.StepId == "prepare-frontend"
             && item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
-        Assert.Contains(evidence.Commands, item => item.StepId == "prepare-frontend"
-            && item.WorkspaceRole == "candidate"
-            && item.DependencyCache?.Any(scope => scope.Reason == "marker-missing") == true);
-        Assert.Contains(logs, line => line.Contains("invalidated scope=frontend after step=verify-3", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line => line.Contains("invalidated scope=frontend after step=verify-3", StringComparison.Ordinal));
         Assert.DoesNotContain(logs, line => line.Contains("state=workspace-removed", StringComparison.Ordinal));
     }
 
@@ -1503,14 +1515,14 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task Red_baseline_keeps_new_test_name_off_the_card()
+    public async Task Red_baseline_blocks_the_new_test_failure_and_records_the_pre_existing_one()
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();
         var command = BaselineCommand(
             "if grep -q subject product.txt; then " +
             "printf '  Failed Product.ExistingFailure [1 ms]\\n  Failed Product.NewFailure [1 ms]\\n'; " +
             "else printf '  Failed Product.ExistingFailure [1 ms]\\n'; fi; exit 1");
-        var (workspace, _) = Workspace(
+        var (workspace, subject) = Workspace(
             "attempt-new-failure",
             subjectSha,
             [command],
@@ -1520,20 +1532,22 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         await workspace.PrepareAsync(null!, default);
 
         var evidence = await workspace.ExecutePlanAsync(default);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan);
 
-        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ProductFailure", normalized.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Equal(["Product.NewFailure"], commandEvidence.NewFailures);
         Assert.Equal(["Product.ExistingFailure"], commandEvidence.PreExistingFailures);
         Assert.True(commandEvidence.RetryPerformed);
         var verdict = Assert.Single(evidence.Verdicts);
-        Assert.Equal("pass", verdict.Status);
-        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
-        Assert.Contains("baseline=red", verdict.Summary, StringComparison.Ordinal);
+        Assert.Equal("block", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, verdict.Classification);
+        Assert.Contains("pre-existing failures: Product.ExistingFailure", verdict.Summary, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Red_baseline_keeps_new_vitest_name_off_the_card()
+    public async Task Red_baseline_blocks_new_vitest_failure()
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();
         var command = BaselineCommand(
@@ -1552,7 +1566,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Equal("ProductFailure", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Equal(
             ["src/math.spec.ts > arithmetic > new failure"],
@@ -1568,7 +1582,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var (_, subjectSha) = await SeedSubjectBranchAsync();
         var command = BaselineCommand(
             "printf '  Failed Product.ExistingFailure [1 ms]\\n'; exit 1");
-        var (workspace, _) = Workspace(
+        var (workspace, subject) = Workspace(
             "attempt-pre-existing",
             subjectSha,
             [command],
@@ -1578,11 +1592,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         await workspace.PrepareAsync(null!, default);
 
         var evidence = await workspace.ExecutePlanAsync(default);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan);
 
-        // AGT-2819: the card adds no failure, so it is not a ProductFailure, and
-        // the step is not green either - the merge base carries the failure and
-        // the review says so with its own terminal.
-        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
+        Assert.Equal("IntegrationBranchDefect", normalized.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Empty(commandEvidence.NewFailures!);
         Assert.Equal(["Product.ExistingFailure"], commandEvidence.PreExistingFailures);
@@ -1590,8 +1603,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(1, commandEvidence.BaselineExitCode);
         var verdict = Assert.Single(evidence.Verdicts);
         Assert.Equal("pass", verdict.Status);
-        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
-        Assert.Contains("baseline=red", verdict.Summary, StringComparison.Ordinal);
+        Assert.Equal(IntegrationBranchDefectClassification, verdict.Classification);
+        Assert.Contains("pre-existing failures: Product.ExistingFailure", verdict.Summary, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -1881,7 +1894,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         await second.PrepareAsync(null!, default);
         var evidence = await second.ExecutePlanAsync(default);
 
-        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Equal("ProductFailure", evidence.Outcome);
         var candidate = CandidateVerification(evidence);
         Assert.True(candidate.BaselineCacheHit);
         Assert.Equal(["Product.NewFailure"], candidate.NewFailures);
@@ -1892,8 +1905,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(1, candidate.ExitCode);
         Assert.Equal("attempt-new-reuse", candidate.AttemptId);
         var verdict = Assert.Single(evidence.Verdicts);
-        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
-        Assert.Equal("pass", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, verdict.Classification);
+        Assert.Equal("block", verdict.Status);
     }
 
     /// <summary>
@@ -1937,6 +1950,28 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Empty(evidence.Verdicts);
         Assert.Contains(evidence.Commands, item =>
             item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal) && item.ExitCode == 1);
+        Assert.Empty(Directory.EnumerateFiles(
+            workspace.BaselineCacheRoot, "*.json", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task Green_exit_without_a_test_result_is_unavailable_and_never_cached()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf '  Failed Product.NewFailure [1 ms]\\n'; exit 1; fi; exit 0",
+            reportPassingTest: false);
+        var (workspace, _) = Workspace(
+            "attempt-unrun-green-baseline", subjectSha, [command], 26220,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("BaselineUnavailable", exception.Classification);
+        Assert.Contains("exited 0 without reporting a test result", exception.Message, StringComparison.Ordinal);
         Assert.Empty(Directory.EnumerateFiles(
             workspace.BaselineCacheRoot, "*.json", SearchOption.AllDirectories));
     }
@@ -2021,7 +2056,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                     "{ printf 'The argument bin/Debug/net10.0/Fixture.dll is invalid.\\n' >&2; exit 1; }; " +
                     ": 'dotnet test --no-build'; " +
                     "if grep -q subject product.txt; then " +
-                    "printf '  Failed Product.ClockGuard [1 ms]\\n  Failed Product.WaitsOn [1 ms]\\n'; exit 1; fi; exit 0"],
+                    "printf '  Failed Product.ClockGuard [1 ms]\\n  Failed Product.WaitsOn [1 ms]\\n'; exit 1; fi; " +
+                    "printf 'Total tests: 1\\n'"],
                 CompareToBaseline: true),
         ];
         var first = Workspace("attempt-clock-guard-fill", subjectSha, plan, 26240,
@@ -2069,7 +2105,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     [InlineData("expired", false)]
     [InlineData("wrong mode", false)]
     [InlineData("test-failures exit 1 without failures", false)]
-    [InlineData("test-failures exit 0 without failures", true)]
+    [InlineData("test-failures exit 0 without failures", false)]
+    [InlineData("test-failures exit 0 with zero tests", false)]
+    [InlineData("test-failures exit 0 with test summary", true)]
+    [InlineData("test-failures exit 1 with wrapper only", false)]
     [InlineData("exit-status exit 1", true)]
     public void Baseline_cache_reuse_decision_matrix(string variant, bool reusable)
     {
@@ -2092,6 +2131,23 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             // AGT-3089: "The argument ... is invalid" exited 1 and ran no test.
             "test-failures exit 1 without failures" => entry with { ExitCode = 1, Failures = [] },
             "test-failures exit 0 without failures" => entry with { ExitCode = 0, Failures = [] },
+            "test-failures exit 0 with zero tests" => entry with
+            {
+                ExitCode = 0,
+                Failures = [],
+                StdOut = "Passed! - Failed: 0, Passed: 0, Skipped: 0, Total: 0",
+            },
+            "test-failures exit 0 with test summary" => entry with
+            {
+                ExitCode = 0,
+                Failures = [],
+                StdOut = "Passed! - Failed: 0, Passed: 12, Skipped: 0, Total: 12",
+            },
+            "test-failures exit 1 with wrapper only" => entry with
+            {
+                Failures = ["npm script test"],
+                StdOut = "npm ERR! test failed",
+            },
             "exit-status exit 1" => entry with
             {
                 BaselineMode = mode = ReviewBaselineModes.ExitStatus,
@@ -2928,7 +2984,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task Red_integration_branch_build_keeps_integration_branch_attribution()
+    public async Task Red_integration_branch_build_makes_the_test_baseline_unavailable()
     {
         await SeedOriginWithFilesAsync(new Dictionary<string, string>
         {
@@ -2937,22 +2993,21 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         });
         var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
             "task/branch-build-error", "product.txt", "unrelated delivery");
-        var (workspace, subject) = Workspace("attempt-branch-build-error", subjectSha,
+        var (workspace, _) = Workspace("attempt-branch-build-error", subjectSha,
             IsolatedBuildPlan(), 26208, resultRef: "refs/heads/task/branch-build-error",
             integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);
 
-        var evidence = await workspace.ExecutePlanAsync(default);
-        var normalized = ReviewReportDiagnosisPolicy.Normalize(
-            Report(evidence, workspace), subject.Plan);
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+        var evidence = Assert.IsType<ReviewExecutionEvidence>(exception.Evidence);
 
-        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
-        Assert.Equal("IntegrationBranchDefect", normalized.Outcome);
+        Assert.Equal("BaselineUnavailable", exception.Classification);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         Assert.Contains(evidence.Commands, command => command.StepId == "verify-build"
             && command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)
             && command.ExitCode is > 0);
-        Assert.Contains(evidence.Verdicts, verdict => verdict is
-            { Aspect: "test", Status: "pass", Classification: "IntegrationBranchDefect" });
+        Assert.DoesNotContain(evidence.Verdicts, verdict => verdict.Aspect == "test");
     }
 
     /// <summary>
@@ -3124,12 +3179,14 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             evidence.Outcome, null, null, evidence.Workspace, workspace.EnvironmentEvidence(),
             evidence.Commands, evidence.Artifacts, evidence.Verdicts);
 
-    private static ReviewCommandDto BaselineCommand(string shell)
+    private static ReviewCommandDto BaselineCommand(string shell, bool reportPassingTest = true)
         => new(
             "verify-2",
             "build-tests",
             PosixShell.RequirePath(),
-            ["-c", shell],
+            ["-c", reportPassingTest
+                ? $"( {shell}\n); result=$?; if [ \"$result\" -eq 0 ]; then printf 'Total tests: 1\\n'; fi; exit \"$result\""
+                : shell],
             CompareToBaseline: true);
 
     private string CreateReviewDirectory(string name, DateTime lastWriteTimeUtc)
