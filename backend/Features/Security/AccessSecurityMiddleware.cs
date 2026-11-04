@@ -1086,7 +1086,8 @@ public sealed class AccessSecurityMiddleware
 
     private static bool IsReadOnlyPost(string method, string path)
         => HttpMethods.IsPost(method)
-           && path.Equals("/api/tasks/reference-status", StringComparison.OrdinalIgnoreCase);
+           && (path.Equals("/api/tasks/reference-status", StringComparison.OrdinalIgnoreCase)
+               || path.Equals("/api/operator/deploy/plan", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// The card input a host reads for its run: <c>prompt.md</c> and the

@@ -22,6 +22,15 @@ public sealed class TaskServerBoardClient(IHttpClientFactory factory, IConfigura
 
     public bool IsConfigured => BaseUri(configuration) is not null;
 
+    /// <summary>The Task Server's reported release and protocol for an operator update plan.</summary>
+    public async Task<ProtocolRangeDto> GetProtocolAsync(CancellationToken ct)
+    {
+        using var response = await Client().GetAsync("api/v1/protocol", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await response.Content.ReadFromJsonAsync<ProtocolRangeDto>(ct)
+            ?? throw new HttpRequestException("The Task Server answered an empty protocol report.");
+    }
+
     public async Task<TaskServerBoardRead> GetBoardAsync(string project, string? etag, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, BoardPath(project));

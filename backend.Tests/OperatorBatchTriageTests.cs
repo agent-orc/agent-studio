@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Diagnostics;
 using AgentStudio.Operator;
@@ -25,6 +26,40 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class OperatorBatchTriageTests : IDisposable
 {
+    [Fact]
+    public async Task Restart_preflight_names_a_pending_push_and_passes_after_clear()
+    {
+        using var factory = BuildFactory();
+        using var client = BearerClient(factory, CreateToken(factory, StudioRoles.Operator, ["*"]));
+        MarkPush(factory);
+
+        using var blocked = await client.GetAsync("/api/operator/preflight/restart");
+        Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+        using var body = JsonDocument.Parse(await blocked.Content.ReadAsStringAsync());
+        Assert.Contains(body.RootElement.GetProperty("blockers").EnumerateArray(),
+            item => item.GetProperty("code").GetString() == "pending-push"
+                && item.GetProperty("project").GetString() == "alpha");
+
+        factory.Services.GetRequiredService<BatchIntegrationReservationService>()
+            .MarkPushVerified("alpha", "alpha-push-job", ResultSha);
+        using var clear = await client.GetAsync("/api/operator/preflight/restart");
+        Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
+    }
+
+    [Fact]
+    public async Task Deploy_plan_orders_server_before_engine_and_hosts()
+    {
+        using var factory = BuildFactory();
+        using var client = BearerClient(factory, CreateToken(factory, StudioRoles.Operator, ["*"]));
+        using var response = await client.PostAsJsonAsync("/api/operator/deploy/plan",
+            new { targetVersion = "1.1.0", windowMinutes = 30 });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(["drain", "task-server", "readiness", "engine", "hosts"],
+            body.RootElement.GetProperty("steps").EnumerateArray()
+                .Select(step => step.GetProperty("kind").GetString()));
+    }
+
     private const string Password = "correct horse battery staple!";
     private const int AlertMinutes = 5;
     private static readonly string BaseSha = new('b', 40);

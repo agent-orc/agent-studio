@@ -9,6 +9,35 @@ Which token may call which route is in the
 routes are in the
 [operator-agent-level Dossier](../operator-agent-level/index.html) (AGT-3462).
 
+## Deploy and restart preflight
+
+`GET /api/operator/preflight/restart` and `GET /api/operator/preflight/deploy`
+check every configured project before a control-plane restart or deploy. An
+installation-wide reader is required so a scoped token cannot miss a blocker
+in another project. A clear preflight returns 200 with `allowed: true`; a
+blocked one returns 409 with `allowed: false` and `blockers[]`. Each blocker
+has a stable `code`, `project`, `subject`, and `detail`:
+
+| Code | Existing fact that blocks the operation |
+|---|---|
+| `pending-push` | An integration push is still pending, regardless of its age. |
+| `flight-publishing` | A batch flight is in its publishing phase. |
+| `card-mid-commit` | A card pipeline has a running commit or merge step. |
+
+Read preflight again immediately before acting. A clear response is an
+observation, not a reservation. `POST /api/operator/deploy/plan` accepts
+`targetVersion` and `windowMinutes` (5 to 120, default 30), rechecks deploy
+preflight, and returns an ordered plan with `createdAtUtc`, `expiresAtUtc`,
+the Task Server's reported current version and protocol (or the local release
+in a single-process installation), target version, and observed host versions.
+The steps are `drain`, `task-server`, `readiness`, `engine`, `hosts` in one
+window. A plan expires at `expiresAtUtc`; no route here executes a host update.
+
+`POST /api/operator/preflight/{restart|deploy}/override` is a T2 operation.
+It returns 403 `owner-approval-unavailable` until SM-5 provides digest-bound
+Owner approval with step-up. Passing `overrideBlocker=true` to the read or
+plan routes is refused with the same code.
+
 ## Batch triage
 
 `GET /api/operator/batch-triage` (OP-4) answers "what is the batch gate doing,
