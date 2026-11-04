@@ -45,6 +45,9 @@ public sealed record QuotaAdmissionPlan(
     /// <summary>Shared run/one-shot fallback receipt, also used by provider rejection continuations.</summary>
     public ModelFallbackInfo? ModelFallback { get; init; }
 
+    /// <summary>The durable planner receipt, reused by legacy admission emitters.</summary>
+    public string? SelectionEventId { get; init; }
+
     /// <summary>The legacy admission view of a selection result; the outcome and receipt carry over unchanged.</summary>
     public static QuotaAdmissionPlan From(SelectionResult result)
     {
@@ -70,6 +73,7 @@ public sealed record QuotaAdmissionPlan(
             result.NearbyResetWait)
         {
             ModelFallback = result.Fallback,
+            SelectionEventId = result.LedgerId,
         };
     }
 
