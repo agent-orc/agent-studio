@@ -9,6 +9,33 @@ Which token may call which route is in the
 routes are in the
 [operator-agent-level Dossier](../operator-agent-level/index.html) (AGT-3462).
 
+## Operator log and card attention
+
+`POST /api/operator/log` appends an entry with `project`, `kind` (`observed`,
+`decided`, `did`, or `handoff`), `text`, `cardKeys[]`, and `auditIds[]`. Owner
+sessions and operator credentials may append within their project scope.
+Operator sessions need a standing grant for `operator-log.append` (T1).
+`GET /api/operator/log?project=<project>&after=<cursor>` returns `entries[]`
+and the next `cursor`. The log is append-only and redacts Studio-issued
+token-shaped values before storage. A project of `*` is reserved for an Owner
+installation handoff. In the standalone profile, the Task Server stores the
+log beside its orchestrator transcripts. Project and task chats include project
+entries in the usual context budget and cite `operator-log:<project>` in their
+context receipt.
+
+`POST /api/tasks/{id}/attention` grants or renews a 10-minute attention lease
+and returns its `lease` and current `revision`. The active holder appears on
+the card header. Operator sessions need a `card.attention` standing grant (T1).
+An operator API token must hold the lease and send
+`If-Match: <revision>` on card writes. No lease returns 409
+`attention-lease-required`; an absent revision returns 428; a stale revision
+returns 412 `stale-card-revision`. Read the card's `ETag` or acquire attention
+to get the current revision. The Owner can act at any time; an Owner action
+ends an operator lease and appends a `handoff` entry to the log. An operator
+cannot replace another actor's active lease.
+Operator API tokens use the single-card move route; the batch move route
+cannot carry a separate revision for each card and refuses API tokens.
+
 ## Deploy and restart preflight
 
 `GET /api/operator/preflight/restart` and `GET /api/operator/preflight/deploy`

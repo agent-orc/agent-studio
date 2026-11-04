@@ -743,7 +743,9 @@ public sealed class AccessSecurityMiddleware
         if (breakGlass is null && operation is { Tier: OperatorTier.T1 })
         {
             var granted = _store.AdmitOperatorGrant(account.AccountId, operation,
-                OperatorRequestClassifier.GrantTarget(operation, target, key => RouteValue(context, path, context.GetEndpoint(), key)),
+                OperatorRequestClassifier.GrantTarget(operation, target, key => key == "project"
+                    ? context.Items["OperatorLog.Project"] as string
+                    : RouteValue(context, path, context.GetEndpoint(), key)),
                 SameProject);
             context.Items[OperatorPolicyItem] = granted;
             if (!granted.Admitted)
