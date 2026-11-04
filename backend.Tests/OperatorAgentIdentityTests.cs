@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Extensions.Time.Testing;
@@ -27,6 +28,8 @@ public sealed class OperatorAgentIdentityTests : IDisposable
     private readonly IConfiguration _config;
     private readonly AccessSecurityStore _store;
     private readonly string _ownerId;
+    private readonly string _ownerSession;
+    private string? _totpSecret;
 
     public OperatorAgentIdentityTests()
     {
@@ -36,7 +39,23 @@ public sealed class OperatorAgentIdentityTests : IDisposable
             ["Security:Profile"] = "networked",
         }).Build();
         _store = new AccessSecurityStore(_config, NullLogger<AccessSecurityStore>.Instance, _clock);
-        _ownerId = _store.Bootstrap(new BootstrapRequest("first.owner", Password, null)).User.Id;
+        var bootstrap = _store.Bootstrap(new BootstrapRequest("first.owner", Password, null));
+        (_ownerId, _ownerSession) = (bootstrap.User.Id, bootstrap.SessionToken);
+    }
+
+    /// <summary>The Owner's session after a fresh second-factor step-up, as a grant change requires.</summary>
+    private HumanPrincipal SteppedUpOwner()
+    {
+        var owner = _store.AuthenticateSession(_ownerSession)!;
+        if (_totpSecret is null)
+        {
+            _totpSecret = _store.BeginTotpEnrollment(owner);
+            _store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(_totpSecret, _clock.GetUtcNow().UtcDateTime));
+            owner = _store.AuthenticateSession(_ownerSession)!;
+        }
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_totpSecret, _clock.GetUtcNow().UtcDateTime));
+        return owner;
     }
 
     [Fact]
@@ -114,9 +133,15 @@ public sealed class OperatorAgentIdentityTests : IDisposable
         var actor = $"operator-agent:{agent.Id}/session:{session.Session.Id}";
         var start = _store.ControlPlaneAudit.HeadSequence;
 
+        // SM-4: the write is a routine stage deploy of a gate-verified commit
+        // under the Owner's standing grant.
+        var grant = _store.CreateStandingGrant(new CreateStandingGrantRequest(agent.Id, [OperatorOperationIds.StageDeploy],
+            new StandingGrantScope(OperatorScopeKinds.Environment, "alpha", IamEnvironments.Stage), 5, null, null, "Stage deploys"),
+            SteppedUpOwner());
         string? ambientActor = null;
-        var write = await Run("POST", "/api/projects/{projectName}/wiki/pages", "/api/projects/alpha/wiki/pages", session.Secret,
-            "{\"title\":\"Runbook\"}", _ => ambientActor = OperatorActorScope.Current?.Actor);
+        var write = await Run("POST", "/api/projects/{projectName}/environments/releases", "/api/projects/alpha/environments/releases",
+            session.Secret, "{\"artifact\":\"sha256:aa\",\"commit\":\"c0ffee\"}", _ => ambientActor = OperatorActorScope.Current?.Actor,
+            new GateEvidence("c0ffee"));
         Assert.True(write.Called);
         Assert.Equal(actor, ambientActor);
         Assert.Equal(actor, write.Context.Items["ClientId"]);
@@ -128,10 +153,13 @@ public sealed class OperatorAgentIdentityTests : IDisposable
         Assert.Equal(actor, synthetic.User.Id);
         Assert.Null(OperatorActorScope.Current);
 
-        var entry = Assert.Single(_store.ControlPlaneAudit.Read(start + 1, 10));
+        var entry = Assert.Single(_store.ControlPlaneAudit.Read(start + 1, 10), item => item.Stream == ControlPlaneAuditStreams.OperatorAgent);
         Assert.Equal((ControlPlaneAuditStreams.OperatorAgent, actor, session.Session.Id, $"human:{_ownerId}"),
             (entry.Stream, entry.Actor, entry.Session, entry.DelegatedBy));
-        Assert.Equal(("POST /api/projects/alpha/wiki/pages", "project:alpha"), (entry.Operation, entry.Target));
+        Assert.Equal(("POST /api/projects/alpha/environments/releases", "project:alpha"), (entry.Operation, entry.Target));
+        var details = entry.Details!.Value;
+        Assert.Equal((OperatorOperationIds.StageDeploy, "T1", grant.Id),
+            (details.GetProperty("operation").GetString(), details.GetProperty("tier").GetString(), details.GetProperty("grantId").GetString()));
         Assert.StartsWith("sha256:", entry.ParameterDigest);
         Assert.DoesNotContain(session.Secret, entry.Raw, StringComparison.Ordinal);
     }
@@ -157,7 +185,11 @@ public sealed class OperatorAgentIdentityTests : IDisposable
             await Run("GET", "/api/v1/{**path}", "/api/v1/runners", token),
         };
         Assert.All(refused, outcome => Assert.Equal((403, false), (outcome.Status, outcome.Called)));
-        Assert.Equal("operator-route-denied", refused[6].Error);
+        // SM-4: access changes are T2 and the path import is not catalogued, so the
+        // policy step refuses both before the access floor; reads still meet the floor.
+        Assert.Equal(OperatorPolicyReasons.ApprovalRequired, refused[1].Error);
+        Assert.Equal(OperatorPolicyReasons.NotCatalogued, refused[6].Error);
+        Assert.Equal("token-route-denied", refused[0].Error);
         Assert.True((await Run("GET", "/api/tags", "/api/tags", token)).Called);
     }
 
@@ -168,7 +200,7 @@ public sealed class OperatorAgentIdentityTests : IDisposable
     }
 
     private async Task<Outcome> Run(string method, string pattern, string path, string token, string? body = null,
-        Action<HttpContext>? handler = null)
+        Action<HttpContext>? handler = null, IOperatorGateEvidence? evidence = null)
     {
         var called = false;
         var middleware = new AccessSecurityMiddleware(context =>
@@ -183,6 +215,8 @@ public sealed class OperatorAgentIdentityTests : IDisposable
         context.Request.Scheme = "https";
         context.Request.Host = new HostString("studio.test");
         context.Request.Headers.Authorization = new StringValues("Bearer " + token);
+        if (evidence is not null)
+            context.RequestServices = new ServiceCollection().AddSingleton(evidence).BuildServiceProvider();
         if (body is not null)
         {
             var bytes = System.Text.Encoding.UTF8.GetBytes(body);
@@ -209,6 +243,13 @@ public sealed class OperatorAgentIdentityTests : IDisposable
     }
 
     private sealed record Outcome(HttpContext Context, int Status, string? Error, bool Called);
+
+    /// <summary>Full gate evidence for exactly one commit.</summary>
+    private sealed class GateEvidence(string commit) : IOperatorGateEvidence
+    {
+        public bool HasFullGateEvidence(string project, string candidate) => candidate == commit;
+        public string? ReleaseCommit(string project, string? releaseId, string? artifact) => null;
+    }
 
     private sealed record OperatorAgentIdentityTestsAgent(string Id, string? Origin);
 

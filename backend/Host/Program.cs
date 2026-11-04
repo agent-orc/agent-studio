@@ -1046,13 +1046,17 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
+// SM-4: the operator policy step reads gate evidence to classify stage deploys and promotions (D2).
+builder.Services.AddSingleton<AgentStudio.Security.IOperatorGateEvidence, AgentStudio.Security.PostMergeGateEvidence>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeIncidentService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeModeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
+builder.Services.AddSingleton<AgentStudio.Operator.BatchTriageReader>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationReservationService(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"],
         "batch-push-reservations"),
+    timeProvider: sp.GetRequiredService<TimeProvider>(),
     alertAfter: TimeSpan.FromMinutes(Math.Clamp(
         builder.Configuration.GetValue<int?>("BatchGate:PendingPushAlertMinutes") ?? 3,
         1, 24 * 60))));

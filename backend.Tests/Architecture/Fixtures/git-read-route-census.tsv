@@ -25,6 +25,8 @@
 /api/auth/iam/	free	-	-	-
 /api/auth/iam/check	free	-	-	-
 /api/auth/iam/operator-agents/	free	-	-	-
+/api/auth/iam/operator-catalogue	free	-	-	-
+/api/auth/iam/standing-grants/	free	-	-	-
 /api/auth/runner	free	-	-	-
 /api/auth/runner-enrollments	free	-	-	-
 /api/auth/runners	free	-	-	-
@@ -107,6 +109,7 @@
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
+/api/operator/batch-triage	free	-	-	-
 /api/operator/decisions	free	-	-	-
 /api/operator/decisions/stream	free	-	-	-
 /api/operator/watcher/lease/	free	-	-	-

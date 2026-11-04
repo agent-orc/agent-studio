@@ -142,10 +142,12 @@ public sealed partial class AccessSecurityStore
     /// One line per service-account, API-token, or operator session request,
     /// refused requests included, in the legacy per-stream file and in the
     /// control plane audit chain with the addressed target and the digest of
-    /// the request parameters.
+    /// the request parameters. An operator session line also names the
+    /// catalogued operation, its tier, the grant that admitted it, or the
+    /// policy step's refusal (SM-4).
     /// </summary>
     public void AppendServiceAccountAudit(ServiceAccountPrincipal principal, string method, string path, int status,
-        string? target = null, string? parameterDigest = null)
+        string? target = null, string? parameterDigest = null, OperatorPolicyDecision? policy = null)
     {
         lock (_gate)
         {
@@ -159,6 +161,8 @@ public sealed partial class AccessSecurityStore
                     timestamp, serviceAccountId = principal.AccountId, tokenId = principal.TokenId,
                     tokenName = principal.AccountName, actor = principal.ActorId, createdBy = principal.CreatedBy,
                     method, path, status, sessionId = op.SessionId, delegatedBy = op.DelegatedBy,
+                    operation = policy?.Operation?.Id, tier = policy?.Operation?.Tier.ToString(), grantId = policy?.GrantId,
+                    policyReason = policy?.Reason,
                 }
                 : new
                 {
