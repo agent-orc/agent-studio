@@ -143,7 +143,9 @@ describe('TaskColumnComponent (smoke)', () => {
     expect(fixture.componentInstance.stalledCount()).toBe(2);
     fixture.detectChanges();
     const count = fixture.nativeElement.querySelector('[data-testid="lane-count-3-progress"]') as HTMLElement | null;
-    expect(count?.textContent?.replace(/\s+/g, ' ').trim()).toMatch(/^4\s*· 2 stalled$/);
+    expect(count?.textContent?.replace(/\s+/g, ' ').trim()).toMatch(/^4\s*·\s*2 stalled$/);
+    const stalled = count?.querySelector('[data-testid="lane-stalled-count"]') as HTMLElement | null;
+    expect(stalled?.getAttribute('data-tone')).toBe('warning');
   });
 
   it('cluster: running + auto → RUNNING + AUTO chips both visible', async () => {

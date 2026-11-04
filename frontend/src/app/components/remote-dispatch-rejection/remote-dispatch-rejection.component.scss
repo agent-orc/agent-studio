@@ -19,15 +19,6 @@
   overflow-wrap: anywhere;
 }
 
-.remote-rejection__dot {
-  width: 7px;
-  height: 7px;
-  margin-top: 4px;
-  border-radius: 50%;
-  background: var(--studio-warn);
-  flex: 0 0 auto;
-}
-
 .remote-rejection--compact {
   padding: 5px var(--studio-spacing-2);
   font-size: 11px;

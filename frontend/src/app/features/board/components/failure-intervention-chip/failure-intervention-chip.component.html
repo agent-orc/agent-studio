@@ -5,7 +5,7 @@
           [attr.data-intervention-state]="item.state"
           [cacTooltip]="'Orchestrator intervention raised from this failure. Open ' + item.key"
           (click)="navigate($event)">
-    <span class="intervention-chip__glyph" aria-hidden="true">↗</span>
-    {{ item.key }} · {{ item.lane }} · {{ item.state }}
+    <app-status-indicator [tone]="item.tone" [label]="item.key + ' · ' + item.lane + ' · ' + item.state"
+                          [compact]="true" testId="task-card-intervention-status" />
   </button>
 }

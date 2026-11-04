@@ -3,9 +3,14 @@ import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { describe, expect, it, vi } from 'vitest';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { redHalvingState } from '../testing/batch-fixtures';
-import { BatchMemberComponent } from './batch-member';
+import { BatchMemberComponent, batchMemberTone } from './batch-member';
 
 describe('BatchMemberComponent', () => {
+  it('maps every membership state to a status tone and falls back to neutral', () => {
+    expect(['pending', 'in-batch', 'published', 'fallback', 'pre-check-red', 'later-state'].map(batchMemberTone))
+      .toEqual(['neutral', 'info', 'success', 'warning', 'danger', 'neutral']);
+  });
+
   it('shows a fallback badge from state membership without reading the board card', async () => {
     const state = signal(redHalvingState);
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
@@ -19,6 +24,7 @@ describe('BatchMemberComponent', () => {
     await fixture.whenStable();
     expect(fixture.nativeElement.textContent).toContain('Per-task fallback');
     expect(fixture.nativeElement.querySelector('[data-status="fallback"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-member-status"]')?.getAttribute('data-tone')).toBe('warning');
   });
 
   it('names why an ejected member left its batch', async () => {

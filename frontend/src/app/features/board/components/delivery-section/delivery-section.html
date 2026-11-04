@@ -32,7 +32,9 @@
   </label>
 </header>
 @if (error()) {
-  <p class="delivery__notice" role="status" data-testid="delivery-load-error">{{ copy.loadError }}</p>
+  <p class="delivery__notice" role="status" data-testid="delivery-load-error">
+    <app-status-indicator tone="warning" [label]="copy.loadError" [compact]="true" testId="delivery-load-error-status" />
+  </p>
 }
 <div class="delivery__columns" data-testid="delivery-columns">
   @for (column of group().columns; track column.id) {
@@ -59,17 +61,15 @@
               <span class="delivery-release__version" data-testid="delivery-release-version">{{ head.releaseVersion ?? copy.noRelease }}</span>
               @if (head.run; as run) {
                 @let state = runLabel(run);
-                <span class="delivery-pill" [attr.data-delivery-tone]="state.tone" data-testid="delivery-run-state">{{ state.label }}</span>
+                <app-status-indicator [tone]="statusTone(state.tone)" [label]="state.label" [compact]="true" testId="delivery-run-state" />
                 @if (run.atUtc) { <time class="delivery-release__time" [attr.datetime]="run.atUtc">{{ run.atUtc | date:'MMM d, HH:mm' }}</time> }
               }
               @let health = healthLabel(head.health);
-              <span class="delivery-health" [attr.data-delivery-tone]="health.tone" data-testid="delivery-health">
-                <span class="delivery-health__dot" aria-hidden="true"></span>{{ health.label }}
-              </span>
+              <app-status-indicator [tone]="statusTone(health.tone)" [label]="health.label" [compact]="true" testId="delivery-health" />
               @if (head.approval; as approval) {
-                <span class="delivery-pill delivery-pill--strong" data-delivery-tone="attention" data-testid="delivery-approval-pill">
-                  {{ copy.approvalPending }}@if (approval.releaseVersion) { · {{ approval.releaseVersion }} }
-                </span>
+                <app-status-indicator tone="warning"
+                                      [label]="copy.approvalPending + (approval.releaseVersion ? ' · ' + approval.releaseVersion : '')"
+                                      [compact]="true" testId="delivery-approval-pill" />
               }
             </div>
           }
@@ -91,9 +91,9 @@
             @for (card of column.waiting; track card.task.taskKey) {
               <div class="delivery-card" data-testid="delivery-waiting-card" [attr.data-card-key]="card.task.displayKey ?? card.task.taskKey">
                 @if (card.rolledBack) {
-                  <span class="delivery-pill" data-delivery-tone="danger" data-testid="delivery-rolled-back">
-                    {{ copy.rolledBack }}@if (card.releaseVersion) { · {{ card.releaseVersion }} }
-                  </span>
+                  <app-status-indicator tone="warning"
+                                        [label]="copy.rolledBack + (card.releaseVersion ? ' · ' + card.releaseVersion : '')"
+                                        [compact]="true" testId="delivery-rolled-back" />
                 }
                 <app-job-card [job]="card.task" [mutationsBlocked]="mutationsBlocked()" (click)="jobClick.emit(card.task)" />
               </div>

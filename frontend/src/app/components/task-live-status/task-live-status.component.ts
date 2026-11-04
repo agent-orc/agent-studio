@@ -4,9 +4,26 @@ import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
 import { deriveActiveTaskRun, isTaskRunActive, resolveRunActivityKind } from '../../services/run-activity.util';
 import { PickupHoldComponent } from '../pickup-hold/pickup-hold.component';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
-type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
+export type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
+
+/**
+ * AGT-3403: live tone to shared status tone. An active step is work in
+ * progress, a wait is a fact worth noticing, a stall needs attention, and
+ * idle has nothing to report.
+ */
+export const LIVE_TONE_INDICATOR: Readonly<Record<LiveTone, StatusTone>> = {
+  active: 'running',
+  waiting: 'info',
+  idle: 'neutral',
+  stalled: 'warning',
+};
+
+export function liveIndicatorTone(tone: string | null | undefined): StatusTone {
+  return LIVE_TONE_INDICATOR[tone as LiveTone] ?? 'neutral';
+}
 
 interface LiveStatusView {
   tone: LiveTone;
@@ -22,7 +39,7 @@ const STALE_AFTER_MS = 10 * 60 * 1000;
   selector: 'app-task-live-status',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [PickupHoldComponent],
+  imports: [PickupHoldComponent, StatusIndicatorComponent],
   templateUrl: './task-live-status.component.html',
   styleUrl: './task-live-status.component.scss',
 })
@@ -31,6 +48,7 @@ export class TaskLiveStatusComponent {
   readonly variant = input<TaskLiveStatusVariant>('card');
   readonly dense = input(false);
   private readonly now = inject(NowTickService).now;
+  readonly liveIndicatorTone = liveIndicatorTone;
 
   readonly view = computed<LiveStatusView | null>(() => {
     const task = this.task();

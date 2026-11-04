@@ -103,7 +103,7 @@ describe('TaskTokenUsagePopoverComponent', () => {
     const fixture = await render(job);
     expect(fixture.nativeElement.querySelector('[data-testid="token-row-model"]').textContent)
       .toContain('Claude Haiku 4.5');
-    expect(fixture.nativeElement.querySelector('[data-testid="token-model-mismatch"]')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="token-model-mismatch"]')?.getAttribute('data-tone')).toBe('warning');
     expect(fixture.nativeElement.querySelector('[data-testid="token-run-model-mismatch"]').textContent)
       .toContain('pinned claude-opus-5-5');
 

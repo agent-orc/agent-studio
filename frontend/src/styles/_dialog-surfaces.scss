@@ -227,15 +227,6 @@
 .create-dialog__attachment-remove:hover {
   background: color-mix(in srgb, var(--studio-accent-6) 70%, transparent);
 }
-.create-dialog__attachment-error {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--studio-accent-6);
-  background: color-mix(in srgb, var(--studio-accent-6) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--studio-accent-6) 35%, transparent);
-  border-radius: 6px;
-  padding: 6px 10px;
-}
 .create-dialog__file {
   display: none;
 }
@@ -329,15 +320,6 @@
 }
 @keyframes create-dialog-spin {
   to { transform: rotate(360deg); }
-}
-.create-dialog__generate-error {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--studio-accent-6);
-  background: color-mix(in srgb, var(--studio-accent-6) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--studio-accent-6) 35%, transparent);
-  border-radius: 6px;
-  padding: 6px 10px;
 }
 .create-dialog__prompt-actions {
   display: inline-flex;

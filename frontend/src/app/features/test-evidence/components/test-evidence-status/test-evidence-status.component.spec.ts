@@ -1,6 +1,11 @@
 import { TestBed } from '@angular/core/testing';
 import { TaskState, type TaskInfo, type TaskTestRunEvidence } from '../../../../models/task.model';
-import { TestEvidenceStatusComponent, visibleTestEvidence } from './test-evidence-status.component';
+import {
+  TestEvidenceStatusComponent,
+  testEvidenceSourceTone,
+  testEvidenceStateTone,
+  visibleTestEvidence,
+} from './test-evidence-status.component';
 
 const missingEvidence: TaskTestRunEvidence = {
   runId: null,
@@ -103,6 +108,9 @@ describe('TestEvidenceStatusComponent', () => {
     expect(element.textContent).toContain(summary);
     expect(element.getAttribute('data-match-quality')).toBe(quality);
     expect(element.getAttribute('data-evidence-state')).toBe(state);
+    const indicator = element.querySelector('[data-testid="test-evidence-state"]') as HTMLElement;
+    expect(indicator.dataset['tone']).toBe(testEvidenceStateTone(state));
+    expect(indicator.classList.contains('status-indicator--compact')).toBe(true);
     if (quality === 'none') expect(element.textContent).toContain('No SHA-linked project run');
   });
 
@@ -240,6 +248,10 @@ describe('TestEvidenceStatusComponent', () => {
     expect(build.dataset['sourceResult']).toBe('passed');
     expect(build.textContent).toContain('verify-1 and verify-2 passed.');
     expect(aspects.dataset['sourceResult']).toBe('blocked');
+    expect((build.querySelector('[data-testid="test-evidence-source-state-review-build-tests"]') as HTMLElement)
+      .dataset['tone']).toBe('success');
+    expect((aspects.querySelector('[data-testid="test-evidence-source-state-review-aspects"]') as HTMLElement)
+      .dataset['tone']).toBe('warning');
     expect(aspects.textContent).toContain('documentation-impact blocked');
     expect(aspects.getAttribute('aria-label')).toContain('Public API and state-file contract changed');
     const links = fixture.nativeElement.querySelectorAll('a.test-evidence-source__report') as NodeListOf<HTMLAnchorElement>;
@@ -247,5 +259,21 @@ describe('TestEvidenceStatusComponent', () => {
     expect(links[0].getAttribute('href')).toBe(
       `/api/tasks/AGT-2689/files/${reportRef}?watchPath=%2Fwork%2Fdemo&scope=workspace`,
     );
+  });
+
+  it('maps evidence states and source results onto shared status tones (AGT-3403)', () => {
+    expect(testEvidenceStateTone('proven')).toBe('success');
+    expect(testEvidenceStateTone('pending')).toBe('warning');
+    expect(testEvidenceStateTone('failed')).toBe('danger');
+    expect(testEvidenceStateTone('not-proven')).toBe('neutral');
+    expect(testEvidenceStateTone('not-applicable')).toBe('neutral');
+    expect(testEvidenceStateTone('unassigned')).toBe('neutral');
+    expect(testEvidenceStateTone('later-state')).toBe('neutral');
+    expect(testEvidenceSourceTone('passed')).toBe('success');
+    expect(testEvidenceSourceTone('blocked')).toBe('warning');
+    expect(testEvidenceSourceTone('failed')).toBe('danger');
+    expect(testEvidenceSourceTone('not-proven')).toBe('neutral');
+    expect(testEvidenceSourceTone('not-applicable')).toBe('neutral');
+    expect(testEvidenceSourceTone('toString')).toBe('neutral');
   });
 });

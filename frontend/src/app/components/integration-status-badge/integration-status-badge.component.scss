@@ -5,75 +5,11 @@
   min-width: 0;
 }
 
+/* The tone, icon and text come from the shared status indicator (AGT-3403);
+   the wrapper only carries the data attributes, tooltip and aria label. */
 .integration-badge {
   display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
   min-width: 0;
-  padding: 2px var(--studio-spacing-2);
-  border: 1px solid var(--studio-border-subtle);
-  border-radius: 999px;
-  background: var(--studio-bg-elevated);
-  color: var(--studio-fg-muted);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 18px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.integration-badge__glyph { flex: 0 0 auto; }
-
-.integration-badge__label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Green — the work is provably in develop. */
-.integration-badge[data-kind='integrated'] {
-  background: color-mix(in srgb, var(--studio-success, var(--studio-accent-3)) 14%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-success, var(--studio-accent-3)) 42%, var(--studio-border));
-  color: var(--studio-success, var(--studio-accent-3));
-}
-
-/*
- * Orange (AGT-3002): the delivery is on the branch, but no gate passed on
- * that tree. Shares the "partial" tone: present, but not proven.
- */
-.integration-badge[data-kind='unverified'] {
-  background: color-mix(in srgb, var(--studio-warning-strong, #e8590c) 16%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-warning-strong, #e8590c) 48%, var(--studio-border));
-  color: var(--studio-warning-strong, #e8590c);
-}
-
-/* Orange — some attributed commits are in develop, some are not. */
-.integration-badge[data-kind='partial'] {
-  background: color-mix(in srgb, var(--studio-warning-strong, #e8590c) 16%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-warning-strong, #e8590c) 48%, var(--studio-border));
-  color: var(--studio-warning-strong, #e8590c);
-}
-
-/* Amber — accepted but NOT integrated: the accept-without-merge state. */
-.integration-badge[data-kind='pending'] {
-  background: color-mix(in srgb, var(--studio-warning, #b8860b) 16%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-warning, #b8860b) 46%, var(--studio-border));
-  color: var(--studio-warning, #b8860b);
-}
-
-/* Red — merge conflict / skip: the work is not in develop and needs a human. */
-.integration-badge[data-kind='conflict'] {
-  background: color-mix(in srgb, var(--studio-error) 14%, var(--studio-bg-elevated));
-  border-color: color-mix(in srgb, var(--studio-error) 46%, var(--studio-border));
-  color: var(--studio-error);
-}
-
-/* Grey — nothing to integrate. */
-.integration-badge[data-kind='no-branch'] {
-  background: var(--studio-bg-elevated);
-  border-color: var(--studio-border-subtle);
-  color: var(--studio-fg-dim);
 }
 
 .integration-recovery {

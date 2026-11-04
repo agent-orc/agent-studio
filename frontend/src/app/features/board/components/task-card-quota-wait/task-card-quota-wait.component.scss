@@ -2,19 +2,7 @@
   display: contents;
 }
 
-.quota-wait-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  min-height: var(--studio-card-pill-height);
-  padding: 0 var(--studio-card-pill-padding-x);
-  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 42%, transparent);
-  border-radius: 7px;
-  color: var(--studio-accent-warn-strong);
-  background: color-mix(in srgb, var(--studio-accent-warn) 16%, var(--studio-bg-elevated));
-  font-size: var(--studio-card-meta-size);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
+app-status-indicator {
   cursor: help;
+  font-variant-numeric: tabular-nums;
 }

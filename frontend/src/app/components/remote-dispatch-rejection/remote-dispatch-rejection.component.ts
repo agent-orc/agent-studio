@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import type { TaskExecutionLocation } from '../../models/task.model';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
 
 /**
  * The durable reason a runner refused an offered task.
@@ -15,6 +16,7 @@ import type { TaskExecutionLocation } from '../../models/task.model';
   selector: 'app-remote-dispatch-rejection',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [StatusIndicatorComponent],
   templateUrl: './remote-dispatch-rejection.component.html',
   styleUrl: './remote-dispatch-rejection.component.scss',
 })
@@ -22,6 +24,8 @@ export class RemoteDispatchRejectionComponent {
   readonly execution = input<TaskExecutionLocation | null | undefined>(null);
   readonly compact = input(false);
   readonly rejection = computed(() => this.execution()?.lastRejection ?? null);
+  /** A refusal needs an operator look, but the runner itself is fine (AGT-3403). */
+  readonly tone: StatusTone = 'warning';
   readonly runnerLabel = computed(() => {
     const rejection = this.rejection();
     return rejection?.runnerName || rejection?.runnerId || 'Remote Runner';

@@ -2,21 +2,25 @@
   display: contents;
 }
 
+// AGT-3403: the wait state reads from the shared status indicator inside; the
+// button keeps only its control affordances (no pill chrome on the indicator).
 .cause-wait-pill {
   display: inline-flex;
   align-items: center;
-  gap: var(--studio-spacing-1);
-  min-height: var(--studio-card-pill-height);
-  padding: 0 var(--studio-card-pill-padding-x);
-  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 42%, transparent);
-  border-radius: 7px;
-  color: var(--studio-accent-warn-strong);
-  background: color-mix(in srgb, var(--studio-accent-warn) 16%, var(--studio-bg-elevated));
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--studio-card-pill-radius);
+  background: transparent;
+  color: inherit;
   font: inherit;
   font-size: var(--studio-card-meta-size);
-  font-weight: 600;
-  letter-spacing: 0.02em;
   cursor: pointer;
+}
+
+.cause-wait-pill:hover {
+  text-decoration: underline;
 }
 
 .cause-wait-pill:focus-visible {

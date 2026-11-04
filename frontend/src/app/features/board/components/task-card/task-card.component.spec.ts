@@ -470,7 +470,7 @@ describe('TaskCardComponent (smoke)', () => {
 
     const pill = fixture.nativeElement.querySelector('[data-testid="task-card-human-review"]') as HTMLElement | null;
     expect(pill?.textContent).toContain('Escalated');
-    expect(pill?.className).toContain('review-decision-badge--attention');
+    expect(pill?.getAttribute('data-tone')).toBe('danger');
   });
 
   it('renders an amber Stalled signal for a failed In-Progress card with no active run', async () => {
@@ -574,7 +574,8 @@ describe('TaskCardComponent (smoke)', () => {
 
     const pill = fixture.nativeElement.querySelector('[data-testid="task-card-outcome-issue"]') as HTMLElement | null;
     expect(pill?.textContent).toContain('Permission blocked');
-    expect(pill?.className).toContain('task-card__issue-pill--high');
+    expect(pill?.getAttribute('data-severity')).toBe('high');
+    expect(pill?.querySelector('[data-testid="task-card-outcome-issue-status"]')?.getAttribute('data-tone')).toBe('danger');
   });
 
   it('moves an older outcome issue off the card after a later accepted run', async () => {
@@ -622,7 +623,8 @@ describe('TaskCardComponent (smoke)', () => {
 
     const pill = fixture.nativeElement.querySelector('[data-testid="task-card-outcome-issue"]') as HTMLElement | null;
     expect(pill?.textContent).toContain('Task branch unpushed');
-    expect(pill?.className).toContain('task-card__issue-pill--warn');
+    expect(pill?.getAttribute('data-severity')).toBe('warn');
+    expect(pill?.querySelector('[data-testid="task-card-outcome-issue-status"]')?.getAttribute('data-tone')).toBe('warning');
   }); // ── Mode badge (planning / research recognizable at a glance) ──────────
 
   it('renders a mode pill naming the mode for a planning card', async () => {
@@ -819,10 +821,10 @@ describe('TaskCardComponent (smoke)', () => {
     expect(signal).not.toBeNull();
     expect(signal?.getAttribute('data-develop')).toBe('true');
     expect(signal?.getAttribute('data-main')).toBe('false');
-    const dev = signal?.querySelector('[data-seg="develop"]') as HTMLElement | null;
-    const main = signal?.querySelector('[data-seg="main"]') as HTMLElement | null;
-    expect(dev?.className).toContain('task-card__merge-seg--on');
-    expect(main?.className).not.toContain('task-card__merge-seg--on');
+    const dev = signal?.querySelector('[data-testid="task-card-merge-develop"]') as HTMLElement | null;
+    const main = signal?.querySelector('[data-testid="task-card-merge-main"]') as HTMLElement | null;
+    expect(dev?.getAttribute('data-tone')).toBe('success');
+    expect(main?.getAttribute('data-tone')).toBe('neutral');
   });
 
   it('AGT-2063 renders NO merge signal on a card without a task commit', async () => {
@@ -889,7 +891,7 @@ describe('TaskCardComponent (smoke)', () => {
 
     const el = fixture.nativeElement.querySelector('[data-testid="task-card-no-commits"]') as HTMLElement | null;
     expect(el?.getAttribute('data-tone')).toBe('discovery');
-    expect(el?.className).toContain('task-card__no-commits--discovery');
+    expect(el?.querySelector('[data-testid="task-card-no-commits-status"]')?.getAttribute('data-tone')).toBe('warning');
     expect(el?.textContent).toContain('commit discovery pending');
   });
 

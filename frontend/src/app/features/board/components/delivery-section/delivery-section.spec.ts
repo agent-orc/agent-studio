@@ -68,14 +68,18 @@ describe('DeliverySectionComponent', () => {
     expect(stage.querySelector('[data-testid="delivery-release-version"]')?.textContent).toContain('2026.10.20.3');
     expect(stage.querySelector('[data-testid="delivery-run-state"]')?.textContent).toContain('Rolled back');
     expect(stage.querySelector('[data-testid="delivery-health"]')?.textContent).toContain('Healthy');
+    expect(stage.querySelector('[data-testid="delivery-run-state"]')?.getAttribute('data-tone')).toBe('warning');
+    expect(stage.querySelector('[data-testid="delivery-health"]')?.getAttribute('data-tone')).toBe('success');
     const order = [...stage.querySelectorAll('[data-testid="delivery-landed-card"], [data-testid="delivery-waiting-divider"], [data-testid="delivery-waiting-card"]')]
       .map((el) => el.getAttribute('data-testid'));
     expect(order).toEqual(['delivery-landed-card', 'delivery-waiting-divider', 'delivery-waiting-card']);
     expect(stage.querySelector('[data-testid="delivery-rolled-back"]')?.textContent).toContain('2026.10.21.1');
+    expect(stage.querySelector('[data-testid="delivery-rolled-back"]')?.getAttribute('data-tone')).toBe('warning');
 
     const production = root.querySelector('[data-testid="delivery-column-production"]') as HTMLElement;
     expect(production.getAttribute('data-delivery-tone')).toBe('attention');
     expect(production.querySelector('[data-testid="delivery-approval-pill"]')?.textContent).toContain('Approval pending');
+    expect(production.querySelector('[data-testid="delivery-approval-pill"]')?.getAttribute('data-tone')).toBe('warning');
   });
 
   it('keeps the group count equal to the sum of the visible column counts', async () => {

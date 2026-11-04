@@ -20,6 +20,19 @@ describe('RoutingPreviewComponent', () => {
     fixture.componentRef.setInput('routing', route(true));
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Mappings conflict');
+    const status = fixture.nativeElement.querySelector('[data-testid="routing-preview-status"]') as HTMLElement;
+    expect(status.getAttribute('data-tone')).toBe('warning');
+    expect(status.textContent?.trim()).toBe('Mappings conflict');
+  });
+
+  it('shows a running indicator while ownership resolves', () => {
+    const fixture = TestBed.configureTestingModule({ imports: [RoutingPreviewComponent] })
+      .createComponent(RoutingPreviewComponent);
+    fixture.componentRef.setInput('pending', true);
+    fixture.detectChanges();
+    const status = fixture.nativeElement.querySelector('[data-testid="routing-preview-status"]') as HTMLElement;
+    expect(status.getAttribute('data-tone')).toBe('running');
+    expect(status.textContent?.trim()).toBe('Resolving component ownership…');
   });
 });
 

@@ -196,7 +196,7 @@ test.describe('Done & Decide — escalated cards do not look like Done', () => {
       const pill = escalated.locator('[data-testid="task-card-human-review"]');
       await expect(pill).toBeVisible();
       await expect(pill).toHaveText(/Escalated/);
-      await expect(pill).toHaveClass(/review-decision-badge--attention/);
+      await expect(pill).toHaveAttribute('data-tone', 'danger');
 
       // 2. Whole-card tint separates the acute state without a left ribbon.
       await expect(completed).not.toHaveClass(/task-card--attention/);

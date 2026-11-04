@@ -5,7 +5,7 @@
           [attr.data-cause-key]="causeWait.causeKey"
           data-testid="task-card-cause-wait"
           (click)="navigate($event)">
-    <span aria-hidden="true">◴</span>
-    {{ causeWait.label }}
+    <app-status-indicator tone="warning" [label]="causeWait.label" [compact]="true"
+                          testId="task-card-cause-wait-status" />
   </button>
 }

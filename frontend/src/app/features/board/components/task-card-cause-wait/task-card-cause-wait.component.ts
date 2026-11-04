@@ -5,11 +5,12 @@ import { NotificationService } from '../../../../services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 import { TaskSelectionService } from '../../../task-detail/runtime';
 import { buildCauseWaitBadge } from '../task-card/task-card-view-model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-task-card-cause-wait',
   standalone: true,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   templateUrl: './task-card-cause-wait.component.html',
   styleUrl: './task-card-cause-wait.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

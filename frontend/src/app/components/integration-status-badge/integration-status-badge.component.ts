@@ -4,6 +4,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { isMergedIntegrationStatus } from '../../features/git';
 import type { IntegrationVerificationState, TaskIntegrationStatus } from '../../features/git';
 import { PendingButtonDirective } from '../async-feedback';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
 import { NotificationService } from '../../services/notification.service';
 import { TaskService } from '../../services/task.service';
 
@@ -25,13 +26,34 @@ import { TaskService } from '../../services/task.service';
  * commit widget renders. Branch presence comes from the acceptance resolver's
  * projected `deliveryRef`, so a remote delivery cannot render as "kein Branch".
  *
- * Follows the {@link ExecutionLocationBadgeComponent} pill pattern. Purely
+ * Renders through the shared status indicator (AGT-3403). Purely
  * presentational; hidden when the card carries no integration verdict.
  */
+export type IntegrationBadgeKind = 'integrated' | 'unverified' | 'partial' | 'pending' | 'conflict' | 'no-branch';
+
+/**
+ * AGT-3403: integration kind to shared status tone. Only a provably merged
+ * and gate-verified delivery is success; present-but-not-proven and
+ * accepted-not-integrated need an operator look (warning); a failed
+ * integration is danger; nothing to integrate stays neutral.
+ */
+export const INTEGRATION_KIND_TONES: Readonly<Record<IntegrationBadgeKind, StatusTone>> = {
+  integrated: 'success',
+  unverified: 'warning',
+  partial: 'warning',
+  pending: 'warning',
+  conflict: 'danger',
+  'no-branch': 'neutral',
+};
+
+export function integrationKindTone(kind: string | null | undefined): StatusTone {
+  return INTEGRATION_KIND_TONES[kind as IntegrationBadgeKind] ?? 'neutral';
+}
+
 @Component({
   selector: 'app-integration-status-badge',
   standalone: true,
-  imports: [TooltipDirective, PendingButtonDirective],
+  imports: [TooltipDirective, PendingButtonDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './integration-status-badge.component.html',
   styleUrl: './integration-status-badge.component.scss',
@@ -65,7 +87,7 @@ export class IntegrationStatusBadgeComponent {
    * local ref can see shares the amber "accepted, not integrated" treatment,
    * because that is exactly what it is; the label and tooltip say why.
    */
-  readonly kind = computed<'integrated' | 'unverified' | 'partial' | 'pending' | 'conflict' | 'no-branch'>(() => {
+  readonly kind = computed<IntegrationBadgeKind>(() => {
     if (this.unverified()) return 'unverified';
     switch (this.integration()?.status) {
       case 'integrated': return 'integrated';
@@ -150,16 +172,8 @@ export class IntegrationStatusBadgeComponent {
     }
   });
 
-  readonly glyph = computed(() => {
-    switch (this.kind()) {
-      case 'integrated': return '✓'; // check
-      case 'unverified': return '!';
-      case 'partial': return '◐';    // half-filled circle
-      case 'conflict': return '⚠';   // warning
-      case 'pending': return '○';    // hollow circle
-      default: return '–';           // en dash
-    }
-  });
+  /** Shared indicator tone; the tone icon replaces the old text glyph. */
+  readonly tone = computed<StatusTone>(() => integrationKindTone(this.kind()));
 
   readonly tooltip = computed(() => {
     const value = this.integration();

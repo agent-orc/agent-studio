@@ -1,10 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   TaskState,
   type TaskInfo,
   type TaskTestEvidenceSource,
   type TaskTestRunEvidence,
+  type TestEvidenceState,
 } from '../../../../models/task.model';
 
 type TestEvidenceContext = Pick<TaskInfo, 'id' | 'watchPath' | 'state' | 'commit' | 'commits' | 'commitCount' | 'integration' | 'testEvidence'>;
@@ -38,10 +40,41 @@ export function visibleTestEvidence(task: TestEvidenceContext): TaskTestRunEvide
     : null;
 }
 
+/**
+ * AGT-3403: evidence state to shared status tone. Proven is the wanted state,
+ * a pending verdict needs attention, a failed one is danger, and evidence that
+ * is not proven, not applicable or not assigned has nothing acute to report.
+ */
+export const TEST_EVIDENCE_STATE_TONES: Readonly<Record<TestEvidenceState, StatusTone>> = {
+  proven: 'success',
+  pending: 'warning',
+  failed: 'danger',
+  'not-proven': 'neutral',
+  'not-applicable': 'neutral',
+  unassigned: 'neutral',
+};
+
+/** Per-source result to shared status tone (panel variant). */
+export const TEST_EVIDENCE_SOURCE_TONES: Readonly<Record<string, StatusTone>> = {
+  passed: 'success',
+  blocked: 'warning',
+  failed: 'danger',
+  'not-proven': 'neutral',
+  'not-applicable': 'neutral',
+};
+
+export function testEvidenceStateTone(state: string | null | undefined): StatusTone {
+  return TEST_EVIDENCE_STATE_TONES[state as TestEvidenceState] ?? 'neutral';
+}
+
+export function testEvidenceSourceTone(result: string | null | undefined): StatusTone {
+  return (result && Object.hasOwn(TEST_EVIDENCE_SOURCE_TONES, result) ? TEST_EVIDENCE_SOURCE_TONES[result] : null) ?? 'neutral';
+}
+
 @Component({
   selector: 'app-test-evidence-status',
   standalone: true,
-  imports: [AppTooltipDirective],
+  imports: [AppTooltipDirective, StatusIndicatorComponent],
   templateUrl: './test-evidence-status.component.html',
   styleUrl: './test-evidence-status.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -51,6 +84,8 @@ export class TestEvidenceStatusComponent {
   readonly variant = input<TestEvidenceStatusVariant>('card');
   readonly testId = input('task-card-test-evidence');
   readonly evidence = computed(() => visibleTestEvidence(this.task()));
+  readonly evidenceTone = testEvidenceStateTone;
+  readonly sourceTone = testEvidenceSourceTone;
 
   tooltipText(): string {
     const evidence = this.evidence();

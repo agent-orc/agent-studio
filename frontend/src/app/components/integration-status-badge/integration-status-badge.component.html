@@ -10,8 +10,8 @@
         role="img"
         [attr.aria-label]="ariaLabel()"
         [cacTooltip]="tooltip()">
-    <span class="integration-badge__glyph" aria-hidden="true">{{ glyph() }}</span>
-    <span class="integration-badge__label">{{ label() }}</span>
+    <app-status-indicator [tone]="tone()" [label]="label()" [compact]="true"
+                          testId="integration-status-indicator" />
   </span>
   @if (retryAvailable() && jobId()) {
     <button type="button"

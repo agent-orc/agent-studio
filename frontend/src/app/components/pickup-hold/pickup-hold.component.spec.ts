@@ -9,6 +9,7 @@ import {
   PICKUP_HOLD_RESOLUTION_ACTIONABILITY,
   PICKUP_HOLD_RESOLUTION_KINDS,
   PickupHoldComponent,
+  pickupHoldIndicatorTone,
 } from './pickup-hold.component';
 
 function task(pickupHold: PickupHoldStatus | null): TaskInfo {
@@ -150,6 +151,9 @@ describe('PickupHoldComponent', () => {
 
     expect(block.getAttribute('data-tone')).toBe('blocked');
     expect(block.getAttribute('data-mechanism')).toBe('dependency-gate');
+    const headline = root.querySelector('[data-testid="pickup-hold-headline"]') as HTMLElement;
+    expect(headline.dataset['tone']).toBe('danger');
+    expect(headline.classList.contains('status-indicator--compact')).toBe(true);
     expect(root.querySelector('[data-testid="pickup-hold-headline"]')?.textContent)
       .toContain('cannot clear by itself');
     expect(root.querySelector('[data-testid="pickup-hold-mechanism"]')?.textContent)
@@ -339,5 +343,12 @@ describe('PickupHoldComponent', () => {
 
     expect(root.querySelector('[data-testid="pickup-hold-mechanism"]')?.textContent)
       .toContain('Quota exhausted');
+  });
+
+  it('maps the hold tone onto the shared status tone (AGT-3403)', () => {
+    expect(pickupHoldIndicatorTone('open')).toBe('info');
+    expect(pickupHoldIndicatorTone('stalled')).toBe('warning');
+    expect(pickupHoldIndicatorTone('blocked')).toBe('danger');
+    expect(pickupHoldIndicatorTone('later-state')).toBe('neutral');
   });
 });

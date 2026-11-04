@@ -1,28 +1,22 @@
 @if (parkedBadge(); as park) {
-  <span class="review-decision-badge"
-        [class]="'review-decision-badge--' + park.tone"
-        [cacTooltip]="park.tooltip"
-        [attr.data-tone]="park.tone"
-        data-testid="task-card-parked">
-    <span class="review-decision-badge__glyph" aria-hidden="true">{{ park.glyph }}</span>
-    {{ park.label }}
-  </span>
+  <app-status-indicator [cacTooltip]="park.tooltip"
+                        [attr.data-park-kind]="park.tone"
+                        [tone]="parkTone(park.tone)"
+                        [label]="park.label"
+                        [compact]="true"
+                        testId="task-card-parked" />
 }
 @if (decisionDamBadge(); as dam) {
-  <span class="review-decision-badge"
-        [class]="'review-decision-badge--' + dam.tone"
-        [cacTooltip]="dam.tooltip"
-        data-testid="task-card-decision-dam">
-    <span class="review-decision-badge__glyph" aria-hidden="true">⚠</span>
-    {{ dam.label }}
-  </span>
+  <app-status-indicator [cacTooltip]="dam.tooltip"
+                        tone="danger"
+                        [label]="dam.label"
+                        [compact]="true"
+                        testId="task-card-decision-dam" />
 }
 @if (humanReviewBadge(); as review) {
-  <span class="review-decision-badge"
-        [class]="'review-decision-badge--' + review.tone"
-        [cacTooltip]="review.tooltip"
-        data-testid="task-card-human-review">
-    <span class="review-decision-badge__glyph" aria-hidden="true">⚠</span>
-    {{ review.label }}
-  </span>
+  <app-status-indicator [cacTooltip]="review.tooltip"
+                        tone="danger"
+                        [label]="review.label"
+                        [compact]="true"
+                        testId="task-card-human-review" />
 }

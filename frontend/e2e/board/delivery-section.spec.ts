@@ -179,7 +179,9 @@ test('Delivery group places accepted cards by environment in both themes', async
   await expect(dev.getByTestId('task-card')).toHaveCount(3);
   await expect(dev.getByTestId('delivery-release-version')).toHaveText('2026.10.21.1');
   await expect(dev.getByTestId('delivery-run-state')).toHaveText('Succeeded');
+  await expect(dev.getByTestId('delivery-run-state')).toHaveAttribute('data-tone', 'success');
   await expect(dev.getByTestId('delivery-health')).toContainText('Healthy');
+  await expect(dev.getByTestId('delivery-health')).toHaveAttribute('data-tone', 'success');
   await expect(dev.getByTestId('delivery-waiting-divider')).toContainText('Waiting · 0');
   // Waiting below the divider; a rolled-back card waits again with its flag.
   expect(await tileKeys(stage, 'landed')).toEqual(['AGT-3288']);
@@ -192,6 +194,7 @@ test('Delivery group places accepted cards by environment in both themes', async
   expect(stageOrder.indexOf('delivery-waiting-divider')).toBe(1);
   // Approval pending: pill plus a tinted column, not a side stripe.
   await expect(production.getByTestId('delivery-approval-pill')).toContainText('Approval pending · 2026.10.19.1');
+  await expect(production.getByTestId('delivery-approval-pill')).toHaveAttribute('data-tone', 'warning');
   await expect(production).toHaveAttribute('data-delivery-tone', 'attention');
   expect(await tileKeys(production, 'waiting')).toEqual(['AGT-3288']);
 

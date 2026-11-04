@@ -52,8 +52,8 @@
             [cacTooltip]="title()">{{ title() }}</h2>
         <span class="column__count" [attr.data-testid]="'lane-count-' + state()">
           <span>{{ headerCount() }}</span>
-          @if (stalledCount() > 0) { <span class="column__stalled-count" data-testid="lane-stalled-count">· {{ stalledCount() }} stalled</span> }
-          @if (operationalStallCount() > 0) { <span class="column__stalled-count" data-testid="lane-operational-stalls">· {{ operationalStallCount() }} alerts</span> }
+          @if (stalledCount() > 0) { <span aria-hidden="true">·</span><app-status-indicator tone="warning" [label]="stalledCount() + ' stalled'" [compact]="true" testId="lane-stalled-count" /> }
+          @if (operationalStallCount() > 0) { <span aria-hidden="true">·</span><app-status-indicator tone="warning" [label]="operationalStallCount() + ' alerts'" [compact]="true" testId="lane-operational-stalls" /> }
         </span>
         @if (state() === '4-auto-review') {
           <app-post-processing-summary [jobs]="jobs()" [nowMs]="nowMs()" />
@@ -168,7 +168,9 @@
             </button>
           }
           @if (archiveError(); as err) {
-            <div class="column__empty column__empty--error" data-testid="archive-error">{{ err }}</div>
+            <div class="column__empty" data-testid="archive-error">
+              <app-status-indicator tone="danger" [label]="err" [detail]="err" [compact]="true" testId="archive-error-status" />
+            </div>
           } @else if (archiveIsEmpty()) {
             <div class="column__empty" data-testid="archive-empty">
               @if (archiveSearch().trim()) { No archived tasks match the filter }

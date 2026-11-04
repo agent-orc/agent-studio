@@ -3,7 +3,7 @@
   min-width: 0;
 }
 
-// Status is carried by a background tint, a border and a dot. No left accent
+// Status is carried by a background tint, a border and the headline indicator. No left accent
 // bar (style-guide hard rule R1), and both tones read in either theme because
 // every colour is mixed from a semantic token.
 .pickup-hold {
@@ -42,24 +42,12 @@
   min-width: 0;
 }
 
-.pickup-hold__dot {
-  align-self: center;
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--studio-accent-4);
-}
-
-.pickup-hold[data-tone='blocked'] .pickup-hold__dot {
-  background: var(--studio-warn);
-}
-
+// The headline is the shared status indicator (AGT-3403). It does not shrink,
+// so a narrow column wraps it onto its own line instead of clipping it.
 .pickup-hold__headline {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 700;
+  flex: 0 0 auto;
+  max-width: 100%;
+  align-self: center;
 }
 
 .pickup-hold__mechanism {
@@ -152,16 +140,9 @@
   opacity: 0.65;
 }
 
-.pickup-hold__error {
+.pickup-hold__message {
   margin: 0;
-  color: var(--studio-danger);
-  font-size: 11px;
-}
-
-.pickup-hold__notice {
-  margin: 0;
-  color: var(--studio-fg-muted);
-  font-size: 11px;
+  min-width: 0;
 }
 
 .pickup-hold__item-detail {

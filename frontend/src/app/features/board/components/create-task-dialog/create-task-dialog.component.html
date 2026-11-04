@@ -40,8 +40,8 @@
           }
         </button>
       </div>
-      @if (titleGenerateError()) {
-        <div class="create-dialog__generate-error" data-testid="create-generate-title-error">⚠ {{ titleGenerateError() }}</div>
+      @if (titleGenerateError(); as err) {
+        <div class="create-dialog__error" data-testid="create-generate-title-error"><app-status-indicator tone="danger" [label]="err" [detail]="err" testId="create-generate-title-error-status" /></div>
       }
     </div>
     <div class="create-dialog__grid">
@@ -140,8 +140,8 @@
           <span class="create-dialog__dropzone-link">click to browse</span>
         </span>
       </div>
-      @if (enhanceError()) {
-        <div class="create-dialog__generate-error" data-testid="create-enhance-error">⚠ {{ enhanceError() }}</div>
+      @if (enhanceError(); as err) {
+        <div class="create-dialog__error" data-testid="create-enhance-error"><app-status-indicator tone="danger" [label]="err" [detail]="err" testId="create-enhance-error-status" /></div>
       }
       @if (enhanceSummary(); as s) {
         <div class="create-dialog__enhance-summary" data-testid="create-enhance-summary">
@@ -191,8 +191,8 @@
           }
         </div>
       }
-      @if (attachmentError()) {
-        <div class="create-dialog__attachment-error" data-testid="create-attach-error">⚠ {{ attachmentError() }}</div>
+      @if (attachmentError(); as err) {
+        <div class="create-dialog__error" data-testid="create-attach-error"><app-status-indicator tone="danger" [label]="err" [detail]="err" testId="create-attach-error-status" /></div>
       }
     </div>
     <app-routing-preview [routing]="routing()" [pending]="routingPending()" /><div class="create-dialog__actions">

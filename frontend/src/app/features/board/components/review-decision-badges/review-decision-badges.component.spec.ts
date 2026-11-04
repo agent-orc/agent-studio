@@ -2,9 +2,13 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it } from 'vitest';
 import type { TaskInfo } from '../../../../models/task.model';
-import { ReviewDecisionBadgesComponent } from './review-decision-badges.component';
+import { ReviewDecisionBadgesComponent, parkKindTone } from './review-decision-badges.component';
 
 describe('ReviewDecisionBadgesComponent', () => {
+  it('maps the park kinds to status tones and falls back to neutral', () => {
+    expect(['decision', 'parked', 'later-kind'].map(parkKindTone)).toEqual(['info', 'warning', 'neutral']);
+  });
+
   it('renders current Review impact without reviving a stale verdict', async () => {
     await TestBed.configureTestingModule({
       imports: [ReviewDecisionBadgesComponent],
@@ -20,6 +24,8 @@ describe('ReviewDecisionBadgesComponent', () => {
 
     expect(fixture.nativeElement.querySelector('[data-testid="task-card-decision-dam"]')?.textContent)
       .toContain('Dams 2 cards');
+    expect(fixture.nativeElement.querySelector('[data-testid="task-card-decision-dam"]')?.getAttribute('data-tone'))
+      .toBe('danger');
     expect(fixture.nativeElement.querySelector('[data-testid="task-card-human-review"]')).toBeNull();
   });
 

@@ -1,11 +1,30 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import type { PickupHoldResolution, PickupHoldStatus, TaskInfo } from '../../models/task.model';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
 import { NowTickService } from '../../services/now-tick.service';
 import { TaskService } from '../../services/task.service';
 import type { Observable } from 'rxjs';
 
 export type PickupHoldVariant = 'card' | 'detail';
+
+/** The hold tone the block exposes as `data-tone`. */
+export type PickupHoldTone = 'open' | 'stalled' | 'blocked';
+
+/**
+ * AGT-3403: hold tone to shared status tone. An honest wait is a fact worth
+ * noticing (info), a stalled prerequisite needs attention (warning), and a
+ * gate that can never open is blocked (danger).
+ */
+export const PICKUP_HOLD_TONES: Readonly<Record<PickupHoldTone, StatusTone>> = {
+  open: 'info',
+  stalled: 'warning',
+  blocked: 'danger',
+};
+
+export function pickupHoldIndicatorTone(tone: string | null | undefined): StatusTone {
+  return PICKUP_HOLD_TONES[tone as PickupHoldTone] ?? 'neutral';
+}
 
 /** Mechanism keys as the backend `PickupHoldMechanisms` spells them. */
 const MECHANISM_LABELS: Record<string, string> = {
@@ -78,7 +97,7 @@ export const PICKUP_HOLD_RESOLUTION_ACTIONABILITY: Readonly<
   selector: 'app-pickup-hold',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [AppTooltipDirective],
+  imports: [AppTooltipDirective, StatusIndicatorComponent],
   templateUrl: './pickup-hold.component.html',
   styleUrl: './pickup-hold.component.scss',
 })
@@ -91,8 +110,10 @@ export class PickupHoldComponent {
   readonly hold = computed<PickupHoldStatus | null>(() => this.task().pickupHold ?? null);
 
   /** `open` for an honest wait, `blocked` for a gate that can never open. */
-  readonly tone = computed(() => ((this.hold()?.classification === 'unsatisfiable' || this.hold()?.unsatisfiable) ? 'blocked'
+  readonly tone = computed<PickupHoldTone>(() => ((this.hold()?.classification === 'unsatisfiable' || this.hold()?.unsatisfiable) ? 'blocked'
     : this.hold()?.classification === 'stalled' ? 'stalled' : 'open'));
+
+  readonly indicatorTone = computed(() => pickupHoldIndicatorTone(this.tone()));
 
   readonly classificationLabel = computed(() => {
     const classification = this.hold()?.classification

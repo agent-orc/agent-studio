@@ -7,6 +7,8 @@ import {
   deliveryRunLabel,
 } from '../../../../models/delivery-presentation';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { deliveryStatusTone } from './delivery-status-tone';
 import { DeliveryColumnsService } from '../../../deployments/services/delivery-columns.service';
 import { LaneCollapseService } from '../../state/lane-collapse.service';
 import { TaskCardComponent } from '../task-card/task-card.component';
@@ -28,7 +30,7 @@ const GROUP_COLLAPSE_KEY = 'delivery-group';
 @Component({
   selector: 'app-delivery-section',
   standalone: true,
-  imports: [DatePipe, DisclosureMarkerComponent, TaskCardComponent],
+  imports: [DatePipe, DisclosureMarkerComponent, StatusIndicatorComponent, TaskCardComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './delivery-section.html',
   styleUrl: './delivery-section.scss',
@@ -53,6 +55,7 @@ export class DeliverySectionComponent {
   readonly copy = DELIVERY_COPY;
   readonly runLabel = deliveryRunLabel;
   readonly healthLabel = deliveryHealthLabel;
+  readonly statusTone = deliveryStatusTone;
   readonly error = this.source.error;
   readonly furthestOnly = signal(readStoredFlag());
   readonly group = computed(() => buildDeliveryGroup(this.source.responses(), this.tasks(), this.furthestOnly()));

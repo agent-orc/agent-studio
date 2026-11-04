@@ -1,11 +1,10 @@
 @if (activity(); as value) {
-  <span class="activity"
-        [class]="'activity--' + value.tone"
-        [cacTooltip]="value.tooltip"
-        data-testid="task-card-post-processing-activity"
-        [attr.data-activity-state]="value.tone"
-        role="status">
-    <span class="activity__glyph" aria-hidden="true"></span>
-    {{ value.label }}
-  </span>
+  <app-status-indicator [cacTooltip]="value.tooltip"
+                        data-testid="task-card-post-processing-activity"
+                        [attr.data-activity-state]="value.tone"
+                        role="status"
+                        [tone]="activityTone(value.tone)"
+                        [label]="value.label"
+                        [compact]="true"
+                        testId="task-card-post-processing-activity-status" />
 }

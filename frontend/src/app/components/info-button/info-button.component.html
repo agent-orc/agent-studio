@@ -18,9 +18,9 @@
     <div class="info-btn__body"
          [attr.data-testid]="'info-button-body-' + topic()">
       @if (loading()) {
-        <p class="info-btn__loading">Loading…</p>
+        <app-status-indicator tone="running" label="Loading…" testId="info-button-loading" />
       } @else if (errorMessage(); as msg) {
-        <p class="info-btn__error">{{ msg }}</p>
+        <app-status-indicator tone="danger" [label]="msg" testId="info-button-error" />
       } @else if (body(); as md) {
         <cac-markdown [source]="md" />
       }

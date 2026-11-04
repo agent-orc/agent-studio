@@ -15,12 +15,10 @@
     <app-copyable-task-key variant="card" [key]="job().key" [label]="issueLabel()" testId="task-card-key" />
     <span class="task-card__header-signals">
       @if (codeReviewGradeBadge(); as grade) {
-        <span class="task-card__grade-pill"
-              [class]="'task-card__grade-pill--' + grade.tone" [cacTooltip]="grade.tooltip"
-              data-testid="task-card-grade"
-              [attr.data-grade]="grade.grade">
-          <span class="task-card__grade-letter" aria-hidden="true">{{ grade.grade }}</span>
-        </span>
+        <app-status-indicator data-testid="task-card-grade"
+                              [attr.data-grade]="grade.grade"
+                              [tone]="gradeTone(grade.tone)" [label]="grade.grade" [cacTooltip]="grade.tooltip"
+                              [compact]="true" testId="task-card-grade-status" />
       }
       @if (ownerChip(); as oc) {
         <span class="task-card__owner-chip"
@@ -56,8 +54,10 @@
       <span class="task-card__compact-cli" aria-hidden="true">{{ agentIcon() }}</span>
     }
     @if (decisionBadge(); as db) {
-      <span class="task-card__decision-badge" data-testid="task-card-decision-badge"
-            [attr.data-open]="db.open" [cacTooltip]="db.tooltip">{{ db.label }}</span>
+      <app-status-indicator class="task-card__decision-badge" data-testid="task-card-decision-badge"
+                            [attr.data-open]="db.open"
+                            [tone]="decisionTone(db.open)" [label]="db.label" [cacTooltip]="db.tooltip"
+                            [compact]="true" testId="task-card-decision-badge-status" />
     }
     @if (job().dossier; as dossier) {
       <span class="task-card__subtask-chip" data-testid="task-card-dossier" [cacTooltip]="dossier.path">Dossier · {{ dossier.path.split('/').slice(-2, -1)[0] }} @if (dossier.section) { · {{ dossier.section }} } @if (dossier.decision) { · {{ dossier.decision }} }</span>
@@ -72,7 +72,7 @@
   @defer (when !!job().preview) { <app-task-preview [preview]="job().preview" [taskKey]="job().taskKey" /> }
   @if (job().state === '2-ready' && job().needsInput; as needsInput) {
     <section class="task-card__needs-input" data-testid="ready-needs-input" aria-label="Queued agent question">
-      <strong>Waiting to steer</strong>
+      <app-status-indicator tone="warning" label="Waiting to steer" [compact]="true" testId="ready-needs-input-status" />
       <pre>{{ needsInput.message }}</pre>
       @if (job().pendingIntent?.mode === 'steer' && job().pendingIntent?.prompt) {
         <div data-testid="ready-needs-input-answer"><span>Answer:</span> {{ job().pendingIntent?.prompt }}{{ job().pendingIntent?.promptTruncated ? '…' : '' }}</div>
@@ -81,13 +81,15 @@
   }<div class="task-card__badges">
     @defer (on immediate) { <app-card-environment-badges [task]="job()" /> }
     @if (job().waitingForEngineDecision) {
-      <span class="task-card__engine-wait" data-testid="task-card-engine-wait" role="status">Waiting for engine decision</span>
+      <app-status-indicator role="status" tone="neutral" label="Waiting for engine decision"
+                            [compact]="true" testId="task-card-engine-wait" />
     }
     <app-batch-member [project]="job().projectName" [taskKey]="job().taskKey" [referenceKey]="job().key" [displayKey]="job().displayKey" [taskId]="job().id" />
     <app-review-queue-pill [task]="job()" />
     @if (stalledState(); as stalled) {
-      <span class="task-card__stalled-pill" data-testid="task-card-stalled" [attr.data-reason]="stalled.reason"
-            [cacTooltip]="stalled.tooltip" role="status"><span aria-hidden="true">⚠</span> {{ stalled.label }}</span>
+      <app-status-indicator data-testid="task-card-stalled" [attr.data-reason]="stalled.reason" role="status"
+                            tone="warning" [label]="stalled.label" [cacTooltip]="stalled.tooltip"
+                            [compact]="true" testId="task-card-stalled-status" />
     }
     @if (modeBadge(); as mb) {
       <span class="task-card__mode-pill"
@@ -101,105 +103,81 @@
     <app-task-card-decision-chips [job]="job()" />
     @if (dependencyChip(); as dep) {
       <button type="button"
-              class="task-card__waiting-pill"
-              [class]="'task-card__waiting-pill--' + dep.tone"
+              class="task-card__status-link"
               [cacTooltip]="dep.tooltip"
               [attr.data-tone]="dep.tone"
               data-testid="task-card-waiting-on"
               (click)="navigateToDependency(dep, $event)">
-        <span class="task-card__waiting-glyph" aria-hidden="true">{{ dep.glyph }}</span> {{ dep.label }}
+        <app-status-indicator [tone]="dependencyTone(dep.tone)" [label]="dep.label" [compact]="true"
+                              testId="task-card-waiting-on-status" />
       </button>
     }
     <app-failure-intervention-chip [origin]="job()" />
     @if (providerAuthWait(); as authWait) {
       @if (authWait.signInTarget) {
         <button type="button"
-                class="task-card__provider-auth-wait"
+                class="task-card__status-link"
                 data-testid="task-card-provider-auth-wait"
                 [cacTooltip]="authWait.tooltip"
                 (click)="$event.stopPropagation(); codexSignIn.open(authWait.signInTarget)">
-          <span class="task-card__provider-auth-dot" aria-hidden="true"></span>
-          {{ authWait.label }} · Sign in
+          <app-status-indicator tone="warning" [label]="authWait.label + ' · Sign in'" [compact]="true"
+                                testId="task-card-provider-auth-wait-status" />
         </button>
       } @else if (authWait.claudeSignInTarget) {
         <button type="button"
-                class="task-card__provider-auth-wait"
+                class="task-card__status-link"
                 data-testid="task-card-provider-auth-wait"
                 [cacTooltip]="authWait.tooltip"
                 (click)="$event.stopPropagation(); claudeSignIn.open(authWait.claudeSignInTarget)">
-          <span class="task-card__provider-auth-dot" aria-hidden="true"></span>
-          {{ authWait.label }} · Sign in
+          <app-status-indicator tone="warning" [label]="authWait.label + ' · Sign in'" [compact]="true"
+                                testId="task-card-provider-auth-wait-status" />
         </button>
       } @else {
-        <span class="task-card__provider-auth-wait"
-              data-testid="task-card-provider-auth-wait"
-              role="status"
-              [cacTooltip]="authWait.tooltip">
-          <span class="task-card__provider-auth-dot" aria-hidden="true"></span>
-          {{ authWait.label }}
-        </span>
+        <app-status-indicator data-testid="task-card-provider-auth-wait" role="status"
+                              tone="warning" [label]="authWait.label" [cacTooltip]="authWait.tooltip"
+                              [compact]="true" testId="task-card-provider-auth-wait-status" />
       }
     }
     <app-review-decision-badges [job]="job()" />
     @if (phaseBadge(); as pb) {
-      <span class="task-card__phase-pill"
-            [class]="'task-card__phase-pill--' + pb.tone"
-            [cacTooltip]="pb.tooltip"
-            data-testid="task-card-phase">
-        {{ pb.label }}
-      </span>
+      <app-status-indicator data-testid="task-card-phase" [attr.data-phase]="pb.tone"
+                            [tone]="phaseTone(pb.tone)" [label]="pb.label" [cacTooltip]="pb.tooltip"
+                            [compact]="true" testId="task-card-phase-status" />
     }
     <app-task-card-quota-wait [wait]="currentQuotaWait()" /><app-task-card-cause-wait [task]="job()" />
     @if (executionBadge(); as badge) {
       @if (badge.tone !== 'running') {
-        <span class="task-card__execution-pill" [class]="'task-card__execution-pill--' + badge.tone">
-          <span class="task-card__execution-dot"></span>
-          {{ badge.label }}
-        </span>
+        <app-status-indicator data-testid="task-card-execution" [attr.data-execution]="badge.tone"
+                              [tone]="executionTone(badge.tone)" [label]="badge.label"
+                              [compact]="true" testId="task-card-execution-status" />
       }
     }
     @if (currentPendingIntent(); as pi) {
-      <span class="task-card__pending-pill"
-            [cacTooltip]="pendingTooltip(pi)"
-            data-testid="task-card-pending">
-        ⏳ {{ pi.mode }}
-      </span>
+      <app-status-indicator tone="warning" [label]="pi.mode" [cacTooltip]="pendingTooltip(pi)"
+                            [compact]="true" testId="task-card-pending" />
     }
     @if (currentAutoLoop(); as al) {
-      <span class="task-card__loop-pill"
-            [class.task-card__loop-pill--hot]="loopHot()"
-            [cacTooltip]="loopTooltip(al)"
-            data-testid="task-card-autoloop">
-        ↻ auto-loop {{ al.iteration }}/{{ al.maxIterations }}
-      </span>
+      <app-status-indicator data-testid="task-card-autoloop" [attr.data-hot]="loopHot() ? 'true' : null"
+                            [tone]="loopTone(loopHot())" [label]="'auto-loop ' + al.iteration + '/' + al.maxIterations"
+                            [cacTooltip]="loopTooltip(al)" [compact]="true" testId="task-card-autoloop-status" />
     }
     @if (reviewBadge(); as rb) {
-      <span class="task-card__review-pill"
-            [class]="'task-card__review-pill--' + rb.tone"
-            [cacTooltip]="rb.tooltip"
-            data-testid="task-card-review">
-        <span class="task-card__review-dot"></span>
-        {{ rb.label }}
-      </span>
+      <app-status-indicator data-testid="task-card-review" [attr.data-review]="rb.tone"
+                            [tone]="reviewTone(rb.tone)" [label]="rb.label" [cacTooltip]="rb.tooltip"
+                            [compact]="true" testId="task-card-review-status" />
     }
     @if (job().state === '4-auto-review') {
       <app-post-processing-activity [job]="job()" />
     }
     @if (outcomeIssueBadge(); as oib) {
-      <span class="task-card__issue-pill"
-            [class]="'task-card__issue-pill--' + oib.tone"
-            [cacTooltip]="oib.tooltip"
-            data-testid="task-card-outcome-issue">
-        {{ oib.label }}
-      </span>
+      <app-status-indicator data-testid="task-card-outcome-issue" [attr.data-severity]="oib.tone"
+                            [tone]="issueTone(oib.tone)" [label]="oib.label" [cacTooltip]="oib.tooltip"
+                            [compact]="true" testId="task-card-outcome-issue-status" />
     }
     @if (codeReviewRunning()) {
-      <span class="task-card__code-review-pill"
-            data-testid="task-card-code-review-running"
-            [cacTooltip]="'A user-triggered code review is running against this task\'s latest commit.'">
-        <span class="task-card__code-review-dot"></span>
-        code review…
-      </span>
+      <app-status-indicator tone="running" label="code review…"
+                            cacTooltip="A user-triggered code review is running against this task's latest commit."
+                            [compact]="true" testId="task-card-code-review-running" />
     }
   </div>
   <!-- AGT-2818: one rendering of the durable refusal, shared with the detail
@@ -212,8 +190,8 @@
          [attr.data-seconds-left]="cd.secondsLeft"
          role="status"
          [cacTooltip]="cd.tooltip">
-      <span class="task-card__cooldown-glyph" aria-hidden="true">↻</span>
-      <span class="task-card__cooldown-label">{{ cd.label }}</span>
+      <app-status-indicator class="task-card__cooldown-label" tone="warning" [label]="cd.label"
+                            [compact]="true" testId="task-card-cooldown-retry-status" />
       <span class="task-card__cooldown-countdown">{{ cd.countdown }}</span>
     </div>
   }
@@ -255,12 +233,8 @@
           [watchPath]="job().watchPath" />
       }
       @if (externalDoneBadge(); as edb) {
-        <span class="task-card__external-pill"
-              [cacTooltip]="edb.tooltip"
-              data-testid="task-card-external-done">
-          <span class="task-card__external-glyph" aria-hidden="true">✓</span>
-          {{ edb.label }}
-        </span>
+        <app-status-indicator tone="success" [label]="edb.label" [cacTooltip]="edb.tooltip"
+                              [compact]="true" testId="task-card-external-done" />
       }
       @if (tokenBubble(); as tb) {
         <span class="task-card__token-wrap" appTokenPopover
@@ -351,14 +325,12 @@
                 role="img"
                 [attr.aria-label]="ms.ariaLabel"
                 [cacTooltip]="ms.tooltip">
-            <span class="task-card__merge-seg task-card__merge-seg--develop"
-                  [class.task-card__merge-seg--on]="ms.develop.merged"
-                  data-seg="develop"
-                  aria-hidden="true">{{ ms.develop.short }}</span>
-            <span class="task-card__merge-seg task-card__merge-seg--main"
-                  [class.task-card__merge-seg--on]="ms.main.merged"
-                  data-seg="main"
-                  aria-hidden="true">{{ ms.main.short }}</span>
+            <app-status-indicator data-seg="develop" aria-hidden="true"
+                                  [tone]="mergeTone(ms.develop.merged)" [label]="ms.develop.short"
+                                  [compact]="true" testId="task-card-merge-develop" />
+            <app-status-indicator data-seg="main" aria-hidden="true"
+                                  [tone]="mergeTone(ms.main.merged)" [label]="ms.main.short"
+                                  [compact]="true" testId="task-card-merge-main" />
           </span>
         }
         <span class="task-card__change-ref"
@@ -406,18 +378,11 @@
         </div>
       } @else if (commitEmptyBadge(); as nb) {
         <div class="task-card__no-commits"
-             [class]="'task-card__no-commits--' + nb.tone"
              [cacTooltip]="nb.tooltip"
              data-testid="task-card-no-commits"
              [attr.data-tone]="nb.tone">
-          @if (nb.tone === 'discovery') {
-            <span class="task-card__no-commits-glyph" aria-hidden="true">⚠</span>
-          } @else if (nb.tone === 'integrated') {
-            <span class="task-card__no-commits-glyph" aria-hidden="true">✓</span>
-          } @else {
-            <span class="task-card__no-commits-glyph" aria-hidden="true">∅</span>
-          }
-          {{ nb.label }}
+          <app-status-indicator [tone]="commitEmptyTone(nb.tone)" [label]="nb.label"
+                                [compact]="true" testId="task-card-no-commits-status" />
         </div>
       }
     </div>

@@ -66,41 +66,16 @@
   flex: 0 0 auto;
 }
 
-.task-live__signal {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--studio-fg-dim);
-  flex: 0 0 auto;
-}
-
-.task-live--active .task-live__signal {
-  background: var(--studio-accent-3);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent-3) 45%, transparent);
-  animation: task-live-pulse 1.35s ease-out infinite;
-}
-
-.task-live--waiting .task-live__signal {
-  background: var(--studio-accent-4);
-}
-
-.task-live--stalled .task-live__signal {
-  background: var(--studio-accent-warn);
-}
-
+// The headline is the shared status indicator (AGT-3403); its tone icon
+// replaces the old signal dot. It truncates with an ellipsis like before.
 .task-live__headline {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   min-width: 0;
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .task-live--detail .task-live__current,
 .task-live--detail .task-live__next {
   display: grid;
-  grid-template-columns: 3rem 8px minmax(0, 1fr) auto;
+  grid-template-columns: 3rem minmax(0, 1fr) auto;
   align-items: baseline;
   column-gap: var(--studio-spacing-2);
 }
@@ -114,10 +89,6 @@
 
 .task-live--detail .task-live__headline {
   flex: 0 1 auto;
-  font-size: 12px;
-}
-
-.task-live--detail .task-live__signal {
   align-self: center;
 }
 
@@ -158,13 +129,8 @@
   grid-column: 1;
 }
 
-.task-live__next-signal {
-  grid-column: 2;
-  width: 8px;
-}
-
 .task-live--detail .task-live__next-value {
-  grid-column: 3 / 5;
+  grid-column: 2 / 4;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -180,22 +146,4 @@
 // exactly the card whose explanation must not be the first thing collapsed.
 .task-live__hold:not(:empty) {
   margin-block-start: var(--studio-spacing-1);
-}
-
-@keyframes task-live-pulse {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent-3) 50%, transparent);
-  }
-  70% {
-    box-shadow: 0 0 0 6px color-mix(in srgb, var(--studio-accent-3) 0%, transparent);
-  }
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent-3) 0%, transparent);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .task-live--active .task-live__signal {
-    animation: none;
-  }
 }

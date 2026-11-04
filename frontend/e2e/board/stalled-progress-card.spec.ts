@@ -135,7 +135,8 @@ test('stalled Progress cards and lane subset are visible at a glance', async ({ 
   const lane = page.locator('[data-testid="lane-3-progress"]');
   await expect(lane).toBeVisible();
   await expect(lane.locator('[data-testid="lane-count-3-progress"]')).toContainText('4');
-  await expect(lane.locator('[data-testid="lane-stalled-count"]')).toHaveText('· 2 stalled');
+  await expect(lane.locator('[data-testid="lane-stalled-count"]')).toHaveText('2 stalled');
+  await expect(lane.locator('[data-testid="lane-stalled-count"]')).toHaveAttribute('data-tone', 'warning');
 
   const stalled = lane.locator('[data-testid="task-card"][data-stalled]');
   await expect(stalled).toHaveCount(2);
