@@ -479,7 +479,8 @@ public static class TaskServerEndpoints
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request runner ids differ."));
             if (await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Coding) is { } refused)
                 return refused;
-            return await InvokeAsync(() => store.ClaimAsync(request, Actor(context), ct));
+            return await InvokeAsync(() => store.ClaimAsync(
+                request, Actor(context), ct, context.TaskServerPrincipal()?.PrincipalId));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.RunsClaim);
         runners.MapPut("/{runnerId}/outbox-status", async (
@@ -525,7 +526,8 @@ public static class TaskServerEndpoints
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request review executor ids differ."));
             if (await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Review) is { } refused)
                 return refused;
-            return await InvokeAsync(() => store.ClaimReviewAsync(request, Actor(context), ct));
+            return await InvokeAsync(() => store.ClaimReviewAsync(
+                request, Actor(context), ct, context.TaskServerPrincipal()?.PrincipalId));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
 
@@ -993,7 +995,8 @@ public static class TaskServerEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         reviews.MapPost("/attempts/{attemptId}/report", async (
             HttpContext context, string attemptId, ReviewReportRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.ReportReviewAsync(attemptId, request, Actor(context), ct)))
+            => await InvokeAsync(() => store.ReportReviewAsync(
+                attemptId, request, Actor(context), ct, context.TaskServerPrincipal())))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
         reviews.MapPost("/attempts/{attemptId}/cleanup", async (
             HttpContext context, string attemptId, ReviewCleanupRequest request, TaskServerStore store, CancellationToken ct)

@@ -123,11 +123,16 @@ public sealed class WorkContainerExecutor(
                 return Denied(attempt, image, "attempt-already-running: one container per attempt.", started);
             var admission = WorkContainerAdmissionPolicy.Decide(grant, Budget(inventory.ReservedHalfCores), settings);
             if (!admission.Admitted) return Denied(attempt, image, admission.Reason, started);
+            // SM-11: an attempt UID no live container on this host holds.
+            var uidsInUse = inventory.Containers.Where(item => item.HoldsGrant && item.Uid > 0)
+                .Select(item => item.Uid).ToHashSet();
             plan = WorkContainerLaunchPlanner.Plan(attempt, image, admission.Limits!, settings,
-                credentialRequired: credentials is not null);
+                credentialRequired: credentials is not null,
+                uid: WorkContainerIdentity.Allocate(attempt.AttemptId, attempt.Fence, uidsInUse));
             grantedAt = _clock.GetUtcNow();
             var volume = await runtime.CreateVolumeAsync(plan.AttemptVolume, plan.Labels, ct);
-            var created = volume.Ok ? await runtime.CreateContainerAsync(plan.CreateArguments, ct) : volume;
+            var prepared = volume.Ok ? await runtime.PrepareAsync(plan.PrepareArguments, ct) : volume;
+            var created = prepared.Ok ? await runtime.CreateContainerAsync(plan.CreateArguments, ct) : prepared;
             if (!created.Ok)
             {
                 var residue = await CleanupAsync(plan, attempt, CancellationToken.None);
@@ -306,6 +311,7 @@ public sealed class WorkContainerExecutor(
         IReadOnlyList<string> residue = [];
         for (var round = 0; round < 3; round++)
         {
+            await runtime.RemoveContainerAsync(plan.PrepareContainerName, ct);
             await runtime.RemoveContainerAsync(plan.ContainerName, ct);
             await runtime.RemoveVolumeAsync(plan.AttemptVolume, ct);
             var inventory = await runtime.ListManagedAsync(attempt.HostId, attempt.AttemptId, ct);

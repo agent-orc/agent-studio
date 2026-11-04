@@ -1,0 +1,18 @@
+# One launcher call per connection from agent-work-launcher.socket. The
+# wrapper verifies root ownership of itself, its configuration and the
+# agent-host release before agent-host validates and runs the call.
+[Unit]
+Description=Agent Studio narrow work-container launcher call
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/agent-work-launcher --stdio
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+# A blocked runtime call (wait) lasts as long as its attempt.
+TimeoutStartSec=infinity
+# The runtime CLI keeps its normal root configuration and runtime directories.
+NoNewPrivileges=true

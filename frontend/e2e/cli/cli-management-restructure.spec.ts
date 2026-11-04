@@ -166,6 +166,27 @@ async function stub(page: Page) {
     }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
+  let conservingClaude = false;
+  await page.route('**/api/model-selection/effective*', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      routes: ['review-aspect', 'review-deep', 'review-grade', 'chat', 'one-shot', 'merge-resolver', 'card-creation']
+        .map(consumer => ({
+          consumer, stepId: null,
+          configured: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+          effective: { cliType: conservingClaude ? 'codex' : 'claude',
+            model: conservingClaude ? 'gpt-5.6-sol' : 'claude-opus-5', thinkingLevel: 'high' },
+          rule: conservingClaude ? 'operator-switch' : 'consumer-default', reason: null,
+        })),
+    }) });
+  });
+  await page.route('**/api/cli/quota/fallback-preference', async (route) => {
+    conservingClaude = (route.request().postDataJSON() as { preferFallback: boolean }).preferFallback;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      cliType: 'claude', active: conservingClaude,
+      enabledAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    }) });
+  });
   await page.route('**/api/clients', json([]));
   await page.route('**/api/dev-tools/flags', json({ updateStableEnabled: false, deleteE2EJobsEnabled: false }));
   await page.route('**/api/admin/prompts', json({ overrideDirectory: 'stub', items: [] }));
@@ -255,6 +276,22 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
 
   });
 
+
+  test('one provider preference updates each consumer class in both themes', async ({ page }) => {
+    await openHome(page);
+    await page.getByTestId('workspace-settings-rail-caps').click();
+    const routes = page.getByTestId('effective-routes-claude');
+    await expect(routes).toContainText('review-deep: claude');
+    await page.getByTestId('prefer-fallback-claude').check();
+    for (const consumer of ['review-aspect', 'review-deep', 'review-grade', 'chat', 'one-shot', 'merge-resolver', 'card-creation'])
+      await expect(routes).toContainText(`${consumer}: codex`);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.getByTestId('cli-admin-overlay').screenshot({
+        path: join(SHOT_DIR, `model-selection-effective-${theme}.png`),
+      });
+    }
+  });
 
   test('retired CLI settings routes open CLI Management without errors', async ({ page }) => {
     const errors: string[] = [];

@@ -9,7 +9,7 @@ public sealed record WorkRuntimeResult(bool Ok, string Output)
 }
 
 /// <summary>A managed container with the grant it reserves while not exited.</summary>
-public sealed record ManagedWorkContainer(ManagedWorkResource Resource, int GrantHalfCores, string State)
+public sealed record ManagedWorkContainer(ManagedWorkResource Resource, int GrantHalfCores, string State, int Uid = 0)
 {
     public bool HoldsGrant => State is "created" or "running" or "restarting" or "paused" or "configured" or "initialized";
 }
@@ -33,6 +33,9 @@ public interface IWorkContainerRuntime
     Task<WorkRuntimeResult> PullAsync(string image, CancellationToken ct);
     Task<WorkRuntimeResult> CreateVolumeAsync(string name, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task<WorkRuntimeResult> CreateContainerAsync(IReadOnlyList<string> createArguments, CancellationToken ct);
+
+    /// <summary>Runs the one-shot ownership step of <see cref="WorkContainerLaunchPlan.PrepareArguments"/>.</summary>
+    Task<WorkRuntimeResult> PrepareAsync(IReadOnlyList<string> prepareArguments, CancellationToken ct);
     Task<WorkRuntimeResult> StartAsync(string container, CancellationToken ct);
     Task<WorkRuntimeResult> InjectGitTokenAsync(string container, string token, CancellationToken ct)
         => throw new NotSupportedException("This work-container runtime cannot inject attempt credentials.");
@@ -47,8 +50,14 @@ public interface IWorkContainerRuntime
     Task<ManagedWorkInventory> ListManagedAsync(string hostId, string? attemptId, CancellationToken ct);
 }
 
-/// <summary>Docker or Podman CLI implementation. Every process goes through <see cref="ProcessRunner"/>.</summary>
-public sealed class CliWorkContainerRuntime(string runtime) : IWorkContainerRuntime
+/// <summary>
+/// Docker or Podman CLI implementation. Every process goes through
+/// <see cref="ProcessRunner"/>. With a <paramref name="launcher"/> socket (SM-11)
+/// every call goes to the root-owned, socket-activated work-container launcher
+/// instead: the host service user has no runtime group membership, and the
+/// root-side <see cref="WorkContainerLauncherPolicy"/> admits only these calls.
+/// </summary>
+public sealed class CliWorkContainerRuntime(string runtime, string? launcher = null) : IWorkContainerRuntime
 {
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan PullTimeout = TimeSpan.FromMinutes(30);
@@ -77,23 +86,31 @@ public sealed class CliWorkContainerRuntime(string runtime) : IWorkContainerRunt
     public Task<WorkRuntimeResult> CreateContainerAsync(IReadOnlyList<string> createArguments, CancellationToken ct)
         => Run(createArguments, CommandTimeout, ct);
 
+    public Task<WorkRuntimeResult> PrepareAsync(IReadOnlyList<string> prepareArguments, CancellationToken ct)
+        => Run(prepareArguments, CommandTimeout, ct);
+
     public Task<WorkRuntimeResult> StartAsync(string container, CancellationToken ct)
         => Run(["start", container], CommandTimeout, ct);
+
+    private Task<ProcessResult> ExecuteAsync(IReadOnlyList<string> arguments, string? stdin, CancellationToken ct)
+        => launcher is null
+            ? ProcessRunner.RunAsync(runtime, arguments, stdin: stdin, clearEnvironment: stdin is not null, ct: ct)
+            : WorkContainerLauncherClient.RunAsync(launcher, arguments, stdin, ct);
 
     public async Task<WorkRuntimeResult> InjectGitTokenAsync(string container, string token, CancellationToken ct)
     {
         // The token exists only on stdin of the runtime and the file inside the
         // container's private tmpfs. It never becomes an argument or environment value.
-        var result = await ProcessRunner.RunAsync(runtime,
-            ["exec", "--interactive", "--user", WorkContainerLaunchPlanner.ContainerUser,
-                container, "/bin/sh", "-c", "umask 077; cat > /run/agent-secrets/.github-token-next && mv /run/agent-secrets/.github-token-next /run/agent-secrets/github-token"],
-            stdin: token, clearEnvironment: true, ct: ct);
+        // exec runs as the container's own attempt UID, which owns the tmpfs.
+        var result = await ExecuteAsync(
+            ["exec", "--interactive", container, "/bin/sh", "-c", WorkContainerLaunchPlanner.InjectTokenScript],
+            token, ct);
         return new WorkRuntimeResult(result.Success, result.Success ? "" : "Attempt secret injection failed.");
     }
 
     public async Task<int?> WaitAsync(string container, CancellationToken ct)
     {
-        var result = await ProcessRunner.RunAsync(runtime, ["wait", container], ct: ct);
+        var result = await ExecuteAsync(["wait", container], null, ct);
         return result.Success && int.TryParse(result.StdOut.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var code)
             ? code : null;
     }
@@ -149,7 +166,8 @@ public sealed class CliWorkContainerRuntime(string runtime) : IWorkContainerRunt
             containers.Add(new ManagedWorkContainer(
                 Resource("container", name, labels, state == "running"),
                 int.TryParse(labels.GetValueOrDefault(WorkContainerLaunchPlanner.GrantLabel), out var grant) ? grant : 0,
-                state));
+                state,
+                int.TryParse(labels.GetValueOrDefault(WorkContainerIdentity.UidLabel), out var uid) ? uid : 0));
         }
         var volumes = new List<ManagedWorkResource>();
         foreach (var line in Lines(volumeLines))
@@ -196,7 +214,7 @@ public sealed class CliWorkContainerRuntime(string runtime) : IWorkContainerRunt
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(timeout);
-        var result = await ProcessRunner.RunAsync(runtime, arguments, ct: deadline.Token);
+        var result = await ExecuteAsync(arguments, null, deadline.Token);
         if (result.Success) return new(true, mergeStdErr ? result.StdOut + result.StdErr : result.StdOut);
         var detail = result.StdErr.Trim();
         return new(false, $"{runtime} {arguments[0]} exited {result.ExitCode}: {(detail.Length <= 400 ? detail : detail[^400..])}");

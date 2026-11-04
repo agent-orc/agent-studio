@@ -20,7 +20,7 @@
     [workbenchTitle]="contextKind() === 'workbench' ? automaticContextPresentation().label : null"
     [pageContext]="pageContext()"
     [contextKey]="contextKey()"
-    [executionContext]="executionContext()"
+    [executionContext]="executionReadiness()?.ready === false ? null : executionContext()"
     [actionsOpen]="contextActionsOpen()"
     [active]="sending() || activeRun() !== null"
     (actionsToggle)="toggleContextActions()"
@@ -140,6 +140,16 @@
       } @else if (effectiveProject()) {
         <section class="sheet__chat">
           <app-orchestrator-chat-usage-header [turns]="turns()" [project]="effectiveProject()" />
+          @if (executionReadiness(); as readiness) {
+            @if (!readiness.ready) {
+              <section class="sheet__setup" role="status" data-testid="orch-chat-runner-setup">
+                <strong>Chat needs a Runner</strong>
+                <p>{{ readiness.reason }}</p>
+                <a href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/linux-runner-host.md"
+                   target="_blank" rel="noopener noreferrer">Runner setup guide</a>
+              </section>
+            }
+          }
           <div #conversationHost class="sheet__conversation" data-testid="orchestrator-conversation">
             <cac-conversation-view
               variant="embedded"
@@ -176,7 +186,7 @@
             [automaticIncluded]="automaticContextIncluded()"
             [currentSource]="currentTabSource()"
             [selectedIds]="selectedContextAttachmentIds()"
-            [disabled]="sending()"
+            [disabled]="sending() || loading() || executionReadiness()?.ready === false"
             (automaticIncludedChange)="setNextMessageContextIncluded($event)"
             (attachmentAdded)="addContextAttachment($event)" />
 
@@ -195,7 +205,7 @@
             variant="embedded"
             emptyState=""
             [pending]="sending()"
-            [disabled]="sending()"
+            [disabled]="sending() || loading() || executionReadiness()?.ready === false"
             [allowAttachments]="false"
             [contextAttachments]="cacContextAttachments()"
             [placeholder]="composerPlaceholder()"

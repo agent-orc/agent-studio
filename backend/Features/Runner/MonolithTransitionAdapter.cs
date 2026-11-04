@@ -108,6 +108,9 @@ public static class MonolithTransitionAdapter
         int slotsBusy, int slotsTotal)
         => BatchGateLookAheadPlanner.GateHostIdle(loadClear, batchRunning, perTaskGates, slotsBusy, slotsTotal);
 
+    public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
+        => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
+
     public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
 
     /// <summary>AGT-3400 S4: shadow review package formation; no lane, verdict or settlement effect.</summary>

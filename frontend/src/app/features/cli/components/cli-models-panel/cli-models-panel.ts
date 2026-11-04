@@ -7,6 +7,7 @@ import { ModelMigrationBadgeComponent } from '../../../../components/model-migra
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService, type CliFallbackState, type CliModelFallbackRoute, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
+import type { EffectiveModelSelection } from '../../../quota/services/quota-api.service';
 import { TaskService } from '../../../../services/task.service';
 import {
   WorkspaceOrchestratorSettingsService,
@@ -51,6 +52,7 @@ export class CliModelsPanelComponent implements OnInit {
   readonly routes = signal<Record<string, CliModelRouteProfile>>({});
   readonly fallbackRoutes = signal<CliModelFallbackRoute[]>([]);
   readonly fallbackStates = signal<Record<string, CliFallbackState>>({});
+  readonly effectiveRoutes = signal<EffectiveModelSelection[]>([]);
   readonly catalogueVersion = signal<string | null>(null);
   readonly callersCannotReroute = signal<{ caller: string; cliType: string; reason: string }[]>([]);
   readonly preferenceSaving = signal<string | null>(null);
@@ -108,6 +110,7 @@ export class CliModelsPanelComponent implements OnInit {
     this.routesApi.getModelRoutingPolicy().subscribe({
       next: (policy) => this.policy.set(policy),
     });
+    this.refreshEffectiveRoutes();
     this.loadWorkspaceAutoApply();
   }
 
@@ -247,8 +250,25 @@ export class CliModelsPanelComponent implements OnInit {
           },
         }));
         this.preferenceSaving.set(null);
+        this.refreshEffectiveRoutes();
       },
       error: () => this.preferenceSaving.set(null),
+    });
+  }
+
+  effectiveFor(cliType: CliType): EffectiveModelSelection[] {
+    const seen = new Set<string>();
+    return this.effectiveRoutes().filter(route => {
+      if (route.configured.cliType !== cliType || seen.has(route.consumer)) return false;
+      seen.add(route.consumer);
+      return true;
+    });
+  }
+
+  private refreshEffectiveRoutes(): void {
+    this.routesApi.getEffectiveModelSelection().subscribe({
+      next: response => this.effectiveRoutes.set(response.routes ?? []),
+      error: () => this.effectiveRoutes.set([]),
     });
   }
 

@@ -53,6 +53,35 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   on current facts. Before AGT-3407 only a running batch kept the host busy.
   On 1 November 2026 six cards each took a per-task gate of about 50 minutes
   behind three busy slots.
+- AGT-3466: on 3 November 2026 a restart dissolved formed batch 944a1c38 and
+  13 gates ran on a host with five slots. Three rules now prevent this:
+  - A formed batch whose base moved before replay closes again with the same
+    members on the new base. The abandoned state reads `base moved before
+    replay; re-formed as <id>`. Before AGT-3466 the members went back to
+    planning with their old review times, already past every deadline, and
+    the cards the planner did not batch at once took per-task gates. Members
+    still return to the queue when one of them is no longer eligible.
+  - A card waiting for its pre-check counts as a batch partner. Pre-checks
+    run only on spare slots. While per-task gates filled the slots, each
+    unchecked card became eligible alone at its deadline and took its own
+    gate, and the plan read `idle` with 14 cards pending. Now a lone card past
+    its deadline waits while enough queued cards wait for a pre-check to
+    reach the minimum batch size. Both planners apply this rule, and the plan
+    reads `queued cards wait for their batch pre-check`. The hold ends no
+    later than the partners' own deadlines. An operator close-now, an urgent
+    tag, or a high-risk card still takes its own gate.
+  - At most one slot fewer than the gate host has (at least one) runs a
+    per-task fallback gate at once. Other gates wait for a slot before
+    choosing their merged candidate. The batch keeps its slot, the rule the
+    pre-check already follows (`BatchGateLookAheadPlanner.PerTaskGateLimit`).
+  The state route names why each `fallback` member left the batch route:
+  `fallbackRule` (`planner-per-task`, `batch-paused`, `batch-ejected`,
+  `unattributable-replay`, `operator-eject`, `batch-disabled`,
+  `documentation-scope`, `already-integrated`, `emergency-admission`,
+  `interrupted-gate`) and `fallbackEvent`, also mirrored in `reason` and
+  `reasonDetail`. The first cause of a review generation is kept until the
+  review returns to the batch queue. A member of an abandoned batch that is
+  queued again shows `pending` with reason `requeued`, not `fallback`.
 - Each card's paths and changed lines come from its result SHA, measured
   from the merge base with `refs/remotes/origin/<branch>`, the ref the
   planning tick fetches. A card whose diff cannot be computed scores at the

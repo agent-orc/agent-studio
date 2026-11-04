@@ -360,6 +360,50 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     card.Key ?? card.Id, occurrence.Run.RunId, failures, retryAt);
             }
         }
+        // The monolith report path has no completed Engine occurrence to re-arm.
+        // Its accepted review and current run still identify the exact delivery.
+        var engineAttempts = store.NewestPerTask("ReviewReport")
+            .Where(item => item.EngineReceipt?.Action == nameof(TransitionAction.DeferToBatch)
+                || (!item.Shadow && item.Run.Status is ("pending" or "leased" or "applying")))
+            .Select(item => item.AuthorityAttemptId)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var card in tasks.Where(item => item.State == TaskStates.AutoReview))
+        {
+            if (admissions >= RearmBudgetPerPass || stoppingToken.IsCancellationRequested) break;
+            string? attemptId = null;
+            try
+            {
+                var review = batchAdmission.StrandedReview(card);
+                if (review is null || engineAttempts.Contains(review.AttemptId)
+                    || RetryPending(review.AttemptId)) continue;
+                attemptId = review.AttemptId;
+                admissions++;
+                var outcome = await batchAdmission.AdmitSettledAsync(card, review, stoppingToken);
+                scanner.PublishCoreFromKnownFolder(card.FolderPath);
+                ForgetRetry(review.AttemptId);
+                if (outcome != EngineBatchAdmissionOutcome.Skipped) rearmed++;
+                logger.LogWarning(
+                    "batch-admission-recovered task={TaskKey} attempt={AttemptId} outcome={Outcome}",
+                    card.Key ?? card.Id, review.AttemptId, outcome);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                if (attemptId is null)
+                    logger.LogWarning(exception,
+                        "batch-admission-recovery-scan-failed task={TaskKey}", card.Key ?? card.Id);
+                else
+                {
+                    var (failures, retryAt) = RecordRetry(attemptId);
+                    logger.LogWarning(exception,
+                        "batch-admission-recovery-pending task={TaskKey} attempt={AttemptId} failures={Failures} retryAt={RetryAt:o}",
+                        card.Key ?? card.Id, attemptId, failures, retryAt);
+                }
+            }
+        }
         if (admissions > 0) scanner.InvalidateCache();
         return rearmed;
     }

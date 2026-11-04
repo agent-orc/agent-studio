@@ -41,6 +41,7 @@ export type {
   OrchestratorChatAttachment,
   OrchestratorChatResponse,
   ChatExecutionContext,
+  ChatExecutionReadiness,
   ChatNavigationContext,
 } from './models/orchestrator.model';
 export type {

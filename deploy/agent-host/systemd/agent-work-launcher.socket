@@ -1,0 +1,18 @@
+# SM-11 narrow work-container launcher (security-model Dossier, SM-D6 H2).
+# The host service user connects here instead of being a container-runtime
+# group member. Each connection starts one agent-work-launcher@ instance as
+# root, which admits only the work-container executor's own runtime calls.
+# Set SocketGroup to the host service group if it is not "agent".
+[Unit]
+Description=Agent Studio narrow work-container launcher socket
+
+[Socket]
+ListenStream=/run/agent-work-launcher.sock
+SocketUser=root
+SocketGroup=agent
+SocketMode=0660
+Accept=yes
+MaxConnections=64
+
+[Install]
+WantedBy=sockets.target

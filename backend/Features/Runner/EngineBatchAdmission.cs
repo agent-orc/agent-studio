@@ -47,9 +47,50 @@ public sealed class EngineBatchAdmission(
             ?? throw new InvalidOperationException("The reviewed attempt was not found.");
         if (!IsCurrentGeneration(review))
             return Skip(task, occurrence, $"Review {review.AttemptId} is no longer the card's current review.");
-        var source = authority.GetRun(review.SourceRunAttemptId)
-            ?? throw new InvalidOperationException("The batch source run was not found.");
-        var reviewedAt = ReviewedAt(review, occurrence);
+        return await AdmitReviewAsync(task, review, ReviewedAt(review, occurrence), hostStopping)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Finds a settled deferred review left in Auto Review without admission.</summary>
+    public ReviewAttemptDto? StrandedReview(TaskInfo task)
+    {
+        if (task.State != TaskStates.AutoReview) return null;
+        var projection = authority.GetTaskProjection(task.Key ?? task.Id);
+        var review = projection.CurrentReviewAttempt;
+        if (review?.Subject.Plan?.BuildTestDeferredToBatch != true
+            || review.Outcome is not (ReviewTerminalOutcome.Pass
+                or ReviewTerminalOutcome.IntegrationBranchDefect)
+            || !IsCurrentGeneration(review)) return null;
+        try
+        {
+            if (store.ReadPending(review.AttemptId) is not null) return null;
+            var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
+            if (ownership?.ReviewAttemptId == review.AttemptId
+                && (RecordsProgress(ownership) || batches.IsPerTaskGateRunning(review.AttemptId)))
+                return null;
+            return review;
+        }
+        catch (Exception exception)
+        {
+            batches.ReportAdmissionFailure(task, review,
+                $"Admission recovery could not read batch ownership: {exception.Message}");
+            throw;
+        }
+    }
+
+    public Task<EngineBatchAdmissionOutcome> AdmitSettledAsync(TaskInfo task,
+        ReviewAttemptDto review, CancellationToken hostStopping = default)
+        => AdmitReviewAsync(task, review, ReviewedAt(review), hostStopping);
+
+    private async Task<EngineBatchAdmissionOutcome> AdmitReviewAsync(TaskInfo task,
+        ReviewAttemptDto review, DateTimeOffset reviewedAt, CancellationToken hostStopping)
+    {
+        var source = authority.GetRun(review.SourceRunAttemptId);
+        if (source is null)
+        {
+            batches.ReportAdmissionFailure(task, review, "The batch source run was not found.");
+            throw new InvalidOperationException("The batch source run was not found.");
+        }
         // Count the review-side build and test minutes before admission, so a
         // failed admission still reports them. A replay finds the recorded fact.
         if (RemoteReviewSettlementJournal.Read(task.FolderPath, review.AttemptId).Entry is { } settlement)
@@ -57,16 +98,20 @@ public sealed class EngineBatchAdmission(
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(
             lifetime.ApplicationStopping, hostStopping);
         var stopping = shutdown.Token;
+        Exception? enqueueFailure = null;
         try
         {
             await batches.EnqueueAsync(task, review, source, reviewedAt, stopping).ConfigureAwait(false);
+            batches.ClearAdmissionFailure(task, review);
             return EngineBatchAdmissionOutcome.Enqueued;
         }
         catch (Exception exception) when (!stopping.IsCancellationRequested)
         {
             logger.LogError(exception, "batch-gate-enqueue-failed attempt={AttemptId}", review.AttemptId);
+            enqueueFailure = exception;
         }
         string? state = null;
+        Exception? fallbackFailure = null;
         try
         {
             await batches.RunEmergencyFallbackAsync(task, review, source, reviewedAt, stopping)
@@ -79,16 +124,25 @@ public sealed class EngineBatchAdmission(
         {
             logger.LogError(fallbackError, "batch-gate-emergency-fallback-failed attempt={AttemptId}",
                 review.AttemptId);
+            fallbackFailure = fallbackError;
         }
         if (state is TaskStates.HumanReview or TaskStates.Escalated)
+        {
+            batches.ClearAdmissionFailure(task, review);
             return EngineBatchAdmissionOutcome.PerTaskGate;
+        }
         // AGT-3219: the per-task gate overran the machine gate queue and the
         // review returned to the batch queue; the card stays in Auto Review.
         if (batches.IsQueuedForBatch(review.AttemptId))
+        {
+            batches.ClearAdmissionFailure(task, review);
             return EngineBatchAdmissionOutcome.Enqueued;
+        }
         if (!IsCurrentGeneration(review))
-            return Skip(task, occurrence,
-                $"Review {review.AttemptId} was superseded while it entered the batch queue.");
+            return EngineBatchAdmissionOutcome.Skipped;
+        batches.ReportAdmissionFailure(task, review,
+            $"Queue: {enqueueFailure?.Message ?? "unknown"}; per-task gate: "
+            + $"{fallbackFailure?.Message ?? "did not finish"}.");
         throw new InvalidOperationException(
             "The settled review could not enter the durable batch queue or finish its per-task gate.");
     }
@@ -158,6 +212,15 @@ public sealed class EngineBatchAdmission(
             ?? review.TerminalAt
             ?? throw new InvalidOperationException("The deferred review has no accepted report.");
         return new DateTimeOffset(DateTime.SpecifyKind(reviewedAt, DateTimeKind.Utc));
+    }
+
+    private static DateTimeOffset ReviewedAt(ReviewAttemptDto review)
+    {
+        var received = review.Reports.LastOrDefault(report =>
+                report.AuthorityStatus == AttemptWriteStatus.Accepted)?.ReceivedAt
+            ?? review.TerminalAt
+            ?? throw new InvalidOperationException("The deferred review has no accepted report.");
+        return new DateTimeOffset(DateTime.SpecifyKind(received, DateTimeKind.Utc));
     }
 
     private EngineBatchAdmissionOutcome Skip(TaskInfo task, MonolithOrchestrationOccurrence occurrence,

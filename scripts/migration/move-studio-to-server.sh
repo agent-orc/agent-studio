@@ -365,7 +365,7 @@ server_rehearse() {
   fi
   trap teardown EXIT
   trap 'exit 130' HUP INT TERM
-  mkdir -p "$rehearsal/data/home" "$rehearsal/data/caddy-data" "$rehearsal/data/caddy-config" "$rehearsal/data/projects"
+  mkdir -p "$rehearsal/data/home" "$rehearsal/data/api-tmp" "$rehearsal/data/caddy-data" "$rehearsal/data/caddy-config" "$rehearsal/data/projects"
   cp -a "$root/move-staging/workspace" "$rehearsal/data/workspace"
   if [ -d "$root/move-staging/projects" ]; then cp -a "$root/move-staging/projects/." "$rehearsal/data/projects/"; fi
   if [ -d "$root/move-staging/storage" ]; then
@@ -420,7 +420,7 @@ networks:
       config: !override
         - subnet: $subnet.0/24
 EOF
-  as_service_owner 10001:10001 "$rehearsal/data" /site/workspace /site/projects /site/home
+  as_service_owner 10001:10001 "$rehearsal/data" /site/workspace /site/projects /site/home /site/api-tmp
   refresh_git_indexes compose || fail 'git index refresh in the rehearsal copy failed'
   echo 'check: git indexes refreshed'
   compose up -d --quiet-pull >/dev/null

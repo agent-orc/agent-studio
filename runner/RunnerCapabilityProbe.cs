@@ -217,6 +217,8 @@ internal static class RunnerCapabilityProbe
             && ZonePolicyCapability.Describe(options.ZonePolicyStatePath, ZoneKinds.Work, clock ?? TimeProvider.System,
                 hostBootId ?? ZonePolicyStateStore.CurrentBootId()) is { } zonePolicy)
             list.Add(zonePolicy);
+        list.Add(WorkContainers.AttemptContainmentCapability.Describe(
+            WorkContainers.AttemptContainmentCapability.Decide(options, clock: clock)));
         return list;
     }
 
@@ -232,6 +234,7 @@ internal static class RunnerCapabilityProbe
             CapabilityProtocol.TaskServerConnectivity,
         }
         .Concat(options.RequiredCapabilities)
+        .Concat(WorkContainers.AttemptContainmentCapability.Requirement(options))
         .Concat(options.IsWorkstation
             ? options.WorkstationRequiredTools.Select(tool => $"toolchain:{tool}")
             : [])
@@ -254,6 +257,7 @@ internal static class RunnerCapabilityProbe
             CapabilityProtocol.TaskServerConnectivity,
         }
         .Concat(options.RequiredCapabilities)
+        .Concat(WorkContainers.AttemptContainmentCapability.Requirement(options))
         .Concat(options.IsWorkstation
             ? options.WorkstationRequiredTools.Select(tool => $"toolchain:{tool}")
             : [])
@@ -274,6 +278,7 @@ internal static class RunnerCapabilityProbe
             ReviewCapabilities.LibraryStepV1,
         }
         .Concat(options.RequiredCapabilities)
+        .Concat(WorkContainers.AttemptContainmentCapability.Requirement(options))
         .Distinct(StringComparer.Ordinal)
         .ToArray();
 

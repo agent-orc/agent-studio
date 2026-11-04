@@ -40,9 +40,12 @@ class WebsiteBaselineTests(unittest.TestCase):
                     ('no-new-privileges:true', 'no-new-privileges'),
                     ("user: '10001:10001'", 'non-root'),
                     ('@sha256:', 'digest'),
-                    ('tmpfs: [/tmp]', 'writable tmpfs'),
                     (mount_marker, 'writable volume'),
                 ]
+                if service == 'api':
+                    settings.append(('/api-tmp:/tmp', 'disk-backed /tmp volume'))
+                else:
+                    settings.append(('tmpfs: [/tmp]', 'writable tmpfs'))
                 if service in ('frontend', 'edge'):
                     settings.extend((
                         ('XDG_CONFIG_HOME: /config', 'writable XDG_CONFIG_HOME'),
@@ -58,6 +61,13 @@ class WebsiteBaselineTests(unittest.TestCase):
                     self.assertNotEqual(0, result.returncode, (service, marker))
                     self.assertIn(reason, result.stderr, (service, marker))
                 path.write_text(original)
+            # Agent CLIs and build gates write scratch files to the API's /tmp;
+            # a tmpfs there would count against the API memory limit.
+            path.write_text(original.replace("  api:\n", "  api:\n    tmpfs: [/tmp]\n", 1))
+            result = self.check(stack)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn('api: memory-backed /tmp', result.stderr)
+            path.write_text(original)
             path = stack / 'Caddyfile.private'
             original = path.read_text()
             path.write_text(original.replace('skip_install_trust', '', 1))

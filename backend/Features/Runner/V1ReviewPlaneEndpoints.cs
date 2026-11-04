@@ -881,6 +881,12 @@ public static class V1ReviewPlaneEndpoints
                 return error!;
             var currentReview = current!;
             var authoritativeLease = currentReview.Lease!;
+            // SM-11: a verdict counts only from a review executor other than the delivery's coding executor.
+            var separation = Contract.ReviewPrincipalSeparationPolicy.Decide(
+                new Contract.DeliveryCodingPrincipal(authority.GetRun(currentReview.SourceRunAttemptId)?.Lease?.ExecutorId, null),
+                new Contract.ReviewVerdictReporter(authoritativeLease.ExecutorId, null, null));
+            if (!separation.Accepted)
+                return Results.Conflict(new Contract.ApiError(separation.Code!, separation.Message!));
             // AGT-3016: an executor that still reads verdict markers out of
             // command output must not downgrade a command that exited 0.
             request = Contract.ReviewCommandVerdictPolicy.NormalizeReport(
@@ -1480,9 +1486,13 @@ public static class V1ReviewPlaneEndpoints
             {
                 var batchSource = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
                 if (batchSource is null)
+                {
+                    batchPilot.ReportAdmissionFailure(task, settled.ReviewAttempt,
+                        "The batch source run is missing.");
                     return Results.Json(new Contract.ApiError(
                         "batch-gate-evidence-missing", "The batch source run is missing."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
                 var hostStopping = context.RequestServices
                     .GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
                 try
@@ -1490,10 +1500,12 @@ public static class V1ReviewPlaneEndpoints
                     await batchPilot.EnqueueAsync(task, settled.ReviewAttempt, batchSource,
                         new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)),
                         hostStopping).ConfigureAwait(false);
+                    batchPilot.ClearAdmissionFailure(task, settled.ReviewAttempt);
                 }
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "batch-gate-enqueue-failed attempt={AttemptId}", attemptId);
+                    Exception? fallbackFailure = null;
                     try
                     {
                         await batchPilot.RunEmergencyFallbackAsync(task,
@@ -1506,15 +1518,22 @@ public static class V1ReviewPlaneEndpoints
                     {
                         logger.LogError(fallbackError,
                             "batch-gate-emergency-fallback-failed attempt={AttemptId}", attemptId);
+                        fallbackFailure = fallbackError;
                     }
                     // AGT-3219: a queue overrun of the emergency gate admits the
                     // review to the batch queue; the card stays in Auto Review.
                     if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated)
                         && !batchPilot.IsQueuedForBatch(settled.ReviewAttempt.AttemptId))
+                    {
+                        batchPilot.ReportAdmissionFailure(task, settled.ReviewAttempt,
+                            $"Queue: {ex.Message}; per-task gate: "
+                            + $"{fallbackFailure?.Message ?? "did not finish"}.");
                         return Results.Json(new Contract.ApiError(
                             "batch-gate-evidence-missing",
                             "The settled review could not enter the durable batch queue or finish its per-task gate."),
                             statusCode: StatusCodes.Status503ServiceUnavailable);
+                    }
+                    batchPilot.ClearAdmissionFailure(task, settled.ReviewAttempt);
                 }
             }
             var reportHash = preparedHash;
@@ -2619,7 +2638,9 @@ public static class V1ReviewPlaneEndpoints
         var resolvedCommands = subject.Plan.Commands.Select(command =>
         {
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)) return command;
-            if (immutablePlan && !string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+            var operatorSwitch = quotaAdmission.IsOperatorSwitchActive(command.CliType);
+            if (immutablePlan && !operatorSwitch
+                && !string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
                 return command;
             string? deniedFallbackKey = null;
             Contract.ModelAcceptanceAdmission? deniedFallbackDecision = null;
@@ -2633,6 +2654,7 @@ public static class V1ReviewPlaneEndpoints
                 ModelAccepted: (provider, model) => modelAdmission(provider, model)
                     is Contract.ModelAcceptanceAdmission.Accepted or Contract.ModelAcceptanceAdmission.Legacy,
                 ClaimingHost: claimingHost,
+                SameClassOnly: true,
                 FallbackModelAccepted: (provider, model) =>
                 {
                     var decision = modelAdmission(provider, model);
@@ -2666,7 +2688,8 @@ public static class V1ReviewPlaneEndpoints
             }
             launchedPlan ??= plan;
             if (!plan.IsFallback) return command;
-            if (string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+            if (!operatorSwitch
+                && string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
             {
                 // This plan froze the deep-review correctness floor. A quota
                 // sibling may be useful for ordinary aspects, but accepting a

@@ -21,6 +21,8 @@ public sealed class CountingWorkContainerRuntime(IWorkContainerRuntime inner) : 
     { Interlocked.Increment(ref _mutations); return inner.CreateVolumeAsync(name, labels, ct); }
     public Task<WorkRuntimeResult> CreateContainerAsync(IReadOnlyList<string> createArguments, CancellationToken ct)
     { Interlocked.Increment(ref _mutations); return inner.CreateContainerAsync(createArguments, ct); }
+    public Task<WorkRuntimeResult> PrepareAsync(IReadOnlyList<string> prepareArguments, CancellationToken ct)
+    { Interlocked.Increment(ref _mutations); return inner.PrepareAsync(prepareArguments, ct); }
     public Task<WorkRuntimeResult> StartAsync(string container, CancellationToken ct)
     { Interlocked.Increment(ref _mutations); Interlocked.Increment(ref _starts); return inner.StartAsync(container, ct); }
     public Task<int?> WaitAsync(string container, CancellationToken ct) => inner.WaitAsync(container, ct);
@@ -42,7 +44,8 @@ public sealed record WorkContainerProofOptions(
     int GrantHalfCores,
     string ReportDirectory,
     string GateScript,
-    bool ImageLayersLocal);
+    bool ImageLayersLocal,
+    string? VerdictDirectory = null);
 
 /// <summary>
 /// DP-S3 acceptance proof on a real Docker or Podman host: over-budget denial,
@@ -61,7 +64,7 @@ public static class WorkContainerProof
         TextWriter output, CancellationToken ct)
     {
         Directory.CreateDirectory(options.ReportDirectory);
-        var counting = new CountingWorkContainerRuntime(new CliWorkContainerRuntime(settings.Runtime));
+        var counting = new CountingWorkContainerRuntime(new CliWorkContainerRuntime(settings.Runtime, settings.Launcher));
         var executor = new WorkContainerExecutor(counting, settings, log: output.WriteLine);
         var command = (IReadOnlyList<string>)["/bin/sh", "-c", options.GateScript];
         // Pre-checks use their own mirror key so the measured attempts start with a cold repository cache.
@@ -164,6 +167,11 @@ public static class WorkContainerProof
         // Acceptance gates the exit code; the performance threshold is a recorded verdict.
         var accepted = evidence.CleanupVerified == evidence.Attempts && residue == 0 && resurrections == 0
                        && deniedBeforeRuntime == overBudget && shaGuard;
+        // SM-11: a go verdict that also passed acceptance makes contained mode the default on this host.
+        var verdictDirectory = options.VerdictDirectory ?? settings.StateDirectory;
+        WorkContainerCanaryVerdict.Record(verdictDirectory, accepted ? verdict : verdict with { Go = false },
+            options.HostId, DateTime.UtcNow);
+        output.WriteLine($"work-container canary verdict recorded go={verdict.Go && accepted} at {Path.Combine(verdictDirectory, WorkContainerCanaryVerdict.FileName)}");
         return accepted ? 0 : 1;
     }
 
