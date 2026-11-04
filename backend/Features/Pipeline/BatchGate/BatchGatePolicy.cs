@@ -114,7 +114,8 @@ public sealed record BatchGateManifest(
     DateTimeOffset ClosedAtUtc, IReadOnlyList<BatchGateSubject> Members,
     IReadOnlyList<BatchGateExclusion> Exclusions,
     IReadOnlyList<string> EligibleKeys,
-    string? ParentBatchId = null, string? FormationReason = null);
+    string? ParentBatchId = null, string? FormationReason = null,
+    string? ReformedFromBatchId = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,
