@@ -12,6 +12,18 @@ The non-root installer uses the pinned Caddy image for a one-shot ownership hand
 
 ## Install
 
+The public stack also starts the Operations Server and a local outbound
+Operations Agent. Before `setup.sh`, set `STUDIO_OPERATIONS_SERVER_DIGEST` and
+`STUDIO_OPERATIONS_AGENT_DIGEST` to the published release digests alongside
+the API, web, and edge digests. `setup.sh` creates the Studio-held OpenSSH CA
+outside the data directory at `STUDIO_HOST_CA_DIR` (default
+`deploy/compose/monolith-networked/keys/host-ca`) and prepares an owner-only
+certificate receipt directory in the API data volume. Back up the CA private
+key separately from the data backup. The Operations Server's port is bound
+to loopback; remote host agents need a private authenticated tunnel and their
+own scoped Operations Server principal. See the
+[operator host migration](operator-agent.md#host-access-migration-sm-6).
+
 1. Point the hostname at the VM. Allow inbound TCP 80 and 443. Install Docker Compose, Git, OpenSSL, Python 3, and iptables on the VM. Use an operator account with Docker access. Clone or extract the matching release's `deploy/compose/monolith-networked` directory. Configure the access provider and digest variables above first.
 2. Run `bash setup.sh [--cloudflare | --private] <version> <hostname> /srv/agent-studio-website`, selecting the mode described in step 3. The script initializes the workspace repository with `.security/` ignored (the API also keeps that folder out of every commit), creates data directories, and prints a random installer owner code. Keep that code private until the first owner account is created. The script writes `.env` with mode 0600; keep it out of backups shared with users. It also creates the secret store key at `keys/secrets.kek` in the stack directory (mode 600, owned by UID 10001) and records it as `STUDIO_SECRETS_KEY_FILE`; Compose mounts it read-only into the API as `Secrets__KeyFile`. Set `STUDIO_SECRETS_KEY_FILE` to an absolute path before setup to place the key elsewhere, outside the data directory. Copy the key to a safe place separate from the data backups (see [Backup and restore](#backup-and-restore)).
 3. For a Cloudflare-proxied hostname, run setup with `--cloudflare` and configure [Cloudflare zone-level Authenticated Origin Pulls](https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pull/set-up/zone-level/) with a leaf client certificate issued by an account-specific private CA. Upload that leaf certificate and its private key to Cloudflare, enable zone-level Authenticated Origin Pulls, and place exactly one issuing CA certificate at `$STUDIO_DATA_DIR/origin-pull/ca.pem` with mode 644 so the edge can read it. Do not use the shared global origin-pull certificate: it also authenticates other Cloudflare customers. Caddy requires and verifies this client certificate. Use Cloudflare Full (strict) mode. For a private LAN or VPN installation, run setup with `--private`. This writes `STUDIO_CADDYFILE=./Caddyfile.private`, `STUDIO_PUBLIC_CLOUDFLARE_EDGE=false`, and `STUDIO_RESTART_POLICY=unless-stopped` to `.env` so Docker restarts the stack after reboot. For an existing private install, set those three values in `.env` and recreate the containers. Trust the internal Caddy root at `$STUDIO_DATA_DIR/caddy-data/caddy/pki/authorities/local/root.crt` on each browser machine. Private clients can then sign in; the API still logs a private login address and reports `/healthz` unhealthy so operators can inspect the proxy chain. The container healthcheck uses the local `/healthz/container` probe and remains healthy during this warning.
