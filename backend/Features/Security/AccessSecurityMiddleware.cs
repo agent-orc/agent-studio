@@ -241,6 +241,8 @@ public sealed class AccessSecurityMiddleware
         context.Items["ClientId"] = serviceAccount.ActorId;
         var parameterDigest = await ParameterDigestAsync(context.Request, path);
         context.Items[ParameterDigestItem] = parameterDigest;
+        var breakGlass = serviceAccount.Operator is { } emergencyActor
+            ? _store.ActiveBreakGlassWindow(emergencyActor.SessionId) : null;
         using var operatorScope = serviceAccount.Operator is { } operatorActor ? OperatorActorScope.Enter(operatorActor) : null;
         var faulted = false;
         try
@@ -257,6 +259,10 @@ public sealed class AccessSecurityMiddleware
             var status = faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode;
             _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path, status,
                 AuditTarget(context, path), parameterDigest.Value, context.Items[OperatorPolicyItem] as OperatorPolicyDecision);
+            if (breakGlass is not null)
+                _store.AppendBreakGlassRequestAudit(breakGlass, serviceAccount.ActorId,
+                    context.Request.Method + " " + path, status < 400 ? "ok" : "refused",
+                    AuditTarget(context, path), parameterDigest.Value, status);
             // SM-5: the result of a request an approval admitted is recorded against that approval.
             if (context.Items[OperatorApprovalItem] is string approvalId) _store.RecordOperatorApprovalResult(approvalId, status);
         }
@@ -624,14 +630,18 @@ public sealed class AccessSecurityMiddleware
         // refuses to every operator session (access administration, the Task
         // Server plane) ends here and never becomes an approval request.
         OperatorOperation? operation = null;
+        var breakGlass = account.Operator is { } emergencyActor
+            ? _store.ActiveBreakGlassWindow(emergencyActor.SessionId) : null;
         if (account.Operator is not null)
         {
             operation = await OperatorRequestClassifier.ClassifyAsync(context, IsSafe(context.Request.Method, path),
                 context.RequestServices?.GetService<IOperatorGateEvidence>(), OperatorEnvironmentKind,
                 key => RouteValue(context, path, context.GetEndpoint(), key));
-            var gate = OperatorPolicy.TierGate(operation);
-            var awaitsApproval = operation is { Tier: OperatorTier.T2 } && !IsTokenDeniedRoute(path);
+            var gate = breakGlass is null || operation is null ? OperatorPolicy.TierGate(operation) : null;
+            var awaitsApproval = breakGlass is null && operation is { Tier: OperatorTier.T2 } && !IsTokenDeniedRoute(path);
             if (gate is not null && !awaitsApproval) context.Items[OperatorPolicyItem] = gate;
+            if (breakGlass is not null && operation is not null)
+                context.Items[OperatorPolicyItem] = OperatorPolicyDecision.Admit(operation);
             if (gate is { Admitted: false } && !awaitsApproval)
             {
                 await Reject(context, 403, gate.Reason!, gate.Message, policy: gate);
@@ -730,7 +740,7 @@ public sealed class AccessSecurityMiddleware
             Id = account.ActorId, UserId = account.ActorId, TokenHash = string.Empty, CsrfHash = string.Empty,
             CreatedAt = now, LastSeenAt = now, ExpiresAt = now, AbsoluteExpiresAt = now,
         };
-        if (operation is { Tier: OperatorTier.T1 })
+        if (breakGlass is null && operation is { Tier: OperatorTier.T1 })
         {
             var granted = _store.AdmitOperatorGrant(account.AccountId, operation,
                 OperatorRequestClassifier.GrantTarget(operation, target, key => RouteValue(context, path, context.GetEndpoint(), key)),
@@ -742,7 +752,8 @@ public sealed class AccessSecurityMiddleware
                 return;
             }
         }
-        if (operation is { Tier: OperatorTier.T2 } && !await AdmitOperatorApprovalAsync(context, account, operation, path)) return;
+        if (breakGlass is null && operation is { Tier: OperatorTier.T2 }
+            && !await AdmitOperatorApprovalAsync(context, account, operation, path)) return;
         context.Items[HumanPrincipalItem] = new HumanPrincipal(user, session);
         context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
         await _next(context);

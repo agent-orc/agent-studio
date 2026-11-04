@@ -101,6 +101,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | AuditSinkForwarder | always | infra | Authority host. Copies control plane audit entries to the configured off-host sink, records the forwarded position, and alerts when the sink stops accepting entries (security model SM-1). Idle without a sink. Makes no transition decision. |
 | ControlPlaneAuditVerifier | always | report | Authority host. Recomputes the control plane audit chain, compares it with the sink, and raises an acute alert on a change, gap, or mismatch (security model SM-1). Makes no transition decision. |
 | OperatorKillSwitchService | always | infra | Authority host. Holds the control plane lock the out-of-band kill switch checks, applies its latch, retries the Operations Server revocation of operator principals, sends pending Owner notices, and runs the scheduled kill switch drill (security model SM-2). Makes no transition decision. |
+| BreakGlassWindowService | always | apply-recover | Authority host. Closes expired break-glass windows, retries opening alerts, and creates one Human review card per closed window after control-plane recovery (security model SM-7). Makes no transition decision. |
 | OperatorApprovalNotifier | always | report | Authority host. Sends the operator-feed notice and the optional push link for a new Owner approval request (security model SM-5). Carries no decision route; makes no transition decision. |
 | HostReleaseDriftWatchdog | !PD | report | Authority host |
 | AutoReviewQueueStagnationWatchdog | !PD | report | Authority host |

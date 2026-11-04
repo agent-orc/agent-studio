@@ -23,7 +23,8 @@ public sealed class HostCertificateAuthority(IConfiguration configuration, IHttp
     private string StateDirectory => configuration["HostCertificates:StateDirectory"]
         ?? throw new InvalidOperationException("Host certificate state is not configured.");
 
-    public async Task<HostCertificateReceipt> IssueAsync(string hostId, string actor, string publicKey, CancellationToken ct)
+    public async Task<HostCertificateReceipt> IssueAsync(string hostId, string actor, string publicKey, CancellationToken ct,
+        DateTimeOffset? notAfter = null)
     {
         if (!ValidHostId(hostId) || !ValidActor(actor) || publicKey is null || !ValidPublicKey(publicKey.Trim()))
             throw new InvalidDataException("Host certificate request is invalid.");
@@ -42,12 +43,16 @@ public sealed class HostCertificateAuthority(IConfiguration configuration, IHttp
             File.WriteAllText(serialPath, serial.ToString());
             var keyPath = Path.Combine(StateDirectory, id + ".pub");
             var certificatePath = Path.Combine(StateDirectory, id + "-cert.pub");
-            var expires = issued.AddMinutes(59);
+            var expires = notAfter is { } limit && limit < issued.AddMinutes(59) ? limit : issued.AddMinutes(59);
+            if (expires <= issued) throw new InvalidDataException("Host certificate window has ended.");
+            static string UtcCertificateTime(DateTimeOffset value) =>
+                value.UtcDateTime.ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture) + "Z";
+            var validity = UtcCertificateTime(issued.AddMinutes(-1)) + ":" + UtcCertificateTime(expires);
             try
             {
                 await File.WriteAllTextAsync(keyPath, publicKey.Trim() + "\n", ct);
                 await RunKeygenAsync(["-q", "-s", CaFile, "-I", id, "-z", serial.ToString(), "-n", Principal,
-                    "-V", "-1m:+59m", "-O", "clear", "-O", "force-command=" + ForcedCommand, keyPath], ct);
+                    "-V", validity, "-O", "clear", "-O", "force-command=" + ForcedCommand, keyPath], ct);
                 var certificate = await File.ReadAllTextAsync(certificatePath, ct);
                 var receipt = new HostCertificateReceipt(id, serial, hostId, actor, certificate, issued, expires);
                 await AppendReceiptAsync(receipt, ct);

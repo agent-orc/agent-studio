@@ -33,6 +33,18 @@ if (args is [AgentStudio.Security.OperatorKillSwitchCommand.Flag, .. var killSwi
     return;
 }
 
+if (args is [AgentStudio.Security.BreakGlassWindowCommand.Flag, .. var breakGlassArgs])
+{
+    Environment.ExitCode = await AgentStudio.Security.BreakGlassWindowCommand.RunAsync(breakGlassArgs, Console.In, Console.Out);
+    return;
+}
+
+if (args is [AgentStudio.Security.BreakGlassWindowCommand.RecordFlag, .. var breakGlassRecordArgs])
+{
+    Environment.ExitCode = await AgentStudio.Security.BreakGlassWindowCommand.RecordAsync(breakGlassRecordArgs, Console.In, Console.Out);
+    return;
+}
+
 if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
 {
     Environment.ExitCode = await DurableLocalCliProcess.RunWorkerAsync(durableLocalCliSpec);
@@ -406,6 +418,7 @@ builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
 builder.Services.AddControlPlaneAudit();
 builder.Services.AddOperatorKillSwitch();
+builder.Services.AddBreakGlassWindows();
 builder.Services.AddHostedService<AgentStudio.Diagnostics.LastSeenPersistenceService>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
 builder.Services.AddHttpClient("secret-external", client => client.Timeout = TimeSpan.FromSeconds(10))

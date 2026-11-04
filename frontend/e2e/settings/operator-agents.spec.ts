@@ -125,6 +125,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof operato
   await page.route('**/api/auth/runners', route => json(route, []));
   await stubGrantRoutes(page);
   await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-approvals'), route => json(route, []));
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/break-glass'), route => json(route, []));
   return stubOperatorRoutes(page, operatorState());
 }
 
@@ -590,4 +591,50 @@ test('owner reviews a T2 request with its digest and source, and approves or rej
   await expect(section.getByTestId('access-approval-linked')).toContainText('rejected: Change secrets');
   expect(approvals.stepUps).toHaveLength(2);
   await shoot(page, 'section[aria-labelledby="access-approvals-title"]', 'operator-approvals-decided');
+});
+
+test('owner opens and closes a break-glass window with two fresh factor checks', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1400 });
+  await stubNetworkedOwner(page);
+  const windows: Array<Record<string, unknown>> = [];
+  const checks: unknown[] = [];
+  const sealed = ['bg', Math.random().toString(36).slice(2), Math.random().toString(36).slice(2)].join('.');
+  await page.route(url => url.pathname === '/api/auth/step-up', route => {
+    checks.push(route.request().postDataJSON());
+    return json(route, {});
+  });
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/break-glass'), route => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'GET') return json(route, windows);
+    if (path.endsWith('/credential')) return json(route, { credential: sealed });
+    if (path.endsWith('/close')) {
+      windows[0].closedAt = '2026-11-04T09:30:00Z';
+      windows[0].reviewCardId = 'AGT-9000';
+      return json(route, windows[0]);
+    }
+    const body = request.postDataJSON() as { credential: string; sessionIds: string[]; project: string; lifetimeHours: number };
+    expect(body).toEqual({ credential: sealed, sessionIds: ['ses_morning'], project: 'PROJ-001', lifetimeHours: 2 });
+    windows.push({ id: 'bgw_demo', sessionIds: body.sessionIds, project: body.project,
+      openedAt: '2026-11-04T09:00:00Z', expiresAt: '2026-11-04T11:00:00Z', closedAt: null, reviewCardId: null });
+    return json(route, windows[0]);
+  });
+  const access = await openAccess(page);
+  const section = access.getByTestId('access-break-glass');
+  await expect(section).toBeVisible();
+  const code = String(100_000 + Math.floor(Math.random() * 899_999));
+  await section.getByTestId('break-glass-code').fill(code);
+  await section.getByTestId('break-glass-issue').click();
+  await expect(section.getByTestId('break-glass-issued')).toContainText(sealed);
+  await section.getByTestId('break-glass-credential').fill(sealed);
+  await section.getByTestId('break-glass-sessions').fill('ses_morning');
+  await section.getByTestId('break-glass-project').fill('PROJ-001');
+  await section.getByTestId('break-glass-code').fill(code);
+  await section.getByTestId('break-glass-open').click();
+  await expect(section.getByTestId('break-glass-windows')).toContainText('ses_morning');
+  expect(checks).toEqual([{ code }, { code }]);
+  await shoot(page, 'section[aria-labelledby="access-break-glass-title"]', 'break-glass-open');
+  await section.getByRole('button', { name: 'Close' }).click();
+  await expect(section.getByTestId('break-glass-windows')).toContainText('AGT-9000');
+  await shoot(page, 'section[aria-labelledby="access-break-glass-title"]', 'break-glass-closed');
 });

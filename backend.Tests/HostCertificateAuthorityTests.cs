@@ -15,6 +15,53 @@ public sealed class HostCertificateAuthorityTests
 {
     [Fact]
     [Trait("Category", "MachineBound")]
+    public async Task Break_glass_certificate_expires_at_the_window_end()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "window-ca-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var ca = Path.Combine(root, "ca");
+            var user = Path.Combine(root, "user");
+            Run("-q", "-t", "ed25519", "-N", "", "-f", ca);
+            Run("-q", "-t", "ed25519", "-N", "", "-f", user);
+            var tokenFile = Path.Combine(root, "token");
+            File.WriteAllText(tokenFile, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["HostCertificates:CaPrivateKeyFile"] = ca,
+                ["HostCertificates:StateDirectory"] = Path.Combine(root, "state"),
+                ["Operations:Url"] = "https://operations.example.test",
+                ["Operations:ServiceTokenFile"] = tokenFile,
+            }).Build();
+            var now = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
+            var clock = new FakeTimeProvider(now);
+            var end = now.AddMinutes(2);
+            var authority = new HostCertificateAuthority(configuration, new ClientFactory(new RevocationReceiver()), clock);
+            var receipt = await authority.IssueAsync("sample-host", "operator-agent:sample/session:sample",
+                File.ReadAllText(user + ".pub"), default, end);
+            Assert.Equal(end, receipt.ExpiresAt);
+
+            var cert = Path.Combine(root, "issued-cert.pub");
+            File.WriteAllText(cert, receipt.Certificate);
+            var inspection = Run("-L", "-f", cert);
+            var validity = Regex.Match(inspection, @"Valid: from (\S+) to (\S+)");
+            Assert.True(validity.Success, inspection);
+            var actualEnd = DateTimeOffset.Parse(validity.Groups[2].Value,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeLocal);
+            Assert.True(actualEnd <= end, inspection);
+            Assert.True(actualEnd > now, inspection);
+            Assert.True(actualEnd - DateTimeOffset.Parse(validity.Groups[1].Value,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeLocal) <= TimeSpan.FromMinutes(3), inspection);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task Issued_certificate_expires_within_an_hour_and_revocation_is_published_as_a_host_krl()
     {
         if (!OperatingSystem.IsLinux()) return;
