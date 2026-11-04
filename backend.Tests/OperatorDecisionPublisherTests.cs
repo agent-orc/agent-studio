@@ -24,7 +24,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
     private readonly FakeTimeProvider _clock = new(DateTimeOffset.Parse("2026-11-04T09:00:00Z"));
     private readonly OperatorDecisionOptions _options = new(
         TimeSpan.FromSeconds(5), TimeSpan.FromHours(24), TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(15));
-    private volatile TaskInfo[] _tasks = [];
+    private volatile TaskInfo[]? _tasks = [];
 
     [Fact]
     public async Task Each_event_type_follows_its_fact_within_ten_seconds_and_only_once()
@@ -127,9 +127,24 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
 
         Assert.Equal(2, (await publisher.SweepOnceAsync()).Count);
         flaky.Fail = true;
-        _tasks = [.. _tasks, Card("A-2", TaskStates.HumanReview, _clock.GetUtcNow().UtcDateTime)];
+        _tasks = [.. _tasks!, Card("A-2", TaskStates.HumanReview, _clock.GetUtcNow().UtcDateTime)];
         Assert.Equal([OperatorDecisionTypes.HumanReviewReady], (await publisher.SweepOnceAsync()).Select(item => item.Type));
         flaky.Fail = false;
+        Assert.Empty(await publisher.SweepOnceAsync());
+    }
+
+    [Fact]
+    public async Task An_unpublished_task_index_keeps_the_published_card_facts_and_reads_no_empty_board()
+    {
+        _tasks = [Card("A-1", TaskStates.Escalated, _clock.GetUtcNow().UtcDateTime)];
+        var publisher = Publisher(new OperatorDecisionLog(null, _options.Retention, _clock));
+        Assert.Single(await publisher.SweepOnceAsync());
+
+        // A restarted index has no publication yet: the sweep reads nothing
+        // and must not forget A-1, or the next publication repeats it.
+        _tasks = null;
+        Assert.Empty(await publisher.SweepOnceAsync());
+        _tasks = [Card("A-1", TaskStates.Escalated, _clock.GetUtcNow().UtcDateTime)];
         Assert.Empty(await publisher.SweepOnceAsync());
     }
 

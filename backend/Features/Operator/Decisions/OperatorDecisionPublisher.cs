@@ -52,8 +52,12 @@ public sealed class OperatorDecisionPublisher : BackgroundService
             {
                 try
                 {
-                    facts.AddRange(source.Collect(now));
-                    observed.UnionWith(source.Types);
+                    if (source.Collect(now) is { } collected)
+                    {
+                        facts.AddRange(collected);
+                        observed.UnionWith(source.Types);
+                    }
+                    else failed.UnionWith(source.Types);
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {

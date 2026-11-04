@@ -11,12 +11,18 @@ public interface IOperatorDecisionFactSource
     /// <summary>The event types this source reports; a failed read keeps their published keys.</summary>
     IReadOnlyList<string> Types { get; }
 
-    IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc);
+    /// <summary>The current facts, or null while the source has nothing to read yet; null keeps their published keys.</summary>
+    IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc);
 }
 
-/// <summary>Lanes, decision cards, quota waits and fallbacks from the cached task snapshot.</summary>
+/// <summary>
+/// Lanes, decision cards, quota waits and fallbacks from the published task
+/// index. It reads the published generation only: a sweep never refreshes the
+/// index, never starts a scan or a git process, and before the first
+/// publication it reports nothing instead of an empty board.
+/// </summary>
 public sealed class OperatorTaskFactSource(
-    Func<IReadOnlyList<TaskInfo>> tasks,
+    Func<IReadOnlyList<TaskInfo>?> tasks,
     Func<TaskInfo, QuotaFallbackStatus?> fallbackOf) : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } =
@@ -26,8 +32,8 @@ public sealed class OperatorTaskFactSource(
         OperatorDecisionTypes.QuotaFallbackActive,
     ];
 
-    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
-        => OperatorDecisionFacts.FromTasks(tasks(), fallbackOf);
+    public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
+        => tasks() is { } published ? OperatorDecisionFacts.FromTasks(published, fallbackOf) : null;
 }
 
 /// <summary>Open watcher stall cases (the watcher's own detector decides them).</summary>
@@ -36,7 +42,7 @@ public sealed class OperatorWatcherCaseFactSource(WatcherCaseStore cases, string
     public IReadOnlyList<string> Types { get; } =
         [OperatorDecisionTypes.BackendStalled, OperatorDecisionTypes.ProgressIdleWithReady];
 
-    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+    public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
         => string.IsNullOrWhiteSpace(workspaceRoot) ? [] : OperatorDecisionFacts.FromWatcherCases(cases.All(workspaceRoot));
 }
 
@@ -50,7 +56,7 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store) : IOperato
 
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.BatchRed, OperatorDecisionTypes.BatchIsolating];
 
-    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+    public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
     {
         var batches = new List<(BatchGateManifest, BatchGateState?)>();
         foreach (var folder in store.ListManifestFolders())
@@ -87,7 +93,7 @@ public sealed class OperatorPendingPushFactSource(
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.PushPendingOverdue];
 
-    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+    public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
         => reservations.ProjectsWithPending()
             .SelectMany(project => OperatorDecisionFacts.FromPendingPushes(
                 project, reservations.GetWaits(project), cardKeyOf))
@@ -99,6 +105,6 @@ public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.QuotaExhausted];
 
-    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+    public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
         => OperatorDecisionFacts.FromProviderLimits(limits.Active(nowUtc));
 }

@@ -1331,7 +1331,7 @@ builder.Services.AddSingleton(sp => new WatcherLeaseService(
     sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<TimeProvider>(),
     sp.GetService<ILogger<WatcherLeaseService>>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorTaskFactSource(
-    () => sp.GetRequiredService<AgentStudio.TaskAccess.ITaskAccess>().Snapshot().Jobs,
+    () => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live,
     task => sp.GetRequiredService<TaskRunnerService>().GetQuotaFallbackForJob(task.Id, task.ProjectName)
         ?? task.QuotaFallback));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorWatcherCaseFactSource(
