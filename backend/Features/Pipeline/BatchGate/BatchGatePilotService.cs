@@ -684,9 +684,18 @@ public sealed partial class BatchGatePilotService
                     continue;
                 }
                 if (formed.Manifest is null) continue;
+                var formationRisks = _snapshots.Cached(first.Subject.Project, current);
                 formed = formed with { Manifest = formed.Manifest with
                 {
                     FormationReason = WaitingFormationReason(formed.Manifest, options),
+                    PlanningCards = formed.Manifest.Members.Select(member =>
+                    {
+                        return formationRisks.TryGetValue(member.TaskKey, out var risk)
+                            ? new BatchPlanCard(member.TaskKey, member.ReviewCompletedAtUtc,
+                                risk.Risk, risk.Paths, [])
+                            : new BatchPlanCard(member.TaskKey, member.ReviewCompletedAtUtc,
+                                BatchGateRiskModel.Unknown(false, false, false), [], []);
+                    }).ToArray(),
                 } };
                 _store.CloseManifest(formed.Manifest);
                 if (options.Planner == "look-ahead"
@@ -1828,6 +1837,15 @@ public sealed partial class BatchGatePilotService
             ClosedAtUtc = _time.GetUtcNow(),
             Members = members,
             ParentBatchId = manifest.BatchId,
+            PlanningCards = members.Select(member =>
+            {
+                var risk = _snapshots.Cached(member.Project, [pending[member.TaskKey]]);
+                return risk.TryGetValue(member.TaskKey, out var cached)
+                    ? new BatchPlanCard(member.TaskKey, member.ReviewCompletedAtUtc,
+                        cached.Risk, cached.Paths, [])
+                    : new BatchPlanCard(member.TaskKey, member.ReviewCompletedAtUtc,
+                        BatchGateRiskModel.UnknownDiff, [], []);
+            }).ToArray(),
         };
         _store.CloseManifest(successor);
         foreach (var member in members)
@@ -1863,7 +1881,7 @@ public sealed partial class BatchGatePilotService
                     Guid.NewGuid().ToString("N"), failedManifest.Scope,
                     failedManifest.BaseSha, digest, _time.GetUtcNow(),
                     subset.ToArray(), [], subset.Select(item => item.TaskKey).ToArray(),
-                    failedManifest.BatchId);
+                    failedManifest.BatchId, Diagnostic: true);
                 _store.CloseManifest(diagnostic);
                 var candidate = new BatchGateAssembler(_store, _git, repo, _time)
                     .Assemble(diagnostic.BatchId, lease.Fence);
@@ -1936,6 +1954,19 @@ public sealed partial class BatchGatePilotService
                     .ConfigureAwait(false);
                 return _store.LatestState(prepared.Manifest.BatchId).Phase == BatchPhase.Published;
             }).ConfigureAwait(false);
+        var diagnosticIds = _store.ListManifests()
+            .Where(manifest => manifest.ParentBatchId == failedManifest.BatchId
+                && manifest.Diagnostic)
+            .Select(manifest => manifest.BatchId).ToHashSet(StringComparer.Ordinal);
+        var isolationExecutions = _store.ListExecutions(failedManifest.Scope.Project)
+            .Where(execution => execution.BatchId is { } id && diagnosticIds.Contains(id))
+            .ToArray();
+        _store.RecordIsolationCost(new BatchIsolationCostFact(failedManifest.BatchId,
+            isolationExecutions.Length,
+            isolationExecutions.Sum(execution => execution.DurationMs is { } duration
+                ? duration / 60000d
+                : Math.Max(0, (execution.CompletedAtUtc - execution.StartedAtUtc).TotalMinutes)),
+            _time.GetUtcNow()));
         foreach (var member in ordered.Where(member =>
                      !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
         {
@@ -2174,6 +2205,23 @@ public sealed partial class BatchGatePilotService
             run.EvidencePath, _time.GetUtcNow(),
             baseAnswer?.Source, baseAnswer?.Minutes);
         _store.RecordVerdict(verdict);
+        var manifest = _store.ReadManifest(run.BatchId);
+        if (!manifest.Diagnostic && manifest.Members.Count > 0)
+        {
+            var cards = manifest.PlanningCards ?? [];
+            var areas = cards.SelectMany(card => card.Paths)
+                .Select(path => path.Split('/', 2)[0].ToLowerInvariant())
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            var overlap = cards.Count == 0 || cards.Any(card => card.Paths.Count == 0)
+                ? "unknown" : cards.SelectMany(card => card.Paths)
+                    .GroupBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .Any(group => group.Count() > 1) ? "shared-path" : "disjoint";
+            _store.RecordFirstCandidate(new BatchFirstCandidateFact(run.BatchId,
+                manifest.Scope.Project, verdict.CompletedAtUtc, manifest.Members.Count,
+                cards.Count == 0 ? BatchGateRiskModel.UnknownDiff : cards.Max(card => card.Risk),
+                areas, overlap, verdict.Outcome == "fail",
+                verdict.Classification));
+        }
         return verdict;
     }
 
