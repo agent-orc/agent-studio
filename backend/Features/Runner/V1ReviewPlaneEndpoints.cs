@@ -1268,7 +1268,11 @@ public static class V1ReviewPlaneEndpoints
                         fixRoundBase);
                 }
             }
-            var preparedHash = RemoteReviewSettlementJournal.Hash(request);
+            // A format-3 replay restores the bounded stored report above. Its
+            // accepted hash still identifies the full report that was settled.
+            var preparedHash = acceptedReplay && priorReport is { Version: >= RemoteReviewSettlementJournal.CurrentVersion }
+                ? RemoteReviewSettlementJournal.ReportHash(priorReport)
+                : RemoteReviewSettlementJournal.Hash(request);
             // Only an accepted report owns a journal; a replayed rejected key is
             // answered by the authority like any other unaccepted report.
             var replay = currentReview.Reports.Any(report => report.AuthorityStatus == AttemptWriteStatus.Accepted
@@ -1284,9 +1288,7 @@ public static class V1ReviewPlaneEndpoints
                         replayJournal.Reason ?? "The settled report has no recoverable journal or evidence."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
                 if (replayJournal.Entry is { } prior
-                    && (prior.Version >= RemoteReviewSettlementJournal.CurrentVersion
-                        ? RemoteReviewSettlementJournal.Hash(prior.Report)
-                        : RemoteReviewSettlementJournal.ReportHash(prior)) != preparedHash)
+                    && RemoteReviewSettlementJournal.ReportHash(prior) != preparedHash)
                     return Results.Conflict(new Contract.ApiError("idempotency-conflict",
                         "The review report key is bound to a different payload."));
             }
