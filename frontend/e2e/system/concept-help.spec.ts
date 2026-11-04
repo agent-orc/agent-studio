@@ -6,11 +6,10 @@ import { api } from '../helpers/api';
 /**
  * In-product concept docs: the small "i" trigger next to a panel title
  * opens a popover with a short paragraph plus a "Learn more" link to the
- * matching doc under docs/. The component is wired into four panels:
+ * matching doc under docs/. The component is wired into three panels:
  * the global orchestrator card (concept = orchestrator), the project
- * supervisor section (concept = supervisor), the project security panel
- * (concept = audits-and-checks), and the CLI usage detail modal
- * (concept = probes).
+ * supervisor section (concept = supervisor), and the project security panel
+ * (concept = audits-and-checks).
  *
  * The spec verifies that each trigger renders, opens the popover with a
  * non-empty body and a Learn-more link pointing to the expected docs path,
@@ -123,22 +122,6 @@ test('audits-and-checks concept-help on the project security panel', async ({ pa
   await assertConceptHelp(page, 'audits-and-checks', 'docs/operations/security/overview.md');
   await page.screenshot({
     path: `${SCREENSHOT_DIR}/03-audits-and-checks.png`,
-    fullPage: true,
-  });
-});
-
-test('probes concept-help on the CLI usage detail panel', async ({ page }) => {
-  await page.goto('/');
-  // Clicking the status-bar quota strip opens the CLI-Management panel,
-  // whose embedded usage detail carries the probes concept-help by title.
-  const trigger = page.getByTestId('usage-hover-panel');
-  await expect(trigger).toBeVisible({ timeout: 10_000 });
-  await trigger.click();
-  await expect(page.getByTestId('cli-admin-panel')).toBeVisible({ timeout: 5_000 });
-  await expect(page.getByTestId('cli-usage-detail')).toBeVisible();
-  await assertConceptHelp(page, 'probes', 'docs/system/cli/skills/cli-overview.md');
-  await page.screenshot({
-    path: `${SCREENSHOT_DIR}/04-probes.png`,
     fullPage: true,
   });
 });

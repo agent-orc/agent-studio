@@ -116,6 +116,33 @@ public sealed class RemoteReviewPlanBuilder
            + "build, test and lint would compare this SHA with itself. "
            + "The integration lane verifies the contained tree before completion (AGT-3002).";
 
+    private string? InventoryDeferralReason(string repositoryPath, string? integrationRef,
+        string? resultSha, IReadOnlyList<string> changedPaths)
+    {
+        foreach (var path in changedPaths)
+        {
+            if (path is ".agent-studio/project.yml" or "frontend/package.json"
+                or "frontend/angular.json" or "backend/OrchestratorApi.csproj")
+                return $"Verify command inventory changed: {path}.";
+            if (path != "backend.Tests/OrchestratorApi.Tests.csproj") continue;
+            if (_git is null || string.IsNullOrWhiteSpace(integrationRef)
+                || !ReviewSubjectStore.IsValidResultSha(resultSha))
+                return $"Cannot classify verify command inventory change: {path}.";
+            var baseSha = _git.GetMergeBase(repositoryPath, integrationRef, resultSha);
+            if (baseSha is null)
+                return $"Cannot classify verify command inventory change: {path}.";
+            var before = _git.ReadFilesAtRevision(repositoryPath, baseSha, [path]);
+            var after = _git.ReadFilesAtRevision(repositoryPath, resultSha!, [path]);
+            if (before.Failure is not null || after.Failure is not null
+                || !before.Files.TryGetValue(path, out var oldContent)
+                || !after.Files.TryGetValue(path, out var newContent))
+                return $"Cannot classify verify command inventory change: {path}.";
+            if (!ReviewInventoryChangePolicy.IsContentOnlyTestProjectChange(oldContent, newContent))
+                return $"Test project verify command inventory changed beyond copy content items: {path}.";
+        }
+        return null;
+    }
+
     /// <param name="changedFiles">
     /// The delivery's paths against its merge base, when known. A diff that
     /// can change the Compose stack adds the Compose-render steps, whose host
@@ -221,19 +248,17 @@ public sealed class RemoteReviewPlanBuilder
         var noChange = IsNoChangeResult(changedPaths, resultSha, resultRef);
         string? testLevel = null;
         string? selectionDigest = null;
+        string? deferralDisabledReason = null;
         if (deferBuildTest)
         {
             var options = projectSettings!.BatchGate;
             var selectionRepo = repositoryPath ?? string.Empty;
-            // Selection reads the project inventory from the existing checkout.
-            // The built-in Agent Studio verifier reads these fixed command
-            // inventory files. A delivery that changes that inventory needs its own full gate;
-            // materializing a 7,000-file result worktree for every queued plan
-            // would hold review admission behind filesystem work.
-            if (changedPaths!.Any(path => path is ".agent-studio/project.yml"
-                    or "frontend/package.json" or "frontend/angular.json"
-                    or "backend/OrchestratorApi.csproj"
-                    or "backend.Tests/OrchestratorApi.Tests.csproj"))
+            // Selection reads the existing checkout's command inventory. A
+            // test-project content item cannot change the verify commands;
+            // all other inventory edits still require the per-card gate.
+            deferralDisabledReason = InventoryDeferralReason(selectionRepo,
+                integrationRef, resultSha, changedPaths!);
+            if (deferralDisabledReason is not null)
                 deferBuildTest = false;
             if (deferBuildTest)
             {
@@ -257,6 +282,11 @@ public sealed class RemoteReviewPlanBuilder
                             && !selected.Any(command => command.Kind == VerifyCommandKind.Test)))
                     {
                         deferBuildTest = false;
+                        deferralDisabledReason = selection.Audit.FullSuiteRequired
+                            ? "Test selection requires the full suite."
+                            : selection.Audit.UnmappedSourceDirectories.Count > 0
+                                ? "Test selection found source directories without a test mapping."
+                                : "Test selection found no class-filtered test command for this work package.";
                     }
                     else
                     {
@@ -470,7 +500,10 @@ public sealed class RemoteReviewPlanBuilder
         var hasModelReview = commands.Any(command =>
             Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind));
         if (deferBuildTest && !hasModelReview)
+        {
             commands = ordinaryToolPlan.Commands.ToList();
+            deferralDisabledReason = "No model review is planned for this delivery.";
+        }
         if (noChange)
         {
             if (commands.Count == 0)
@@ -488,6 +521,8 @@ public sealed class RemoteReviewPlanBuilder
                 : deferBuildTest && !hasModelReview
                     ? ordinaryToolPlan.Preparation : toolPlan.Preparation,
             BuildTestDeferredToBatch = deferBuildTest && hasModelReview,
+            BuildTestDeferralDisabledReason = !deferBuildTest || !hasModelReview
+                ? deferralDisabledReason : null,
             TestLevel = (deferBuildTest && hasModelReview) || perCardApplied ? testLevel : null,
             TestSelectionDigest = (deferBuildTest && hasModelReview) || perCardApplied ? selectionDigest : null,
             RequiredAspects = commands
@@ -664,6 +699,10 @@ public sealed class RemoteReviewPlanBuilder
         var matching = rules.LastOrDefault(rule => values.TryGetValue(rule.FactId, out var value)
             && (rule.WarningThreshold is null
                 || int.TryParse(rule.WarningThreshold, out var threshold) && value >= threshold));
+        var typedSettings = PipelineTypeSettings.ForTask(settings, task);
+        var deepSetting = typedSettings?.PipelineSteps?.GetValueOrDefault("post-deep-review");
+        var selectedDeepModel = matching?.Model ?? deepSetting?.Model;
+        var selectedDeepThinking = matching?.ThinkingLevel ?? deepSetting?.ThinkingLevel;
         var ruleSelection = matching is null ? (bool?)null
             : matching.CandidateActions.Contains(Contract.DecisionActionKinds.Prepare, StringComparer.Ordinal);
         var critical = _routing?.CorrectnessFloor(task.TaskType, task.Title, taskBody)?.Id == "sol-xhigh"
@@ -678,17 +717,22 @@ public sealed class RemoteReviewPlanBuilder
             settings?.MaxDeliveredReviewRounds ?? ReviewRoundBudgetPolicy.DefaultMaximumRounds,
             gateFailures, "unknown");
         var preliminary = MonolithTransitionAdapter.DeepReview(preliminaryFacts, DeepReviewPolicy.Shadow,
-            ruleVersion, ruleSelection, matching?.Model, matching?.ThinkingLevel);
+            ruleVersion, ruleSelection, selectedDeepModel, selectedDeepThinking);
         var reviewCli = preliminary.Model.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)
             ? "claude" : "codex";
         var quota = _quota?.Plan(new QuotaAdmissionRequest(reviewCli, preliminary.Model,
             preliminary.ThinkingLevel, task.ProjectName, 0, "remote-deep-review-plan"));
-        var quotaState = quota is null ? "unknown" : !quota.ShouldLaunch ? "capped"
-            : quota.IsFallback ? "unavailable" : "available";
+        var operatorSwitch = _quota?.IsOperatorSwitchActive(reviewCli) == true;
+        var quotaState = DeepReviewQuotaState(quota, operatorSwitch);
         return MonolithTransitionAdapter.DeepReview(preliminaryFacts with { QuotaState = quotaState },
             _configuration["DeepReview:Mode"] ?? DeepReviewPolicy.Shadow,
-            ruleVersion, ruleSelection, matching?.Model, matching?.ThinkingLevel);
+            ruleVersion, ruleSelection, selectedDeepModel, selectedDeepThinking);
     }
+
+    internal static string DeepReviewQuotaState(QuotaAdmissionPlan? plan, bool operatorSwitch)
+        => plan is null ? "unknown" : operatorSwitch ? "available"
+            : !plan.ShouldLaunch ? "capped"
+            : plan.IsFallback ? "unavailable" : "available";
 
     /// <summary>
     /// Reads unchanged files from the checkout and the delivery's changed paths

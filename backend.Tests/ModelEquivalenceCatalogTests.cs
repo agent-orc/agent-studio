@@ -6,6 +6,16 @@ namespace AgentStudio.Tests;
 
 public sealed class ModelEquivalenceCatalogTests
 {
+    [Fact]
+    public void Sol_xhigh_has_the_D5_explicit_Opus_route()
+    {
+        var route = _catalogue.TryGetRoute(CliTypes.Codex, ModelIds.Gpt6Sol,
+            "xhigh", CliTypes.Claude);
+        Assert.NotNull(route);
+        Assert.Equal(ModelIds.ClaudeOpus5, route.ToModel);
+        Assert.Equal("xhigh", route.ToThinkingLevel);
+        Assert.True(_catalogue.SameCapabilityClass(ModelIds.Gpt6Sol, route.ToModel));
+    }
     private readonly ModelEquivalenceCatalog _catalogue = new(TokenTestServices.Pricing());
 
     [Fact]

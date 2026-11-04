@@ -104,7 +104,7 @@ test('create workspace via "+" button persists to registry and shows in settings
     // Open the Settings panel and verify the workspace row appears.
     // The new workspace sorts after the default (which has inline
     // project rows and can be tall), so scroll it into view first.
-    const settingsTab = page.getByTestId('studio-ab-settings');
+    const settingsTab = page.getByTestId('studio-titlebar-settings');
     await settingsTab.click();
     // AGT-2035: workspace management moved into the Workspaces section of the
     // consolidated Settings view.
@@ -120,7 +120,7 @@ test('create workspace via "+" button persists to registry and shows in settings
     // Reload and verify persistence survives a page refresh.
     await page.reload();
     await expect(page.getByTestId('app-root')).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId('studio-ab-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-workspaces').click({ timeout: 10_000 });
     const wsListAfter = page.getByTestId('settings-workspaces-list');
     await expect(wsListAfter).toBeVisible({ timeout: 5_000 });

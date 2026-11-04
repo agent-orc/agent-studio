@@ -1062,9 +1062,15 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>()
 builder.Services.AddSingleton<AgentStudio.Tokens.TokenAnalysisService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
     AgentStudio.Pipeline.RemoteRequiredLintScssRunner>();
-builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
-    AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter>(client =>
-        client.Timeout = TimeSpan.FromMinutes(5));
+builder.Services.AddHttpClient("quality-studio-analysis", client => client.Timeout = TimeSpan.FromMinutes(5));
+builder.Services.AddTransient<AgentStudio.Pipeline.IQualityStudioAnalysisCore>(sp =>
+    new AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("quality-studio-analysis"),
+        sp.GetRequiredService<IConfiguration>(),
+        sp.GetRequiredService<AgentStudio.QualityStudio.QualityStudioConnectionStore>(),
+        sp.GetRequiredService<AgentStudio.Secrets.ISecretProvider>(),
+        sp.GetRequiredService<ProjectRegistry>(), sp.GetRequiredService<ProjectSettingsService>(),
+        sp.GetRequiredService<ILogger<AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter>>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteGateTransport>();
@@ -1188,6 +1194,10 @@ builder.Services.AddHttpClient<AgentStudio.Registry.QualityStudioRegistrationSer
     client.Timeout = TimeSpan.FromSeconds(8));
 builder.Services.AddSingleton<AgentStudio.Registry.QualityStudioRegistrationReconciler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Registry.QualityStudioRegistrationReconciler>());
+builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityStudioConnectionStore>();
+builder.Services.AddHttpClient("quality-studio-integration", client => client.Timeout = TimeSpan.FromSeconds(3));
+builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityStudioRevokeOutbox>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.QualityStudio.QualityStudioRevokeOutbox>());
 builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
@@ -1458,6 +1468,7 @@ if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
 builder.Services.AddSingleton<CliQuotaCapsService>();
 builder.Services.AddSingleton<CliQuotaWaitPolicyService>();
 builder.Services.AddSingleton<CliFallbackPreferenceService>();
+builder.Services.AddSingleton<ModelSelectionEffectiveService>();
 builder.Services.AddSingleton<AgentStudio.Cli.IModelEquivalenceCatalog, AgentStudio.Cli.ModelEquivalenceCatalog>();
 builder.Services.AddSingleton<CliQuotaFallbackService>();
 builder.Services.AddSingleton<AgentStudio.Cli.QuotaAdmissionService>();

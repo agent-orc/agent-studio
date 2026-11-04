@@ -84,7 +84,9 @@ public static class QuotaAdmissionPlanner
         CliFallbackPreference? preference = null,
         Func<string, string?, bool>? modelAccepted = null,
         string? claimingHost = null,
-        Func<string, string?, bool>? fallbackModelAccepted = null)
+        Func<string, string?, bool>? fallbackModelAccepted = null,
+        bool sameClassOnly = false,
+        Func<string, bool>? fallbackProviderAllowed = null)
     {
         var cli = string.IsNullOrWhiteSpace(requestedCli)
             ? CliTypes.Claude
@@ -144,7 +146,14 @@ public static class QuotaAdmissionPlanner
 
         var preferFallback = preference?.Active == true;
         var route = fallback?.Resolve(cli, requestedModel, requestedThinking, Admission, preferFallback,
-            fallbackModelAccepted ?? modelAccepted);
+            fallbackModelAccepted ?? modelAccepted, sameClassOnly, fallbackProviderAllowed);
+
+        if (preferFallback && route?.IsFallback != true)
+            return new QuotaAdmissionPlan(QuotaAdmissionOutcome.Wait, cli,
+                route?.Model ?? requestedModel, route?.ThinkingLevel ?? requestedThinking, false,
+                $"waiting: operator switch cannot use {cli} and {route?.Reason ?? "no equivalent route is available"}",
+                preference?.ExpiresAt,
+                QuotaWindowProjection.WorstProjection(primarySnapshot, caps, nowUtc), projectionWarning);
 
         // 2) The router switched us to the fallback (primary capped or projected;
         //    a usable fallback exists). Documented model switch before start.

@@ -135,6 +135,10 @@ for name, (caddyfile, allow_direct, public_edge, restart_policy) in expected.ite
     data_dir = os.path.join(work, name, 'data')
     assert not key_file.startswith(data_dir + os.sep), (key_file, data_dir)
     assert int(api['mem_limit']) == 20 * 1024 ** 3, api.get('mem_limit')
+    # Agent CLI and build scratch files go to disk, not into the API memory limit.
+    assert mounts(api)['/tmp'] == os.path.join(data_dir, 'api-tmp'), api['volumes']
+    assert not api.get('tmpfs'), api.get('tmpfs')
+    assert os.stat(os.path.join(data_dir, 'api-tmp')).st_mode & 0o777 == 0o700
     for service_name, service in rendered['services'].items():
         hardened(service_name, service)
     assert frontend.get('read_only') is True and edge.get('read_only') is True, 'frontend and edge run read-only'

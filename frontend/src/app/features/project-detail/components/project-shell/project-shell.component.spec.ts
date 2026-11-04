@@ -69,6 +69,9 @@ describe('ProjectShellComponent rail IA', () => {
     http.expectOne('/api/projects/Demo%20Project/quality-studio').flush({
       connected: true, repositoryId: null, state: 'not-registered', reason: 'root-missing',
     });
+    http.expectOne('/api/integrations/quality-studio/status?project=Demo%20Project').flush({
+      state: 'not-registered', configured: true, owner: true, repositoryId: null,
+    });
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('[data-testid="quality-studio-reason"]')?.textContent)

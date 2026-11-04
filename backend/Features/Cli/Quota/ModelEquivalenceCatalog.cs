@@ -27,6 +27,7 @@ public interface IModelEquivalenceCatalog
     ModelEquivalenceRoute? TryGetRoute(
         string fromCliType, string? fromModel, string? fromThinkingLevel, string toCliType);
     IReadOnlyList<ModelEquivalenceRoute> Routes { get; }
+    bool SameCapabilityClass(string? fromModel, string? toModel);
 }
 
 /// <summary>
@@ -46,6 +47,19 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
     {
         _pricing = pricing;
         Routes = BuildRoutes();
+    }
+
+    public bool SameCapabilityClass(string? fromModel, string? toModel)
+    {
+        // D5: the routing registry treats Sol at xhigh and Opus at xhigh
+        // as the same review tier while Token Economy's reverse entry lags.
+        if (string.Equals(fromModel, ModelIds.Gpt6Sol, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(toModel, ModelIds.ClaudeOpus5, StringComparison.OrdinalIgnoreCase))
+            return true;
+        var source = string.IsNullOrWhiteSpace(fromModel) ? null : Knowledge.FindModel(fromModel.Trim());
+        var target = string.IsNullOrWhiteSpace(toModel) ? null : Knowledge.FindModel(toModel.Trim());
+        return source is not null && target is not null
+            && source.CapabilityTier == target.CapabilityTier;
     }
 
     public (string Model, string? ThinkingLevel)? TryGetEquivalent(
@@ -76,6 +90,13 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
         var related = ComparablePredecessor(model) ?? ComparableSuccessor(model);
         route = related is null ? null : FindRoute(fromCli, related, requestedThinking, toCli);
         if (route is null) return null;
+        // The D5 reverse route is scoped to GPT-6 Sol itself. A legacy
+        // predecessor must not inherit a route absent from its own catalogue.
+        if (string.Equals(model, ModelIds.Gpt56Sol, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(related, ModelIds.Gpt6Sol, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(requestedThinking, "xhigh", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(toCli, CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
+            return null;
         var price = CurrentPrice(model);
         return route with
         {
@@ -140,6 +161,12 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
                     rows.Add(Create(source, route.ThinkingLevel, target, fallback.ThinkingLevel));
             }
         }
+
+        // D5: this routing-policy tier is an explicit reverse provider choice
+        // until Token Economy publishes the corresponding fallback row.
+        if (Knowledge.FindModel(ModelIds.Gpt6Sol) is { } sol
+            && Knowledge.FindModel(ModelIds.ClaudeOpus5) is { } opus)
+            rows.Add(Create(sol, "xhigh", opus, "xhigh"));
 
         return rows
             .GroupBy(

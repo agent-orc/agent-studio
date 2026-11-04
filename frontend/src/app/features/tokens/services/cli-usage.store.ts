@@ -39,21 +39,14 @@ export interface CliUsageQuotaRow {
 }
 
 /**
- * App-wide store for CLI usage / quota data, split into two cost tiers so
- * the always-mounted status-bar strip pays only for the lightweight quota
- * poll while the heavy token / timeline / expensive-job aggregates load
- * lazily and only while the CLI-Management panel that needs them is open.
+ * Settings Token usage store for CLI quota probes and token aggregates.
+ * Polling begins when the Token usage section opens; the footer uses the
+ * separate UsageCockpitService subscription snapshot.
  *
- * - `ensureQuotaStarted()` (called by the status-bar quota strip) starts a
- *   60 s `/api/cli/quota` poll plus a 1 s relative-time tick. App-lifetime.
- * - `startDetail()` / `stopDetail()` (called on mount / destroy by the
- *   CLI-Management detail) ref-count the token-summary, ad-hoc, timeline,
- *   and expensive-job polls so they run only while the panel is visible.
- *
- * Lifting this out of `<app-usage-hover-panel>` lets the compact hover
- * popover (quota only) and the settings-roof detail (full aggregates)
- * share a single fetch + `quotaRows` derivation instead of duplicating
- * the polling loop in two components.
+ * - `ensureQuotaStarted()` starts a 60 s `/api/cli/quota` poll plus a 1 s
+ *   relative-time tick for Settings token analysis. App-lifetime.
+ * - `startDetail()` / `stopDetail()` ref-count the token-summary, ad-hoc,
+ *   timeline, and expensive-job polls while the section is visible.
  */
 @Injectable({ providedIn: 'root' })
 export class CliUsageStore {
@@ -106,11 +99,8 @@ export class CliUsageStore {
   /**
    * Re-hydrate on SignalR reconnect. The board re-pulls itself via the hub's
    * `reconnected` hook, but this store polls on its own 60 s cadence and would
-   * otherwise leave the status-bar quota strip (and any open detail panel)
-   * showing pre-restart numbers for up to a minute after the backend returns.
-   * Reacting to the connection flipping back up pulls fresh data immediately,
-   * so the strip converges with the rest of the shell instead of staying stale
-   * until the next tick or a manual reload.
+   * otherwise leave the Settings token analysis showing pre-restart numbers
+   * for up to a minute after the backend returns. Reconnect pulls immediately.
    */
   private readonly reconnectEffect = effect(() => {
     const up = this.hub.connected();
@@ -141,6 +131,7 @@ export class CliUsageStore {
    * polls run only while at least one detail consumer is mounted.
    */
   startDetail(): void {
+    this.ensureQuotaStarted();
     this.detailConsumers++;
     if (this.detailConsumers === 1) {
       this.fetchTokensCached();

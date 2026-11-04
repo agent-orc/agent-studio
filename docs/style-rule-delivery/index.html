@@ -1,0 +1,783 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Style rules in the card | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+    nav ol { columns: 2; column-gap: 32px; font-size: 0.9rem; }
+    figure > svg text { dominant-baseline: auto; }
+    .variant-grid { grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept Dossier · AGT-3465</p>
+    <h1>Style rules in the card</h1>
+    <p class="lede">The pipeline should give each card the style rules that apply to it. Today those rules are chosen by substring matching, cut to two optional blocks, and reduced to one summary sentence each. This Dossier measures the current step on 178 cards. It proposes rule packs in skill format, selection from paths and pins, delivery through the prompt, the card's Docs and the CLI skill roots, and a review aspect that checks the diff against exactly the delivered rules. The header rules from AGT-3464 are the pilot.</p>
+    <div class="meta">
+      <span><b>Pattern</b> concept</span>
+      <span><b>Status</b> decision-pending</span>
+      <span><b>Phase</b> decision-ready</span>
+      <span><b>Source</b> AGT-3465</span>
+      <span><b>Pilot</b> AGT-3464</span>
+      <span><b>As of</b> <time datetime="2026-11-03">3 November 2026</time></span>
+    </div>
+  </header>
+
+  <nav aria-label="Contents">
+    <p class="kicker">Contents</p>
+    <ol>
+      <li><a href="#summary">Summary</a></li>
+      <li><a href="#inventory">Inventory</a></li>
+      <li><a href="#gaps">Gaps</a></li>
+      <li><a href="#target-design">Target design</a></li>
+      <li><a href="#alternatives">Alternatives</a></li>
+      <li><a href="#recommendation">Recommendation</a></li>
+      <li><a href="#evidence">Evidence</a></li>
+      <li><a href="#open-decisions">Open decisions</a></li>
+      <li><a href="#slices">Implementation slices</a></li>
+    </ol>
+  </nav>
+
+  <section id="summary">
+    <h2><span class="number">00</span> Summary</h2>
+    <p>The measurement window covers the 178 cards with run transcripts on agent-runner-01 (sessions from 21 October to 3 November 2026). The brief asked for the last 200 cards; the runner keeps transcripts for about 13 days, so 178 is the observable set. For 163 of these cards the delivered file list is known from the salvage refs on <code>origin</code> and the edit calls in the transcripts.</p>
+    <table>
+      <thead><tr><th>Measured fact</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Cards on which the <code>frontend</code> area fires</td><td>172 of 178 (97%)</td></tr>
+        <tr><td>Of those with a delivered diff, cards that touched frontend files</td><td>55 of 158 (35% precision)</td></tr>
+        <tr><td>Enriched frontend cards that received the <code>frontend-styling</code> guide</td><td>1 of 45</td></tr>
+        <tr><td>Cards that received <code>angular-components</code> and touched frontend files</td><td>39 of 120 (33%)</td></tr>
+        <tr><td>Frontend cards that opened none of the four style sources</td><td>19 of 45</td></tr>
+        <tr><td>Frontend cards outside Agent Studio that received any style rule</td><td>0 of 12</td></tr>
+        <tr><td>Tokens the enrichment section adds per card (median)</td><td>346</td></tr>
+        <tr><td>Rule ids cited by review verdicts</td><td>none (the verdict format has no rule field)</td></tr>
+      </tbody>
+    </table>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended direction</h3>
+      <p>Keep one deterministic step, <code>pre-prompt-enrichment</code>, and give it a better input and a better output. The input becomes rule packs in skill format under <code>docs/quality/rules/&lt;pack&gt;/SKILL.md</code>, each with numbered binding rules, path globs and a check per rule. Selection uses pins, inheritance from the source card, paths named in the prompt, and word-boundary keywords. Model tokens stay at zero. Binding rules travel in full inside the prompt. The full pack is in the card's Docs and in the CLI's own skill root for the run. A <code>rule-fit</code> review aspect checks the diff against exactly the delivered rules and cites rule ids. Cited findings feed a rule ledger that proposes sharper or new rules through <code>adding-a-rule.md</code>.</p>
+    </div>
+  </section>
+
+  <section id="inventory">
+    <h2><span class="number">01</span> Inventory</h2>
+    <p>Every row was checked against the code at <code>d63df0be4</code> (develop, 3 November 2026).</p>
+    <table>
+      <thead><tr><th>Part</th><th>Where</th><th>What it does today</th></tr></thead>
+      <tbody>
+        <tr><td>Selectable style guides</td><td><code>docs/quality/angular-components.md</code>, <code>frontend-styling.md</code>, <code>dotnet-backend.md</code></td><td>Frontmatter with <code>styleGuideId</code>, <code>promptSummary</code> (at most 600 characters) and <code>appliesTo</code> (projects, technologies, taskAreas). Only the summary and the path reach the prompt. The full guides are 467 to 877 tokens.</td></tr>
+        <tr><td>Catalogue snapshot</td><td><code>backend/Features/Docs/ProjectStyleGuideService.cs</code></td><td>Five-minute snapshot over at most 64 top-level Markdown files in <code>docs/quality</code>, 32 KiB per guide.</td></tr>
+        <tr><td>Area detection</td><td><code>IntakeRunner.AreaNeedles</code></td><td>7 areas, case-insensitive substring match over title, task type, tags and prompt.</td></tr>
+        <tr><td>Built-in rule blocks</td><td><code>IntakeRunner.ConstraintRules</code></td><td>7 blocks written in C#. One is mandatory (<code>repo-instructions-source</code>). The others are optional with priorities 10 to 70 and apply only to Agent Studio unless a pipeline type pins them.</td></tr>
+        <tr><td>Budget</td><td><code>IntakeRunner.ApplyEnrichmentBudget</code></td><td>Mandatory blocks plus at most 2 optional blocks, 6,000 characters (about 1,500 tokens). Every guide has priority 20, so ties break by id: <code>angular-components</code> before <code>dotnet-backend</code> before <code>frontend-styling</code>.</td></tr>
+        <tr><td>Explicit pins</td><td><code>PipelineStepConfig.EnrichmentBlockIds</code></td><td>A pipeline type can pin built-in block ids. There is no card-level pin.</td></tr>
+        <tr><td>Enrichment step</td><td><code>PromptEnrichmentService</code>, step <code>pre-prompt-enrichment</code></td><td>Writes <code>intake/enriched-context.md</code> and <code>enrichment-report.json</code> into the task folder, appends the context to the launch prompt, and records the step with zero selector tokens.</td></tr>
+        <tr><td>Remote transport</td><td><code>RunSpecDto.ModeFraming</code></td><td>The enrichment reaches a remote runner only as text inside the mode framing. The task folder is not transported; on agent-runner-01 the task folder holds only <code>results/</code>.</td></tr>
+        <tr><td>Skills</td><td><code>.agents/skills/</code> (task-api, regenerate-readme, runtime-log-analysis), <code>docs/concepts/skills-architecture.md</code></td><td>Workflow skills. No code materializes or selects skills for a run. The concept page proposes a central library with native CLI exports as adapters.</td></tr>
+        <tr><td>Hard rules</td><td><code>AGENTS.md</code>, <code>frontend/AGENTS.md</code> (about 9,000 tokens), <code>docs/quality/design/style-guide-hard-rules.md</code> (R1 to R9, about 2,200 tokens), <code>agent-rules/core.md</code></td><td>Always-present instructions. Codex auto-loads only the root <code>AGENTS.md</code> for a run at the repository root. Claude Code loads <code>CLAUDE.md</code>, which points to <code>AGENTS.md</code>. No <code>frontend/CLAUDE.md</code> exists.</td></tr>
+        <tr><td>Mechanical guards</td><td><code>npm run lint:structure</code>, stylelint spacing rule, <code>FeatureFolderBoundaryTests</code></td><td>Lane strings (R9), disclosure markers, segmented controls, spacing tokens for opted-in files, backend feature folders.</td></tr>
+        <tr><td>Task view</td><td>Overview pipeline block, Docs tab (<code>prompt-pane</code>, tab id <code>description</code>), enrichment report in the Task tab</td><td>The Overview pipeline line shows Loop check, Model qualification, Prompt enrichment as the first pre-steps; the Docs tab lists task-folder documents (<a href="#fig-pipeline">screenshots</a>). The Task tab renders <code>enrichment-report.json</code> beside the authored prompt (code reference).</td></tr>
+        <tr><td>Remote Review</td><td><code>docs/system/domains/review.md</code></td><td>Four stock aspects (<code>requirement-fit</code>, <code>code-quality</code>, <code>documentation-impact</code>, <code>tests-and-evidence</code>) plus <code>concept-fit</code> for concept cards. They share a cached prompt prefix. A verdict cites <code>evidence_checked</code> and <code>missing</code> but has no rule id field.</td></tr>
+        <tr><td>Source audits</td><td>QS-107 and TE-58 result folders on agent-runner-01</td><td>Both show that a project without <code>AGENTS.md</code> or <code>docs/quality</code> gets zero blocks. TE-58 also shows the <code>token</code> needle detecting <code>frontend</code> because the project is called Token Economy. VL-2 has no result folder on this host.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="gaps">
+    <h2><span class="number">02</span> Gaps</h2>
+    <p>Each gap is backed by a measurement in <a href="#evidence">Evidence</a> (E-numbers) or a code reference.</p>
+    <h3>G1 · Area detection fires on almost every card</h3>
+    <p>On the authored prompt alone, without title and tags, <code>frontend</code> fires on 97% of cards, <code>git</code> on 83%, <code>runner</code> on 80% and <code>backend</code> on 71%. The needle <code>ui</code> fires on 142 of 178 prompts because it is a substring of words such as "build", "guide" and "require". <code>card</code> fires on 134. For cards with a known diff, the frontend area has 35% precision. Word boundaries alone do not fix this: precision stays at 36%, because "card", "lane", "token" and "state" are real words in nearly every Agent Studio prompt (E2, E3).</p>
+    <h3>G2 · The most specific guide never arrives</h3>
+    <p>All three guides have priority 20, and the two optional slots are filled in id order. When <code>backend</code> also fires (71% of cards), <code>angular-components</code> and <code>dotnet-backend</code> take both slots and <code>frontend-styling</code> is dropped. It reached 1 of 45 enriched frontend cards. The built-in <code>frontend-design-tokens-components</code> block (priority 30) only appears on concept cards, where guides are not offered. The quality README promises that styling cards receive the frontend-styling context; the data shows they almost never do (E4).</p>
+    <h3>G3 · Drops are invisible to the agent and to the reader of the card</h3>
+    <p><code>RenderLaunchContext</code> lists only the appended blocks. <code>intake/enriched-context.md</code> is written from the same text. A dropped guide appears only as a <code>rejected-budget</code> candidate inside <code>enrichment-report.json</code> (code, E9).</p>
+    <h3>G4 · A summary sentence plus a path is not read</h3>
+    <p>Of 39 frontend cards whose prompt cited a style guide, 18 opened that guide. 19 of 45 enriched frontend cards opened none of the four style sources (angular-components, frontend-styling, hard rules, living rules). Claude runs opened <code>angular-components.md</code> on 1 of 10 frontend cards; Codex runs on 14 of 35 (E6).</p>
+    <h3>G5 · Projects without a catalogue get nothing</h3>
+    <p>33 cards in PROJ-015, 016, 020, 021 and 022 ran without enrichment; 10 cards in PROJ-011, 012 and 023 received only the repository-instructions block. 12 frontend-touching cards outside Agent Studio received no style rule. None of those repositories on agent-runner-01 has <code>docs/quality</code> or a skills folder (E7, QS-107, TE-58).</p>
+    <h3>G6 · Rules have no ids, so review cannot cite them</h3>
+    <p>The guides use prose and tables. The hard rules have ids (R1 to R9), but the verdict sentinel has no field for them. A header regression found in review becomes a fix card (AGT-3458, "Header destinations can appear twice when the shell narrows inside a wide viewport") and leaves no trace on any rule (E13, E14).</p>
+    <h3>G7 · The task folder is not a run input on remote hosts</h3>
+    <p>Documents in the card's Docs are visible to people, but a remote run receives only the prompt text. The full rule text can reach a remote agent only through the prompt or through the repository checkout (E12).</p>
+    <h3>G8 · Header-zone churn is high and unguarded by a dedicated rule set</h3>
+    <p>Between 7 and 11 cards a week touch header-zone files (week 43: 11; week 45: 7 cards on Monday and Tuesday alone). Every one of them received the generic Angular summary. None received a header-specific rule, because none exists yet; AGT-3464 writes it (E13).</p>
+  </section>
+
+  <section id="target-design">
+    <h2><span class="number">03</span> Target design</h2>
+    <p>One loop from source to review and back. Selection and delivery stay deterministic and free of model tokens. Review is the only model step, and it already exists.</p>
+    <figure class="media-breakout">
+      <svg viewBox="0 0 1120 470" role="img" aria-labelledby="flow-title flow-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="flow-title">Rule flow from source to review</title>
+        <desc id="flow-desc">Four columns. Source: project packs in docs/quality/rules and workspace packs. Selection in pre-prompt-enrichment: pins, inheritance, paths, keywords, mode, tiered budget. Delivery: binding rules in the prompt, selected-rules document in the card Docs, packs in the CLI skill root. Review: rule-fit aspect and deterministic guards. A ledger feeds findings back to the sources.</desc>
+        <style>
+          .box-f { fill: var(--article-surface); stroke: var(--article-line); }
+          .box-a { fill: var(--article-link-soft); stroke: var(--article-link); }
+          .t-h { fill: var(--article-ink); font: 700 15px var(--article-sans); }
+          .t-b { fill: var(--article-muted); font: 13px var(--article-sans); }
+          .t-c { fill: var(--article-ink); font: 12px var(--article-mono); }
+          .ln { stroke: var(--article-faint); stroke-width: 1.5; fill: none; }
+          .ln-a { stroke: var(--article-link); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+          .ah { fill: var(--article-faint); }
+          .ah-a { fill: var(--article-link); }
+        </style>
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+          <marker id="arr-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="ah-a"/></marker>
+        </defs>
+        <text x="20" y="28" class="t-h">1 Source</text>
+        <rect x="20" y="42" width="240" height="118" rx="10" class="box-f"/>
+        <text x="34" y="66" class="t-h">Project packs</text>
+        <text x="34" y="88" class="t-c">docs/quality/rules/&lt;pack&gt;/</text>
+        <text x="34" y="106" class="t-c">  SKILL.md, references/</text>
+        <text x="34" y="128" class="t-b">binding rules with ids,</text>
+        <text x="34" y="146" class="t-b">path globs, one check per rule</text>
+        <rect x="20" y="176" width="240" height="96" rx="10" class="box-f"/>
+        <text x="34" y="200" class="t-h">Workspace packs</text>
+        <text x="34" y="222" class="t-b">shipped with Agent Studio,</text>
+        <text x="34" y="240" class="t-b">apply to every project,</text>
+        <text x="34" y="258" class="t-b">disable per project</text>
+        <rect x="20" y="288" width="240" height="70" rx="10" class="box-a"/>
+        <text x="34" y="312" class="t-h">Pilot: header-zone</text>
+        <text x="34" y="334" class="t-b">rule set from AGT-3464</text>
+
+        <text x="300" y="28" class="t-h">2 Selection</text>
+        <rect x="300" y="42" width="250" height="316" rx="10" class="box-f"/>
+        <text x="314" y="66" class="t-c">pre-prompt-enrichment</text>
+        <text x="314" y="94" class="t-b">1 pins: card, orchestrator,</text>
+        <text x="314" y="112" class="t-b">   pipeline type</text>
+        <text x="314" y="136" class="t-b">2 inherited: source card,</text>
+        <text x="314" y="154" class="t-b">   earlier attempt diff</text>
+        <text x="314" y="178" class="t-b">3 paths and component</text>
+        <text x="314" y="196" class="t-b">   selectors named in prompt</text>
+        <text x="314" y="220" class="t-b">4 keywords, word boundary,</text>
+        <text x="314" y="238" class="t-b">   two hits per pack</text>
+        <text x="314" y="262" class="t-b">5 card mode gate</text>
+        <text x="314" y="292" class="t-h">Tiered budget</text>
+        <text x="314" y="314" class="t-b">binding in full, guidance as</text>
+        <text x="314" y="332" class="t-b">pointer, overflow listed</text>
+
+        <text x="590" y="28" class="t-h">3 Delivery</text>
+        <rect x="590" y="42" width="250" height="90" rx="10" class="box-f"/>
+        <text x="604" y="66" class="t-h">Prompt</text>
+        <text x="604" y="88" class="t-b">binding rules with ids,</text>
+        <text x="604" y="106" class="t-b">pointers, omitted list</text>
+        <rect x="590" y="146" width="250" height="96" rx="10" class="box-f"/>
+        <text x="604" y="170" class="t-h">Card Docs</text>
+        <text x="604" y="192" class="t-c">rules/selected-rules.md</text>
+        <text x="604" y="212" class="t-b">plus enrichment-report.json,</text>
+        <text x="604" y="230" class="t-b">visible in the Docs tab</text>
+        <rect x="590" y="256" width="250" height="102" rx="10" class="box-f"/>
+        <text x="604" y="280" class="t-h">CLI skill root of the run</text>
+        <text x="604" y="302" class="t-c">$CODEX_HOME/skills/</text>
+        <text x="604" y="320" class="t-c">$CLAUDE_CONFIG_DIR/skills/</text>
+        <text x="604" y="342" class="t-b">outside the worktree</text>
+
+        <text x="880" y="28" class="t-h">4 Review</text>
+        <rect x="880" y="42" width="220" height="150" rx="10" class="box-a"/>
+        <text x="894" y="66" class="t-h">rule-fit aspect</text>
+        <text x="894" y="90" class="t-b">delivered rules from the</text>
+        <text x="894" y="108" class="t-b">report plus packs matched</text>
+        <text x="894" y="126" class="t-b">by the diff; verdict cites</text>
+        <text x="894" y="144" class="t-c">rule=HDR-2</text>
+        <text x="894" y="170" class="t-b">shares the cached prefix</text>
+        <rect x="880" y="206" width="220" height="152" rx="10" class="box-f"/>
+        <text x="894" y="230" class="t-h">Deterministic guards</text>
+        <text x="894" y="254" class="t-b">lint:structure, stylelint,</text>
+        <text x="894" y="272" class="t-b">architecture tests, header</text>
+        <text x="894" y="290" class="t-b">slot registry (AGT-3464);</text>
+        <text x="894" y="308" class="t-b">named in each rule's</text>
+        <text x="894" y="326" class="t-c">check:</text>
+
+        <path d="M260 200 L300 200" class="ln" marker-end="url(#arr)"/>
+        <path d="M550 87 L590 87" class="ln" marker-end="url(#arr)"/>
+        <path d="M550 194 L590 194" class="ln" marker-end="url(#arr)"/>
+        <path d="M550 307 L590 307" class="ln" marker-end="url(#arr)"/>
+        <path d="M840 117 L880 117" class="ln" marker-end="url(#arr)"/>
+
+        <rect x="300" y="392" width="800" height="60" rx="10" class="box-f"/>
+        <text x="314" y="416" class="t-h">5 Feedback ledger</text>
+        <text x="314" y="438" class="t-b">rule-cited findings, selection misses and repeated uncited findings per pack path become sharpen-rule, new-rule or guard cards (adding-a-rule.md)</text>
+        <path d="M990 358 L990 392" class="ln-a" marker-end="url(#arr-a)"/>
+        <path d="M300 422 L140 422 L140 358" class="ln-a" marker-end="url(#arr-a)"/>
+      </svg>
+      <figcaption>Target flow. Steps 1 to 3 are deterministic and use no model tokens. Step 4 adds one review aspect. Step 5 proposes cards; a person accepts them.</figcaption>
+    </figure>
+
+    <h3>Rule pack</h3>
+    <p>A rule pack is a folder in the open skill format: <code>SKILL.md</code> with <code>name</code> and <code>description</code> in the frontmatter, so that Claude Code and Codex can load it as a native skill. Agent Studio data goes into the standard <code>metadata</code> map as strings, so the file stays valid for both CLIs. The body starts with the binding rules: one line each, numbered with a stable id, followed by its check. Explanations, examples and screenshots go into <code>references/</code>.</p>
+<pre><code>docs/quality/rules/header-zone/
+  SKILL.md
+  references/slot-registry.md
+  references/examples.md
+
+---
+name: header-zone
+description: Binding rules for the Studio app header and the task header zone. Use when changing the usage cockpit header, header quota, studio-shell header wiring, or the task detail header.
+metadata:
+  pack-version: "1"
+  tier: binding
+  applies-to: '{"projects":["PROJ-002"],"technologies":["angular"],"surfaces":["app-header","task-header"],"paths":["frontend/src/app/features/usage-cockpit/components/usage-cockpit-header/**","frontend/src/app/features/studio-shell/studio-shell.header-cockpit.ts","frontend/src/app/features/quota/components/header-quota/**","frontend/src/app/features/task-detail/components/detail-header/**"],"taskKinds":["coding","review-fix"]}'
+  keywords: "app header, task header, header zone, usage cockpit"
+---
+
+# Header zone
+
+## Binding rules
+- HDR-1 &lt;rule text from AGT-3464&gt;. Check: test HeaderSlotRegistry (AGT-3464).
+- HDR-2 Every header destination renders exactly once at every shell width. Check: review.
+- HDR-3 Usage and session statistics live in the footer only; the header holds account and settings. Check: review.
+
+## Evidence
+- AGT-3458 review finding (2026-11-03), AGT-3356 operator wording (2026-11-01).
+
+## References
+- references/slot-registry.md, references/examples.md</code></pre>
+    <p class="dim">HDR-2 and HDR-3 are candidates taken from the AGT-3458 review finding and the AGT-3356 operator wording. AGT-3464 owns the final rule text and numbering.</p>
+
+    <h3>Pipeline line</h3>
+    <p>The step order in the task view does not change. The Prompt enrichment step gains rule selection, and one aspect is added after the run.</p>
+    <figure>
+      <svg viewBox="0 0 700 150" role="img" aria-labelledby="pl-title pl-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="pl-title">Pipeline line with rule selection and rule fit</title>
+        <desc id="pl-desc">Loop check, Model qualification, Prompt enrichment with rules, Agent run, then the review aspects Requirement fit, Code quality, Documentation impact, Tests and evidence, and the new Rule fit.</desc>
+        <style>
+          .pl-f { fill: var(--article-surface); stroke: var(--article-line); }
+          .pl-a { fill: var(--article-link-soft); stroke: var(--article-link); }
+          .pl-t { fill: var(--article-ink); font: 600 12px var(--article-sans); }
+          .pl-s { fill: var(--article-muted); font: 11px var(--article-sans); }
+          .pl-l { stroke: var(--article-faint); stroke-width: 1.5; }
+        </style>
+        <rect x="10" y="20" width="100" height="40" rx="8" class="pl-f"/><text x="60" y="44" text-anchor="middle" class="pl-t">Loop check</text>
+        <rect x="125" y="20" width="130" height="40" rx="8" class="pl-f"/><text x="190" y="44" text-anchor="middle" class="pl-t">Model qualification</text>
+        <rect x="270" y="14" width="150" height="52" rx="8" class="pl-a"/><text x="345" y="37" text-anchor="middle" class="pl-t">Prompt enrichment</text><text x="345" y="54" text-anchor="middle" class="pl-s">rule packs selected</text>
+        <rect x="435" y="20" width="100" height="40" rx="8" class="pl-f"/><text x="485" y="44" text-anchor="middle" class="pl-t">Agent run</text>
+        <line x1="110" y1="40" x2="125" y2="40" class="pl-l"/><line x1="255" y1="40" x2="270" y2="40" class="pl-l"/><line x1="420" y1="40" x2="435" y2="40" class="pl-l"/><line x1="535" y1="40" x2="550" y2="40" class="pl-l"/>
+        <rect x="550" y="6" width="140" height="22" rx="6" class="pl-f"/><text x="620" y="21" text-anchor="middle" class="pl-s">Requirement fit</text>
+        <rect x="550" y="32" width="140" height="22" rx="6" class="pl-f"/><text x="620" y="47" text-anchor="middle" class="pl-s">Code quality</text>
+        <rect x="550" y="58" width="140" height="22" rx="6" class="pl-f"/><text x="620" y="73" text-anchor="middle" class="pl-s">Documentation impact</text>
+        <rect x="550" y="84" width="140" height="22" rx="6" class="pl-f"/><text x="620" y="99" text-anchor="middle" class="pl-s">Tests and evidence</text>
+        <rect x="550" y="110" width="140" height="26" rx="6" class="pl-a"/><text x="620" y="127" text-anchor="middle" class="pl-t">Rule fit</text>
+      </svg>
+      <figcaption>Proposed pipeline line. Accented: the extended Prompt enrichment step and the new Rule fit aspect. The step summary reads, for example, "3 packs, 11 binding rules, 1 omitted (budget)".</figcaption>
+    </figure>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">04</span> Alternatives</h2>
+    <p>One block per question from the brief. The recommended option of each is marked and justified in <a href="#recommendation">Recommendation</a>.</p>
+
+    <h3>D1 · Rule unit</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>D1-A Extended guide files</h3><p>Keep one Markdown file per guide and add numbered rules plus path globs to its frontmatter. Smallest change. No CLI can load it natively, and long guides keep mixing binding rules with explanation.</p></article>
+      <article class="variant"><h3>D1-B Rule pack in skill format (recommended)</h3><p>A folder with <code>SKILL.md</code> (name, description, <code>metadata</code> with <code>applies-to</code>, tier, version, keywords), binding rules with ids and checks, and <code>references/</code>. Claude Code and Codex can read the same file as a skill. The catalogue parser reuses the inline-JSON <code>appliesTo</code> contract.</p></article>
+      <article class="variant"><h3>D1-C Rules as data in the application</h3><p>Rules stored in the Task Server and edited in the UI. Good for workspace-wide rules, but it moves project knowledge out of the repository, outside review and the Wiki.</p></article>
+    </div>
+    <p><b>Migration under D1-B.</b> <code>angular-components</code>, <code>frontend-styling</code> and <code>dotnet-backend</code> become packs with ids (ANG-n, FES-n, NET-n); each current <code>promptSummary</code> clause becomes one binding rule. The C# block <code>frontend-design-tokens-components</code> merges into <code>angular-components</code>; it repeats that guide's token rule. <code>git-handling-api-not-cli</code>, <code>task-state-api-first</code>, <code>orchestrator-state-machine-authority</code>, <code>stable-namespaces-on-splits</code> and <code>delegation-economy</code> become the Agent Studio pack <code>studio-architecture</code>. The hard rules R1 to R9 become the pack <code>studio-ui-hard-rules</code> and keep their ids. <code>repo-instructions-source</code> stays a mandatory platform block in C#; it is a pointer, not a style rule.</p>
+    <p><b>Location.</b> Project packs: <code>docs/quality/rules/&lt;pack&gt;/</code> in the project repository, so they are present in every worktree, shown in the Wiki, and covered by <code>adding-a-rule.md</code>. Workspace packs: a <code>rule-packs/</code> folder shipped with Agent Studio and enabled for every project, with a per-project switch in project settings. Packs under <code>.agents/skills/</code> were considered. Codex lists every skill there in every run regardless of selection, and Claude Code does not read that folder.</p>
+
+    <h3>D2 · Selection</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>D2-A Tune the needles</h3><p>Word boundaries and fewer needles. The backtest shows 36% precision with word boundaries, because the remaining words occur in nearly every prompt.</p></article>
+      <article class="variant"><h3>D2-B Deterministic multi-signal selector (recommended)</h3><p>In order of strength: pins (card field <code>rulePacks</code>, orchestrator, pipeline type); inheritance (a review-fix or continuation card takes the source card's delivered packs plus packs matched by the source card's diff); paths and component selectors in the prompt and in referenced Dossiers and cards, matched against pack globs; earlier-attempt diff; keywords per pack with word boundaries and at least two hits; card mode as a gate. Zero model tokens.</p></article>
+      <article class="variant"><h3>D2-C Model classifier</h3><p>A Claude Haiku 5.5 call reads the prompt and a pack index (about 4,000 input and 100 output tokens) and returns pack ids. At $0.10 input and $0.50 output per million tokens that is about $0.00045 per card, or $0.45 per 1,000 cards. It is non-deterministic, needs a fallback when the provider is unavailable, and adds latency before dispatch.</p></article>
+    </div>
+    <p>A review-time safety net applies to every option. The <code>rule-fit</code> aspect selects packs from the actual diff, which is exact. A pack matched by the diff but not delivered is reviewed anyway and recorded as a selection miss.</p>
+
+    <h3>D3 · Budget</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>D3-A Keep two optional blocks</h3><p>The current limit. It is what drops <code>frontend-styling</code>.</p></article>
+      <article class="variant"><h3>D3-B Tiered character budget with visible overflow (recommended)</h3><p>Tier 0: mandatory platform blocks (about 100 tokens). Tier 1: binding rules of selected packs in full, at most 12 rules and 1,200 characters per pack, 4,000 characters in total. Tier 2: guidance packs as one-line pointers, at most 6. The 6,000-character ceiling stays. Order is by signal strength, then by the narrowest glob, never by id. Overflow drops pointers before binding rules. The prompt, the Docs document and the report name every omitted pack.</p></article>
+      <article class="variant"><h3>D3-C Full packs in the prompt</h3><p>Every selected pack in full. The header pack plus the Angular pack plus the hard rules alone would exceed 3,500 tokens. This repeats text the agent can open on demand.</p></article>
+    </div>
+
+    <h3>D4 · Delivery</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>D4-A Docs channel only</h3><p>A <code>rules/selected-rules.md</code> document in the task folder, shown in the Docs tab, plus the prompt. Visible and auditable. A remote run sees the document only if it is transported, and today the task folder is not.</p></article>
+      <article class="variant"><h3>D4-B Native skills in the worktree</h3><p>Copy selected packs into <code>.claude/skills/</code> and <code>.agents/skills/</code> of the run's worktree. Codex 0.155.0 lists <code>&lt;worktree&gt;/.agents/skills</code> in headless runs. The copies are untracked files that a platform salvage commit can capture, and <code>.agents/skills</code> is a tracked folder in Agent Studio.</p></article>
+      <article class="variant"><h3>D4-C Combination (recommended)</h3><p>Binding rules inline in the prompt (works for every CLI). <code>rules/selected-rules.md</code> plus the report in the task folder (Docs tab, audit, review input), and an additive <code>RuleDelivery</code> field in <code>RunSpecDto</code> carrying the document and pack files (bounded to 64 KiB). The runner materializes the selected packs into the per-card clean-context skill root (<code>$CODEX_HOME/skills/</code>, <code>$CLAUDE_CONFIG_DIR/skills/</code>), which is outside the worktree and owned by the runner.</p></article>
+    </div>
+
+    <h3>D5 · Phase</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>D5-A Extend <code>pre-prompt-enrichment</code> (recommended)</h3><p>One selector, one budget, one report, one commit marker. The step already blocks dispatch when its report cannot be persisted and already records zero selector tokens.</p></article>
+      <article class="variant"><h3>D5-B New step <code>pre-rule-selection</code></h3><p>Its own row between Model qualification and Prompt enrichment. More visible, but it creates two budgets competing for the same prompt space and two reports a reviewer must join.</p></article>
+    </div>
+
+    <h3>D6 · Verification</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>D6-A Append rules to <code>code-quality</code></h3><p>No new call. Rule verdicts get mixed with general findings, and the step cannot be routed or disabled on its own.</p></article>
+      <article class="variant"><h3>D6-B Dedicated <code>rule-fit</code> aspect plus guards (recommended)</h3><p>Runs only when delivered or diff-matched packs contain rules checked by review. Input: exactly those rules from <code>enrichment-report.json</code>, the merge-base diff, and the packs matched by the diff. The sentinel gains <code>rules_cited=HDR-2,ANG-3</code>; a block must cite a rule id and a diff location. Rules whose check is a deterministic guard are not judged by the model; a failed guard is cited instead. The aspect shares the frozen cached prefix of the stock aspects.</p></article>
+      <article class="variant"><h3>D6-C Guards only</h3><p>Cheapest, but most header rules (one render per width, footer-only usage) are layout facts that a lint rule cannot see.</p></article>
+    </div>
+
+    <h3>D7 · Feedback loop</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>D7-A Manual</h3><p>Authors read review reports and edit guides. This is today's state; AGT-3458 left no trace on a rule.</p></article>
+      <article class="variant"><h3>D7-B Rule ledger with proposed cards (recommended)</h3><p>Each rule-cited finding is a ledger entry (rule id, card, verdict, delivered or not). Triggers: the same delivered rule cited on two cards within 14 days proposes a sharpen-rule card; a cited rule that was not delivered proposes a surface-map fix; two uncited findings within a pack's paths in 14 days propose a new-rule card; a rule cited three times with a mechanical shape proposes a guard. Cards land in the backlog with the evidence and follow <code>adding-a-rule.md</code>.</p></article>
+    </div>
+
+    <h3>D8 · Measurement</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>D8-A Brief metrics only</h3><p>Rule-cited findings per card, header-zone regressions per week, tokens added per card.</p></article>
+      <article class="variant"><h3>D8-B Brief metrics plus selection quality (recommended)</h3><p>Adds selection precision (delivered pack paths touched by the diff), selection misses (diff-matched packs not delivered), and the open rate of pointer-only packs. These numbers show whether a rule failed or simply never arrived.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">05</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended default</h3>
+      <p>D1-B rule packs in skill format under <code>docs/quality/rules/</code>, with workspace packs shipped with Agent Studio. D2-B deterministic multi-signal selection with the review-time safety net. D3-B tiered budget with visible overflow. D4-C delivery through prompt, card Docs and the clean-context skill root. D5-A inside <code>pre-prompt-enrichment</code>. D6-B a <code>rule-fit</code> aspect plus deterministic guards. D7-B a rule ledger that proposes cards. D8-B metrics including selection quality. The pilot is the header-zone pack from AGT-3464.</p>
+    </div>
+    <table>
+      <thead><tr><th>Decision</th><th>Choice</th><th>Main reason</th></tr></thead>
+      <tbody>
+        <tr><td>D1 Rule unit</td><td>D1-B</td><td>One file serves the Wiki, the selector, the reviewer and both installed CLIs. Rule ids make review citations and the ledger possible (G6).</td></tr>
+        <tr><td>D2 Selection</td><td>D2-B</td><td>Path and pin signals reach 65 to 73% precision against 35% today (E10). The lower recall is covered by the pointer index, Codex's native skill listing, and the exact diff-based selection in review. A model step is not needed until the selection-miss rate shows otherwise.</td></tr>
+        <tr><td>D3 Budget</td><td>D3-B</td><td>It removes the id tie-break that drops <code>frontend-styling</code> (G2). It keeps the existing 6,000-character ceiling and makes every drop visible (G3).</td></tr>
+        <tr><td>D4 Delivery</td><td>D4-C</td><td>Rules in the prompt work for every CLI and every host. The Docs document gives people the same view as the agent. The skill root gives on-demand references without writing into the worktree (G4, G7).</td></tr>
+        <tr><td>D5 Phase</td><td>D5-A</td><td>One budget and one report. The pipeline line keeps its order (figure above).</td></tr>
+        <tr><td>D6 Verification</td><td>D6-B</td><td>The diff is judged against exactly what the agent was told, with rule ids. Mechanical rules stay with guards.</td></tr>
+        <tr><td>D7 Feedback</td><td>D7-B</td><td>Repeated header findings such as AGT-3458 become rule changes with evidence instead of only fix cards.</td></tr>
+        <tr><td>D8 Measurement</td><td>D8-B</td><td>Separates "rule unclear" from "rule never delivered".</td></tr>
+      </tbody>
+    </table>
+    <h3>Budget per card</h3>
+    <p>A typical frontend card with the header pack: platform block about 90 tokens, header binding rules about 250, Angular binding rules about 250, hard-rule binding lines about 300, three pointers about 60. That is about 950 tokens against 346 today, within the existing 1,500-token ceiling. On Claude Opus 5.5 the added 600 tokens cost $0.0024 once and are then read from the prompt cache at $0.20 per million tokens on every turn. The <code>rule-fit</code> aspect reads the shared cached prefix and adds one bounded call per card that has review-checked rules.</p>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">06</span> Evidence</h2>
+    <p>Method. A script read every Claude Code 2.1.305 and Codex 0.155.0 session transcript under the runner's clean-context state on agent-runner-01 whose working directory is a task worktree (524 sessions, 178 cards). For each card it took the authored prompt, cut at the first platform section (Prompt enrichment, Delivery and approval, Concept mode, Verification scope, session notes, run context). Area detection was replayed with the exact needle table from <code>IntakeRunner</code>. Title, task type and tags are not in the transcript, so real firing rates can only be higher. Appended block ids were read from the launch prompt. Ground truth for surfaces is the delivered file list: the diff of the latest salvage ref per card against its merge base with <code>origin/develop</code> (130 cards), joined with edit calls from the transcripts. Guide opens are tool calls that name the file (Read, <code>sed</code>, <code>cat</code>, <code>rg</code>). Scripts and aggregate numbers are in <a href="evidence/"><code>evidence/</code></a>; no prompt text is stored there.</p>
+
+    <div class="evidence-list">
+      <a class="evidence" href="evidence/metrics.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e1">E1 Window</b><small>178 cards, 524 sessions (372 Codex, 152 Claude), 21 October to 3 November 2026. 163 cards with a delivered file list, 145 with an enrichment block.</small></span></a>
+      <a class="evidence" href="evidence/metrics.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e2">E2 Area firing</b><small>backend 71%, runner 80%, frontend 97%, git 83%, filesystem 68%, refactor 15%, delegation 2%. Needle hits: <code>ui</code> 142, <code>card</code> 134, <code>agent</code> 101, <code>commit</code> 91, <code>api</code> 64, <code>token</code> 54.</small></span></a>
+      <a class="evidence" href="evidence/metrics.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e3">E3 Area correctness</b><small>frontend area against delivered frontend files: 55 true, 103 false positives, 0 misses (35% precision). backend: 99 true, 22 false, 29 misses (82% precision, 77% recall).</small></span></a>
+      <a class="evidence" href="evidence/metrics.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e4">E4 Appended blocks</b><small>repo-instructions 145, angular-components 126, dotnet-backend 121, frontend-design-tokens 8, git-handling 8, delegation-economy 6, frontend-styling 1. 135 cards carried exactly three blocks. frontend-styling reached 1 of 45 enriched frontend cards (AGT-3458, whose prompt did not fire backend).</small></span></a>
+      <a class="evidence" href="evidence/metrics.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e5">E5 Guide precision</b><small>angular-components was appended to 120 cards with a delivered diff; 39 touched frontend files. dotnet-backend: 115 appended, 102 touched backend files.</small></span></a>
+      <a class="evidence" href="evidence/metrics.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e6">E6 Guide opens</b><small>45 enriched frontend cards: angular-components.md opened on 15, frontend-styling.md on 0, hard rules on 23, frontend/AGENTS.md on 39; 19 opened none of the four style sources. Claude 10 cards (1, 2, 6). Codex 35 cards (14, 21, 33). Of 39 cards citing a guide in the prompt, 18 opened it.</small></span></a>
+      <a class="evidence" href="evidence/metrics.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e7">E7 Other projects</b><small>33 unenriched cards (PROJ-015, 016, 020, 021, 022), 10 cards with only the repository-instructions block (PROJ-011, 012, 023), 12 frontend-touching cards without any style rule. QS-107 and TE-58 audits reach the same result from source.</small></span></a>
+      <a class="evidence" href="evidence/metrics.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e8">E8 Token cost</b><small>Enrichment section median 346 tokens, maximum 386 (characters / 4). Per block: repo-instructions 90, angular-components 104, dotnet-backend 124, frontend-styling 164. Full sources: angular-components 842, frontend-styling 467, hard rules 2,212, frontend/AGENTS.md about 9,064.</small></span></a>
+      <a class="evidence" href="#gaps"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e9">E9 Drop visibility</b><small><code>PromptEnrichmentService.RenderLaunchContext</code> renders only <code>manifest.Constraints</code>; <code>Prepare</code> writes that same text to <code>intake/enriched-context.md</code>. Omissions appear only as <code>rejected-budget</code> candidates in <code>enrichment-report.json</code>.</small></span></a>
+      <a class="evidence" href="evidence/metrics.json"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="e10">E10 Selector backtest</b><small>Frontend surface on 163 cards. Current needles 35% precision, 100% recall. Paths in prompt only: 73%, 44%. Two strong words with boundaries: 70%, 55%. Path or two strong words: 65%, 58%. 108 of 163 prompts name a repository path; 13 are review-fix cards whose source card diff is known. Pack-level globs are narrower than the frontend surface, so this is a lower bound for the precision of a pack such as header-zone.</small></span></a>
+      <a class="evidence" href="#d4"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e11">E11 Native skill discovery</b><small>Codex 0.155.0 headless (<code>codex_exec</code>) on PROJ-002 worktrees lists skill roots <code>$CODEX_HOME/skills/.system</code>, plugin caches and <code>&lt;worktree&gt;/.agents/skills</code>, and names task-api, regenerate-readme and runtime-log-analysis with descriptions only. Claude Code 2.1.305: in 162 sessions on task worktrees the skill listing holds only the 12 to 14 built-in skills, never a skill from <code>.agents/skills</code>. A live probe of <code>.claude/skills</code> discovery failed to authenticate (no billable call was made), so that path is unverified on this host. Copilot and Gemini CLIs are not installed on agent-runner-01.</small></span></a>
+      <a class="evidence" href="#gaps"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e12">E12 Remote transport</b><small><code>RunSpecDto</code> carries <code>ModeFraming</code>, model, budget and follow-up fields only. The runner task folder for this card contains only <code>results/</code>. The CLI config directories are per card (<code>taskIdentityHash</code> in <code>.agent-studio-clean-context.json</code>) and Codex directories already contain a <code>skills/</code> folder.</small></span></a>
+      <a class="evidence" href="evidence/header-zone-cards-by-week.txt"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e13">E13 Header-zone churn</b><small>Distinct cards per ISO week whose salvage commits touch header-zone files (usage-cockpit-header, studio-shell header cockpit and shell template and styles, header-quota, task detail-header): W35 2, W36 1, W37 9, W38 2, W39 3, W40 5, W41 4, W42 7, W43 11, W44 3, W45 7 (Monday and Tuesday only). The shell template and styles also hold non-header parts, so this is an upper bound for header changes. AGT-3458 is a review-fix card for a header defect found in AGT-3356.</small></span></a>
+      <a class="evidence" href="#d6"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="e14">E14 Verdict format</b><small><code>[[ASPECT_VERDICT: status; summary; evidence_checked; missing]]</code> per <code>review.md</code>. No rule field; the citation policy downgrades an uncited block to concerns.</small></span></a>
+      <a class="evidence" href="#d2"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="e15">E15 Classifier cost</b><small>Claude Haiku 5.5 at $0.10 and $0.50 per million input and output tokens: 4,000 in and 100 out cost about $0.00045 per card. Claude Sonnet 5.5 at $2 and $10: about $0.009 per card.</small></span></a>
+    </div>
+
+    <h3>Task view surfaces</h3>
+<p>Both captures come from the real backend of the isolated worktree test stack (<code>scripts/worktree-test-stack.sh up --with-frontend</code>) at <code>d63df0be4</code>. A temporary git repository was registered as project "Rule Capture", and one card, RC-1, was created through the public API; the capture spec only reads what the backend returns for it. The pinned ADR-0056 demo stack could not be used: since AGT-2669 its <code>public-demo-readonly</code> profile answers every API call over plain HTTP with <code>426 https-required</code>, so <code>generate.sh</code> fails at its pinning step. Source: <a href="capture/rule-delivery-capture.spec.ts"><code>capture/rule-delivery-capture.spec.ts</code></a>, <a href="capture/run-capture.sh"><code>capture/run-capture.sh</code></a>, DOM facts in <a href="capture/rule-delivery-facts.json"><code>capture/rule-delivery-facts.json</code></a>.</p>
+<figure class="evidence-figure media-breakout" id="fig-pipeline">
+  <div class="evidence-captures">
+    <div class="evidence-capture">
+      <span class="capture-theme">Light</span>
+      <img src="assets/task-overview-pipeline-pre-steps-light--real.png" alt="Task view Overview tab, Pipeline block with the Pre steps group expanded: rows Loop check, a truncated Model qualification, a truncated Prompt enrichment with an open tooltip reading Prompt enrichment, a disabled Orchestrator prep and a Reissue row, followed by the collapsed core, decision, tool, analysis and aspect groups." width="1079" height="398">
+      <span class="figure-annotation">Third pre-step: Prompt enrichment</span>
+    </div>
+    <div class="evidence-capture">
+      <span class="capture-theme">Dark</span>
+      <img src="assets/task-overview-pipeline-pre-steps-dark--real.png" alt="The same Pipeline block in the dark theme with the Prompt enrichment tooltip open on the third pre-step row." width="1079" height="398">
+    </div>
+  </div>
+  <figcaption>
+    <span class="figure-claim"><b>Evidence.</b> The task view's pipeline line lists the pre-steps in this order: Loop check, Model qualification, Prompt enrichment, then Orchestrator prep (off) and the Reissue open-items check. The tooltip on the third row reads "Prompt enrichment. A deterministic pre-processing step that runs before the agent." The step names are truncated in the name column even at a 2,560 px viewport; the full labels come from the DOM (<code>pre-loop-guard</code>, <code>pre-model-qualification</code>, <code>pre-prompt-enrichment</code>).</span>
+    <span class="figure-as-of">
+      <span><b>Light:</b> captured <time datetime="2026-11-03">3 November 2026</time> on agent-runner-01 from the isolated worktree test stack at d63df0be4, card RC-1 created through the API (<code>--real</code>).</span>
+      <span><b>Dark:</b> captured <time datetime="2026-11-03">3 November 2026</time>, same stack, card and commit (<code>--real</code>).</span>
+    </span>
+  </figcaption>
+</figure>
+<figure class="evidence-figure media-breakout" id="fig-docs">
+  <div class="evidence-captures">
+    <div class="evidence-capture">
+      <span class="capture-theme">Light</span>
+      <img src="assets/task-docs-tab-files-light--real.png" alt="Task view Docs tab for a new card: an On this page index with one entry, Task brief, one document card showing the start of the prompt, and a hint that agent reports, review notes, aspect verdicts and interactive explorations will appear in Docs automatically." width="852" height="290">
+      <span class="figure-annotation">Task folder document: prompt.md</span>
+    </div>
+    <div class="evidence-capture">
+      <span class="capture-theme">Dark</span>
+      <img src="assets/task-docs-tab-files-dark--real.png" alt="The same Docs tab in the dark theme with the Task brief card and the hint about documents appearing automatically." width="852" height="290">
+    </div>
+  </div>
+  <figcaption>
+    <span class="figure-claim"><b>Evidence.</b> The Docs tab (tab id <code>description</code>) lists the documents of the card's task folder. For a new card it shows one card, "Task brief" (<code>prompt.md</code>), and the hint "Only the task brief is here. Agent reports, review notes, aspect verdicts, and interactive explorations will appear in Docs automatically." A <code>rules/selected-rules.md</code> written by the enrichment step would appear in this list.</span>
+    <span class="figure-as-of">
+      <span><b>Light:</b> captured <time datetime="2026-11-03">3 November 2026</time> on agent-runner-01 from the isolated worktree test stack at d63df0be4, card RC-1 (<code>--real</code>); cropped to the top 290 px of the pane, the rest is empty.</span>
+      <span><b>Dark:</b> captured <time datetime="2026-11-03">3 November 2026</time>, same stack, card and commit (<code>--real</code>); cropped the same way.</span>
+    </span>
+  </figcaption>
+</figure>
+<p class="dim">The enrichment report beside the authored prompt in the Task tab is stated from code only (<code>task-inspector-tab.component.html</code>, <code>data-testid="enrichment-report"</code>). It needs a dispatched run, and no CLI run was started for this Dossier. Its mocked spec <code>e2e/task-detail/prompt-enrichment-report.spec.ts</code> fails at d63df0be4 because its catch-all route answers <code>/api/usage/cockpit</code> with <code>[]</code>, which raises "clis is not iterable" in <code>UsageCockpitHeaderComponent</code>; it produced no image.</p>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">07</span> Open decisions</h2>
+    <p>Each decision has a working recommendation. Implementation cards use it unless an operator decision selects another option.</p>
+    <table>
+      <thead><tr><th>Id</th><th>Decision</th><th>Options</th><th>Recommended</th></tr></thead>
+      <tbody>
+        <tr id="d1"><td>D1</td><td>Rule unit and location</td><td>A extended guide files · B skill-format packs in <code>docs/quality/rules/</code> plus workspace packs · C rules as application data</td><td>B</td></tr>
+        <tr id="d2"><td>D2</td><td>Selection signals</td><td>A tuned needles · B deterministic pins, inheritance, paths, keywords, mode · C Haiku classifier</td><td>B, with C kept as a later option if the measured selection-miss rate stays above 15% after four weeks</td></tr>
+        <tr id="d3"><td>D3</td><td>Budget</td><td>A two optional blocks · B tiered character budget, visible overflow · C full packs</td><td>B</td></tr>
+        <tr id="d4"><td>D4</td><td>Delivery</td><td>A card Docs only · B native skills in the worktree · C prompt plus card Docs plus clean-context skill root</td><td>C</td></tr>
+        <tr id="d5"><td>D5</td><td>Phase</td><td>A extend <code>pre-prompt-enrichment</code> · B new <code>pre-rule-selection</code> step</td><td>A</td></tr>
+        <tr id="d6"><td>D6</td><td>Verification</td><td>A inside <code>code-quality</code> · B dedicated <code>rule-fit</code> aspect plus guards · C guards only</td><td>B</td></tr>
+        <tr id="d7"><td>D7</td><td>Feedback loop</td><td>A manual · B rule ledger proposing cards</td><td>B</td></tr>
+        <tr id="d8"><td>D8</td><td>Measurement</td><td>A brief metrics · B brief metrics plus selection quality</td><td>B</td></tr>
+        <tr id="d9"><td>D9</td><td>Concept-mode cards</td><td>A no rules · B pointer index only · C same as coding</td><td>B; binding rules only for packs pinned on the card</td></tr>
+        <tr id="d10"><td>D10</td><td>Workspace pack override</td><td>A project may disable a workspace pack · B project may also replace it under the same id</td><td>A; same-id packs are rejected by the catalogue</td></tr>
+      </tbody>
+    </table>
+    <h3>Baselines and targets</h3>
+    <table>
+      <thead><tr><th>Metric</th><th>Baseline (this Dossier)</th><th>Target after the pilot</th></tr></thead>
+      <tbody>
+        <tr><td>Rule-cited findings per card</td><td>not measurable (no rule ids)</td><td>measured on every card with review-checked rules</td></tr>
+        <tr><td>Header-zone regressions per week</td><td>header-zone cards 3 to 11 per week; regressions counted from S8 on as review-fix or bug cards whose diff touches header-zone paths</td><td>falling four-week trend; zero repeats of a cited HDR rule within 14 days</td></tr>
+        <tr><td>Tokens added per card</td><td>median 346</td><td>at most 1,500 (unchanged ceiling)</td></tr>
+        <tr><td>Selection precision</td><td>angular-components 33%</td><td>at least 70% per pack</td></tr>
+        <tr><td>Selection misses</td><td>not measurable</td><td>below 15% of cards with a diff-matched pack</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="slices">
+    <h2><span class="number">08</span> Implementation slices</h2>
+    <p>Each slice is one card. The order is the pilot path: S1 to S5 put the header pack in front of agents and reviewers; S6 to S9 migrate the rest and close the loop. The same slices are in <code>workbench.json</code> as <code>implementationTasks</code>.</p>
+    <table>
+      <thead><tr><th>Slice</th><th>Content</th><th>Depends on</th><th>Acceptance</th></tr></thead>
+      <tbody>
+        <tr><td>S1 Rule-pack format and catalogue</td><td>Parser and validation for <code>docs/quality/rules/*/SKILL.md</code> and workspace packs; rule ids, tiers, globs, checks; catalogue API; docs.</td><td>none</td><td>Fixture packs parse; duplicate ids, oversize packs and invalid globs are rejected with path warnings; existing guides still load; docs updated.</td></tr>
+        <tr><td>S2 Header-zone pilot pack</td><td>Author <code>header-zone</code> from AGT-3464 with ids, checks and references; wire the slot-registry guard as the check of its rule.</td><td>S1, AGT-3464</td><td>Pack validates in the catalogue; every rule has a check; the slot-registry rule points at a passing test; Wiki shows the pack.</td></tr>
+        <tr><td>S3 Selector v5 and tiered budget</td><td>Pins, inheritance, paths and selectors, keywords, mode gate; tiered budget; overflow in prompt, Docs and report; <code>rulePacks</code> section in the report.</td><td>S1</td><td>Replay tests: a header card naming <code>header-quota</code> gets <code>header-zone</code>; a review-fix card inherits it; a backend-only card does not get Angular packs; <code>frontend-styling</code> is no longer dropped by id order; zero selector tokens.</td></tr>
+        <tr><td>S4 Delivery to the run</td><td><code>rules/selected-rules.md</code> in the task folder; additive <code>RuleDelivery</code> in <code>RunSpecDto</code>; runner materializes packs into the clean-context skill root.</td><td>S3</td><td>Docs tab lists the document; a remote run receives it; a live probe on the installed Claude Code and Codex versions shows the pack in the skill listing; no file appears in <code>git status</code> of the worktree.</td></tr>
+        <tr><td>S5 Rule-fit review aspect</td><td>New aspect, scheduling condition, frozen prompt with delivered and diff-matched rules, <code>rules_cited</code> in the sentinel, selection-miss record.</td><td>S3</td><td>A seeded header violation yields a block citing <code>HDR-n</code> and a diff location; an uncited block is downgraded; a guard-checked rule is not judged by the model; cache read on the shared prefix is reported.</td></tr>
+        <tr><td>S6 Migrate guides and built-in blocks</td><td>Three guides to packs; C# blocks to <code>studio-architecture</code>; hard rules to <code>studio-ui-hard-rules</code>; remove <code>AreaNeedles</code> from pack selection.</td><td>S1, S3</td><td>Only <code>repo-instructions-source</code> remains in C#; every former block id maps to a pack rule; README and <code>adding-a-rule.md</code> describe packs.</td></tr>
+        <tr><td>S7 Rule ledger and proposed cards</td><td>Ledger of cited findings; four triggers; backlog card proposals with evidence.</td><td>S5</td><td>Two seeded citations of one delivered rule within 14 days propose one sharpen-rule card; a cited undelivered rule proposes a surface-map card; no duplicates.</td></tr>
+        <tr><td>S8 Measurement</td><td>Weekly metrics per project and pack: cited findings, header-zone regressions, tokens added, precision, misses, pointer open rate.</td><td>S3, S5</td><td>Numbers reproduce this Dossier's baselines on the replay set; header-zone regressions per week are visible.</td></tr>
+        <tr><td>S9 Workspace packs for every project</td><td>Shipped workspace packs with a per-project switch; projects without <code>docs/quality</code> receive them.</td><td>S1, S3</td><td>A fixture project with no catalogue receives the workspace pack; disabling it per project removes it; TE-58 replay shows a non-empty enrichment.</td></tr>
+      </tbody>
+    </table>
+    <p class="dim">The concept-mode delivery rule allowed changes only inside this Dossier directory. The required row in <code>docs/start/README.md</code> is left to slice S1, which touches that index anyway.</p>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">09</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

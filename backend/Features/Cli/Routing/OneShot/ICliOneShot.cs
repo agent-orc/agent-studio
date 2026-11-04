@@ -247,7 +247,10 @@ public sealed class CliOneShotRegistry
             request.ThinkingLevel,
             request.Project,
             OccupiedSlots: 0,
-            ExecutionPath: source));
+            ExecutionPath: source,
+            SameClassOnly: source.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                || source.Contains("review-grade", StringComparison.OrdinalIgnoreCase)
+                || source.Contains("code-review", StringComparison.OrdinalIgnoreCase)));
         var task = TaskFrom(request);
         if (task is not null)
             _quotaRecorder?.EmitAdmissionDecision(task, plan, source);

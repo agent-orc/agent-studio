@@ -163,6 +163,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("GET", "/api/cli/types", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/usage", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/cli/quota", IamPermissions.WorkspaceRead)]
+    [InlineData("GET", "/api/model-selection/effective", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/cli/{cliType}/models", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/maintenance-model", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/{name}/effective-mode", IamPermissions.WorkspaceRead)]

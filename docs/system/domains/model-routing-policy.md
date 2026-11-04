@@ -557,6 +557,17 @@ path-to-test map is the CLI domain's
 load-bearing boundary is recorded in
 [ADR-0069](../architecture/decisions/adr-archive.md#adr-0069---quota-admission-is-one-run-scoped-boundary-for-every-cli-execution-path-2026-09-08).
 
+The operator's expiring fallback preference now reaches review aspects (including
+deep review), review grade, one-shots, orchestrator chat, merge resolution, and
+the model recommendation for new cards. It switches at the next launch or
+claim and expires at the selected quota reset; existing card settings are not
+rewritten. Review routes require a fallback in the same Token Economy
+capability class and wait with a reason when none is available. Quota-cap
+fallback still defers deep review. `GET /api/model-selection/effective` previews
+configured and effective routes with the deciding rule for a project and
+pipeline type. The CLI Management overlay shows those routes next to the
+preference control.
+
 Remote coding claims also require fresh model-acceptance evidence from the
 claiming host for the effective model. CLI catalogue discovery alone does not
 prove that the current login can run a listed model. The host sends one small

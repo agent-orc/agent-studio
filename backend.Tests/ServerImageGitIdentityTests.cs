@@ -47,7 +47,12 @@ public sealed partial class ServerImageGitIdentityTests : IDisposable
         Assert.Equal("*", config["safe.directory"]);
     }
 
-    /// <summary>Git as the service user sees it: only the given system file, no global file, no identity variables.</summary>
+    /// <summary>
+    /// Git as the service user sees it: only the given system file, no global file, no identity variables.
+    /// Every inherited <c>GIT_*</c> variable is removed first, so a host that sets
+    /// <c>GIT_CONFIG_NOSYSTEM</c> (the hermetic review step environment), <c>GIT_CONFIG_COUNT</c>
+    /// or an author identity cannot hide or replace the system file; the probe's own variables stay.
+    /// </summary>
     private sealed class IsolatedGit(string systemConfig, string home) : IReadinessGit
     {
         private readonly ProcessReadinessGit _git = new();
@@ -55,15 +60,17 @@ public sealed partial class ServerImageGitIdentityTests : IDisposable
         public ReadinessGitResult Run(string workingDirectory, IReadOnlyList<string> arguments,
             IReadOnlyDictionary<string, string?>? environment = null)
         {
-            var isolated = new Dictionary<string, string?>(environment ?? new Dictionary<string, string?>())
-            {
-                ["GIT_CONFIG_SYSTEM"] = systemConfig,
-                ["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null",
-                ["HOME"] = home,
-                ["GIT_COMMITTER_NAME"] = null,
-                ["GIT_COMMITTER_EMAIL"] = null,
-                ["EMAIL"] = null,
-            };
+            var isolated = new Dictionary<string, string?>(StringComparer.Ordinal);
+            foreach (var key in Environment.GetEnvironmentVariables().Keys.Cast<string>())
+                if (key.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)) isolated[key] = null;
+            foreach (var (key, value) in environment ?? new Dictionary<string, string?>())
+                isolated[key] = value;
+            isolated["GIT_CONFIG_SYSTEM"] = systemConfig;
+            isolated["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+            isolated["HOME"] = home;
+            isolated["GIT_COMMITTER_NAME"] = null;
+            isolated["GIT_COMMITTER_EMAIL"] = null;
+            isolated["EMAIL"] = null;
             return _git.Run(workingDirectory, arguments, isolated);
         }
     }
