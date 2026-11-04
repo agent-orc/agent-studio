@@ -205,6 +205,10 @@ public sealed class ModelQualificationService
         };
     }
 
+    /// <summary>Hard floor for a local launch, using the same policy as a remote claim.</summary>
+    public ModelRoutingTier? CorrectnessFloor(TaskInfo task, string prompt)
+        => _policy.CorrectnessFloor(task.TaskType, task.Title, prompt);
+
     public async Task RecordDecisionAsync(string jobFolder, ModelQualificationDecision decision, CancellationToken ct)
     {
         try

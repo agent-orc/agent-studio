@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using AgentStudio.TestSupport;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -222,6 +224,48 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         Assert.Equal(
             "model unsupported by installed CLI 2.1.270 (minimum 2.1.281)",
             rejection.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public async Task AutoPickupUnsupportedFallbackModel_StaysReady_AndDoesNotSpawn()
+    {
+        WriteJob(TaskStates.Ready, "job-unsupported-fallback",
+            model: "claude-haiku-4-5", modelExplicit: false);
+        var cli = new FailingCliService(installedVersion: "2.1.270 (Claude Code)");
+        var runner = BuildRunner(cli, modelSelection: new UnsupportedFallbackSelection());
+        runner.SetMode("auto-continuous");
+
+        await runner.TickAsync(CancellationToken.None);
+
+        Assert.False(cli.StartCalled);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "job-unsupported-fallback");
+        Assert.True(Directory.Exists(readyFolder));
+        using var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(readyFolder, "task.json")));
+        Assert.Equal(ModelPinAdmissionPolicy.RejectionCode,
+            taskJson.RootElement.GetProperty(RemoteDispatchRejectionStore.FieldName)
+                .GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void Local_fallback_selection_receives_the_cards_hard_correctness_floor()
+    {
+        WriteJob(TaskStates.Ready, "job-critical-fallback", model: "gpt-6-sol");
+        File.WriteAllText(Path.Combine(_watchPath, TaskStates.Ready,
+            "job-critical-fallback", "prompt.md"), "Prevent data-loss in a concurrent state machine.");
+        var policy = new ModelRoutingPolicyRegistry();
+        var qualification = new ModelQualificationService(policy, new FixedRoutingMode(),
+            new JsonlAppender(), NullLogger<ModelQualificationService>.Instance);
+        var selection = new FloorInspectingSelection();
+        TaskScannerService? scanner = null;
+        var runner = BuildRunner(new FailingCliService(), modelSelection: selection,
+            modelQualification: qualification, scannerObserver: found => scanner = found);
+        var info = scanner!.FindJob("job-critical-fallback")!;
+
+        var method = typeof(ProjectRunner).GetMethod("PlanQuotaAdmission",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        _ = method.Invoke(runner, [info]);
+
+        Assert.Equal("sol-xhigh", selection.Floor?.Id);
     }
 
     [Fact]
@@ -649,7 +693,9 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         LocalRunClaimAdapter? localRunClaims = null,
         IVisualQaService? visualQa = null,
         bool networked = false,
-        string? executionRunner = null)
+        string? executionRunner = null,
+        IModelSelectionService? modelSelection = null,
+        ModelQualificationService? modelQualification = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -739,7 +785,53 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             localCodingAdmission: allowLocalCoding ? AllowLocalCodingForTests.Instance : null,
             localRunClaims: localRunClaims,
             visualQa: visualQa,
-            networked: networked);
+            networked: networked,
+            modelQualification: modelQualification,
+            modelSelection: modelSelection);
+    }
+
+    private sealed class FixedRoutingMode : IModelRoutingModeProvider
+    {
+        public bool EconomyMode => false;
+    }
+
+    private sealed class FloorInspectingSelection : IModelSelectionService
+    {
+        public ModelRoutingTier? Floor { get; private set; }
+        public bool IsOperatorSwitchActive(string? cliType) => false;
+        public ModelSelectionDecision Select(ModelSelectionCall call)
+        {
+            Floor = call.CorrectnessFloor?.Invoke();
+            var route = new SelectionRoute(call.Request.Pins.CliType ?? CliTypes.Claude,
+                call.Request.Pins.Model, call.Request.Pins.ThinkingLevel);
+            var result = new SelectionResult
+            {
+                Outcome = SelectionOutcome.Primary,
+                Primary = route,
+                Route = route,
+                Rule = SelectionRules.Pin,
+                Reason = "launch",
+            };
+            return new ModelSelectionDecision(result, QuotaAdmissionPlan.From(result));
+        }
+    }
+
+    private sealed class UnsupportedFallbackSelection : IModelSelectionService
+    {
+        public bool IsOperatorSwitchActive(string? cliType) => false;
+
+        public ModelSelectionDecision Select(ModelSelectionCall call)
+        {
+            var result = new SelectionResult
+            {
+                Outcome = SelectionOutcome.Fallback,
+                Primary = new SelectionRoute(CliTypes.Claude, "claude-haiku-4-5", null),
+                Route = new SelectionRoute(CliTypes.Claude, "claude-opus-5-5", "high"),
+                Rule = SelectionRules.QuotaCap,
+                Reason = "quota fallback",
+            };
+            return new ModelSelectionDecision(result, QuotaAdmissionPlan.From(result));
+        }
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
