@@ -30,6 +30,7 @@ entry surface.
 |---|---|---|
 | [Angular components](angular-components.md) | Angular is detected | [UI hard rules](./design/style-guide-hard-rules.md), [component vocabulary](./frontend/style-guide/README.md), [performance playbook](./frontend/performance.md) |
 | [Frontend styling context](frontend-styling.md) | Angular + frontend/styling task area are detected | [living styling rules](./frontend/style-guide/living-rules.md), [button vocabulary](./frontend/style-guide/buttons.md), [Deck-Panel v1](../concepts/visual-style-guide/deck-panel-v1.md) |
+| [Studio header zones](header-zones.md) | Angular + header task area are detected | [header slot and relevance guide](./frontend/style-guide/header.md) |
 | [.NET backend](dotnet-backend.md) | .NET or C# is detected | [backend structure style guide](../system/architecture/backend-structure/styleguide.md), [domain maps](../system/domains/README.md) |
 
 The [UI hard rules](./design/style-guide-hard-rules.md) remain the

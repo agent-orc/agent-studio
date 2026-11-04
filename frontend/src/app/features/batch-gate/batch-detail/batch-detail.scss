@@ -15,4 +15,17 @@
 .batch-detail p { margin: 0; }
 .batch-detail__summary { font-variant-numeric: tabular-nums; }
 .batch-detail code { overflow-wrap: anywhere; }
+.batch-detail .btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding-inline: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-card-radius);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.batch-detail .btn:hover { background: var(--studio-bg-hover); }
 .batch-detail .btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
