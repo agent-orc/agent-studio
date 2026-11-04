@@ -186,6 +186,9 @@ public sealed class BatchIntegrationReservationService
     public PendingIntegrationPushWait? GetWait(string project)
         => GetWaits(project).FirstOrDefault();
 
+    /// <summary>The age at which a pending push raises its age alert (<c>BatchGate:PendingPushAlertMinutes</c>).</summary>
+    public TimeSpan AlertAfter => _alertAfter;
+
     public IReadOnlyList<PendingIntegrationPushWait> GetWaits(string project)
     {
         var pending = ForProject(project);

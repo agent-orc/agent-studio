@@ -51,7 +51,10 @@ public static class QualityChangeReviewProjection
         if (latest.Mode == "off") return "not-reviewed";
         if (latest.UnavailableReason is not null) return "unavailable";
         var verdict = latest.Document is { } document
-            ? document.GetProperty("verdict").GetString() : null;
+            && document.ValueKind == System.Text.Json.JsonValueKind.Object
+            && document.TryGetProperty("verdict", out var value)
+            && value.ValueKind == System.Text.Json.JsonValueKind.String
+            ? value.GetString() : null;
         if (verdict is "provider-unavailable" or "timeout" or "auth-failure" or "unparseable")
             return "unavailable";
         if (latest.Mode == "shadow" && verdict is not null) return "shadow";
