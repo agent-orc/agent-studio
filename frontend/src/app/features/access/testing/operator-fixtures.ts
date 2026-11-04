@@ -95,7 +95,7 @@ export function oneTimeOperatorSession(): OneTimeOperatorSession {
 export function operatorKill(overrides: Partial<OperatorKillRecord> = {}): OperatorKillRecord {
   return {
     id: 'kill_1', kind: 'all', trigger: 'studio', actor: 'human:usr_owner', reason: 'Unexpected restarts', at: '2026-11-02T09:10:00Z',
-    operatorAgentIds: ['opa_ops', 'opa_off'], sessionIds: ['ses_live'], allOperators: true,
+    operatorAgentIds: ['opa_ops', 'opa_off'], sessionIds: ['ses_live'], standingGrantIds: [], approvalIds: [], allOperators: true,
     operationsServer: { state: 'revoked', attempts: 1, lastAttemptAt: '2026-11-02T09:10:01Z', lastError: null,
       revokedPrincipalIds: ['operator-console'], cancelledOperations: 1, completedAt: '2026-11-02T09:10:01Z' },
     notifiedAt: '2026-11-02T09:10:01Z',

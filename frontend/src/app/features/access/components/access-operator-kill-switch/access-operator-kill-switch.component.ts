@@ -66,16 +66,22 @@ export class AccessOperatorKillSwitchComponent implements OnInit {
     if (!this.operators.killing()) void this.operators.runDrill();
   }
 
-  /** The agents and sessions one use ended, as one phrase. */
+  /** The agents, sessions, standing grants, and approval requests one use ended, as one phrase. */
   scope(kill: OperatorKillRecord): string {
-    const agents = kill.operatorAgentIds.length;
-    const sessions = kill.sessionIds.length;
-    if (kill.kind === 'session') return '1 session';
-    return `${agents} ${agents === 1 ? 'agent' : 'agents'}, ${sessions} ${sessions === 1 ? 'live session' : 'live sessions'}`;
+    const parts = kill.kind === 'session'
+      ? ['1 session']
+      : [count(kill.operatorAgentIds.length, 'agent'), count(kill.sessionIds.length, 'live session')];
+    if (kill.standingGrantIds.length) parts.push(count(kill.standingGrantIds.length, 'standing grant'));
+    if (kill.approvalIds.length) parts.push(count(kill.approvalIds.length, 'approval request'));
+    return parts.join(', ');
   }
 
   actor(value: string): string {
     if (value.startsWith('system:')) return 'Control plane host';
     return value.startsWith('human:') ? 'Owner' : value;
   }
+}
+
+function count(value: number, noun: string): string {
+  return `${value} ${noun}${value === 1 ? '' : 's'}`;
 }

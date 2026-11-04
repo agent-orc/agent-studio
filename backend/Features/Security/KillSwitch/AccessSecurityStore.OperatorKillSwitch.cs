@@ -2,9 +2,9 @@ namespace AgentStudio.Security;
 
 /// <summary>
 /// The access-state half of the operator kill switch (security model SM-2,
-/// decisions D1 and D7): ending operator principals and sessions, the
-/// out-of-band latch that refuses every session while it exists, and the
-/// test principal of a drill. <see cref="OperatorKillSwitch"/> coordinates the
+/// decisions D1 and D7): ending operator principals, sessions, standing
+/// grants and open approval requests, the out-of-band latch that refuses every
+/// session while it exists, and the test principal of a drill. <see cref="OperatorKillSwitch"/> coordinates the
 /// audit entry, the Operations Server revocation, and the Owner notice.
 /// </summary>
 public sealed partial class AccessSecurityStore

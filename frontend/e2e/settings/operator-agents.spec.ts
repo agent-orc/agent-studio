@@ -77,9 +77,11 @@ function drill(id: string, trigger: string, startedAt: string, durationMs: numbe
   };
 }
 
-function kill(id: string, kind: 'all' | 'session', at: string, agentIds: string[], sessionIds: string[], reason: string | null, operationsState: string) {
+function kill(id: string, kind: 'all' | 'session', at: string, agentIds: string[], sessionIds: string[], reason: string | null, operationsState: string,
+  ended: { standingGrantIds?: string[]; approvalIds?: string[] } = {}) {
   return {
-    id, kind, trigger: 'studio', actor: 'human:usr_owner', reason, at, operatorAgentIds: agentIds, sessionIds, allOperators: kind === 'all',
+    id, kind, trigger: 'studio', actor: 'human:usr_owner', reason, at, operatorAgentIds: agentIds, sessionIds,
+    standingGrantIds: ended.standingGrantIds ?? [], approvalIds: ended.approvalIds ?? [], allOperators: kind === 'all',
     operationsServer: {
       state: operationsState, attempts: operationsState === 'not-required' ? 0 : 1, lastAttemptAt: at,
       lastError: operationsState === 'pending' ? 'http-503' : null,
@@ -152,7 +154,8 @@ async function stubOperatorRoutes(page: Page, state: ReturnType<typeof operatorS
     if (request.method() === 'POST' && path[1] === 'sessions' && path[3] === 'kill') {
       const agent = state.agents.find(candidate => candidate.id === path[0])!;
       agent.sessions = agent.sessions.map(item => item.id === path[2] ? { ...item, state: 'revoked' as SessionState, revokedAt: '2026-11-02T09:10:00Z' } : item);
-      const record = kill('kill_session', 'session', '2026-11-02T09:10:00Z', [agent.id], [path[2]], null, 'not-required');
+      const record = kill('kill_session', 'session', '2026-11-02T09:10:00Z', [agent.id], [path[2]], null, 'not-required',
+        { approvalIds: ['apr_morning'] });
       state.killSwitch.kills.unshift(record);
       return json(route, record);
     }
@@ -169,7 +172,8 @@ async function stubOperatorRoutes(page: Page, state: ReturnType<typeof operatorS
         ...agent, disabledAt: '2026-11-02T09:12:00Z',
         sessions: agent.sessions.map(item => item.state === 'active' ? { ...item, state: 'revoked' as SessionState, revokedAt: '2026-11-02T09:12:00Z' } : item),
       }));
-      const record = kill('kill_all', 'all', '2026-11-02T09:12:00Z', state.agents.map(agent => agent.id), live, body.reason ?? null, 'revoked');
+      const record = kill('kill_all', 'all', '2026-11-02T09:12:00Z', state.agents.map(agent => agent.id), live, body.reason ?? null, 'revoked',
+        { standingGrantIds: ['grant_release'], approvalIds: ['apr_release'] });
       state.killSwitch.kills.unshift(record);
       return json(route, record);
     }
@@ -300,7 +304,7 @@ test('owner ends one session, then all operator access, and runs a drill', async
   await page.getByTestId('confirm-dialog-confirm').click();
   await expect(operators.getByTestId('access-operator-session-ses_morning')).toHaveAttribute('data-state', 'revoked');
   await expect(operators.getByTestId('access-operator-agent-opa_release')).not.toContainText('Disabled');
-  await expect(killSwitch.getByTestId('access-kill-kill_session')).toContainText('One session');
+  await expect(killSwitch.getByTestId('access-kill-kill_session')).toContainText('1 session, 1 approval request');
 
   // Every operator agent is disabled by the switch.
   await killSwitch.getByTestId('access-kill-reason').fill('Unexpected restarts overnight');
@@ -309,6 +313,7 @@ test('owner ends one session, then all operator access, and runs a drill', async
   await page.getByTestId('confirm-dialog-confirm').click();
   await expect(operators.getByTestId('access-operator-agent-opa_release')).toContainText('Disabled');
   await expect(killSwitch.getByTestId('access-kill-last')).toContainText('All operator access, Studio, 1 agent');
+  await expect(killSwitch.getByTestId('access-kill-last')).toContainText('1 standing grant, 1 approval request');
   await expect(killSwitch.getByTestId('access-kill-last-operations')).toContainText('Operations Server principals revoked');
   await expect(killSwitch.getByTestId('access-kill-last')).not.toHaveAttribute('data-tone', 'alert');
   await expect(killSwitch.getByTestId('access-kill-reason')).toHaveValue('');

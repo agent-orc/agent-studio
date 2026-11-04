@@ -201,7 +201,8 @@ Every operator call is refused within 60 seconds; in practice the next Studio
 request already gets `401`. To resume, create a new operator agent and start a
 session. Each use appears in the audit trail with its own event type
 (`operator-kill.all`, `operator-kill.session`, `operator-kill.drill`) and as
-an operator feed event.
+an operator feed event. The Kill switch panel lists each use with the agents,
+sessions, standing grants and approval requests it ended.
 
 ### When the Studio UI is unreachable
 

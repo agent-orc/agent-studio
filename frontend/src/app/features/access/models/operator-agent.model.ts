@@ -146,9 +146,15 @@ export interface OperatorKillRecord {
   at: string;
   operatorAgentIds: readonly string[];
   sessionIds: readonly string[];
+  /** The standing grants (SM-4) the kill revoked; a per-session kill keeps them. */
+  standingGrantIds: readonly string[];
+  /** The open approval requests (SM-5) the kill cancelled. */
+  approvalIds: readonly string[];
   allOperators: boolean;
   operationsServer: OperatorKillPropagation;
   notifiedAt?: string | null;
+  /** The out-of-band request a host-command kill applied. */
+  requestId?: string | null;
 }
 
 export interface OperatorKillDrill {
@@ -162,6 +168,7 @@ export interface OperatorKillDrill {
   otherSessionsKept: boolean;
   passed: boolean;
   failure: string | null;
+  operatorAgentId?: string | null;
 }
 
 export interface OperatorKillSwitchStatus {

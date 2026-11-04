@@ -56,7 +56,7 @@ public sealed record OperatorKillActor(string Actor, string? OwnerId)
     public static readonly OperatorKillActor Drill = new(OperatorKillActors.Drill, null);
 }
 
-/// <summary>What the access store changed for one kill: the principals disabled and the sessions revoked.</summary>
+/// <summary>What the access store changed for one kill: the principals disabled, the sessions and standing grants revoked, and the approval requests cancelled.</summary>
 public sealed record OperatorAccessEnded(DateTime At, IReadOnlyList<string> OperatorAgentIds, IReadOnlyList<string> SessionIds)
 {
     /// <summary>The standing grants (SM-4) the kill revoked; a per-session kill keeps them.</summary>

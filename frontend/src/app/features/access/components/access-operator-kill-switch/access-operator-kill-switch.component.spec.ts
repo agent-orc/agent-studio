@@ -60,6 +60,17 @@ describe('AccessOperatorKillSwitchComponent', () => {
     expect(byTestId('access-kill-kill_1')!.textContent).toContain('Unexpected restarts');
   });
 
+  it('names the standing grants and approval requests a kill ended next to its agents and sessions', async () => {
+    await render(operatorKillSwitch({
+      kills: [
+        operatorKill({ standingGrantIds: ['grant_1'], approvalIds: ['apr_1', 'apr_2'] }),
+        operatorKill({ id: 'kill_session', kind: 'session', operatorAgentIds: ['opa_ops'], approvalIds: ['apr_3'] }),
+      ],
+    }));
+    expect(byTestId('access-kill-last')!.textContent).toContain('2 agents, 1 live session, 1 standing grant, 2 approval requests');
+    expect(byTestId('access-kill-kill_session')!.textContent).toContain('1 session, 1 approval request');
+  });
+
   it('turns acute only for a pending revocation, a failed drill, or a pending host command', async () => {
     await render(operatorKillSwitch({
       kills: [operatorKill({ operationsServer: { state: 'pending', attempts: 2, lastError: 'http-503', cancelledOperations: 0 } })],

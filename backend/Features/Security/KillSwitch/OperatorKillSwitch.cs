@@ -27,11 +27,12 @@ public sealed class DeferredOperatorKillNotifier : IOperatorKillNotifier
 /// <summary>
 /// The operator kill switch (security model SM-2, decisions D1 and D7). One
 /// coordinator for the Studio action, the out-of-band command, the per-session
-/// kill, and the drill: it ends access in the access store first (the next
-/// Studio request is refused), writes the audit entry with its own event type,
-/// revokes the operator's Operations Server principals (retried until they are
-/// revoked), and notifies the Owner. Standing grants (SM-4), approval requests
-/// (SM-5), and host certificates (SM-6) join this sequence when those slices exist.
+/// kill, and the drill: it ends access in the access store first (principals,
+/// sessions, standing grants of SM-4 and open approval requests of SM-5 in one
+/// save, so the next Studio request is refused), writes the audit entry with its
+/// own event type, revokes the operator's Operations Server principals (retried
+/// until they are revoked), and notifies the Owner. Host certificates (SM-6)
+/// join this sequence when that slice exists.
 /// </summary>
 public sealed class OperatorKillSwitch(
     AccessSecurityStore store,
@@ -47,7 +48,7 @@ public sealed class OperatorKillSwitch(
     public OperatorKillSwitchLog Log => log;
     public bool OperationsServerConfigured => revocation.Configured;
 
-    /// <summary>Ends every operator principal, every session, and the operator's Operations Server principals.</summary>
+    /// <summary>Ends every operator principal, session, standing grant and open approval request, and the operator's Operations Server principals.</summary>
     public async Task<OperatorKillRecord> EndAllAsync(OperatorKillActor actor, string trigger, string? reason, string? requestId,
         CancellationToken ct)
     {
@@ -69,7 +70,7 @@ public sealed class OperatorKillSwitch(
         return await NotifyAsync(record, ct);
     }
 
-    /// <summary>Ends one runaway session; the principal and its other sessions keep working.</summary>
+    /// <summary>Ends one runaway session and cancels its open approval requests; the principal and its other sessions keep working.</summary>
     public async Task<OperatorKillRecord> KillSessionAsync(string agentId, string sessionId, string ownerId, string? reason,
         CancellationToken ct)
     {
