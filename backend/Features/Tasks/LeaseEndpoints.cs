@@ -30,6 +30,55 @@ public static class LeaseEndpoints
     internal static readonly SemaphoreSlim ClaimGate = new(1, 1);
     private static readonly AgentStudio.Shared.RemoteRequeueLogLimiter DeferredLeaseLogs = new();
 
+    private static void RecordModelHealthEvent(ModelSelectionLedger ledger, TimelineLog timeline,
+        TaskInfo task, string runnerId, string? attemptId, string kind, string rule,
+        string provider, string model, string reason, DateTime? expiresAt = null)
+    {
+        var entry = new ModelSelectionEvent
+        {
+            Kind = kind, Consumer = "coding", Host = runnerId, Project = task.ProjectName,
+            TaskKey = task.TaskKey, AttemptId = attemptId,
+            From = new ModelSelectionRoute(provider, model, task.ThinkingLevel),
+            To = new ModelSelectionRoute(provider, model, task.ThinkingLevel),
+            Rule = rule, Reason = reason,
+            ReturnToPrimaryAt = expiresAt is { } deadline ? new DateTimeOffset(deadline, TimeSpan.Zero) : null,
+        };
+        ledger.Append(entry);
+        timeline.Append(task.FolderPath, $"model.{kind}", TimelineActors.System,
+            $"{reason} Selection event {entry.Id}.", runId: attemptId,
+            details: new Dictionary<string, string> { ["selectionEventId"] = entry.Id });
+    }
+
+    private static IReadOnlyList<AgentStudio.TaskServer.Contracts.ProviderModelFallback> RejectionCandidates(
+        ModelRoutingPolicyRegistry routing, IModelEquivalenceCatalog catalogue,
+        string? cli, string? model, string? thinking, bool unauthorized, bool includeSibling,
+        bool continuation = false)
+    {
+        var provider = CliTypes.Normalize(cli);
+        var sibling = includeSibling ? routing.ProviderRejectionFallback(provider, model) : null;
+        var equivalent = catalogue.TryGetRoute(provider, model, thinking,
+            provider == CliTypes.Codex ? CliTypes.Claude : CliTypes.Codex);
+        AgentStudio.TaskServer.Contracts.ProviderModelFallback? policyEquivalent = null;
+        if (provider == CliTypes.Codex
+            && model is ModelIds.Gpt6Sol or ModelIds.Gpt56Sol
+            && string.Equals(thinking, "xhigh", StringComparison.OrdinalIgnoreCase)
+            && routing.Policy.Tiers.FirstOrDefault(tier => tier.Id == "sol-xhigh")
+                ?.VendorOverrides.GetValueOrDefault("anthropic") is { } highEquivalent)
+            policyEquivalent = new(model!, highEquivalent.Model,
+                continuation ? "The declared same-tier Opus xhigh route after Sol capacity."
+                    : unauthorized ? "provider-unauthorized-policy-equivalent" : "model-capacity-policy-equivalent",
+                CliTypes.Claude, highEquivalent.ThinkingLevel);
+        return AgentStudio.TaskServer.Contracts.ProviderRejectionFallbackRoutes.Candidates(
+            provider, unauthorized,
+            sibling is null ? null : new(model!, sibling.ToModel,
+                continuation ? sibling.Reason : "model-capacity-sibling", provider, thinking),
+            equivalent is null ? null : new(model!, equivalent.ToModel,
+                continuation ? "The catalogue equivalent after a provider model refusal."
+                    : unauthorized ? "provider-unauthorized-equivalent" : "model-capacity-equivalent",
+                equivalent.ToCliType, equivalent.ToThinkingLevel),
+            policyEquivalent);
+    }
+
     public static void MapLeaseEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/runner/lease");
@@ -417,6 +466,7 @@ public static class LeaseEndpoints
             RemoteDispatchRejectionStore dispatchRejections,
             CliQuotaWaitPolicyService quotaWaitPolicy,
             IModelSelectionService modelSelection,
+            ModelSelectionLedger selectionLedger,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
             IModelEquivalenceCatalog equivalenceCatalog,
             TaskMutationService mutations,
@@ -857,6 +907,7 @@ public static class LeaseEndpoints
 
                 TaskInfo? candidate = null;
                 QuotaAdmissionPlan? candidateQuotaPlan = null;
+                var candidateHostHealthFallback = false;
                 RemoteProjectRepository? repository = null;
                 TaskInfo? failedPreflightCandidate = null;
                 RemoteProjectRepository? failedPreflightRepository = null;
@@ -913,14 +964,10 @@ public static class LeaseEndpoints
                     if (!string.IsNullOrWhiteSpace(requestedModel)
                         && capabilityRegistry.TakeExpiredModelCapacity(req.RunnerId.Trim(),
                             CliTypes.Normalize(requestedCli), requestedModel))
-                        timeline.Append(task.FolderPath, "model.health-cleared", TimelineActors.System,
-                            $"The capacity retry window ended for {requestedModel} on this host.",
-                            details: new Dictionary<string, string>
-                            {
-                                ["provider"] = CliTypes.Normalize(requestedCli),
-                                ["model"] = requestedModel,
-                                ["runner"] = req.RunnerId,
-                            });
+                        RecordModelHealthEvent(selectionLedger, timeline, task, req.RunnerId,
+                            null, "health-cleared", "model-capacity",
+                            CliTypes.Normalize(requestedCli), requestedModel,
+                            $"The capacity retry window ended for {requestedModel} on this host.");
                     // MS-5 selection remains the admission boundary; health
                     // marks supply host facts and a pending switch supplies the
                     // route for this fresh attempt.
@@ -967,46 +1014,27 @@ public static class LeaseEndpoints
                         && !string.IsNullOrWhiteSpace(requestedModel)
                         && capabilityRegistry.HasModelCapacity(req.RunnerId.Trim(),
                             CliTypes.Normalize(requestedCli), requestedModel);
+                    var hostHealthFallback = false;
                     if (capacityOnHost || unauthorizedOnHost)
                     {
                         var promptPath = Path.Combine(task.FolderPath, "prompt.md");
                         var promptText = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
                         var floor = modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
-                        var choices = new List<(string Cli, string Model, string? Thinking, string Rule)>();
-                        if (capacityOnHost
-                            && modelRouting.ProviderRejectionFallback(requestedCli, requestedModel)
-                            is { } sibling)
-                            choices.Add((CliTypes.Normalize(requestedCli), sibling.ToModel,
-                                requestedThinking, "model-capacity-sibling"));
-                        var equivalent = equivalenceCatalog.TryGetRoute(
-                            CliTypes.Normalize(requestedCli), requestedModel, requestedThinking,
-                            CliTypes.Normalize(requestedCli) == CliTypes.Codex ? CliTypes.Claude : CliTypes.Codex);
-                        if (equivalent is not null)
-                            choices.Add((equivalent.ToCliType, equivalent.ToModel,
-                                equivalent.ToThinkingLevel, unauthorizedOnHost
-                                    ? "provider-unauthorized-equivalent" : "model-capacity-equivalent"));
-                        if (CliTypes.Normalize(requestedCli) == CliTypes.Codex
-                            && requestedModel is ModelIds.Gpt6Sol or ModelIds.Gpt56Sol
-                            && string.Equals(requestedThinking, "xhigh", StringComparison.OrdinalIgnoreCase)
-                            && modelRouting.Policy.Tiers.FirstOrDefault(tier => tier.Id == "sol-xhigh")
-                                ?.VendorOverrides.GetValueOrDefault("anthropic") is { } highEquivalent)
-                            choices.Add((CliTypes.Claude, highEquivalent.Model,
-                                highEquivalent.ThinkingLevel, unauthorizedOnHost
-                                    ? "provider-unauthorized-policy-equivalent" : "model-capacity-policy-equivalent"));
+                        var choices = RejectionCandidates(modelRouting, equivalenceCatalog,
+                            requestedCli, requestedModel, requestedThinking, unauthorizedOnHost, capacityOnHost);
                         // The MS-7 hard pin waits for its requested route.
-                        if (task.PinMode == "hard") choices.Clear();
-                        foreach (var choice in choices.Distinct())
+                        foreach (var choice in task.PinMode == "hard" ? [] : choices)
                         {
-                            if (!modelRouting.RouteMeetsFloor(choice.Model, choice.Thinking, floor)
+                            if (!modelRouting.RouteMeetsFloor(choice.To, choice.ThinkingLevel, floor)
                                 || capabilityRegistry.ModelAdmission(req.RunnerId.Trim(), req.CapabilityInstanceId,
-                                    choice.Cli, choice.Model)
+                                    choice.CliType, choice.To)
                                     != AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted)
                                 continue;
                             var candidatePlan = modelSelection.Select(SelectionCall(
-                                choice.Cli, choice.Model, choice.Thinking,
+                                choice.CliType, choice.To, choice.ThinkingLevel,
                                 "remote-coding-claim-capacity")).Admission;
                             if (!candidatePlan.ShouldLaunch
-                                || !modelRouting.RouteMeetsFloor(candidatePlan.Model ?? choice.Model,
+                                || !modelRouting.RouteMeetsFloor(candidatePlan.Model ?? choice.To,
                                     candidatePlan.ThinkingLevel, floor)) continue;
                             quotaPlan = candidatePlan with
                             {
@@ -1015,9 +1043,10 @@ public static class LeaseEndpoints
                                 Reason = unauthorizedOnHost
                                     ? $"{requestedCli} is unauthorized on this host; switched to {candidatePlan.Model}."
                                     : $"{requestedModel} is at capacity on this host; switched to {candidatePlan.Model}.",
-                                ModelFallback = new ModelFallbackInfo(requestedModel ?? string.Empty, candidatePlan.Model ?? choice.Model,
-                                    choice.Rule, candidatePlan.CliType, candidatePlan.ThinkingLevel),
+                                ModelFallback = new ModelFallbackInfo(requestedModel ?? string.Empty, candidatePlan.Model ?? choice.To,
+                                    choice.Reason, candidatePlan.CliType, candidatePlan.ThinkingLevel),
                             };
+                            hostHealthFallback = true;
                             break;
                         }
                         if (unauthorizedOnHost && !quotaPlan.IsFallback)
@@ -1149,6 +1178,7 @@ public static class LeaseEndpoints
                         }
                         candidate = task;
                         candidateQuotaPlan = quotaPlan;
+                        candidateHostHealthFallback = hostHealthFallback;
                         break;
                     }
 
@@ -1443,6 +1473,29 @@ public static class LeaseEndpoints
                     QuotaWaitMarker.Clear(claimedInfo.FolderPath);
                     if (candidateQuotaPlan.IsFallback)
                     {
+                        if (candidateHostHealthFallback)
+                        {
+                            var switchReceipt = new ModelSelectionEvent
+                            {
+                                Kind = "switched", Consumer = "remote-claim", Host = req.RunnerId,
+                                Project = candidate.ProjectName, TaskKey = taskKey,
+                                AttemptId = acquire.Lease.AttemptId,
+                                From = new ModelSelectionRoute(candidate.CliType, candidate.Model,
+                                    candidate.ThinkingLevel),
+                                To = new ModelSelectionRoute(candidateQuotaPlan.CliType,
+                                    candidateQuotaPlan.Model, candidateQuotaPlan.ThinkingLevel),
+                                Rule = candidateQuotaPlan.ModelFallback?.Reason ?? "model-capacity",
+                                Reason = candidateQuotaPlan.Reason,
+                            };
+                            selectionLedger.Append(switchReceipt);
+                            timeline.Append(claimedFolderPath, "model.switched", TimelineActors.System,
+                                $"Model selection event {switchReceipt.Id}.",
+                                runId: acquire.Lease.AttemptId,
+                                details: new Dictionary<string, string>
+                                {
+                                    ["selectionEventId"] = switchReceipt.Id,
+                                });
+                        }
                         QuotaFallbackMarker.Write(claimedFolderPath, new QuotaFallbackRecord
                         {
                             CliType = candidateQuotaPlan.CliType,
@@ -1831,16 +1884,13 @@ public static class LeaseEndpoints
                     1, req.OutcomeDecision.RawFacts.StdOut, req.OutcomeDecision.RawFacts.StdErr);
                 capabilityRegistry.MarkModelCapacity(req.RunnerId.Trim(), capacityCli, capacityModel,
                     capacityEvidence.LimitedUntil?.UtcDateTime);
-                timeline.Append(task.FolderPath, "model.health-marked", TimelineActors.System,
-                    $"{capacityModel} is at capacity on host {capabilityRegistry.HostIdOf(req.RunnerId.Trim()) ?? req.RunnerId} for 15 minutes.",
-                    runId: attemptId,
-                    details: new Dictionary<string, string>
-                    {
-                        ["provider"] = capacityCli,
-                        ["model"] = capacityModel,
-                        ["kind"] = "capacity",
-                        ["runner"] = req.RunnerId,
-                    });
+                var capacityNow = DateTime.UtcNow;
+                var capacityUntil = capacityEvidence.LimitedUntil?.UtcDateTime is { } retryAt && retryAt > capacityNow
+                    ? retryAt : capacityNow.AddMinutes(15);
+                RecordModelHealthEvent(selectionLedger, timeline, task, req.RunnerId,
+                    attemptId, "health-marked", "model-capacity", capacityCli, capacityModel,
+                    $"{capacityModel} is at capacity on host {capabilityRegistry.HostIdOf(req.RunnerId.Trim()) ?? req.RunnerId} until {capacityUntil:u}.",
+                    capacityUntil);
             }
             var settledRun = settled.RunAttempt ?? authority.GetRun(attemptId);
             var terminalAt = settledRun?.TerminalAt ?? DateTime.UtcNow;
@@ -2186,56 +2236,24 @@ public static class LeaseEndpoints
                         req.SalvageRecoveryBranch,
                         req.SalvageRecoveryCommitSha)
                     : null;
-                var declaredFallback = modelRouting.ProviderRejectionFallback(effectiveCli, providerRejectionModel);
                 var hostInstance = capabilityRegistry.CurrentInstanceId(req.RunnerId.Trim());
-                if (declaredFallback is not null
-                    && capabilityRegistry.ModelAdmission(req.RunnerId.Trim(), hostInstance,
-                        declaredFallback.CliType, declaredFallback.ToModel)
-                        != AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted)
-                    declaredFallback = null;
-                if (declaredFallback is null && !string.IsNullOrWhiteSpace(effectiveCli)
-                    && !string.IsNullOrWhiteSpace(providerRejectionModel))
-                {
-                    var targetCli = CliTypes.Normalize(effectiveCli) == CliTypes.Codex
-                        ? CliTypes.Claude : CliTypes.Codex;
-                    var equivalent = equivalenceCatalog.TryGetRoute(
-                        effectiveCli, providerRejectionModel, providerRejectionThinking, targetCli);
-                    if (equivalent is not null
-                        && capabilityRegistry.ModelAdmission(req.RunnerId.Trim(), hostInstance,
-                            targetCli, equivalent.ToModel)
-                            == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted)
-                        declaredFallback = new ProviderRejectionModelFallback
-                        {
-                            CliType = targetCli,
-                            FromModel = providerRejectionModel,
-                            ToModel = equivalent.ToModel,
-                            Reason = "The catalogue equivalent after a provider model refusal.",
-                        };
-                    if (declaredFallback is null
-                        && CliTypes.Normalize(effectiveCli) == CliTypes.Codex
-                        && providerRejectionModel is ModelIds.Gpt6Sol or ModelIds.Gpt56Sol
-                        && string.Equals(providerRejectionThinking, "xhigh", StringComparison.OrdinalIgnoreCase)
-                        && modelRouting.Policy.Tiers.FirstOrDefault(tier => tier.Id == "sol-xhigh")
-                            ?.VendorOverrides.GetValueOrDefault("anthropic") is { } highEquivalent
-                        && capabilityRegistry.ModelAdmission(req.RunnerId.Trim(), hostInstance,
-                            CliTypes.Claude, highEquivalent.Model)
-                            == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted)
-                        declaredFallback = new ProviderRejectionModelFallback
-                        {
-                            CliType = CliTypes.Claude,
-                            FromModel = providerRejectionModel,
-                            ToModel = highEquivalent.Model,
-                            Reason = "The declared same-tier Opus xhigh route after Sol capacity.",
-                        };
-                }
+                var candidates = RejectionCandidates(modelRouting, equivalenceCatalog,
+                    effectiveCli, providerRejectionModel, providerRejectionThinking,
+                    unauthorized: false, includeSibling: true, continuation: true);
                 var promptPath = Path.Combine(task.FolderPath, "prompt.md");
                 var promptText = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
                 var floor = modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
-                var meetsFloor = declaredFallback is not null
-                                 && modelRouting.RouteMeetsFloor(
-                                     declaredFallback.ToModel,
-                                     providerRejectionThinking,
-                                     floor);
+                var selected = candidates.FirstOrDefault(candidate =>
+                    modelRouting.RouteMeetsFloor(candidate.To, candidate.ThinkingLevel, floor)
+                    && capabilityRegistry.ModelAdmission(req.RunnerId.Trim(), hostInstance,
+                        candidate.CliType, candidate.To)
+                        == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted);
+                var declaredFallback = selected is null ? null : new ProviderRejectionModelFallback
+                {
+                    CliType = selected.CliType, FromModel = selected.From,
+                    ToModel = selected.To, Reason = selected.Reason,
+                };
+                var meetsFloor = declaredFallback is not null;
                 var refusalCount = string.IsNullOrWhiteSpace(providerRejectionModel)
                     ? 1
                     : providerRejectionContinuations.CountRefusals(task, providerRejectionModel) + 1;
@@ -2684,16 +2702,11 @@ public static class LeaseEndpoints
                         req.RunnerId.Trim(),
                         req.OutcomeDecision?.RawFacts.EffectiveCliType ?? task.CliType ?? "codex",
                         providerRejectionModel!);
-                    timeline.Append(task.FolderPath, "model.health-marked", TimelineActors.System,
-                        $"{providerRejectionModel} is unavailable for this host login until a successful model probe.",
-                        runId: attemptId,
-                        details: new Dictionary<string, string>
-                        {
-                            ["provider"] = req.OutcomeDecision?.RawFacts.EffectiveCliType ?? task.CliType ?? "codex",
-                            ["model"] = providerRejectionModel!,
-                            ["kind"] = "model-unavailable",
-                            ["runner"] = req.RunnerId,
-                        });
+                    RecordModelHealthEvent(selectionLedger, timeline, task, req.RunnerId,
+                        attemptId, "health-marked", "model-unavailable",
+                        req.OutcomeDecision?.RawFacts.EffectiveCliType ?? task.CliType ?? "codex",
+                        providerRejectionModel!,
+                        $"{providerRejectionModel} is unavailable on this host until the next catalogue refresh.");
                     var holdPlan = quotaAdmission.Plan(new QuotaAdmissionRequest(
                         task.CliType, task.Model, task.ThinkingLevel, task.ProjectName, 0,
                         "remote-model-rejection",

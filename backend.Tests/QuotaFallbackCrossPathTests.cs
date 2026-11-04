@@ -60,6 +60,13 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         Assert.Equal(RClaimStatus.Claimed, claim.Status);
         Assert.Equal(expectedCli, claim.RunSpec?.CliType);
         Assert.Equal(expectedModel, claim.RunSpec?.Model);
+        var switchReceipt = factory.Services.GetRequiredService<ModelSelectionLedger>()
+            .Query(project: ProjectName).Events.First(entry =>
+                entry.Kind == "switched" && entry.To?.Model == expectedModel
+                && entry.From?.Model == ModelIds.Gpt6Sol);
+        Assert.Equal(claim.TaskKey, switchReceipt.TaskKey);
+        Assert.Equal(ModelIds.Gpt6Sol, switchReceipt.From?.Model);
+        Assert.False(string.IsNullOrWhiteSpace(switchReceipt.Reason));
         Assert.Equal(ModelIds.Gpt6Sol,
             factory.Services.GetRequiredService<TaskScannerService>()
                 .FindJob(taskKey, _watchPath)?.Model);

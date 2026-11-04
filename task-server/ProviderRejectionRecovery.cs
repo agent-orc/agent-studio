@@ -242,19 +242,22 @@ public sealed partial class TaskServerStore
         var sibling = policy.ProviderRejectionFallbacks.FirstOrDefault(item =>
             string.Equals(item.CliType, provider, StringComparison.OrdinalIgnoreCase)
             && string.Equals(item.From, model, StringComparison.OrdinalIgnoreCase));
-        if (sibling is not null)
-            yield return sibling with { ThinkingLevel = thinking, Reason = "model-capacity-sibling" };
-
-        // The versioned routing policy declares the same-class Anthropic route,
+        ProviderModelFallback? crossProvider = null;
+        // The versioned policy declares the same-class Anthropic route,
         // including Opus xhigh for the Sol xhigh floor (D5).
-        if (!string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase)
-            || model is not ("gpt-6-sol" or "gpt-5.6-sol")) yield break;
-        var tier = ThinkingRank(thinking) >= ThinkingRank("xhigh") ? "sol-xhigh" : "sol-medium";
-        if (policy.AnthropicRoutes.TryGetValue(tier, out var equivalent))
-            yield return new ProviderModelFallback(model, equivalent.Model,
+        if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase)
+            && model is "gpt-6-sol" or "gpt-5.6-sol")
+        {
+            var tier = ThinkingRank(thinking) >= ThinkingRank("xhigh") ? "sol-xhigh" : "sol-medium";
+            if (policy.AnthropicRoutes.TryGetValue(tier, out var equivalent))
+                crossProvider = new ProviderModelFallback(model, equivalent.Model,
                 "model-capacity-equivalent", "claude",
                 ThinkingRank(thinking) >= ThinkingRank(equivalent.ThinkingLevel)
                     ? thinking : equivalent.ThinkingLevel);
+        }
+        return ProviderRejectionFallbackRoutes.Candidates(provider, false,
+            sibling is null ? null : sibling with { ThinkingLevel = thinking, Reason = "model-capacity-sibling" },
+            crossProvider, null);
     }
 
     private static string DescribeProviderRejection(ProviderRequestRejection rejection)
