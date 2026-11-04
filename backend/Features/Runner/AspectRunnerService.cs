@@ -87,7 +87,7 @@ public sealed class AspectRunnerService
         }
     }
 
-    private async Task<string> RunViaOneShotAsync(string aspectId, string cli, string model, string prompt,
+    internal async Task<string> RunViaOneShotAsync(string aspectId, string cli, string model, string prompt,
         string? thinkingLevel, TimeSpan timeout, string jobFolderPath, string project, string jobId,
         CancellationToken ct)
     {
@@ -103,7 +103,19 @@ public sealed class AspectRunnerService
                 JobId = jobId,
             });
             if (direct is { Admission.ShouldLaunch: false })
-                throw new InvalidOperationException(direct.Admission.Reason);
+            {
+                var now = DateTime.UtcNow;
+                var deferred = CliOneShotResult.SpawnFailure(
+                    $"[quota-deferred] {direct.Admission.Reason}", now, now) with
+                {
+                    QuotaAdmission = direct.Admission,
+                    EffectiveCliType = direct.Admission.CliType,
+                    EffectiveModel = direct.Admission.Model,
+                    EffectiveThinkingLevel = direct.Admission.ThinkingLevel,
+                    QuotaDeferred = true,
+                };
+                return CliOneShotCompatibility.ToClaudeResultEnvelope(deferred, model);
+            }
             var admitted = direct?.Admission;
             if (admitted is not null && !string.Equals(admitted.CliType, cli, StringComparison.OrdinalIgnoreCase))
             {
@@ -401,12 +413,28 @@ public sealed class AspectRunnerService
             long spentInput = 0, spentOutput = 0, spentCacheRead = 0, spentCacheCreation = 0;
             while (true)
             {
-                (response, ok, callUsage, durationMs) =
+                var deferredReason = (string?)null;
+                (response, ok, callUsage, durationMs, deferredReason) =
                     await InvokeAspectCliAsync(def, inputs, cliBinary, model, thinkingLevel, prompt, perAspectTimeout, ct);
                 spentInput += callUsage?.InputTokens ?? 0;
                 spentOutput += callUsage?.OutputTokens ?? 0;
                 spentCacheRead += callUsage?.CacheReadTokens ?? 0;
                 spentCacheCreation += callUsage?.CacheCreationTokens ?? 0;
+
+                if (deferredReason is not null)
+                {
+                    _pipelineLog?.RecordStep(inputs.JobFolderPath, new PipelineStepExecution
+                    {
+                        StepId = pipelineStepId,
+                        Kind = StepKind.Aspect,
+                        Model = model,
+                        ThinkingLevel = thinkingLevel,
+                        Status = PipelineStepStatus.Pending,
+                        Reason = deferredReason,
+                    });
+                    return (index, new AspectVerdict(def.Id, AspectStatus.Pass,
+                        "Waiting for quota reset", string.Empty, null) { IsQuotaDeferred = true });
+                }
 
                 var parsed = AspectVerdictParsing.ParseVerdict(response);
                 if (parsed != null)
@@ -685,7 +713,7 @@ public sealed class AspectRunnerService
     /// AGT-2021 retry loop can call it repeatedly without duplicating the
     /// timing / usage bookkeeping.
     /// </summary>
-    private async Task<(string Response, bool Ok, OrchestratorTokenUsage? Usage, long DurationMs)> InvokeAspectCliAsync(
+    private async Task<(string Response, bool Ok, OrchestratorTokenUsage? Usage, long DurationMs, string? DeferredReason)> InvokeAspectCliAsync(
         AspectDefinition def,
         AspectRunInputs inputs,
         string cliBinary,
@@ -704,13 +732,16 @@ public sealed class AspectRunnerService
                     perAspectTimeout, inputs.JobFolderPath, inputs.Project, inputs.JobId, ct);
             sw.Stop();
             var durationMs = sw.ElapsedMilliseconds;
+            var deferredReason = DeferredReason(rawResponse);
+            if (deferredReason is not null)
+                return (string.Empty, false, null, durationMs, deferredReason);
             var parsed = AdHocClaudeInvoker.ParseOrFallback(rawResponse, model);
             AdHocClaudeInvoker.Record(_usage, $"aspect-{def.Id}", model, parsed.Usage,
                 durationMs, ok: true, project: inputs.Project, jobId: inputs.JobId,
                 thinkingLevel: thinkingLevel,
                 participantId: string.IsNullOrWhiteSpace(inputs.ReviewAttemptId) ? null
                     : $"support:review-attempt:{inputs.ReviewAttemptId}:step:aspect-{def.Id}");
-            return (parsed.Text, true, parsed.Usage, durationMs);
+            return (parsed.Text, true, parsed.Usage, durationMs, null);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -723,7 +754,25 @@ public sealed class AspectRunnerService
                 def.Id, inputs.Project, inputs.JobId);
             // Fail-loud-but-don't-block: on infrastructure failure the caller
             // retries once, then records an InfraCrash rather than durchwinken.
-            return (string.Empty, false, null, 0);
+            return (string.Empty, false, null, 0, null);
+        }
+    }
+
+    private static string? DeferredReason(string rawResponse)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(rawResponse);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            return root.TryGetProperty("quotaDeferred", out var deferred)
+                   && deferred.ValueKind == JsonValueKind.True
+                ? root.TryGetProperty("error", out var error) ? error.GetString() ?? "quota-deferred" : "quota-deferred"
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 
@@ -925,6 +974,9 @@ public sealed record AspectRunReport(
     /// the card must not be accepted, reissued, or counted as unfinished work.
     /// </summary>
     public bool HasInfraFailure => Verdicts.Any(v => v.IsInfraFailure);
+
+    /// <summary>True when a quota decision postponed an aspect without a model call.</summary>
+    public bool HasQuotaDeferred => Verdicts.Any(v => v.IsQuotaDeferred);
 
     /// <summary>The aspects that produced no verdict even after the retry.</summary>
     public IReadOnlyList<AspectVerdict> InfraFailures =>

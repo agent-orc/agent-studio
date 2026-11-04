@@ -139,21 +139,6 @@ public sealed class ModelSelectionService : IModelSelectionService
         if (modelFallbacks is not null && modelFallbacks.TryGetValue(explicitKey, out var explicitFallback))
             configuredFallback = [explicitFallback];
         var routing = _fallback.RoutingFacts();
-        if (configuredFallback is { Count: > 0 })
-        {
-            var original = routing.Profile;
-            routing = routing with { Profile = cli =>
-            {
-                var fallback = configuredFallback[0];
-                var previous = original(cli);
-                return (previous ?? new CliModelRouteProfile { CliType = cli }) with
-                {
-                    FallbackCliType = fallback.CliType,
-                    FallbackModel = fallback.Model,
-                    FallbackThinkingLevel = fallback.ThinkingLevel,
-                };
-            } };
-        }
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var facts = new SelectionFacts
         {
@@ -161,6 +146,7 @@ public sealed class ModelSelectionService : IModelSelectionService
             Caps = _caps,
             SnapshotFor = cli => string.IsNullOrWhiteSpace(cli) ? null : _quota.GetCachedFor(cli),
             Routing = routing,
+            ConfiguredFallbacks = configuredFallback,
             OccupiedSlots = call.OccupiedSlots,
             WaitPolicy = _waitPolicy.Resolve(project),
             OperatorSwitch = _preference?.Get(request.Pins.CliType ?? CliTypes.Claude),

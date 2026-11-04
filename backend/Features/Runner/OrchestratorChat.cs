@@ -8,6 +8,7 @@ using AgentStudio.Tasks;
 using AgentStudio.AdHoc;
 using AgentStudio.Prompts;
 using AgentStudio.Tokens;
+using AgentStudio.Cli;
 
 namespace AgentStudio.Runner;
 
@@ -659,13 +660,13 @@ public class OrchestratorChatService
                 var fullPrompt = prompt;
                 if (remoteRoute != null && _remoteWork != null)
                 {
-                    var quotaPlan = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+                    var quotaPlan = _quotaAdmission?.Selection.Select(ModelSelectionCall.FromAdmission(new QuotaAdmissionRequest(
                         CliTypes.Codex,
                         requestedModel,
                         thinkingLevel,
                         projectName,
                         OccupiedSlots: 0,
-                        ExecutionPath: "remote-project-chat"));
+                        ExecutionPath: "remote-project-chat"))).Admission;
                     if (quotaPlan is not null && !quotaPlan.ShouldLaunch)
                     {
                         _quotaAdmissionRecorder?.EmitProjectAdmissionDecision(
@@ -758,12 +759,19 @@ public class OrchestratorChatService
                 }
                 else
                 {
-                    result = _networked
-                        ? new OrchestratorDecisionResult(false, "", requestedModel, null, null,
-                            "No remote runner is configured for this project. Project chat cannot run on the Studio host in the networked profile.")
-                        : await _runner.DecideCodexAsync(
-                            fullPrompt, requestedModel, thinkingLevel, workingDirectory,
-                            ct, projectName, watchPath);
+                    if (_networked)
+                    {
+                        result = new OrchestratorDecisionResult(false, "", requestedModel, null, null,
+                            "No remote runner is configured for this project. Project chat cannot run on the Studio host in the networked profile.");
+                    }
+                    else
+                    {
+                        result = await RunLocalSelectedRouteAsync(_runner, _quotaAdmission?.Selection,
+                            requestedModel, thinkingLevel, fullPrompt, workingDirectory,
+                            projectName, watchPath, ct,
+                            plan => _quotaAdmissionRecorder?.EmitProjectAdmissionDecision(
+                                watchPath, projectName, plan, "remote-project-chat"));
+                    }
                 }
             }
             catch (Exception ex)
@@ -885,6 +893,41 @@ public class OrchestratorChatService
     }
 
     /// <summary>Preserve the planner's CLI when an unreachable remote chat runs locally.</summary>
+    internal static async Task<OrchestratorDecisionResult> RunLocalSelectedRouteAsync(
+        OrchestratorRunner runner, IModelSelectionService? selection,
+        string requestedModel, string? thinkingLevel, string prompt,
+        string workingDirectory, string projectName, string watchPath,
+        CancellationToken ct, Action<QuotaAdmissionPlan>? recordDecision = null)
+    {
+        var plan = selection?.Select(ModelSelectionCall.FromAdmission(
+            new QuotaAdmissionRequest(CliTypes.Codex, requestedModel, thinkingLevel,
+                projectName, OccupiedSlots: 0, ExecutionPath: "remote-project-chat"))).Admission;
+        if (plan is { ShouldLaunch: false })
+        {
+            recordDecision?.Invoke(plan);
+            return new OrchestratorDecisionResult(false, "", requestedModel, null, null, plan.Reason)
+            {
+                CliType = CliTypes.Codex,
+                ConfiguredModel = requestedModel,
+            };
+        }
+        if (plan?.IsFallback == true)
+            recordDecision?.Invoke(plan);
+        var outcome = await RunLocalPlannedRouteAsync(runner,
+            plan?.CliType ?? CliTypes.Codex,
+            plan?.Model ?? requestedModel,
+            plan?.ThinkingLevel ?? thinkingLevel,
+            prompt, workingDirectory, projectName, watchPath, ct);
+        return outcome with
+        {
+            CliType = plan?.CliType ?? CliTypes.Codex,
+            ConfiguredModel = requestedModel,
+            QuotaFallback = plan?.IsFallback == true,
+            QuotaFallbackReason = plan?.IsFallback == true ? plan.Reason : null,
+        };
+    }
+
+    /// <summary>Run the CLI and model already admitted for chat.</summary>
     internal static Task<OrchestratorDecisionResult> RunLocalPlannedRouteAsync(
         OrchestratorRunner runner, string cliType, string model, string? thinkingLevel,
         string prompt, string workingDirectory, string projectName, string watchPath,

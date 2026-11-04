@@ -81,6 +81,9 @@ public sealed record AspectVerdict(
     /// source-compatible.
     /// </summary>
     public bool IsInfraFailure { get; init; }
+
+    /// <summary>Admission deferred this aspect until the provider quota resets.</summary>
+    public bool IsQuotaDeferred { get; init; }
 }
 
 /// <summary>

@@ -532,7 +532,6 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(result);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
-        // Per-project pipeline-step override. Sets enabled / mode / model for
         app.MapPut("/api/projects/{projectName}/model-selection-overrides/{consumer}",
             (string projectName, string consumer, ModelSelectionOverrideRequest request,
                 ProjectSettingsService settings, TaskScannerService scanner,

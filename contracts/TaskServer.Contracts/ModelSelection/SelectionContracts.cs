@@ -169,6 +169,8 @@ public sealed record SelectionFacts
     public Func<string?, QuotaSnapshot?> SnapshotFor { get; init; } = _ => null;
     /// <summary>Null when no routing map is configured: the planner then never switches.</summary>
     public SelectionRoutingFacts? Routing { get; init; }
+    /// <summary>Ordered consumer or project routes, tried before catalogue routing.</summary>
+    public IReadOnlyList<SelectionRoute>? ConfiguredFallbacks { get; init; }
     public int OccupiedSlots { get; init; }
     public ResolvedCliQuotaWaitPolicy? WaitPolicy { get; init; }
     /// <summary>The operator switch ("conserve provider X until its reset") for the requested CLI.</summary>

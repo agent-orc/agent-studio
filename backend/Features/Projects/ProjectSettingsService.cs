@@ -213,13 +213,22 @@ public class ProjectSettingsService
                 ? new Dictionary<string, ModelSelectionOverride>(StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, ModelSelectionOverride>(typeEntry.ByStep, StringComparer.OrdinalIgnoreCase);
             if (value is null) steps.Remove(stepId); else steps[stepId] = value;
-            types[pipelineType] = typeEntry with { ByStep = steps.Count == 0 ? null : steps };
-            map[consumer] = parent with { ByPipelineType = types };
-            _cache[key] = current with { ModelSelectionOverrides = map };
+            var updatedType = typeEntry with { ByStep = steps.Count == 0 ? null : steps };
+            if (EmptySelectionOverride(updatedType)) types.Remove(pipelineType);
+            else types[pipelineType] = updatedType;
+            var updatedParent = parent with { ByPipelineType = types.Count == 0 ? null : types };
+            if (EmptySelectionOverride(updatedParent)) map.Remove(consumer);
+            else map[consumer] = updatedParent;
+            _cache[key] = current with { ModelSelectionOverrides = map.Count == 0 ? null : map };
             Persist();
             return _cache[key];
         }
     }
+
+    private static bool EmptySelectionOverride(ModelSelectionOverride value) =>
+        value.Primary is null && value.Fallbacks is null && value.PinMode != "hard"
+        && value.ByPipelineType is null or { Count: 0 }
+        && value.ByStep is null or { Count: 0 };
 
     public void SetAutoCommit(string projectName, bool enabled)
     {
