@@ -566,6 +566,32 @@ SM-4, decisions SM-D2 option A, SM-D3 option A, and SM-D7 option A).
   request after its revocation, well inside 60 seconds. The rate counts
   admitted requests of the last hour and is persisted with the grant, so a
   restart does not reset it.
+- The catalogue and grant routes sit under `/api/auth/iam`, so an API token,
+  a service account token, or an operator session gets 403 on all of them.
+  Request and response bodies are camelCase JSON; tiers are `"T0"`, `"T1"`,
+  and `"T2"`.
+
+  | Method and route | Permission | Body and answer |
+  |---|---|---|
+  | `GET /api/auth/iam/operator-catalogue` | `access.read` | Answers `operations` (`id`, `tier`, `scopeKind`, `title`), `defaultGrantDays` (7), `maxGrantDays` (30), `defaultRatePerHour` (10), and `maxRatePerHour` (120). |
+  | `GET /api/auth/iam/standing-grants?principalId=<opa id>` | `access.read` | Answers every grant, newest first; `principalId` is optional and narrows the list to one operator agent. |
+  | `POST /api/auth/iam/standing-grants` | `access.manage`, active Owner, fresh step-up | Takes `principalId`, `operations` (catalogued T1 ids), `scope` (`kind` of `workspace`, `project`, `environment`, or `host`, with `project`, `environment` (`stage` or `production`), or `host` as the kind needs), `ratePerHour` (1 to 120, default 10), optional `window` (`startUtc`, `endUtc` as `HH:mm`), `expiresInDays` (1 to 30, default 7), and `reason` (at most 500 characters). Answers the grant. |
+  | `POST /api/auth/iam/standing-grants/{id}/renew` | `access.manage`, active Owner, fresh step-up | Takes optional `expiresInDays` and sets the expiry that many days from now. A revoked or expired grant answers 409 `standing-grant-ended`. |
+  | `POST /api/auth/iam/standing-grants/{id}/revoke` | `access.manage`, active Owner | Takes optional `reason`. Revoking a revoked grant answers it unchanged. |
+
+  A grant answer carries `id` (`sgr_*`), `principalId`, `principalName`,
+  `tier`, `operations`, `scope`, `ratePerHour`, `window`, `issuedBy`,
+  `issuedAt`, `expiresAt`, `renewedAt`, `renewedBy`, `revokedAt`,
+  `revokedBy`, `reason`, `revokeReason`, `state` (`active`, `expired`, or
+  `revoked`), and `usesLastHour`. The step-up comes from
+  `POST /api/auth/step-up` within the five minutes before the change and is
+  used up by it. Refusals answer `error` and a message: 400
+  `grant-operation-required`, `grant-operation-invalid` (not catalogued or not
+  T1), `invalid-scope`, `grant-scope-mismatch` (for example a host operation
+  in a project scope), `invalid-rate`, `invalid-window`, `invalid-lifetime`,
+  `reason-required`, or `invalid-reason`; 403 `owner-required` or
+  `step-up-required`; 404 `operator-agent-not-found` (unknown or disabled
+  agent) or `standing-grant-not-found`.
 - Grant changes are written to the IAM audit (`standing-grant.create`,
   `.renew`, `.revoke`). Each operator request's audit entry names the
   operation, its tier, the admitting grant id, or the policy refusal.

@@ -116,7 +116,9 @@ When the agent's request is refused, the answer names the reason:
 `grant-required` (no live grant covers the operation in that scope),
 `grant-outside-window`, or `grant-rate-exceeded`. **Revoke** takes effect on
 the agent's next request and needs no second factor. Disabling the agent
-revokes its grants too.
+revokes its grants too. The methods, routes, bodies, and refusal codes behind
+this page are listed in the
+[security overview](../security/overview.md#operator-operation-catalogue-tiers-and-standing-grants-sm-4).
 
 ## 5. Renew, end, and review
 
