@@ -613,7 +613,8 @@ public sealed partial class BatchGatePilotService
                 }
                 else
                 {
-                    if (_store.HasCloseNow(first.Subject.Project))
+                    var closeNow = _store.HasCloseNow(first.Subject.Project);
+                    if (closeNow)
                     {
                         var eligible = current.Where(item => BatchGatePolicy.Exclusion(
                                 item.Subject, scope, options) is null)
@@ -635,7 +636,7 @@ public sealed partial class BatchGatePilotService
                             provenGreenKeys, queuedPartners);
                     }
                     planReason = formed.Manifest is not null ? "threshold reached"
-                        : formed.UsePerTaskGate ? "per-card gate selected: a lone card reached its deadline"
+                        : formed.UsePerTaskGate ? formed.Reason ?? "per-task gate selected"
                         : queuedPartners > 0 ? BatchGateLookAheadPlanner.QueuedPartnersReason
                         : "waiting for threshold or deadline";
                     _store.AppendPlanDecision(first.Subject.Project,
@@ -2392,6 +2393,7 @@ public sealed partial class BatchGatePilotService
                         Project = pending.Subject.Project,
                         SubjectRef = subject.Merged ? subject.TestedSha : pending.Subject.ResultRef,
                         RequiredTestLevel = level,
+                        ReserveBatchSlot = ConfiguredGateSlots() > 1,
                         TestExecution = _settings.Get(pending.Subject.Project).TestExecution,
                         OnMachineGateSlotWaiting = (busy, total) => _queueStalls.Waiting(
                             pending.Subject.Project, pending.ReviewAttemptId, busy, total),

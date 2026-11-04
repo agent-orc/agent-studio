@@ -50,6 +50,8 @@ public sealed record CliOneShotRequest(
     string Model,
     string Prompt)
 {
+    /// <summary>Consumer policy key when the step id is more specific than the selection class.</summary>
+    public string? SelectionConsumer { get; init; }
     /// <summary>Optional thinking/reasoning level for CLIs and models that
     /// support one. Unsupported combinations are normalized away by the
     /// concrete runner.</summary>
@@ -243,7 +245,10 @@ public sealed class CliOneShotRegistry
             return await _byCli[request.CliType].RunAsync(request, ct).ConfigureAwait(false);
 
         var source = request.StepId ?? request.Source ?? "one-shot";
-        var plan = _selection.Select(SelectionCallFor(request, source)).Admission;
+        var plan = _selection.Select(SelectionCallFor(request, source) with
+        {
+            HostAcceptsFallback = (cli, _) => _byCli.ContainsKey(cli),
+        }).Admission;
         var task = TaskFrom(request);
         if (task is not null)
             _quotaRecorder?.EmitAdmissionDecision(task, plan, source);
@@ -356,12 +361,12 @@ public sealed class CliOneShotRegistry
     /// </summary>
     internal static ModelSelectionCall SelectionCallFor(CliOneShotRequest request, string source)
     {
-        var consumer = source.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+        var consumer = request.SelectionConsumer ?? (source.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
             ? SelectionConsumers.ReviewAspect
             : source.Contains("review-grade", StringComparison.OrdinalIgnoreCase)
                 || source.Contains("code-review", StringComparison.OrdinalIgnoreCase)
                 ? SelectionConsumers.ReviewGrade
-                : SelectionConsumers.OneShot(source);
+                : SelectionConsumers.OneShot(source));
         return new ModelSelectionCall(
             new SelectionRequest
             {
@@ -374,6 +379,24 @@ public sealed class CliOneShotRegistry
             },
             source);
     }
+
+    /// <summary>Admit a CLI whose aspect adapter does not use the one-shot protocol.</summary>
+    public ModelSelectionDecision? SelectDirect(CliOneShotRequest request)
+    {
+        if (_selection is null) return null;
+        var source = request.StepId ?? request.Source ?? "one-shot";
+        return _selection.Select(SelectionCallFor(request, source) with
+        {
+            HostAcceptsFallback = (cli, _) => _byCli.ContainsKey(cli)
+                || string.Equals(cli, request.CliType, StringComparison.OrdinalIgnoreCase),
+        });
+    }
+
+    /// <summary>Dispatch a route already admitted by <see cref="SelectDirect"/>.</summary>
+    public Task<CliOneShotResult> RunSelectedAsync(CliOneShotRequest request, CancellationToken ct)
+        => _byCli.TryGetValue(request.CliType, out var implementation)
+            ? implementation.RunAsync(request, ct)
+            : throw new InvalidOperationException($"No one-shot implementation is registered for '{request.CliType}'.");
 
     private static TaskInfo? TaskFrom(CliOneShotRequest request)
     {

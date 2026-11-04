@@ -37,6 +37,7 @@ This folder is the **second-look** for any visual or styling change. The first s
 - "I need a modal" → [modals.md](./modals.md)
 - "I need sidebar / rail navigation" → [navigation.md](./navigation.md)
 - "I need a tab strip" → [tabs.md](./tabs.md)
+- "I am changing the Studio app or task header" → [header.md](./header.md)
 - "I need a form input" → [forms.md](./forms.md)
 - "What spacing / radius / shadow token do I use?" → [tokens.md](./tokens.md)
 

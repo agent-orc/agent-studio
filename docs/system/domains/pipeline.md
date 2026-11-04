@@ -46,6 +46,18 @@ selection when develop moved over a path changed by the reviewed delivery,
 or when review and merge evidence cannot prove a disjoint merge. Merge and
 publication locks are keyed by project and integration branch; the aggregate
 merge-busy flag still drains stable deployment.
+The threshold batch planner selects a per-task gate when one eligible card
+reaches its deadline without a batch partner, or an operator closes below the
+minimum batch size. The plan state names that trigger. This path does not use
+title urgency, risk, or changed-path overlap. Its fallback gate does not own
+the project batch reservation. A later direct integration must hold the
+reservation through its merge gate and possible rollback. It acquires the
+reservation after the per-project merge lock, so a queued per-task integration
+does not block a formed batch. Its machine queue
+wait is capped at two minutes and its gate run at 25 minutes. The batch
+gate state reports the combined 27-minute reservation gate cap.
+When the gate host has more than one slot, per-task fallback gates leave the
+first slot available for a batch.
 The post-merge worker reads its window size and age from the project's
 look-ahead settings through the runner state endpoint.
 
@@ -282,7 +294,10 @@ owning process is gone. Recovery is scoped to
 the installation id and recorded host/root; the primary and every configured
 SSH shard host are swept. A startup sweep failure is logged and does not stop
 the periodic sweep. A different Studio installation sharing a gate host
-is left alone. The record is removed after the remote run
+is left alone. A run with `response.json` is already finished: recovery
+removes its remote directory once without sending another cancel marker and
+retires its record even if that cleanup fails. An unfinished run's record is
+removed after the remote run
 directory is removed under the worker lock and confirmed gone. A run that never
 started is removed by the same recovery path.
 

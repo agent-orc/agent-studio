@@ -23,6 +23,7 @@ public sealed class TagMaintenanceSynthesis(CliOneShotRegistry oneShots, Runtime
         {
             ThinkingLevel = "high", Timeout = TimeSpan.FromMinutes(3), Project = project,
             Source = "tag-maintenance", StepId = "periodic-tag-maintenance",
+            SelectionConsumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.OneShot("tags"),
         }, ct);
         if (!result.Ok) throw new InvalidOperationException(result.Error ?? "Tag synthesis failed.");
         return JsonSerializer.Deserialize<List<TagMaintenanceProposal>>(result.ParsedText, TagMaintenancePolicy.Json)
