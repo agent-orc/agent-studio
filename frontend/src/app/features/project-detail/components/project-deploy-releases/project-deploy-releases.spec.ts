@@ -1,8 +1,10 @@
 import { provideZonelessChangeDetection } from '@angular/core';
+import { vi } from 'vitest';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { of } from 'rxjs';
 import { ProjectDeployReleasesComponent } from './project-deploy-releases';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
+import { QualityStudioService } from '../../../../services/quality-studio.service';
 import { buildEnvironmentCards, type DeployPanel, type Release } from '../../state/deploy-area.model';
 import { DEPLOY_FIXTURE_NOW, deployReleasesFixture, deploySourcesFixture } from '../../testing/deploy-fixtures';
 
@@ -12,6 +14,7 @@ describe('ProjectDeployReleasesComponent', () => {
   const byTestId = (id: string) => host().querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
 
   async function render(panel: DeployPanel<Release[]>): Promise<void> {
+    fixture.componentRef.setInput('projectName', 'Web Site');
     fixture.componentRef.setInput('panel', panel);
     fixture.componentRef.setInput('environments', buildEnvironmentCards(deploySourcesFixture()));
     fixture.componentRef.setInput('now', DEPLOY_FIXTURE_NOW);
@@ -23,6 +26,7 @@ describe('ProjectDeployReleasesComponent', () => {
     await TestBed.configureTestingModule({
       imports: [ProjectDeployReleasesComponent],
       providers: [provideZonelessChangeDetection(),
+        { provide: QualityStudioService, useValue: { openRange: () => undefined } },
         { provide: ProjectDeployDataService, useValue: { releaseNotes: () => of({ status: 'unavailable' }) } }],
     }).compileComponents();
     fixture = TestBed.createComponent(ProjectDeployReleasesComponent);
@@ -74,5 +78,50 @@ describe('ProjectDeployReleasesComponent', () => {
     expect(byTestId('deploy-release-detail')?.textContent).toContain('Release 2026.10.18.1');
     expect(byTestId('deploy-release-live-in')?.textContent?.trim()).toBe('Production');
     expect(byTestId(`deploy-release-${'c'.repeat(16)}`)?.getAttribute('aria-current')).toBeNull();
+  });
+
+  it('reconciles Quality counts with card rows and opens the release range', async () => {
+    const releases = deployReleasesFixture();
+    const release = releases[0];
+    release.cardKeys = ['WEB-35', 'WEB-36', 'WEB-37'];
+    release.quality = {
+      cards: [{ key: 'WEB-35', verdict: 'pass' }, { key: 'WEB-36', verdict: 'concerns' },
+        { key: 'WEB-37', verdict: 'block' }],
+      pass: 1, concerns: 1, block: 1, notReviewed: 0, worstVerdict: 'block',
+      rangeVerdict: 'not-reviewed',
+      range: { repositoryId: 'repo', baseSha: 'b'.repeat(40), headSha: release.commitSha, requiresConfirmation: false },
+      rangeUnavailableReason: null,
+    };
+    const open = vi.spyOn(TestBed.inject(QualityStudioService), 'openRange');
+    await render({ status: 'ready', value: releases });
+    expect(byTestId('deploy-release-quality-counts')?.textContent).toContain('1 pass · 1 concerns · 1 block · 0 not reviewed');
+    expect(host().querySelectorAll('.releases__quality-cards li').length).toBe(3);
+    expect(byTestId('deploy-release-range-verdict')?.textContent).toContain('Not reviewed');
+    byTestId('deploy-release-open-quality')!.click();
+    expect(open).toHaveBeenCalledWith('Web Site', 'repo', 'b'.repeat(40), release.commitSha);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires confirmation before opening the first release root range', async () => {
+    const releases = deployReleasesFixture();
+    const first = releases[2];
+    first.quality = {
+      cards: [], pass: 0, concerns: 0, block: 0, notReviewed: 0,
+      worstVerdict: 'not-reviewed', rangeVerdict: 'not-reviewed',
+      range: { repositoryId: 'repo', baseSha: '0'.repeat(40), headSha: first.commitSha,
+        requiresConfirmation: true }, rangeUnavailableReason: null,
+    };
+    const open = vi.spyOn(TestBed.inject(QualityStudioService), 'openRange');
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await render({ status: 'ready', value: releases });
+    byTestId(`deploy-release-${first.id}`)!.click();
+    fixture.detectChanges();
+    byTestId('deploy-release-open-quality')!.click();
+    expect(confirm).toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    byTestId('deploy-release-open-quality')!.click();
+    expect(open).toHaveBeenCalledWith('Web Site', 'repo', '0'.repeat(40), first.commitSha);
+    expect(open).toHaveBeenCalledTimes(1);
   });
 });

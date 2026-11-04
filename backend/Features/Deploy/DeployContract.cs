@@ -82,6 +82,7 @@ public sealed record Release(
     IReadOnlyList<string> CardKeys, DateTime CreatedAtUtc, string Channel)
 {
     public ReleaseSuiteVerdict? PreDeliveryVerdict { get; init; }
+    public ReleaseQuality? Quality { get; init; }
 }
 
 public sealed record DeploymentStep(string Name, string State, DateTime? StartedAtUtc,
