@@ -2,6 +2,7 @@ using AgentStudio.Git;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using System.Text.Json;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -107,11 +108,17 @@ public sealed class IntegrationLaneDivergencePolicyTests
         Directory.CreateDirectory(watchPath);
         try
         {
+            var publishedCardFolder = Path.Combine(watchPath, TaskStates.Completed, "AGT-3201");
+            Directory.CreateDirectory(publishedCardFolder);
+            File.WriteAllText(Path.Combine(publishedCardFolder, "task.json"), JsonSerializer.Serialize(new
+            {
+                id = "AGT-3201", key = "AGT-3201", title = "First blocked card", state = TaskStates.Completed,
+            }));
             var (service, orchestratorLog) = HealthService(watchPath);
             var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 16, 21, 0, 0, TimeSpan.Zero));
             var commits = new[]
             {
-                IntegrationLaneDivergencePolicy.Classify(new LaneCommitFacts(Lane, Delivery, false)),
+                IntegrationLaneDivergencePolicy.Classify(new LaneCommitFacts(Lane, Delivery, false, "AGT-3435")),
                 IntegrationLaneDivergencePolicy.Classify(new LaneCommitFacts(Successor, Successor, true)),
             };
 
@@ -120,11 +127,17 @@ public sealed class IntegrationLaneDivergencePolicyTests
             time.Advance(TimeSpan.FromMinutes(5));
             service.IntegrationLaneStalled(new IntegrationLaneStall(
                 "agent-taskboard", watchPath, "develop", "AGT-3202", commits, time.GetUtcNow().UtcDateTime));
+            time.Advance(TimeSpan.FromMinutes(1));
+            IntegrationLaneEvents.Append(publishedCardFolder, "agent-taskboard", "AGT-3201", "published",
+                sequence: 1, atUtc: time.GetUtcNow());
+            service.IntegrationLaneStalled(new IntegrationLaneStall(
+                "agent-taskboard", watchPath, "develop", "AGT-3203", commits, time.GetUtcNow().UtcDateTime));
 
             var entry = Assert.Single(orchestratorLog.Read(watchPath));
             Assert.Equal(OrchestratorLogKinds.Alert, entry.Kind);
             Assert.Contains("Integration lane develop diverged from origin", entry.Summary);
             Assert.Contains("222222222", entry.Reasoning);
+            Assert.Contains("AGT-3435", entry.Reasoning);
             Assert.DoesNotContain("333333333", entry.Reasoning);
 
             var snapshot = service.Snapshot("agent-taskboard", time.GetUtcNow().UtcDateTime)!;
@@ -132,7 +145,8 @@ public sealed class IntegrationLaneDivergencePolicyTests
             var alert = Assert.Single(snapshot.Alerts);
             Assert.Equal(PipelineHealthConventions.IntegrationLaneDivergedKind, alert.Kind);
             Assert.Contains("2 card(s) blocked", alert.Summary);
-            Assert.Contains("AGT-3201, AGT-3202", alert.Detail);
+            Assert.Contains("AGT-3202, AGT-3203", alert.Detail);
+            Assert.DoesNotContain("AGT-3201", alert.Detail);
 
             service.IntegrationLaneRecovered("agent-taskboard", "develop", time.GetUtcNow().UtcDateTime);
 
