@@ -3,6 +3,7 @@ extern alias Runner;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -335,6 +336,38 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         Assert.Contains("TokenEconomy", marker.ModelFallback?.CatalogueVersion);
     }
 
+    // ── MS-5: the remote coding claim asks the selection service ──
+    [Fact]
+    public async Task Remote_claim_asks_the_model_selection_service()
+    {
+        const string taskKey = "AGT-QUOTA-CLAIM-SPY";
+        SeedTask(
+            TaskStates.Ready, taskKey, "Card for the selection spy", "Do the configured thing.",
+            cliType: CliTypes.Claude, model: ModelIds.ClaudeOpus5, thinkingLevel: "high");
+        SpyModelSelectionService? spy = null;
+
+        using var factory = BuildFactory(services => services.AddSingleton<IModelSelectionService>(sp =>
+            spy = new SpyModelSelectionService(sp.GetRequiredService<ModelSelectionService>())));
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/quota-claim-spy.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", IdempotencyKey: "quota-claim-spy"));
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.NotNull(spy);
+        var call = Assert.Single(spy!.Calls.Where(item => item.ExecutionPath == "remote-coding-claim").Take(1));
+        Assert.Equal(Contract.SelectionConsumers.Coding, call.Request.Consumer);
+        Assert.Equal(ProjectName, call.Request.Project);
+        Assert.Equal(new Contract.SelectionPins(CliTypes.Claude, ModelIds.ClaudeOpus5, "high"), call.Request.Pins);
+        Assert.NotNull(call.Request.Host);
+        Assert.NotNull(call.HostAccepts);
+        Assert.NotNull(call.CorrectnessFloor);
+    }
+
     // ── helpers, mirroring RemoteRunnerEndToEndTests' conventions ───────────────
 
     private static async Task<Runner::AgentRunner.RunnerClaimResponse> ClaimWithSuccessfulPreflightAsync(
@@ -453,11 +486,12 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         File.WriteAllText(globalSession, session);
     }
 
-    private WebApplicationFactory<Program> BuildFactory() =>
+    private WebApplicationFactory<Program> BuildFactory(Action<IServiceCollection>? services = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
                 b.UseEnvironment("Test");
+                if (services is not null) b.ConfigureTestServices(services);
                 b.ConfigureAppConfiguration((_, cfg) =>
                 {
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>
