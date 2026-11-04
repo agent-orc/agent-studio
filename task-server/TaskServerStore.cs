@@ -1754,7 +1754,7 @@ public sealed partial class TaskServerStore
             }
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
-                connection, transaction, task.TaskId, ct);
+                connection, transaction, task.TaskId, request.RunnerId, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
             var previousSession = await ReadPreviousSessionAsync(connection, transaction, task.TaskId, ct);
@@ -1775,6 +1775,8 @@ public sealed partial class TaskServerStore
             var briefVersion = FollowUpPromptDigest.Compute(task.Body ?? string.Empty);
             var now = UtcNow;
             var expires = now.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
+            var clearedModelCapacity = await ClearExpiredModelCapacityAsync(
+                connection, transaction, request.RunnerId, now, ct);
             // An ordered continuation round takes precedence. A follow-up row
             // saved before schema 26 stays queued for a later claim.
             var followUp = continuationIntent is not null
@@ -1819,6 +1821,25 @@ public sealed partial class TaskServerStore
                     ("$command", continuationIntent.Receipt.CommandId));
                 continuationIntent = continuationIntent with { Status = "claimed", RunId = runId, Fence = fence };
             }
+            if (providerContinuation?.Fallback is { } switched)
+                await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
+                    "model.switched", new
+                    {
+                        provider = switched.CliType,
+                        from = switched.From,
+                        to = switched.To,
+                        thinkingLevel = switched.ThinkingLevel,
+                        rule = switched.Reason,
+                        hostRunnerId = request.RunnerId,
+                    }, ct);
+            foreach (var capabilityKey in clearedModelCapacity)
+                await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
+                    "model.health-cleared", new
+                    {
+                        hostRunnerId = request.RunnerId,
+                        capabilityKey,
+                        reason = "capacity retry window elapsed",
+                    }, ct);
             await ReserveCanariesAsync(
                 connection,
                 transaction,
@@ -2428,6 +2449,26 @@ public sealed partial class TaskServerStore
             }
             providerRecovery = await PlanProviderRejectionAsync(
                 connection, transaction, lease.TaskId, request, ct);
+            if (transientModelCapacity
+                && request.OutcomeDecision?.RawFacts.EffectiveCliType is { Length: > 0 } capacityProvider
+                && request.OutcomeDecision.RawFacts.EffectiveModel is { Length: > 0 } capacityModel)
+            {
+                var evidence = ProviderAccessClassifier.ClassifyRun(1,
+                    request.OutcomeDecision.RawFacts.StdOut, request.OutcomeDecision.RawFacts.StdErr,
+                    observedAt: new DateTimeOffset(now, TimeSpan.Zero));
+                var expiresAt = await RecordModelCapacityAsync(connection, transaction, request.RunnerId,
+                    CapabilityProtocol.ModelAcceptance(capacityProvider, capacityModel), now,
+                    evidence.LimitedUntil?.UtcDateTime, ct);
+                await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
+                    lease.Fence, "model.health-marked", new
+                    {
+                        hostRunnerId = request.RunnerId,
+                        provider = capacityProvider,
+                        model = capacityModel,
+                        kind = "capacity",
+                        expiresAt,
+                    }, ct);
+            }
             if (providerRecovery?.HostModelUnavailable == true)
             {
                 nextState = StudioTaskLanes.Ready;
@@ -2444,6 +2485,14 @@ public sealed partial class TaskServerStore
                             provider = cli,
                             model = providerRecovery.Model,
                             reason = effectiveSummary,
+                        }, ct);
+                    await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
+                        lease.Fence, "model.health-marked", new
+                        {
+                            hostRunnerId = request.RunnerId,
+                            provider = cli,
+                            model = providerRecovery.Model,
+                            kind = "model-unavailable",
                         }, ct);
                 }
             }
@@ -4601,6 +4650,11 @@ public sealed partial class TaskServerStore
                 acknowledged_instance_id TEXT,
                 acknowledged_sequence INTEGER,
                 PRIMARY KEY(runner_id, capability_key));
+            CREATE TABLE IF NOT EXISTS host_model_capacity(
+                host_id TEXT NOT NULL,
+                capability_key TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY(host_id, capability_key));
             CREATE INDEX IF NOT EXISTS ix_artifacts_run ON artifacts(run_id);
             CREATE INDEX IF NOT EXISTS ix_legacy_entities_migration_kind
                 ON legacy_migration_entities(migration_id, entity_kind);

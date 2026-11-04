@@ -402,15 +402,19 @@ public sealed partial class TaskServerStore
                 ct);
 
             var wholeHost = WholeHostCapabilities.Contains(capability.Key);
+            var unauthorizedProvider = capability.Key.StartsWith("provider-auth:", StringComparison.Ordinal)
+                && request.Classification == "ProviderUnauthorized";
             var failures = capability.ConsecutiveFailures + 1;
             var nextState = capability.HealthState switch
             {
+                _ when unauthorizedProvider => CapabilityHealthStates.Draining,
                 CapabilityHealthStates.HalfOpen => CapabilityHealthStates.Draining,
                 CapabilityHealthStates.Draining => CapabilityHealthStates.Draining,
                 _ when wholeHost || failures >= CapabilityFailureThreshold => CapabilityHealthStates.Draining,
                 _ => CapabilityHealthStates.Suspect,
             };
-            DateTime? cooldownUntil = nextState == CapabilityHealthStates.Draining
+            DateTime? cooldownUntil = unauthorizedProvider ? DateTime.MaxValue
+                : nextState == CapabilityHealthStates.Draining
                 ? UtcNow.AddSeconds(CapabilityBaseCooldownSeconds * (1 << Math.Min(Math.Max(0, failures - 2), 4)))
                 : null;
             var history = AppendHistory(

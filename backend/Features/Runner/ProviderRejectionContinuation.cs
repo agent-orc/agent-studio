@@ -164,7 +164,7 @@ public sealed class ProviderRejectionContinuationService
         var fallbackInfo = new ModelFallbackInfo(
             fallback.FromModel,
             fallback.ToModel,
-            "provider-rejection",
+            rejection.Code == "model_capacity" ? "model-capacity" : "provider-rejection",
             fallback.CliType,
             thinkingLevel);
         if (_mutations.SavePendingIntent(
@@ -229,6 +229,16 @@ public sealed class ProviderRejectionContinuationService
                 ["cardPinned"] = pinCard ? "true" : "false",
                 ["pinMode"] = pinCard ? "preference" : "none",
                 ["runAttemptId"] = attemptId,
+            });
+        _timeline.Append(folder, "model.switched", TimelineActors.System,
+            $"Switched from {fallback.FromModel} to {fallback.ToModel} for the next attempt.",
+            runId: attemptId,
+            details: new Dictionary<string, string>
+            {
+                ["fromModel"] = fallback.FromModel,
+                ["toModel"] = fallback.ToModel,
+                ["provider"] = fallback.CliType,
+                ["rule"] = fallbackInfo.Reason,
             });
         _logger.LogWarning(
             "provider-rejection-continuation task={TaskKey} attempt={AttemptId} from={FromModel} to={ToModel} code={Code} parameter={Parameter} pinned={Pinned}",
