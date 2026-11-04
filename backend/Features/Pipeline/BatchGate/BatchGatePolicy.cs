@@ -43,6 +43,8 @@ public enum BatchExclusionReason
     ActivePerTaskGate,
     NotDocumentationOnly,
     NextBatch,
+    OverlapSeparate,
+    MaximumSize,
 }
 
 public sealed record BatchGateScope(
@@ -59,7 +61,8 @@ public sealed record BatchGateSubject(
     bool DocumentationOnly, DateTimeOffset ReviewCompletedAtUtc,
     long EnqueueSequence);
 
-public sealed record BatchGateExclusion(string TaskKey, BatchExclusionReason Reason);
+public sealed record BatchGateExclusion(string TaskKey, BatchExclusionReason Reason,
+    string? Detail = null);
 
 public sealed record BatchGateFormationOptions(
     bool Enabled = false, int CloseSize = 4, int MaximumSize = 8,
@@ -111,7 +114,7 @@ public sealed record BatchGateManifest(
     DateTimeOffset ClosedAtUtc, IReadOnlyList<BatchGateSubject> Members,
     IReadOnlyList<BatchGateExclusion> Exclusions,
     IReadOnlyList<string> EligibleKeys,
-    string? ParentBatchId = null);
+    string? ParentBatchId = null, string? FormationReason = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,
