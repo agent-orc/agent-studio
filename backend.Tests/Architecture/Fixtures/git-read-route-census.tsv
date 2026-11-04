@@ -27,6 +27,7 @@
 /api/auth/iam/operator-agents/	free	-	-	-
 /api/auth/iam/operator-approvals/	free	-	-	-
 /api/auth/iam/operator-catalogue	free	-	-	-
+/api/auth/iam/operator-kill-switch/	free	-	-	-
 /api/auth/iam/standing-grants/	free	-	-	-
 /api/auth/runner	free	-	-	-
 /api/auth/runner-enrollments	free	-	-	-

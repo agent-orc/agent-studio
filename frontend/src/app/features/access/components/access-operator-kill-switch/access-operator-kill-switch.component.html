@@ -1,0 +1,82 @@
+<div class="kill" data-testid="access-operator-kill-switch">
+  @if (operators.killSwitchError(); as message) { <p class="access-error" role="alert" data-testid="access-kill-error">{{ message }}</p> }
+  @if (status(); as data) {
+    @if (data.outOfBandRequestPending) {
+      <p class="kill__line" data-tone="alert" role="status" data-testid="access-kill-pending">
+        <span class="kill__dot" data-tone="alert" aria-hidden="true"></span>
+        <strong>A host command is ending all operator access.</strong>
+        <span class="kill__meta">Every operator session is refused until Studio has applied it.</span>
+      </p>
+    }
+    <div class="kill__action">
+      <div class="kill__copy">
+        <h4>End all operator access</h4>
+        <p class="access-hint">Disables every operator agent, ends every session and standing grant, cancels every open approval request, revokes their Operations Server principals, and cancels their queued host operations. Every operator call is refused within 60 seconds. When Studio is unreachable, run the host command from the operator agent guide.</p>
+      </div>
+      <label>Reason
+        <input data-testid="access-kill-reason" placeholder="Optional" maxlength="500" [value]="reason()" (input)="reason.set($any($event.target).value)" />
+      </label>
+      <button type="button" class="kill__danger" data-testid="access-kill-end-all" [disabled]="operators.killing()" (click)="endAll()">End all operator access</button>
+    </div>
+
+    <div class="kill__status">
+      @if (lastKill(); as kill) {
+        <p class="kill__line" data-testid="access-kill-last" [attr.data-state]="kill.operationsServer.state" [attr.data-tone]="kill.operationsServer.state === 'pending' ? 'alert' : null" [attr.role]="kill.operationsServer.state === 'pending' ? 'alert' : null">
+          <span class="kill__dot" [attr.data-tone]="kill.operationsServer.state === 'pending' ? 'alert' : null" aria-hidden="true"></span>
+          <strong class="access-numeric">Last used {{ time(kill.at) }}</strong>
+          <span class="kill__meta">{{ kindLabel(kill.kind) }}, {{ triggerLabel(kill.trigger) }}, {{ scope(kill) }}</span>
+          <span class="kill__meta" data-testid="access-kill-last-operations">{{ propagation(kill.operationsServer.state) }}@if (kill.operationsServer.lastError) { ({{ kill.operationsServer.lastError }}) }</span>
+        </p>
+      } @else {
+        <p class="kill__line" data-testid="access-kill-last" data-state="never">
+          <span class="kill__dot" aria-hidden="true"></span>
+          <strong>Never used</strong>
+        </p>
+      }
+      <p class="kill__line" data-testid="access-kill-drill" [attr.data-state]="lastDrill() ? (lastDrill()!.passed ? 'passed' : 'failed') : 'none'" [attr.data-tone]="lastDrill() && !lastDrill()!.passed ? 'alert' : null" [attr.role]="lastDrill() && !lastDrill()!.passed ? 'alert' : null">
+        @if (lastDrill(); as drill) {
+          <span class="kill__dot" [attr.data-tone]="drill.passed ? 'ok' : 'alert'" aria-hidden="true"></span>
+          @if (drill.passed) {
+            <strong class="access-numeric" data-testid="access-kill-drill-result">Drill passed in {{ duration(drill.durationMs) }}</strong>
+          } @else {
+            <strong data-testid="access-kill-drill-result">Drill failed: {{ drill.failure }}</strong>
+          }
+          <span class="kill__meta access-numeric">{{ triggerLabel(drill.trigger) }} {{ time(drill.startedAt) }}</span>
+          @if (drill.studioRefusedMs !== null) { <span class="kill__meta access-numeric">Studio refused after {{ duration(drill.studioRefusedMs) }}</span> }
+          @if (drill.operationsServerMs !== null) { <span class="kill__meta access-numeric">Operations Server after {{ duration(drill.operationsServerMs) }}</span> }
+        } @else {
+          <span class="kill__dot" aria-hidden="true"></span>
+          <strong>No drill yet</strong>
+        }
+        <span class="kill__meta access-numeric" data-testid="access-kill-next-drill">@if (data.nextDrillAt) {Next scheduled drill {{ time(data.nextDrillAt) }}} @else {Scheduled drills are off}</span>
+        <button type="button" class="access-secondary kill__push" data-testid="access-kill-run-drill" [disabled]="operators.killing()" (click)="drill()">{{ operators.killing() ? 'Running' : 'Run drill now' }}</button>
+      </p>
+    </div>
+
+    @if (recent().length) {
+      <div class="kill__scroll">
+        <table data-testid="access-kill-history">
+          <caption class="visually-hidden">Recent uses of the kill switch</caption>
+          <thead>
+            <tr><th scope="col">When</th><th scope="col">What</th><th scope="col">Trigger</th><th scope="col">By</th><th scope="col">Scope</th><th scope="col">Operations Server</th><th scope="col">Reason</th></tr>
+          </thead>
+          <tbody>
+            @for (kill of recent(); track kill.id) {
+              <tr [attr.data-testid]="'access-kill-' + kill.id">
+                <td class="access-numeric">{{ time(kill.at) }}</td>
+                <td>{{ kindLabel(kill.kind) }}</td>
+                <td>{{ triggerLabel(kill.trigger) }}</td>
+                <td>{{ actor(kill.actor) }}</td>
+                <td class="access-numeric">{{ scope(kill) }}</td>
+                <td><span class="access-badge" [attr.data-tone]="kill.operationsServer.state === 'revoked' ? 'active' : 'muted'">{{ propagation(kill.operationsServer.state) }}</span></td>
+                <td class="kill__reason">{{ kill.reason || '' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  } @else if (!operators.killSwitchError()) {
+    <p class="access-hint">Loading the kill switch…</p>
+  }
+</div>

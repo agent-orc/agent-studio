@@ -635,25 +635,33 @@ public sealed class ProjectPreparationTests : IDisposable
     public async Task Concurrent_prepares_on_one_entry_each_keep_their_own_copy()
     {
         WriteRestoringDotNetRepository();
-        var cache = Path.Combine(_root, "product-cache");
+        // Keep the shared cache outside the scanned repository: the loser's staging
+        // cleanup must not appear as a disappearing repository input directory.
+        var cache = Path.Combine(Path.GetTempPath(), "project-preparation-cache-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var first = PrepareAsync(cache, "concurrent-a.json");
+            var second = PrepareAsync(cache, "concurrent-b.json");
+            var results = await Task.WhenAll(first, second);
 
-        var first = PrepareAsync(cache, "concurrent-a.json");
-        var second = PrepareAsync(cache, "concurrent-b.json");
-        var results = await Task.WhenAll(first, second);
+            Assert.All(results, result => Assert.True(result.Succeeded, result.Output));
+            Assert.All(results, result => Assert.True(
+                File.Exists(RestoredPackage(result.Environment["NUGET_PACKAGES"])),
+                "Losing the publication race must not take the loser's own packages away."));
+            Assert.NotEqual(results[0].Environment["NUGET_PACKAGES"], results[1].Environment["NUGET_PACKAGES"]);
+            // Exactly one immutable entry, complete, and no abandoned staging folder.
+            var entries = Directory.GetDirectories(Path.Combine(cache, "entries", "nuget"));
+            Assert.Single(entries);
+            Assert.True(File.Exists(Path.Combine(entries[0], "manifest.json")));
+            Assert.True(File.Exists(RestoredPackage(Path.Combine(entries[0], "content"))));
 
-        Assert.All(results, result => Assert.True(result.Succeeded, result.Output));
-        Assert.All(results, result => Assert.True(
-            File.Exists(RestoredPackage(result.Environment["NUGET_PACKAGES"])),
-            "Losing the publication race must not take the loser's own packages away."));
-        Assert.NotEqual(results[0].Environment["NUGET_PACKAGES"], results[1].Environment["NUGET_PACKAGES"]);
-        // Exactly one immutable entry, complete, and no abandoned staging folder.
-        var entries = Directory.GetDirectories(Path.Combine(cache, "entries", "nuget"));
-        Assert.Single(entries);
-        Assert.True(File.Exists(Path.Combine(entries[0], "manifest.json")));
-        Assert.True(File.Exists(RestoredPackage(Path.Combine(entries[0], "content"))));
-
-        var third = await PrepareAsync(cache, "concurrent-c.json");
-        Assert.True(third.CacheHit);
+            var third = await PrepareAsync(cache, "concurrent-c.json");
+            Assert.True(third.CacheHit);
+        }
+        finally
+        {
+            try { Directory.Delete(cache, recursive: true); } catch { }
+        }
     }
 
     [Fact]

@@ -52,6 +52,9 @@
     <!-- The golden decision table calls the aliased Task Server adapter.
          ConnectorNegativeMatrixTests also starts its built output as a process. -->
     <ProjectReference Include="..\task-server\TaskServer.csproj" Aliases="TaskServerAssembly" />
+    <!-- The kill switch acceptance (security model SM-2) hosts the Operations
+         Server in process next to the Studio API. Aliased for its Program. -->
+    <ProjectReference Include="..\operations-server\OperationsServer.csproj" Aliases="OperationsServerAssembly" />
   </ItemGroup>
 
   <!-- Block 6: same library-type aliases as the app, so tests resolve the adopted
