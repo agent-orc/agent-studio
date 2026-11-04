@@ -7,7 +7,8 @@ ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 WORKDIR /src
 COPY . ./
-RUN dotnet publish runner/AgentRunner.csproj -c Release -o /app /p:UseAppHost=false \
+RUN --mount=type=secret,id=sixlabors_license \
+    dotnet publish runner/AgentRunner.csproj -c Release -o /app /p:UseAppHost=false \
     -p:Version="$VERSION" -p:SourceRevisionId="$SHA"
 
 # SDK base image on purpose: coding agents build and test the projects they

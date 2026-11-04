@@ -14,6 +14,14 @@
     <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
   </PropertyGroup>
 
+  <!-- SixLabors.ImageSharp 3.2 validates a Six Labors license key before CoreCompile and fails
+       Release builds without one. Host builds read the SixLaborsLicenseKey environment variable;
+       container builds receive it as the BuildKit secret sixlabors_license. See
+       docs/operations/setup/contributor-setup.md#six-labors-license-key-for-release-builds. -->
+  <PropertyGroup Condition="'$(SixLaborsLicenseKey)' == '' and '$(SixLaborsLicenseFile)' == '' and Exists('/run/secrets/sixlabors_license')">
+    <SixLaborsLicenseFile>/run/secrets/sixlabors_license</SixLaborsLicenseFile>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
     <PackageReference Include="Microsoft.OpenApi" Version="2.10.0" />

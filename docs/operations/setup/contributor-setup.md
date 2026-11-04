@@ -319,6 +319,43 @@ launcher-exit shape: [`scripts/api-start-windows-launcher.test.sh`](../../../scr
 
 ## Reference: configuration knobs
 
+### Six Labors license key for Release builds
+
+The backend decodes uploaded artifact images with `SixLabors.ImageSharp` 3.2.0
+(`backend/OrchestratorApi.csproj`). That package ships an MSBuild license check
+that runs before every compile of the backend, including the compile inside a
+`runner/AgentRunner.csproj` build. Debug builds only warn. Release builds fail
+without a key:
+
+```text
+error : No Six Labors license found. Set $(SixLaborsLicenseKey), set $(SixLaborsLicenseFile), or add a 'sixlabors.lic' file to the project/workspace.
+```
+
+This affects `dotnet build` and `dotnet publish` with `-c Release`, every image
+built from `backend/Dockerfile`, `runner/Dockerfile`,
+`testsupport/scenario/runner.Dockerfile` and
+`tools/remote-test-suite/docker/agent-runner.Dockerfile`, the release and nightly
+installation workflows, and the Release steps of `scripts/release/*.sh` and
+`frontend/scripts/run-prebuilt-e2e.sh`.
+
+ImageSharp 3.2.0 is under the Six Labors Split License 1.0. Agent Studio is
+Apache-2.0 open source, so ImageSharp is licensed to this project under the
+Apache License, Version 2.0, and the free Six Labors Community license key
+covers the build. Apply for it at <https://sixlabors.com/pricing/>. A paid Six
+Labors commercial license is needed only when the backend is built into
+closed-source software by a for-profit business with more than 1M USD annual
+gross revenue.
+
+Supply the key in one of these ways. The key is a secret: never commit it or
+bake it into an image.
+
+| Build | How the key reaches the build |
+|---|---|
+| Host build or publish | `export SixLaborsLicenseKey='<key>'`. MSBuild reads the environment variable as the `SixLaborsLicenseKey` property. Alternatives: `-p:SixLaborsLicenseFile=<path>`, or a `backend/sixlabors.lic` file holding the key (ignored by Git and by the Docker build context). |
+| `docker compose ... up --build` | Export `SixLaborsLicenseKey` in the shell. `docker-compose.yml`, `testsupport/scenario/docker-compose.scenario.yml` and `tools/remote-test-suite/compose.yaml` pass it as the BuildKit secret `sixlabors_license`. |
+| `docker build` | `docker build --secret id=sixlabors_license,env=SixLaborsLicenseKey -f backend/Dockerfile .` The backend project reads the mounted secret file `/run/secrets/sixlabors_license`. |
+| GitHub Actions | Repository secret `SIXLABORS_LICENSE_KEY`. `release.yml` and `installation-nightly.yml` export it as `SixLaborsLicenseKey` and pass it to their image builds. |
+
 ### Dev vs. stable checkout markers
 
 The frontend visually marks a checkout as "dev" (orange "DEV" stripe, orange PWA icon, `(DEV)` window title) whenever the backend serves `/api/environment` with `{ isDev: true }`, which happens iff `Environment.IsDev` is `true` in `appsettings.Local.json`. Leave it `false` (or omit the block) for a plain single-instance setup.

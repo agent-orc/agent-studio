@@ -374,7 +374,7 @@ services:
 
   orchestrator-api-dev:
     <<: *api
-    build: {context: ., dockerfile: backend/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
+    build: {context: ., dockerfile: backend/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}, secrets: [sixlabors_license]}
     environment:
       TaskServer__BaseUrl: http://task-server-dev:5071
       TaskServer__AuthTokenFile: /run/agent-studio-secrets/studio_token
@@ -395,7 +395,7 @@ services:
 
   agent-host-distributed-dev:
     <<: *runner
-    build: {context: ., dockerfile: runner/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
+    build: {context: ., dockerfile: runner/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}, secrets: [sixlabors_license]}
     environment:
       <<: *runner-environment
       RUNNER_SERVER_URL: http://task-server-dev:5071
@@ -409,7 +409,7 @@ services:
 
   agent-host-review-distributed-dev:
     <<: *runner
-    build: {context: ., dockerfile: runner/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
+    build: {context: ., dockerfile: runner/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}, secrets: [sixlabors_license]}
     environment:
       <<: *runner-environment
       RUNNER_SERVER_URL: http://task-server-dev:5071
@@ -435,6 +435,12 @@ services:
     depends_on:
       task-server-dev: {condition: service_healthy}
     profiles: [dev]
+
+# ImageSharp 3.2 fails Release builds without a Six Labors license key. The dev image
+# builds read it from SixLaborsLicenseKey; see docs/operations/setup/contributor-setup.md.
+secrets:
+  sixlabors_license:
+    environment: SixLaborsLicenseKey
 
 volumes:
   store:

@@ -11,6 +11,11 @@ scripts/compose-distributed-bootstrap.sh
 docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev
 ```
 
+The Studio API and agent host images are Release builds of the backend, which
+need a Six Labors license key for ImageSharp. Export `SixLaborsLicenseKey`
+before `--build`; see
+[Six Labors license key for Release builds](./contributor-setup.md#six-labors-license-key-for-release-builds).
+
 Open `http://localhost:4011`. This source-built path is the verified default
 for the current checkout. To run it in the background, add `-d` before `--wait`.
 The Task Server, Engine, BFF, Studio API, web UI, and coding and review hosts start

@@ -151,3 +151,6 @@ frontend/.frontend-dev.log
 
 # Local docker-compose overrides (ports, version pin, distributed tokens).
 /.env
+
+# Six Labors license key file (ImageSharp build-time license check). The key is a secret.
+sixlabors.lic

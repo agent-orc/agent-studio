@@ -6,7 +6,8 @@ ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 WORKDIR /src
 COPY . ./
-RUN dotnet publish backend/OrchestratorApi.csproj -c Release -o /app /p:UseAppHost=false \
+RUN --mount=type=secret,id=sixlabors_license \
+    dotnet publish backend/OrchestratorApi.csproj -c Release -o /app /p:UseAppHost=false \
     -p:Version="$VERSION" -p:SourceRevisionId="$SHA"
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0

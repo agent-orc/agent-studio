@@ -88,6 +88,7 @@ services:
       args:
         HARNESS_REVISION: ${REMOTE_HARNESS_REVISION}
         HARNESS_IDENTITY: ${REMOTE_HARNESS_PROJECT}
+      secrets: [sixlabors_license]
     restart: "no"
     init: true
     command: ["/harness/compose-agent.mjs"]
@@ -166,3 +167,8 @@ volumes:
   runner-workspace:
     name: ${REMOTE_HARNESS_PROJECT}-runner-workspace
     labels: *harness-labels
+
+# ImageSharp 3.2 fails Release builds without a Six Labors license key.
+secrets:
+  sixlabors_license:
+    environment: SixLaborsLicenseKey

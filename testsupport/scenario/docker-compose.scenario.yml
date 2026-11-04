@@ -50,6 +50,7 @@ services:
       dockerfile: testsupport/scenario/runner.Dockerfile
       labels:
         io.agent-studio.disposable-image: scenario
+      secrets: [sixlabors_license]
     environment:
       HOME: /scenario/home
       DOTNET_CLI_HOME: /scenario/home
@@ -79,3 +80,8 @@ services:
       - type: bind
         source: ${SCENARIO_HOST_DIR:?set SCENARIO_HOST_DIR}
         target: ${SCENARIO_HOST_DIR:?set SCENARIO_HOST_DIR}
+
+# ImageSharp 3.2 fails Release builds without a Six Labors license key.
+secrets:
+  sixlabors_license:
+    environment: SixLaborsLicenseKey

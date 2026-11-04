@@ -5,6 +5,7 @@
 **/*.env
 **/*.token
 **/.git-credentials
+**/sixlabors.lic
 **/git-credentials
 !**/*.env.template
 !**/*.env.example
