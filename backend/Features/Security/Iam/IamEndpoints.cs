@@ -101,6 +101,7 @@ public static class IamEndpoints
             })).RequirePermission(IamPermissions.AccessManage);
 
         iam.MapOperatorAgentEndpoints();
+        iam.MapStandingGrantEndpoints();
     }
 
     /// <summary>Returns the acting user's id once the workspace-level permission holds.</summary>

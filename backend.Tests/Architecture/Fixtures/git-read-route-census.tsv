@@ -24,6 +24,8 @@
 /api/auth/iam/	free	-	-	-
 /api/auth/iam/check	free	-	-	-
 /api/auth/iam/operator-agents/	free	-	-	-
+/api/auth/iam/operator-catalogue	free	-	-	-
+/api/auth/iam/standing-grants/	free	-	-	-
 /api/auth/runner	free	-	-	-
 /api/auth/runner-enrollments	free	-	-	-
 /api/auth/runners	free	-	-	-
