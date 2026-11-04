@@ -882,6 +882,47 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Formed_batch_starts_while_a_per_task_fallback_gate_is_running()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        var slots = factory.Services.GetRequiredService<GateSlotUsageTracker>();
+        slots.Acquired("capacity-probe", 3);
+        slots.Released("capacity-probe");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = false;
+        var releaseFallback = new TaskCompletionSource<BuildTestGateResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.FallbackAsync = (request, _) => releaseFallback.Task;
+        _gate.Batch = request => Green(request.ExpectedSha);
+        _gate.Merge = request => Green(request.ExpectedSha);
+
+        SeedMember(factory, "CODE-SOLO", "backend/solo.cs");
+        _clock = _clock.AddMinutes(16);
+        await pilot.TickAsync(CancellationToken.None);
+        await _gate.FirstFallbackStarted;
+        Assert.True(_gate.Requests.First(request => request.Executor == "batch-fallback")
+            .ReserveBatchSlot);
+
+        SeedMember(factory, "CODE-BATCH-A", "backend/batch-a.cs");
+        SeedMember(factory, "CODE-BATCH-B", "backend/batch-b.cs");
+        try
+        {
+            await pilot.TickAsync(CancellationToken.None);
+            await _gate.FirstBatchStarted;
+            Assert.Equal(1, _gate.BatchRuns);
+            Assert.False(releaseFallback.Task.IsCompleted);
+        }
+        finally
+        {
+            releaseFallback.TrySetResult(Green(_gate.Requests.First(request =>
+                request.Executor == "batch-fallback").ExpectedSha));
+            await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task Paused_member_published_under_another_sha_leaves_as_integrated_without_a_gate()
     {
         using var factory = BuildFactory();

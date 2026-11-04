@@ -369,6 +369,30 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             var remote = record.Root + "/" + record.RunId;
             try
             {
+                // A response is the worker's terminal fact. The caller that owned
+                // it is gone, so there is no verdict to deliver; remove this
+                // finished run without asking the worker to cancel again.
+                var finished = false;
+                await Ssh(options, Path.GetTempPath(), "if [ -f " + Quote(remote + "/response.json")
+                    + " ]; then echo REMOTE_GATE_FINISHED; fi", TimeSpan.FromSeconds(10), ct,
+                    line => finished |= line == "REMOTE_GATE_FINISHED");
+                if (finished)
+                {
+                    try
+                    {
+                        await Ssh(options, Path.GetTempPath(), "rm -rf -- " + Quote(remote),
+                            TimeSpan.FromSeconds(10), ct);
+                    }
+                    catch (Exception exception) when (exception is IOException or TimeoutException)
+                    {
+                        _logger.LogWarning(exception,
+                            "remote_gate_finished_orphan_cleanup_failed run_id={RunId} host={Host}",
+                            record.RunId, record.Host);
+                    }
+                    _runs.Remove(record.RunId);
+                    _slotUsage.Released(record.RunId);
+                    continue;
+                }
                 var cleanup = CleanupCommand(remote);
                 await Ssh(options, Path.GetTempPath(), cleanup, TimeSpan.FromSeconds(50), ct);
                 await Ssh(options, Path.GetTempPath(), "test ! -e " + Quote(remote), TimeSpan.FromSeconds(10), ct);
