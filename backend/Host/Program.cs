@@ -1316,6 +1316,37 @@ builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStud
 builder.Services.AddSingleton<AgentStudio.Watcher.WatcherHostedService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Watcher.WatcherHostedService>());
+// Operator agent level OP-2: the decision stream publishes facts the
+// sources below already hold as typed events, and keeps the installation's
+// one watcher lease. It moves no card; transition rules stay in
+// orchestration-decisions.
+builder.Services.AddSingleton(sp => OperatorDecisionOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton(sp => new OperatorDecisionLog(
+    OperatorDecisionOptions.Folder(sp.GetRequiredService<IConfiguration>()),
+    sp.GetRequiredService<OperatorDecisionOptions>().Retention, sp.GetRequiredService<TimeProvider>(),
+    sp.GetService<ILogger<OperatorDecisionLog>>()));
+builder.Services.AddSingleton(sp => new WatcherLeaseService(
+    OperatorDecisionOptions.Folder(sp.GetRequiredService<IConfiguration>()),
+    sp.GetRequiredService<OperatorDecisionOptions>(), sp.GetRequiredService<OperatorDecisionLog>(),
+    sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<TimeProvider>(),
+    sp.GetService<ILogger<WatcherLeaseService>>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorTaskFactSource(
+    () => sp.GetRequiredService<AgentStudio.TaskAccess.ITaskAccess>().Snapshot().Jobs,
+    task => sp.GetRequiredService<TaskRunnerService>().GetQuotaFallbackForJob(task.Id, task.ProjectName)
+        ?? task.QuotaFallback));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorWatcherCaseFactSource(
+    sp.GetRequiredService<AgentStudio.Watcher.WatcherCaseStore>(), sp.GetRequiredService<IConfiguration>()["TaskRepository"]));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBatchGateFactSource(
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPendingPushFactSource(
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchIntegrationReservationService>(),
+    jobId => sp.GetRequiredService<AgentStudio.TaskAccess.ITaskAccess>().FindJob(jobId) is { } task
+        ? OperatorDecisionFacts.CardKey(task) : null));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
+    sp.GetRequiredService<ProviderLimitRegistry>()));
+builder.Services.AddSingleton<OperatorDecisionPublisher>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());
 // AGT-3207: the AI Operator acts on the stall events (A0/A1), proposes A2
 // actions and never takes A3 ones; receipts, follow-up checks, rate limits.
 builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionStore>();
@@ -2297,6 +2328,11 @@ transitionsForRunner.OnJobMoved += (projectName, jobId, fromState, toState) =>
 // PUB-2 automation ladder. Package targets are clamped to suggest; only the
 // website auto rung subscribes to acceptance and waits for the asynchronous
 // integration merge before dispatching the existing deploy workflow.
+// OP-2: a lane move starts the next decision sweep at once, so an escalation
+// or a human review reaches the stream before the sweep interval ends.
+var operatorDecisionsForTransitions = app.Services.GetRequiredService<OperatorDecisionPublisher>();
+transitionsForRunner.OnJobMoved += (_, _, _, _) => operatorDecisionsForTransitions.Wake();
+
 var publishActionsForTransitions = app.Services.GetRequiredService<PublishActionService>();
 transitionsForRunner.OnJobMoved += (projectName, jobId, _, toState) =>
 {
