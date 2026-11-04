@@ -864,6 +864,64 @@ with step-up; an optional push notification only links there).
   link; `OperatorApprovalTests` cover the lifecycle matrix, step-up,
   cancellation, the queue limit, and masking.
 
+### Host operations and certificates (security model SM-6)
+
+SM-D1 uses option O4 for routine work and option O3 for a bounded transition.
+The supported networked Compose stack starts the Operations Server and an
+outbound local Operations Agent on the private website network. The Operations
+Server has separate service and agent principals, no browser credentials, and
+a loopback-only host port for private tunnels to other enrolled hosts. An
+existing installation needs the Operations image digests, a Studio host CA
+outside the data directory, and a certificate receipt directory before the
+new Compose stack starts; follow the
+[website update procedure](../setup/studio-website.md#first-update-that-adds-operations-server).
+The public Docker firewall covers their addresses in the full website subnet;
+the website systemd unit verifies that the subnet rule is first in
+`DOCKER-USER` before Compose starts the public edge. Studio's
+service credential is readable only by the API's dedicated Operations group
+inside its mounted secret volume; the agent credential has a separate volume.
+Studio's `POST /api/hosts/{id}/{inspect|restart|drain|resume|logs|configuration}`
+routes accept an operator session only after the SM-4 policy step. The route
+selects a typed catalogue entry and a host standing grant where T1 applies;
+the handler submits the command with the session actor to the Operations
+Server. The local agent advertises only operations whose host-owned allowlist
+is present. Requests supply names and digests, never executable paths or
+shell text.
+
+The operations are `host.inspect` (T0), `service.restart` (T1), `host.drain`
+and `host.resume` (T1), `host.logs.collect` (T0), and
+`host.configuration.apply` (T1). Drain and resume call the fixed
+`agent-host host-agent` role commands with a configured host-agent file. Log
+collection reads the last 8192 bytes of an allowlisted file. Configuration
+apply copies at most 1 MiB from a host-owned reviewed source after its SHA-256
+matches both the allowlist and the command, then atomically replaces one
+allowlisted target. Studio appends a hash-chained control plane audit entry
+before submitting each operator host command, including the actor, host,
+operation, input digest and idempotency key. The server validates each input
+and output shape. It
+stores every attempt transition in a SQLite table with update and delete
+triggers that refuse mutation. Before executing, the agent appends an
+owner-only host journal line and sends it to the server. The server accepts
+the receipt only when the dispatched central history matches the actor,
+agent, operation, and digest; a mismatch emits
+`host-journal-without-central-audit`. The result follows the existing durable
+spool and replay path.
+
+For a command outside this catalogue, an operator session with a covering
+host grant may request a user certificate at
+`POST /api/hosts/{id}/certificates`. Studio's CA private key is mounted from a
+host secret outside the API data directory. It signs only `agent-operations`
+certificates with a fixed forced command, no extensions, and a validity
+interval ending 59 minutes after issue. The forced command accepts only the
+exact commands listed in `deploy/agent-host/agent-operations-command`.
+`POST /api/hosts/{id}/certificates/{certificateId}/revoke` builds an OpenSSH
+KRL and publishes it to the Operations Server; agents that have a
+`revokedKeysFile` configured download and atomically install the newest KRL
+on each poll. Hosts configure `RevokedKeys` and `TrustedUserCAKeys`, disable
+password and standing authorized-key login for this account, and keep the
+operations account unprivileged. The [operator setup guide](../setup/operator-agent.md)
+has the migration sequence.
+
 ### Operator guardrails on card rounds (AGT-3483)
 
 Two guardrails of the

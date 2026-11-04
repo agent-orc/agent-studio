@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text.Json;
 using AgentStudio.Operations.Agent.Features.Execution;
 using AgentStudio.Operations.Contracts;
@@ -7,9 +8,11 @@ using AgentStudio.Operations.Contracts;
 namespace AgentStudio.Operations.Agent;
 
 public sealed class OperationsAgentClient(HttpClient client, string agentId, string bootId, string spoolDirectory, TimeProvider clock,
-    RestartableServices? services = null, Func<ProcessStartInfo, TimeSpan, CancellationToken, Task<ToolRun>>? run = null)
+    RestartableServices? services = null, Func<ProcessStartInfo, TimeSpan, CancellationToken, Task<ToolRun>>? run = null,
+    HostRoutineSettings? hostSettings = null)
 {
     private readonly RestartableServices _services = services ?? RestartableServices.Empty;
+    private readonly HostRoutineSettings _hostSettings = hostSettings ?? HostRoutineSettings.Empty;
 
     private const string Api = "api/operations/v1/";
 
@@ -19,11 +22,21 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
         if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(spoolDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         // Results from an earlier process generation must be reported before
         // the new boot asks to replace that generation's registration.
+        await ReplayJournalAsync(ct);
         await ReplaySpoolAsync(ct);
         var operations = new Dictionary<string, int> { [OperationCatalogue.HostInspect.Id] = OperationCatalogue.HostInspect.Version };
         // AGT-3207: only an agent with a local allowlist offers restarts.
         if (_services.Services.Count > 0)
             operations[OperationCatalogue.ServiceRestart.Id] = OperationCatalogue.ServiceRestart.Version;
+        if (_hostSettings.AgentHostExecutable is not null)
+        {
+            operations[OperationCatalogue.HostDrain.Id] = OperationCatalogue.HostDrain.Version;
+            operations[OperationCatalogue.HostResume.Id] = OperationCatalogue.HostResume.Version;
+        }
+        if (_hostSettings.LogSources.Count > 0)
+            operations[OperationCatalogue.HostLogsCollect.Id] = OperationCatalogue.HostLogsCollect.Version;
+        if (_hostSettings.Configurations.Count > 0)
+            operations[OperationCatalogue.HostConfigurationApply.Id] = OperationCatalogue.HostConfigurationApply.Version;
         var capability = new AgentCapability(agentId, bootId, "diagnostics", [], [], operations, 1, 1, 1);
         using var response = await client.PostAsJsonAsync(Api + "agents/register", capability, ct);
         response.EnsureSuccessStatusCode();
@@ -31,7 +44,9 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
 
     public async Task PollOnceAsync(CancellationToken ct)
     {
+        await ReplayJournalAsync(ct);
         await ReplaySpoolAsync(ct);
+        await SyncRevocationsAsync(ct);
         using var response = await client.PostAsJsonAsync(Api + $"agents/{Uri.EscapeDataString(agentId)}/poll", new AgentPollRequest(bootId), ct);
         response.EnsureSuccessStatusCode();
         if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return;
@@ -45,6 +60,8 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
                   ?? throw new InvalidDataException("Agent lease response is empty.");
         if (!Guid.TryParseExact(attempt.Id, "N", out _)) throw new InvalidDataException("Agent attempt identity is invalid.");
         var restartMarker = Path.Combine(spoolDirectory, attempt.Id + ".restart-started");
+        var effectMarker = Path.Combine(spoolDirectory, attempt.Id + ".effect-started");
+        var isEffect = attempt.Command.OperationId is "host.drain" or "host.resume" or "host.configuration.apply";
         // A refused restart has no side effect and needs no execution marker.
         if (attempt.Command.OperationId == OperationCatalogue.ServiceRestart.Id
             && ServiceRestart.Refusal(attempt, _services, clock.GetUtcNow()) is null)
@@ -57,9 +74,25 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
                     JsonSerializer.SerializeToElement(new { }), [], true, started, started));
             await WriteDurableAsync(restartMarker, JsonSerializer.SerializeToUtf8Bytes(uncertain, OperationsProtocol.Json), ct);
         }
+        if (isEffect && attempt.State == "running")
+        {
+            if (File.Exists(effectMarker)) throw new IOException("Host effect has an unresolved durable execution marker.");
+            var started = clock.GetUtcNow();
+            var uncertain = new AttemptReportRequest(bootId, attempt.Fence,
+                new OperationResult("failed", attempt.Command.InputDigest, "host-effect-outcome-unknown",
+                    JsonSerializer.SerializeToElement(new { }), [], true, started, started));
+            await WriteDurableAsync(effectMarker, JsonSerializer.SerializeToUtf8Bytes(uncertain, OperationsProtocol.Json), ct);
+        }
+        await AppendJournalAsync(attempt, "execution-started", ct);
+        await ReplayJournalAsync(ct);
         var result = attempt.Command.OperationId == OperationCatalogue.ServiceRestart.Id
             ? await ServiceRestart.ExecuteAsync(attempt, agentId, bootId, _services, run ?? ServiceRestart.RunAsync, clock, ct)
-            : HostInspection.Execute(attempt, agentId, bootId, clock.GetUtcNow());
+            : attempt.Command.OperationId == OperationCatalogue.HostInspect.Id
+                ? HostInspection.Execute(attempt, agentId, bootId, clock.GetUtcNow())
+                : await HostRoutineOperations.ExecuteAsync(attempt, agentId, bootId, _hostSettings,
+                    run ?? ServiceRestart.RunAsync, clock, ct);
+        await AppendJournalAsync(attempt, result.Outcome, ct);
+        await ReplayJournalAsync(ct);
         var reportRequest = new AttemptReportRequest(bootId, attempt.Fence, result);
         var target = Path.Combine(spoolDirectory, attempt.Id + ".json");
         if (Directory.EnumerateFiles(spoolDirectory).Take(128).Count() >= 128)
@@ -72,7 +105,88 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
         // The marker goes first: a leftover result replays itself, a leftover
         // marker would replay a contradicting "unknown" for a reported result.
         if (File.Exists(restartMarker)) File.Delete(restartMarker);
+        if (File.Exists(effectMarker)) File.Delete(effectMarker);
         File.Delete(target);
+    }
+
+    private async Task SyncRevocationsAsync(CancellationToken ct)
+    {
+        if (_hostSettings.RevokedKeysFile is not { } target) return;
+        using var response = await client.GetAsync(Api + $"agents/{Uri.EscapeDataString(agentId)}/revocations", ct);
+        response.EnsureSuccessStatusCode();
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+            throw new IOException("A host revocation list has not been published.");
+        var list = await response.Content.ReadFromJsonAsync<HostRevocationList>(ct)
+            ?? throw new IOException("The host revocation response is empty.");
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(list.Base64Krl); }
+        catch (FormatException exception) { throw new IOException("The host revocation list is invalid.", exception); }
+        if (bytes.Length is < 8 or > 16 * 1024 || !bytes.AsSpan(0, 8).SequenceEqual("SSHKRL\n\0"u8)
+            || Convert.ToHexStringLower(SHA256.HashData(bytes)) != list.Sha256)
+            throw new IOException("The host revocation list is invalid.");
+        var versionPath = target + ".version";
+        var installedVersion = long.TryParse(File.Exists(versionPath) ? await File.ReadAllTextAsync(versionPath, ct) : null,
+            out var version) ? version : 0;
+        if (list.Version < installedVersion)
+            throw new IOException("The host revocation list rolled back.");
+        if (File.Exists(target) && new FileInfo(target).LinkTarget is not null)
+            throw new IOException("The host revocation target is a link.");
+        if (File.Exists(target) && SHA256.HashData(await File.ReadAllBytesAsync(target, ct)).AsSpan().SequenceEqual(SHA256.HashData(bytes)))
+        {
+            if (list.Version > installedVersion) await File.WriteAllTextAsync(versionPath, list.Version.ToString(), ct);
+            return;
+        }
+        if (list.Version == installedVersion && installedVersion != 0)
+            throw new IOException("The host revocation list changed without a new version.");
+        var temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await WriteDurableAsync(temporary, bytes, ct);
+            File.Move(temporary, target, true);
+            await File.WriteAllTextAsync(versionPath, list.Version.ToString(), ct);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    private async Task AppendJournalAsync(OperationAttempt attempt, string outcome, CancellationToken ct)
+    {
+        var entry = new HostJournalEntry(attempt.Id, attempt.Command.Actor, agentId,
+            attempt.Command.OperationId, attempt.Command.InputDigest, clock.GetUtcNow(), outcome);
+        var line = JsonSerializer.Serialize(entry, OperationsProtocol.Json) + "\n";
+        var path = spoolDirectory + ".journal.jsonl";
+        if (File.Exists(path) && new FileInfo(path).Length + System.Text.Encoding.UTF8.GetByteCount(line) > 8 * 1024 * 1024)
+            throw new IOException("Host journal capacity reached.");
+        var options = new FileStreamOptions { Mode = FileMode.Append, Access = FileAccess.Write, Options = FileOptions.WriteThrough };
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        await using var stream = new FileStream(path, options);
+        await stream.WriteAsync(System.Text.Encoding.UTF8.GetBytes(line), ct);
+        stream.Flush(flushToDisk: true);
+    }
+
+    private async Task ReplayJournalAsync(CancellationToken ct)
+    {
+        var path = spoolDirectory + ".journal.jsonl";
+        if (!File.Exists(path)) return;
+        if (new FileInfo(path).Length > 8 * 1024 * 1024)
+            throw new IOException("Host journal capacity reached.");
+        var cursorPath = path + ".cursor";
+        var cursor = int.TryParse(File.Exists(cursorPath) ? await File.ReadAllTextAsync(cursorPath, ct) : null,
+            out var saved) && saved >= 0 ? saved : 0;
+        var lines = await File.ReadAllLinesAsync(path, ct);
+        if (cursor > lines.Length) throw new IOException("Host journal cursor exceeds the journal.");
+        for (var index = cursor; index < lines.Length; index++)
+        {
+            var entry = JsonSerializer.Deserialize<HostJournalEntry>(lines[index], OperationsProtocol.Json)
+                ?? throw new InvalidDataException("Host journal entry is empty.");
+            await SendJournalAsync(entry, ct);
+            await File.WriteAllTextAsync(cursorPath, (index + 1).ToString(), ct);
+        }
+    }
+
+    private async Task SendJournalAsync(HostJournalEntry entry, CancellationToken ct)
+    {
+        using var receipt = await client.PostAsJsonAsync(Api + $"agents/{Uri.EscapeDataString(agentId)}/journal", entry, ct);
+        receipt.EnsureSuccessStatusCode();
     }
 
     private static async Task WriteDurableAsync(string path, byte[] bytes, CancellationToken ct)
@@ -94,13 +208,18 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
             var report = JsonSerializer.Deserialize<AttemptReportRequest>(await File.ReadAllTextAsync(file, ct), OperationsProtocol.Json)
                          ?? throw new InvalidDataException("Agent result evidence is empty.");
             await ReportAsync(Path.GetFileNameWithoutExtension(file), report, ct);
-            var marker = Path.ChangeExtension(file, ".restart-started");
-            if (File.Exists(marker)) File.Delete(marker);
+            foreach (var extension in new[] { ".restart-started", ".effect-started" })
+            {
+                var marker = Path.ChangeExtension(file, extension);
+                if (File.Exists(marker)) File.Delete(marker);
+            }
             File.Delete(file);
         }
         // A side effect may have completed before its result could be spooled.
         // Report uncertainty and never recreate the service on redispatch.
-        foreach (var marker in Directory.EnumerateFiles(spoolDirectory, "*.restart-started").Order(StringComparer.Ordinal).Take(128))
+        foreach (var marker in Directory.EnumerateFiles(spoolDirectory, "*.restart-started")
+                     .Concat(Directory.EnumerateFiles(spoolDirectory, "*.effect-started"))
+                     .Order(StringComparer.Ordinal).Take(128))
         {
             var report = JsonSerializer.Deserialize<AttemptReportRequest>(await File.ReadAllTextAsync(marker, ct), OperationsProtocol.Json)
                          ?? throw new InvalidDataException("Restart execution marker is empty.");
