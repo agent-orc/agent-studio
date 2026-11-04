@@ -19,6 +19,8 @@ public sealed class AccessSecurityMiddleware
     /// <summary>The <see cref="RequestAccess"/> captured with the request's permission decision.</summary>
     public const string RequestAccessItem = "AccessSecurity.RequestAccess";
     public const string AttributionClientIdItem = "AccessSecurity.AttributionClientId";
+    /// <summary>The operator policy step's <see cref="OperatorPolicyDecision"/> for an operator session request (SM-4).</summary>
+    public const string OperatorPolicyItem = "AccessSecurity.OperatorPolicy";
     private const string TaskResolutionItem = "AccessSecurity.TaskResolution";
     private const string AuditTargetItem = "AccessSecurity.AuditTarget";
     /// <summary>Bodies above this size are digested by length only, without buffering them.</summary>
@@ -250,7 +252,7 @@ public sealed class AccessSecurityMiddleware
         {
             _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path,
                 faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode,
-                AuditTarget(context, path), parameterDigest);
+                AuditTarget(context, path), parameterDigest, context.Items[OperatorPolicyItem] as OperatorPolicyDecision);
         }
     }
 
@@ -603,6 +605,23 @@ public sealed class AccessSecurityMiddleware
     /// </summary>
     private async Task AuthorizeServiceAccount(HttpContext context, ServiceAccountPrincipal account, string path)
     {
+        // SM-4: the policy step is the only way from an operator session to an
+        // effect. A request outside the catalogue and every T2 request end
+        // here, before any binding is read; T1 waits for its grant below.
+        OperatorOperation? operation = null;
+        if (account.Operator is not null)
+        {
+            operation = await OperatorRequestClassifier.ClassifyAsync(context, IsSafe(context.Request.Method, path),
+                context.RequestServices?.GetService<IOperatorGateEvidence>(), OperatorEnvironmentKind,
+                key => RouteValue(context, path, context.GetEndpoint(), key));
+            var gate = OperatorPolicy.TierGate(operation);
+            if (gate is not null) context.Items[OperatorPolicyItem] = gate;
+            if (gate is { Admitted: false })
+            {
+                await Reject(context, 403, gate.Reason!, gate.Message, policy: gate);
+                return;
+            }
+        }
         if (path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase))
         {
@@ -675,10 +694,26 @@ public sealed class AccessSecurityMiddleware
             Id = account.ActorId, UserId = account.ActorId, TokenHash = string.Empty, CsrfHash = string.Empty,
             CreatedAt = now, LastSeenAt = now, ExpiresAt = now, AbsoluteExpiresAt = now,
         };
+        if (operation is { Tier: OperatorTier.T1 })
+        {
+            var granted = _store.AdmitOperatorGrant(account.AccountId, operation,
+                OperatorRequestClassifier.GrantTarget(operation, target, key => RouteValue(context, path, context.GetEndpoint(), key)),
+                SameProject);
+            context.Items[OperatorPolicyItem] = granted;
+            if (!granted.Admitted)
+            {
+                await Reject(context, 403, granted.Reason!, granted.Message, policy: granted);
+                return;
+            }
+        }
         context.Items[HumanPrincipalItem] = new HumanPrincipal(user, session);
         context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
         await _next(context);
     }
+
+    /// <summary>The canonical environment key of an environment id a project declares, for the operator catalogue.</summary>
+    private string? OperatorEnvironmentKind(string project, string environmentId)
+        => ResolveEnvironmentKey(ProjectRouteAddress.Addressed(project), environmentId);
 
     private static bool OperatorDeniedPermission(string permission)
         => permission is IamPermissions.AccessRead or IamPermissions.AccessManage or IamPermissions.WorkspaceAdminister
@@ -1350,7 +1385,8 @@ public sealed class AccessSecurityMiddleware
         int status,
         string code,
         string message,
-        string? loginUrl = null)
+        string? loginUrl = null,
+        OperatorPolicyDecision? policy = null)
     {
         // A refused write never reaches the provider. Preserve the real actor in its audit.
         if (status == StatusCodes.Status403Forbidden)
@@ -1363,7 +1399,9 @@ public sealed class AccessSecurityMiddleware
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
         context.Response.Headers.CacheControl = "no-store";
-        if (loginUrl is null)
+        if (policy is not null)
+            await context.Response.WriteAsJsonAsync(new { error = code, message, operation = policy.Operation?.Id, tier = policy.Operation?.Tier });
+        else if (loginUrl is null)
             await context.Response.WriteAsJsonAsync(new { error = code, message });
         else
             await context.Response.WriteAsJsonAsync(new { error = code, message, loginUrl });

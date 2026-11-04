@@ -165,6 +165,30 @@ public sealed class QuotaAdmissionEventEmissionTests : IDisposable
         Assert.Contains("projection ignored", line.Reasoning);
     }
 
+    // ── MS-5: the local launch asks the selection service ──
+    [Fact]
+    public void Local_launch_admission_asks_the_model_selection_service()
+    {
+        var spy = new SpyModelSelectionService();
+        var (runner, _) = BuildRunner(spy);
+        var info = MakeJob("spy-job") with { Model = "claude-opus-5", ThinkingLevel = "high", TaskType = "feature" };
+
+        var method = typeof(ProjectRunner).GetMethod(
+            "PlanQuotaAdmission", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(nameof(ProjectRunner), "PlanQuotaAdmission");
+        var plan = (QuotaAdmissionPlan)method.Invoke(runner, new object[] { info })!;
+
+        var call = Assert.Single(spy.Calls);
+        Assert.Equal("local-coding-launch", call.ExecutionPath);
+        Assert.Equal(AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding, call.Request.Consumer);
+        Assert.Equal(ProjectName, call.Request.Project);
+        Assert.Equal("spy-job", call.Request.TaskKey);
+        Assert.Equal(new AgentStudio.TaskServer.Contracts.SelectionPins("claude", "claude-opus-5", "high"), call.Request.Pins);
+        Assert.Equal("feature", call.Request.TaskType);
+        Assert.Equal(QuotaAdmissionOutcome.LaunchPrimary, plan.Outcome);
+        Assert.Equal("launch: spy", plan.Reason);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
     private static void Emit(ProjectRunner runner, TaskInfo info, QuotaAdmissionPlan plan)
     {
@@ -218,7 +242,7 @@ public sealed class QuotaAdmissionEventEmissionTests : IDisposable
         ],
     };
 
-    private (ProjectRunner Runner, TimelineLog Timeline) BuildRunner()
+    private (ProjectRunner Runner, TimelineLog Timeline) BuildRunner(IModelSelectionService? modelSelection = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -284,7 +308,8 @@ public sealed class QuotaAdmissionEventEmissionTests : IDisposable
             orchestratorLog, orchestratorRunner, orchestratorSessions,
             settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess,
             timeline: timeline, quotaFallback: quotaFallback,
-            localCodingAdmission: AllowLocalCodingForTests.Instance);
+            localCodingAdmission: AllowLocalCodingForTests.Instance,
+            modelSelection: modelSelection);
 
         return (runner, timeline);
     }

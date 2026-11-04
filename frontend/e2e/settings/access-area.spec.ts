@@ -69,8 +69,9 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
     ])
     : route.continue());
   await page.route('**/api/auth/iam', route => json(route, state));
-  // Operator agents have their own spec (operator-agents.spec.ts); this server answers without them.
-  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents') || url.pathname.startsWith('/api/auth/audit/'),
+  // Operator agents and standing grants have their own spec (operator-agents.spec.ts); this server answers without them.
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents') || url.pathname.startsWith('/api/auth/audit/')
+    || url.pathname === '/api/auth/iam/operator-catalogue' || url.pathname.startsWith('/api/auth/iam/standing-grants'),
     route => json(route, { message: 'Not found' }, 404));
   await page.route('**/api/auth/runner-enrollments', route => route.request().method() === 'POST'
     ? json(route, { enrollmentCode, name: 'build-host', scopes: [], expiresAt: '2026-10-20T09:15:00Z' })

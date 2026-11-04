@@ -74,6 +74,13 @@
         @defer (on immediate) { <app-access-operator-agents /> }
       </section>
 
+      @if (standingGrants.state() !== 'denied') {
+        <section class="access__section" aria-labelledby="access-grants-title">
+          <header><h3 id="access-grants-title">Standing grants</h3><p class="access-hint">The operation catalogue and the routine authority you grant an operator agent, by operation, scope, hourly rate, and time window. A grant lasts 7 days by default and at most 30.</p></header>
+          @defer (on immediate) { <app-access-standing-grants /> }
+        </section>
+      }
+
       <section class="access__section" aria-labelledby="access-operator-activity-title">
         <header><h3 id="access-operator-activity-title">Operator activity</h3><p class="access-hint">Audit entries of operator sessions in a hash chain, with its verification and off-host forwarding.</p></header>
         @defer (on immediate) { <app-access-operator-activity /> }

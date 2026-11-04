@@ -120,6 +120,7 @@ public static class IamEndpoints
             })).RequirePermission(IamPermissions.AccessManage);
 
         iam.MapOperatorAgentEndpoints();
+        iam.MapStandingGrantEndpoints();
     }
 
     private static void RevokeUsers(AccessSecurityStore store, AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes)
