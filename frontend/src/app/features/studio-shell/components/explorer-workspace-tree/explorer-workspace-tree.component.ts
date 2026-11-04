@@ -40,6 +40,7 @@ import {
 import { ExplorerAutoPickupIndicatorComponent } from '../explorer-auto-pickup-indicator/explorer-auto-pickup-indicator.component';
 import type { WorkbenchListItem } from '../../../../models/project-docs.model';
 import { ExplorerWorkbenchListComponent } from '../explorer-workbench-list/explorer-workbench-list.component';
+import { QualityStudioExplorerRowComponent } from '../quality-studio-explorer-row/quality-studio-explorer-row.component';
 import {
   buildExplorerWorkspaceGroups,
   type ExplorerProjectNode,
@@ -51,7 +52,6 @@ export type {
   ExplorerProjectRow,
   ExplorerWorkspaceGroup,
 } from './explorer-workspace-groups';
-
 export type ExplorerProjectSurface = 'board' | 'hub' | 'wiki' | 'deploy' | 'operations' | 'workbenches' | 'workbench';
 export interface ActiveExplorerWorkbench {
   projectName: string;
@@ -70,7 +70,7 @@ export interface ActiveExplorerWorkbench {
 @Component({
   selector: 'app-explorer-workspace-tree',
   standalone: true,
-  imports: [CdkDrag, CdkDropList, CdkDropListGroup, SectionHeaderComponent, TreeRowComponent, StudioIconComponent, EmptyStateComponent, TooltipDirective, MenuComponent, ExplorerAutoPickupIndicatorComponent, ExplorerLaneDashboardComponent, ExplorerWorkbenchListComponent],
+  imports: [CdkDrag, CdkDropList, CdkDropListGroup, SectionHeaderComponent, TreeRowComponent, StudioIconComponent, EmptyStateComponent, TooltipDirective, MenuComponent, ExplorerAutoPickupIndicatorComponent, ExplorerLaneDashboardComponent, ExplorerWorkbenchListComponent, QualityStudioExplorerRowComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './explorer-workspace-tree.component.html',
@@ -270,7 +270,6 @@ export class ExplorerWorkspaceTreeComponent {
     event?.stopPropagation();
     window.open(url, '_blank', 'noopener');
   }
-
   readonly laneCountsFor = laneCountsFor;
   readonly boardLaneCountsLabel = boardLaneCountsLabel;
 

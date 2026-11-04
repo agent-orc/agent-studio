@@ -136,15 +136,15 @@ public sealed class TestCliGuardTests
             .AddInMemoryCollection(new Dictionary<string, string?> { ["ClaudeCli:Path"] = stub })
             .Build();
         var oneShot = NewOneShot(configuration, new CapturingLogger<ClaudeOneShot>());
-        var before = TestCliGuard.ReadInvocations().ToHashSet();
+        var marker = "explicit-model-" + Guid.NewGuid().ToString("N");
 
-        var result = await oneShot.RunAsync(OneShotRequest(workspace));
+        var result = await oneShot.RunAsync(OneShotRequest(workspace) with { Model = marker });
 
         Assert.True(result.Ok, $"Explicit stub did not run: exit {result.ExitCode}, stderr '{result.Stderr}'.");
         Assert.Contains(reply, result.ParsedText, StringComparison.Ordinal);
         Assert.Equal(Path.GetFullPath(workspace.Path),
             Path.GetFullPath((await File.ReadAllTextAsync(cwdProbe)).Trim()));
-        Assert.Empty(NewIsolatedCalls(before));
+        Assert.DoesNotContain(TestCliGuard.ReadInvocations(), invocation => invocation.Argv.Contains(marker));
     }
 
     /// <summary>

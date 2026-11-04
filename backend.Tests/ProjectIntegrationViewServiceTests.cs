@@ -187,18 +187,53 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
         Assert.Equal(System.Net.HttpStatusCode.NotModified, notModified.StatusCode);
     }
 
+    [Fact]
+    public async Task Published_view_waits_for_facts_after_an_initial_empty_200_and_slow_warming()
+    {
+        using var client = new HttpClient(new WarmingThenReadyHandler())
+            { BaseAddress = new Uri("http://localhost") };
+        using var response = await PublishedView(client, "/api/git/integration",
+            () => TimeSpan.FromSeconds(61));
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.Contains(GitFactsResults.GenerationHeader));
+    }
+
     /// <summary>Polls the route until the producer published the view; a warming answer is 202.</summary>
-    private static async Task<HttpResponseMessage> PublishedView(HttpClient client, string url)
+    private static async Task<HttpResponseMessage> PublishedView(HttpClient client, string url,
+        Func<TimeSpan>? elapsed = null)
     {
         var waited = System.Diagnostics.Stopwatch.StartNew();
+        elapsed ??= () => waited.Elapsed;
         while (true)
         {
             var response = await client.GetAsync(url);
-            if (response.StatusCode == System.Net.HttpStatusCode.OK) return response;
-            Assert.Equal(System.Net.HttpStatusCode.Accepted, response.StatusCode);
+            if (response.StatusCode == System.Net.HttpStatusCode.OK
+                && response.Headers.Contains(GitFactsResults.GenerationHeader)) return response;
+            // Before the index registers this configured project the route can
+            // return the unknown-project placeholder as 200 without facts.
+            if (response.StatusCode != System.Net.HttpStatusCode.OK)
+                Assert.Equal(System.Net.HttpStatusCode.Accepted, response.StatusCode);
             response.Dispose();
-            if (waited.Elapsed > TimeSpan.FromMinutes(1)) throw new TimeoutException("The integration view was not published.");
+            // The producer's own run deadline is 90 seconds. On a loaded host
+            // the endpoint may stay warming for most of that allowed run.
+            if (elapsed() > TimeSpan.FromMinutes(3)) throw new TimeoutException("The integration view was not published.");
             await Task.Delay(50);
+        }
+    }
+
+    private sealed class WarmingThenReadyHandler : HttpMessageHandler
+    {
+        private int _requests;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var requestNumber = Interlocked.Increment(ref _requests);
+            var response = new HttpResponseMessage(requestNumber == 2
+                ? System.Net.HttpStatusCode.Accepted : System.Net.HttpStatusCode.OK);
+            if (requestNumber >= 3)
+                response.Headers.TryAddWithoutValidation(GitFactsResults.GenerationHeader, "1");
+            return Task.FromResult(response);
         }
     }
 

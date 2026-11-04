@@ -87,7 +87,7 @@ test.describe('CLI Admin / quota caps', () => {
     // The scattered "Manage CLIs" status-bar button folded into the global
     // Workspace-settings home (ASS-695). Open the home, then pick the
     // "Usage caps" rail section, which still renders the CLI-admin panel.
-    const trigger = page.getByTestId('status-bar-settings');
+    const trigger = page.getByTestId('studio-titlebar-settings');
     await expect(trigger).toBeVisible();
     await trigger.click();
 

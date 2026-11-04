@@ -35,7 +35,7 @@ test('owner can inspect and edit a blocked workspace quota', async ({ page, requ
   });
 
   await page.goto('/');
-  await page.getByTestId('studio-ab-settings').click();
+  await page.getByTestId('studio-titlebar-settings').click();
   await page.getByTestId('workspace-settings-rail-workspaces').click();
   // The quota toggle renders once the settings view has read the workspace registry.
   const quotaToggle = page.getByTestId(`settings-workspace-quota-${workspaceId}`);

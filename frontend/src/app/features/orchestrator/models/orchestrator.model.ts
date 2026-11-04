@@ -289,6 +289,13 @@ export interface OrchestratorChatResponse {
   project: string;
   turns: OrchestratorChatTurn[];
   executionContext?: ChatExecutionContext | null;
+  executionReadiness?: ChatExecutionReadiness | null;
+}
+
+export interface ChatExecutionReadiness {
+  ready: boolean;
+  code: string;
+  reason: string | null;
 }
 
 export interface ChatExecutionContext {

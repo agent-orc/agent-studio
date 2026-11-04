@@ -3,9 +3,12 @@ using System.Text.Json;
 
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -20,6 +23,61 @@ namespace AgentStudio.Tests;
 /// </summary>
 public class CreateTaskByProjectHandleTests : IDisposable
 {
+    [Fact]
+    public async Task Active_preference_recommends_equivalent_for_new_card_without_rewriting_a_pin()
+    {
+        var config = BuildConfig();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2030, 11, 4, 12, 0, 0, TimeSpan.Zero));
+        var reset = clock.GetUtcNow().UtcDateTime.AddHours(2);
+        new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance).Write([
+            new QuotaSnapshot
+            {
+                CliType = CliTypes.Claude, FetchedAt = clock.GetUtcNow().UtcDateTime,
+                Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 20, ResetAt = reset }],
+            },
+        ]);
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureTestServices(services => services.Replace(
+                ServiceDescriptor.Singleton<TimeProvider>(clock)));
+            builder.ConfigureAppConfiguration((_, settings) => settings.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = Project,
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _watchPath,
+                    ["PublicDemo:Enabled"] = "false",
+                }));
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var mutations = factory.Services.GetRequiredService<TaskMutationService>();
+        factory.Services.GetRequiredService<TaskStateMachine>().EnsureStateFoldersAndMigrate();
+        var pinnedId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Pinned before switch", WatchPath = _watchPath,
+            CliType = CliTypes.Claude, Model = ModelIds.ClaudeOpus5, ModelExplicit = true,
+        });
+        var pinFile = Path.Combine(scanner.FindJob(pinnedId!, _watchPath)!.FolderPath, "task.json");
+        var pinBefore = File.ReadAllText(pinFile);
+
+        (await client.PutAsJsonAsync("/api/cli/quota/fallback-preference",
+            new { cliType = CliTypes.Claude, preferFallback = true })).EnsureSuccessStatusCode();
+        (await client.PostAsJsonAsync("/api/tasks", new
+        {
+            title = "New while conserving", watchPath = _watchPath,
+            cliType = CliTypes.Claude, taskType = "task",
+        })).EnsureSuccessStatusCode();
+
+        var created = scanner.FindJob("new-while-conserving", _watchPath);
+        Assert.NotNull(created);
+        Assert.Equal(CliTypes.Codex, created.CliType);
+        Assert.False(string.IsNullOrWhiteSpace(created.Model));
+        Assert.Equal(pinBefore, File.ReadAllText(pinFile));
+    }
     private readonly string _workspace;
     private readonly string _watchPath;
     private const string Project = "demo";

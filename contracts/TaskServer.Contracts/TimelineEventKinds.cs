@@ -166,6 +166,12 @@ public static class TimelineEventKinds
     /// <summary>Written exception to the current-brief content acceptance gate.</summary>
     public const string CompletionContentOverridden = "completion_content_overridden";
     /// <summary>
+    /// AGT-3467: the settlement journal of the card's current review reads as
+    /// repair, so completion has no content verdict. Written once per review
+    /// attempt; details carry the attempt and the journal's repair reason.
+    /// </summary>
+    public const string ReviewSettlementRepairRequired = "review_settlement_repair_required";
+    /// <summary>
     /// AGT-3076: an operator override accepted a card whose RunAttempt the
     /// attempt authority store no longer holds. Details carry the authority
     /// epoch and the delivery evidence (integration status, ref, SHA, commits)

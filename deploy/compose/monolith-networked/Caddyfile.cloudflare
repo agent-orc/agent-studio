@@ -49,3 +49,28 @@
         header_up X-Forwarded-For {client_ip}
     }
 }
+
+{$QUALITY_DOMAIN} {
+    import origin-direct-{$STUDIO_CLOUDFLARE_ALLOW_DIRECT:false}
+    tls {
+        client_auth {
+            mode require_and_verify
+            trust_pool file /etc/caddy/origin-pull/ca.pem
+        }
+    }
+    encode zstd gzip
+    header {
+        >Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        >X-Content-Type-Options nosniff
+        >Referrer-Policy same-origin
+        -Server
+    }
+    @bypass {
+        vars {http.vars.trusted_proxy} false
+        not vars {env.STUDIO_CLOUDFLARE_ALLOW_DIRECT} true
+    }
+    respond @bypass "Direct origin access is disabled. Use the Cloudflare hostname." 403
+    reverse_proxy quality-studio:8080 {
+        header_up X-Forwarded-For {client_ip}
+    }
+}

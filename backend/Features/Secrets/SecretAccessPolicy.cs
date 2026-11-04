@@ -31,7 +31,8 @@ public static partial class SecretAccessPolicy
     /// are, so a project's own GITHUB_APP_ID or similar stays an ordinary secret.
     /// </summary>
     public static bool IsPlatformOnly(string? name)
-        => name is GitHubAppPrivateKeyName or GitHubAppClientSecretName;
+        => name is GitHubAppPrivateKeyName or GitHubAppClientSecretName
+            or "quality-studio/api-token" or "quality-studio/signing-key";
 
     public static SecretAccessDecision ForWorkload(SecretReference reference, SecretWorkload workload, string? purpose)
     {

@@ -627,7 +627,12 @@ review report or a tick that meets a running fallback waits for it instead of
 starting a second gate. The card marker records that per-card gate as active
 with a start count; a marker still active with no gate running in the process
 (restart, or a gate that threw) is resumed on the next tick, and after two
-interrupted starts the card escalates as `GateInfra`. A batch that pauses (a second
+interrupted starts the card escalates as `GateInfra`. Across all review
+generations of the process, at most one gate slot fewer than the gate host has
+runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
+slot before they choose their merged candidate, so the batch slot stays free. A
+formed batch whose base moved before replay closes again with the same members
+on the new base, and its members do not reach a per-task gate. A batch that pauses (a second
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
 unexpected fault) keeps `Paused` in its state history; on the next tick the
 worker returns every member it still owns to that per-card gate and records the
@@ -689,6 +694,13 @@ also enters isolation when another test was quarantined as flaky. Per-task
 fallback gates admit at most one fewer concurrent request than configured gate
 slots, leaving a slot for a batch. The pilot reconciles a current passed review
 in Auto Review with a missing pending record back into the batch queue.
+Admission accepts a passed per-card model review whose required agent aspects
+were carried from a passed equivalent-delivery review. A plan with no agent
+aspect command or carried verdict remains ineligible. If queue admission and
+the emergency per-task gate both fail, pipeline health emits one alarm for the
+card and review attempt with the failure reason. Startup recovery retries a
+current settled deferred review in Auto Review when it has neither a pending
+batch entry nor a running gate, and clears the alarm after admission succeeds.
 
 `GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
 including `integrationBranchRedBatches` and the correctness floor; comparable baseline and cost fields remain null

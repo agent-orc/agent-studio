@@ -81,9 +81,8 @@ internal static class ReviewBaselineResultCache
     /// Pure reuse decision. Every key input is re-checked against the stored
     /// entry, so a file that survives a key change or a parser change is
     /// ignored rather than trusted by its path alone. A test-failures entry
-    /// that exited non-zero without a failure name recorded a baseline that
-    /// never ran (AGT-3089) and is never reused; an exit-status entry carries
-    /// its state in the exit code alone and stays reusable.
+    /// without a reported test result is never reused. An exit-status entry
+    /// carries its state in the exit code alone and stays reusable.
     /// </summary>
     internal static bool IsReusable(
         BaselineCacheEntry entry,
@@ -98,8 +97,10 @@ internal static class ReviewBaselineResultCache
            && string.Equals(entry.ToolchainFingerprint, key.ToolchainFingerprint, StringComparison.Ordinal)
            && string.Equals(entry.BaselineMode, baselineMode, StringComparison.OrdinalIgnoreCase)
            && (ReviewBaselineModes.IsExitStatus(baselineMode)
-               || entry.ExitCode == 0
-               || entry.Failures is { Count: > 0 })
+               || entry.Failures is { } failures
+                  && (entry.ExitCode == 0 || failures.Count > 0)
+                  && ReviewBaselineTestResultPolicy.HasResult(
+                      failures, entry.StdOut ?? string.Empty, entry.StdErr ?? string.Empty))
            && !IsExpired(entry, utcNow);
 
     internal static bool IsExpired(BaselineCacheEntry entry, DateTime utcNow)

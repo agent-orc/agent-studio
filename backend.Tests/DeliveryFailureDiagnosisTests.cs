@@ -185,6 +185,35 @@ public sealed class DeliveryFailureDiagnosisTests
         Assert.Equal("DiagnosisEvidenceInvalid", normalized.FailureClassification);
     }
 
+    [Theory]
+    [InlineData(ReviewBaselineModes.TestFailures, true, "ProductFailure")]
+    [InlineData(ReviewBaselineModes.TestFailures, false, "ReviewInfra")]
+    [InlineData(ReviewBaselineModes.ExitStatus, true, "ReviewInfra")]
+    public void Red_baseline_can_charge_only_reproduced_new_test_failures(
+        string mode, bool hasNewFailure, string expected)
+    {
+        var failed = FailedCommand("verify-6", DeliveryFailureDiagnosis.Product, true) with
+        {
+            BaselineExitCode = 1,
+            NewFailures = hasNewFailure ? ["Product.Tests.NewFailure"] : [],
+            PreExistingFailures = ["Product.Tests.OldFailure"],
+        };
+        var report = EmptyReport("ProductFailure") with
+        {
+            Commands = [failed, failed with
+            {
+                Phase = "clean-repeat", WorkspaceRole = "clean-repeat", Diagnosis = null,
+            }],
+        };
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-6", "build-tests", "dotnet", [],
+                CompareToBaseline: true, BaselineMode: mode)], []);
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, plan);
+
+        Assert.Equal(expected, normalized.Outcome);
+    }
+
     [Fact]
     public void Mixed_failure_with_missing_diagnosis_cannot_charge()
     {

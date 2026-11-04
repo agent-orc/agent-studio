@@ -1,0 +1,23 @@
+@if (owner()) {
+  <section class="quality-connection" data-testid="quality-studio-connection-settings" aria-label="Integrations, Quality Studio">
+    <header><h3>Integrations › Quality Studio</h3><p>Connect the hosted Quality Studio service. The service token is stored as a workspace secret.</p></header>
+    <label>Internal base URL
+      <input data-testid="quality-studio-internal-url" type="url" [value]="internalBaseUrl()"
+        (input)="internalBaseUrl.set($any($event.target).value)" placeholder="http://quality-studio:8080" />
+    </label>
+    <label>Public URL
+      <input data-testid="quality-studio-public-url" type="url" [value]="publicUrl()"
+        (input)="publicUrl.set($any($event.target).value)" placeholder="https://quality-robert.omgai.dev" />
+    </label>
+    <label>Service client ID
+      <input data-testid="quality-studio-client-id" type="text" [value]="serviceClientId()"
+        (input)="serviceClientId.set($any($event.target).value)" />
+    </label>
+    <label>Service token (write only; leave blank to keep the current token)
+      <input data-testid="quality-studio-token" type="password" autocomplete="new-password" [value]="token()"
+        (input)="token.set($any($event.target).value)" />
+    </label>
+    <button type="button" data-testid="quality-studio-save-connection" [disabled]="saving()" (click)="save()">Save Quality Studio connection</button>
+    @if (message()) { <p role="status">{{ message() }}</p> }
+  </section>
+}

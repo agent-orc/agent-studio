@@ -26,24 +26,24 @@ test.describe('Status bar default picker (unified chip)', () => {
     });
 
     await page.setViewportSize({ width: 1600, height: 900 });
-    await page.goto('http://localhost:4010');
+    await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(800);
 
-    const trigger = page.getByTestId('status-bar-defaults');
+    const trigger = page.getByTestId('studio-titlebar-defaults');
     await expect(trigger).toBeVisible();
     await trigger.click();
 
-    const picker = page.getByTestId('status-bar-defaults-picker');
+    const picker = page.getByTestId('studio-titlebar-defaults-picker');
     await expect(picker).toBeVisible();
     await expect(picker).toHaveAttribute('role', 'dialog');
 
     // Both sections present in one popover.
-    await expect(picker.getByTestId('status-bar-defaults-picker-cli-pills')).toBeVisible();
-    await expect(picker.getByTestId('status-bar-defaults-picker-model-pills')).toBeVisible();
+    await expect(picker.getByTestId('studio-titlebar-defaults-picker-cli-pills')).toBeVisible();
+    await expect(picker.getByTestId('studio-titlebar-defaults-picker-model-pills')).toBeVisible();
 
     await page.screenshot({
-      path: 'test-results/status-bar-defaults-picker-open.png',
+      path: 'test-results/studio-titlebar-defaults-picker-open.png',
       fullPage: false,
     });
 

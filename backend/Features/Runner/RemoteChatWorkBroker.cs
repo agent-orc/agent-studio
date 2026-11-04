@@ -123,6 +123,13 @@ public sealed class RemoteChatWorkBroker
         }
     }
 
+    public bool IsRunnerReachable(string runnerId)
+    {
+        lock (_gate)
+            return _lastPollByRunner.TryGetValue(runnerId, out var lastPoll)
+                && DateTime.UtcNow - lastPoll < _unreachableBudget;
+    }
+
     public void RecordLocalFallback(RemoteChatWorkRoute route, ChatExecutionContext context)
     {
         lock (_gate)
