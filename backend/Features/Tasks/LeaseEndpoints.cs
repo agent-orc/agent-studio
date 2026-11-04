@@ -912,7 +912,7 @@ public static class LeaseEndpoints
                         {
                             Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding,
                             Project = task.ProjectName,
-                            TaskKey = task.Key ?? task.TaskKey ?? task.Id,
+                            TaskKey = task.Key ?? (string.IsNullOrEmpty(task.TaskKey) ? task.Id : task.TaskKey),
                             Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
                                 task.CliType, task.Model, task.ThinkingLevel),
                             TaskType = task.TaskType,

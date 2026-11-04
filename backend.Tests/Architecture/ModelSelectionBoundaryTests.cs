@@ -63,9 +63,10 @@ public sealed class ModelSelectionBoundaryTests
         ["AgentStudio.Cli.CliEndpoints"] = "model catalogue and CLI path checks",
         ["AgentStudio.Cli.CliVersionMonitorHostedService"] = "CLI version probe",
         ["AgentStudio.Cli.QuotaProbeBase"] = "quota probe of the installed CLI",
-        ["AgentStudio.Pipeline.PipelineStepEconomyAdvisor"] = "model catalogue",
+        ["AgentStudio.Pipeline.CliPipelineModelCatalogueProvider"] = "model catalogue for the step economy advisor",
         ["AgentStudio.Connector.ConnectorDevSeatCompatibilityEndpoints"] = "dev-seat compatibility description and catalogue",
-        ["AgentStudio.Host.Program"] = "Codex catalogue warm-up",
+        // Top-level statements compile into the global-namespace Program type.
+        ["Program"] = "Codex catalogue warm-up",
     };
 
     [Fact]
@@ -225,10 +226,18 @@ public sealed class ModelSelectionBoundaryTests
 
     private static Type OuterType(Type type)
     {
-        while (type.DeclaringType is not null && type.IsDefined(typeof(CompilerGeneratedAttribute)))
+        while (type.DeclaringType is not null && IsCompilerGenerated(type))
             type = type.DeclaringType;
         return type;
     }
+
+    /// <summary>
+    /// Closures, lambdas and state machines. The compiler leaves
+    /// <see cref="CompilerGeneratedAttribute"/> off the state machine of an
+    /// async lambda, so the unspeakable name counts as well.
+    /// </summary>
+    private static bool IsCompilerGenerated(Type type)
+        => type.IsDefined(typeof(CompilerGeneratedAttribute)) || type.Name.StartsWith('<');
 
     /// <summary>"Namespace.Type.Method" with lambdas, local functions and state machines folded into their source method.</summary>
     private static string OwnerOf(MethodBase method)
@@ -236,7 +245,7 @@ public sealed class ModelSelectionBoundaryTests
         var declaring = method.DeclaringType!;
         var name = method.Name.StartsWith('<')
             ? SourceName(method.Name)
-            : declaring.IsDefined(typeof(CompilerGeneratedAttribute)) && declaring.Name.StartsWith('<')
+            : declaring.Name.StartsWith('<')
                 && !declaring.Name.StartsWith("<>", StringComparison.Ordinal)
                 ? SourceName(declaring.Name)
                 : method.Name;

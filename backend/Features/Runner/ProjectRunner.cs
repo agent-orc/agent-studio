@@ -894,7 +894,7 @@ public class ProjectRunner
                {
                    Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding,
                    Project = ProjectName,
-                   TaskKey = info.Key ?? info.TaskKey ?? info.Id,
+                   TaskKey = info.Key ?? (string.IsNullOrEmpty(info.TaskKey) ? info.Id : info.TaskKey),
                    Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
                        info.CliType, info.Model, info.ThinkingLevel),
                    TaskType = info.TaskType,
