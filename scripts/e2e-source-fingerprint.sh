@@ -11,7 +11,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     frontend/src frontend/e2e frontend/scripts \
     frontend/angular.json frontend/package.json frontend/package-lock.json \
     'frontend/tsconfig*.json' 'frontend/playwright*.ts' 'frontend/vitest*.ts' \
-    Directory.Build.props Directory.Packages.props global.json
+    Directory.Build.props Directory.Build.targets Directory.Packages.props global.json
   while IFS= read -r -d '' file; do
     printf '%s\0' "${file}"
     git hash-object -- "${file}"
