@@ -55,12 +55,12 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   behind three busy slots.
 - AGT-3466: on 3 November 2026 a restart dissolved formed batch 944a1c38 and
   13 gates ran on a host with five slots. Three rules now prevent this:
-  - A formed batch whose base moved before replay closes again with the same
-    members on the new base. The abandoned state reads `base moved before
-    replay; re-formed as <id>`. Before AGT-3466 the members went back to
-    planning with their old review times, already past every deadline, and
-    the cards the planner did not batch at once took per-task gates. Members
-    still return to the queue when one of them is no longer eligible.
+  - A formed batch whose base moved before replay closes again on the new
+    base. The abandoned state reads `base moved before replay; re-formed as
+    <id>`. Before AGT-3466 the members went back to planning with their old
+    review times, already past every deadline, and the cards the planner did
+    not batch at once took per-task gates. AGT-3498 adds per-member checks so
+    one ineligible member does not dissolve the compatible group.
   - A card waiting for its pre-check counts as a batch partner. Pre-checks
     run only on spare slots. While per-task gates filled the slots, each
     unchecked card became eligible alone at its deadline and took its own
@@ -82,6 +82,16 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   `reasonDetail`. The first cause of a review generation is kept until the
   review returns to the batch queue. A member of an abandoned batch that is
   queued again shows `pending` with reason `requeued`, not `fallback`.
+- AGT-3498: when a formed batch's base moves before replay, the worker checks
+  each member's current review and immutable delivery against the new base.
+  Compatible members close together in one successor linked by
+  `reformedFromBatchId`; they run a new exact-candidate gate with no inherited
+  run or verdict. A conflicting member starts its merge-conflict round, and a
+  superseded review resolves from the queue. The retired batch state records
+  typed `baseMoveMemberReasons` and the successor ID. The state response
+  reports `baseMoves` by new base SHA and `baseMoveTotals`, each counting formed
+  batches kept and abandoned. A replay probe infrastructure failure pauses
+  the batch rather than classifying a member as conflicting.
 - Each card's paths and changed lines come from its result SHA, measured
   from the merge base with `refs/remotes/origin/<branch>`, the ref the
   planning tick fetches. A card whose diff cannot be computed scores at the

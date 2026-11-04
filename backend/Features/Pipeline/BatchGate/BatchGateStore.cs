@@ -10,7 +10,10 @@ public sealed record BatchGateState(
     string BatchId, string MembershipDigest, BatchPhase Phase,
     string? CandidateSha, long CoordinatorFence, DateTimeOffset RecordedAtUtc,
     string? Reason = null, string? BatchRunId = null,
-    long? RefMutationFence = null);
+    long? RefMutationFence = null,
+    string? BaseMoveToSha = null, string? BaseMoveOutcome = null,
+    string? SuccessorBatchId = null,
+    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null);
 
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,

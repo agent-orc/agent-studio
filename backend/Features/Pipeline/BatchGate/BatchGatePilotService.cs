@@ -844,6 +844,20 @@ public sealed partial class BatchGatePilotService
         foreach (var manifest in _store.ListRecoverableManifests()
                      .Where(manifest => _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed))
         {
+            var waiting = _store.ListPending();
+            if (FormedExclusions(manifest, waiting).Length == 0) continue;
+            var repo = waiting.FirstOrDefault(item => manifest.Members.Any(member =>
+                member.TaskKey == item.Subject.TaskKey
+                && member.RunAttempt == item.Subject.RunAttempt));
+            if (repo is not null)
+            {
+                var currentBase = _git.FetchBatchIntegrationTip(repo.RepositoryPath,
+                    manifest.Scope.IntegrationBranch, CancellationToken.None);
+                if (currentBase is not null
+                    && !string.Equals(currentBase, manifest.BaseSha,
+                        StringComparison.OrdinalIgnoreCase))
+                    continue;
+            }
             BatchCoordinatorLease? lease;
             try { lease = _leases.TryAcquire(manifest.Scope, "formed-batch-replan"); }
             catch (IOException) { continue; }
@@ -856,14 +870,7 @@ public sealed partial class BatchGatePilotService
     private bool ReconcileFormedBatch(BatchGateManifest manifest, long fence)
     {
         if (_store.LatestState(manifest.BatchId).Phase != BatchPhase.Formed) return false;
-        var waiting = _store.ListPending();
-        var exclusions = manifest.Members.Select(member =>
-        {
-            var pending = waiting.FirstOrDefault(item => item.Subject.TaskKey == member.TaskKey
-                && item.Subject.RunAttempt == member.RunAttempt);
-            var reason = pending is null ? null : _snapshots.PendingExclusion(pending);
-            return reason is null ? null : $"{member.TaskKey}: {reason}";
-        }).Where(reason => reason is not null).ToArray();
+        var exclusions = FormedExclusions(manifest, _store.ListPending());
         if (exclusions.Length == 0) return false;
 
         // Closed manifests are immutable. Retire this snapshot with a per-member
@@ -873,6 +880,16 @@ public sealed partial class BatchGatePilotService
             "formed-batch-replanned; removed " + string.Join("; ", exclusions));
         return true;
     }
+
+    private string[] FormedExclusions(BatchGateManifest manifest,
+        IReadOnlyList<BatchGatePendingRecord> waiting)
+        => manifest.Members.Select(member =>
+        {
+            var pending = waiting.FirstOrDefault(item => item.Subject.TaskKey == member.TaskKey
+                && item.Subject.RunAttempt == member.RunAttempt);
+            var reason = pending is null ? "no longer pending" : _snapshots.PendingExclusion(pending);
+            return reason is null ? null : $"{member.TaskKey}: {reason}";
+        }).OfType<string>().ToArray();
 
     private void StartClosedBatches(CancellationToken ct)
     {
@@ -884,7 +901,7 @@ public sealed partial class BatchGatePilotService
             var members = manifest.Members.Select(member => waiting.FirstOrDefault(item =>
                 item.Subject.TaskKey == member.TaskKey
                 && item.Subject.RunAttempt == member.RunAttempt)).ToArray();
-            if (members.Any(item => item is null))
+            if (members.All(item => item is null))
             {
                 var recovery = _leases.TryAcquire(manifest.Scope, "formed-batch-recovery");
                 if (recovery is not null)
@@ -899,7 +916,7 @@ public sealed partial class BatchGatePilotService
                 }
                 continue;
             }
-            var current = members.Cast<BatchGatePendingRecord>().ToArray();
+            var current = members.OfType<BatchGatePendingRecord>().ToArray();
             StartBatch(manifest, current.ToDictionary(item => item.Subject.TaskKey,
                 StringComparer.Ordinal), current[0].RepositoryPath, ct);
         }
@@ -1382,8 +1399,7 @@ public sealed partial class BatchGatePilotService
             // continuation arrived or another tick retired its manifest.
             lock (_runningBatches)
             {
-                if (_store.LatestState(manifest.BatchId).Phase != BatchPhase.Formed
-                    || ReconcileFormedBatch(manifest, lease.Fence))
+                if (_store.LatestState(manifest.BatchId).Phase != BatchPhase.Formed)
                     return;
                 _assemblingBatchIds.Add(manifest.BatchId);
             }
@@ -1392,6 +1408,23 @@ public sealed partial class BatchGatePilotService
                 AbandonRollback();
                 return;
             }
+            var currentBase = _git.FetchBatchIntegrationTip(
+                repo, manifest.Scope.IntegrationBranch, cancellation.Token);
+            if (currentBase is not null && !string.Equals(currentBase, manifest.BaseSha,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                if (!ReformOnMovedBase(manifest, pending, repo,
+                        currentBase, lease.Fence, conflictKeys))
+                {
+                    _store.AppendState(new BatchGateState(manifest.BatchId,
+                        manifest.MembershipDigest, BatchPhase.Abandoned, null,
+                        lease.Fence, _time.GetUtcNow(), "base moved before replay",
+                        BaseMoveToSha: currentBase, BaseMoveOutcome: "abandoned"));
+                    ReturnToPending(manifest);
+                }
+                return;
+            }
+            if (ReconcileFormedBatch(manifest, lease.Fence)) return;
             if (!MembersCurrent())
             {
                 AbandonSuperseded("superseded before replay");
@@ -1399,21 +1432,6 @@ public sealed partial class BatchGatePilotService
             }
             foreach (var member in manifest.Members)
                 Lane(pending[member.TaskKey], "dequeued", reason: $"batch:{manifest.BatchId}");
-            var currentBase = _git.FetchBatchIntegrationTip(
-                repo, manifest.Scope.IntegrationBranch, cancellation.Token);
-            if (currentBase is not null && !string.Equals(currentBase, manifest.BaseSha,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                if (!QueueOnMovedDocumentationBase(manifest, pending, repo,
-                        currentBase, lease.Fence)
-                    && !ReformOnMovedBase(manifest, pending, currentBase, lease.Fence))
-                {
-                    State(manifest, BatchPhase.Abandoned, null, lease.Fence,
-                        "base moved before replay");
-                    ReturnToPending(manifest);
-                }
-                return;
-            }
             var assembly = new BatchGateAssembler(_store, _git, repo, _time)
                 .Assemble(manifest.BatchId, lease.Fence);
             AfterAssemblyForTesting?.Invoke();
@@ -1630,6 +1648,8 @@ public sealed partial class BatchGatePilotService
         }
 
         bool MembersCurrent() => manifest.Members.All(member =>
+            pending.ContainsKey(member.TaskKey)
+            &&
             !_store.HasEject(manifest.Scope.Project, member.TaskKey)
             && Refresh(pending[member.TaskKey]).Subject.CurrentGeneration);
 

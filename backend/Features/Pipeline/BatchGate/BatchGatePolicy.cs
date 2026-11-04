@@ -118,7 +118,8 @@ public sealed record BatchGateManifest(
     IReadOnlyList<string> EligibleKeys,
     string? ParentBatchId = null, string? FormationReason = null,
     IReadOnlyList<BatchPlanCard>? PlanningCards = null,
-    bool Diagnostic = false);
+    bool Diagnostic = false,
+    string? ReformedFromBatchId = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,

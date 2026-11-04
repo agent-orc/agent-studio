@@ -31,6 +31,15 @@ public static class BatchGateStateSnapshotReader
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(item => item.ClosedAtUtc)
             .Take(Math.Clamp(history, 0, 100)).ToArray();
+        var moved = store.ListManifests()
+            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
+            .Select(item => store.LatestState(item.BatchId))
+            .Where(state => state.BaseMoveToSha is not null).ToArray();
+        var baseMoves = moved.GroupBy(state => state.BaseMoveToSha!, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new { baseSha = group.Key,
+                kept = group.Count(state => state.BaseMoveOutcome == "kept"),
+                abandoned = group.Count(state => state.BaseMoveOutcome == "abandoned") })
+            .OrderByDescending(group => group.baseSha).ToArray();
         var batches = manifests.Select(manifest =>
         {
             var phase = store.LatestState(manifest.BatchId);
@@ -38,8 +47,13 @@ public static class BatchGateStateSnapshotReader
             {
                 manifest.BatchId,
                 manifest.ParentBatchId,
+                manifest.ReformedFromBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseReason = phase.Reason,
+                baseMoveToSha = phase.BaseMoveToSha,
+                baseMoveOutcome = phase.BaseMoveOutcome,
+                successorBatchId = phase.SuccessorBatchId,
+                baseMoveMemberReasons = phase.BaseMoveMemberReasons,
                 manifest.FormationReason,
                 exclusions = manifest.Exclusions,
                 manifest.BaseSha,
@@ -109,6 +123,8 @@ public static class BatchGateStateSnapshotReader
                 }
                 var ejected = replay is { Outcome: "unattributable" };
                 var left = phase == BatchPhase.Abandoned || ejected;
+                var baseMoveReason = store.LatestState(manifest.BatchId)
+                    .BaseMoveMemberReasons?.GetValueOrDefault(member.TaskKey);
                 var cause = left
                     ? causes.LastOrDefault(entry => entry.TaskKey == member.TaskKey
                         && entry.RunAttempt == member.RunAttempt && entry.RecordedAtUtc >= manifest.ClosedAtUtc)
@@ -126,8 +142,9 @@ public static class BatchGateStateSnapshotReader
                     phase = phase.ToString().ToLowerInvariant(),
                     position = (int?)(index + 1),
                     size = (int?)manifest.Members.Count,
-                    reason = ejected ? replay!.Outcome : requeued ? "requeued" : cause?.Rule,
+                    reason = baseMoveReason ?? (ejected ? replay!.Outcome : requeued ? "requeued" : cause?.Rule),
                     reasonDetail = ejected ? EjectionDetail(replay!)
+                        : baseMoveReason is not null ? store.LatestState(manifest.BatchId).Reason
                         : requeued ? store.LatestState(manifest.BatchId).Reason : cause?.Event,
                     fallbackRule = cause?.Rule,
                     fallbackEvent = cause?.Event,
@@ -160,6 +177,9 @@ public static class BatchGateStateSnapshotReader
                 };
             }).ToArray(),
             batches,
+            baseMoves,
+            baseMoveTotals = new { kept = moved.Count(state => state.BaseMoveOutcome == "kept"),
+                abandoned = moved.Count(state => state.BaseMoveOutcome == "abandoned") },
             members,
             isolationFindings = store.ListIsolationFindings(project),
             pushWait,
