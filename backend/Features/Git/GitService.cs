@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
+using AgentStudio.Pipeline;
 
 namespace AgentStudio.Git;
 
@@ -4704,6 +4705,28 @@ public partial class GitService
         if (code != 0) return null;
         var sha = output.Trim();
         return ReviewSubjectStore.IsValidResultSha(sha) ? sha : null;
+    }
+
+    /// <summary>One bounded first-parent range for acceptance publication checks, newest first.</summary>
+    public IReadOnlyList<IntegrationPublicationGatePolicy.FirstParentCommit>? GetFirstParentRange(
+        string repoRoot, string verifiedSha, string tipSha)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !ReviewSubjectStore.IsValidResultSha(verifiedSha)
+            || !ReviewSubjectStore.IsValidResultSha(tipSha)) return null;
+        var (output, _, code) = RunGitArgs(repoRoot, "rev-list", "--first-parent", "--parents",
+            $"--max-count={IntegrationPublicationGatePolicy.MaxFirstParentSteps + 1}",
+            $"{verifiedSha}..{tipSha}");
+        if (code != 0) return null;
+        var commits = new List<IntegrationPublicationGatePolicy.FirstParentCommit>();
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length < 2 || !ReviewSubjectStore.IsValidResultSha(fields[0])
+                || !ReviewSubjectStore.IsValidResultSha(fields[1])) return null;
+            commits.Add(new(fields[0], fields[1]));
+        }
+        return commits;
     }
 
     /// <summary>
