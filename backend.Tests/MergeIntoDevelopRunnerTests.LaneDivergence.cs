@@ -59,6 +59,32 @@ public sealed partial class MergeIntoDevelopRunnerTests
     }
 
     [Fact]
+    public void LaneDivergence_NetChangeWithPublishedSuccessor_RestartsAtOrigin()
+    {
+        var (repo, remote, source, laneTip) = SeedNetChangeLane("net-superseded", legacySubject: false);
+        RunGit(repo, "checkout -q -b operator develop");
+        File.WriteAllText(Path.Combine(repo, "source.txt"), "newer delivery");
+        Commit(repo, "feat: newer card delivery");
+        var successor = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "push -q origin operator:develop");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, _, _) = BuildWithSettings(repo);
+        var worktree = new IntegrationWorktreeProvider(git).Resolve(repo, "develop").Path!;
+        var lineage = new FixedLaneLineage(laneTip, source, new LaneDeliveryCard("AGT-3435", successor));
+
+        var healed = git.SynchronizeIntegrationBranch(worktree, "develop", lineage: lineage);
+
+        Assert.Equal(IntegrationBranchSyncOutcome.FastForwarded, healed.Outcome);
+        Assert.Equal(RemoteSha(remote, "develop"), RunGit(repo, $"rev-parse {GitService.IntegrationLaneRef("develop")}").Out.Trim());
+        Assert.Equal(laneTip, RunGit(repo, $"rev-parse {GitService.IntegrationLaneBackupRef("develop", laneTip)}").Out.Trim());
+        var dropped = Assert.Single(healed.LaneCommits!);
+        Assert.Equal(LaneCommitStatus.Superseded, dropped.Status);
+        Assert.Equal("AGT-3435", dropped.CardKey);
+        Assert.Equal(successor, dropped.SuccessorSha);
+    }
+
+    [Fact]
     public void LaneDivergence_ForeignSingleParentCommit_Stalls()
     {
         var (repo, _, _, _) = SeedNetChangeLane("foreign-commit", legacySubject: false);
