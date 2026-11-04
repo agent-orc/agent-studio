@@ -149,7 +149,16 @@ The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
 `/releases`, and `/deployments` when configured. Its Pipeline view reads the
 parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
 The release view loads
-`/releases/{releaseId}/notes` from the included cards. The board and task detail
+`/releases/{releaseId}/notes` from the included cards.
+The release response also projects current Quality verdicts from the included
+cards' stored Review Plane artifacts. The visible card rows reconcile with the
+pass, concerns, block, and not reviewed counts; the worst card verdict labels
+the rollup. Studio labels the release range Not reviewed; the Quality Studio
+change view resolves a stored verdict when opened. For releases after
+the first, its Quality Studio jump uses the merge-base of the previous and
+current release commits as base and the current commit as head. The first
+release has no range jump until an operator confirms the repository root range.
+The board and task detail
 share environment badges from `/api/deploy/cards`; the board can filter cards
 that are in Staging only, in Production, not yet in Production, or rolled back.
 Projects without deployment declarations show an empty environment state.
