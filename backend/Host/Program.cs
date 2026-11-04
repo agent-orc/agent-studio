@@ -1469,7 +1469,15 @@ builder.Services.AddSingleton<CliFallbackPreferenceService>();
 builder.Services.AddSingleton<ModelSelectionEffectiveService>();
 builder.Services.AddSingleton<AgentStudio.Cli.IModelEquivalenceCatalog, AgentStudio.Cli.ModelEquivalenceCatalog>();
 builder.Services.AddSingleton<CliQuotaFallbackService>();
-builder.Services.AddSingleton<AgentStudio.Cli.QuotaAdmissionService>();
+// MS-5: one selection service decides CLI, model and thinking level for every
+// launch path; QuotaAdmissionService is its legacy adapter until MS-6. MS-2
+// replaces the interim logging ledger with the JSONL store.
+builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionLedger, AgentStudio.Cli.LoggingModelSelectionLedger>();
+builder.Services.AddSingleton<AgentStudio.Cli.ModelSelectionService>();
+builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionService>(sp =>
+    sp.GetRequiredService<AgentStudio.Cli.ModelSelectionService>());
+builder.Services.AddSingleton(sp =>
+    new AgentStudio.Cli.QuotaAdmissionService(sp.GetRequiredService<AgentStudio.Cli.IModelSelectionService>()));
 builder.Services.AddSingleton<AgentStudio.Cli.QuotaAdmissionRecorder>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<TaskWatcherService>());
 if (!publicDemoExecutionProfile)

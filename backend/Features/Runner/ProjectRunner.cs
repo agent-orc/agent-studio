@@ -157,6 +157,7 @@ public class ProjectRunner
     private readonly CliQuotaWaitPolicyService? _quotaWaitPolicy;
     private readonly CliQuotaFallbackService? _quotaFallback;
     private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly IModelSelectionService? _modelSelection;
     private readonly ProviderLimitRegistry _providerLimits;
     private readonly ILoadThrottleGate? _loadThrottle;
     private readonly GitService _git;
@@ -490,7 +491,8 @@ public class ProjectRunner
         ILocalCodingAdmissionPolicy? localCodingAdmission = null,
         ReviewInputDecisionGateway? reviewInputDecisions = null,
         AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
-        bool networked = false)
+        bool networked = false,
+        IModelSelectionService? modelSelection = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -513,6 +515,7 @@ public class ProjectRunner
         _quotaCaps = quotaCaps;
         _quotaFallback = quotaFallback;
         _quotaAdmission = quotaAdmission;
+        _modelSelection = modelSelection ?? quotaAdmission?.Selection;
         _quotaWaitPolicy = quotaWaitPolicy;
         _providerLimits = providerLimits ?? new ProviderLimitRegistry();
         _loadThrottle = loadThrottle;
@@ -879,18 +882,25 @@ public class ProjectRunner
     }
 
     /// <summary>
-    /// AGT-2055: run the algorithmic pre-launch quota check for a card. Pure
-    /// decision over the cached snapshots + the AGT-2040 routing map; never
-    /// spawns anything. See <see cref="QuotaAdmissionPlanner"/>.
+    /// AGT-2055: run the algorithmic pre-launch quota check for a card. Since
+    /// MS-5 the decision comes from <see cref="IModelSelectionService"/> (the
+    /// shared planner over cached snapshots and the routing map); never spawns
+    /// anything. A runner built without the service (test fixtures) uses the
+    /// legacy planner adapter with the same rules.
     /// </summary>
     private QuotaAdmissionPlan PlanQuotaAdmission(TaskInfo info)
-        => _quotaAdmission?.Plan(new QuotaAdmissionRequest(
-               info.CliType,
-               info.Model,
-               info.ThinkingLevel,
-               ProjectName,
-               _activeRuns.Count,
-               "local-coding-launch"))
+        => _modelSelection?.Select(new ModelSelectionCall(
+               new AgentStudio.TaskServer.Contracts.SelectionRequest
+               {
+                   Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding,
+                   Project = ProjectName,
+                   TaskKey = info.Key ?? info.TaskKey ?? info.Id,
+                   Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
+                       info.CliType, info.Model, info.ThinkingLevel),
+                   TaskType = info.TaskType,
+               },
+               "local-coding-launch",
+               _activeRuns.Count)).Admission
            ?? QuotaAdmissionPlanner.Plan(
                info.CliType, info.Model, info.ThinkingLevel,
                _quotaFallback, _quotaCaps,
