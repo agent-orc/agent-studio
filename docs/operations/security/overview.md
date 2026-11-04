@@ -205,7 +205,10 @@ that is already allowed to edit that project's checkout.
   manage role bindings, groups, and service accounts; create and revoke named
   API tokens; create, list, and revoke runner enrollment codes; and revoke
   enrolled runners. API tokens use the operator or viewer role and an
-  explicit project list (`*` grants all projects). The creation response shows
+  explicit project list (`*` grants all projects). An operator token binds the
+  narrow `operator-agent` role (OP-1, below); Settings > Access shows that role
+  name on the token. Without `expiresAt` a token expires after 30 days; the
+  maximum stays 365 days. The creation response shows
   the secret once; subsequent lists expose metadata only: creator, expiry,
   last use, and revocation. The existing `.security/access-state.json` holds
   their hashes alongside the other access credentials. A disabled creator
@@ -215,8 +218,12 @@ that is already allowed to edit that project's checkout.
   Studio sign-in remains the frontend's auth path.
 - Scripts send an API token as `Authorization: Bearer` in the networked
   profile. The task-api reference scripts accept `TASKBOARD_URL` for the HTTPS
-  origin and `AGENT_STUDIO_API_TOKEN` for the secret. `X-Client-Id` remains
-  attribution only. API tokens cannot call access administration, versioned
+  origin and read the secret only from `~/.config/agent-studio/operator-token`
+  with owner-only permissions. They refuse a file that group or others can
+  access (`token-file-permissions`), the retired `AGENT_STUDIO_API_TOKEN`
+  variable (`token-environment-refused`, no fallback), and a token on the
+  command line (`token-argument-refused`), and redact the token from their
+  output. `X-Client-Id` remains attribution only. API tokens cannot call access administration, versioned
   Task Server, Runner service, or SignalR routes. A viewer token cannot mutate.
   API tokens are service accounts and pass the same named-permission check.
   Routes without a project address, including workspace timelines,
@@ -247,6 +254,7 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 | Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
 | Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
 | Developer | workspace, project, environment | cards, runs, chats, documents, non-production deploys |
+| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys |
 | Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
 | Viewer | workspace, project, environment | reads, secret metadata included |
 | Approver | workspace, project, environment | `environment.production.deploy.approve` and reads |
@@ -429,10 +437,30 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   transition. Runners and the engine keep their enrollment credentials and
   Runner scopes.
 - API tokens (AGT-3186) are service accounts with one `api.` token, created
-  under `/api/auth/api-tokens` with Admin (`operator`) or Viewer bindings for
-  the requested projects. They keep the API-token limits: no
+  under `/api/auth/api-tokens` with Operator agent (`operator`) or Viewer
+  bindings for the requested projects. They keep the API-token limits: no
   installation-wide writes even with `*`, and no use once the creating user is
   disabled.
+- The `operator-agent` role (Dossier operator-agent-level, OP-1, decision
+  OA-D4 B) holds exactly the operator surface: `workspace.read`,
+  `project.read`, `project.cards.write` (create, title, lane moves and
+  acceptance), `project.runs.operate` (continue and steer rounds, batch gate
+  eject and close-now), `project.pipeline.write` (`PUT
+  /api/projects/{project}/pipeline-step`, review step models),
+  `workspace.operate` for reads such as `/api/watcher/*`, and
+  `environment.deploy` (stage releases of gate-verified commits). It holds no
+  `secrets.read`, `secrets.write`, or `secrets.resolve`, no production deploy
+  or approval, no access permission, no `workspace.settings.write` or
+  `workspace.administer`, and no `project.settings.write`. Only service
+  accounts take it. A principal whose strongest granting role is
+  `operator-agent` cannot make an installation-wide (unaddressed) write, so
+  `workspace.operate` stays read-only for it. It does not hold operator
+  authority: an operator override completion and the operator decider of a
+  decision card stay with Admin and Owner. `POST /api/runner/secrets/resolve`
+  answers 403 `secret-resolve-denied` to any service-account bearer.
+  `GET /api/quota/admission/{project}` stays a Task Server and Runner claim
+  route that no session or token reads; operator tokens read quota through
+  `/api/cli/quota` and `/api/cli/quota/model-routes`.
 - Secret routes (AGT-3222) declare `secrets.read` for metadata reads and
   `secrets.write` for put, rotate, revoke, and delete, at the workspace
   (`/api/secrets/workspace`, which needs a workspace binding), project
@@ -455,7 +483,17 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   keep their token id and secret hash, so existing `api.` secrets keep
   working. Sessions, runners, enrollments, and invitations are unchanged. A
   single-user installation migrates its owner and needs no setup; a fresh
-  bootstrap binds the first owner directly.
+  bootstrap binds the first owner directly. Version 3 (OP-1) rebinds every
+  Admin binding of an API-token service account to `operator-agent` in the
+  same scope and writes one `api-token.role-migration` entry per token to
+  `.security/iam-audit.jsonl` (token id, from and to role, bindings). Legacy
+  operator tokens from version 0 or 1 bind `operator-agent` directly and get
+  the same entry. Service accounts created in the Access area keep their
+  bindings. A networked server loads the state at start, so the migration
+  and its audit entries run before the first request; an unreadable state
+  file is logged and does not stop the start, and every request that reads it
+  answers 500 until the file is repaired. An older binary does not know the role and grants such a token
+  nothing until it is upgraded again.
 - Each user record keeps `role`, `projects`, and `productionApprovalProjects`
   as a downgrade-safe summary: only Admin is summarized as `operator` (with
   the Admin projects), Product as `contributor`, everything else as `viewer`,
@@ -465,7 +503,7 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   restore the migration backup to return to the old state. A later upgrade
   migrates again from that summary, so bindings, groups, and service accounts
   made under the rights model would be lost. Before a downgrade, copy the
-  current `.security/access-state.json` (version 2) aside; before upgrading
+  current `.security/access-state.json` (version 3) aside; before upgrading
   again, restore that copy.
 - The legacy user endpoint keeps working: `PUT /api/auth/users/{id}` renames
   or disables without touching bindings when `role`, `projects`, and
