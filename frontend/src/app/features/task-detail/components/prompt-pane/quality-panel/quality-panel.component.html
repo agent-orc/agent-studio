@@ -1,0 +1,80 @@
+<section class="quality-panel" data-testid="quality-panel" aria-label="Quality">
+  <header class="quality-panel__header">
+    <h3>Quality</h3>
+    @if (view(); as quality) {
+      <span class="quality-panel__badge" [attr.data-state]="selectedState()" data-testid="quality-state">
+        {{ label(selectedState()) }}
+      </span>
+      <span class="quality-panel__context">Code quality in Agent Studio review</span>
+    } @else {
+      <span class="quality-panel__context">Loading review range…</span>
+    }
+  </header>
+
+  @if (view(); as quality) {
+    @if (selected(); as round) {
+      <div class="quality-panel__range" data-testid="quality-range">
+        Round {{ round.round }} · <code>{{ short(round.baseSha) }}..{{ short(round.headSha) }}</code>
+        · {{ round.commitCount }} {{ round.commitCount === 1 ? 'commit' : 'commits' }}
+        · {{ round.mode === 'decide' ? 'decides' : round.mode === 'shadow' ? 'does not decide' : 'off' }}
+      </div>
+      @if (round.document; as document) {
+        <div class="quality-panel__counts" data-testid="quality-severity-counts">
+          @for (item of counts(); track item.severity) {
+            <span class="quality-panel__count" [attr.data-severity]="item.severity">{{ item.count }} {{ item.severity }}</span>
+          }
+          @if (previous(); as prior) {
+            <span class="quality-panel__delta">{{ newCount() }} new since round {{ prior.round }}</span>
+          }
+        </div>
+        <ul class="quality-panel__findings">
+          @for (finding of document.findings.slice(0, 3); track finding.fingerprint) {
+            <li class="quality-panel__finding" data-testid="quality-finding">
+              <span class="quality-panel__finding-head"><span class="quality-panel__count" [attr.data-severity]="finding.severity">{{ finding.severity }}</span>
+              <code>{{ finding.ruleId }}</code> <code>{{ finding.path }}:{{ finding.line }}</code></span>
+              <span>{{ finding.message }}</span>
+            </li>
+          }
+        </ul>
+        @if (document.findings.length > 3) {
+          <p class="quality-panel__context">{{ document.findings.length - 3 }} more findings in Quality Studio</p>
+        }
+      } @else if (round.unavailableReason) {
+        <p class="quality-panel__context">{{ round.unavailableReason }}</p>
+      }
+      <div class="quality-panel__actions">
+        @if (round.repositoryId) {
+          <button type="button" data-testid="quality-open-range" (click)="open(round)">Open this range in Quality Studio ↗</button>
+        }
+        @if (rounds().length > 1) {
+          <label for="quality-round">Round</label>
+          <select id="quality-round" data-testid="quality-round" [value]="round.attemptId" (change)="select($any($event.target).value)">
+            @for (option of rounds(); track option.attemptId) {
+              <option [value]="option.attemptId">Round {{ option.round }}</option>
+            }
+          </select>
+        }
+      </div>
+      @if (isLatest(round) && quality.landedSha) {
+        <p class="quality-panel__landed" data-testid="quality-landed">
+          Landed as <code>{{ short(quality.landedSha) }}</code>
+          @if (quality.landedPatchEqualsReviewedPatch === true) {
+            · landed patch equals reviewed patch
+          } @else if (quality.landedPatchEqualsReviewedPatch === false) {
+            · landed patch differs from reviewed patch
+            <button type="button" data-testid="quality-open-landed" (click)="openLanded()">Open landed range ↗</button>
+          }
+        </p>
+      }
+    } @else {
+      <p class="quality-panel__context">{{ label(quality.state) }}</p>
+    }
+  }
+  @if (qualityRows().length > 0) {
+    <ul class="quality-panel__findings" data-testid="quality-evidence-rows">
+      @for (entry of qualityRows(); track entry.id) {
+        <li class="quality-panel__finding"><strong>{{ entry.title }}</strong> {{ entry.body }}</li>
+      }
+    </ul>
+  }
+</section>

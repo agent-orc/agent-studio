@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.QualityStudio;
+using AgentStudio.Bus;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
 using Microsoft.Extensions.Configuration;
@@ -112,6 +113,81 @@ public sealed class QualityStudioIntegrationTests : IDisposable
         var path = Path.Combine(_root, ".security", "quality-studio-revoke-outbox.json");
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         Assert.Equal(0, document.RootElement.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Verdict_ingest_replays_idempotently_after_restart_and_expires_after_seven_days()
+    {
+        Directory.CreateDirectory(_root);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["TaskRepository"] = _root }).Build();
+        var connections = new QualityStudioConnectionStore(configuration);
+        connections.Set(new QualityStudioConnection("http://quality.test", "https://quality.test", "agent-studio"));
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-11-02T12:00:00Z"));
+        var feed = new AgentMessageBusBridge(new AgentMessageBusStore(), configuration,
+            NullLogger<AgentMessageBusBridge>.Instance, clock);
+        var handler = new VerdictHandler { FailuresRemaining = 1 };
+        using var client = new HttpClient(handler);
+        var factory = new FixedClientFactory(client);
+        var secrets = new FixedSecretProvider();
+        using var parsed = JsonDocument.Parse("""
+            {"repository":"repo","baseSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+             "headSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+             "policyHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+             "ruleSetHash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+             "catalogueVersion":"1","verdict":"pass","findings":[]}
+            """);
+        var document = parsed.RootElement.Clone();
+        var round = new QualityChangeReviewRound(2, "attempt-2", "run-2", "repo",
+            new string('a', 40), new string('b', 40), 2, "decide", clock.GetUtcNow().UtcDateTime, document);
+        using (var first = new QualityChangeReviewOutbox(configuration, connections, secrets, factory, clock,
+                   feed, NullLogger<QualityChangeReviewOutbox>.Instance))
+        {
+            first.Enqueue("repo", "AGT-2", round, document);
+            first.Enqueue("repo", "AGT-2", round, document);
+            Assert.Equal(1, first.PendingCount);
+            Assert.True(await first.DeliverDueOnceAsync(CancellationToken.None));
+            Assert.Equal(1, first.PendingCount);
+        }
+        using (var restarted = new QualityChangeReviewOutbox(configuration, connections, secrets, factory, clock,
+                   feed, NullLogger<QualityChangeReviewOutbox>.Instance))
+        {
+            Assert.Equal(1, restarted.PendingCount);
+            clock.Advance(TimeSpan.FromSeconds(6));
+            Assert.True(await restarted.DeliverDueOnceAsync(CancellationToken.None));
+            Assert.Equal(0, restarted.PendingCount);
+            Assert.Equal(2, handler.Calls);
+            using var changed = JsonDocument.Parse(document.GetRawText().Replace("\"verdict\":\"pass\"", "\"verdict\":\"block\""));
+            // A different key simulates another reviewed range; its endpoint stays down.
+            using var other = JsonDocument.Parse(changed.RootElement.GetRawText().Replace(new string('b', 40), new string('c', 40)));
+            handler.FailuresRemaining = int.MaxValue;
+            restarted.Enqueue("repo", "AGT-3", round with { AttemptId = "attempt-3" }, other.RootElement);
+            clock.Advance(TimeSpan.FromDays(7) + TimeSpan.FromSeconds(1));
+            Assert.True(await restarted.DeliverDueOnceAsync(CancellationToken.None));
+            Assert.Equal(0, restarted.PendingCount);
+            Assert.False(await restarted.DeliverDueOnceAsync(CancellationToken.None));
+            Assert.Equal(2, handler.Calls);
+        }
+        var feedLines = Directory.GetFiles(AgentMessageBusPaths.BusRoot(_root), "*.jsonl", SearchOption.AllDirectories)
+            .SelectMany(File.ReadAllLines)
+            .Where(line => line.Contains("quality-change-review-delivery-expired", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Single(feedLines);
+    }
+
+    private sealed class VerdictHandler : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        public int FailuresRemaining { get; set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Assert.Equal(HttpMethod.Put, request.Method);
+            Assert.Equal("/api/v1/repos/repo/change-reviews", request.RequestUri?.AbsolutePath);
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            Assert.Equal("agent-studio-review-plane", body.RootElement.GetProperty("provenance").GetProperty("producer").GetString());
+            Calls++;
+            return new HttpResponseMessage(FailuresRemaining-- > 0 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK);
+        }
     }
 
     private sealed class RevokeHandler : HttpMessageHandler

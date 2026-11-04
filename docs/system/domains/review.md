@@ -1553,3 +1553,23 @@ an automatic later-review miss applies only to an earlier approval of the same
 aspect and delivered SHA. The previous finding remains in the full-review prompt.
 This affects review depth only, not the task's
 acceptance or transition decision.
+
+## Quality Studio change ranges on cards
+
+The Review Plane workspace proof supplies the reviewed merge base and immutable
+Result SHA. The task keeps one `results/quality-studio/review-<attempt>.json`
+artifact per review attempt with that range, delivery generation, run attempt,
+commit count excluding superseded commits, mode, and an optional
+`change-review-verdict.v1` document. The Remote Review grade file also records
+the merge base. This preserves an older round when the integration ref moves.
+
+`GET /api/tasks/{id}/quality-studio` projects those artifacts for the Evidence
+tab. It compares the reviewed patch with a no-ff merge's first-parent range
+using `git patch-id --stable`. A missing object leaves patch equality unknown.
+The panel and its signed hand-off range link make only read requests. The
+Review Plane supplies the document as a digest-checked report artifact named
+`change-review-verdict.v1.json`; its producer controls the off, shadow and decide
+mode. An absent artifact does not become a pass. The durable outbox sends a
+present document to Quality Studio's versioned `PUT .../change-reviews` route,
+replays the same key across restarts, and emits an operator-feed event after
+seven days without delivery.
