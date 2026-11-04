@@ -235,7 +235,7 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         Assert.Equal("5-hour", marker.ModelFallback?.Window);
         Assert.Contains("TokenEconomy", marker.ModelFallback?.CatalogueVersion);
         var ledgerPage = await http.GetFromJsonAsync<ModelSelectionEventPage>(
-            $"/api/model-selection/events?provider={expectedCli}&project={ProjectName}&consumer=remote-claim&rule=quota-cap&from={configuredModel}&to={expectedModel}");
+            $"/api/model-selection/events?provider={expectedCli}&project={ProjectName}&consumer=coding&rule=quota-cap&from={configuredModel}&to={expectedModel}");
         var selection = Assert.Single(ledgerPage!.Events);
         Assert.Equal(selection.Id, fallbackEvent.Details["selectionEventId"]);
     }

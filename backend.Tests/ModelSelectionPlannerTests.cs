@@ -189,6 +189,14 @@ public sealed class ModelSelectionPlannerTests
         Assert.Equal(Now.AddDays(3), entry.ReturnToPrimaryAt);
     }
 
+    [Fact]
+    public void Legacy_admission_keeps_the_planner_receipt_id()
+    {
+        var selected = ModelSelectionPlanner.Plan(Request(), Facts(claudeUsed: 97))
+            with { LedgerId = "selection-1" };
+        Assert.Equal("selection-1", QuotaAdmissionPlan.From(selected).SelectionEventId);
+    }
+
     [Theory]
     [InlineData(SelectionConsumers.ReviewAspect, true)]
     [InlineData(SelectionConsumers.ReviewDeep, true)]

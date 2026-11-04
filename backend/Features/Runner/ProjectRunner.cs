@@ -431,7 +431,7 @@ public class ProjectRunner
     private readonly bool _networked;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly ModelSelectionLedger? _selectionLedger;
-    private readonly Dictionary<string, string> _selectionIdsByJob = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _selectionIdsByJob = new(StringComparer.Ordinal);
 
     /// <summary>Workspace or project quota refusal for a new local run; null admits it.</summary>
     internal RunRejection? WorkspaceQuotaRefusal()
@@ -1175,8 +1175,8 @@ public class ProjectRunner
             if (!repeated) _lastAdmissionDecisionByJob[info.Id] = key;
         }
         if (repeated && !plan.IsDeferred) return;
-        string? selectionEventId = null;
-        if (_selectionLedger is not null && (plan.IsFallback || plan.IsDeferred || warning is not null))
+        string? selectionEventId = plan.SelectionEventId;
+        if (selectionEventId is null && _selectionLedger is not null && (plan.IsFallback || plan.IsDeferred || warning is not null))
         {
             var selection = new ModelSelectionEvent
             {
@@ -1190,11 +1190,11 @@ public class ProjectRunner
                     proj.CurrentUsedPct, proj.CapPct, proj.ProjectedUsedPct, proj.ResetAt, null),
             };
             if (_selectionLedger.Append(selection)) selectionEventId = selection.Id;
-            if (selectionEventId is not null) _selectionIdsByJob[info.Id] = selectionEventId;
         }
-        else if (_selectionLedger is not null && plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary)
+        else if (selectionEventId is null && _selectionLedger is not null && plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary)
             selectionEventId = _selectionLedger.ReturnToPrimary("local-coding-launch", ProjectName, info.TaskKey,
                 new ModelSelectionRoute(plan.CliType, plan.Model, plan.ThinkingLevel), plan.Reason)?.Id;
+        if (selectionEventId is not null) _selectionIdsByJob[info.Id] = selectionEventId;
         if (repeated) return;
 
         // Persist normal and notable decisions alike. This gives the token
