@@ -24,8 +24,8 @@ public sealed partial class TaskServerStore
 
     private sealed record ProviderRejectionClaimContinuation(
         ProviderModelFallback Fallback,
-        string BaseRef,
-        string BaseSha);
+        string? BaseRef,
+        string? BaseSha);
 
     public async Task<IReadOnlyList<ProviderRejectionDailyCountDto>> ListProviderRejectionCountsAsync(
         int days,
@@ -123,6 +123,7 @@ public sealed partial class TaskServerStore
         SqliteConnection connection,
         SqliteTransaction transaction,
         string taskId,
+        string runnerId,
         CancellationToken ct)
     {
         string? payload = null;
@@ -146,12 +147,41 @@ public sealed partial class TaskServerStore
                 salvageCommitSha = reader.IsDBNull(2) ? null : reader.GetString(2);
             }
         }
-        if (string.IsNullOrWhiteSpace(payload)) return null;
+        if (string.IsNullOrWhiteSpace(payload))
+            return await ReadUnauthorizedFallbackForClaimAsync(
+                connection, transaction, taskId, runnerId, ct);
 
         var decision = JsonSerializer.Deserialize<ExecutionOutcomeDecision>(payload, OutcomeJson);
-        if (decision?.Outcome != ExecutionOutcomeKind.ProviderRejectedRequest
-            || decision.ProviderRejection is null)
+        if (decision is null)
+            return await ReadUnauthorizedFallbackForClaimAsync(
+                connection, transaction, taskId, runnerId, ct);
+        if (decision.Outcome == ExecutionOutcomeKind.TransientModelCapacity)
+        {
+            var provider = decision.RawFacts.EffectiveCliType?.Trim().ToLowerInvariant();
+            var model = decision.RawFacts.EffectiveModel?.Trim();
+            if (string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(model)
+                || !await ModelCapacityActiveAsync(connection, transaction, runnerId,
+                    provider, model, UtcNow, ct))
+                return null;
+            var taskText = await ReadProviderFallbackTaskTextAsync(connection, transaction, taskId, ct);
+            foreach (var candidate in CapacityFallbacks(provider, model, decision.RawFacts.EffectiveThinkingLevel))
+            {
+                if (ProviderFallbackMeetsFloor(candidate.To, candidate.ThinkingLevel,
+                        taskText.TaskType, taskText.Text)
+                    && await CandidateModelAcceptedAsync(connection, transaction, runnerId,
+                        candidate.CliType, candidate.To,
+                        !string.Equals(candidate.CliType, provider, StringComparison.OrdinalIgnoreCase), ct))
+                    return !string.IsNullOrWhiteSpace(salvageBranch)
+                           && !string.IsNullOrWhiteSpace(salvageCommitSha)
+                        ? new ProviderRejectionClaimContinuation(candidate, salvageBranch, salvageCommitSha)
+                        : null;
+            }
             return null;
+        }
+        if (decision.Outcome != ExecutionOutcomeKind.ProviderRejectedRequest
+            || decision.ProviderRejection is null)
+            return await ReadUnauthorizedFallbackForClaimAsync(
+                connection, transaction, taskId, runnerId, ct);
         var synthetic = new CompleteRunRequest(
             string.Empty,
             string.Empty,
@@ -171,6 +201,60 @@ public sealed partial class TaskServerStore
                 fallback,
                 salvageBranch,
                 salvageCommitSha);
+    }
+
+    private async Task<ProviderRejectionClaimContinuation?> ReadUnauthorizedFallbackForClaimAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string taskId,
+        string runnerId, CancellationToken ct)
+    {
+        await using var command = Command(connection, """
+            SELECT COALESCE(NULLIF(lower(trim(fields.cli_type)), ''), 'claude'),
+                   NULLIF(trim(fields.model), ''), NULLIF(trim(fields.thinking_level), '')
+              FROM tasks task LEFT JOIN task_studio_fields fields ON fields.task_id = task.id
+             WHERE task.id = $task;
+            """, transaction, ("$task", taskId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+        var provider = reader.GetString(0);
+        var model = reader.IsDBNull(1) ? null : reader.GetString(1);
+        var thinking = reader.IsDBNull(2) ? null : reader.GetString(2);
+        await reader.DisposeAsync();
+        if (model is null || !await ProviderUnauthorizedOnHostAsync(
+                connection, transaction, runnerId, provider, ct)) return null;
+        var taskText = await ReadProviderFallbackTaskTextAsync(connection, transaction, taskId, ct);
+        foreach (var route in CapacityFallbacks(provider, model, thinking)
+                     .Where(route => !string.Equals(route.CliType, provider, StringComparison.OrdinalIgnoreCase)))
+        {
+            if (ProviderFallbackMeetsFloor(route.To, route.ThinkingLevel,
+                    taskText.TaskType, taskText.Text)
+                && await CandidateModelAcceptedAsync(connection, transaction, runnerId,
+                    route.CliType, route.To, requireProof: true, ct))
+                return new ProviderRejectionClaimContinuation(
+                    route with { Reason = "provider-unauthorized-equivalent" }, null, null);
+        }
+        return null;
+    }
+
+    private static IEnumerable<ProviderModelFallback> CapacityFallbacks(
+        string provider, string model, string? thinking)
+    {
+        var policy = ModelRoutingPolicyDocument.Value;
+        var sibling = policy.ProviderRejectionFallbacks.FirstOrDefault(item =>
+            string.Equals(item.CliType, provider, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(item.From, model, StringComparison.OrdinalIgnoreCase));
+        if (sibling is not null)
+            yield return sibling with { ThinkingLevel = thinking, Reason = "model-capacity-sibling" };
+
+        // The versioned routing policy declares the same-class Anthropic route,
+        // including Opus xhigh for the Sol xhigh floor (D5).
+        if (!string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase)
+            || model is not ("gpt-6-sol" or "gpt-5.6-sol")) yield break;
+        var tier = ThinkingRank(thinking) >= ThinkingRank("xhigh") ? "sol-xhigh" : "sol-medium";
+        if (policy.AnthropicRoutes.TryGetValue(tier, out var equivalent))
+            yield return new ProviderModelFallback(model, equivalent.Model,
+                "model-capacity-equivalent", "claude",
+                ThinkingRank(thinking) >= ThinkingRank(equivalent.ThinkingLevel)
+                    ? thinking : equivalent.ThinkingLevel);
     }
 
     private static string DescribeProviderRejection(ProviderRequestRejection rejection)
@@ -233,16 +317,16 @@ public sealed partial class TaskServerStore
             : 0;
         if (CriticalProviderFallbackFloor.IsMatch(taskText)) floor = Math.Max(floor, 4);
         var thinkingRank = ThinkingRank(thinking);
-        var routeRank = model.ToLowerInvariant() switch
-        {
-            "gpt-5.6-sol" when thinkingRank >= ThinkingRank("xhigh") => 4,
-            "gpt-5.6-sol" when thinkingRank >= ThinkingRank("medium") => 3,
-            "gpt-5.6-sol" when thinkingRank >= ThinkingRank("low") => 1,
-            "claude-opus-4-8" when thinkingRank >= ThinkingRank("xhigh") => 4,
-            "claude-sonnet-4-6" when thinkingRank >= ThinkingRank("medium") => 3,
-            "claude-sonnet-4-6" when thinkingRank >= ThinkingRank("low") => 1,
-            _ => -1,
-        };
+        var comparable = string.Equals(model, "gpt-5.6-sol", StringComparison.OrdinalIgnoreCase)
+            ? "gpt-6-sol" : model;
+        var routeRank = policy.Tiers
+            .Where(tier => thinkingRank >= ThinkingRank(tier.ThinkingLevel)
+                && (string.Equals(tier.Model, comparable, StringComparison.OrdinalIgnoreCase)
+                    || policy.AnthropicRoutes.TryGetValue(tier.Id, out var anthropic)
+                    && string.Equals(anthropic.Model, model, StringComparison.OrdinalIgnoreCase)))
+            .Select(tier => tier.Rank)
+            .DefaultIfEmpty(-1)
+            .Max();
         return routeRank >= floor;
     }
 

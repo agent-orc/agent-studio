@@ -46,6 +46,14 @@ elif ! grep -Fq 'After=docker.service agent-studio-cloudflare-firewall.service' 
   echo "$website_unit must require and start after agent-studio-cloudflare-firewall.service" >&2
   exit 1
 fi
+# Apply the rule check to both newly generated and pre-existing website units.
+# A live firewall unit with a missing or displaced DOCKER-USER rule is not a
+# sufficient prerequisite for publishing the edge container.
+install -d -m 755 /etc/systemd/system/agent-studio-website.service.d
+cat > /etc/systemd/system/agent-studio-website.service.d/10-firewall-rule.conf <<EOF
+[Service]
+ExecStartPre=/bin/bash $stack_dir/verify-cloudflare-docker-firewall.sh
+EOF
 systemctl daemon-reload
 systemctl enable --now agent-studio-cloudflare-firewall.service
 systemctl enable agent-studio-website.service

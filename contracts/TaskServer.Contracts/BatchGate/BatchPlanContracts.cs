@@ -19,7 +19,16 @@ public sealed record BatchPlanInput(
     int MaximumSize, int DeadlineMinutes, int LookAheadMinutes,
     IReadOnlyList<string> UrgentTags, string RiskPolicy, string Overlap,
     bool CloseNow = false, bool IdleGateHost = false, bool GateBacklog = false,
-    int QueuedPartners = 0);
+    int QueuedPartners = 0,
+    string Calibration = "legacy",
+    IReadOnlyList<BatchPlanObservation>? Observations = null);
+
+/// <summary>One original batch candidate. Risk is a relative score, not a probability.</summary>
+public sealed record BatchPlanObservation(
+    string BatchId, DateTimeOffset AtUtc, int Size, double MaxRisk,
+    IReadOnlyList<string> Areas, string OverlapGroup, bool Red,
+    int IsolationRuns = 0, double IsolationMinutes = 0,
+    string Classification = "pass");
 
 public sealed record BatchPlanUpcomingView(
     string TaskKey, string Stage, DateTimeOffset? EtaUtc,

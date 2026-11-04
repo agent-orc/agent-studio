@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
@@ -2990,6 +2992,182 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
         Assert.Contains("integrated-unverified", refused.Message);
         Assert.Contains(unrelated, refused.Message);
+    }
+
+    [Fact]
+    public void Acceptance_BatchGateCannotReplaceFirstParentVerificationAncestry()
+    {
+        var deliverySha = PublishDelivery("batch-side-delivery.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+
+        RunGit(_repo, "checkout", "-q", "-b", "verified-side", deliverySha);
+        File.WriteAllText(Path.Combine(_repo, "side.txt"), "verified side\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "verified side commit");
+        var verifiedSide = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "checkout", "-q", "-B", "published-batch", "origin/develop");
+        RunGit(_repo, "merge", "-q", "--no-ff", "verified-side", "-m", "batch publication");
+        var batchSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        WriteBatchEvidence(batches, "side-batch", deliverySha, batchSha);
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
+        {
+            TestStatusOverride = _ => VerifiedStatus(deliverySha, verifiedSide),
+        };
+
+        var status = service.BuildForAcceptance(card);
+
+        Assert.Equal(IntegrationVerificationStates.Unverified, status.Verification?.State);
+        Assert.Contains("first-parent", status.Verification?.Reason);
+        Assert.Contains(verifiedSide, status.Verification?.Reason);
+    }
+
+    [Fact]
+    public void Acceptance_BatchGateCoversMappedVerifiedCommitOnFirstParentLine()
+    {
+        var deliverySha = PublishDelivery("mapped-batch-delivery.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var replaySha = PublishLaterCommit("mapped-batch-replay.txt");
+        var candidateSha = PublishLaterCommit("mapped-batch-candidate.txt");
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        WriteBatchEvidence(batches, "mapped-batch", deliverySha, candidateSha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)! with
+        {
+            IntegrationRecords =
+            [
+                new TaskIntegrationRecord
+                {
+                    Id = $"batch-map:mapped-batch:run:{TaskKey}",
+                    Classification = IntegrationRecordClasses.CuratedMapping,
+                    SourceSha = deliverySha,
+                    IntegrationSha = replaySha,
+                },
+            ],
+        };
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
+        {
+            TestStatusOverride = _ => VerifiedStatus(deliverySha, replaySha),
+        };
+
+        var status = service.BuildForAcceptance(card);
+
+        Assert.Equal(IntegrationVerificationStates.Verified, status.Verification?.State);
+        Assert.Contains("batch gate mapped-batch run run", status.Verification?.Reason);
+    }
+
+    [Fact]
+    public void Acceptance_MissingRepositoryOrTip_PreservesEarlierVerification()
+    {
+        var deliverySha = PublishDelivery("missing-facts.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance)
+        {
+            TestStatusOverride = _ => VerifiedStatus(deliverySha, deliverySha),
+        };
+
+        var missingRoot = service.BuildForAcceptance(card with { WatchPath = Path.Combine(_tempDir, "missing") });
+        Assert.Equal(IntegrationVerificationStates.Verified, missingRoot.Verification?.State);
+
+        RunGit(_repo, "update-ref", "-d", "refs/remotes/origin/develop");
+        var missingTip = service.BuildForAcceptance(card);
+        Assert.Equal(IntegrationVerificationStates.Verified, missingTip.Verification?.State);
+    }
+
+    [Fact]
+    public void Acceptance_StaleGateEvidence_DoesNotAddGitCallsPerEntry()
+    {
+        var deliverySha = PublishDelivery("bounded-gates.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var laterSha = PublishLaterCommit("bounded-later.txt");
+        Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+            PassedPublishedGate(laterSha, "AGT-LATER")));
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
+        {
+            TestStatusOverride = _ => VerifiedStatus(deliverySha, deliverySha),
+        };
+        int CountCalls()
+        {
+            using var telemetry = GitProcessTelemetry.BeginRequest(
+                "acceptance-publication-budget", NullLogger.Instance, includeNested: true);
+            Assert.Equal(IntegrationVerificationStates.Verified,
+                service.BuildForAcceptance(card).Verification?.State);
+            return GitProcessTelemetry.CurrentTally()!.Value.Spawns;
+        }
+        var baseline = CountCalls();
+        for (var i = 0; i < 40; i++)
+        {
+            var staleSha = i.ToString("x40");
+            Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+                PassedPublishedGate(staleSha, $"AGT-STALE-{i}")));
+            WriteBatchEvidence(batches, $"stale-{i}", deliverySha, staleSha);
+        }
+
+        var withStaleEvidence = CountCalls();
+
+        Assert.True(withStaleEvidence <= baseline,
+            $"Stale evidence added Git calls: baseline={baseline}, with evidence={withStaleEvidence}.");
+        Assert.InRange(withStaleEvidence, 1, 8);
+    }
+
+    private static TaskIntegrationStatus VerifiedStatus(string deliverySha, string verificationSha) => new()
+    {
+        Status = IntegrationStatuses.Integrated,
+        Sha = deliverySha,
+        IntegrationBranch = "develop",
+        Verification = new TaskIntegrationVerification
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = verificationSha,
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+            Reason = "Gate pre-develop-build-gate passed.",
+        },
+    };
+
+    private static void WriteBatchEvidence(BatchGateStore batches, string batchId,
+        string baseSha, string candidateSha)
+    {
+        var folder = batches.BatchDirectory(batchId);
+        var runs = Path.Combine(folder, "runs");
+        Directory.CreateDirectory(runs);
+        var evidence = Path.Combine(folder, "gate.log");
+        File.WriteAllText(evidence, "passed");
+        var scope = new BatchGateScope(Project, "fixture", "develop", "profile", "digest", "version");
+        var at = DateTimeOffset.UnixEpoch.AddDays(1);
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(
+            new BatchGateManifest(batchId, scope, baseSha, "membership", at, [], [], []), options));
+        File.WriteAllText(Path.Combine(folder, "publication.json"), JsonSerializer.Serialize(
+            new BatchGatePublication(batchId, "membership", "run", baseSha, candidateSha,
+                candidateSha, 1, 1, at), options));
+        var runFile = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("run")))
+            + ".verdict.json";
+        File.WriteAllText(Path.Combine(runs, runFile), JsonSerializer.Serialize(
+            new BatchGateRunVerdict("run", batchId, "membership", candidateSha, "digest",
+                "pass", "pass", evidence, at), options));
     }
 
     private string PublishLaterCommit(string name)

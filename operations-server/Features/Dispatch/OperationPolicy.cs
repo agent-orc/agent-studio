@@ -54,6 +54,37 @@ public static class OperationPolicy
         {
             if (!ValidRestartOutput(attempt.Command.Input, result)) return "invalid-output";
         }
+        else if (definition == OperationCatalogue.HostDrain || definition == OperationCatalogue.HostResume)
+        {
+            if (result.Outcome == "succeeded"
+                && (result.Output.EnumerateObject().Count() != 2
+                    || !result.Output.TryGetProperty("role", out var role) || role.ValueKind != JsonValueKind.String
+                    || role.GetString() != attempt.Command.Input.GetProperty("role").GetString()
+                    || !result.Output.TryGetProperty("drained", out var drained)
+                    || drained.ValueKind != (definition == OperationCatalogue.HostDrain ? JsonValueKind.True : JsonValueKind.False)))
+                return "invalid-output";
+            if (result.Outcome != "succeeded" && result.Output.EnumerateObject().Any()) return "invalid-output";
+        }
+        else if (definition == OperationCatalogue.HostLogsCollect)
+        {
+            if (result.Outcome == "succeeded"
+                && (result.Output.EnumerateObject().Count() != 2
+                    || !result.Output.TryGetProperty("source", out var source) || source.ValueKind != JsonValueKind.String
+                    || source.GetString() != attempt.Command.Input.GetProperty("source").GetString()
+                    || !result.Output.TryGetProperty("text", out var value) || value.ValueKind != JsonValueKind.String
+                    || value.GetString()!.Length > 8192)) return "invalid-output";
+            if (result.Outcome != "succeeded" && result.Output.EnumerateObject().Any()) return "invalid-output";
+        }
+        else if (definition == OperationCatalogue.HostConfigurationApply)
+        {
+            if (result.Outcome == "succeeded"
+                && (result.Output.EnumerateObject().Count() != 2
+                    || !result.Output.TryGetProperty("configuration", out var name) || name.ValueKind != JsonValueKind.String
+                    || name.GetString() != attempt.Command.Input.GetProperty("configuration").GetString()
+                    || !result.Output.TryGetProperty("applied", out var applied) || applied.ValueKind != JsonValueKind.True))
+                return "invalid-output";
+            if (result.Outcome != "succeeded" && result.Output.EnumerateObject().Any()) return "invalid-output";
+        }
         else if (result.Outcome == "succeeded")
         {
             if (result.Output.EnumerateObject().Count() != 3
@@ -77,6 +108,20 @@ public static class OperationPolicy
             return properties.Length == 1 && properties[0].Name == "service"
                 && properties[0].Value.ValueKind == JsonValueKind.String
                 && OperationCatalogue.ValidServiceName(properties[0].Value.GetString());
+        if (definition == OperationCatalogue.HostLogsCollect)
+            return properties.Length == 1 && properties[0].Name == "source"
+                && properties[0].Value.ValueKind == JsonValueKind.String
+                && OperationCatalogue.ValidServiceName(properties[0].Value.GetString());
+        if (definition == OperationCatalogue.HostDrain || definition == OperationCatalogue.HostResume)
+            return properties.Length == 1 && properties[0].Name == "role"
+                && properties[0].Value.ValueKind == JsonValueKind.String
+                && properties[0].Value.GetString() is "coding" or "review" or "post";
+        if (definition == OperationCatalogue.HostConfigurationApply)
+            return properties.Length == 2
+                && input.TryGetProperty("configuration", out var configuration) && configuration.ValueKind == JsonValueKind.String
+                && OperationCatalogue.ValidServiceName(configuration.GetString())
+                && input.TryGetProperty("sha256", out var digest) && digest.ValueKind == JsonValueKind.String
+                && OperationCatalogue.ValidSha256(digest.GetString());
         return properties.Length == 0;
     }
 
