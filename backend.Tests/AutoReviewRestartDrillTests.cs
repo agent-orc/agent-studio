@@ -759,7 +759,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Equal(AttemptWriteStatus.Duplicate, replay.Status);
         Assert.Equal(2, settleCalls);
         Assert.Equal(entry.ReportSha256,
-            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!.ReportSha256);
+            RemoteReviewSettlementJournal.ReportHash(
+                RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!));
         var path = RemoteReviewSettlementJournal.PathFor(card.FolderPath, card.ReviewAttemptId);
         File.WriteAllText(path, File.ReadAllText(path).Replace(
             "\"shouldIntegrate\": true", "\"shouldIntegrate\": false", StringComparison.Ordinal));
@@ -843,14 +844,15 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Equal(AttemptWriteStatus.Accepted, accepted.Status);
         var journal = RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId);
         Assert.Equal(RemoteReviewSettlementReadStatus.Ready, journal.Status);
-        Assert.Equal(corrected.ReportSha256, journal.Entry!.ReportSha256);
+        Assert.Equal(corrected.ReportSha256, RemoteReviewSettlementJournal.ReportHash(journal.Entry!));
         Assert.True(RemoteReviewSettlementPolicy.MatchesAcceptedReview(
             journal.Entry, stack.Authority.GetReview(card.ReviewAttemptId)));
 
         // After acceptance a late loser is refused and leaves the owned journal intact.
         Assert.False(Settle(Keyed("report-late", "Late payload."), claimed.LastFence).Accepted);
         Assert.Equal(corrected.ReportSha256,
-            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!.ReportSha256);
+            RemoteReviewSettlementJournal.ReportHash(
+                RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!));
     }
 
     [Fact]

@@ -17,7 +17,8 @@ public sealed record RemoteReviewSettlementEntry
     /// <summary>
     /// Hash format of the entry (<see cref="RemoteReviewSettlementJournal.CurrentVersion"/>).
     /// Format 1 hashes the compact JSON of each member as the writing release
-    /// serialized it; format 2 hashes its canonical JSON
+    /// serialized it; formats 2 and 3 hash canonical JSON. Format 3 binds
+    /// the digest of the accepted full report into the stored report hash
     /// (<see cref="RemoteReviewSettlementJournal.Hash"/>).
     /// </summary>
     public int Version { get; init; } = RemoteReviewSettlementJournal.CurrentVersion;
@@ -27,6 +28,8 @@ public sealed record RemoteReviewSettlementEntry
     public required string ReportSha256 { get; init; }
     /// <summary>Hash of the runner payload before server-side brief and coverage normalization.</summary>
     public string? SubmittedReportSha256 { get; init; }
+    /// <summary>Hash of the accepted, unabridged report for replay across format 3 compaction.</summary>
+    public string? AcceptedReportSha256 { get; init; }
     public required Contract.ReviewReportRequest Report { get; init; }
     public RemoteDeliverySettlementRecord? Delivery { get; init; }
     public string? DeliverySha256 { get; init; }
@@ -84,7 +87,12 @@ public static class RemoteReviewSettlementJournal
     /// members holding null, false or zero are omitted. A release that adds an
     /// optional member at its default therefore keeps every hash.
     /// </summary>
-    public const int CurrentVersion = 2;
+    public const int CanonicalVersion = 2;
+
+    /// <summary>Format 3 stores bounded evidence and hashes that stored report together with its original digest.</summary>
+    public const int CurrentVersion = 3;
+    public const int MaximumFileBytes = 512 * 1024;
+    public const int MaximumStepTailBytes = 64 * 1024;
 
     /// <summary>Canonical report hash: the idempotency identity of a report payload.</summary>
     public static string Hash(Contract.ReviewReportRequest report)
@@ -92,7 +100,8 @@ public static class RemoteReviewSettlementJournal
 
     /// <summary>The report hash of a verified entry in the current canonical format.</summary>
     public static string ReportHash(RemoteReviewSettlementEntry entry)
-        => entry.Version >= CurrentVersion ? entry.ReportSha256 : Hash(entry.Report);
+        => entry.Version >= CurrentVersion ? entry.AcceptedReportSha256!
+            : entry.Version >= CanonicalVersion ? entry.ReportSha256 : Hash(entry.Report);
 
     /// <summary>
     /// The submitted payload hash comparable with <see cref="Hash"/>, or null
@@ -100,7 +109,11 @@ public static class RemoteReviewSettlementJournal
     /// not journaled, so its legacy hash cannot be recomputed.
     /// </summary>
     public static string? SubmittedReportHash(RemoteReviewSettlementEntry entry)
-        => entry.Version >= CurrentVersion ? entry.SubmittedReportSha256 : null;
+        => entry.Version >= CanonicalVersion ? entry.SubmittedReportSha256 : null;
+
+    private static string HashBoundedReport(Contract.ReviewReportRequest report, string acceptedHash)
+        => HashJsonText(JsonSerializer.Serialize(new { report, acceptedReportSha256 = acceptedHash }, HashJson),
+            canonical: true);
 
     private static string? HashDelivery(RemoteDeliverySettlementRecord? delivery)
         => delivery is null ? null : HashJsonText(JsonSerializer.Serialize(delivery, HashJson), canonical: true);
@@ -227,7 +240,9 @@ public static class RemoteReviewSettlementJournal
             var entry = stored.ValueKind == JsonValueKind.Object
                 ? stored.Deserialize<RemoteReviewSettlementEntry>(Json)
                 : null;
-            var problem = entry is null ? "empty" : Problem(stored, entry, attemptId);
+            var problem = entry is null ? "empty"
+                : entry.Version == CurrentVersion && new FileInfo(path).Length > MaximumFileBytes
+                    ? "journal-size-limit" : Problem(stored, entry, attemptId);
             if (problem is not null)
                 return new(RemoteReviewSettlementReadStatus.Repair,
                     Reason: $"corrupt-review-settlement-journal:{problem}");
@@ -243,7 +258,7 @@ public static class RemoteReviewSettlementJournal
     /// <summary>The first reason the entry cannot be trusted, or null for a verified entry.</summary>
     private static string? Problem(JsonElement stored, RemoteReviewSettlementEntry entry, string attemptId)
     {
-        if (entry.Version is not (LegacyVersion or CurrentVersion))
+        if (entry.Version is not (LegacyVersion or CanonicalVersion or CurrentVersion))
             return $"unsupported-format-{entry.Version}";
         if (entry.AttemptId != attemptId
             || string.IsNullOrWhiteSpace(entry.TaskKey) || string.IsNullOrWhiteSpace(entry.IdempotencyKey)
@@ -252,6 +267,9 @@ public static class RemoteReviewSettlementJournal
         if (entry.SubmittedReportSha256 is { } submitted
             && (submitted.Length != 64 || !submitted.All(Uri.IsHexDigit)))
             return "submitted-report-sha256-malformed";
+        if (entry.Version == CurrentVersion && (entry.AcceptedReportSha256 is not { Length: 64 } accepted
+            || !accepted.All(Uri.IsHexDigit)))
+            return "accepted-report-sha256-malformed";
         if (entry.Delivery is { } delivery
             && (delivery.ReviewAttemptId != attemptId || delivery.TaskKey != entry.TaskKey
                 || !V1ReviewPlaneEndpoints.TryOutcome(entry.Report.Outcome, out var settledOutcome)
@@ -266,7 +284,7 @@ public static class RemoteReviewSettlementJournal
                 || continuation.DeliveredRound is { } deliveredRound
                    && deliveredRound.AttemptId != attemptId))
             return "continuation-mismatch";
-        var canonical = entry.Version >= CurrentVersion;
+        var canonical = entry.Version >= CanonicalVersion;
         if (!string.Equals(HashStored(StoredMember(stored, "delivery"), canonical), entry.DeliverySha256,
                 StringComparison.Ordinal))
             return "delivery-sha256-mismatch";
@@ -276,7 +294,12 @@ public static class RemoteReviewSettlementJournal
         if (!string.Equals(HashStored(StoredMember(stored, "continuation"), canonical), entry.ContinuationSha256,
                 StringComparison.Ordinal))
             return "continuation-sha256-mismatch";
-        if (!string.Equals(HashStored(StoredMember(stored, "report"), canonical), entry.ReportSha256,
+        var reportHash = entry.Version == CurrentVersion
+            ? HashJsonText("{\"report\":" + (StoredMember(stored, "report") ?? "null")
+                + ",\"acceptedReportSha256\":"
+                + (StoredMember(stored, "acceptedReportSha256") ?? "null") + "}", canonical: true)
+            : HashStored(StoredMember(stored, "report"), canonical);
+        if (!string.Equals(reportHash, entry.ReportSha256,
                 StringComparison.Ordinal))
             return "report-sha256-mismatch";
         return null;
@@ -346,32 +369,109 @@ public static class RemoteReviewSettlementJournal
     }
 
     /// <summary>
-    /// Writes the entry in the current format. A rewritten format 1 entry (an
-    /// evidence or repair update after a verified read) is upgraded: its report
-    /// hash is recomputed canonically, and its legacy submitted hash is dropped
-    /// because the submitted payload cannot be rehashed.
+    /// Writes a bounded entry. Rewrites of verified older entries retain the
+    /// original accepted digest for replay; legacy submitted hashes are dropped.
     /// </summary>
     public static void Write(string folder, RemoteReviewSettlementEntry entry)
     {
-        var upgraded = entry.Version < CurrentVersion;
         var path = PathFor(folder, entry.AttemptId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(
-                entry with
+            var acceptedHash = entry.Version == CurrentVersion
+                ? entry.AcceptedReportSha256 ?? entry.ReportSha256
+                : ReportHash(entry);
+            string? serialized = null;
+            foreach (var streamBytes in new[] { MaximumStepTailBytes / 2, 8 * 1024, 0 })
+            {
+                var boundedReport = BoundReport(entry.Report, streamBytes);
+                serialized = JsonSerializer.Serialize(entry with
                 {
                     Version = CurrentVersion,
-                    ReportSha256 = upgraded ? Hash(entry.Report) : entry.ReportSha256,
-                    SubmittedReportSha256 = upgraded ? null : entry.SubmittedReportSha256,
+                    Report = boundedReport,
+                    AcceptedReportSha256 = acceptedHash,
+                    ReportSha256 = HashBoundedReport(boundedReport, acceptedHash),
+                    SubmittedReportSha256 = entry.Version == LegacyVersion ? null : entry.SubmittedReportSha256,
                     DeliverySha256 = HashDelivery(entry.Delivery),
                     ReviewBudgetSha256 = HashReviewBudget(entry),
                     ContinuationSha256 = HashContinuation(entry.Continuation),
-                }, Json));
+                }, Json);
+                if (Encoding.UTF8.GetByteCount(serialized) <= MaximumFileBytes) break;
+                serialized = null;
+            }
+            if (serialized is null)
+                throw new IOException("The review settlement metadata exceeds its 512 KiB journal limit.");
+            File.WriteAllText(temporary, serialized);
             File.Move(temporary, path, overwrite: true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    private static Contract.ReviewReportRequest BoundReport(Contract.ReviewReportRequest report, int streamBytes)
+    {
+        var artifacts = report.Artifacts.GroupBy(artifact => artifact.Sha256, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var referencedDigests = report.Commands
+            .SelectMany(command => new[] { command.StdoutSha256, command.StderrSha256 })
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var retainedBytes = 0;
+        var boundedArtifacts = report.Artifacts.Select(artifact =>
+        {
+            if (streamBytes == 0 || !referencedDigests.Contains(artifact.Sha256) || artifact.ContentBase64 is null
+                || artifact.SizeBytes > 16 * 1024
+                || retainedBytes + artifact.SizeBytes > 128 * 1024)
+                return artifact with { ContentBase64 = null };
+            retainedBytes += (int)artifact.SizeBytes;
+            return artifact;
+        }).ToArray();
+        return report with
+        {
+            Artifacts = boundedArtifacts,
+            Commands = report.Commands.Select(command => command with
+            {
+                OutputTail = BoundTail(command, artifacts, streamBytes),
+            }).ToArray(),
+        };
+    }
+
+    private static Contract.ReviewCommandOutputTailDto? BoundTail(
+        Contract.ReviewCommandEvidenceDto command,
+        IReadOnlyDictionary<string, Contract.ReviewArtifactEvidenceDto> artifacts,
+        int streamBytes)
+    {
+        if (command.ExitCode == 0 || streamBytes == 0) return null;
+        (string Text, bool Truncated) Stream(string digest, string? existing, bool wasTruncated)
+        {
+            if (existing is not null)
+            {
+                var text = Tail(existing, streamBytes);
+                return (text, wasTruncated || text.Length < existing.Length);
+            }
+            if (!artifacts.TryGetValue(digest, out var artifact) || artifact.ContentBase64 is null)
+                return (string.Empty, false);
+            try
+            {
+                return (Tail(Encoding.UTF8.GetString(Convert.FromBase64String(artifact.ContentBase64)), streamBytes),
+                    artifact.SizeBytes > streamBytes);
+            }
+            catch (FormatException) { return (string.Empty, false); }
+        }
+        var stdout = Stream(command.StdoutSha256, command.OutputTail?.Stdout,
+            command.OutputTail?.StdoutTruncated == true);
+        var stderr = Stream(command.StderrSha256, command.OutputTail?.Stderr,
+            command.OutputTail?.StderrTruncated == true);
+        if (stdout.Text.Length == 0 && stderr.Text.Length == 0) return null;
+        return new Contract.ReviewCommandOutputTailDto(stdout.Text, stderr.Text,
+            stdout.Truncated, stderr.Truncated);
+    }
+
+    private static string Tail(string value, int maximumBytes)
+    {
+        if (Encoding.UTF8.GetByteCount(value) <= maximumBytes) return value;
+        var start = Math.Max(0, value.Length - maximumBytes);
+        while (start < value.Length && Encoding.UTF8.GetByteCount(value.AsSpan(start)) > maximumBytes) start++;
+        return value[start..];
     }
 }
 

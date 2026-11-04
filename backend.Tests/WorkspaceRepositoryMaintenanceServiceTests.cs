@@ -99,6 +99,38 @@ public sealed class WorkspaceRepositoryMaintenanceServiceTests : IDisposable
         Assert.Empty(Git("status", "--porcelain").Split('\n', StringSplitOptions.RemoveEmptyEntries));
     }
 
+    [Fact]
+    public void Oversized_review_journals_leave_the_index_through_the_platform_sweep()
+    {
+        var folder = Path.Combine(_root, "projects", "demo", "tasks", "000", "DEMO-1", "logs");
+        Directory.CreateDirectory(folder);
+        var large = Path.Combine(folder, "remote-review-settlement-large.json");
+        var small = Path.Combine(folder, "remote-review-settlement-small.json");
+        File.WriteAllText(large, new string('x', 5 * 1024 * 1024 + 1));
+        File.WriteAllText(small, "{}\n");
+        RunGit("add", "projects");
+        RunGit("commit", "-q", "-m", "legacy review journals");
+        var configuration = Config();
+        var commits = new WorkspaceArtifactCommitService(configuration,
+            NullLogger<WorkspaceArtifactCommitService>.Instance);
+        var service = new WorkspaceRepositoryMaintenanceService(configuration, commits,
+            new ReadyLoadGate(), NullLogger<WorkspaceRepositoryMaintenanceService>.Instance);
+
+        var untrack = service.UntrackOversizedReviewJournals();
+        var sweep = commits.TryCommitTrackedSweep(_root);
+
+        Assert.True(untrack.Success, $"{untrack.Phase}: {untrack.Error}");
+        Assert.True(sweep.DidCommit, sweep.Error);
+        Assert.True(File.Exists(large));
+        Assert.DoesNotContain("remote-review-settlement-large", Git("ls-files", "projects"));
+        Assert.Contains("remote-review-settlement-small", Git("ls-files", "projects"));
+        Assert.DoesNotContain("remote-review-settlement-large", Git("ls-tree", "-r", "--name-only", "HEAD"));
+        var evidence = commits.TryCommitEvidence(_root,
+            [Path.Combine(_root, "projects", "demo")], [], "evidence\n");
+        Assert.True(evidence.Success, evidence.Error);
+        Assert.DoesNotContain("remote-review-settlement-large", Git("ls-files", "projects"));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); }
