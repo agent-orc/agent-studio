@@ -537,7 +537,7 @@ SelectionResult {
       </tbody>
     </table>
     <p><b>Storage.</b> Daily JSONL files under <code>&lt;TaskRepository&gt;/.runtime/model-selection/&lt;yyyy-MM-dd&gt;.jsonl</code>, written by one writer in the monolith. This matches <code>QuotaHistoryStore</code>. The Task Server and runner post their events to <code>POST /api/model-selection/events</code> with a runner-scoped principal, and the post is retried with bounded backoff. Repeated identical <code>waiting</code> events for the same card collapse into one entry with a count. The active fallbacks are an in-memory projection rebuilt from the last 14 days at start. <b>Retention:</b> 90 days, then files are deleted. 90 days covers several weekly windows and is enough to compare quality across equivalents. A daily summary row (counts per provider, rule and consumer) is kept for 400 days.</p>
-    <p><b>API.</b></p>
+    <p><b>API.</b> The implemented wire and permission contract is documented in <a href="../system/contracts/model-selection-api.md">Model selection API</a>.</p>
     <ul>
       <li><code>GET /api/model-selection/events?provider=&amp;project=&amp;consumer=&amp;rule=&amp;from=&amp;to=&amp;cursor=</code>: newest first, paged.</li>
       <li><code>GET /api/model-selection/active</code>: open fallbacks and health marks, with their expected return.</li>
