@@ -6,6 +6,8 @@ stack="$repo_root/deploy/compose/monolith-networked"
 version="$(tr -d '\r\n' < "$repo_root/VERSION")"
 api_image="ghcr.io/agent-orc/agent-studio-api:v$version"
 web_image="ghcr.io/agent-orc/agent-studio-web:v$version"
+operations_server_image="agent-operations-server:website-smoke"
+operations_agent_image="agent-operations-agent:website-smoke"
 smoke_root="$(mktemp -d)"
 chmod 755 "$smoke_root"
 export COMPOSE_PROJECT_NAME="website-smoke-$$"
@@ -32,6 +34,8 @@ if [ "${WEBSITE_REUSE_WEBSITE_IMAGES:-0}" != 1 ]; then
     docker build -f "$repo_root/backend/Dockerfile" --build-arg VERSION="$version" -t "$api_image" "$repo_root"
   fi
   docker build -f "$repo_root/frontend/Dockerfile" --build-arg VERSION="$version" -t "$web_image" "$repo_root"
+  docker build -f "$repo_root/operations-server/Dockerfile" -t "$operations_server_image" "$repo_root"
+  docker build -f "$repo_root/operations-agent/Dockerfile" -t "$operations_agent_image" "$repo_root"
 fi
 
 # setup.sh uses the edge image for its root-owned directory handoff. Pull the
@@ -48,6 +52,8 @@ cd "$stack"
 export STUDIO_API_DIGEST="$(openssl rand -hex 32)"
 export STUDIO_WEB_DIGEST="$(openssl rand -hex 32)"
 export STUDIO_EDGE_DIGEST="$edge_digest"
+export STUDIO_OPERATIONS_SERVER_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_OPERATIONS_AGENT_DIGEST="$(openssl rand -hex 32)"
 export STUDIO_ACCESS_AUTH_URL=https://access.example.test
 export STUDIO_ACCESS_MFA_ENFORCED=true
 STUDIO_SECRETS_KEY_FILE="$smoke_root/keys/secrets.kek" bash setup.sh --private "$version" studio.test "$smoke_root/data" >/dev/null
@@ -57,6 +63,12 @@ services:
     image: $api_image
   frontend:
     image: $web_image
+  operations-bootstrap:
+    image: $operations_server_image
+  operations-server:
+    image: $operations_server_image
+  operations-agent:
+    image: $operations_agent_image
 EOF
 export COMPOSE_FILE="$stack/compose.yaml:$smoke_root/local-images.yaml"
 code="$(sed -n 's/^STUDIO_BOOTSTRAP_CODE=//p' .env)"

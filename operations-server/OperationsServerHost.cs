@@ -14,6 +14,7 @@ public static class OperationsServerHost
             ?? throw new InvalidOperationException("Operations:DataDirectory is required.");
         services.AddSingleton(new OperationsAccess(principals));
         services.AddSingleton(new OperationsStore(directory));
+        services.AddSingleton(new HostRevocationStore(directory));
         services.AddSingleton<TimeProvider>(TimeProvider.System);
         services.AddHttpClient<IOperationPermitAuthority, OperationPermitAuthority>(client =>
         {
@@ -72,6 +73,37 @@ public static class OperationsServerHost
             operations.RegisterAsync(Principal(context), capability));
         app.MapPost("/api/operations/v1/agents/{agentId}/poll", (string agentId, AgentPollRequest request, HttpContext context, OperationsCoordinator operations, CancellationToken ct) =>
             operations.PollAsync(Principal(context), agentId, request.BootId, ct));
+        app.MapPost("/api/operations/v1/agents/{agentId}/journal", (string agentId, HostJournalEntry entry,
+            HttpContext context, OperationsStore store, ILogger<OperationsStore> logger) =>
+        {
+            var denial = OperationsAccessPolicy.Denial(Principal(context), "agent", "agents.connect", agentId);
+            if (denial is not null) throw new OperationRejected(denial, 403);
+            if (entry.AgentId != agentId || entry.Outcome is not ("execution-started" or "succeeded" or "failed" or "cancelled")
+                || !Guid.TryParseExact(entry.AttemptId, "N", out _))
+                throw new OperationRejected("invalid-host-journal", 400);
+            try { store.ReceiveJournal(entry); }
+            catch (OperationRejected rejected) when (rejected.Code == "host-journal-without-central-audit")
+            {
+                logger.LogError("host-journal-without-central-audit attempt={AttemptId} agent={AgentId}", entry.AttemptId, agentId);
+                throw;
+            }
+            return Results.NoContent();
+        });
+        app.MapGet("/api/operations/v1/agents/{agentId}/revocations", (string agentId, HttpContext context,
+            HostRevocationStore store) =>
+        {
+            var denial = OperationsAccessPolicy.Denial(Principal(context), "agent", "agents.connect", agentId);
+            if (denial is not null) throw new OperationRejected(denial, 403);
+            return store.Read() is { } list ? Results.Ok(list) : Results.NoContent();
+        });
+        app.MapPut("/api/operations/v1/certificates/revocations", (HostRevocationList list, HttpContext context,
+            HostRevocationStore store) =>
+        {
+            var denial = OperationsAccessPolicy.Denial(Principal(context), "service", "certificates.revoke");
+            if (denial is not null) throw new OperationRejected(denial, 403);
+            store.Publish(list);
+            return Results.NoContent();
+        });
         app.MapPost("/api/operations/v1/commands", (OperationCommand command, HttpContext context, OperationsCoordinator operations, CancellationToken ct) =>
             operations.SubmitAsync(Principal(context), command, ct));
         app.MapGet("/api/operations/v1/attempts/{id}", (string id, HttpContext context, OperationsCoordinator operations) =>
