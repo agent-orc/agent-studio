@@ -1238,6 +1238,8 @@ public sealed class AccessSecurityMiddleware
             return ProjectRouteAddress.DeferredToHandler;
         // The operator decision stream filters each event by its project; the
         // watcher lease belongs to the installation (operator agent level OP-2).
+        // The batch triage read (OP-4) lists only the projects the caller may
+        // read; its handler checks project.read per project.
         if (path.StartsWith("/api/operator/", StringComparison.OrdinalIgnoreCase))
             return ProjectRouteAddress.DeferredToHandler;
         // Report, supervisor, bus, and runtime routes name their project in the

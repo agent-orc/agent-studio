@@ -222,6 +222,16 @@ that is already allowed to edit that project's checkout.
   Routes without a project address, including workspace timelines,
   expensive-jobs lists, and screenshots, require the `*` project grant. A
   `?project=` query cannot turn a workspace route into a project route.
+- `GET /api/operator/batch-triage` (operator-agent-level OP-4) is a
+  `project.read` route without a project address. Unlike the other such
+  routes it does not need the `*` grant: the middleware defers the project
+  check to the handler, as for `/api/tasks`. Operator and viewer tokens,
+  operator sessions and signed-in users may read it. The handler lists only the
+  projects the principal may read, so a project-scoped token sees its own
+  batch gate flights, members, pending pushes and queue stalls and nothing of
+  other projects. It reads only; the per-project batch gate writes keep their
+  own `project.runs.operate` check. See the
+  [operator API reference](../operator-api.md#batch-triage).
 - A Runner never receives a human password or session cookie.
 
 #### Operator chat readiness read
