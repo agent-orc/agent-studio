@@ -21,6 +21,7 @@ export default defineConfig({
       '**/workspace/structure-view.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/studio-shell/activity-bar-single-active.spec.ts',
+      '**/visual-evidence/status-indicator-surfaces.spec.ts',
     ],
     use: { ...devices['Desktop Chrome'], channel: undefined, serviceWorkers: 'block' },
   }],
