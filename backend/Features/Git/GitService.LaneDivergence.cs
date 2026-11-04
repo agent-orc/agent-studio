@@ -3,6 +3,46 @@ namespace AgentStudio.Git;
 public partial class GitService
 {
     /// <summary>
+    /// Restores the integration lane after publication rejected this exact
+    /// candidate. Unlike ordinary divergence repair, the caller owns this
+    /// unpublished candidate and may remove it. Keep its tip for inspection.
+    /// </summary>
+    public IntegrationBranchSyncResult RestartRejectedIntegrationLane(
+        string repoRoot, string integrationBranch, string rejectedSha,
+        CancellationToken cancellationToken = default)
+    {
+        var lane = IntegrationLaneRef(integrationBranch);
+        var laneTip = GetBranchTip(repoRoot, lane);
+        if (!string.Equals(laneTip, rejectedSha, StringComparison.OrdinalIgnoreCase))
+            return new(IntegrationBranchSyncOutcome.Error,
+                $"The integration lane moved beyond rejected candidate {rejectedSha}; refusing to discard another delivery.");
+
+        var fetched = FetchIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
+        if (!fetched.Success) return fetched;
+        var publishedTip = GetBranchTip(repoRoot, $"refs/remotes/origin/{integrationBranch}");
+        if (publishedTip is null)
+            return new(IntegrationBranchSyncOutcome.Error,
+                $"Could not resolve origin/{integrationBranch} after a rejected push.");
+
+        var backup = IntegrationLaneBackupRef(integrationBranch, laneTip!);
+        if (GetBranchTip(repoRoot, backup) is null)
+        {
+            var (_, backupError, backupCode) = RunGitArgs(repoRoot,
+                "update-ref", backup, laneTip!, string.Empty);
+            if (backupCode != 0)
+                return new(IntegrationBranchSyncOutcome.Error,
+                    $"Could not back up the rejected lane commit: {backupError.Trim()}");
+        }
+        var reset = ResetIntegrationBranch(repoRoot, integrationBranch, publishedTip);
+        if (!reset.Success)
+            return new(IntegrationBranchSyncOutcome.Error, reset.Error);
+        _logger.LogInformation(
+            "Rejected integration candidate {RejectedSha} backed up at {Backup}; lane restarted at origin/{Branch} {PublishedSha}",
+            rejectedSha, backup, integrationBranch, publishedTip);
+        return new(IntegrationBranchSyncOutcome.FastForwarded);
+    }
+
+    /// <summary>
     /// The ref that keeps a diverged lane tip before the lane restarts at origin
     /// (AGT-3215). Keyed by the dropped tip, so a repeated restart of the same tip
     /// reuses its backup and never needs a clock.

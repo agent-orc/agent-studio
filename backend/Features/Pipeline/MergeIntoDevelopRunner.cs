@@ -81,6 +81,13 @@ public sealed partial class MergeIntoDevelopRunner
     public const string SupersededReviewGenerationError = "superseded-review-generation";
     private int _mergeGateUsers;
     private readonly AsyncLocal<long?> _mergeLockWaitMs = new();
+    private readonly AsyncLocal<RejectedPushReplayGateHolder?> _rejectedPushReplayGate = new();
+    private sealed record RejectedPushReplayGate(
+        string? DeliverySha, string BaseSha, BuildTestGateResult Gate);
+    private sealed class RejectedPushReplayGateHolder
+    {
+        public RejectedPushReplayGate? Approval { get; set; }
+    }
     private string? _integrationGateHolder;
 
     public MergeIntoDevelopRunner(
@@ -253,13 +260,24 @@ public sealed partial class MergeIntoDevelopRunner
                 mergeLockWaitMs: mergeWait.ElapsedMilliseconds, holdingProject: holdingProject);
             try
             {
-                return await RunSerializedAsync(
-                    project, jobId, jobFolderPath, watchPath,
-                    integrationBranch, integrationStrategy, pipelineType, publicationFence,
-                    reviewedResultSha, ct).ConfigureAwait(false);
+                _rejectedPushReplayGate.Value = new RejectedPushReplayGateHolder();
+                // A rejected publication is restored to origin before this
+                // method returns. Reconstruct once on that new base while the
+                // project reservation still excludes a batch publication.
+                for (var replay = 0; ; replay++)
+                {
+                    var outcome = await RunSerializedAsync(
+                        project, jobId, jobFolderPath, watchPath,
+                        integrationBranch, integrationStrategy, pipelineType, publicationFence,
+                        reviewedResultSha, ct, replay).ConfigureAwait(false);
+                    if (replay > 0 || outcome.FailureCode != AcceptedIntegrationFailureCodes.IntegrationPushBlocked
+                        || outcome.Error?.Contains("replay on origin", StringComparison.Ordinal) != true)
+                        return outcome;
+                }
             }
             finally
             {
+                _rejectedPushReplayGate.Value = null;
                 _mergeLockWaitMs.Value = null;
                 _mergeHolders.TryRemove(key, out _);
                 gate.Release();
@@ -302,7 +320,8 @@ public sealed partial class MergeIntoDevelopRunner
         string pipelineType,
         Func<Action, bool>? publicationFence,
         string? reviewedResultSha,
-        CancellationToken ct)
+        CancellationToken ct,
+        int replay)
     {
         var cancellationSubject = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, reviewedResultSha);
         var cancellationAttempt = _pipelineLog.Read(jobFolderPath)?.Attempt;
@@ -585,6 +604,7 @@ public sealed partial class MergeIntoDevelopRunner
                     watchPath,
                     repoRoot,
                     pushBranch ?? branch,
+                    pipelineType,
                     delivery,
                     result).ConfigureAwait(false);
                 result = verification.Result;
@@ -600,7 +620,7 @@ public sealed partial class MergeIntoDevelopRunner
                     approvedPushSha = null;
                 }
             }
-            else if (result.Outcome.IsFreshMerge())
+            else if (result.Outcome.IsFreshMerge() && !PublishWithinGate(project, pipelineType, repoRoot, branch))
             {
                 RecordFreshMergeVerification(
                     jobFolderPath,
@@ -642,6 +662,7 @@ public sealed partial class MergeIntoDevelopRunner
                 pushBranch = branch;
             }
             var pushDecidedByFence = false;
+            GitPushResult? inlinePush = null;
             var supersededCleanly = false;
             var conclusionFolderPath = jobFolderPath;
             var cancelledGate = preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation
@@ -739,9 +760,16 @@ public sealed partial class MergeIntoDevelopRunner
                             return;
                         }
                         if (admittedPushBranch is not null)
-                            MaybeEnqueueIntegrationPush(
-                                project, jobId, jobFolderPath, watchPath,
-                                admittedPushBranch, admittedPushSha, pipelineType);
+                        {
+                            if (PublishWithinGate(project, pipelineType, repoRoot, admittedPushBranch))
+                                inlinePush = PushIntegrationBranchSerializedAsync(
+                                    project, jobId, jobFolderPath, watchPath,
+                                    admittedPushBranch, admittedPushSha, ct).GetAwaiter().GetResult();
+                            else
+                                MaybeEnqueueIntegrationPush(
+                                    project, jobId, jobFolderPath, watchPath,
+                                    admittedPushBranch, admittedPushSha, pipelineType);
+                        }
                     }))
                 {
                     result = RollBackSupersededPublication(repoRoot, fenceAnchors, out supersededCleanly);
@@ -785,13 +813,76 @@ public sealed partial class MergeIntoDevelopRunner
                     rollback! with { FailureCode = AcceptedIntegrationFailureCodes.IntegrationError },
                     null, null, startedAt, ct, recordStep: false).ConfigureAwait(false);
             }
+            if (!pushDecidedByFence && pushBranch is not null
+                && PublishWithinGate(project, pipelineType, repoRoot, pushBranch))
+            {
+                inlinePush = await PushIntegrationBranchSerializedAsync(
+                    project, jobId, jobFolderPath, watchPath, pushBranch,
+                    approvedPushSha, ct).ConfigureAwait(false);
+                pushDecidedByFence = true;
+            }
+            if (inlinePush is not null)
+            {
+                if (inlinePush.Success && inlinePush.Status is ("pushed" or "already-remote"))
+                {
+                    if (result.Outcome.IsFreshMerge())
+                        RecordFreshMergeVerification(jobFolderPath, repoRoot, pushBranch!,
+                            result, preMainResult ?? preDevelopResult);
+                    else if (verification is { NoOp: false }
+                             && verification.Decision.State == IntegrationVerificationStates.Verified)
+                        RecordVerification(jobFolderPath, repoRoot, verification.Branch,
+                            result.MergedSha, verification.Decision, verification.Gate,
+                            result.EvidenceShas);
+                    IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "published",
+                        outcome: inlinePush.Status, receipt: inlinePush.Sha);
+                }
+                else
+                {
+                    var repair = inlinePush.Status == "remote-rejected"
+                        ? _git.RestartRejectedIntegrationLane(repoRoot, pushBranch!, approvedPushSha!, ct)
+                        : null;
+                    var replayCovered = false;
+                    if (repair is { Success: true })
+                    {
+                        var oldBase = _git.GetFirstParent(repoRoot, approvedPushSha!);
+                        var newBase = _git.GetBranchTip(repoRoot, $"refs/remotes/origin/{pushBranch}");
+                        var deliveryPaths = oldBase is null ? null
+                            : _git.ChangedPathsAgainstMergeBase(repoRoot, oldBase, approvedPushSha!);
+                        var movedPaths = oldBase is null || newBase is null ? null
+                            : _git.ChangedPathsAgainstMergeBase(repoRoot, oldBase, newBase);
+                        replayCovered = RejectedPushReplayPolicy.Decide(
+                            replay, oldBase is not null && newBase is not null
+                                && _git.IsAncestor(repoRoot, oldBase, newBase),
+                            (preMainResult ?? preDevelopResult) is { Verdict: BuildTestGateVerdict.Ok },
+                            deliveryPaths, movedPaths)
+                            == RejectedPushReplayAction.ReuseGreenOnNewBase;
+                        if (replayCovered)
+                            _rejectedPushReplayGate.Value!.Approval = new RejectedPushReplayGate(
+                                delivery.ExpectedResultSha, newBase!,
+                                (preMainResult ?? preDevelopResult)!);
+                        var reviewAttempt = BatchGateOwnershipStore.Read(jobFolderPath)?.ReviewAttemptId;
+                        if (!replayCovered && !string.IsNullOrWhiteSpace(reviewAttempt)
+                            && _batchGates?.ReadPending(reviewAttempt) is not null)
+                            _batchGates.ReopenPending(reviewAttempt);
+                    }
+                    result = MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
+                        replayCovered
+                            ? "Publication was rejected after origin moved; the lane was restored for replay on origin."
+                            : repair is { Success: true }
+                            ? "Publication was rejected after origin moved; the lane was restored and the card returned to the batch queue."
+                            : $"Publication failed ({inlinePush.Status}); {repair?.Error ?? inlinePush.Error}");
+                    approvedPushSha = null;
+                }
+            }
             // A cleanly rolled-back supersession is routine, not a failure; only
             // a failed rollback needs the operator.
             var unverifiedBranch = verification?.Decision.Action == IntegrationVerificationAction.FailUnverified;
             result = await ConcludeAsync(
                 project, jobId, conclusionFolderPath, watchPath, taskBranch, branch, strategy,
                 result, preMainResult, preDevelopResult, startedAt, ct,
-                raiseIntervention: !supersededCleanly && !shutdownCancellation && !unverifiedBranch,
+                raiseIntervention: !supersededCleanly && !shutdownCancellation && !unverifiedBranch
+                    && result.FailureCode != AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
                 approvedPushSha: approvedPushSha,
                 recordStep: !supersededCancellation || cancellationAttempt.HasValue,
                 expectedAttempt: supersededCancellation ? cancellationAttempt : null).ConfigureAwait(false);
@@ -818,12 +909,10 @@ public sealed partial class MergeIntoDevelopRunner
                     environmentalRetries: 0);
             }
 
-            // AGT-1999: once the accepted task is folded into the integration
-            // branch, push that branch to origin so integration is never only
-            // local. Offloaded to the background worker (the same "not on the
-            // request path" strategy as the completed-job workspace push), so the
-            // accept transition never awaits the network round-trip.
-            // AGT-2996: only the push worker releases the developer checkout.
+            // Legacy and unwired paths keep the deferred push. Per-task code
+            // integrations with the publication lease pushed before ConcludeAsync.
+            // AGT-2996: the push helper releases the developer checkout only
+            // after origin carries the approved result.
             // A disabled or unavailable push leaves the branch on the lane.
             if (!pushDecidedByFence && pushBranch is not null)
             {
@@ -1254,6 +1343,27 @@ public sealed partial class MergeIntoDevelopRunner
             ? null
             : _git.ChangedPathsAgainstMergeBase(repoRoot, preMergeTip, gatedSha);
         var gateApplies = PreDevelopBuildGate.AppliesTo(profile, changedPaths, repoRoot);
+        var replayGate = _rejectedPushReplayGate.Value?.Approval;
+        if (gateApplies && replayGate is not null
+            && string.Equals(preMergeTip, replayGate.BaseSha, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(ReviewSubjectStore.Read(jobFolderPath)?.ResultSha,
+                replayGate.DeliverySha, StringComparison.OrdinalIgnoreCase)
+            && replayGate.Gate.Verdict == BuildTestGateVerdict.Ok)
+        {
+            var reused = replayGate.Gate with
+            {
+                ExpectedSha = gatedSha,
+                TestedSha = gatedSha,
+                VerdictSource = GateVerdictSource.CacheHit,
+                Reason = "The published base moved only in files outside this delivery; the prior green gate covers the replay.",
+            };
+            IntegrationGateReceipts.Record(jobFolderPath,
+                IntegrationGateJournal.PreDevelopBuildGateStep, reused, _timeline,
+                mergeLockWaitMs: _mergeLockWaitMs.Value);
+            IntegrationGateJournal.ClearOwned(jobFolderPath, journalOwner);
+            _rejectedPushReplayGate.Value!.Approval = null;
+            return (result with { GateVerdictReused = true }, reused);
+        }
         if (!gateApplies && changedPaths is not null)
         {
             const string skipReason =
@@ -2047,6 +2157,14 @@ public sealed partial class MergeIntoDevelopRunner
             return true;
         }
     }
+
+    private bool PublishWithinGate(string project, string pipelineType, string repoRoot, string branch)
+        => _pushQueue is not null
+           && _batchReservations is not null
+           && _refMutationLeases is not null
+           && !IsReleaseBranch(branch)
+           && _git.HasOriginRemote(repoRoot)
+           && IntegrationPushEnabled(project, pipelineType);
 
     /// <summary>
     /// Pushes the integration branch to <c>origin</c> and records the deferred

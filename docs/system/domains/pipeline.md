@@ -643,6 +643,14 @@ pending. It is reconstructed only after the base SHA moves; a red run never
 validates the build profile. An operator eject reconstructs a held batch and
 sends only the requested member to per-card fallback. Code integrations also
 keep batches waiting from the local merge until its approved SHA reaches origin.
+For a per-task code integration, the project reservation and ref mutation lease
+span merge, gate, remote base check, and push. The card receives its verified
+merge record only after origin accepts the exact gated commit. If origin moves
+before publication, the rejected lane tip is saved under
+`refs/agent-studio/integration-backup/` and the lane returns to the fetched
+origin tip. A move in files outside the delivery can replay the merge with the
+prior green verdict; an overlapping move returns the review to the batch queue.
+The queue also receives a replay that cannot publish on its second attempt.
 The persisted pending-push marker is also the restart recovery job: the integration
 push backstop processes it even while its card is in Auto Review and regardless of
 the project's automatic artifact-push strategy. A terminal push failure is recorded
