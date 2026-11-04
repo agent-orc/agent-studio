@@ -1538,7 +1538,11 @@ builder.Services.AddSingleton<CliQuotaFallbackService>();
 builder.Services.AddSingleton<ModelSelectionPolicyStore>();
 // MS-5: one selection service decides CLI, model and thinking level for every
 // launch path; QuotaAdmissionService is its legacy adapter until MS-6.
-builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionLedger, AgentStudio.Cli.LoggingModelSelectionLedger>();
+builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionLedger>(sp =>
+    new AgentStudio.Cli.LoggingModelSelectionLedger(
+        sp.GetRequiredService<ILogger<AgentStudio.Cli.LoggingModelSelectionLedger>>(),
+        sp.GetRequiredService<IConfiguration>(),
+        ledger: sp.GetRequiredService<AgentStudio.Cli.ModelSelectionLedger>()));
 builder.Services.AddSingleton<AgentStudio.Cli.ModelSelectionService>();
 builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionService>(sp =>
     sp.GetRequiredService<AgentStudio.Cli.ModelSelectionService>());

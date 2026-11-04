@@ -227,6 +227,11 @@ public sealed class ModelSelectionService : IModelSelectionService
                 SilentCatch.Note(ex, "ModelSelectionService: selection receipt write failed");
             }
         }
+        else if (entry is null && result.Outcome == SelectionOutcome.Fallback
+                 && active?.To == result.Route)
+        {
+            result = result with { LedgerId = active.Id };
+        }
 
         var admission = QuotaAdmissionPlan.From(result) with
         {
