@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
@@ -17,6 +19,18 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class DriftPostStepRunnerTests : IDisposable
 {
+    [Fact]
+    public void Production_service_provider_injects_model_selection()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
+        var runner = factory.Services.GetRequiredService<DriftPostStepRunner>();
+        var field = typeof(DriftPostStepRunner).GetField("_modelSelection",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.Same(factory.Services.GetRequiredService<AgentStudio.Cli.IModelSelectionService>(),
+            field?.GetValue(runner));
+    }
+
     private readonly string _workspace;
     private readonly string _promptDir;
     private readonly string _jobFolder;
