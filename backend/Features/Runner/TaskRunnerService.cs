@@ -32,6 +32,7 @@ public class TaskRunnerService : BackgroundService
     private readonly ProviderLimitRegistry _providerLimits;
     private readonly CliQuotaFallbackService? _quotaFallback;
     private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly ModelSelectionLedger? _selectionLedger;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly OrchestratorChatLog _chatLog;
     private readonly OrchestratorLog _orchestratorLog;
@@ -180,7 +181,8 @@ public class TaskRunnerService : BackgroundService
         TimeProvider? time = null,
         ReviewInputDecisionGateway? reviewInputDecisions = null,
         AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
-        RemoteRunStopRequestStore? runStops = null)
+        RemoteRunStopRequestStore? runStops = null,
+        ModelSelectionLedger? selectionLedger = null)
     {
         _config = config;
         _logger = logger;
@@ -198,6 +200,7 @@ public class TaskRunnerService : BackgroundService
         _quotaCaps = quotaCaps;
         _quotaFallback = quotaFallback;
         _quotaAdmission = quotaAdmission;
+        _selectionLedger = selectionLedger;
         _workspaceQuota = workspaceQuota;
         _loadThrottle = loadThrottle;
         _chatLog = chatLog;
@@ -456,7 +459,8 @@ public class TaskRunnerService : BackgroundService
                 localCodingAdmission: _localCodingAdmission,
                 networked: SecurityProfiles.IsNetworked(_config),
                 reviewInputDecisions: _reviewInputDecisions,
-                workspaceQuota: _workspaceQuota);
+                workspaceQuota: _workspaceQuota,
+                selectionLedger: _selectionLedger);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -1925,7 +1929,8 @@ public class TaskRunnerService : BackgroundService
             localCodingAdmission: _localCodingAdmission,
             networked: SecurityProfiles.IsNetworked(_config),
             reviewInputDecisions: _reviewInputDecisions,
-            workspaceQuota: _workspaceQuota);
+            workspaceQuota: _workspaceQuota,
+            selectionLedger: _selectionLedger);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));
