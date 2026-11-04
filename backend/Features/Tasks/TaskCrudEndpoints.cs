@@ -382,7 +382,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
+        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, AgentStudio.Operator.OperatorCoordinationStore attention, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
                 loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
@@ -441,6 +441,11 @@ public static class TaskCrudEndpoints
                 } };
             if (AcceptanceAttemptLineagePolicy.ReadGap(withRuntime.Info, attemptAuthority) is { } attemptGap)
                 withRuntime = withRuntime with { Info = withRuntime.Info with { AcceptanceAttemptGap = attemptGap } };
+            context.Response.Headers.ETag = AgentStudio.Operator.OperatorCoordinationStore.Revision(withRuntime.Info.FolderPath);
+            withRuntime = withRuntime with { Info = withRuntime.Info with
+            {
+                AttentionHolder = attention.Current(withRuntime.Info.TaskKey)?.Holder,
+            } };
             return Results.Ok(withRuntime);
         });
 
@@ -1564,6 +1569,20 @@ public static class TaskCrudEndpoints
         {
             var card = scanner.FindJob(jobId, watchPath);
             if (card is null) return Results.NotFound();
+            var attention = context.RequestServices.GetRequiredService<AgentStudio.Operator.OperatorCoordinationStore>();
+            var actor = AgentStudio.Operator.OperatorEndpoints.Actor(context);
+            var owner = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                && human.User.Role == StudioRoles.Owner;
+            if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal)
+            {
+                if (attention.Current(card.TaskKey)?.Holder != actor)
+                    return Results.Conflict(new { error = "attention-lease-required" });
+                if (context.Request.Headers.IfMatch.Count == 0)
+                    return Results.Json(new { error = "card-revision-required" }, statusCode: StatusCodes.Status428PreconditionRequired);
+                if (!string.Equals(context.Request.Headers.IfMatch.ToString(),
+                        AgentStudio.Operator.OperatorCoordinationStore.Revision(card.FolderPath), StringComparison.Ordinal))
+                    return Results.Json(new { error = "stale-card-revision" }, statusCode: StatusCodes.Status412PreconditionFailed);
+            }
             // AGT-3483: a requeue would replace the delivery an isolating batch
             // is probing. Eject is the member action until isolation ends.
             if (AgentStudio.Pipeline.BatchIsolationGuardPolicy.IsRequeue(card.State, request.TargetState)
@@ -1584,6 +1603,8 @@ public static class TaskCrudEndpoints
                 cause: OperatorActor(context), reason: request.Reason,
                 operatorOverride: request.OperatorOverride,
                 archiveOverride: request.ArchiveOverride);
+            if (moved.Status == MoveJobStatus.Success && owner)
+                await attention.OwnerActionAsync(card.TaskKey, card.ProjectName, actor, ct);
             if (moved.Status == MoveJobStatus.Success && live?.AttemptId is { } attemptId
                 && intent == RunMoveIntent.Revoke)
             {

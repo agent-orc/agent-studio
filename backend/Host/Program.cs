@@ -1361,6 +1361,7 @@ if (!publicDemoExecutionProfile)
 // one watcher lease. It moves no card; transition rules stay in
 // orchestration-decisions.
 builder.Services.AddSingleton(sp => OperatorDecisionOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton<OperatorCoordinationStore>();
 builder.Services.AddSingleton(sp => new OperatorDecisionLog(
     OperatorDecisionOptions.Folder(sp.GetRequiredService<IConfiguration>()),
     sp.GetRequiredService<OperatorDecisionOptions>().Retention, sp.GetRequiredService<TimeProvider>(),

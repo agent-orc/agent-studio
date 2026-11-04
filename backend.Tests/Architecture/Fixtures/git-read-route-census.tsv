@@ -117,6 +117,7 @@
 /api/operator/batch-triage	free	-	-	-
 /api/operator/decisions	free	-	-	-
 /api/operator/decisions/stream	free	-	-	-
+/api/operator/log	free	-	-	-
 /api/operator/preflight/deploy	free	-	-	-
 /api/operator/preflight/restart	free	-	-	-
 /api/operator/watcher/lease/	free	-	-	-

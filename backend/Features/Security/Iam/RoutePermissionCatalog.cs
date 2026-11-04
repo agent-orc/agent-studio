@@ -345,6 +345,9 @@ public static class RoutePermissionCatalog
             "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease");
         AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
             "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
+        Add("R", IamPermissions.ProjectRead, "/api/operator/log");
+        AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/operator/log");
+        Add("POST", IamPermissions.ProjectCardsWrite, "/api/tasks/{}/attention");
 
         // --- Workspace administration, settings, and operation -------------
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/usage-calendar");

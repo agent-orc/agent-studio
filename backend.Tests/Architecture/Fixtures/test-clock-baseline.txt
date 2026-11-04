@@ -360,7 +360,6 @@ fixed-date backend.Tests/ObservationParsingTests.cs
 fixed-date backend.Tests/OrchestratorChatNavigationContextTests.cs
 fixed-date backend.Tests/OrchestratorContextDigestServiceTests.cs
 fixed-date backend.Tests/OrchestratorContextEndpointsTests.cs
-fixed-date backend.Tests/OrchestratorContextEnvelopeTests.cs
 fixed-date backend.Tests/OrchestratorSessionRegistryTests.cs
 fixed-date backend.Tests/OrchestratorTaskPromptContextComposerTests.cs
 fixed-date backend.Tests/OrchestratorWorkbenchPromptContextComposerTests.cs

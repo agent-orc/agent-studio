@@ -493,6 +493,7 @@ public class OrchestratorChatService
     private readonly AgentMessageBusBridge? _bus;
     private readonly AdHocUsageRecorder? _chatUsage;
     private readonly LocalChatUsageTracker? _localChatUsage;
+    private readonly AgentStudio.Operator.OperatorCoordinationStore? _operatorLog;
     private readonly string? _taskRepositoryRoot;
     private readonly bool _networked;
 
@@ -526,7 +527,8 @@ public class OrchestratorChatService
         AgentMessageBusBridge? bus = null,
         AdHocUsageRecorder? chatUsage = null,
         LocalChatUsageTracker? localChatUsage = null,
-        V1ReviewExecutorRegistry? remoteHosts = null)
+        V1ReviewExecutorRegistry? remoteHosts = null,
+        AgentStudio.Operator.OperatorCoordinationStore? operatorLog = null)
     {
         _pricing = pricing;
         _chat = chat;
@@ -539,6 +541,7 @@ public class OrchestratorChatService
         _bus = bus;
         _chatUsage = chatUsage;
         _localChatUsage = localChatUsage;
+        _operatorLog = operatorLog;
         _identityStore = identityStore;
         _contextDigests = contextDigests;
         _componentRouting = componentRouting;
@@ -1069,6 +1072,28 @@ public class OrchestratorChatService
         await ResolveAutomaticContextAsync(
             automatic, projectName, watchPath, req, clientId, context, envelope, ct)
             .ConfigureAwait(false);
+        if (_operatorLog is not null && envelope.Scope.Kind != "workbench")
+        {
+            try
+            {
+                var entries = (await _operatorLog.ReadAsync(projectName, 0, ct)).TakeLast(50).ToArray();
+                if (entries.Length > 0)
+                    automatic.Add(ResolvedContextBlock.Included(
+                        $"operator-log:{projectName}", "operator-log",
+                        string.Join('\n', entries.Select(entry =>
+                            $"{entry.TimeUtc:O} {entry.Actor} {entry.Kind}: {entry.Text} "
+                            + $"cards=[{string.Join(',', entry.CardKeys)}] audits=[{string.Join(',', entry.AuditIds)}]")),
+                        entries[^1].Cursor.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        "current", isExplicit: false));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "operator_log_context_unavailable project={Project}", projectName);
+                automatic.Add(ResolvedContextBlock.Unavailable($"operator-log:{projectName}",
+                    "operator-log", "unavailable", "The operator log could not be read."));
+            }
+        }
         ResolveExplicitContext(explicitBlocks, projectName, watchPath, envelope);
         if (req.Attachments is { Count: > 0 })
         {

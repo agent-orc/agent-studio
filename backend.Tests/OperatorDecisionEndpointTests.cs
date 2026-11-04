@@ -149,6 +149,98 @@ public sealed class OperatorDecisionEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Operator_log_redacts_token_shaped_text_before_storage()
+    {
+        using var factory = BuildFactory();
+        using var owner = Client(factory, Login(factory));
+        var secretPart = new string('b', 32);
+        var secret = "api." + new string('a', 32) + "." + secretPart;
+        using var posted = await owner.PostAsJsonAsync("/api/operator/log", new
+        {
+            project = "alpha", kind = "observed", text = "Found " + secret,
+            cardKeys = new[] { "alpha-backlog" }, auditIds = Array.Empty<string>()
+        });
+        Assert.Equal(HttpStatusCode.OK, posted.StatusCode);
+        using var read = await owner.GetAsync("/api/operator/log?project=alpha");
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        var body = await read.Content.ReadAsStringAsync();
+        Assert.Contains("[redacted]", body);
+        Assert.DoesNotContain(secret, body);
+        Assert.DoesNotContain(secretPart, body);
+        using var scoped = BearerClient(factory, Token(factory, "alpha log reader", StudioRoles.Viewer, "alpha"));
+        using var forbidden = await scoped.GetAsync("/api/operator/log?project=beta");
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public async Task Operator_move_requires_attention_and_current_card_revision()
+    {
+        using var factory = BuildFactory();
+        using var agent = BearerClient(factory, Token(factory, "card operator", StudioRoles.Operator, "alpha"));
+        var path = "/api/tasks/alpha-backlog/move?project=alpha";
+        using var noLease = await agent.PostAsJsonAsync(path,
+            new MoveJobRequest { TargetState = TaskStates.Preparation });
+        Assert.Equal(HttpStatusCode.Conflict, noLease.StatusCode);
+        Assert.Equal("attention-lease-required", (await Json(noLease)).GetProperty("error").GetString());
+
+        var attention = await Json(await agent.PostAsync("/api/tasks/alpha-backlog/attention?project=alpha", null));
+        var revision = attention.GetProperty("revision").GetString()!;
+        using var stale = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = JsonContent.Create(new MoveJobRequest { TargetState = TaskStates.Preparation })
+        };
+        stale.Headers.TryAddWithoutValidation("If-Match", "\"stale\"");
+        using var refused = await agent.SendAsync(stale);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, refused.StatusCode);
+
+        using var current = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = JsonContent.Create(new MoveJobRequest { TargetState = TaskStates.Preparation })
+        };
+        current.Headers.TryAddWithoutValidation("If-Match", revision);
+        using var moved = await agent.SendAsync(current);
+        Assert.Equal(HttpStatusCode.OK, moved.StatusCode);
+    }
+
+    [Fact]
+    public async Task Operator_batch_move_cannot_bypass_card_attention()
+    {
+        using var factory = BuildFactory();
+        using var agent = BearerClient(factory, Token(factory, "batch operator", StudioRoles.Operator, "alpha"));
+        using var response = await agent.PostAsJsonAsync("/api/tasks/batch-move", new BatchMoveRequest
+        {
+            Items = [new BatchMoveItem { JobId = "alpha-backlog", TargetState = TaskStates.Preparation }]
+        });
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("attention-lease-required", (await Json(response)).GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task Owner_move_ends_operator_attention_and_records_handoff()
+    {
+        using var factory = BuildFactory();
+        using var agent = BearerClient(factory, Token(factory, "card operator", StudioRoles.Operator, "alpha"));
+        using var owner = Client(factory, Login(factory));
+        var attention = await Json(await agent.PostAsync("/api/tasks/alpha-backlog/attention?project=alpha", null));
+        var holder = attention.GetProperty("lease").GetProperty("holder").GetString();
+        using var moved = await owner.PostAsJsonAsync("/api/tasks/alpha-backlog/move?project=alpha",
+            new MoveJobRequest { TargetState = TaskStates.Preparation });
+        Assert.Equal(HttpStatusCode.OK, moved.StatusCode);
+        using var read = await owner.GetAsync("/api/operator/log?project=alpha");
+        var log = await Json(read);
+        Assert.Contains(log.GetProperty("entries").EnumerateArray(), entry =>
+            entry.GetProperty("text").GetString()!.Contains(holder!, StringComparison.Ordinal));
+        using var detail = await owner.GetAsync("/api/tasks/alpha-backlog?project=alpha");
+        var card = await Json(detail);
+        Assert.True(!card.GetProperty("info").TryGetProperty("attentionHolder", out var holderAfter)
+            || holderAfter.ValueKind == JsonValueKind.Null);
+        using var ownerAttention = await owner.PostAsync("/api/tasks/alpha-backlog/attention?project=alpha", null);
+        Assert.Equal(HttpStatusCode.OK, ownerAttention.StatusCode);
+        using var refused = await agent.PostAsync("/api/tasks/alpha-backlog/attention?project=alpha", null);
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+    }
+
     private static async Task Sweep(WebApplicationFactory<Program> factory)
         => await factory.Services.GetRequiredService<OperatorDecisionPublisher>().SweepOnceAsync();
 

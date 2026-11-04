@@ -31,8 +31,10 @@ public static class EndpointMapping
         app.MapSecretEndpoints();
         app.MapPullGateEndpoints();
         var tasks = app.MapGroup("/api/tasks")
-            .AddEndpointFilter<TaskOperationTimingFilter>();
+            .AddEndpointFilter<TaskOperationTimingFilter>()
+            .AddEndpointFilter<OperatorAttentionFilter>();
         tasks.MapTaskCrudEndpoints();
+        tasks.MapTaskAttentionEndpoints();
         tasks.MapTaskCoreEndpoint();
         tasks.MapTaskDetailResources();
         tasks.MapBatchMoveEndpoints();
@@ -69,6 +71,7 @@ public static class EndpointMapping
         app.MapAcceptanceRailEndpoints();
         app.MapWatcherEndpoints();
         app.MapOperatorEndpoints();
+        app.MapOperatorLogEndpoints();
         app.MapDeployPreflightEndpoints();
         app.MapOrchestratorSessionEndpoints();
         app.MapOrchestratorContextEndpoints();

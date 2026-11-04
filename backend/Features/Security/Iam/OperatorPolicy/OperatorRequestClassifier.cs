@@ -62,9 +62,15 @@ public static class OperatorRequestClassifier
         if (context.GetEndpoint() is not RouteEndpoint endpoint) return null;
         var rule = OperatorOperationCatalog.ResolveWrite(context.Request.Method, RoutePermissionCatalog.Normalize(endpoint.RoutePattern));
         if (rule is null) return null;
-        if (rule.Refinement == OperatorRouteRefinement.None) return OperatorOperationCatalog.Refine(rule, new OperatorRequestFacts());
+        if (rule.Refinement == OperatorRouteRefinement.None
+            && rule.OperationId != OperatorOperationIds.OperatorLogAppend)
+            return OperatorOperationCatalog.Refine(rule, new OperatorRequestFacts());
 
         var body = await BodyStringsAsync(context.Request);
+        if (rule.OperationId == OperatorOperationIds.OperatorLogAppend)
+            context.Items["OperatorLog.Project"] = Field(body, "project");
+        if (rule.Refinement == OperatorRouteRefinement.None)
+            return OperatorOperationCatalog.Refine(rule, new OperatorRequestFacts());
         var project = routeValue("projectName");
         bool Evidence(string? commit)
             => evidence is not null && project is not null && commit is not null && evidence.HasFullGateEvidence(project, commit);
@@ -89,7 +95,7 @@ public static class OperatorRequestClassifier
         => operation.ScopeKind == OperatorScopeKinds.Host
             ? new OperatorGrantTarget(Host: routeValue("id"))
             : new OperatorGrantTarget(
-                target.Projects is [{ Length: > 0 } project] ? project : null,
+                target.Projects is [{ Length: > 0 } project] ? project : routeValue("project"),
                 target.Environment);
 
     private static string? Field(IReadOnlyDictionary<string, string> body, string name)

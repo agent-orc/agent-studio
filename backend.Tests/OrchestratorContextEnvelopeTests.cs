@@ -1,7 +1,9 @@
 using System.Net;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Operator;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -39,6 +41,27 @@ public sealed class OrchestratorContextEnvelopeTests : IDisposable
         Assert.Equal("project", result.Scope.Kind);
         Assert.Equal("project:project-a", result.Scope.ContextKey);
         Assert.Null(result.Scope.TaskKey);
+    }
+
+    [Fact]
+    public async Task Project_chat_receipt_lists_the_operator_log_when_entries_exist()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+        }).Build();
+        new OperatorCoordinationStore(configuration, new FakeTimeProvider(new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero))).Append("operator-agent:fixture",
+            new OperatorLogRequest("project-a", "observed", "The batch is waiting.", ["A-1"], []));
+        var persistence = new MemoryPersistence([]);
+        var service = BuildService(new CapturingRunner(), persistence);
+        Assert.True(OrchestratorContextKey.TryParse("project:project-a", out var context));
+
+        var reply = await service.SendAsync("project-a", _watchPath,
+            new SendOrchestratorChatRequest("What happened?", null, Model: "gpt-5.4-mini"),
+            clientId: null, context, CancellationToken.None);
+
+        Assert.Contains(Assert.IsType<OrchestratorContextReceipt>(reply.ContextReceipt).Sources!,
+            source => source.SourceId == "operator-log:project-a" && source.Status == "included");
     }
 
     [Fact]
@@ -501,7 +524,8 @@ public sealed class OrchestratorContextEnvelopeTests : IDisposable
             scanner,
             config,
             NullLogger<OrchestratorChatService>.Instance,
-            persistence: persistence);
+            persistence: persistence,
+            operatorLog: new OperatorCoordinationStore(config, new FakeTimeProvider(new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero))));
     }
 
     private static OrchestratorContextEnvelope Envelope(
