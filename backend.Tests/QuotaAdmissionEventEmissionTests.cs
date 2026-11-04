@@ -189,6 +189,23 @@ public sealed class QuotaAdmissionEventEmissionTests : IDisposable
         Assert.Equal("launch: spy", plan.Reason);
     }
 
+    [Fact]
+    public void Selection_ids_support_parallel_admission_writes_and_timeline_reads()
+    {
+        var (runner, _) = BuildRunner();
+        var field = typeof(ProjectRunner).GetField("_selectionIdsByJob",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var ids = Assert.IsType<System.Collections.Concurrent.ConcurrentDictionary<string, string>>(
+            field.GetValue(runner));
+        Parallel.For(0, 1_000, index =>
+        {
+            var key = $"job-{index % 32}";
+            ids[key] = $"selection-{index}";
+            Assert.NotNull(ids.GetValueOrDefault(key));
+        });
+        Assert.Equal(32, ids.Count);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
     private static void Emit(ProjectRunner runner, TaskInfo info, QuotaAdmissionPlan plan)
     {
