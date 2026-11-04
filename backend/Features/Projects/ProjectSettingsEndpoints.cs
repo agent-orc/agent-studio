@@ -1283,6 +1283,12 @@ public static class ProjectSettingsEndpoints
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
                 ? Results.Ok(pilot.Report(projectName))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
+        app.MapGet("/api/projects/{projectName}/batch-gate/ledger", (string projectName,
+            DateOnly? day, string? type, int? page, int? pageSize,
+            GateRunLedger ledger, TaskScannerService scanner) =>
+            scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
+                ? Results.Ok(ledger.Read(projectName, day, type, page ?? 1, pageSize ?? 50))
+                : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
         app.MapGet("/api/projects/{projectName}/batch-gate/state", (string projectName,
             int? history, BatchGatePilotService pilot,
             TaskScannerService scanner) =>

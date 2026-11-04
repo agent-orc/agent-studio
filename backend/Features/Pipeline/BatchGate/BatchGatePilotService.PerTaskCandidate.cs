@@ -107,7 +107,8 @@ public sealed partial class BatchGatePilotService
             var verdict = await BaseVerdictAsync(pending.Subject.Project, subject.BaseSha!,
                 GateProfile(settings.BuildProfile, pending.RepositoryPath), pending.RepositoryPath,
                 Path.Combine(TaskPaths.LogsDir(task.FolderPath), FallbackTipEvidenceName(pending.ReviewAttemptId)),
-                null, ct).ConfigureAwait(false);
+                null, pending.Subject.TaskKey, gate.GateRunId ?? pending.ReviewAttemptId,
+                ct).ConfigureAwait(false);
             return !verdict.Provisional && PerTaskFallbackPolicy.RetestOnOwnBase(
                 subject, pending.Subject.ResultSha, gate, verdict.Outcome);
         }
