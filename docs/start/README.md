@@ -89,6 +89,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Selectable Studio header prompt guide | [header-zones.md](../quality/header-zones.md) |
 | CLI | [domains/cli.md](../system/domains/cli.md) |
 | Model routing policy (model, thinking level, risk floors, benchmark evidence) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
+| Model selection ledger API (events, active fallbacks, effective routes, runner ingestion) | [contracts/model-selection-api.md](../system/contracts/model-selection-api.md) |
 | Model routing by assessed complexity: analysis and implementation plan as pipeline steps, Token Economy as the measuring authority for the (complexity class, model, level) pair table, reported-versus-achieved feedback (AGT-2815) | [decision dossier](../model-routing-by-complexity/index.html) |
 | Task switch performance: measured baseline, bounded core, progressive detail and Git snapshots (AGT-W64; source AGT-2910) | [decision Dossier](../task-switch-performance/index.html) |
 | Tokens | [domains/tokens.md](../system/domains/tokens.md) |

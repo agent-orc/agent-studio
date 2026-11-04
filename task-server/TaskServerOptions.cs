@@ -11,6 +11,7 @@ public sealed class TaskServerOptions
     public string ListenUrl { get; set; } = "http://127.0.0.1:5071";
     public string? QuotaAdmissionBaseUrl { get; set; }
     public string? QuotaAdmissionBearerToken { get; set; }
+    public string? ModelSelectionBearerToken { get; set; }
     public int MinimumLeaseSeconds { get; set; } = 30;
     public int MaximumLeaseSeconds { get; set; } = 900;
     /// <summary>Shadow is the default. Canary admission requires an explicit operator switch.</summary>
