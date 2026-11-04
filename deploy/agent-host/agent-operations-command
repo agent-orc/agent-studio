@@ -1,0 +1,13 @@
+#!/bin/sh
+# Forced by both the OpenSSH certificate and the operations account's sshd rule.
+set -eu
+unset SSH_AUTH_SOCK
+case "${SSH_ORIGINAL_COMMAND:-}" in
+  uptime) exec /usr/bin/uptime ;;
+  'df -h') exec /usr/bin/df -h ;;
+  'ss -ltn') exec /usr/bin/ss -ltn ;;
+  'findmnt --verify') exec /usr/bin/findmnt --verify ;;
+  'journalctl --no-pager --unit agent-operations-agent --lines 100')
+    exec /usr/bin/journalctl --no-pager --unit agent-operations-agent --lines 100 ;;
+  *) exit 126 ;;
+esac

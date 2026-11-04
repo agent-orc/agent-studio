@@ -30,6 +30,10 @@
   completion judging in the separate API-only Orchestrator Engine. Flow
   definitions and in-flight runs remain durable Task Server data, so restarting
   the Engine does not orphan work.
+- Routes operator host inspection, allowlisted restarts, drains, log collection,
+  and reviewed configuration apply through the Operations Server and outbound
+  host agents in the networked deployment. Short OpenSSH certificates cover a
+  fixed command allowlist during migration away from standing operator keys.
 
 ## Install
 
