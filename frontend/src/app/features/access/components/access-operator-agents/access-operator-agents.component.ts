@@ -107,7 +107,7 @@ export class AccessOperatorAgentsComponent {
     if (this.operators.busy() || this.operators.killing()) return;
     const confirmed = await this.confirmDialog.confirm({
       title: 'End this operator session?',
-      message: 'The session is refused at once. The agent and its other sessions keep working.',
+      message: 'The session is refused at once and its open approval requests are cancelled. The agent and its other sessions keep working.',
       detail: `${agent.name}: ${session.name || session.id}`,
       confirmLabel: 'End session',
       kind: 'danger',

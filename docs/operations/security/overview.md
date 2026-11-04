@@ -675,11 +675,16 @@ do.
   kill switch`), each with a `standing-grant.revoke` IAM audit entry, and the
   kill record lists them in `standingGrantIds`. No future grant can be issued
   or renewed, because a grant needs an enabled operator agent. A per-session
-  kill keeps the agent's grants. Approval requests (SM-5) and host
-  certificates (SM-6) join this step when those slices exist.
+  kill keeps the agent's grants. The same save also cancels every open
+  (pending or approved) approval request (SM-5) of those agents (reason
+  `operator kill switch`), each with an `operator-approval.cancel` IAM audit
+  entry, and the kill record lists them in `approvalIds`; a cancelled approval
+  never runs (`approval-cancelled`). Host certificates (SM-6) join this step
+  when that slice exists.
 - **End session** on one session row
   (`POST /api/auth/iam/operator-agents/{id}/sessions/{sid}/kill`) refuses that
-  session at once while the agent and its other sessions keep working.
+  session at once while the agent and its other sessions keep working. It
+  cancels the open approval requests of that session only.
 - Every use writes one entry in the control plane audit chain with stream
   `kill-switch` and its own event type: `operator-kill.all`,
   `operator-kill.session`, or `operator-kill.drill`. The Operations Server

@@ -61,6 +61,8 @@ public sealed record OperatorAccessEnded(DateTime At, IReadOnlyList<string> Oper
 {
     /// <summary>The standing grants (SM-4) the kill revoked; a per-session kill keeps them.</summary>
     public IReadOnlyList<string> StandingGrantIds { get; init; } = [];
+    /// <summary>The open approval requests (SM-5) the kill cancelled; a per-session kill cancels those of its session.</summary>
+    public IReadOnlyList<string> ApprovalIds { get; init; } = [];
 }
 
 public sealed record OperatorKillPropagation(
@@ -85,6 +87,8 @@ public sealed record OperatorKillRecord
     public IReadOnlyList<string> SessionIds { get; init; } = [];
     /// <summary>The standing grants (SM-4) the kill revoked.</summary>
     public IReadOnlyList<string> StandingGrantIds { get; init; } = [];
+    /// <summary>The open approval requests (SM-5) the kill cancelled.</summary>
+    public IReadOnlyList<string> ApprovalIds { get; init; } = [];
     /// <summary><c>true</c> when the kill covered every operator agent rather than named ones.</summary>
     public bool AllOperators { get; init; }
     public OperatorKillPropagation OperationsServer { get; init; } = new(OperatorKillPropagationStates.NotRequired);

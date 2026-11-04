@@ -57,7 +57,7 @@ public sealed class OperatorKillSwitch(
         {
             Id = "kill_" + Guid.NewGuid().ToString("N"), Kind = OperatorKillKinds.All, Trigger = trigger, Actor = actor.Actor,
             Reason = reason, At = ended.At, OperatorAgentIds = ended.OperatorAgentIds, SessionIds = ended.SessionIds,
-            StandingGrantIds = ended.StandingGrantIds, AllOperators = true, RequestId = requestId,
+            StandingGrantIds = ended.StandingGrantIds, ApprovalIds = ended.ApprovalIds, AllOperators = true, RequestId = requestId,
             OperationsServer = new OperatorKillPropagation(revocation.Configured
                 ? OperatorKillPropagationStates.Pending : OperatorKillPropagationStates.NotConfigured),
         };
@@ -80,6 +80,7 @@ public sealed class OperatorKillSwitch(
         {
             Id = "kill_" + Guid.NewGuid().ToString("N"), Kind = OperatorKillKinds.Session, Trigger = OperatorKillTriggers.Studio,
             Actor = actor.Actor, Reason = reason, At = ended.At, OperatorAgentIds = ended.OperatorAgentIds, SessionIds = ended.SessionIds,
+            ApprovalIds = ended.ApprovalIds,
         };
         store.AppendOperatorKillAudit(actor.Actor, OperatorKillEvents.Session, "ok", $"operator-agent:{agentId}", AuditDetails(record));
         log.Replace(record);
@@ -175,7 +176,7 @@ public sealed class OperatorKillSwitch(
                     new
                     {
                         killId = record.Id, requestId = request.Id, operatorAgentIds = enforced.OperatorAgentIds,
-                        sessionIds = enforced.SessionIds, standingGrantIds = enforced.StandingGrantIds,
+                        sessionIds = enforced.SessionIds, standingGrantIds = enforced.StandingGrantIds, approvalIds = enforced.ApprovalIds,
                     });
         }
         if (removeLatch) File.Delete(store.OperatorKillRequestPath);
@@ -266,7 +267,7 @@ public sealed class OperatorKillSwitch(
     private static object AuditDetails(OperatorKillRecord record) => new
     {
         killId = record.Id, record.Kind, record.Trigger, record.Reason, record.OperatorAgentIds, record.SessionIds,
-        record.StandingGrantIds, record.AllOperators, record.RequestId, operationsServer = record.OperationsServer.State,
+        record.StandingGrantIds, record.ApprovalIds, record.AllOperators, record.RequestId, operationsServer = record.OperationsServer.State,
     };
 
     private static string? NormalizeReason(string? reason)

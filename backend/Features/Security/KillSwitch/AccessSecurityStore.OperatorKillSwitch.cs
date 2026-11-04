@@ -11,6 +11,7 @@ public sealed partial class AccessSecurityStore
 {
     public const string OperatorKillRequestFileName = "operator-kill-switch.request.json";
     public static readonly TimeSpan DrillSessionLifetime = TimeSpan.FromHours(1);
+    private const string KillSwitchCancelReason = "operator kill switch";
 
     public string OperatorKillRequestPath => Path.Combine(SecurityFolder, OperatorKillRequestFileName);
 
@@ -19,8 +20,9 @@ public sealed partial class AccessSecurityStore
 
     /// <summary>
     /// Disables every operator agent (<paramref name="agentIds"/> <c>null</c>)
-    /// or the named ones and revokes each of their sessions and standing
-    /// grants in one save, so the next request of any of them is refused. A
+    /// or the named ones, revokes each of their sessions and standing grants,
+    /// and cancels their open approval requests in one save, so the next
+    /// request of any of them is refused and no approved request runs. A
     /// Studio kill requires an active Owner; the out-of-band command and a
     /// drill do not.
     /// </summary>
@@ -40,16 +42,22 @@ public sealed partial class AccessSecurityStore
             foreach (var account in targets)
                 next.ServiceAccounts[next.ServiceAccounts.IndexOf(account)] = DisabledLocked(account, now, actor.OwnerId ?? actor.Actor);
             var grants = RevokeKilledGrantsLocked(next, targets, now, actor.OwnerId ?? actor.Actor);
+            var approvals = CancelKilledApprovalsLocked(next, targets, now);
             SaveLocked(next);
             AuditKilledGrants(actor.OwnerId, grants);
+            AuditCancelledApprovals(actor.OwnerId, approvals);
             return new OperatorAccessEnded(now, targets.Select(account => account.Id).ToList(), sessions)
             {
                 StandingGrantIds = grants.Select(grant => grant.Id).ToList(),
+                ApprovalIds = approvals.Select(approval => approval.Id).ToList(),
             };
         }
     }
 
-    /// <summary>Ends one session of an operator agent; the agent and its other sessions keep working.</summary>
+    /// <summary>
+    /// Ends one session of an operator agent and cancels the open approval
+    /// requests of that session; the agent and its other sessions keep working.
+    /// </summary>
     public OperatorAccessEnded KillOperatorSession(string agentId, string sessionId, string ownerId)
     {
         lock (_gate)
@@ -68,15 +76,22 @@ public sealed partial class AccessSecurityStore
                 Sessions = agent.Sessions!.Select(candidate => candidate.Id == sessionId
                     ? candidate with { RevokedAt = now, RevokedBy = ownerId } : candidate).ToList(),
             };
+            var approvals = CancelOpenApprovalsLocked(next,
+                approval => approval.PrincipalId == agentId && approval.SessionId == sessionId, now, KillSwitchCancelReason);
             SaveLocked(next);
-            return new OperatorAccessEnded(now, [agentId], [sessionId]);
+            AuditCancelledApprovals(ownerId, approvals);
+            return new OperatorAccessEnded(now, [agentId], [sessionId])
+            {
+                ApprovalIds = approvals.Select(approval => approval.Id).ToList(),
+            };
         }
     }
 
     /// <summary>
     /// Re-applies an out-of-band kill to the state this process holds: every
-    /// operator agent created before the request is disabled and its sessions
-    /// revoked. Changes nothing when the state already reflects the kill.
+    /// operator agent created before the request is disabled, its sessions and
+    /// grants revoked, and its open approvals cancelled. Changes nothing when
+    /// the state already reflects the kill.
     /// </summary>
     public OperatorAccessEnded EnforceOperatorKill(DateTime requestedAt)
     {
@@ -86,18 +101,23 @@ public sealed partial class AccessSecurityStore
             var now = Now;
             var targets = next.ServiceAccounts.Where(account => IsOperatorAgent(account) && account.CreatedAt <= requestedAt
                 && (account.DisabledAt is null || account.Sessions?.Any(session => session.RevokedAt is null) == true
-                    || next.StandingGrants.Any(grant => grant.PrincipalId == account.Id && grant.RevokedAt is null))).ToList();
+                    || next.StandingGrants.Any(grant => grant.PrincipalId == account.Id && grant.RevokedAt is null)
+                    || next.OperatorApprovals.Any(approval => approval.PrincipalId == account.Id
+                        && OperatorApprovalPolicy.IsOpen(approval, now)))).ToList();
             var sessions = targets.SelectMany(account => (account.Sessions ?? [])
                 .Where(session => session.RevokedAt is null && session.ExpiresAt > now).Select(session => session.Id)).ToList();
             if (targets.Count == 0) return new OperatorAccessEnded(now, [], []);
             foreach (var account in targets)
                 next.ServiceAccounts[next.ServiceAccounts.IndexOf(account)] = DisabledLocked(account, now, OperatorKillActors.OutOfBand);
             var grants = RevokeKilledGrantsLocked(next, targets, now, OperatorKillActors.OutOfBand);
+            var approvals = CancelKilledApprovalsLocked(next, targets, now);
             SaveLocked(next);
             AuditKilledGrants(null, grants);
+            AuditCancelledApprovals(null, approvals);
             return new OperatorAccessEnded(now, targets.Select(account => account.Id).ToList(), sessions)
             {
                 StandingGrantIds = grants.Select(grant => grant.Id).ToList(),
+                ApprovalIds = approvals.Select(approval => approval.Id).ToList(),
             };
         }
     }
@@ -186,6 +206,13 @@ public sealed partial class AccessSecurityStore
     private static List<StandingGrant> RevokeKilledGrantsLocked(SecurityState state, IEnumerable<ServiceAccount> targets, DateTime now,
         string revokedBy)
         => targets.SelectMany(account => RevokeAgentGrantsLocked(state, account.Id, now, revokedBy, "operator kill switch")).ToList();
+
+    /// <summary>The open approval requests (SM-5) of the killed principals, cancelled in the caller's save.</summary>
+    private static List<OperatorApproval> CancelKilledApprovalsLocked(SecurityState state, IEnumerable<ServiceAccount> targets, DateTime now)
+    {
+        var killed = targets.Select(account => account.Id).ToHashSet(StringComparer.Ordinal);
+        return CancelOpenApprovalsLocked(state, approval => killed.Contains(approval.PrincipalId), now, KillSwitchCancelReason);
+    }
 
     /// <summary>Each revoked grant goes to the IAM audit like any other grant change.</summary>
     private void AuditKilledGrants(string? ownerId, IEnumerable<StandingGrant> grants)
