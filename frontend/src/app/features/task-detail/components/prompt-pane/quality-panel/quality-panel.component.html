@@ -50,7 +50,7 @@
           <label for="quality-round">Round</label>
           <select id="quality-round" data-testid="quality-round" [value]="round.attemptId" (change)="select($any($event.target).value)">
             @for (option of rounds(); track option.attemptId) {
-              <option [value]="option.attemptId">Round {{ option.round }}</option>
+              <option [value]="option.attemptId" [selected]="option.attemptId === round.attemptId">Round {{ option.round }}</option>
             }
           </select>
         }

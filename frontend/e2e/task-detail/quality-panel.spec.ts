@@ -124,21 +124,21 @@ test('board shows the Quality Block dot only in review lanes', async ({ page }) 
     watchPath, targetState: '2-ready', requiresIntegration: false, fixture: false });
   await getJob(created.id, watchPath);
   await moveJob(created.id, watchPath, '5-human-review');
+  const task = await getJob(created.id, watchPath);
   let verdict = 'block';
   let state = '5-human-review';
-  const patchTasks = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(patchTasks);
-    if (value && typeof value === 'object') {
-      const item = value as Record<string, unknown>;
-      if (item.id === created.id) return { ...item, state, qualityStudioVerdict: verdict };
-      return Object.fromEntries(Object.entries(item).map(([key, child]) => [key, patchTasks(child)]));
-    }
-    return value;
+  const board = () => {
+    const card = { ...task, state, qualityStudioVerdict: verdict };
+    return {
+      backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+      failedPickup: [], codeNotComplete: [], review: [],
+      autoReview: state === '4-review' ? [card] : [],
+      humanReview: state === '5-human-review' ? [card] : [],
+      completed: state === '6-completed' ? [card] : [], archive: [],
+    };
   };
-  await page.route(/\/api\/(?:v1\/studio\/board|tasks\/grouped)(\?|$)/, async route => {
-    const response = await route.fetch();
-    return route.fulfill({ response, body: JSON.stringify(patchTasks(await response.json())) });
-  });
+  await page.route(/\/api\/(?:v1\/studio\/board|tasks\/grouped)(\?|$)/, route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(board()) }));
   try {
     for (const theme of ['light', 'dark'] as const) {
       for (const sample of [
@@ -151,6 +151,8 @@ test('board shows the Quality Block dot only in review lanes', async ({ page }) 
         verdict = sample.verdict;
         state = sample.state;
         await page.goto('/');
+        await page.getByTestId('studio-project-picker-trigger').click();
+        await page.getByTestId('studio-project-picker-item-__all__').click();
         await setTheme(page, theme);
         const card = page.getByTestId('task-card').filter({ hasText: title }).first();
         await expect(card).toBeVisible();
