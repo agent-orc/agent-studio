@@ -1,4 +1,6 @@
-import { ChangeDetectionStrategy, Component, ElementRef, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, computed, inject, input, signal } from '@angular/core';
+import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
+import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 
 import { UsageCostDetailComponent } from '../usage-cost-detail/usage-cost-detail';
 import { usageStateTone } from '../usage-cost-detail/usage-detail-status';
@@ -17,18 +19,33 @@ import {
  * slot pools. The desktop popover and the phone sheet render this same
  * component; only the surface around it differs.
  *
- * The panel always holds every section, so one chip action reaches all usage
+ * The panel always holds every section, so one footer entry reaches all usage
  * detail. `focus` only decides which section heading receives focus.
  */
 @Component({
   selector: 'app-usage-detail-panel',
   standalone: true,
-  imports: [UsageCostDetailComponent, StatusIndicatorComponent],
+  imports: [UsageCostDetailComponent, DisclosureMarkerComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './usage-detail-panel.html',
   styleUrl: './usage-detail-panel.scss',
 })
-export class UsageDetailPanelComponent {
+export class UsageDetailPanelComponent implements OnDestroy {
+  private readonly remoteHosts = inject(RemoteHostsService);
+  readonly chatUsage = this.remoteHosts.interactiveUsage;
+  readonly chatUsageOpen = signal(false);
+  private chatUsagePoll: ReturnType<typeof setInterval> | null = null;
+  toggleChatUsage(): void {
+    this.chatUsageOpen.update(open => !open);
+    if (this.chatUsageOpen()) {
+      this.remoteHosts.refreshInteractiveUsage();
+      this.chatUsagePoll = setInterval(() => this.remoteHosts.refreshInteractiveUsage(), 5_000);
+    } else if (this.chatUsagePoll) {
+      clearInterval(this.chatUsagePoll);
+      this.chatUsagePoll = null;
+    }
+  }
+  ngOnDestroy(): void { if (this.chatUsagePoll) clearInterval(this.chatUsagePoll); }
   readonly snapshot = input.required<UsageCockpitResponse>();
   readonly focus = input<UsageDetailFocus>({ kind: 'cost' });
   /** Reference time for countdowns and staleness, epoch milliseconds. */

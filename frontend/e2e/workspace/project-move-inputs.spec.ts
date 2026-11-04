@@ -111,7 +111,7 @@ async function openApp(page: Page): Promise<void> {
 }
 
 async function openWorkspaces(page: Page): Promise<void> {
-  await page.getByTestId('studio-ab-settings').click();
+  await page.getByTestId('studio-titlebar-settings').click();
   await page.getByTestId('workspace-settings-rail-workspaces').click();
   await expect(page.getByTestId('settings-workspaces')).toBeVisible();
 }

@@ -81,7 +81,7 @@ test('numbers default, dots toggle, cap, order, a11y, and both themes', async ({
     await sidebar.screenshot({ path: path.join(resultsDir, `tree-numbers-${theme}--mocked.png`) });
   }
 
-  await page.getByTestId('studio-ab-settings').click();
+  await page.getByTestId('studio-titlebar-settings').click();
   await page.getByTestId('settings-tree-metrics-dots').click();
   await expect.poll(() => page.evaluate(() => localStorage.getItem('atp.studio.explorer.metrics'))).toBe('dots');
   await page.getByTestId('studio-ab-explorer').click();

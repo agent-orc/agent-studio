@@ -16,7 +16,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NgComponentOutlet } from '@angular/common';
-import { StudioHeaderCockpit, UsageCockpitHeaderComponent } from './studio-shell.header-cockpit';
+import { StudioHeaderCockpit, StudioNavigationHeaderComponent } from './studio-shell.header-cockpit';
 import type { TaskInfo, RegistryWorkspaceListItem, RegistryProjectSummary, WatchPathEntry, RegistryProjectUrl } from '../../models/task.model';
 import type { WorkbenchListItem } from '../../models/project-docs.model';
 import { forkJoin } from 'rxjs';
@@ -71,8 +71,11 @@ import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-ta
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
 import { ChatSessionsPanelComponent, OrchestratorFeedStore } from '../orchestrator';
 import { UsageDetailSurfaceComponent } from '../usage-cockpit';
+import { WorkspaceQuotaBannerComponent } from '../quota';
+import { AccountControlComponent } from '../shell/components/account-control/account-control';
 import { EnvironmentFlowComponent } from './components/environment-flow/environment-flow.component';
 import { WorkspaceDeploymentDashboardComponent } from '../deployments';
+import { TaskDefaultsControlComponent } from './components/task-defaults-control/task-defaults-control';
 import { DevelopStateIndicatorComponent } from './components/develop-state-indicator/develop-state-indicator.component';
 /** Canonicalise project storage paths so titlebar workspace lookup survives
  * slash style, trailing separator, and case differences. */
@@ -107,7 +110,7 @@ function cliColorFor(cli: string): string {
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent],
+  imports: [FormsModule, NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -115,9 +118,11 @@ function cliColorFor(cli: string): string {
 })
 export class StudioShellComponent {
   readonly environmentOpen = signal(false);
+  readonly toggleSettings = output<void>();
+  readonly defaultCliChange = output<import('../../models/task.model').CliType>();
+  readonly defaultModelChange = output<{ cliType: import('../../models/task.model').CliType; model: string; thinkingLevel: string | null }>();
   private readonly jobService = inject(TaskService);
   readonly clientService = inject(ClientService);
-
   /**
    * Backend-known project names (from the WatchPaths config). The
    * shell uses this so projects with zero working-set jobs still
@@ -265,7 +270,6 @@ export class StudioShellComponent {
   /** Bubbles to app.ts so the parent can flip the orchestrator side
    *  sheet open without the shell needing a reference to it. */
   readonly chatToggle = output<void>();
-  readonly openUsageSheet = output<void>();
   readonly openCliAdmin = output<void>();
   readonly openWorkspaceScreenshots = output<void>();
   readonly openOrchFeed = output<void>();
@@ -1014,13 +1018,7 @@ export class StudioShellComponent {
     this.pickProject(ev.id === '__all__' ? null : ev.id);
   }
 
-  togglePanel(panel: StudioActivityPanelKey | 'settings' | 'chats'): void {
-    // The gear ('settings') no longer toggles a sidebar panel — it opens the
-    // one consolidated Settings view as an editor tab (AGT-2035).
-    if (panel === 'settings') {
-      this.toggleWorkspaceSettingsTab();
-      return;
-    }
+  togglePanel(panel: StudioActivityPanelKey | 'chats'): void {
     if (panel === 'activity') {
       this.openFeed();
       return;
@@ -1028,8 +1026,7 @@ export class StudioShellComponent {
     this.panelState.toggle(panel);
   }
 
-  /** Open the consolidated Settings view, or close it if it is already the
-   *  active editor tab (mirrors the status-bar "Settings" pill toggle). */
+  /** Open the consolidated Settings view, or close its active editor tab. */
   toggleWorkspaceSettingsTab(): void {
     const active = this.tabState.activeTab()?.kind === 'workspace-settings';
     if (active) {

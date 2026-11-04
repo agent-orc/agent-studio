@@ -24,7 +24,8 @@ test.describe('CLI icons — distinct glyph per CLI', () => {
     // The Usage trigger opens the workspace-settings home at the CLI-Management
     // ("Usage caps") section — the cost overview that succeeded the old
     // quota strip when the loose CLI-usage sidesheet was retired.
-    await page.getByTestId('status-bar-usage').click();
+    await page.getByTestId('studio-titlebar-settings').click();
+    await page.getByTestId('workspace-settings-rail-caps').click();
     const overlay = page.getByTestId('cli-admin-overlay');
     await expect(overlay).toBeVisible();
 

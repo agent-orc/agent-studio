@@ -185,7 +185,7 @@ written reason and a pinned button signature.
 
 Both right-edge side sheets are **panels that push the workspace, not overlays that float over it**. The push behaviour rides on three coordinated pieces; break any one and the panel either floats, overlays, leaves a transparent gap, or stacks on the wrong side. Locked by the `open pushes studio-shell + inner panel fills host` test in `e2e/orchestrator-side-sheet-position.spec.ts`.
 
-> History: a third sheet, `<app-cli-usage-sheet>`, used to live here. Its quota glance and per-CLI session inventory were folded into the global Workspace Settings home (the CLI Management / "Usage caps" section, `features/cli/components/cli-admin-panel`) so CLI usage has a single hub; the loose sidesheet was retired. The status-bar "Usage" button now opens that home section instead of a parallel sidesheet.
+> History: a third sheet, `<app-cli-usage-sheet>`, used to live here. CLI Management and its session inventory live in Workspace Settings. The footer now shows subscription usage from `GET /api/usage/cockpit`; each entry opens the shared usage detail surface. New-task defaults, Settings, and the account menu live in the Studio header.
 
 1. **Flex parent.** In `app.html` the `vsCodeLayout` branch wraps `<app-studio-shell>` + the side sheets in `<div class="app-shell">`, styled `display: flex; flex-direction: row-reverse`. Row-reverse keeps the studio shell on the left (consuming the remaining space via `flex: 1 1 auto`) while the side sheets dock on the right edge in natural DOM order. Without the flex parent the sheets fall back to block layout and stack vertically.
 

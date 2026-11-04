@@ -106,7 +106,7 @@ const modelRoutes = {
 /** Open CLI Management the way an operator does: Settings, then the rail entry. */
 async function openCliManagement(page: Page): Promise<void> {
   await page.goto('/');
-  await page.getByTestId('status-bar-settings').click();
+  await page.getByTestId('studio-titlebar-settings').click();
   await page.getByTestId('workspace-settings-rail-caps').click();
   await expect(page.getByTestId('cli-admin-panel')).toBeVisible({ timeout: 20_000 });
 }

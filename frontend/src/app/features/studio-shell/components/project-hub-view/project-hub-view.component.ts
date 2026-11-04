@@ -19,6 +19,7 @@ import {
   ProjectProposalsPanelComponent,
   ProjectGraphComponent,
   ProjectTestRunsPanelComponent,
+  QualityStudioPanelComponent,
   OwnershipMappingPanelComponent,
 } from '../../../project-detail';
 import { ProjectDetailComponent } from '../../../project-detail/lazy';
@@ -54,6 +55,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   'drift',
   'uxui',
   'test-quality',
+  'quality-studio',
   'token-usage',
   'cycle-time',
   'agent-activity',
@@ -110,6 +112,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     ProjectProposalsPanelComponent,
     ProjectGraphComponent,
     ProjectTestRunsPanelComponent,
+    QualityStudioPanelComponent,
     OwnershipMappingPanelComponent,
     PromptAdminPanelComponent,
     WorkspaceScreenshotsComponent,

@@ -4,7 +4,7 @@ import type { RegistryWorkspaceListItem } from '../../models/task.model';
 import { clearVisibleInterval, setVisibleInterval } from '../../utils/visible-interval';
 import { WorkspaceQuotaBoardState } from '../quota';
 import {
-  UsageCockpitHeaderComponent,
+  StudioNavigationHeaderComponent,
   UsageCockpitService,
   UsageAlarmStateService,
   type UsageDetailFocus,
@@ -12,27 +12,23 @@ import {
   type UsageDetailRequest,
 } from '../usage-cockpit';
 
-export { UsageCockpitHeaderComponent };
+export { StudioNavigationHeaderComponent };
 
-/** Status-bar storage key of the saved default CLI. */
-const STORAGE_DEFAULT_CLI = 'defaultCliType';
 /** Quota admission changes with metered work, not per keystroke; one read a minute keeps the board current. */
 const QUOTA_POLL_MS = 60_000;
 
 /**
  * Destinations of the header More menu. The inline controls with the same
  * meaning carry `data-nav-inline-from` in the shell template; `null` rows are
- * menu-only. Usage is offered in More only when its Details control is absent.
+ * menu-only. Notifications has no destination yet and stays inline-only.
  */
 export const STUDIO_HEADER_NAV_ITEMS: readonly CockpitNavItem[] = [
   { id: 'project', label: 'Switch project', inlineFrom: 'tablet' },
   { id: 'search', label: 'Search', inlineFrom: 'tablet' },
   { id: 'chat', label: 'Project chat', inlineFrom: 'tablet' },
   { id: 'theme', label: 'Switch theme', inlineFrom: 'desktop' },
-  { id: 'usage', label: 'Usage details', inlineFrom: null },
-  { id: 'feed', label: 'Orchestrator feed', inlineFrom: 'desktop' },
   { id: 'environment', label: 'Environment', inlineFrom: 'tablet' },
-  { id: 'settings', label: 'Orchestrator settings', inlineFrom: null },
+  { id: 'settings', label: 'Orchestrator configuration', inlineFrom: null },
 ];
 
 /** The parts of the studio shell the header cockpit drives. */
@@ -43,17 +39,14 @@ export interface StudioHeaderHost {
   readonly environmentOpen: WritableSignal<boolean>;
   readonly pickerOpen: WritableSignal<boolean>;
   readonly chatToggle: OutputEmitterRef<void>;
-  readonly openUsageSheet: OutputEmitterRef<void>;
-  readonly openOrchFeed: OutputEmitterRef<void>;
   readonly openOrchSettings: OutputEmitterRef<void>;
   toggleTheme(): void;
 }
 
 /**
- * Studio-shell wiring of the header usage cockpit (HUC-S4). Create it in an
- * injection context. It polls the cockpit projection for the active
- * workspace, keeps the primary-CLI order inputs and routes the More menu
- * and usage triggers to the shell's existing destinations.
+ * Studio-shell wiring for navigation and footer usage detail. It polls the
+ * cockpit projection for the active workspace and routes the More menu and
+ * footer triggers to their destinations.
  */
 export class StudioHeaderCockpit {
   private currentWorkspaceId: string | null | undefined;
@@ -67,16 +60,9 @@ export class StudioHeaderCockpit {
     return (workspaces.find(ws => ws.displayName === name) ?? workspaces.find(ws => ws.isDefault) ?? workspaces[0])?.id ?? null;
   });
   readonly navItems = STUDIO_HEADER_NAV_ITEMS;
-  /** The CLI the operator last opened from the strip leads the primary order. */
-  readonly selectedCli = signal<string | null>(null);
   readonly detailFocus = signal<UsageDetailFocus | null>(null);
   readonly detailNow = signal(Date.now());
   readonly openRequest = signal<UsageDetailRequest | null>(null);
-  /** Saved default CLI (status-bar selector), re-read on each snapshot. */
-  readonly defaultCli = computed(() => {
-    this.usage.snapshot();
-    return localStorage.getItem(STORAGE_DEFAULT_CLI);
-  });
   /** Anchor of the project picker while it is opened from the More menu. */
   readonly pickerAnchor = signal<HTMLElement | null>(null);
 
@@ -108,7 +94,7 @@ export class StudioHeaderCockpit {
     });
   }
 
-  onNav(id: string, header: UsageCockpitHeaderComponent): void {
+  onNav(id: string, header: StudioNavigationHeaderComponent): void {
     const host = this.host;
     switch (id) {
       case 'project':
@@ -122,15 +108,12 @@ export class StudioHeaderCockpit {
       case 'search': host.globalSearchOpen.set(true); return;
       case 'chat': host.chatToggle.emit(); return;
       case 'theme': host.toggleTheme(); return;
-      case 'usage': host.openUsageSheet.emit(); return;
-      case 'feed': host.openOrchFeed.emit(); return;
       case 'environment': host.environmentOpen.set(true); return;
       case 'settings': host.openOrchSettings.emit(); return;
     }
   }
 
   onUsage(request: UsageDetailRequest): void {
-    if (request.section === 'cli' && request.cliId) this.selectedCli.set(request.cliId);
     this.detailNow.set(Date.now());
     this.openRequest.set(request);
     this.detailFocus.set(request.section === 'cli' && request.cliId

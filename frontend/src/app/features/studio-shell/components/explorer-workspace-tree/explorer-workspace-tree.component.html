@@ -33,7 +33,6 @@
       <app-studio-icon name="grid" [size]="11"></app-studio-icon>
     </button>
   </app-section-header>
-
   @if (!isCollapsed('workspace')) {
     @for (g of groups(); track g.id) {
       <div class="studio-explorer-tree__ws-group"
@@ -100,7 +99,6 @@
           }
         </div>
       }
-
       @if (!isCollapsed('ws:' + g.id)) {
         @for (p of g.projects; track p.name) {
           <div class="studio-tree-project"
@@ -216,6 +214,7 @@
                               [ariaLabel]="'Deck, ' + p.displayLabel"
                               [testid]="'studio-explorer-project-hub-' + p.name"
                               (selectRequest)="openHubRequest.emit(p.name)" />
+                <app-quality-studio-explorer-row [projectName]="p.name" [displayLabel]="p.displayLabel" />
                 @for (u of p.urls; track u.id) {
                   <app-tree-row level="child" glyph="link"
                                 [label]="u.label"

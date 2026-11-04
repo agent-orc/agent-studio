@@ -4,22 +4,14 @@
      data-testid="app-root"
      data-studio="root">
   <!-- ============ Titlebar ============ -->
-  <!-- Header usage cockpit (HUC-S4): the existing navigation row above the
-       usage row, one row on phone. Optional controls carry
+  <!-- One navigation row. Optional controls carry
        `data-nav-inline-from`; below that tier they live in the text-only
        More menu (`STUDIO_HEADER_NAV_ITEMS`). -->
-  <app-usage-cockpit-header #cockpitHeader
+  <app-studio-navigation-header #cockpitHeader
                             class="studio-titlebar"
                             data-testid="studio-titlebar"
-                            [snapshot]="headerCockpit.usage.snapshot()"
-                            [readFailed]="headerCockpit.usage.readFailed()"
-                            [selectedCliId]="headerCockpit.selectedCli()"
-                            [defaultCliId]="headerCockpit.defaultCli()"
-                            [openDetail]="headerCockpit.openRequest()"
-                            detailControls="studio-usage-detail"
                             [navItems]="headerCockpit.navItems"
-                            (navSelect)="headerCockpit.onNav($event, cockpitHeader)"
-                            (usageSelect)="headerCockpit.onUsage($event)">
+                            (navSelect)="headerCockpit.onNav($event, cockpitHeader)">
     <nav class="studio-titlebar__crumbs" aria-label="Breadcrumb" data-testid="studio-titlebar-crumbs"
          data-nav-inline-from="desktop">
       @if (activeWorkspaceName(); as workspaceName) {
@@ -100,6 +92,8 @@
     </button>
 
     <div class="studio-titlebar__actions" data-testid="studio-titlebar-actions">
+      <app-task-defaults-control (cliChange)="defaultCliChange.emit($event)"
+                                 (modelChange)="defaultModelChange.emit($event)" />
       <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-environment"
               data-nav-inline-from="tablet" cacTooltip="Open live environment"
               (click)="environmentOpen.set(true)">Environment</button>
@@ -107,7 +101,7 @@
               class="studio-titlebar__chatbtn"
               data-testid="studio-titlebar-chat"
               data-nav-inline-from="tablet"
-              cacTooltip="Open project chat (orchestrator side sheet)"
+              cacTooltip="Open project chat"
               (click)="chatToggle.emit()">
         <app-studio-icon name="bot" [size]="14"></app-studio-icon>
         <span>Project Chat</span>
@@ -121,11 +115,19 @@
               (click)="toggleTheme()">
         <app-studio-icon [name]="theme() === 'light' ? 'moon' : 'sun'" [size]="14"></app-studio-icon>
       </button>
-      <button type="button" class="studio-titlebar__iconbtn" data-testid="studio-open-stalls" data-nav-inline-from="desktop" [attr.aria-label]="orchestratorFeed.openStallCount() + ' open stalls'" cacTooltip="Open stall events" (click)="openFeed()">
-        <app-studio-icon name="bell" [size]="14"></app-studio-icon> @if (orchestratorFeed.openStallCount()) { <strong class="studio-titlebar__stall-count">{{ orchestratorFeed.openStallCount() }}</strong> }
+      @if (orchestratorFeed.openStallCount()) {
+        <button type="button" class="studio-titlebar__iconbtn" data-testid="studio-open-stalls" [attr.aria-label]="orchestratorFeed.openStallCount() + ' open stalls'" cacTooltip="Open stall events" (click)="openFeed()">
+          <app-studio-icon name="bell" [size]="14"></app-studio-icon><strong class="studio-titlebar__stall-count">{{ orchestratorFeed.openStallCount() }}</strong>
+        </button>
+      }
+      <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-settings"
+              aria-label="Settings" cacTooltip="Workspace settings" (click)="toggleSettings.emit()">
+        <app-studio-icon name="settings" [size]="14" /><span>Settings</span>
       </button>
+      <app-account-control />
     </div>
-  </app-usage-cockpit-header>
+  </app-studio-navigation-header>
+  <app-workspace-quota-banner />
   <app-usage-detail-surface surfaceId="studio-usage-detail"
                             [snapshot]="headerCockpit.usage.snapshot()"
                             [focus]="headerCockpit.detailFocus()"
@@ -326,11 +328,6 @@
                   }
                 }
                 <app-section-header title="Tools" [divider]="true" />
-                <button type="button" class="studio-button studio-button--ghost"
-                        data-testid="studio-cli-open-usage"
-                        (click)="openUsageSheet.emit()">
-                  Open CLI usage sheet
-                </button>
                 <button type="button" class="studio-button studio-button--ghost"
                         (click)="openCliAdmin.emit()">
                   Open CLI admin

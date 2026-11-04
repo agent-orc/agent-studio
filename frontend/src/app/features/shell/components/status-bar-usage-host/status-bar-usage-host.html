@@ -1,0 +1,3 @@
+<app-status-bar [projectNames]="projectNames()" (openUsageDetail)="open($event)" />
+<app-usage-detail-surface surfaceId="legacy-usage-detail" [snapshot]="usage.snapshot()"
+                          [focus]="focus()" [now]="now()" (closed)="focus.set(null)" />

@@ -699,6 +699,10 @@ public sealed class RemoteReviewPlanBuilder
         var matching = rules.LastOrDefault(rule => values.TryGetValue(rule.FactId, out var value)
             && (rule.WarningThreshold is null
                 || int.TryParse(rule.WarningThreshold, out var threshold) && value >= threshold));
+        var typedSettings = PipelineTypeSettings.ForTask(settings, task);
+        var deepSetting = typedSettings?.PipelineSteps?.GetValueOrDefault("post-deep-review");
+        var selectedDeepModel = matching?.Model ?? deepSetting?.Model;
+        var selectedDeepThinking = matching?.ThinkingLevel ?? deepSetting?.ThinkingLevel;
         var ruleSelection = matching is null ? (bool?)null
             : matching.CandidateActions.Contains(Contract.DecisionActionKinds.Prepare, StringComparer.Ordinal);
         var critical = _routing?.CorrectnessFloor(task.TaskType, task.Title, taskBody)?.Id == "sol-xhigh"
@@ -713,17 +717,22 @@ public sealed class RemoteReviewPlanBuilder
             settings?.MaxDeliveredReviewRounds ?? ReviewRoundBudgetPolicy.DefaultMaximumRounds,
             gateFailures, "unknown");
         var preliminary = MonolithTransitionAdapter.DeepReview(preliminaryFacts, DeepReviewPolicy.Shadow,
-            ruleVersion, ruleSelection, matching?.Model, matching?.ThinkingLevel);
+            ruleVersion, ruleSelection, selectedDeepModel, selectedDeepThinking);
         var reviewCli = preliminary.Model.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)
             ? "claude" : "codex";
         var quota = _quota?.Plan(new QuotaAdmissionRequest(reviewCli, preliminary.Model,
             preliminary.ThinkingLevel, task.ProjectName, 0, "remote-deep-review-plan"));
-        var quotaState = quota is null ? "unknown" : !quota.ShouldLaunch ? "capped"
-            : quota.IsFallback ? "unavailable" : "available";
+        var operatorSwitch = _quota?.IsOperatorSwitchActive(reviewCli) == true;
+        var quotaState = DeepReviewQuotaState(quota, operatorSwitch);
         return MonolithTransitionAdapter.DeepReview(preliminaryFacts with { QuotaState = quotaState },
             _configuration["DeepReview:Mode"] ?? DeepReviewPolicy.Shadow,
-            ruleVersion, ruleSelection, matching?.Model, matching?.ThinkingLevel);
+            ruleVersion, ruleSelection, selectedDeepModel, selectedDeepThinking);
     }
+
+    internal static string DeepReviewQuotaState(QuotaAdmissionPlan? plan, bool operatorSwitch)
+        => plan is null ? "unknown" : operatorSwitch ? "available"
+            : !plan.ShouldLaunch ? "capped"
+            : plan.IsFallback ? "unavailable" : "available";
 
     /// <summary>
     /// Reads unchanged files from the checkout and the delivery's changed paths

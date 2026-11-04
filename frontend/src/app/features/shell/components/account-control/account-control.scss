@@ -1,0 +1,29 @@
+:host { display: contents; }
+
+.account-control__trigger {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--studio-row-min-h-interactive-compact);
+  max-width: 18ch;
+  padding-inline: var(--studio-spacing-2);
+  overflow: hidden;
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-action-radius-sm);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.account-control__trigger:hover { background: var(--studio-bg-hover); }
+.account-control__trigger:focus-visible { outline: 2px solid var(--studio-accent-strong); }
+
+@media (max-width: 720px) {
+  .account-control__trigger {
+    min-height: var(--studio-target-coarse-min);
+    max-width: 10ch;
+  }
+}

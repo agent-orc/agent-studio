@@ -14,6 +14,25 @@
        data-testid="usage-detail-jump-cost"
        (click)="$event.preventDefault(); jumpTo(costFocus)">Cost</a>
   </nav>
+  <section class="usage-detail__section" aria-label="Interactive chat usage">
+    <button type="button" class="usage-detail__chat-toggle" data-testid="usage-detail-chat-toggle"
+            [attr.aria-expanded]="chatUsageOpen()" (click)="toggleChatUsage()">
+      <app-disclosure-marker [open]="chatUsageOpen()" />Interactive chat usage
+    </button>
+    @if (chatUsageOpen()) {
+      <table class="usage-detail__table" data-testid="usage-detail-chat-table">
+        <caption>Interactive chat since Task Server startup</caption>
+        <thead><tr><th>Host / project</th><th>Active</th><th>Heavy</th><th>CPU</th><th>Tokens</th><th>Cost</th></tr></thead>
+        <tbody>
+          @for (row of chatUsage(); track row.hostName + ':' + row.projectName) {
+            <tr><th>{{ row.hostName }} / {{ row.projectName }}</th><td>{{ row.activeTurns }}</td><td>{{ row.heavyTurns }}</td>
+              <td>{{ row.cpuPercent === null ? 'pending' : row.cpuPercent.toFixed(0) + '%' }}</td>
+              <td>{{ row.tokens.toLocaleString() }}</td><td>{{ row.costUsd === null ? 'unknown' : '$' + row.costUsd.toFixed(3) }}</td></tr>
+          } @empty { <tr><td colspan="6">No interactive chat usage reported.</td></tr> }
+        </tbody>
+      </table>
+    }
+  </section>
 
   @for (cli of v.clis; track cli.cliId) {
     <section class="usage-detail__section"

@@ -71,7 +71,7 @@ import {
 } from './features/project-detail/runtime';
 import {
   AutoReviewIndicatorComponent,
-  StatusBarComponent,
+  StatusBarComponent, StatusBarUsageHostComponent, AccountControlComponent,
   UiPreferencesService,
   WorkspaceBannerComponent,
   WorkspaceCreateDialogComponent, OnboardProjectDialogComponent,
@@ -94,7 +94,7 @@ import {
 } from './features/update';
 import { VerboseDebugOverlayComponent } from './features/verbose-debug';
 import {
-  StudioShellComponent,
+  StudioShellComponent, TaskDefaultsControlComponent,
   StudioTabActionsComponent,
   ProjectHubUrlService,
   StudioTabStateService,
@@ -180,7 +180,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     OrchestratorFeedComponent,
     ProjectOverlaysComponent,
     AutoReviewIndicatorComponent,
-    StatusBarComponent,
+    StatusBarComponent, StatusBarUsageHostComponent, AccountControlComponent,
     FormsModule,
     CreateTaskDialogComponent,
     DossierGroupBoardComponent,
@@ -204,7 +204,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     KanbanFilterSidesheetComponent, ActiveBoardFiltersComponent, TagFiltersComponent, TagChipsComponent,
     TooltipDirective,
     MenuComponent,
-    StudioShellComponent,
+    StudioShellComponent, TaskDefaultsControlComponent,
     StudioTabActionsComponent,
     ProjectHubViewComponent,
     StudioDiffViewComponent,

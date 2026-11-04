@@ -57,6 +57,14 @@ describe('CliModelsPanelComponent', () => {
       tiers: [],
       taskTypeDefaults: {},
     });
+    http.expectOne('/api/model-selection/effective').flush({
+      routes: [{
+        consumer: 'review-grade', stepId: 'post-code-review-grade',
+        configured: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+        effective: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+        rule: 'pin', reason: null,
+      }],
+    });
     fixture.detectChanges();
 
     const groups = fixture.componentInstance.groups();
@@ -82,6 +90,8 @@ describe('CliModelsPanelComponent', () => {
     expect(fallbackTable?.textContent).toContain('claude-opus-5 medium');
     expect(fallbackTable?.textContent).toContain('gpt-5.6-sol high');
     expect(fallbackTable?.textContent).toContain('TokenEconomy 0.3.4');
+    expect(fixture.nativeElement.querySelector('[data-testid="effective-routes-claude"]')?.textContent)
+      .toContain('review-grade: claude');
     expect(fixture.nativeElement.querySelector('[data-testid="quota-non-reroutable-callers"]')?.textContent)
       .toContain('quota-probe');
     economy.click();
@@ -100,12 +110,22 @@ describe('CliModelsPanelComponent', () => {
       cliType: 'claude', active: true,
       enabledAt: '2026-09-25T07:00:00Z', expiresAt: '2026-09-26T07:00:00Z',
     });
+    http.expectOne('/api/model-selection/effective').flush({
+      routes: [{
+        consumer: 'review-grade', stepId: 'post-code-review-grade',
+        configured: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+        effective: { cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high' },
+        rule: 'operator-switch', reason: 'Operator switch',
+      }],
+    });
     fixture.detectChanges();
     expect(fixture.componentInstance.fallbackStateLabel('claude'))
       .toContain('fallback preferred by operator until');
     const state = fixture.nativeElement.querySelector('[data-testid="cli-models-fallback-state-claude"]') as HTMLElement;
     expect(state.dataset['tone']).toBe('warning');
     expect(state.textContent).toContain('fallback preferred by operator until');
+    expect(fixture.nativeElement.querySelector('[data-testid="effective-routes-claude"]')?.textContent)
+      .toContain('review-grade: codex');
   });
 });
 

@@ -45,7 +45,7 @@ test.describe('Admin/CLI page — models & completion contracts', () => {
 
   test('CLI Management renders models and contracts', async ({ page }) => {
     await page.goto('/');
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-caps').click();
 
     const overlay = page.getByTestId('cli-admin-overlay');
