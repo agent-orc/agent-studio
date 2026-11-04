@@ -4,31 +4,8 @@ using TokenEconomy;
 
 namespace AgentStudio.Cli;
 
-/// <summary>One route projected from Token Economy's routing and price catalogues.</summary>
-public sealed record ModelEquivalenceRoute(
-    string FromCliType,
-    string FromModel,
-    string? FromThinkingLevel,
-    string ToCliType,
-    string ToModel,
-    string? ToThinkingLevel,
-    string CatalogueVersion,
-    decimal? FromInputPerMTok,
-    decimal? FromOutputPerMTok,
-    decimal? ToInputPerMTok,
-    decimal? ToOutputPerMTok,
-    string CapabilityClass);
-
-public interface IModelEquivalenceCatalog
-{
-    string Version { get; }
-    (string Model, string? ThinkingLevel)? TryGetEquivalent(
-        string fromCliType, string? fromModel, string? fromThinkingLevel, string toCliType);
-    ModelEquivalenceRoute? TryGetRoute(
-        string fromCliType, string? fromModel, string? fromThinkingLevel, string toCliType);
-    IReadOnlyList<ModelEquivalenceRoute> Routes { get; }
-    bool SameCapabilityClass(string? fromModel, string? toModel);
-}
+// ModelEquivalenceRoute and IModelEquivalenceCatalog live in the contracts
+// package (ModelSelection/QuotaDecisionContracts.cs).
 
 /// <summary>
 /// Adapter over the embedded, versioned Token Economy artefacts. Admission

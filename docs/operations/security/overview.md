@@ -509,7 +509,7 @@ D1, D4, and D11).
   actor the handler named is kept as `reportedActor`. Queued batch moves keep
   the scope. The Owner never appears as the actor of a session's action.
 - A session token is refused (403) on every `/api/auth/*` route (access
-  administration, role bindings, which are today's grants, and the audit view
+  administration, role bindings, standing grants, and the audit view
   and verification), on the versioned Task Server plane `/api/v1/*`, and on any
   route that needs `access.*`, `workspace.administer`, or `secrets.resolve`,
   whatever its bindings say. The standalone Task Server has no operator
@@ -517,6 +517,87 @@ D1, D4, and D11).
 - The operator agent runs on the Owner's machine under its own OS user,
   without the Owner's SSH agent, keys, or credential files (D11). See the
   [operator agent setup guide](../setup/operator-agent.md).
+
+### Operator operation catalogue, tiers, and standing grants (SM-4)
+
+Every operator session request passes the policy step in
+`AccessSecurityMiddleware` before any role binding is read (security model
+SM-4, decisions SM-D2 option A, SM-D3 option A, and SM-D7 option A).
+
+- The operation catalogue (`OperatorOperationCatalog`) gives each operation an
+  id, exactly one tier, and a scope kind (workspace, project, environment, or
+  host). Every read (GET, HEAD, OPTIONS, and the read-only reference-status
+  POST) is `observe` (T0). A write is catalogued only by a narrow route rule;
+  any other write is refused with `operation-not-catalogued`. The typed host
+  operations of the Operations Server are catalogued too: `host.inspect` is T0
+  and `service.restart` is T1.
+- T1 routine: `card.requeue` (a move into Backlog, Preparation, orchestrator
+  prep, or Ready, and the failed-pickup restore), `card.steer` (continue),
+  `service.restart`, `host.drain` and `host.resume`, `gate.rerun` (integration
+  retry and a pipeline step run), `stage.deploy`, and `production.promote`.
+  A stage deploy or promotion is T1 only when the commit has full gate
+  evidence: a green post-merge run on exactly that commit in which every
+  command passed (D2). Without it the same request is `gate.bypass`.
+- T2 high risk: `secrets.change`, `exposure.change`, `data.delete` (every
+  catalogued delete), `history.rewrite`, `gate.bypass` (merge, external
+  completion, a move into Human review or Completed), `keys.rotate`,
+  `host.enrollment`, `access.change`, `grant.change`, and `catalogue.change`.
+  The policy step refuses every T2 request with `approval-required`; the
+  approval request itself is SM-5. Changing the catalogue is a code change
+  through a card, so it is T2 by construction.
+- The operator agent has no operation that pushes a protected branch (D3). A
+  change reaches `develop` or `main` as a card through the gate.
+- A T1 request is admitted only under a live standing grant of the operator
+  agent that names the operation, covers the request's scope (a workspace
+  grant covers everything, a project grant its project and environments, an
+  environment grant one project environment, a host grant one host), is inside
+  its optional daily UTC window, and has hourly rate left. Otherwise it is
+  refused with `grant-required`, `grant-outside-window`, or
+  `grant-rate-exceeded`. A refusal answers 403 with `error`, `operation`, and
+  `tier`. The role bindings still apply after the policy step.
+- A standing grant (`/api/auth/iam/standing-grants`) records the principal,
+  tier T1, operation set, scope, rate per hour, optional window, issuer, issue
+  time, expiry (default 7 days, at most 30), renewal, revocation, and reason.
+  Only an active Owner issues, renews, or revokes one in Settings → Access →
+  Standing grants. Issuing and renewing consume a fresh step-up (five minutes,
+  single use); revoking needs none. Disabling the operator agent revokes its
+  grants. The policy step reads the grant records under the store lock on
+  every request, so a grant stops admitting at its expiry and on the first
+  request after its revocation, well inside 60 seconds. The rate counts
+  admitted requests of the last hour and is persisted with the grant, so a
+  restart does not reset it.
+- The catalogue and grant routes sit under `/api/auth/iam`, so an API token,
+  a service account token, or an operator session gets 403 on all of them.
+  Request and response bodies are camelCase JSON; tiers are `"T0"`, `"T1"`,
+  and `"T2"`.
+
+  | Method and route | Permission | Body and answer |
+  |---|---|---|
+  | `GET /api/auth/iam/operator-catalogue` | `access.read` | Answers `operations` (`id`, `tier`, `scopeKind`, `title`), `defaultGrantDays` (7), `maxGrantDays` (30), `defaultRatePerHour` (10), and `maxRatePerHour` (120). |
+  | `GET /api/auth/iam/standing-grants?principalId=<opa id>` | `access.read` | Answers every grant, newest first; `principalId` is optional and narrows the list to one operator agent. |
+  | `POST /api/auth/iam/standing-grants` | `access.manage`, active Owner, fresh step-up | Takes `principalId`, `operations` (catalogued T1 ids), `scope` (`kind` of `workspace`, `project`, `environment`, or `host`, with `project`, `environment` (`stage` or `production`), or `host` as the kind needs), `ratePerHour` (1 to 120, default 10), optional `window` (`startUtc`, `endUtc` as `HH:mm`), `expiresInDays` (1 to 30, default 7), and `reason` (at most 500 characters). Answers the grant. |
+  | `POST /api/auth/iam/standing-grants/{id}/renew` | `access.manage`, active Owner, fresh step-up | Takes optional `expiresInDays` and sets the expiry that many days from now. A revoked or expired grant answers 409 `standing-grant-ended`. |
+  | `POST /api/auth/iam/standing-grants/{id}/revoke` | `access.manage`, active Owner | Takes optional `reason`. Revoking a revoked grant answers it unchanged. |
+
+  A grant answer carries `id` (`sgr_*`), `principalId`, `principalName`,
+  `tier`, `operations`, `scope`, `ratePerHour`, `window`, `issuedBy`,
+  `issuedAt`, `expiresAt`, `renewedAt`, `renewedBy`, `revokedAt`,
+  `revokedBy`, `reason`, `revokeReason`, `state` (`active`, `expired`, or
+  `revoked`), and `usesLastHour`. The step-up comes from
+  `POST /api/auth/step-up` within the five minutes before the change and is
+  used up by it. Refusals answer `error` and a message: 400
+  `grant-operation-required`, `grant-operation-invalid` (not catalogued or not
+  T1), `invalid-scope`, `grant-scope-mismatch` (for example a host operation
+  in a project scope), `invalid-rate`, `invalid-window`, `invalid-lifetime`,
+  `reason-required`, or `invalid-reason`; 403 `owner-required` or
+  `step-up-required`; 404 `operator-agent-not-found` (unknown or disabled
+  agent) or `standing-grant-not-found`.
+- Grant changes are written to the IAM audit (`standing-grant.create`,
+  `.renew`, `.revoke`). Each operator request's audit entry names the
+  operation, its tier, the admitting grant id, or the policy refusal.
+  `OperatorOperationCatalogInventoryTests` fails for a route matched by two
+  rules, a rule that matches no mapped route, or a typed operation without a
+  catalogue entry.
 
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,
 `runner.events`, `runner.artifacts`, and `runner.completion`. Reading the prompt
@@ -540,6 +621,27 @@ reports, `runner.events` for the Git setup reports. An empty queue answers
 1 minute. It logs the status and refusal code once for each distinct failure,
 logs the repeat count when the failure changes or the poll recovers, and goes
 back to 2 seconds after an answer.
+
+### Operator guardrails on card rounds (AGT-3483)
+
+Two guardrails of the
+[operator-agent-level Dossier](../../operator-agent-level/index.html) are
+enforced by the server, for human sessions, API tokens and operator-agent
+sessions alike. No route was added; the existing routes changed as follows.
+
+- `POST /api/tasks/{id}/continue` starts a queued round from the card's latest
+  recorded result ref and returns it as `base`. The optional `baseRef` must be
+  one of the card's own result refs: any other value is refused with
+  `400 base-ref-not-on-card` before the card is written, so a caller cannot
+  point a run at an arbitrary branch of the repository.
+- Continue (every mode), preview feedback, the orchestrator-log steer override
+  and an operator requeue (`move`, `state`, `batch-move` into a run lane) of a
+  member of a batch under isolation answer `409 batch-isolation-active` with
+  the flight id. Batch gate eject stays allowed. The refusal is the same for
+  every principal: it protects the delivery under test, not an access level.
+
+The operator-facing description is in the
+[operator API reference](../../system/contracts/operator-api.md).
 
 ### Runner credential binding (SM-9)
 
@@ -747,6 +849,41 @@ diagnostic endpoints are not mapped in the networked profile. Error details are
 disabled. The health response is only `ok` and exposes no version, dependency,
 workspace, or identity information.
 
+### Operator decision stream and watcher lease (operator agent level OP-2)
+
+The [operator agent level Dossier](../../operator-agent-level/index.html)
+(decision OA-D2 option B) replaces board polling with a typed decision
+stream that API tokens may read. SignalR stays closed to tokens.
+
+- `GET /api/operator/decisions?after=<cursor>&limit=<n>` returns a snapshot
+  and `GET /api/operator/decisions/stream` the same events as Server-Sent
+  Events (`id` is the cursor, `event` the type). Both declare
+  `project.read`, resolve as handler-filtered routes, and are open to human
+  sessions, API tokens, and operator agent sessions. Each reader receives only
+  events of the projects it may read. Installation-wide events (no project,
+  for example a provider limit) need an Owner, an all-projects grant, or the
+  local profile. `watcher.heartbeat` names no project data and every reader
+  receives it, because the lease is per installation.
+- `GET /api/operator/watcher/lease` reads the lease. `POST` takes it, `POST
+  .../lease/{leaseId}/heartbeat` renews it, and `DELETE .../lease/{leaseId}`
+  releases it. The writes declare `project.runs.operate` with project
+  bindings sufficing, so a viewer token or a viewer session gets 403. While
+  a lease is active, a second `POST` gets `409 watcher-active` naming the
+  holder actor, its session label, and its last heartbeat. A take-over needs
+  `takeOver: true` in the body and is written to the control plane audit
+  (`operator` stream, operation `watcher.lease.take-over`, the previous
+  holder as target, its lease id and last heartbeat, and the given reason)
+  before the lease changes; when that audit write fails, the take-over does
+  not happen. Grants and releases are audited the same way.
+- The publisher reads facts other features already decided and moves no
+  card: lanes, open decision cards, quota waits and fallbacks from the card
+  records, open watcher stall cases, red and isolating batches, the batch
+  gate's pending-push age alert, and runner provider limits. Events, the
+  published fact keys, and the lease live in `<TaskRepository>/.operator/`
+  (`decision-events.jsonl`, `decision-facts.json`, `watcher-lease.json`) and
+  hold no secret. Event reasons repeat the reason text of the underlying
+  record.
+
 ## Audit and credential handling
 
 Remote claim, event, and completion records are appended under
@@ -767,7 +904,7 @@ and query strings are omitted from that audit. IAM changes go to
 One writer records the control plane audit trail in
 `<TaskRepository>/.security/control-plane-audit.jsonl` (D4 option A2). Each
 line carries `sequence`, `at`, `stream` (`iam`, `service-account`,
-`api-token`, `operator-agent`, `secret`, `run`), `actor`, `session`,
+`api-token`, `operator-agent`, `secret`, `run`, `operator`), `actor`, `session`,
 `delegatedBy`, `operation` (route or operation), `target`, `parameterDigest`
 (`sha256:` over method, path, query, and body for bearer requests; over the
 change details for IAM changes), `outcome`, the producer's full legacy record
@@ -777,6 +914,9 @@ reordered line breaks the chain. The writer never edits or removes a line.
 The IAM, service-account, API-token, secret, and run audits are routed
 through it; their per-stream files above stay as read projections for the
 existing readers.
+The `operator` stream holds the watcher lease records of the operator
+decision stream (`watcher.lease.grant`, `watcher.lease.take-over`,
+`watcher.lease.release`); it has no per-stream file.
 
 Forwarding: `AuditSinkForwarder` copies every entry, unchanged and in order,
 to the configured off-host append-only sink and records the acknowledged

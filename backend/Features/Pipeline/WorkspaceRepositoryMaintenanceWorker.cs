@@ -94,6 +94,7 @@ public sealed class WorkspaceRepositoryMaintenanceService
         "*.bak",
         AgentStudio.Git.SecurityStorePathPolicy.IgnorePattern,
     };
+    internal const long LegacyFallbackUntrackBytes = 1024 * 1024;
 
     private readonly IConfiguration _configuration;
     private readonly WorkspaceArtifactCommitService _commits;
@@ -275,9 +276,34 @@ public sealed class WorkspaceRepositoryMaintenanceService
 
         var untrack = RunGit(gitRoot,
             ["rm", "-r", "--cached", "--ignore-unmatch", "--", "logs/bus", ".metadata/attempt-authority*"], ct);
-        return untrack.Success
-            ? WorkspaceRepositoryMaintenanceResult.Ok("configured")
-            : WorkspaceRepositoryMaintenanceResult.Failed("runtime-untrack", untrack.Error);
+        if (!untrack.Success)
+            return WorkspaceRepositoryMaintenanceResult.Failed("runtime-untrack", untrack.Error);
+
+        // Remove only legacy large records. New compact evidence stays tracked.
+        // The following tracked sweep makes the index removal a normal workspace commit.
+        var trackedFallbacks = RunGit(gitRoot,
+            ["ls-files", "-z", "--", "projects/**/logs/batch-fallback-*.json*"], ct);
+        if (!trackedFallbacks.Success)
+            return WorkspaceRepositoryMaintenanceResult.Failed("fallback-inventory", trackedFallbacks.Error);
+        var oldFiles = trackedFallbacks.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Where(path => File.Exists(Path.Combine(gitRoot, path))
+                && new FileInfo(Path.Combine(gitRoot, path)).Length > LegacyFallbackUntrackBytes)
+            .ToArray();
+        if (oldFiles.Length > 0)
+        {
+            var ignored = EnsureExcluded(gitRoot,
+                oldFiles.Select(path => "/" + path.Replace('\\', '/')).ToArray(), ct);
+            if (!ignored.Success) return ignored;
+            var args = new List<string> { "rm", "-q", "--cached", "--ignore-unmatch", "--" };
+            args.AddRange(oldFiles.Select(path => $":(top,literal){path}"));
+            var removed = RunGit(gitRoot, args, ct);
+            if (!removed.Success)
+                return WorkspaceRepositoryMaintenanceResult.Failed("fallback-untrack", removed.Error);
+            _logger.LogInformation("workspace-fallback-large-untracked repo={Repo} files={Count} bytes={Bytes}",
+                gitRoot, oldFiles.Length,
+                oldFiles.Sum(path => new FileInfo(Path.Combine(gitRoot, path)).Length));
+        }
+        return WorkspaceRepositoryMaintenanceResult.Ok("configured");
     }
 
     private WorkspaceRepositoryMaintenanceResult EnsureExcluded(

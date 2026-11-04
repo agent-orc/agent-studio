@@ -48,4 +48,27 @@ public sealed class ReviewAspectCachePromptTests
             }, prompt);
         }
     }
+
+    [Fact]
+    public void Crlf_authored_prompt_drops_its_duplicate_evidence_sections()
+    {
+        var prompts = new RuntimePromptService(new ConfigurationBuilder().Build(),
+            NullLogger<RuntimePromptService>.Instance);
+        var aspects = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
+        var inputs = new AspectRunInputs("Project", "AGT-1", "Cache review", "/tmp/AGT-1",
+            "Brief body", "Recent execution", "Branch diff", "Status report")
+        {
+            AcceptanceScope = "Acceptance criteria",
+            ResultsInventory = "results/proof.txt",
+            CardMode = "Coding delivery",
+        };
+        var authored = aspects.BuildAspectPrompt(AspectRunnerService.Catalogue["code-quality"], inputs, "claude-opus-5")
+            .ReplaceLineEndings("\r\n");
+
+        var prompt = ReviewAspectCachePrompt.Compose(authored, inputs);
+
+        Assert.Equal(1, prompt.Split("Brief body").Length - 1);
+        Assert.Equal(1, prompt.Split("Branch diff").Length - 1);
+        Assert.Equal(1, prompt.Split("results/proof.txt").Length - 1);
+    }
 }

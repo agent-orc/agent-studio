@@ -68,14 +68,24 @@ internal static class ReviewAspectCachePrompt
 
     private static string RemoveFencedSection(string prompt, string heading, string value)
     {
-        var header = "## " + heading + "\n\n```\n";
+        foreach (var newline in (string[])["\r\n", "\n"])
+        {
+            var removed = RemoveFencedSection(prompt, heading, value, newline);
+            if (!ReferenceEquals(removed, prompt)) return removed;
+        }
+        return prompt;
+    }
+
+    private static string RemoveFencedSection(string prompt, string heading, string value, string newline)
+    {
+        var header = "## " + heading + newline + newline + "```" + newline;
         var start = prompt.IndexOf(header, StringComparison.Ordinal);
         if (start < 0) return prompt;
         var contentStart = start + header.Length;
         if (!prompt.AsSpan(contentStart).StartsWith(value.AsSpan(), StringComparison.Ordinal))
             return prompt;
         var end = contentStart + value.Length;
-        const string close = "\n```\n\n";
+        var close = newline + "```" + newline + newline;
         if (!prompt.AsSpan(end).StartsWith(close.AsSpan(), StringComparison.Ordinal))
             return prompt;
         return prompt.Remove(start, end + close.Length - start);
