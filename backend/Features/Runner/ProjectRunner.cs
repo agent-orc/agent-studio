@@ -2185,6 +2185,22 @@ public class ProjectRunner
             resolverCliType,
             resolverModel,
             AgentStudio.Pipeline.PipelineStepModelDefaults.SupportThinkingLevel);
+        var resolverAdmission = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+            resolverCliType, resolverModel, resolverThinkingLevel, ProjectName, 0, "merge-resolver"));
+        if (resolverAdmission is { ShouldLaunch: false })
+        {
+            var waiting = $"Conflict resolution is waiting: {resolverAdmission.Reason}";
+            var result = new IntegrationResult(IntegrationOutcome.Conflict, null, waiting, conflict.ConflictedFiles);
+            RecordConflictResolutionStep(info, PipelineStepStatus.Failed, "merge-blocked",
+                IntegrationSummary(waiting, run, workBranch, result), started, model: resolverModel);
+            return result;
+        }
+        if (resolverAdmission is not null)
+        {
+            resolverCliType = resolverAdmission.CliType;
+            resolverModel = resolverAdmission.Model ?? resolverModel;
+            resolverThinkingLevel = resolverAdmission.ThinkingLevel;
+        }
         RecordConflictResolutionStep(info, PipelineStepStatus.Running, "running",
             IntegrationSummary($"Starting managed {resolverCliType} conflict-resolution run.", run, workBranch, conflict),
             started,

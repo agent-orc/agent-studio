@@ -2625,7 +2625,9 @@ public static class V1ReviewPlaneEndpoints
         var resolvedCommands = subject.Plan.Commands.Select(command =>
         {
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)) return command;
-            if (immutablePlan && !string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+            var operatorSwitch = quotaAdmission.IsOperatorSwitchActive(command.CliType);
+            if (immutablePlan && !operatorSwitch
+                && !string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
                 return command;
             string? deniedFallbackKey = null;
             Contract.ModelAcceptanceAdmission? deniedFallbackDecision = null;
@@ -2639,6 +2641,7 @@ public static class V1ReviewPlaneEndpoints
                 ModelAccepted: (provider, model) => modelAdmission(provider, model)
                     is Contract.ModelAcceptanceAdmission.Accepted or Contract.ModelAcceptanceAdmission.Legacy,
                 ClaimingHost: claimingHost,
+                SameClassOnly: true,
                 FallbackModelAccepted: (provider, model) =>
                 {
                     var decision = modelAdmission(provider, model);
@@ -2672,7 +2675,8 @@ public static class V1ReviewPlaneEndpoints
             }
             launchedPlan ??= plan;
             if (!plan.IsFallback) return command;
-            if (string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+            if (!operatorSwitch
+                && string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
             {
                 // This plan froze the deep-review correctness floor. A quota
                 // sibling may be useful for ordinary aspects, but accepting a

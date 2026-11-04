@@ -732,9 +732,13 @@ public class OrchestratorChatService
                                     _localChatUsage?.Start(userTurn.Id, projectName,
                                         fallbackQueuedAt ?? queuedAt, startedAt);
                                     localStarted = true;
-                                    result = await _runner.DecideCodexAsync(
-                                        fullPrompt, effectiveModel, effectiveThinking,
-                                        workingDirectory, ct, projectName, watchPath);
+                                    result = string.Equals(effectiveCli, CliTypes.Codex, StringComparison.OrdinalIgnoreCase)
+                                        ? await _runner.DecideCodexAsync(
+                                            fullPrompt, effectiveModel, effectiveThinking,
+                                            workingDirectory, ct, projectName, watchPath)
+                                        : await _runner.DecideWithCliAsync(
+                                            effectiveCli, fullPrompt, effectiveModel,
+                                            effectiveThinking, workingDirectory, ct);
                                 }
                                 finally
                                 {
