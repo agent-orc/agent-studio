@@ -34,6 +34,37 @@ public sealed class ModelSelectionPlannerTests
         Assert.Equal(97, result.Quota?.UsedPct);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Ordered_policy_fallback_skips_exhausted_or_rejected_provider_and_logs_chosen_route(bool rejected)
+    {
+        var request = Request();
+        var facts = Facts(97) with
+        {
+            ConfiguredFallbacks =
+            [
+                new SelectionRoute(CliTypes.Codex, ModelIds.Gpt56Sol, "high"),
+                new SelectionRoute(CliTypes.Gemini, ModelIds.Gemini25Pro, "high"),
+            ],
+            SnapshotFor = cli => cli == CliTypes.Codex && !rejected
+                ? Snapshot(CliTypes.Codex, 99) : Snapshots(97)(cli),
+            HostAcceptsFallback = rejected
+                ? (cli, _) => cli != CliTypes.Codex
+                : null,
+        };
+
+        var result = ModelSelectionPlanner.Plan(request, facts);
+        var entry = SelectionLedgerEntry.For(request, result, "local-coding-launch", "ordered", Now);
+
+        Assert.Equal(SelectionOutcome.Fallback, result.Outcome);
+        Assert.Equal(new SelectionRoute(CliTypes.Gemini, ModelIds.Gemini25Pro, "high"), result.Route);
+        Assert.Equal("policy", result.Equivalence?.Source);
+        Assert.Contains("selected configured fallback 2 of 2", result.Reason);
+        Assert.Equal(result.Route, entry?.To);
+        Assert.Contains("selected configured fallback 2 of 2", entry?.Reason);
+    }
+
     [Fact]
     public void Healthy_primary_launches_on_the_pin()
     {
