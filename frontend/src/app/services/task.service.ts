@@ -2496,6 +2496,7 @@ export class TaskService {
       cliType?: string | null;
       model?: string | null;
       thinkingLevel?: string | null;
+      pinMode?: 'preference' | 'hard';
       prompt?: string | null;
       condition?: PipelineStepCondition | null;
     },

@@ -1,0 +1,35 @@
+:host { display: block; }
+.consumer-policy {
+  margin-bottom: var(--studio-spacing-4);
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-bg-hover);
+}
+.consumer-policy header {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-spacing-3);
+  border-bottom: 1px solid var(--studio-border);
+}
+.consumer-policy header strong { color: var(--studio-fg-strong); font-size: 12px; }
+.consumer-policy header small { color: var(--studio-fg-muted); font-size: 10px; }
+.consumer-policy__scroll { overflow-x: auto; }
+.consumer-policy table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.consumer-policy th, .consumer-policy td {
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border-bottom: 1px solid var(--studio-border);
+  text-align: left;
+  vertical-align: top;
+}
+.consumer-policy th { color: var(--studio-fg-muted); }
+.consumer-policy td { color: var(--studio-fg); }
+.consumer-policy td small { display: block; color: var(--studio-fg-muted); }
+.consumer-policy input {
+  width: min(100%, 250px);
+  color: var(--studio-fg);
+  background: var(--studio-bg-selected);
+  border: 1px solid var(--studio-border);
+  border-radius: 4px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+}
+.consumer-policy p { padding: var(--studio-spacing-3); color: var(--studio-fg); }

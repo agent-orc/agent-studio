@@ -16,6 +16,7 @@ public sealed class CliQuotaFallbackService
     private readonly IConfiguration _config;
     private readonly ILogger<CliQuotaFallbackService> _logger;
     private readonly IModelEquivalenceCatalog? _equivalence;
+    private readonly ModelSelectionPolicyStore? _policy;
     private readonly object _lock = new();
     private Dictionary<string, CliModelRouteProfile> _profiles = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
@@ -23,11 +24,13 @@ public sealed class CliQuotaFallbackService
     public CliQuotaFallbackService(
         IConfiguration config,
         ILogger<CliQuotaFallbackService> logger,
-        IModelEquivalenceCatalog? equivalence = null)
+        IModelEquivalenceCatalog? equivalence = null,
+        ModelSelectionPolicyStore? policy = null)
     {
         _config = config;
         _logger = logger;
         _equivalence = equivalence;
+        _policy = policy;
     }
 
     public IReadOnlyDictionary<string, CliModelRouteProfile> GetAll()
@@ -128,6 +131,12 @@ public sealed class CliQuotaFallbackService
         {
             if (_loaded) return;
             _loaded = true;
+            if (_policy is not null)
+            {
+                _profiles = new Dictionary<string, CliModelRouteProfile>(_policy.Get().LegacyProfiles,
+                    StringComparer.OrdinalIgnoreCase);
+                return;
+            }
             var path = ResolvePath();
             if (!File.Exists(path)) return;
             try
@@ -143,6 +152,11 @@ public sealed class CliQuotaFallbackService
 
     private void Persist()
     {
+        if (_policy is not null)
+        {
+            foreach (var profile in _profiles.Values) _policy.SetLegacyProfile(profile);
+            return;
+        }
         var path = ResolvePath();
         try
         {

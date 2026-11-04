@@ -58,6 +58,25 @@ export interface EffectiveModelSelection {
   reason: string | null;
 }
 
+export interface SelectionRoute { cliType: string; model: string | null; thinkingLevel: string | null }
+export interface ConsumerPolicyRoute { cli: string; model: string | null; thinking: string | null }
+export interface ConsumerModelPolicy {
+  primary: ConsumerPolicyRoute | null;
+  route: string | null;
+  fallbacks: ConsumerPolicyRoute[] | 'catalogue' | null;
+  sameClassOnly: boolean;
+  stickyWithinCard: boolean;
+  costGuardFactor: number | null;
+}
+export interface ModelSelectionPolicy {
+  version: number;
+  consumers: Record<string, ConsumerModelPolicy>;
+  caps: Record<string, Record<string, number>>;
+  costGuardFactor: number;
+  hysteresis: { returnBelowCapPoints: number; minDwellMinutes: number };
+  migration: { inheritedSteps: number; explicitSteps: number; projects: number; applied: boolean };
+}
+
 export interface CliQuotaWaitPolicy {
   enabled: boolean;
   thresholdMinutes: number;
@@ -197,6 +216,15 @@ export class QuotaApiService {
     return this.http.get<{ routes: EffectiveModelSelection[] }>(
       `${this.baseUrl}/model-selection/effective`,
     );
+  }
+
+  getSelectionPolicy() {
+    return this.http.get<ModelSelectionPolicy>(`${this.baseUrl}/model-selection/policy`);
+  }
+
+  setConsumerPolicy(consumer: string, setting: ConsumerModelPolicy) {
+    return this.http.put<ModelSelectionPolicy>(
+      `${this.baseUrl}/model-selection/policy/consumers/${encodeURIComponent(consumer)}`, setting);
   }
 
   setFallbackPreference(cliType: string, preferFallback: boolean) {

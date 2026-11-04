@@ -896,7 +896,14 @@ public class ProjectRunner
                    Project = ProjectName,
                    TaskKey = info.Key ?? (string.IsNullOrEmpty(info.TaskKey) ? info.Id : info.TaskKey),
                    Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
-                       info.CliType, info.Model, info.ThinkingLevel),
+                       info.CliType,
+                       info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
+                           ? info.PreferenceModel ?? info.Model : info.Model,
+                       info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
+                           ? info.PreferenceThinkingLevel ?? info.ThinkingLevel : info.ThinkingLevel,
+                       info.PinMode == "hard" ? AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard
+                           : AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference),
+                   IsExplicitPin = info.ModelExplicit,
                    TaskType = info.TaskType,
                },
                "local-coding-launch",
