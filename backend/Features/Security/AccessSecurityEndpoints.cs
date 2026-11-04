@@ -118,10 +118,12 @@ public static class AccessSecurityEndpoints
                     SecondFactorEnrollmentRequired: principal.Session.SecondFactorEnrollmentOnly));
         });
 
-        auth.MapPost("/logout", (HttpContext context, AccessSecurityStore store) =>
+        auth.MapPost("/logout", (HttpContext context, AccessSecurityStore store, AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             Execute(() =>
             {
-                store.Logout(RequireHuman(context, store).Session);
+                var session = RequireHuman(context, store).Session;
+                store.Logout(session);
+                revokes.EnqueueSid(session.Id);
                 context.Response.Cookies.Delete(AccessSecurityStore.SessionCookieName, SessionCookieOptions(https: true));
                 context.Response.Cookies.Delete("__Host-agentstudio-csrf", CsrfCookieOptions(https: true));
                 context.Response.Cookies.Delete(AccessSecurityStore.InsecureSessionCookieName, SessionCookieOptions(https: false));
@@ -180,8 +182,15 @@ public static class AccessSecurityEndpoints
         auth.MapPost("/users/{id}/sessions/revoke-others", (string id, HttpContext context, AccessSecurityStore store) =>
             Execute(() => { store.RevokeOtherSessions(RequireOwner(context, store), id); return Results.NoContent(); }));
 
-        auth.MapPost("/change-password", (ChangePasswordRequest request, HttpContext context, AccessSecurityStore store) =>
-            Execute(() => Results.Ok(ToResponse(store.ChangePassword(RequireHuman(context, store), request)))));
+        auth.MapPost("/change-password", (ChangePasswordRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
+            Execute(() =>
+            {
+                var human = RequireHuman(context, store);
+                var changed = store.ChangePassword(human, request);
+                revokes.EnqueueSub(human.User.Id);
+                return Results.Ok(ToResponse(changed));
+            }));
 
         auth.MapGet("/users", (HttpContext context, AccessSecurityStore store) =>
             Execute(() =>
@@ -211,18 +220,23 @@ public static class AccessSecurityEndpoints
                 });
             }));
 
-        auth.MapPut("/users/{id}", (string id, UpdateUserRequest request, HttpContext context, AccessSecurityStore store) =>
+        auth.MapPut("/users/{id}", (string id, UpdateUserRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             Execute(() =>
             {
                 var owner = RequireOwner(context, store);
-                return Results.Ok(ToResponse(store.UpdateUser(id, request, owner.User.Id)));
+                var updated = store.UpdateUser(id, request, owner.User.Id);
+                revokes.EnqueueSub(id);
+                return Results.Ok(ToResponse(updated));
             }));
 
-        auth.MapPost("/users/{id}/reset-password", (string id, PasswordResetRequest request, HttpContext context, AccessSecurityStore store) =>
+        auth.MapPost("/users/{id}/reset-password", (string id, PasswordResetRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             Execute(() =>
             {
                 RequireOwner(context, store);
                 var reset = store.ResetPassword(id, request);
+                revokes.EnqueueSub(id);
                 return Results.Ok(new PasswordResetResponse(reset.User.Id, reset.TemporaryPassword, true));
             }));
 

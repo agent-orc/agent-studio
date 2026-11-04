@@ -147,7 +147,7 @@ test.describe('wait on nearby quota reset', () => {
 
     await page.goto('/');
     await hideRecoveryOverlay(page);
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-caps').click();
 
     const panel = page.getByTestId('cli-admin-panel');

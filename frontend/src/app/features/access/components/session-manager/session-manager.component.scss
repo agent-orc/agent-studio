@@ -28,6 +28,7 @@
   padding: var(--studio-spacing-3);
 }
 .session-manager--access .session-manager__panel { top: calc(100% + var(--studio-spacing-2)); bottom: auto; }
+:host-context(app-account-control) .session-manager__panel { top: calc(100% + var(--studio-spacing-2)); bottom: auto; }
 .session-manager__panel header { display: flex; align-items: center; justify-content: space-between; gap: var(--studio-spacing-2); }
 .session-manager__panel h3 { margin: 0; font-size: 1rem; }
 .session-manager__rows { display: grid; gap: var(--studio-spacing-2); margin: var(--studio-spacing-3) 0; }

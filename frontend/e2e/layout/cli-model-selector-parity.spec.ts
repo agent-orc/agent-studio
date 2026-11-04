@@ -71,12 +71,12 @@ test.describe('CLI + model selector parity across sites', () => {
     await page.waitForTimeout(500);
 
     // Site 1: status-bar defaults chip.
-    const defaultsChip = page.getByTestId('status-bar-defaults');
+    const defaultsChip = page.getByTestId('studio-titlebar-defaults');
     await expect(defaultsChip).toBeVisible();
     await defaultsChip.click();
-    await assertSelectorShape(page, 'status-bar-defaults-picker');
+    await assertSelectorShape(page, 'studio-titlebar-defaults-picker');
     await page.keyboard.press('Escape');
-    await expect(page.getByTestId('status-bar-defaults-picker')).not.toBeVisible();
+    await expect(page.getByTestId('studio-titlebar-defaults-picker')).not.toBeVisible();
 
     // Site 2: create-task dialog agent chip.
     await page.getByRole('button', { name: /add task/i }).first().click();
