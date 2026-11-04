@@ -11,6 +11,36 @@ namespace AgentStudio.Tests;
 public sealed class HostModelCapabilityRecoveryTests
 {
     [Fact]
+    public void Capacity_and_unauthorized_marks_are_host_scoped()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 15, 37, 0, TimeSpan.Zero));
+        var registry = new V1ReviewExecutorRegistry(clock);
+        foreach (var (id, host) in new[] { ("runner-a", "host-a"), ("runner-b", "host-b") })
+            registry.Register(id, new Contract.RegisterRunnerRequest(
+                id, host, id + "-instance", "test", Contract.TaskServerProtocol.Current,
+                [Contract.ReviewCapabilities.CodingExecutor]));
+        registry.MarkModelCapacity("runner-a", "codex", "gpt-6-sol");
+        Assert.Equal(Contract.ModelAcceptanceAdmission.Unavailable,
+            registry.ModelAdmission("runner-a", "runner-a-instance", "codex", "gpt-6-sol"));
+        Assert.Equal(Contract.ModelAcceptanceAdmission.Legacy,
+            registry.ModelAdmission("runner-a", "runner-a-instance", "codex", "gpt-5.6-sol"));
+        Assert.Equal(Contract.ModelAcceptanceAdmission.Legacy,
+            registry.ModelAdmission("runner-b", "runner-b-instance", "codex", "gpt-6-sol"));
+
+        registry.ReportCapabilityFailure("runner-a", new Contract.CapabilityFailureRequest(
+            "runner-a", "runner-a-instance", Contract.CapabilityProtocol.ProviderAuthentication("codex"),
+            "ProviderUnauthorized", "Codex returned 401", clock.GetUtcNow().UtcDateTime,
+            "unauthorized-a"));
+        Assert.True(registry.IsProviderUnauthorized("runner-a", "codex"));
+        Assert.False(registry.IsProviderUnauthorized("runner-b", "codex"));
+        Assert.False(registry.IsProviderUnauthorized("runner-a", "claude"));
+        clock.Advance(TimeSpan.FromMinutes(16));
+        Assert.Equal(Contract.ModelAcceptanceAdmission.Legacy,
+            registry.ModelAdmission("runner-a", "runner-a-instance", "codex", "gpt-6-sol"));
+        Assert.True(registry.IsProviderUnauthorized("runner-a", "codex"));
+    }
+
+    [Fact]
     public void Legacy_host_can_claim_but_advertised_protocol_requires_a_verdict()
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
