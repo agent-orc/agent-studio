@@ -1468,6 +1468,7 @@ public sealed partial class TaskServerStore
         else
             RequireWritable();
         ClaimResponse? response = null;
+        var selectionReceipts = new List<object>();
         if (request.AvailableSlots > 0) await StartWorkspaceQuotaRefreshAsync(QuotaClaimKind.Coding, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
@@ -1825,9 +1826,20 @@ public sealed partial class TaskServerStore
                 continuationIntent = continuationIntent with { Status = "claimed", RunId = runId, Fence = fence };
             }
             if (providerContinuation?.Fallback is { } switched)
+            {
+                var selectionId = TaskServerModelSelectionPoster.NewId();
+                selectionReceipts.Add(new
+                {
+                    id = selectionId, at = now, kind = "switched", consumer = "task-server-claim",
+                    host = request.RunnerId, taskKey = task.TaskKey, attemptId = runId,
+                    @from = new { cliType = switched.CliType, model = switched.From, thinkingLevel = switched.ThinkingLevel },
+                    to = new { cliType = switched.CliType, model = switched.To, thinkingLevel = switched.ThinkingLevel },
+                    rule = switched.Reason, reason = $"Provider rejected {switched.From}; selected {switched.To}.",
+                });
                 await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
                     "model.switched", new
                     {
+                        selectionEventId = selectionId,
                         provider = switched.CliType,
                         from = switched.From,
                         to = switched.To,
@@ -1835,14 +1847,29 @@ public sealed partial class TaskServerStore
                         rule = switched.Reason,
                         hostRunnerId = request.RunnerId,
                     }, ct);
+            }
             foreach (var capabilityKey in clearedModelCapacity)
+            {
+                var selectionId = TaskServerModelSelectionPoster.NewId();
+                var parts = capabilityKey.Split(':', 3);
+                var provider = parts.Length > 1 ? parts[1] : string.Empty;
+                var model = parts.Length > 2 ? parts[2] : string.Empty;
+                selectionReceipts.Add(new
+                {
+                    id = selectionId, at = now, kind = "health-cleared", consumer = "task-server-claim",
+                    host = request.RunnerId, taskKey = task.TaskKey, attemptId = runId,
+                    @from = new { cliType = provider, model }, to = new { cliType = provider, model },
+                    rule = "model-capacity", reason = "Capacity retry window elapsed.",
+                });
                 await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
                     "model.health-cleared", new
                     {
+                        selectionEventId = selectionId,
                         hostRunnerId = request.RunnerId,
                         capabilityKey,
                         reason = "capacity retry window elapsed",
                     }, ct);
+            }
             await ReserveCanariesAsync(
                 connection,
                 transaction,
@@ -1900,6 +1927,9 @@ public sealed partial class TaskServerStore
                 PlacementReason: placementReason,
                 ContinuationIntent: continuationIntent);
         }, ct);
+        if (_selectionPoster is not null)
+            foreach (var receipt in selectionReceipts)
+                await _selectionPoster.PostAsync(receipt, CancellationToken.None);
         return response!;
     }
 
@@ -2331,6 +2361,7 @@ public sealed partial class TaskServerStore
             effectiveSummary = $"Resumed mechanical round requires a policy-qualified fresh attempt ({request.SessionContinuation!.FallbackReason}).";
         ProviderRejectionRecoveryPlan? providerRecovery = null;
         RunDto? completed = null;
+        var healthReceipts = new List<object>();
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             if (request.OutcomeDecision is not null
@@ -2376,6 +2407,9 @@ public sealed partial class TaskServerStore
 
             var lease = await ReadLeaseAsync(connection, transaction, runId, ct)
                 ?? throw new KeyNotFoundException("Run lease was not found.");
+            var selectionTaskKey = Convert.ToString(await ScalarAsync(connection,
+                "SELECT task_key FROM tasks WHERE id = $task;", ct, transaction,
+                ("$task", lease.TaskId)), CultureInfo.InvariantCulture) ?? lease.TaskId;
             ValidateLeaseReference(lease, request.RunnerId, request.InstanceId, request.LeaseId, request.Fence);
             await EnsureOutboxLeaseCurrentAsync(
                 connection,
@@ -2462,9 +2496,20 @@ public sealed partial class TaskServerStore
                 var expiresAt = await RecordModelCapacityAsync(connection, transaction, request.RunnerId,
                     CapabilityProtocol.ModelAcceptance(capacityProvider, capacityModel), now,
                     evidence.LimitedUntil?.UtcDateTime, ct);
+                var selectionId = TaskServerModelSelectionPoster.NewId();
+                healthReceipts.Add(new
+                {
+                    id = selectionId, at = now, kind = "health-marked", consumer = "task-server-recovery",
+                    host = request.RunnerId, taskKey = selectionTaskKey, attemptId = runId,
+                    @from = new { cliType = capacityProvider, model = capacityModel },
+                    to = new { cliType = capacityProvider, model = capacityModel },
+                    rule = "model-capacity", reason = $"{capacityModel} is at capacity until {expiresAt:u}.",
+                    returnToPrimaryAt = expiresAt,
+                });
                 await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
                     lease.Fence, "model.health-marked", new
                     {
+                        selectionEventId = selectionId,
                         hostRunnerId = request.RunnerId,
                         provider = capacityProvider,
                         model = capacityModel,
@@ -2489,9 +2534,20 @@ public sealed partial class TaskServerStore
                             model = providerRecovery.Model,
                             reason = effectiveSummary,
                         }, ct);
+                    var modelUnavailableSelectionId = TaskServerModelSelectionPoster.NewId();
+                    healthReceipts.Add(new
+                    {
+                        id = modelUnavailableSelectionId, at = now, kind = "health-marked",
+                        consumer = "task-server-recovery", host = request.RunnerId,
+                        taskKey = selectionTaskKey, attemptId = runId,
+                        @from = new { cliType = cli, model = providerRecovery.Model },
+                        to = new { cliType = cli, model = providerRecovery.Model },
+                        rule = "model-unavailable", reason = effectiveSummary,
+                    });
                     await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
                         lease.Fence, "model.health-marked", new
                         {
+                            selectionEventId = modelUnavailableSelectionId,
                             hostRunnerId = request.RunnerId,
                             provider = cli,
                             model = providerRecovery.Model,
@@ -2701,6 +2757,9 @@ public sealed partial class TaskServerStore
                 resultHandoff?.Envelope.RepositoryId,
                 BriefVersion: claimedBriefVersion);
         }, ct);
+        if (_selectionPoster is not null)
+            foreach (var receipt in healthReceipts)
+                await _selectionPoster.PostAsync(receipt, CancellationToken.None);
         if (_selectionPoster is not null && providerRecovery?.Fallback is { } selectedFallback)
         {
             var selectionId = TaskServerModelSelectionPoster.NewId();
