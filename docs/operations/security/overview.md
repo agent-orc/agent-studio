@@ -521,8 +521,9 @@ D1, D4, and D11).
 ### Operator operation catalogue, tiers, and standing grants (SM-4)
 
 Every operator session request passes the policy step in
-`AccessSecurityMiddleware` before any role binding is read (security model
-SM-4, decisions SM-D2 option A, SM-D3 option A, and SM-D7 option A).
+`AccessSecurityMiddleware` (security model SM-4, decisions SM-D2 option A,
+SM-D3 option A, and SM-D7 option A). A request outside the catalogue is
+refused before any role binding is read.
 
 - The operation catalogue (`OperatorOperationCatalog`) gives each operation an
   id, exactly one tier, and a scope kind (workspace, project, environment, or
@@ -542,9 +543,12 @@ SM-4, decisions SM-D2 option A, SM-D3 option A, and SM-D7 option A).
   catalogued delete), `history.rewrite`, `gate.bypass` (merge, external
   completion, a move into Human review or Completed), `keys.rotate`,
   `host.enrollment`, `access.change`, `grant.change`, and `catalogue.change`.
-  The policy step refuses every T2 request with `approval-required`; the
-  approval request itself is SM-5. Changing the catalogue is a code change
-  through a card, so it is T2 by construction.
+  A T2 request runs only under the Owner's approval of exactly that request
+  (SM-5, next section); without one it is refused with `approval-required`.
+  A T2 request on access administration or the Task Server plane
+  (`/api/auth/*`, `/api/v1/*`) is refused there and never becomes an approval
+  request, because no operator session may call those routes. Changing the
+  catalogue is a code change through a card, so it is T2 by construction.
 - The operator agent has no operation that pushes a protected branch (D3). A
   change reaches `develop` or `main` as a card through the gate.
 - A T1 request is admitted only under a live standing grant of the operator
@@ -621,6 +625,89 @@ reports, `runner.events` for the Git setup reports. An empty queue answers
 1 minute. It logs the status and refusal code once for each distinct failure,
 logs the repeat count when the failure changes or the poll recovers, and goes
 back to 2 seconds after an answer.
+
+### Owner approval with step-up (SM-5)
+
+A T2 operator request becomes an approval request instead of an effect
+(security model SM-5, decision SM-D8 option A: the Owner decides in Studio
+with step-up; an optional push notification only links there).
+
+- **When it opens.** The policy step defers a T2 request until the route
+  floors and the session's role bindings admit it, so the Owner is asked only
+  about requests that could run. Without an `X-Operator-Approval` header the
+  store opens an approval request and the answer is 403
+  `approval-required` with `approvalId`, `operation`, and `tier`. A retry of
+  the same request from the same session while the request is pending
+  answers the same `approvalId`. One session holds at most 20 open (pending
+  or approved) requests; the next answers 429 `approval-queue-full`. A body
+  too large to digest in full (over 16 MB) answers 403 `approval-unbindable`.
+- **What the Owner sees.** The operation and its tier, the request line
+  (method, path, query), the parameters (the JSON body indented, with the
+  values of secret-like fields such as `value`, `token`, `password`, `key`,
+  or `credential` masked, other bodies through the credential redactor), the
+  parameter digest, the target (project and task), the session actor
+  `operator-agent:<id>/session:<sid>`, the instruction source, and the
+  agent's stated reason. The agent states the source in
+  `X-Operator-Instruction-Source` (`owner-chat`, `card`, `repository-file`,
+  `web-page`, or `log`; anything else is recorded as `unstated`) and the
+  reason in `X-Operator-Reason` (percent-encoded UTF-8, at most 500
+  characters). Every source except `owner-chat` is shown as untrusted
+  content that can propose but never authorize. The masked view is for
+  review only; the digest binds the exact bytes.
+- **Deciding.** Only an active Owner approves or rejects, in Settings →
+  Access → Approval requests. Each decision consumes a fresh step-up
+  (`POST /api/auth/step-up` within the five minutes before, single use);
+  without one the decision is refused with 403 `step-up-required`. The
+  deciding actor is the user of the authenticated Studio session. No header
+  (`X-Client-Id` included) and no body field names it; a bearer principal
+  (service account, API token, or operator session) is refused on these
+  routes even if it sends the Owner's id. The Owner has 15 minutes from the
+  request to decide; afterwards the request is `expired` and a decision
+  answers 409 `approval-expired`. A decision is final (409
+  `approval-decided`).
+- **Running it.** The agent repeats the exact request with
+  `X-Operator-Approval: <id>`. It runs only when the approval belongs to the
+  same operator agent and session, names the same operation, matches the
+  parameter digest (method, path, query, and body), is approved, unused, and
+  within 15 minutes of the decision. The store marks it used under its lock
+  before the handler runs, so a replay or a concurrent copy finds it used.
+  The role bindings still apply. Refusals answer 403 with
+  `approval-not-found` (unknown, or another session's), `approval-pending`,
+  `approval-rejected`, `approval-used`, `approval-expired`,
+  `approval-cancelled`, or `approval-digest-mismatch` (a changed card, query,
+  or body); the approval check answers before the target is resolved, so a
+  replay after the target was deleted still answers `approval-used`. The
+  response status of the admitted request is recorded against the approval
+  (`resultStatus`).
+- **Cancelling.** Revoking the session or disabling the operator agent
+  cancels its open approvals.
+- **Audit.** The IAM stream records `operator-approval.request` (session
+  actor), `.approve` and `.reject` (`human:<owner id>`), `.execute` (with the
+  answer status), and `.cancel`. Every operator request entry that concerned
+  an approval carries `approvalId` next to `policyReason` and the parameter
+  digest.
+- **Notification.** A new request emits one operator-feed event
+  (`operator_approval_requested`) with a link to
+  `#/workspace/settings/access?approval=<id>`. When
+  `OperatorApprovals:Push:Url` is set (HTTPS, or HTTP on loopback), the
+  notifier also posts `approvalId`, `title`, `message`, and `url` as JSON to
+  that endpoint, with the bearer from `OperatorApprovals:Push:TokenFile` if
+  set; `OperatorApprovals:StudioUrl` gives the link its address. The
+  notification carries no token, digest, or decision route, so receiving it
+  approves nothing. Delivery runs off the request path from a bounded queue;
+  a failed delivery is logged and the request stays in Studio.
+
+  | Method and route | Permission | Body and answer |
+  |---|---|---|
+  | `GET /api/auth/iam/operator-approvals?principalId=<opa id>` | `access.read` | Answers every approval, newest first: `id` (`apr_*`), `principalId`, `principalName`, `sessionId`, `actor`, `delegatedBy`, `operation`, `operationTitle`, `tier`, `method`, `path`, `query`, `parameters`, `parameterDigest`, `target`, `instructionSource`, `reason`, `requestedAt`, `expiresAt`, `state` (`pending`, `approved`, `rejected`, `used`, `expired`, or `cancelled`), `decidedBy`, `decidedAt`, `decisionNote`, `approvalExpiresAt`, `usedAt`, `resultStatus`, `cancelledAt`, and `cancelReason`. |
+  | `POST /api/auth/iam/operator-approvals/{id}/approve` | `access.manage`, active Owner, fresh step-up | Takes optional `note` (at most 500 characters). Answers the approval. Refusals: 403 `owner-required`, `step-up-required`, or `human-session-required`; 404 `approval-not-found`; 409 `approval-expired`, `approval-decided`, `approval-cancelled`, or `approval-used`; 400 `invalid-note`. |
+  | `POST /api/auth/iam/operator-approvals/{id}/reject` | `access.manage`, active Owner, fresh step-up | As approve. |
+
+  Settled approvals stay in the identity store for 30 days.
+  `OperatorApprovalFlowTests` cover the end-to-end flow, replay, a changed
+  parameter, another session, expiry, a forged actor header, and the push
+  link; `OperatorApprovalTests` cover the lifecycle matrix, step-up,
+  cancellation, the queue limit, and masking.
 
 ### Operator guardrails on card rounds (AGT-3483)
 

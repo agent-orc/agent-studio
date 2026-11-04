@@ -1048,6 +1048,8 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
 // SM-4: the operator policy step reads gate evidence to classify stage deploys and promotions (D2).
 builder.Services.AddSingleton<AgentStudio.Security.IOperatorGateEvidence, AgentStudio.Security.PostMergeGateEvidence>();
+// SM-5: approval requests of T2 operator requests notify the Owner through the operator feed and an optional push link.
+builder.Services.AddOperatorApprovals();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeIncidentService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeModeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();

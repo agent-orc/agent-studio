@@ -14,6 +14,7 @@ decision D11 option A; see the
 | Operator agent principal (`opa_*`) | Role bindings you choose, no token of its own | Until you disable it |
 | Operator session | One `oas.*` bearer in the agent user's protected file | 1 to 8 hours, renewed only by you |
 | Standing grant | The routine (T1) operations the agent may run, by scope, rate, and window | 7 days by default, at most 30, renewed only by you |
+| Approval | One exact high-risk (T2) request you approved after a second factor | Used once, within 15 minutes of your decision |
 | You, the Owner | Creating the agent, starting, renewing, and revoking sessions and grants | |
 
 Every request the session makes, every audit entry, and every card timeline
@@ -27,9 +28,10 @@ are always allowed to an active session. Routine operations (T1), such as
 requeueing or steering a card, draining or resuming a host, re-running a gate,
 or deploying a gate-verified commit, run only under a standing grant you
 issued. High-risk operations (T2), such as changing secrets, deleting data, or
-bypassing a gate, are refused with `approval-required`. Anything outside the
-operation catalogue is refused with `operation-not-catalogued`. A chat message
-or the agent's memory never grants anything; only grant records do.
+bypassing a gate, wait for your approval of that exact request in Studio
+(security model SM-5). Anything outside the operation catalogue is refused
+with `operation-not-catalogued`. A chat message or the agent's memory never
+grants anything; only grant and approval records do.
 
 ## 1. Create the operator agent in Studio
 
@@ -120,7 +122,61 @@ revokes its grants too. The methods, routes, bodies, and refusal codes behind
 this page are listed in the
 [security overview](../security/overview.md#operator-operation-catalogue-tiers-and-standing-grants-sm-4).
 
-## 5. Renew, end, and review
+## 5. Approve high-risk requests
+
+A high-risk (T2) request of the agent opens an approval request instead of
+running. The agent gets 403 `approval-required` with an `approvalId`.
+
+1. Let the agent say where the instruction came from and why, on the T2
+   request itself:
+
+   ```sh
+   curl -sS -X DELETE \
+     -H "Authorization: Bearer $(cat ~/.config/agent-studio/operator-session)" \
+     -H "X-Operator-Instruction-Source: owner-chat" \
+     -H "X-Operator-Reason: Remove the duplicate card" \
+     "https://studio.example.test/api/tasks/AGT-12?project=PROJ-001"
+   ```
+
+   The source is one of `owner-chat`, `card`, `repository-file`, `web-page`,
+   or `log`; anything else is shown to you as not stated. Percent-encode a
+   reason that is not plain ASCII.
+2. Open **Settings > Access > Approval requests** (the operator feed notice
+   and the optional push notification link there). Each request shows the
+   operation, the request line, the parameters with secret-like values
+   masked, the parameter digest, the target, the session, the instruction
+   source, and the agent's reason. A source other than your own chat is
+   marked as untrusted content: it can propose, never authorize.
+3. Enter an authenticator or recovery code, or leave the field empty to use a
+   passkey, and choose **Approve** or **Reject**. Each decision asks for a
+   fresh second factor. You have 15 minutes from the request.
+4. The agent repeats the exact request with `X-Operator-Approval: <approvalId>`
+   within 15 minutes of your approval. It runs once; the result is recorded
+   against the approval. A replay answers `approval-used`, a changed card,
+   query, or body `approval-digest-mismatch`, a late attempt
+   `approval-expired`, and a request still waiting `approval-pending`.
+
+The approval is bound to the session that asked; another session gets
+`approval-not-found`. Revoking the session or disabling the agent cancels its
+open approvals. Nothing the agent sends names who approved: Studio records
+your session's user.
+
+Optional push notification: set the address Studio is reached at and an
+HTTPS endpoint that forwards JSON (`approvalId`, `title`, `message`, `url`)
+to your phone, for example a self-hosted notification relay:
+
+```sh
+OperatorApprovals__StudioUrl=https://studio.example.test
+OperatorApprovals__Push__Url=https://push-relay.example.test/studio-approvals
+OperatorApprovals__Push__TokenFile=/run/secrets/approval-push-token
+```
+
+The notification only links to the request; opening it still needs your
+Studio sign-in and a second factor to decide. The routes, fields, and
+refusal codes are listed in the
+[security overview](../security/overview.md#owner-approval-with-step-up-sm-5).
+
+## 6. Renew, end, and review
 
 - **Renew** extends an active session to at most 8 hours from now. Only you
   can renew; the agent cannot.
