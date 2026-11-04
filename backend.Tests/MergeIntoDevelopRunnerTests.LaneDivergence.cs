@@ -14,6 +14,125 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed partial class MergeIntoDevelopRunnerTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void LaneDivergence_NetChangeAlreadyOnOrigin_RestartsAndKeepsBackup(bool legacySubject)
+    {
+        var (repo, remote, source, laneTip) = SeedNetChangeLane("net-contained-" + legacySubject, legacySubject);
+        RunGit(repo, "checkout -q -b operator develop");
+        RunGit(repo, "merge -q --no-ff -m \"Operator delivery merge\" task/source");
+        File.WriteAllText(Path.Combine(repo, "operator.txt"), "operator work");
+        Commit(repo, "chore: operator work");
+        RunGit(repo, "push -q origin operator:develop");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, _, _) = BuildWithSettings(repo);
+        var worktree = new IntegrationWorktreeProvider(git).Resolve(repo, "develop").Path!;
+        var healed = git.SynchronizeIntegrationBranch(worktree, "develop");
+
+        Assert.Equal(IntegrationBranchSyncOutcome.FastForwarded, healed.Outcome);
+        Assert.Equal(RemoteSha(remote, "develop"), RunGit(repo, $"rev-parse {GitService.IntegrationLaneRef("develop")}").Out.Trim());
+        Assert.Equal(laneTip, RunGit(repo, $"rev-parse {GitService.IntegrationLaneBackupRef("develop", laneTip)}").Out.Trim());
+        var dropped = Assert.Single(healed.LaneCommits!);
+        Assert.Equal(source, dropped.DeliverySha);
+        Assert.Equal(LaneCommitStatus.Contained, dropped.Status);
+    }
+
+    [Fact]
+    public void LaneDivergence_NetChangeNotOnOrigin_StallsWithItsCard()
+    {
+        var (repo, _, source, laneTip) = SeedNetChangeLane("net-unpublished", legacySubject: false);
+        PublishUnrelatedOriginCommit(repo);
+        var (git, _, _) = BuildWithSettings(repo);
+        var worktree = new IntegrationWorktreeProvider(git).Resolve(repo, "develop").Path!;
+        var lineage = new FixedLaneLineage(laneTip, source, new LaneDeliveryCard("AGT-3435", source));
+
+        var stalled = git.SynchronizeIntegrationBranch(worktree, "develop", lineage: lineage);
+
+        Assert.Equal(IntegrationBranchSyncOutcome.Diverged, stalled.Outcome);
+        Assert.Equal(laneTip, RunGit(repo, $"rev-parse {GitService.IntegrationLaneRef("develop")}").Out.Trim());
+        var unpublished = Assert.Single(stalled.LaneCommits!);
+        Assert.Equal(LaneCommitStatus.Unpublished, unpublished.Status);
+        Assert.Equal("AGT-3435", unpublished.CardKey);
+        Assert.Contains("AGT-3435", stalled.Error);
+    }
+
+    [Fact]
+    public void LaneDivergence_NetChangeWithPublishedSuccessor_RestartsAtOrigin()
+    {
+        var (repo, remote, source, laneTip) = SeedNetChangeLane("net-superseded", legacySubject: false);
+        RunGit(repo, "checkout -q -b operator develop");
+        File.WriteAllText(Path.Combine(repo, "source.txt"), "newer delivery");
+        Commit(repo, "feat: newer card delivery");
+        var successor = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "push -q origin operator:develop");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, _, _) = BuildWithSettings(repo);
+        var worktree = new IntegrationWorktreeProvider(git).Resolve(repo, "develop").Path!;
+        var lineage = new FixedLaneLineage(laneTip, source, new LaneDeliveryCard("AGT-3435", successor));
+
+        var healed = git.SynchronizeIntegrationBranch(worktree, "develop", lineage: lineage);
+
+        Assert.Equal(IntegrationBranchSyncOutcome.FastForwarded, healed.Outcome);
+        Assert.Equal(RemoteSha(remote, "develop"), RunGit(repo, $"rev-parse {GitService.IntegrationLaneRef("develop")}").Out.Trim());
+        Assert.Equal(laneTip, RunGit(repo, $"rev-parse {GitService.IntegrationLaneBackupRef("develop", laneTip)}").Out.Trim());
+        var dropped = Assert.Single(healed.LaneCommits!);
+        Assert.Equal(LaneCommitStatus.Superseded, dropped.Status);
+        Assert.Equal("AGT-3435", dropped.CardKey);
+        Assert.Equal(successor, dropped.SuccessorSha);
+    }
+
+    [Fact]
+    public void LaneDivergence_ForeignSingleParentCommit_Stalls()
+    {
+        var (repo, _, _, _) = SeedNetChangeLane("foreign-commit", legacySubject: false);
+        var baseTip = RunGit(repo, "rev-parse develop").Out.Trim();
+        var tree = RunGit(repo, "rev-parse task/source^{tree}").Out.Trim();
+        var foreign = RunGit(repo, $"commit-tree {tree} -p {baseTip} -m \"Foreign lane commit\"").Out.Trim();
+        RunGit(repo, $"update-ref {GitService.IntegrationLaneRef("develop")} {foreign}");
+        PublishUnrelatedOriginCommit(repo);
+        var (git, _, _) = BuildWithSettings(repo);
+        var worktree = new IntegrationWorktreeProvider(git).Resolve(repo, "develop").Path!;
+
+        var stalled = git.SynchronizeIntegrationBranch(worktree, "develop");
+
+        Assert.Equal(IntegrationBranchSyncOutcome.Diverged, stalled.Outcome);
+        var unpublished = Assert.Single(stalled.LaneCommits!);
+        Assert.Null(unpublished.DeliverySha);
+        Assert.Equal(LaneCommitStatus.Unpublished, unpublished.Status);
+        Assert.Equal(foreign, RunGit(repo, $"rev-parse {GitService.IntegrationLaneRef("develop")}").Out.Trim());
+    }
+
+    private (string Repo, string Remote, string Source, string LaneTip) SeedNetChangeLane(
+        string name, bool legacySubject)
+    {
+        var (repo, remote) = SeedRepoWithOrigin(name);
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "push -q -u origin develop");
+        var baseTip = RunGit(repo, "rev-parse develop").Out.Trim();
+        RunGit(repo, "checkout -q -b task/source");
+        File.WriteAllText(Path.Combine(repo, "source.txt"), "delivery work");
+        Commit(repo, "feat: source delivery");
+        var source = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        var message = $"Integrate net change from {source[..9]}";
+        var trailer = legacySubject ? "" : $" -m \"Agent-Studio-Net-Change-Of: {source}\"";
+        var laneTip = RunGit(repo, $"commit-tree {source}^{{tree}} -p {baseTip} -m \"{message}\"{trailer}").Out.Trim();
+        RunGit(repo, $"update-ref {GitService.IntegrationLaneRef("develop")} {laneTip}");
+        return (repo, remote, source, laneTip);
+    }
+
+    private static void PublishUnrelatedOriginCommit(string repo)
+    {
+        RunGit(repo, "checkout -q -b operator develop");
+        File.WriteAllText(Path.Combine(repo, "operator.txt"), "unrelated work");
+        Commit(repo, "chore: unrelated origin work");
+        RunGit(repo, "push -q origin operator:develop");
+        RunGit(repo, "checkout -q develop");
+    }
+
     [Fact]
     public void LaneDivergence_ExternalPushContainsTheLaneDelivery_BacksUpLaneAndContinues()
     {

@@ -525,6 +525,8 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         Assert.Equal(before, result.PreviousIntegrationSha);
         Assert.Equal(result.MergedSha, RunGit(repo, "rev-parse develop").Out.Trim());
         Assert.Equal(before, RunGit(repo, $"rev-parse {result.MergedSha}^1").Out.Trim());
+        Assert.Contains($"Agent-Studio-Net-Change-Of: {resultSha}",
+            RunGit(repo, $"show -s --format=%B {result.MergedSha}").Out);
         Assert.NotEqual(0, RunGit(repo, $"merge-base --is-ancestor {resultSha} develop").Code);
         Assert.Equal(resultSha, RunGit(repo, "rev-parse task/net").Out.Trim());
         Assert.Contains(result.RebasedCommits, item => item.OriginalSha == resultSha && item.RebasedSha == result.MergedSha);
