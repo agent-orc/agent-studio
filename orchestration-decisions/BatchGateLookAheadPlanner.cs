@@ -8,6 +8,13 @@ public static class BatchGateLookAheadPlanner
     /// <summary>Reason of a batch closed instead of a per-task gate because the gate queue is backlogged.</summary>
     public const string BacklogReason = "gate backlog: batch preferred over a per-task gate";
 
+    /// <summary>
+    /// Reason of a hold for queued cards that wait for their batch pre-check
+    /// instead of a per-task gate (AGT-3466).
+    /// </summary>
+    public const string QueuedPartnersReason =
+        "queued cards wait for their batch pre-check: the next batch takes this card instead of a per-task gate";
+
     /// <summary>Deadlines a card may wait behind a gate backlog before it takes its own gate.</summary>
     public const int BacklogAgeOutDeadlines = 2;
 
@@ -31,6 +38,20 @@ public static class BatchGateLookAheadPlanner
         => loadClear && !batchRunning && perTaskGates == 0 && slotsBusy < slotsTotal;
 
     /// <summary>
+    /// AGT-3466: per-task gates share the gate host with the batch. At most
+    /// one slot fewer than the host has runs a per-task gate at once, so one
+    /// slot stays free for the batch, the rule the batch pre-check follows. A
+    /// one-slot host still runs one per-task gate; without a known slot count
+    /// there is no limit.
+    /// </summary>
+    public static int PerTaskGateLimit(int slotsTotal)
+        => slotsTotal <= 0 ? int.MaxValue : Math.Max(1, slotsTotal - 1);
+
+    /// <summary>True while another per-task gate may start under <see cref="PerTaskGateLimit"/>.</summary>
+    public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
+        => perTaskGates < PerTaskGateLimit(slotsTotal);
+
+    /// <summary>
     /// Plans one scope. The decision names the waiting cards it considered, so
     /// an authority that applies it later can tell which cards it did not know.
     /// </summary>
@@ -49,7 +70,9 @@ public static class BatchGateLookAheadPlanner
             waiting.Where(ready => Overlaps(ready.Paths, card.Paths))
                 .Select(ready => ready.TaskKey).ToArray())).ToArray();
         if (waiting.Length == 0)
-            return new("idle", "no eligible cards", null, [], 0, upcoming);
+            return input.QueuedPartners > 0
+                ? new("wait", QueuedPartnersReason, null, [], 0, upcoming)
+                : new("idle", "no eligible cards", null, [], 0, upcoming);
 
         var riskLimit = HighRiskLimit(input.RiskPolicy);
         var ordered = Order(waiting, input.Overlap)
@@ -98,6 +121,14 @@ public static class BatchGateLookAheadPlanner
         if (candidates.Length < input.MinimumSize && input.GateBacklog && due && !agedOut && !input.CloseNow)
             return new("wait", "gate backlog: waiting for a batch partner instead of a per-task gate",
                 arriving.First().ReadyAtUtc, candidates.Select(card => card.TaskKey).ToArray(), target, upcoming);
+        // AGT-3466: a card past its deadline without an eligible partner waits
+        // for the queued cards that only lack their pre-check; they reach the
+        // batch at their own deadline at the latest. Before AGT-3466 each of
+        // them took a per-task gate when it became eligible alone.
+        if (candidates.Length < input.MinimumSize && !urgent && !input.CloseNow
+            && candidates.Length + input.QueuedPartners >= input.MinimumSize)
+            return new("wait", QueuedPartnersReason, null,
+                candidates.Select(card => card.TaskKey).ToArray(), target, upcoming);
         if (candidates.Length < input.MinimumSize)
             return new("per-task", "close condition reached below minimum batch size",
                 null, [oldest.TaskKey], input.MinimumSize, upcoming);

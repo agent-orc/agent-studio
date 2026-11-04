@@ -36,7 +36,8 @@ public sealed class BatchGateSnapshotBuilder
 
     public BatchPlanInput Build(string project, string branch,
         IReadOnlyList<BatchGatePendingRecord> waiting, BatchGateFormationOptions options,
-        DateTimeOffset now, bool closeNow = false, bool idleGateHost = false, bool gateBacklog = false)
+        DateTimeOffset now, bool closeNow = false, bool idleGateHost = false, bool gateBacklog = false,
+        int queuedPartners = 0)
     {
         var history = History(project);
         var ready = waiting.Where(item => PendingExclusion(item) is null).Select(item =>
@@ -85,7 +86,7 @@ public sealed class BatchGateSnapshotBuilder
         return new BatchPlanInput(now, ready, reviews.Concat(coding).ToArray(),
             options.MinimumSize, options.MaximumSize, options.DeadlineMinutes,
             options.LookAheadMinutes, options.EffectiveUrgentTags, options.RiskPolicy,
-            options.Overlap, closeNow, idleGateHost, gateBacklog);
+            options.Overlap, closeNow, idleGateHost, gateBacklog, queuedPartners);
     }
 
     /// <summary>

@@ -32,17 +32,27 @@ public sealed partial class BatchGatePilotServiceTests
             var running = Assert.Single(store.ListRecoverableManifests());
             Assert.Equal(BatchPhase.Running, store.LatestState(running.BatchId).Phase);
 
+            // Seed reviews in the past without advancing the lease clock past
+            // its two-minute TTL while the fake gate is still running.
+            var gateStartedAt = _clock;
+            _clock = gateStartedAt.AddMinutes(-46);
             SeedMember(factory, "CODE-WAIT-1", "src/wait-1.cs");
-            _clock = _clock.AddSeconds(1);
+            _clock = gateStartedAt.AddSeconds(1);
+            await pilot.TickAsync(CancellationToken.None);
+            Assert.DoesNotContain(store.ListRecoverableManifests(), manifest =>
+                store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed);
+
+            _clock = gateStartedAt.AddMinutes(-46).AddSeconds(1);
             SeedMember(factory, "CODE-WAIT-2", "src/wait-2.cs");
-            pilot.RequestCloseNow(ProjectName);
+            _clock = gateStartedAt.AddSeconds(2);
             await pilot.TickAsync(CancellationToken.None);
             var initialWait = Assert.Single(store.ListRecoverableManifests().Where(manifest =>
                 store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed));
             Assert.Equal(["CODE-WAIT-1", "CODE-WAIT-2"],
                 initialWait.Members.Select(member => member.TaskKey));
+            _clock = gateStartedAt.AddMinutes(-46).AddSeconds(2);
             SeedMember(factory, "CODE-WAIT-3", "src/wait-3.cs");
-            _clock = _clock.AddSeconds(1);
+            _clock = gateStartedAt.AddSeconds(3);
             await pilot.TickAsync(CancellationToken.None);
             Assert.Equal(BatchPhase.Running, store.LatestState(running.BatchId).Phase);
 

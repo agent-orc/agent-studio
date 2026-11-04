@@ -502,7 +502,8 @@ For the threshold planner, while a project gate holds the lease, newly eligible
 cards can join a formed batch that has not started. The pilot closes a
 replacement snapshot with the largest compatible membership up to
 `maximumSize` and retires the earlier
-formed snapshot. When the lease frees, it starts the largest formed batch.
+formed snapshot. A lone card past its deadline waits for a partner while the
+project gate is busy. When the lease frees, the pilot starts the largest formed batch.
 With `overlap: separate`, cards touching a selected member's file wait for a
 different batch. The state response includes each batch's `exclusions` with
 the rule and conflicting file paths, and `formationReason` explains why a
@@ -636,7 +637,12 @@ review report or a tick that meets a running fallback waits for it instead of
 starting a second gate. The card marker records that per-card gate as active
 with a start count; a marker still active with no gate running in the process
 (restart, or a gate that threw) is resumed on the next tick, and after two
-interrupted starts the card escalates as `GateInfra`. A batch that pauses (a second
+interrupted starts the card escalates as `GateInfra`. Across all review
+generations of the process, at most one gate slot fewer than the gate host has
+runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
+slot before they choose their merged candidate, so the batch slot stays free. A
+formed batch whose base moved before replay closes again with the same members
+on the new base, and its members do not reach a per-task gate. A batch that pauses (a second
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
 unexpected fault) keeps `Paused` in its state history; on the next tick the
 worker returns every member it still owns to that per-card gate and records the

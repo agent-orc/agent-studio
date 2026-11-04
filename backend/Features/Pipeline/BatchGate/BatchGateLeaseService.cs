@@ -41,6 +41,16 @@ public sealed class BatchGateLeaseService
         return next;
     }
 
+    public bool IsBusy(BatchGateScope scope)
+    {
+        try
+        {
+            using var guard = Guard(scope);
+            return Read(scope) is { } current && current.ExpiresAtUtc > _now();
+        }
+        catch (IOException) { return true; }
+    }
+
     public BatchCoordinatorLease? Renew(BatchCoordinatorLease lease)
     {
         try

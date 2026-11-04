@@ -2,6 +2,21 @@ namespace AgentStudio.Pipeline;
 
 public sealed partial class BatchGatePilotService
 {
+    private bool ProjectGateBusy(BatchGateScope scope)
+    {
+        lock (_runningBatches)
+            if (_runningBatches.TryGetValue(scope.Project, out var flight)
+                && !flight.IsCompleted) return true;
+        string[] fallbackAttempts;
+        lock (_fallbackFlights)
+            fallbackAttempts = _fallbackFlights.Where(pair => !pair.Value.IsCompleted)
+                .Select(pair => pair.Key).ToArray();
+        if (_store.ListPending().Any(item => item.Subject.Project == scope.Project
+            && fallbackAttempts.Contains(item.ReviewAttemptId, StringComparer.Ordinal)))
+            return true;
+        return _leases.IsBusy(scope);
+    }
+
     private string? WaitingFormationReason(BatchGateManifest proposed,
         BatchGateFormationOptions options)
     {

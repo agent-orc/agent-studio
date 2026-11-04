@@ -231,6 +231,17 @@ and recreate only those enriched nodes while ordinary text appeared stable.
 
 ## Execution Location and Checkout Context
 
+### Chat execution readiness
+
+The existing project and context chat GET responses include `executionReadiness`
+with `ready`, `code`, and `reason`. In the networked profile, readiness requires
+a configured project Runner, a recent Runner chat-work poll, and fresh `ready`
+advertisements for both Codex CLI execution and provider authentication. The
+side sheet shows the reason and the [Runner setup guide](../operations/setup/linux-runner-host.md)
+when readiness is false, and disables the composer before a first question.
+Refresh the chat after fixing setup to check again. The server still refuses a
+turn if placement changes between the readiness read and the send.
+
 Side-sheet chat execution follows the same project assignment that controls
 card pickup. When `remoteExecutionEnabled` and `executionRunner` select a remote
 Runner, project and task chat turns are queued for that Runner. The host

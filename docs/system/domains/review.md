@@ -1352,6 +1352,17 @@ failures in its verdict summary and card review evidence. The review reaches
 suite. New failures reproduced on the candidate charge the card even when
 the baseline was red.
 
+For batch-deferred reviews, `RemoteReviewPlanBuilder` compares the delivered
+test project with its merge base before treating a change to
+`backend.Tests/OrchestratorApi.Tests.csproj` as a verify command inventory edit.
+Adding or removing only `None`, `Content`, or `EmbeddedResource` items with
+optional copy metadata keeps the build-only review and leaves the full suite
+to the batch gate. Package and project references, compile items, target
+frameworks, and test discovery properties still disable deferral. Changes to
+`.agent-studio/project.yml`, `frontend/package.json`, `frontend/angular.json`,
+or `backend/OrchestratorApi.csproj` also disable it. The frozen plan records
+the rule that disabled deferral, and the card's review tool gate cites it.
+
 ## No-change results skip the tool gates (AGT-3079)
 
 A result that changes no path against its merge base with the integration ref

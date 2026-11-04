@@ -18,6 +18,7 @@ public sealed class RemoteChatWorkBrokerTests
     public async Task Assigned_runner_claims_turn_and_completion_preserves_exact_host_checkout()
     {
         var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(), NullLogger<RemoteChatWorkBroker>.Instance);
+        Assert.False(broker.IsRunnerReachable(Route.RunnerId));
         var pending = broker.EnqueueTurnAsync(
             Route,
             "Inspect the repository.",
@@ -35,6 +36,7 @@ public sealed class RemoteChatWorkBrokerTests
 
         var claim = broker.TryClaim(new RemoteChatWorkClaimRequest(
             "runner-01", "agent-runner-01", "agent-runner-01"));
+        Assert.True(broker.IsRunnerReachable(Route.RunnerId));
         Assert.Equal(RemoteChatWorkClaimStatuses.Claimed, claim.Status);
         Assert.NotNull(claim.Work);
         Assert.Equal(Route.RepositoryUrl, claim.Work!.RepositoryUrl);

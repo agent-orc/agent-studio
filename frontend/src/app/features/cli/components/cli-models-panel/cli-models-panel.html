@@ -102,10 +102,19 @@
           <input type="checkbox"
                  [attr.data-testid]="'prefer-fallback-' + g.cliType"
                  [checked]="fallbackStates()[g.cliType]?.state === 'fallback-preferred'"
-                 [disabled]="preferenceSaving() !== null || !hasFallback(g.cliType)"
+                 [disabled]="preferenceSaving() !== null"
                  (change)="setPreferFallback(g.cliType, $any($event.target).checked)" />
           <span>{{ fallbackStateLabel(g.cliType) }}</span>
         </label>
+        @if (effectiveFor(g.cliType).length) {
+          <div class="cli-models__effective" [attr.data-testid]="'effective-routes-' + g.cliType">
+            @for (route of effectiveFor(g.cliType); track route.consumer) {
+              <span>{{ route.consumer }}: {{ route.effective?.cliType ?? 'wait' }}
+                @if (route.effective?.model) { · {{ route.effective?.model }} }
+                ({{ route.rule }})</span>
+            }
+          </div>
+        }
         <app-model-migration-badge [model]="primaryModel(g.cliType)" [pending]="savingCli() === g.cliType"
           testId="cli-models-migration" (apply)="setPrimary(g.cliType, $event)" />
         <button class="cli-models__refresh"
