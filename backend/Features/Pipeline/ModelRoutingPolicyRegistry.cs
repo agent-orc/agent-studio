@@ -1,25 +1,12 @@
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
-public sealed record ModelRoutingVendorOverride
-{
-    public string Model { get; init; } = "";
-    public string ThinkingLevel { get; init; } = "medium";
-}
-
-public sealed record ModelRoutingTier
-{
-    public string Id { get; init; } = "";
-    public int Rank { get; init; }
-    public string Model { get; init; } = "";
-    public string ThinkingLevel { get; init; } = "medium";
-    public int EstimatedSavingsPercent { get; init; }
-    public Dictionary<string, ModelRoutingVendorOverride> VendorOverrides { get; init; } =
-        new(StringComparer.OrdinalIgnoreCase);
-}
+// ModelRoutingVendorOverride and ModelRoutingTier live in the contracts package
+// (ModelSelection/ModelRoutingTierContracts.cs) with the shared planner.
 
 public sealed record ModelRoutingTaskTypeDefault
 {
@@ -35,13 +22,7 @@ public sealed record ModelRoutingEconomyMode
     public string Label { get; init; } = "Economy mode";
 }
 
-public sealed record ProviderRejectionModelFallback
-{
-    public string CliType { get; init; } = "";
-    public string FromModel { get; init; } = "";
-    public string ToModel { get; init; } = "";
-    public string Reason { get; init; } = "";
-}
+// ProviderRejectionModelFallback lives in the contracts package as well.
 
 public sealed record ModelRoutingPolicyDocument
 {
@@ -192,15 +173,13 @@ public sealed class ModelRoutingPolicyRegistry
     public ProviderRejectionModelFallback? ProviderRejectionFallback(
         string? cliType,
         string? model)
-    {
-        var normalizedModel = ModelMetadataRegistry.NormalizeId(model);
-        return Policy.ProviderRejectionFallbacks.FirstOrDefault(candidate =>
-            string.Equals(candidate.CliType, CliTypes.Normalize(cliType), StringComparison.OrdinalIgnoreCase)
-            && string.Equals(
-                ModelMetadataRegistry.NormalizeId(candidate.FromModel),
-                normalizedModel,
-                StringComparison.OrdinalIgnoreCase));
-    }
+        => ModelSelectionPlanner.RejectionSibling(
+            Policy.ProviderRejectionFallbacks,
+            candidate => (candidate.CliType, candidate.FromModel),
+            cliType,
+            model,
+            ModelMetadataRegistry.NormalizeId,
+            value => CliTypes.Normalize(value));
 
     /// <summary>
     /// Computes only the hard correctness floor. It deliberately ignores live
@@ -238,46 +217,8 @@ public sealed class ModelRoutingPolicyRegistry
     /// sibling substitution, not an economy downgrade.
     /// </summary>
     public bool RouteMeetsFloor(string model, string? thinkingLevel, ModelRoutingTier? floor)
-    {
-        if (floor is null) return true;
-        var normalizedModel = ModelMetadataRegistry.NormalizeId(model);
-        var normalizedThinking = thinkingLevel?.Trim().ToLowerInvariant();
-        var rank = Policy.Tiers
-            .Where(tier => RouteMatchesTier(tier, normalizedModel, normalizedThinking))
-            .Select(tier => (int?)tier.Rank)
-            .Max();
-        return rank is not null && rank.Value >= floor.Rank;
-    }
-
-    private static bool RouteMatchesTier(
-        ModelRoutingTier tier,
-        string? model,
-        string? thinkingLevel)
-    {
-        static string FamilyEquivalent(string? value) => value switch
-        {
-            ModelIds.ClaudeOpus48 or ModelIds.ClaudeOpus47 or ModelIds.ClaudeOpus46 or ModelIds.ClaudeOpus45
-                => ModelIds.ClaudeOpus5,
-            ModelIds.ClaudeSonnet46 or ModelIds.ClaudeSonnet45 => ModelIds.ClaudeSonnet5,
-            ModelIds.Gpt56Sol => ModelIds.Gpt6Sol,
-            ModelIds.Gpt56Luna => ModelIds.Gpt6Luna,
-            _ => value ?? string.Empty,
-        };
-
-        var route = tier.VendorOverrides.Values
-            .Append(new ModelRoutingVendorOverride { Model = tier.Model, ThinkingLevel = tier.ThinkingLevel });
-        return route.Any(candidate =>
-            string.Equals(FamilyEquivalent(ModelMetadataRegistry.NormalizeId(candidate.Model)), FamilyEquivalent(model), StringComparison.OrdinalIgnoreCase)
-            && ThinkingAtLeast(thinkingLevel, candidate.ThinkingLevel));
-    }
-
-    private static bool ThinkingAtLeast(string? actual, string required)
-    {
-        string[] order = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
-        var actualRank = Array.FindIndex(order, value => string.Equals(value, actual, StringComparison.OrdinalIgnoreCase));
-        var requiredRank = Array.FindIndex(order, value => string.Equals(value, required, StringComparison.OrdinalIgnoreCase));
-        return actualRank >= 0 && requiredRank >= 0 && actualRank >= requiredRank;
-    }
+        => ModelSelectionPlanner.RouteMeetsFloor(
+            Policy.Tiers, model, thinkingLevel, floor, ModelMetadataRegistry.NormalizeId);
 
     private static ModelRoutingTier Stronger(ModelRoutingTier? left, ModelRoutingTier right)
         => left == null || right.Rank > left.Rank ? right : left;
@@ -335,14 +276,12 @@ public sealed class ModelRoutingPolicyRegistry
     /// </summary>
     private CliModelInfo? FindWithDeclaredSiblings(IReadOnlyList<CliModelInfo> available, string modelId)
     {
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (var candidate = modelId; !string.IsNullOrWhiteSpace(candidate) && visited.Add(candidate);)
+        foreach (var candidate in ModelSelectionPlanner.SiblingChain(
+                     Policy.ProviderRejectionFallbacks, fallback => (fallback.FromModel, fallback.ToModel), modelId))
         {
             var match = available.FirstOrDefault(model =>
                 string.Equals(model.Id, candidate, StringComparison.OrdinalIgnoreCase));
             if (match != null) return match;
-            candidate = Policy.ProviderRejectionFallbacks.FirstOrDefault(fallback =>
-                string.Equals(fallback.FromModel, candidate, StringComparison.OrdinalIgnoreCase))?.ToModel;
         }
         return null;
     }

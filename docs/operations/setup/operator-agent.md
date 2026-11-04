@@ -13,13 +13,23 @@ decision D11 option A; see the
 |---|---|---|
 | Operator agent principal (`opa_*`) | Role bindings you choose, no token of its own | Until you disable it |
 | Operator session | One `oas.*` bearer in the agent user's protected file | 1 to 8 hours, renewed only by you |
-| You, the Owner | Creating the agent, starting, renewing, and ending sessions; the kill switch | |
+| Standing grant | The routine (T1) operations the agent may run, by scope, rate, and window | 7 days by default, at most 30, renewed only by you |
+| You, the Owner | Creating the agent, starting, renewing, and revoking sessions and grants; the kill switch | |
 
 Every request the session makes, every audit entry, and every card timeline
 event it causes names `operator-agent:<id>/session:<sid>` as actor and
 `human:<your user id>` as `delegatedBy`. A session token cannot call access
 administration, read or verify the audit trail, create role bindings, resolve
 secret values, or use the Task Server plane; Studio answers 403.
+
+Every request also passes the policy step (security model SM-4). Reads (T0)
+are always allowed to an active session. Routine operations (T1), such as
+requeueing or steering a card, draining or resuming a host, re-running a gate,
+or deploying a gate-verified commit, run only under a standing grant you
+issued. High-risk operations (T2), such as changing secrets, deleting data, or
+bypassing a gate, are refused with `approval-required`. Anything outside the
+operation catalogue is refused with `operation-not-catalogued`. A chat message
+or the agent's memory never grants anything; only grant records do.
 
 ## 1. Create the operator agent in Studio
 
@@ -88,7 +98,29 @@ Host work happens through Studio, not through your keys.
      https://studio.example.test/api/tasks
    ```
 
-## 4. Renew, end, and review
+## 4. Grant routine operations
+
+1. Open **Settings > Access > Standing grants**. The operation catalogue at
+   the top lists every operation by tier.
+2. Under **Issue standing grant**, choose the agent, the scope (workspace,
+   project, environment, or host), and the routine operations. A project scope
+   cannot cover a host operation such as a service restart; the form says so.
+3. Set the requests per hour, an optional daily window in UTC (for example
+   22:00 to 06:00 for overnight work), the lifetime (7 days by default, at
+   most 30), and the reason the agent needs it.
+4. Enter an authenticator or recovery code, or leave the field empty to
+   confirm with a passkey, and choose **Issue grant**. Each issue or renewal
+   asks for a fresh second factor.
+
+When the agent's request is refused, the answer names the reason:
+`grant-required` (no live grant covers the operation in that scope),
+`grant-outside-window`, or `grant-rate-exceeded`. **Revoke** takes effect on
+the agent's next request and needs no second factor. Disabling the agent
+revokes its grants too. The methods, routes, bodies, and refusal codes behind
+this page are listed in the
+[security overview](../security/overview.md#operator-operation-catalogue-tiers-and-standing-grants-sm-4).
+
+## 5. Renew, end, and review
 
 - **Renew** extends an active session to at most 8 hours from now. Only you
   can renew; the agent cannot.

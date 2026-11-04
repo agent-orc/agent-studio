@@ -1,0 +1,125 @@
+<div class="grants" data-testid="access-standing-grants">
+  @if (grantsService.error(); as message) { <p class="access-error" role="alert" data-testid="access-grant-error">{{ message }}</p> }
+  <ul class="grants__catalogue" data-testid="access-operator-catalogue" aria-label="Operation catalogue">
+    @for (group of tiers(); track group.tier) {
+      <li [attr.data-testid]="'access-catalogue-' + group.tier">
+        <span class="access-badge" [attr.data-tier]="group.tier">{{ tierText(group.tier) }}</span>
+        <span class="grants__operations">
+          @for (operation of group.operations; track operation.id) {
+            <span class="grants__operation" [attr.title]="operation.id">{{ operation.title }}</span>
+          }
+        </span>
+      </li>
+    }
+  </ul>
+  <p class="access-hint">T0 is always allowed to an active session. T1 runs only under a live grant below. T2 waits for your approval of the exact request. Anything outside the catalogue is refused.</p>
+
+  @if (grants().length) {
+    <div class="grants__scroll">
+      <table data-testid="access-grants-table">
+        <thead>
+          <tr>
+            <th scope="col">Operator agent</th><th scope="col">Operations</th><th scope="col">Scope</th>
+            <th scope="col" class="access-numeric">Rate</th><th scope="col">Window</th><th scope="col">Expires</th>
+            <th scope="col">State</th><th scope="col">Reason</th><th scope="col"><span class="visually-hidden">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (grant of grants(); track grant.id) {
+            <tr [attr.data-testid]="'access-grant-' + grant.id" [attr.data-state]="grant.state">
+              <td>{{ grant.principalName ?? grant.principalId }}</td>
+              <td>{{ operationTitles(grant) }}</td>
+              <td>{{ scopeText(grant.scope) }}</td>
+              <td class="access-numeric" [attr.title]="grant.usesLastHour + ' used in the last hour'">{{ grant.usesLastHour }} / {{ grant.ratePerHour }} per hour</td>
+              <td>{{ windowText(grant.window) }}</td>
+              <td class="access-numeric" [attr.title]="issuedNote(grant)">{{ time(grant.expiresAt) }}</td>
+              <td><span class="access-badge" [attr.data-tone]="grant.state === 'active' ? 'active' : 'muted'" [attr.title]="grant.revokedAt ? 'Revoked ' + time(grant.revokedAt) + ' by ' + person(grant.revokedBy) : null">{{ stateLabel(grant.state) }}</span></td>
+              <td class="grants__reason">{{ grant.reason }}</td>
+              <td class="access-actions">
+                @if (grant.state === 'active') {
+                  <button type="button" class="access-quiet" [attr.data-testid]="'access-grant-renew-' + grant.id" [disabled]="grantsService.busy()" (click)="renew(grant)">Renew</button>
+                  <button type="button" class="access-quiet" [attr.data-testid]="'access-grant-revoke-' + grant.id" [disabled]="grantsService.busy()" (click)="revoke(grant)">Revoke</button>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  } @else {
+    <p class="access-hint" data-testid="access-grants-empty">No standing grants. Without one, an operator agent can observe but runs no routine operation.</p>
+  }
+
+  @if (agents().length) {
+    <section class="grants__create" aria-labelledby="access-issue-grant-title">
+      <h4 id="access-issue-grant-title">Issue standing grant</h4>
+      <div class="access-row">
+        <label>Operator agent
+          <select data-testid="access-grant-principal" (change)="principal.set($any($event.target).value)">
+            @for (agent of agents(); track agent.id) { <option [value]="agent.id" [selected]="agent.id === principalId()">{{ agent.name }}</option> }
+          </select>
+        </label>
+        <label>Scope
+          <select data-testid="access-grant-scope-kind" (change)="setScopeKind($any($event.target).value)">
+            @for (kind of scopeKinds; track kind) { <option [value]="kind" [selected]="kind === scopeKind()">{{ kind }}</option> }
+          </select>
+        </label>
+        @if (scopeKind() === 'project' || scopeKind() === 'environment') {
+          <label>Project
+            <input data-testid="access-grant-project" [value]="project()" (input)="project.set($any($event.target).value)" />
+          </label>
+        }
+        @if (scopeKind() === 'environment') {
+          <label>Environment
+            <select data-testid="access-grant-environment" (change)="environment.set($any($event.target).value)">
+              @for (name of environments; track name) { <option [value]="name" [selected]="name === environment()">{{ name }}</option> }
+            </select>
+          </label>
+        }
+        @if (scopeKind() === 'host') {
+          <label>Host
+            <input data-testid="access-grant-host" [value]="host()" (input)="host.set($any($event.target).value)" />
+          </label>
+        }
+      </div>
+      <fieldset class="grants__choices">
+        <legend>Routine operations</legend>
+        @for (operation of routine(); track operation.id) {
+          <label class="grants__choice">
+            <input type="checkbox" [attr.data-testid]="'access-grant-operation-' + operation.id" [checked]="selected().has(operation.id)" (change)="toggle(operation.id, $any($event.target).checked)" />
+            {{ operation.title }} @if (scopeHint(operation); as hint) { <span class="grants__scope">({{ hint }})</span> }
+          </label>
+        }
+      </fieldset>
+      @if (uncovered().length) {
+        <p class="access-hint" data-testid="access-grant-uncovered">A {{ scopeKind() }} scope cannot cover {{ uncoveredTitles() }}.</p>
+      }
+      <div class="access-row">
+        <label>Requests per hour
+          <input type="number" min="1" [attr.max]="catalogue()?.maxRatePerHour ?? 120" data-testid="access-grant-rate" [value]="ratePerHour()" (input)="setRate($any($event.target).value)" />
+        </label>
+        <label>Window start (UTC)
+          <input type="time" data-testid="access-grant-window-start" [value]="windowStart()" (input)="windowStart.set($any($event.target).value)" />
+        </label>
+        <label>Window end (UTC)
+          <input type="time" data-testid="access-grant-window-end" [value]="windowEnd()" (input)="windowEnd.set($any($event.target).value)" />
+        </label>
+        <label>Lifetime
+          <select data-testid="access-grant-lifetime" (change)="setDays($any($event.target).value)">
+            @for (day of dayOptions(); track day) { <option [value]="'' + day" [selected]="day === lifetime()">{{ day }} {{ day === 1 ? 'day' : 'days' }}</option> }
+          </select>
+        </label>
+      </div>
+      <div class="access-row">
+        <label class="grants__wide">Reason
+          <input data-testid="access-grant-reason" placeholder="Why the operator agent needs this" [value]="reason()" (input)="reason.set($any($event.target).value)" />
+        </label>
+        <label>Second factor code
+          <input data-testid="access-grant-code" autocomplete="one-time-code" placeholder="Empty to use a passkey" [value]="code()" (input)="code.set($any($event.target).value)" />
+        </label>
+        <button type="button" data-testid="access-grant-issue" [disabled]="!canIssue() || grantsService.busy()" (click)="issue()">Issue grant</button>
+      </div>
+      <p class="access-hint">Issuing or renewing a grant asks for a fresh second factor. Renew uses the lifetime above and the code entered here.</p>
+    </section>
+  }
+</div>

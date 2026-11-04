@@ -21,6 +21,7 @@ public sealed record QualityChangeReviewRound(
 public static class QualityChangeReviewStore
 {
     public const string ArtifactName = "change-review-verdict.v1.json";
+    private const string LatestIndexName = "latest-review-index.json";
     private const string Schema = "https://agent-orchestrator.dev/quality/schemas/change-review-verdict.v1.schema.json";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
@@ -60,16 +61,19 @@ public static class QualityChangeReviewStore
                     throw new InvalidDataException("verdict artifact digest differs");
                 using var parsed = JsonDocument.Parse(bytes);
                 var root = parsed.RootElement;
-                if (root.GetProperty("schema").GetString() != Schema
-                    || root.GetProperty("schemaVersion").GetInt32() != 1
-                    || !string.Equals(root.GetProperty("repository").GetString(), repositoryId, StringComparison.Ordinal)
-                    || !string.Equals(root.GetProperty("baseSha").GetString(), baseSha, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(root.GetProperty("headSha").GetString(), headSha, StringComparison.OrdinalIgnoreCase)
-                    || !IsVerdict(root.GetProperty("verdict").GetString())
-                    || string.IsNullOrWhiteSpace(root.GetProperty("policyHash").GetString())
-                    || string.IsNullOrWhiteSpace(root.GetProperty("ruleSetHash").GetString())
-                    || string.IsNullOrWhiteSpace(root.GetProperty("catalogueVersion").GetString())
-                    || root.GetProperty("findings").ValueKind != JsonValueKind.Array)
+                if (ReadString(root, "schema") != Schema
+                    || !root.TryGetProperty("schemaVersion", out var version)
+                    || version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var schemaVersion)
+                    || schemaVersion != 1
+                    || !string.Equals(ReadString(root, "repository"), repositoryId, StringComparison.Ordinal)
+                    || !string.Equals(ReadString(root, "baseSha"), baseSha, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(ReadString(root, "headSha"), headSha, StringComparison.OrdinalIgnoreCase)
+                    || !IsVerdict(ReadString(root, "verdict"))
+                    || string.IsNullOrWhiteSpace(ReadString(root, "policyHash"))
+                    || string.IsNullOrWhiteSpace(ReadString(root, "ruleSetHash"))
+                    || string.IsNullOrWhiteSpace(ReadString(root, "catalogueVersion"))
+                    || !root.TryGetProperty("findings", out var findings)
+                    || findings.ValueKind != JsonValueKind.Array)
                     throw new InvalidDataException("verdict artifact does not match the fenced range");
                 document = root.Clone();
             }
@@ -109,13 +113,12 @@ public static class QualityChangeReviewStore
 
     public static string? LatestVerdict(string taskFolder)
     {
-        var latest = Read(taskFolder).LastOrDefault();
+        var latest = ReadIndex(taskFolder);
         var current = ReviewSubjectStore.Read(taskFolder);
-        if (latest?.Mode != "decide" || latest.Document is not { } document
+        if (latest?.Mode != "decide"
             || current is not null && !string.Equals(current.ResultSha, latest.HeadSha,
                 StringComparison.OrdinalIgnoreCase)) return null;
-        return document.ValueKind == JsonValueKind.Object
-            && document.TryGetProperty("verdict", out var verdict) ? verdict.GetString() : null;
+        return latest.Verdict;
     }
 
     private static void Write(string taskFolder, QualityChangeReviewRound round)
@@ -129,9 +132,47 @@ public static class QualityChangeReviewStore
         {
             File.WriteAllText(temporary, JsonSerializer.Serialize(round, Json));
             File.Move(temporary, path, true);
+            var current = ReadIndex(taskFolder);
+            if (current is null || round.Round > current.Round
+                || round.Round == current.Round && round.ReviewedAtUtc >= current.ReviewedAtUtc)
+            {
+                var index = new LatestIndex(round.Round, round.ReviewedAtUtc, round.HeadSha,
+                    round.Mode, round.Document is { } document ? ReadString(document, "verdict") : null);
+                var indexPath = Path.Combine(directory, LatestIndexName);
+                var indexTemporary = indexPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.WriteAllText(indexTemporary, JsonSerializer.Serialize(index, Json));
+                    File.Move(indexTemporary, indexPath, true);
+                }
+                finally { if (File.Exists(indexTemporary)) File.Delete(indexTemporary); }
+            }
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
+
+    private static LatestIndex? ReadIndex(string taskFolder)
+    {
+        var path = Path.Combine(TaskPaths.ResultsDir(taskFolder), "quality-studio", LatestIndexName);
+        try
+        {
+            return File.Exists(path)
+                ? JsonSerializer.Deserialize<LatestIndex>(File.ReadAllText(path), Json) : null;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException)
+        {
+            SilentCatch.Note(ex, "QualityChangeReviewStore: unreadable latest index");
+            return null;
+        }
+    }
+
+    private static string? ReadString(JsonElement root, string name)
+        => root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() : null;
+
+    private sealed record LatestIndex(int Round, DateTime ReviewedAtUtc, string HeadSha,
+        string Mode, string? Verdict);
 
     private static bool IsVerdict(string? verdict) => verdict is "pass" or "concerns" or "block"
         or "provider-unavailable" or "timeout" or "auth-failure" or "unparseable";

@@ -121,6 +121,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof operato
   }));
   await page.route('**/api/auth/runner-enrollments', route => json(route, []));
   await page.route('**/api/auth/runners', route => json(route, []));
+  await stubGrantRoutes(page);
   return stubOperatorRoutes(page, operatorState());
 }
 
@@ -338,4 +339,138 @@ test('the kill switch turns acute only for a pending revocation, a pending host 
   await expect(killSwitch.getByTestId('access-kill-drill-result')).toContainText('Drill failed: operations-server-unreachable');
   await expect(killSwitch.getByTestId('access-kill-kill_oob')).toContainText('Control plane host');
   await shoot(page, 'section[aria-labelledby="access-kill-switch-title"]', 'operator-kill-switch-alert');
+});
+
+/** SM-4 (AGT-3375): the operation catalogue and the Owner's standing grants, with a step-up per issue or renewal. */
+function grantState() {
+  const grant = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id, principalId: 'opa_release', principalName: 'release-operator', tier: 'T1', operations: ['card.requeue', 'card.steer'],
+    scope: { kind: 'project', project: 'PROJ-001' }, ratePerHour: 6, window: null as { startUtc: string; endUtc: string } | null,
+    issuedBy: 'usr_owner', issuedAt: '2026-11-01T09:00:00Z', expiresAt: '2026-11-08T09:00:00Z', renewedAt: null as string | null,
+    renewedBy: null as string | null, revokedAt: null as string | null, revokedBy: null as string | null,
+    reason: 'Requeue stalled cards', revokeReason: null as string | null, state: 'active', usesLastHour: 2, ...overrides,
+  });
+  return {
+    grant,
+    grants: [
+      grant('sgr_live'),
+      grant('sgr_old', {
+        operations: ['service.restart'], scope: { kind: 'host', project: null, host: 'build-host' }, ratePerHour: 2,
+        issuedAt: '2026-10-20T09:00:00Z', expiresAt: '2026-10-27T09:00:00Z', state: 'expired', usesLastHour: 0,
+        reason: 'Restart the indexer during the migration',
+      }),
+    ],
+    created: [] as Record<string, unknown>[],
+    stepUps: [] as unknown[],
+    renewed: [] as { id: string; days: number }[],
+  };
+}
+
+const catalogue = {
+  operations: [
+    { id: 'observe', tier: 'T0', scopeKind: 'workspace', title: 'Read board, cards, runs, logs, metrics, host status, audit and credential metadata' },
+    { id: 'host.inspect', tier: 'T0', scopeKind: 'host', title: 'Inspect a host' },
+    { id: 'card.requeue', tier: 'T1', scopeKind: 'project', title: 'Requeue a card' },
+    { id: 'card.steer', tier: 'T1', scopeKind: 'project', title: "Steer a card's run" },
+    { id: 'service.restart', tier: 'T1', scopeKind: 'host', title: 'Restart an allowlisted service' },
+    { id: 'host.drain', tier: 'T1', scopeKind: 'host', title: 'Drain a host' },
+    { id: 'gate.rerun', tier: 'T1', scopeKind: 'project', title: 'Re-run a gate' },
+    { id: 'stage.deploy', tier: 'T1', scopeKind: 'environment', title: 'Deploy a gate-verified commit to stage' },
+    { id: 'production.promote', tier: 'T1', scopeKind: 'environment', title: 'Promote a commit with full gate evidence' },
+    { id: 'secrets.change', tier: 'T2', scopeKind: 'project', title: 'Change secrets' },
+    { id: 'gate.bypass', tier: 'T2', scopeKind: 'project', title: 'Bypass a gate' },
+    { id: 'access.change', tier: 'T2', scopeKind: 'workspace', title: 'Change access' },
+    { id: 'grant.change', tier: 'T2', scopeKind: 'workspace', title: 'Change standing grants' },
+  ],
+  defaultGrantDays: 7, maxGrantDays: 30, defaultRatePerHour: 10, maxRatePerHour: 120,
+};
+
+async function stubGrantRoutes(page: Page) {
+  const state = grantState();
+  await page.route(url => url.pathname === '/api/auth/iam/operator-catalogue', route => json(route, catalogue));
+  await page.route(url => url.pathname === '/api/auth/step-up', route => {
+    state.stepUps.push(route.request().postDataJSON());
+    return json(route, {});
+  });
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/standing-grants'), route => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname.split('/').slice(5);
+    if (request.method() === 'GET') return json(route, state.grants);
+    if (path.length === 0) {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      state.created.push(body);
+      const created = state.grant('sgr_new', {
+        operations: body['operations'], scope: body['scope'], ratePerHour: body['ratePerHour'], window: body['window'],
+        reason: body['reason'], issuedAt: '2026-11-02T09:10:00Z', expiresAt: '2026-11-16T09:10:00Z', usesLastHour: 0,
+      });
+      state.grants.unshift(created);
+      return json(route, created);
+    }
+    const target = state.grants.find(candidate => candidate.id === path[0])!;
+    if (path[1] === 'renew') {
+      const days = (request.postDataJSON() as { expiresInDays: number }).expiresInDays;
+      state.renewed.push({ id: target.id, days });
+      Object.assign(target, { renewedAt: '2026-11-02T09:12:00Z', expiresAt: '2026-11-09T09:12:00Z' });
+      return json(route, target);
+    }
+    Object.assign(target, { state: 'revoked', revokedAt: '2026-11-02T09:15:00Z', revokedBy: 'usr_owner' });
+    return json(route, target);
+  });
+  return state;
+}
+
+test('owner issues, renews, and revokes a standing grant with a fresh second factor', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1600 });
+  await stubNetworkedOwner(page);
+  const grants = await stubGrantRoutes(page);
+  const access = await openAccess(page);
+  /** Built at runtime: a one-time code is never a source literal. */
+  const code = String(100_000 + Math.floor(Math.random() * 899_999));
+
+  const section = access.getByTestId('access-standing-grants');
+  await expect(access.getByRole('heading', { name: 'Standing grants' })).toBeVisible();
+  await expect(section.getByTestId('access-catalogue-T0')).toContainText('Inspect a host');
+  await expect(section.getByTestId('access-catalogue-T1')).toContainText('Requeue a card');
+  await expect(section.getByTestId('access-catalogue-T2')).toContainText('Change standing grants');
+  await expect(section.getByTestId('access-grant-operation-secrets.change')).toHaveCount(0);
+  await expect(section.getByTestId('access-grant-sgr_live')).toContainText('2 / 6 per hour');
+  await expect(section.getByTestId('access-grant-sgr_old')).toContainText('Expired');
+  await expect(section.getByTestId('access-grant-renew-sgr_old')).toHaveCount(0);
+
+  await section.getByTestId('access-grant-operation-card.requeue').check();
+  await section.getByTestId('access-grant-operation-service.restart').check();
+  await section.getByTestId('access-grant-project').fill('PROJ-001');
+  await expect(section.getByTestId('access-grant-uncovered')).toContainText('Restart an allowlisted service');
+  await expect(section.getByTestId('access-grant-issue')).toBeDisabled();
+  await section.getByTestId('access-grant-operation-service.restart').uncheck();
+  await section.getByTestId('access-grant-rate').fill('4');
+  await section.getByTestId('access-grant-window-start').fill('22:00');
+  await section.getByTestId('access-grant-window-end').fill('06:00');
+  await section.getByTestId('access-grant-lifetime').selectOption('14');
+  await section.getByTestId('access-grant-reason').fill('Requeue stalled cards overnight');
+  await section.getByTestId('access-grant-code').fill(code);
+  await section.getByTestId('access-grant-issue').click();
+
+  const issued = section.getByTestId('access-grant-sgr_new');
+  await expect(issued).toContainText('22:00 to 06:00 UTC');
+  await expect(issued).toContainText('0 / 4 per hour');
+  expect(grants.stepUps).toEqual([{ code }]);
+  expect(grants.created).toEqual([{
+    principalId: 'opa_release', operations: ['card.requeue'], scope: { kind: 'project', project: 'PROJ-001' },
+    ratePerHour: 4, window: { startUtc: '22:00', endUtc: '06:00' }, expiresInDays: 14, reason: 'Requeue stalled cards overnight',
+  }]);
+  await expect(section.getByTestId('access-grant-code')).toHaveValue('');
+  await shoot(page, 'section[aria-labelledby="access-grants-title"]', 'standing-grants');
+
+  await section.getByTestId('access-grant-code').fill(code);
+  await section.getByTestId('access-grant-renew-sgr_live').click();
+  await expect.poll(() => grants.renewed).toEqual([{ id: 'sgr_live', days: 14 }]);
+  expect(grants.stepUps).toHaveLength(2);
+
+  await section.getByTestId('access-grant-revoke-sgr_new').click();
+  await expect(page.getByTestId('confirm-dialog-detail')).toContainText('release-operator: Requeue a card');
+  await page.getByTestId('confirm-dialog-confirm').click();
+  await expect(issued).toHaveAttribute('data-state', 'revoked');
+  await expect(section.getByTestId('access-grant-revoke-sgr_new')).toHaveCount(0);
+  expect(grants.stepUps).toHaveLength(2);
 });

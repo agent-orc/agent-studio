@@ -121,6 +121,7 @@ public static class IamEndpoints
 
         iam.MapOperatorAgentEndpoints();
         iam.MapOperatorKillSwitchEndpoints();
+        iam.MapStandingGrantEndpoints();
     }
 
     private static void RevokeUsers(AccessSecurityStore store, AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes)
