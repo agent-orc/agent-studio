@@ -2913,6 +2913,102 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(IntegrationVerificationEvidence.IntegrationRecord, verification?.Evidence);
     }
 
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Acceptance_AncestorGate_RequiresEveryLaterPublicationToHaveItsOwnGate(
+        bool gateFirstPublication, bool gateSecondPublication)
+    {
+        var deliverySha = PublishDelivery("ancestor-delivery.txt", "verified delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = deliverySha,
+            IntegrationBranch = "develop",
+            DeliveryShas = [deliverySha],
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+            Reason = "The pre-develop build gate passed on this delivery tree.",
+        });
+
+        var first = PublishLaterCommit("later-first.txt");
+        if (gateFirstPublication)
+            Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+                PassedPublishedGate(first, "AGT-LATER-1")));
+        var second = PublishLaterCommit("later-second.txt");
+        if (gateSecondPublication)
+            Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+                PassedPublishedGate(second, "AGT-LATER-2")));
+
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+        if (gateFirstPublication && gateSecondPublication)
+        {
+            Assert.Equal(MoveJobStatus.Success, accepted.Status);
+            var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+            Assert.Contains(deliverySha, completed.CompletionClaim?.Evidence);
+            Assert.Contains(IntegrationGateJournal.PreDevelopBuildGateStep, completed.CompletionClaim?.Evidence);
+            Assert.Contains(TaskKey, completed.CompletionClaim?.Evidence);
+        }
+        else
+        {
+            Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
+            Assert.Contains(gateSecondPublication ? first : second, accepted.Message);
+        }
+    }
+
+    [Fact]
+    public async Task Acceptance_VerificationTreeOutsideThePublishedBranch_IsRefused()
+    {
+        var deliverySha = PublishDelivery("different-tree.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        RunGit(_repo, "checkout", "-q", "-b", "unrelated-verification", "main");
+        File.WriteAllText(Path.Combine(_repo, "unrelated-verification.txt"), "unrelated\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "unrelated verification tree");
+        var unrelated = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "checkout", "-q", "main");
+        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = unrelated,
+            IntegrationBranch = "develop",
+            DeliveryShas = [deliverySha],
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+        });
+
+        var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
+        Assert.Contains("integrated-unverified", refused.Message);
+        Assert.Contains(unrelated, refused.Message);
+    }
+
+    private string PublishLaterCommit(string name)
+    {
+        RunGit(_repo, "checkout", "-q", "-B", "later-publications", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, name), name + "\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "later published delivery");
+        var sha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        return sha;
+    }
+
+    private static PublishedGateEvidence PassedPublishedGate(string sha, string sourceJobId)
+        => new(Project, "develop", sha, IntegrationGateJournal.PreDevelopBuildGateStep,
+            sourceJobId, nameof(BuildTestGateVerdict.Ok), "passed", sha,
+            DateTimeOffset.UnixEpoch.AddDays(1));
+
     [Fact]
     public async Task OperatorAcceptance_SurvivesWorkerAndRestartBackstop()
     {
