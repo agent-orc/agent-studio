@@ -162,7 +162,7 @@ public sealed partial class AccessSecurityStore
                     tokenName = principal.AccountName, actor = principal.ActorId, createdBy = principal.CreatedBy,
                     method, path, status, sessionId = op.SessionId, delegatedBy = op.DelegatedBy,
                     operation = policy?.Operation?.Id, tier = policy?.Operation?.Tier.ToString(), grantId = policy?.GrantId,
-                    policyReason = policy?.Reason,
+                    approvalId = policy?.ApprovalId, policyReason = policy?.Reason,
                 }
                 : new
                 {
@@ -365,8 +365,10 @@ public sealed partial class AccessSecurityStore
             var account = next.ServiceAccounts.FirstOrDefault(candidate => candidate.Id == id)
                 ?? throw new SecurityOperationException(404, "service-account-not-found", "Service account not found.");
             next.ServiceAccounts[next.ServiceAccounts.IndexOf(account)] = DisabledLocked(account, Now, actingUserId);
+            var cancelled = CancelOpenApprovalsLocked(next, approval => approval.PrincipalId == id, Now, "operator agent disabled");
             SaveLocked(next);
             AppendIamAudit(actingUserId, "service-account.disable", "service-account", id, null);
+            AuditCancelledApprovals(actingUserId, cancelled);
         }
     }
 

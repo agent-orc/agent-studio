@@ -837,6 +837,27 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// Emits one operator-feed notice for a new approval request of an operator
+    /// session (security model SM-5). It links to the request in Settings &gt;
+    /// Access; the decision itself needs the Owner's session and a step-up.
+    /// </summary>
+    public Task EmitOperatorApprovalRequestedAsync(string approvalId, string operation, string message, string link, CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "action",
+            severity: "High",
+            project: null,
+            topic: "operator_approval_requested",
+            summary: TruncateSummary(message),
+            payload: new { approvalId, operation, link },
+            artifacts: [new AgentArtifactRef { Kind = "link", Uri = link, Label = "Open approval request" }],
+            tags: new[] { "operator-approval", $"operation:{operation}" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Emits one operator-feed alarm for an execution host whose agent-host
     /// release has been older than the Stable release for longer than the grace
     /// window (AGT-2826). The caller de-duplicates, so one drift is one event.
