@@ -958,9 +958,11 @@ public static class LeaseEndpoints
                             var promptText = File.Exists(promptPath)
                                 ? File.ReadAllText(promptPath) : string.Empty;
                             return modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
-                        });
-                    var quotaPlan = modelSelection.Select(SelectionCall(
-                        requestedCli, requestedModel, requestedThinking, "remote-coding-claim")).Admission;
+                        },
+                        DecisionKey: req.IdempotencyKey));
+                    var selection = modelSelection.Select(SelectionCall(
+                        requestedCli, requestedModel, requestedThinking, "remote-coding-claim"));
+                    var quotaPlan = selection.Admission;
                     var unauthorizedOnHost = capabilityRegistry.IsProviderUnauthorized(
                         req.RunnerId.Trim(), CliTypes.Normalize(requestedCli));
                     var capacityOnHost = quotaPlan.Outcome == QuotaAdmissionOutcome.HostCapabilityMissing

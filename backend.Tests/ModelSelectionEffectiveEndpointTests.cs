@@ -7,6 +7,7 @@ using AgentStudio.Projects;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -21,6 +22,144 @@ namespace AgentStudio.Tests;
 public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "model-effective-" + Guid.NewGuid().ToString("N"));
+
+    [Theory]
+    [InlineData("quota-fallback", 98, false, "switched", "quota-cap")]
+    [InlineData("quota-wait", 98, true, "waiting", "pin")]
+    [InlineData("host-rejection", 20, false, "refused", "host-capability")]
+    public async Task SelectionServiceDecisionsAppearInEventsApi(
+        string scenario, double used, bool hardPin, string kind, string rule)
+    {
+        var root = Path.Combine(_root, scenario);
+        Directory.CreateDirectory(root);
+        var clock = new MutableClock(new DateTime(2030, 11, 4, 12, 0, 0, DateTimeKind.Utc));
+        var now = clock.GetUtcNow().UtcDateTime;
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = root }).Build();
+        new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance).Write([
+            new QuotaSnapshot { CliType = "claude", FetchedAt = now,
+                Windows = [new QuotaWindow { Label = "Weekly", UsedPct = used,
+                    ResetAt = now.AddDays(3) }] },
+            new QuotaSnapshot { CliType = "codex", FetchedAt = now,
+                Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 10,
+                    ResetAt = now.AddDays(3) }] },
+        ]);
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            builder.UseEnvironment("Test").ConfigureAppConfiguration((_, settings) =>
+                settings.AddInMemoryCollection(new Dictionary<string, string?>
+                    { ["TaskRepository"] = root, ["PublicDemo:Enabled"] = "false" }))
+                .ConfigureTestServices(services => services.Replace(
+                    ServiceDescriptor.Singleton<TimeProvider>(clock))));
+        factory.Services.GetRequiredService<CliQuotaFallbackService>().Set(new CliModelRouteProfile
+        {
+            CliType = "claude", PrimaryModel = "claude-opus-5", FallbackCliType = "codex",
+            FallbackModel = "gpt-6-sol", FallbackThinkingLevel = "high",
+        });
+        var request = new SelectionRequest
+        {
+            Consumer = SelectionConsumers.Coding, Project = "demo", TaskKey = "DEMO-1",
+            IsExplicitPin = true,
+            Pins = new SelectionPins("claude", "claude-opus-5", "high",
+                hardPin ? SelectionPinMode.Hard : SelectionPinMode.Preference),
+            Host = new SelectionHost("host-a"),
+        };
+        var decision = factory.Services.GetRequiredService<ModelSelectionService>().Select(
+            new ModelSelectionCall(request, "remote-coding-claim",
+                HostAccepts: scenario == "host-rejection" ? (_, _) => false : null));
+        Assert.NotNull(decision.Result.LedgerId);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var events = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/model-selection/events?provider=claude&project=demo&consumer=coding&rule={rule}&from=claude-opus-5");
+        var entry = Assert.Single(events.GetProperty("events").EnumerateArray());
+        Assert.Equal(decision.Result.LedgerId, entry.GetProperty("id").GetString());
+        Assert.Equal(kind, entry.GetProperty("kind").GetString());
+        Assert.Equal("claude", entry.GetProperty("from").GetProperty("cliType").GetString());
+        Assert.Equal("high", entry.GetProperty("from").GetProperty("thinkingLevel").GetString());
+        if (kind == "switched")
+        {
+            Assert.Equal("codex", entry.GetProperty("to").GetProperty("cliType").GetString());
+            Assert.Equal("gpt-6-sol", entry.GetProperty("to").GetProperty("model").GetString());
+            Assert.Equal("high", entry.GetProperty("to").GetProperty("thinkingLevel").GetString());
+        }
+        Assert.False(string.IsNullOrWhiteSpace(entry.GetProperty("reason").GetString()));
+    }
+
+    [Fact]
+    public void LedgerWriteFailureDoesNotChangeQuotaFallbackDecision()
+    {
+        Directory.CreateDirectory(_root);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build();
+        var now = new DateTime(2030, 11, 4, 12, 0, 0, DateTimeKind.Utc);
+        var clock = new MutableClock(now);
+        var cache = new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance);
+        cache.Write([
+            new QuotaSnapshot { CliType = CliTypes.Claude, FetchedAt = now,
+                Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 98, ResetAt = now.AddDays(3) }] },
+            new QuotaSnapshot { CliType = CliTypes.Codex, FetchedAt = now,
+                Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 10, ResetAt = now.AddDays(3) }] },
+        ]);
+        var quota = new QuotaService(NullLogger<QuotaService>.Instance, [], config, cache);
+        var caps = new CliQuotaCapsService(NullLogger<CliQuotaCapsService>.Instance, config);
+        var fallback = new CliQuotaFallbackService(config, NullLogger<CliQuotaFallbackService>.Instance);
+        fallback.Set(new CliModelRouteProfile
+        {
+            CliType = CliTypes.Claude, PrimaryModel = ModelIds.ClaudeOpus5,
+            FallbackCliType = CliTypes.Codex, FallbackModel = ModelIds.Gpt56Sol,
+            FallbackThinkingLevel = "high",
+        });
+        var wait = new CliQuotaWaitPolicyService(NullLogger<CliQuotaWaitPolicyService>.Instance, config);
+        var projects = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        var service = new ModelSelectionService(quota, caps, fallback, wait, projects,
+            timeProvider: clock, ledger: new FailingSelectionLedger());
+
+        var decision = service.Select(new ModelSelectionCall(new SelectionRequest
+        {
+            Consumer = SelectionConsumers.Coding,
+            Pins = new SelectionPins(CliTypes.Claude, ModelIds.ClaudeOpus5, "high"),
+        }, "remote-coding-claim"));
+
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, decision.Admission.Outcome);
+        Assert.Equal(CliTypes.Codex, decision.Admission.CliType);
+        Assert.Equal(ModelIds.Gpt56Sol, decision.Admission.Model);
+        Assert.Null(decision.Result.LedgerId);
+    }
+
+    [Fact]
+    public async Task CostGuardWaitUsesTheSameDurableEventsRoute()
+    {
+        Directory.CreateDirectory(_root);
+        var clock = new MutableClock(new DateTime(2030, 11, 4, 12, 0, 0, DateTimeKind.Utc));
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            builder.UseEnvironment("Test").ConfigureAppConfiguration((_, settings) =>
+                settings.AddInMemoryCollection(new Dictionary<string, string?>
+                    { ["TaskRepository"] = _root, ["PublicDemo:Enabled"] = "false" }))
+                .ConfigureTestServices(services => services.Replace(
+                    ServiceDescriptor.Singleton<TimeProvider>(clock))));
+        var request = new SelectionRequest
+        {
+            Consumer = SelectionConsumers.Coding, Project = "demo", TaskKey = "DEMO-2",
+            Pins = new SelectionPins("claude", "claude-opus-5", "high"),
+        };
+        var route = new SelectionRoute("claude", "claude-opus-5", "high");
+        var decision = new SelectionResult
+        {
+            Outcome = SelectionOutcome.Wait, Route = route, Primary = route,
+            Rule = SelectionRules.CostGuard, Reason = "waiting: fallback price exceeds the cost guard",
+        };
+        var entry = SelectionLedgerEntry.For(request, decision, "remote-coding-claim",
+            ModelSelectionEventId.New(), clock.GetUtcNow().UtcDateTime)!;
+        factory.Services.GetRequiredService<IModelSelectionLedger>().Record(entry);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var events = await client.GetFromJsonAsync<JsonElement>(
+            "/api/model-selection/events?project=demo&rule=cost-guard&from=claude-opus-5");
+        var saved = Assert.Single(events.GetProperty("events").EnumerateArray());
+        Assert.Equal(entry.Id, saved.GetProperty("id").GetString());
+        Assert.Equal("waiting", saved.GetProperty("kind").GetString());
+        Assert.Equal("high", saved.GetProperty("from").GetProperty("thinkingLevel").GetString());
+    }
 
     [Fact]
     public async Task SelectionEventsRouteFiltersNewestFirst()
@@ -180,5 +319,10 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
         private DateTime _now = now;
         public override DateTimeOffset GetUtcNow() => new(_now);
         public void Advance(TimeSpan duration) => _now = _now.Add(duration);
+    }
+
+    private sealed class FailingSelectionLedger : IModelSelectionLedger
+    {
+        public void Record(SelectionLedgerEntry entry) => throw new IOException("ledger unavailable");
     }
 }

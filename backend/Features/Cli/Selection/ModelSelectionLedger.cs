@@ -12,6 +12,43 @@ public interface IModelSelectionLedger
     void Record(SelectionLedgerEntry entry);
 }
 
+/// <summary>Maps planner decisions into the workspace's durable selection log.</summary>
+public sealed class DurableModelSelectionLedger(ModelSelectionLedger ledger) : IModelSelectionLedger
+{
+    public void Record(SelectionLedgerEntry entry)
+    {
+        var projection = entry.Quota?.Projection;
+        ledger.Append(new ModelSelectionEvent
+        {
+            Id = entry.Id,
+            At = new DateTimeOffset(DateTime.SpecifyKind(entry.At, DateTimeKind.Utc)),
+            Kind = entry.Kind,
+            Consumer = entry.Consumer,
+            Host = entry.Host,
+            Project = entry.Project,
+            PipelineType = entry.PipelineType,
+            StepId = entry.StepId,
+            TaskKey = entry.TaskKey,
+            AttemptId = entry.AttemptId,
+            Round = entry.Round,
+            From = new ModelSelectionRoute(entry.From.CliType, entry.From.Model, entry.From.ThinkingLevel),
+            To = entry.Kind == SelectionLedgerKinds.Waiting ? null
+                : new ModelSelectionRoute(entry.To.CliType, entry.To.Model, entry.To.ThinkingLevel),
+            Rule = entry.Rule,
+            Reason = entry.Reason,
+            Quota = entry.Quota is null ? null : new ModelSelectionQuota(
+                entry.From.CliType, entry.Quota.Window,
+                entry.Quota.UsedPct, projection?.CapPct, projection?.ProjectedUsedPct,
+                projection?.ResetAt is null ? null : new DateTimeOffset(DateTime.SpecifyKind(projection.ResetAt.Value, DateTimeKind.Utc)),
+                null),
+            Equivalence = entry.Equivalence is null ? null : new ModelSelectionEquivalence(
+                entry.Equivalence.CapabilityClass, entry.Equivalence.CatalogueVersion, entry.Equivalence.Source),
+            ReturnToPrimaryAt = entry.ReturnToPrimaryAt is null ? null
+                : new DateTimeOffset(DateTime.SpecifyKind(entry.ReturnToPrimaryAt.Value, DateTimeKind.Utc)),
+        });
+    }
+}
+
 /// <summary>
 /// Interim ledger: one structured <c>model_selection_event</c> log line per
 /// event. Claim and pickup loops ask again every tick, so an event identical

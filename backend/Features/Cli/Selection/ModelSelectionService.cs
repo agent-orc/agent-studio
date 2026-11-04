@@ -16,7 +16,8 @@ public sealed record ModelSelectionCall(
     int OccupiedSlots = 0,
     Func<string, string?, bool>? HostAccepts = null,
     Func<string, string?, bool>? HostAcceptsFallback = null,
-    Func<ModelRoutingTier?>? CorrectnessFloor = null)
+    Func<ModelRoutingTier?>? CorrectnessFloor = null,
+    string? DecisionKey = null)
 {
     /// <summary>The selection call behind a legacy admission request (adapter until MS-6).</summary>
     public static ModelSelectionCall FromAdmission(QuotaAdmissionRequest request)
@@ -80,6 +81,8 @@ public sealed class ModelSelectionService : IModelSelectionService
     private readonly IModelSelectionLedger? _ledger;
     private readonly ModelSelectionPolicyStore? _policy;
     private readonly TimeProvider _timeProvider;
+    private readonly object _receiptSync = new();
+    private readonly Dictionary<string, string> _receiptIds = new(StringComparer.Ordinal);
 
     public ModelSelectionService(
         QuotaService quota,
@@ -161,11 +164,41 @@ public sealed class ModelSelectionService : IModelSelectionService
         var result = ModelSelectionPlanner.Plan(request, facts);
         var entry = SelectionLedgerEntry.For(
             request, result, call.ExecutionPath,
-            Guid.CreateVersion7(new DateTimeOffset(now, TimeSpan.Zero)).ToString("N"), now);
+            ModelSelectionEventId.New(), now);
         if (entry is not null && _ledger is not null)
         {
-            _ledger.Record(entry);
-            result = result with { LedgerId = entry.Id };
+            try
+            {
+                if (string.IsNullOrWhiteSpace(call.DecisionKey))
+                {
+                    _ledger.Record(entry);
+                    result = result with { LedgerId = entry.Id };
+                }
+                else
+                {
+                    // A claim can be selected once for repository preflight and
+                    // again for dispatch. Both decisions belong to one claim.
+                    var key = string.Join("|", call.ExecutionPath, call.DecisionKey,
+                        request.Project, request.TaskKey, request.Host?.HostId,
+                        result.Outcome, result.Rule, result.Primary, result.Route);
+                    lock (_receiptSync)
+                    {
+                        if (!_receiptIds.TryGetValue(key, out var id))
+                        {
+                            _ledger.Record(entry);
+                            id = entry.Id;
+                            if (_receiptIds.Count >= 4096) _receiptIds.Clear();
+                            _receiptIds[key] = id;
+                        }
+                        result = result with { LedgerId = id };
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // A receipt failure cannot change an already planned launch route.
+                SilentCatch.Note(ex, "ModelSelectionService: selection receipt write failed");
+            }
         }
 
         var admission = QuotaAdmissionPlan.From(result) with
