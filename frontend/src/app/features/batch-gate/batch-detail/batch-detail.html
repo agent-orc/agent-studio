@@ -4,7 +4,7 @@
   <section class="batch-detail" aria-labelledby="task-batch-title" data-testid="task-batch-verification">
     <header class="batch-detail__head">
       <h2 id="task-batch-title">Batch verification</h2>
-      <button type="button" class="btn btn--ghost" data-testid="task-batch-open-panel" (click)="panelOpen.set(true)">Open batch panel</button>
+      <button type="button" class="studio-button btn btn--ghost" data-testid="task-batch-open-panel" (click)="panelOpen.set(true)">Open batch panel</button>
     </header>
     @if (pushWait(); as wait) {
       <p data-testid="task-integration-push-wait" role="status">
