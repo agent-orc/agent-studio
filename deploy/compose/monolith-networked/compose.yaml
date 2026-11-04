@@ -6,6 +6,41 @@ x-hardening: &hardening
   security_opt: [no-new-privileges:true]
 
 services:
+  quality-studio:
+    profiles: [quality]
+    image: ${QUALITY_STUDIO_IMAGE:-quality-studio:local}
+    restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    <<: *hardening
+    pids_limit: 512
+    environment:
+      QualityStudio__Security__Mode: Hosted
+      # Studio reaches the service over the private bridge. Public browsers use edge TLS.
+      QualityStudio__Security__RequireHttps: 'false'
+      QualityStudio__Security__TrustedProxies__0: 172.30.83.2
+      AgentStudio__Federation__Issuer: https://${STUDIO_DOMAIN}
+      AgentStudio__Federation__Audience: quality-studio
+      AgentStudio__Federation__JwksUrl: https://${STUDIO_DOMAIN}/.well-known/agent-studio/jwks.json
+      AgentStudio__Federation__StudioPublicUrl: https://${STUDIO_DOMAIN}
+      QualityStudio__AllowedOrigins__0: https://${QUALITY_DOMAIN:-quality-${STUDIO_DOMAIN}}
+      QualityStudio__AllowedOrigins__1: https://${STUDIO_DOMAIN}
+      QualityStudio__Security__Clients__0__Id: ${QUALITY_SERVICE_CLIENT_ID:-agent-studio}
+      QualityStudio__Security__Clients__0__CredentialSha256: ${QUALITY_SERVICE_TOKEN_SHA256:-}
+      QualityStudio__Security__Clients__0__Repositories__0: '*'
+      QualityStudio__Security__Clients__0__CanRegisterRepositories: 'true'
+      QualityStudio__RepositoryRoot: ${QUALITY_REPOSITORY_ROOT:-/home/agent/runner-work}
+      QualityStudio__AllowedRoots__0: ${QUALITY_REPOSITORY_ROOT:-/home/agent/runner-work}
+      QualityStudio__DataRoot: /data
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: ${QUALITY_REPOSITORY_ROOT:-/home/agent/runner-work}/*
+    volumes:
+      - ${QUALITY_REPOSITORY_ROOT:-/home/agent/runner-work}:${QUALITY_REPOSITORY_ROOT:-/home/agent/runner-work}:ro
+      - /srv/agent-studio/quality/data:/data
+      - /srv/agent-studio/quality/registry:/app/.quality-studio
+    networks:
+      website:
+        ipv4_address: 172.30.83.5
+
   api:
     image: ghcr.io/agent-orc/agent-studio-api@sha256:${STUDIO_API_DIGEST:?Set the release API image digest}
     user: '10001:10001'
@@ -30,6 +65,7 @@ services:
       Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2
       AllowedHosts: ${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+      QUALITY_DOMAIN: ${QUALITY_DOMAIN:-quality-${STUDIO_DOMAIN}}
       # The key-encryption key of the secret store, kept outside the data directory.
       Secrets__KeyFile: /run/secrets/studio-secrets.kek
     volumes:
@@ -55,6 +91,7 @@ services:
     pids_limit: 512
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+      QUALITY_DOMAIN: ${QUALITY_DOMAIN:-quality-${STUDIO_DOMAIN}}
       XDG_CONFIG_HOME: /config
       XDG_DATA_HOME: /data
       HOME: /tmp
@@ -84,6 +121,7 @@ services:
     pids_limit: 512
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+      QUALITY_DOMAIN: ${QUALITY_DOMAIN:-quality-${STUDIO_DOMAIN}}
       # Caddyfile.cloudflare only: true admits peers outside Cloudflare's ranges.
       STUDIO_CLOUDFLARE_ALLOW_DIRECT: ${STUDIO_CLOUDFLARE_ALLOW_DIRECT:-false}
       STUDIO_ACCESS_AUTH_URL: ${STUDIO_ACCESS_AUTH_URL:?Set the HTTPS access-layer authorization URL}

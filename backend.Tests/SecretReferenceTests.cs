@@ -12,6 +12,7 @@ public sealed class SecretReferenceTests
     [InlineData("secret://memowikis/prod/DATABASE_URL@3", "environment", "memowikis", "prod", "DATABASE_URL", 3)]
     [InlineData("secret://Operator Demo/stage/DATABASE_URL", "environment", "Operator Demo", "stage", "DATABASE_URL", null)]
     [InlineData("secret://workspace/smtp.password@12", "workspace", null, null, "smtp.password", 12)]
+    [InlineData("secret://workspace/quality-studio/api-token", "workspace", null, null, "quality-studio/api-token", null)]
     public void Parses_every_scope_shape_and_round_trips(string text, string kind, string? project, string? environment, string name, int? version)
     {
         var reference = SecretReference.Parse(text);

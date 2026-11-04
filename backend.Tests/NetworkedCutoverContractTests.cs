@@ -53,8 +53,9 @@ public sealed class NetworkedCutoverContractTests
         Assert.Contains("-i br-studio-web -j RETURN", rules);
         Assert.Contains("-d 172.30.83.2 -p tcp -m multiport --dports 80,443 -j RETURN", rules);
         Assert.Contains("com.docker.network.bridge.name: br-studio-web", compose);
-        Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(compose,
+        Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(compose,
             @"restart: \$\{STUDIO_RESTART_POLICY:-on-failure\}").Count);
+        Assert.Contains("profiles: [quality]", compose);
         Assert.Contains("After=docker.service agent-studio-cloudflare-firewall.service", installer);
         Assert.Contains("systemctl enable agent-studio-website.service", installer);
     }
