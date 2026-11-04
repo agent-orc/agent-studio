@@ -4,6 +4,7 @@ using AgentStudio.Tasks;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.Registry;
+using AgentStudio.QualityStudio;
 
 namespace AgentStudio.Deploy;
 
@@ -34,6 +35,10 @@ public sealed class DeployService
     private const int ReleaseCommitWindow = 5000;
     private const int AuditLimit = 500;
     private readonly object _gate = new();
+    private readonly object _qualityGate = new();
+    private readonly Dictionary<string, (string Signature, DateTimeOffset Expires, string ArtifactStamp,
+        IReadOnlyList<string> CardFolders, IReadOnlyList<Release> Value)> _qualityCache =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (DateTime Window, int Count)> _hostLogRates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _hostLogRunIds = new(StringComparer.Ordinal);
     private readonly ProjectEnvironmentService _environments;
@@ -47,6 +52,8 @@ public sealed class DeployService
     private readonly PostMergeRunStore? _postMerge;
     private readonly ProjectRegistry? _registry;
     private readonly AgentStudio.Projects.ProjectSettingsService? _projectSettings;
+    private readonly QualityReleaseRangeVerdictClient? _rangeVerdicts;
+    private readonly Func<IReadOnlyList<TaskInfo>> _qualityTaskScan;
 
     /// <summary>
     /// Ancestry answers between release commits. Commits are immutable, so a
@@ -67,7 +74,9 @@ public sealed class DeployService
         TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger,
         TaskMutationService? mutations, ReleaseCardAttributionSource? attribution = null,
         PostMergeRunStore? postMerge = null, ProjectRegistry? registry = null,
-        AgentStudio.Projects.ProjectSettingsService? projectSettings = null)
+        AgentStudio.Projects.ProjectSettingsService? projectSettings = null,
+        QualityReleaseRangeVerdictClient? rangeVerdicts = null,
+        Func<IReadOnlyList<TaskInfo>>? qualityTaskScan = null)
     {
         _environments = environments;
         _store = store;
@@ -80,6 +89,8 @@ public sealed class DeployService
         _postMerge = postMerge;
         _registry = registry;
         _projectSettings = projectSettings;
+        _rangeVerdicts = rangeVerdicts;
+        _qualityTaskScan = qualityTaskScan ?? _scanner.ScanAllJobsWithArchive;
     }
 
     /// <summary>
@@ -297,12 +308,13 @@ public sealed class DeployService
 
     public IReadOnlyList<Release>? Releases(string project)
     {
+        IReadOnlyList<Release>? releases;
         lock (_gate)
         {
-            var releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
+            releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
                 .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
-            return releases is null ? null : WithQuality(project, releases);
         }
+        return releases is null ? null : WithQuality(project, releases);
     }
 
     /// <param name="artifact">
@@ -313,48 +325,90 @@ public sealed class DeployService
     public DeployPage<Release>? ReleasePage(string project, int offset, int limit,
         string? artifact = null, DateTime? notAfterUtc = null)
     {
+        IReadOnlyList<Release>? allReleases;
+        DeployPage<Release>? page;
         lock (_gate)
         {
             var digest = artifact is null ? null : DigestOf(artifact);
-            var allReleases = SyncLocked(project)?.Releases;
+            allReleases = SyncLocked(project)?.Releases;
             var releases = allReleases?
                 .Where(item => digest is null || item.ArtifactDigests.Any(value => DigestOf(value) == digest))
                 .Where(item => notAfterUtc is null || item.CreatedAtUtc <= notAfterUtc)
                 .OrderByDescending(item => item.CreatedAtUtc)
                 .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
             if (releases is null || allReleases is null) return null;
-            var page = Page(releases, offset, limit);
-            return page with { Items = WithQuality(project, allReleases, page.Items) };
+            page = Page(releases, offset, limit);
         }
+        return page with { Items = WithQuality(project, allReleases, page.Items) };
     }
 
     public DeployPage<Release>? ReleasePageContaining(string project, string releaseId, int limit)
     {
+        Release[]? releases;
+        DeployPage<Release>? page;
         lock (_gate)
         {
-            var releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
+            releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
                 .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
             if (releases is null) return null;
             var index = Array.FindIndex(releases, item => item.Id == releaseId);
             if (index < 0) return null;
             var pageSize = Math.Clamp(limit, 1, 50);
-            var page = Page(releases, index / pageSize * pageSize, pageSize);
-            return page with { Items = WithQuality(project, releases, page.Items) };
+            page = Page(releases, index / pageSize * pageSize, pageSize);
         }
+        return page with { Items = WithQuality(project, releases, page.Items) };
     }
 
     private IReadOnlyList<Release> WithQuality(string project, IReadOnlyList<Release> releases,
         IReadOnlyList<Release>? visible = null)
     {
         if (visible is { Count: 0 }) return [];
-        var tasks = _scanner.ScanAllJobsWithArchive()
-            .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase));
         var config = _projectSettings?.Get(project);
         var repositoryId = config?.QualityStudioRepositoryId ?? config?.QualityStudio?.RepositoryId;
-        var repo = _git.ResolveRepoRootForProject(project);
-        return ReleaseQualityProjection.Project(releases, tasks, repositoryId,
-            (previous, current) => repo is null ? null : _git.GetMergeBase(repo, previous, current), visible,
-            head => repo is null ? null : _git.GetRootCommit(repo, head));
+        visible ??= releases;
+        var key = project + ":" + string.Join(',', visible.Select(item => item.Id));
+        string Signature() => _scanner.SnapshotGeneration + ":" + repositoryId + ":"
+            + string.Join(';', releases.Select(item => item.Id + ":" + item.CommitSha + ":"
+                + string.Join(',', item.CardKeys)));
+        var signature = Signature();
+        lock (_qualityGate)
+        {
+            var now = _clock.GetUtcNow();
+            if (_qualityCache.TryGetValue(key, out var cached)
+                && cached.Signature == signature && cached.Expires > now
+                && cached.ArtifactStamp == QualityArtifactStamp(cached.CardFolders))
+                return cached.Value;
+            var tasks = _qualityTaskScan()
+                .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var visibleKeys = visible.SelectMany(item => item.CardKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var cardFolders = tasks.Where(task => visibleKeys.Contains(task.Key ?? task.TaskKey))
+                .Select(task => task.FolderPath).Distinct(StringComparer.Ordinal).ToArray();
+            var repo = _git.ResolveRepoRootForProject(project);
+            var value = ReleaseQualityProjection.Project(releases, tasks, repositoryId,
+                (previous, current) => repo is null ? null : _git.GetMergeBase(repo, previous, current), visible,
+                head => repo is null ? null : _git.GetRootCommit(repo, head),
+                (id, baseSha, headSha) => _rangeVerdicts?.Read(id, baseSha, headSha));
+            if (_qualityCache.Count >= 16) _qualityCache.Remove(_qualityCache.Keys.First());
+            _qualityCache[key] = (Signature(), now.AddSeconds(30), QualityArtifactStamp(cardFolders), cardFolders, value);
+            return value;
+        }
+    }
+
+    private static string QualityArtifactStamp(IReadOnlyList<string> folders)
+    {
+        var stamp = new System.Text.StringBuilder();
+        foreach (var folder in folders)
+        {
+            var quality = Path.Combine(TaskPaths.ResultsDir(folder), "quality-studio");
+            var index = new FileInfo(Path.Combine(quality, "latest-review-index.json"));
+            var subject = new FileInfo(ReviewSubjectStore.PathFor(folder));
+            stamp.Append(folder).Append(':').Append(Directory.GetLastWriteTimeUtc(quality).Ticks)
+                .Append(':').Append(index.Exists ? index.LastWriteTimeUtc.Ticks : 0)
+                .Append(':').Append(index.Exists ? index.Length : 0)
+                .Append(':').Append(subject.Exists ? subject.LastWriteTimeUtc.Ticks : 0)
+                .Append(':').Append(subject.Exists ? subject.Length : 0).Append(';');
+        }
+        return stamp.ToString();
     }
 
     private static string DigestOf(string artifact)
