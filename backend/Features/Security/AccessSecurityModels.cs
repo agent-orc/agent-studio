@@ -192,6 +192,8 @@ public sealed record SecurityState
     /// </summary>
     public List<StudioApiToken> ApiTokens { get; init; } = [];
     public List<TelemetryIngestToken> TelemetryIngestTokens { get; init; } = [];
+    /// <summary>Operator agents' T1 authority (security model SM-4); only the Owner changes it.</summary>
+    public List<StandingGrant> StandingGrants { get; init; } = [];
 }
 
 public sealed record StudioInvitation

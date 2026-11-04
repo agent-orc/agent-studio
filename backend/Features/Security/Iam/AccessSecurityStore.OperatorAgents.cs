@@ -124,7 +124,7 @@ public sealed partial class AccessSecurityStore
         }
     }
 
-    /// <summary>Disables the agent and revokes every session.</summary>
+    /// <summary>Disables the agent and revokes every session and standing grant.</summary>
     public void DisableOperatorAgent(string agentId, string ownerId)
     {
         lock (_gate)
@@ -133,9 +133,14 @@ public sealed partial class AccessSecurityStore
             RequireActiveOwnerLocked(next, ownerId);
             var agent = next.ServiceAccounts.FirstOrDefault(candidate => candidate.Id == agentId && IsOperatorAgent(candidate))
                 ?? throw new SecurityOperationException(404, "operator-agent-not-found", "Operator agent not found.");
-            next.ServiceAccounts[next.ServiceAccounts.IndexOf(agent)] = DisabledLocked(agent, Now, ownerId);
+            var now = Now;
+            next.ServiceAccounts[next.ServiceAccounts.IndexOf(agent)] = DisabledLocked(agent, now, ownerId);
+            var revoked = RevokeAgentGrantsLocked(next, agentId, now, ownerId, "operator agent disabled");
             SaveLocked(next);
             AppendIamAudit(ownerId, "operator-agent.disable", "operator-agent", agentId, null);
+            foreach (var grant in revoked)
+                AppendIamAudit(ownerId, "standing-grant.revoke", "standing-grant", grant.Id,
+                    new { grant.PrincipalId, grant.RevokeReason });
         }
     }
 
