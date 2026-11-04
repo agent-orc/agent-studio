@@ -786,7 +786,7 @@ public sealed class RemoteReviewWorkspace
                         $"signal={execution.Signal ?? "none"}.",
                         commands, artifacts, ct);
                 }
-                if (comparison is not null && !comparison.BlockedByIsolatedBuild)
+                if (comparison is not null)
                 {
                     var reviewFlakyTests = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
                     retryPerformed = true;
@@ -928,25 +928,29 @@ public sealed class RemoteReviewWorkspace
                         repeatPassed: cleanRepeat.Process.Success && cleanRepeat.Signal is null);
                 }
                 var requiredComparison = RequireBaselineComparison(comparison, command);
-                var cacheDefect = requiredComparison.BlockedByIsolatedBuild
-                    ? null
-                    : await RepeatCachedBaselineCleanAsync(
-                        command, requiredComparison, execution, cleanRepeat, commands, artifacts, ct);
-                comparison = requiredComparison.BlockedByIsolatedBuild
-                    ? requiredComparison
-                    : cacheDefect is not null
-                        // The clean baseline repeat is the merge base's
-                        // real state; the cached red result was not.
-                        ? requiredComparison with { BaselineExitCode = 0, Diagnosis = cacheDefect }
-                        : requiredComparison with
-                        {
-                            Diagnosis = IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
-                                ? new DeliveryFailureDiagnosisResult(
-                                    IntegrationBranchDefectClassification, 1,
-                                    [$"build {command.StepId} was already red on the integration branch"])
-                                : await DiagnoseFailureAsync(
-                                    command, requiredComparison, execution, cleanRepeat, ct),
-                        };
+                var cacheDefect = await RepeatCachedBaselineCleanAsync(
+                    command, requiredComparison, execution, cleanRepeat, commands, artifacts, ct);
+                comparison = cacheDefect is not null
+                    // The clean baseline repeat is the merge base's
+                    // real state; the cached red result was not.
+                    ? requiredComparison with { BaselineExitCode = 0, Diagnosis = cacheDefect }
+                    : requiredComparison with
+                    {
+                        Diagnosis = IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
+                            ? new DeliveryFailureDiagnosisResult(
+                                IntegrationBranchDefectClassification, 1,
+                                [$"build {command.StepId} was already red on the integration branch"])
+                            : !ReviewBaselineModes.IsExitStatus(command.BaselineMode)
+                              && requiredComparison.BaselineExitCode != 0
+                              && requiredComparison.BaselineFailures.Count > 0
+                              && cleanRepeat is not null
+                              && ReviewBaselineTestResultPolicy.HasResult(
+                                  ParsedTestFailures(cleanRepeat.Process),
+                                  cleanRepeat.Process.StdOut, cleanRepeat.Process.StdErr)
+                                ? DiagnoseRedTestBaseline(requiredComparison)
+                            : await DiagnoseFailureAsync(
+                                command, requiredComparison, execution, cleanRepeat, ct),
+                    };
                 if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
                     && candidateCache is not null)
                 {
@@ -2121,17 +2125,13 @@ public sealed class RemoteReviewWorkspace
                 await AddIsolatedBuildEvidenceAsync(
                     isolatedBuild, baselineHead, baselineTree, workspaceRole,
                     baselineSha, "verification", commands, artifacts, ct);
-                return BaselineComparison.Create(
-                    baselineSha, [], SubjectFailures(command, subjectResult),
-                    cacheHit: false, isolatedBuild.Execution.Process.ExitCode) with
-                {
-                    NewFailures = [],
-                    PreExistingFailures = [],
-                    BlockedByIsolatedBuild = true,
-                    Diagnosis = new DeliveryFailureDiagnosisResult(
-                        IntegrationBranchDefectClassification, 1,
-                        [$"isolated baseline build {isolatedBuild.Build.StepId} exited {isolatedBuild.Execution.Process.ExitCode}"]),
-                };
+                var unavailable = BaselineUnavailable(
+                    $"Isolated baseline build '{isolatedBuild.Build.StepId}' exited " +
+                    $"{isolatedBuild.Execution.Process.ExitCode}; test step '{command.StepId}' could not run.",
+                    baselineSha,
+                    command);
+                throw await InfrastructureFailureAsync(
+                    unavailable.Classification, unavailable.Message, commands, artifacts, ct);
             }
             execution = await RunCommandAsync(command, baselinePath, ct, environment);
             commands.Add(await AddCommandEvidenceAsync(
@@ -2203,14 +2203,14 @@ public sealed class RemoteReviewWorkspace
         }
         var failures = BaselineFailures(command, execution.Process);
         if (!ReviewBaselineModes.IsExitStatus(command.BaselineMode)
-            && execution.Process.ExitCode != 0
-            && failures.Count == 0)
+            && ((execution.Process.ExitCode != 0 && failures.Count == 0)
+                || !ReviewBaselineTestResultPolicy.HasResult(
+                    failures, execution.Process.StdOut, execution.Process.StdErr)))
         {
-            // AGT-3089: a merge-base test run that exited non-zero without
-            // naming a failed test never ran the suite ("The argument ... is
-            // invalid", a missing browser). Caching it reused an unrun baseline
-            // as a red merge base for 24 hours and reported a false
-            // integration-branch defect.
+            // A merge-base test command must report a test result, including
+            // when it exits zero. A nonzero run also needs failure names for
+            // the comparison; otherwise an unrun suite could be cached and
+            // cited as the merge base's measured state.
             var unavailable = BaselineUnavailable(
                 UnrunBaselineSummary(command, execution.Process),
                 baselineSha,
@@ -2605,6 +2605,18 @@ public sealed class RemoteReviewWorkspace
                     cleanResult!.ExitCode, firstResult.StdOut, firstResult.StdErr)])
             : diagnosis;
     }
+
+    private static DeliveryFailureDiagnosisResult DiagnoseRedTestBaseline(
+        BaselineComparison comparison)
+        => comparison.NewFailures.Count == 0
+            ? new DeliveryFailureDiagnosisResult(
+                IntegrationBranchDefectClassification, 1,
+                [$"pre-existing failures: {string.Join(", ", comparison.PreExistingFailures)}",
+                    "clean repeat found no new failures"])
+            : new DeliveryFailureDiagnosisResult(
+                DeliveryFailureDiagnosis.Product, 1,
+                [$"new failures: {string.Join(", ", comparison.NewFailures)}",
+                    $"pre-existing failures: {string.Join(", ", comparison.PreExistingFailures)}"]);
 
     private string ReviewFailureFingerprint(
         string stepId, IReadOnlyList<string> failures, ProcessResult? process)
@@ -4117,7 +4129,6 @@ internal sealed record BaselineComparison(
     TimeSpan? ReusedAge = null)
 {
     public IReadOnlyList<string> InitialFailures { get; init; } = [];
-    public bool BlockedByIsolatedBuild { get; init; }
     public DeliveryFailureDiagnosisResult? Diagnosis { get; init; }
     /// <summary>
     /// How the baseline side of this comparison was produced, worded once for
@@ -4173,9 +4184,15 @@ internal sealed record BaselineComparison(
             ReusedFromAttemptId,
             ReusedAge);
         var retriedFailures = subjectFailures.ToHashSet(StringComparer.Ordinal);
+        var baseline = BaselineFailures.ToHashSet(StringComparer.Ordinal);
         return retried with
         {
             InitialFailures = InitialFailures,
+            PreExistingFailures = InitialFailures.Concat(subjectFailures)
+                .Where(baseline.Contains)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray(),
             FlakyQuarantinedFailures = (repeatPassed ? NewFailures : [])
                 .Where(failure => !retriedFailures.Contains(failure) && reviewFlakyTests.Contains(failure))
                 .Order(StringComparer.Ordinal)

@@ -7,33 +7,66 @@ import { BatchGateService } from '../../../services/batch-gate.service';
 import { redHalvingState } from '../testing/batch-fixtures';
 import { BatchDetailComponent } from './batch-detail';
 
+async function mount(initial: BatchGateState | null, task: Partial<TaskInfo>) {
+  const state = signal<BatchGateState | null>(initial);
+  const unavailable = signal(false);
+  TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
+    provide: BatchGateService,
+    useValue: { state: () => state.asReadonly(), unavailable: () => unavailable.asReadonly(), watch: () => vi.fn() },
+  }] });
+  const fixture = TestBed.createComponent(BatchDetailComponent);
+  fixture.componentRef.setInput('task', { projectName: 'Demo', ...task } as TaskInfo);
+  await fixture.whenStable();
+  return { fixture, state, unavailable, host: fixture.nativeElement as HTMLElement };
+}
+
 describe('BatchDetailComponent', () => {
-  it('uses the task id after the composite and reference keys, then hides disabled state', async () => {
-    const state = signal<BatchGateState | null>(redHalvingState);
-    const unavailable = signal(false);
-    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
-      provide: BatchGateService,
-      useValue: { state: () => state.asReadonly(), unavailable: () => unavailable.asReadonly(), watch: () => vi.fn() },
-    }] });
-    const fixture = TestBed.createComponent(BatchDetailComponent);
-    fixture.componentRef.setInput('task', { projectName: 'Demo', taskKey: '/tmp/demo::AGT-2', key: 'OTHER', id: 'AGT-2' } as TaskInfo);
-    await fixture.whenStable();
-    expect(fixture.nativeElement.textContent).toContain('Batch batch-8');
-    expect(fixture.nativeElement.textContent).toContain('Phase: running');
+  it('renders status, batch id, position and phase for a member found by task id after the other keys', async () => {
+    const { host } = await mount(redHalvingState, { taskKey: '/tmp/demo::AGT-2', key: 'OTHER', id: 'AGT-2' });
+    const section = host.querySelector('[data-testid="task-batch-verification"]');
+    expect(section).not.toBeNull();
+    const summary = host.querySelector('[data-testid="task-batch-summary"]')!.textContent!;
+    expect(summary).toContain('in-batch');
+    expect(summary).toContain('Batch batch-8');
+    expect(summary).toContain('1 of 1');
+    expect(summary).toContain('running');
+    expect(section!.textContent).toContain('Phase: running');
+    expect(host.querySelector('[data-testid="task-batch-open-panel"]')!.classList).toContain('btn--ghost');
+  });
+
+  it('counts a queued member', async () => {
+    const { host } = await mount(redHalvingState, { id: 'AGT-1' });
+    expect(host.querySelector('[data-testid="task-batch-summary"]')!.textContent).toContain('pending');
+  });
+
+  it('shows the push wait of a member', async () => {
+    const { fixture, state, host } = await mount(redHalvingState, { id: 'AGT-2' });
     state.set({ ...redHalvingState, pushWait: {
       jobId: 'AGT-2', approvedSha: 'a'.repeat(40),
       sinceUtc: '2026-11-03T01:05:36Z', ageMinutes: 4.5, ageAlert: true,
       reason: 'Approved integration push awaits restart recovery.',
     } });
     await fixture.whenStable();
-    expect(fixture.nativeElement.querySelector('[data-testid="task-integration-push-wait"]').textContent)
-      .toContain('pending for 4.5 min');
-    state.set({ ...redHalvingState, plan: { ...redHalvingState.plan, decision: 'disabled' } });
-    await fixture.whenStable();
-    expect(fixture.nativeElement.querySelector('[data-testid="task-batch-verification"]')).toBeNull();
-    state.set(null);
+    expect(host.querySelector('[data-testid="task-integration-push-wait"]')!.textContent).toContain('pending for 4.5 min');
+  });
+
+  it('renders no DOM for a card that is not a batch member', async () => {
+    const { host } = await mount(redHalvingState, { taskKey: '/tmp/demo::AGT-3403', key: 'AGT-3403', id: 'AGT-3403' });
+    expect(host.children.length).toBe(0);
+    expect(host.textContent!.trim()).toBe('');
+  });
+
+  it('renders no DOM while the state is loading or unavailable', async () => {
+    const { fixture, unavailable, host } = await mount(null, { id: 'AGT-2' });
+    expect(host.children.length).toBe(0);
+    expect(host.textContent!.trim()).toBe('');
     unavailable.set(true);
     await fixture.whenStable();
-    expect(fixture.nativeElement.querySelector('[data-testid="task-batch-verification"]')).toBeNull();
+    expect(host.children.length).toBe(0);
+  });
+
+  it('renders no DOM when the gate is disabled, even for a listed member', async () => {
+    const { host } = await mount({ ...redHalvingState, plan: { ...redHalvingState.plan, decision: 'disabled' } }, { id: 'AGT-2' });
+    expect(host.children.length).toBe(0);
   });
 });

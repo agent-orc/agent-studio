@@ -228,43 +228,78 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     public async Task ImmediateCliFinish_WaitsForDurableStartHandshakeBeforeFinalization()
     {
         WriteJob(TaskStates.Ready, "job-fast-finish");
-        var cli = new ImmediateFinishCliService();
+        var loadBound = TimeSpan.FromMinutes(2);
+        using var outputReadGate = new ManualResetEventSlim(false);
+        var outputReadEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cli = new ImmediateFinishCliService
+        {
+            BeforeFirstOutputRead = () =>
+            {
+                outputReadEntered.TrySetResult();
+                outputReadGate.Wait(loadBound);
+            },
+        };
         var runner = BuildRunner(cli);
         runner.SetMode("auto-continuous");
 
         var tick = runner.TickAsync(CancellationToken.None);
-        await cli.FinishRaised.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-        // Keep StartAsync suspended after it raised OnFinished. Without the
-        // handoff gate, the background finalizer releases the execution slot
-        // and writes post-processing state while admission is still waiting.
-        await Task.Delay(200);
-        Assert.Equal(1, runner.GetStatus().OccupiedSlots);
         var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, "job-fast-finish");
-        Assert.True(Directory.Exists(progressFolder));
-        Assert.False(File.Exists(Path.Combine(progressFolder, "logs", "session-events.jsonl")));
+        try
+        {
+            try
+            {
+                await cli.FinishRaised.Task.WaitAsync(loadBound);
 
-        cli.AllowStartReturn.TrySetResult();
-        await tick.WaitAsync(TimeSpan.FromSeconds(10));
+                // Keep StartAsync suspended after it raised OnFinished. Without the
+                // handoff gate, the background finalizer releases the execution slot
+                // and writes post-processing state while admission is still waiting.
+                await Task.Delay(200);
+                Assert.Equal(1, runner.GetStatus().OccupiedSlots);
+                Assert.True(Directory.Exists(progressFolder));
+                Assert.False(File.Exists(Path.Combine(progressFolder, "logs", "session-events.jsonl")));
+            }
+            finally
+            {
+                // A failed assertion must release the fake start and let the
+                // finalizer finish before the fixture deletes its workspace.
+                cli.AllowStartReturn.TrySetResult();
+                await tick.WaitAsync(loadBound);
+            }
+
+            // The fake pauses finalization after the start handshake and before
+            // the closeout rewrite, so this reads the complete durable start.
+            await outputReadEntered.Task.WaitAsync(loadBound);
+            var startEvents = Path.Combine(progressFolder, "logs", "session-events.jsonl");
+            Assert.True(File.Exists(startEvents), "the confirmed start must be durable before finalization is released");
+            Assert.Contains("\"kind\"", File.ReadAllText(startEvents), StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            outputReadGate.Set();
+        }
 
         var sessionEvents = Path.Combine(progressFolder, "logs", "session-events.jsonl");
-        Assert.True(File.Exists(sessionEvents), "the confirmed start must be durable before finalization is released");
-        Assert.Contains("\"kind\"", File.ReadAllText(sessionEvents), StringComparison.OrdinalIgnoreCase);
 
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (runner.GetStatus().OccupiedSlots != 0 && DateTime.UtcNow < deadline)
+        var slotWait = Stopwatch.StartNew();
+        while (runner.GetStatus().OccupiedSlots != 0 && slotWait.Elapsed < loadBound)
             await Task.Delay(20);
         Assert.Equal(0, runner.GetStatus().OccupiedSlots);
 
         SessionEvent? recorded = null;
-        var closeoutDeadline = DateTime.UtcNow.AddSeconds(10);
-        while (recorded?.FinishedAt is null && DateTime.UtcNow < closeoutDeadline)
+        var closeoutWait = Stopwatch.StartNew();
+        while (recorded?.FinishedAt is null && closeoutWait.Elapsed < loadBound)
         {
-            recorded = JsonSerializer.Deserialize<SessionEvent>(
-                File.ReadLines(sessionEvents).Single(),
-                TaskJsonFile.ReadOpts);
+            try
+            {
+                var lines = File.ReadAllLines(sessionEvents);
+                if (lines.Length == 1)
+                    recorded = JsonSerializer.Deserialize<SessionEvent>(lines[0], TaskJsonFile.ReadOpts);
+            }
+            catch (IOException) { /* The closeout writer may still hold this file on Windows. */ }
+            catch (JsonException) { /* A read may overlap the closeout rewrite. */ }
             if (recorded?.FinishedAt is null) await Task.Delay(20);
         }
+        Assert.Single(File.ReadAllLines(sessionEvents));
         Assert.NotNull(recorded);
         Assert.Equal(RunStatuses.Stopped, recorded!.Status);
         Assert.Equal(TerminalRunOutcomeKinds.Interrupted, recorded.Result);
@@ -831,6 +866,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AllowStartReturn { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Action? BeforeFirstOutputRead { get; init; }
+        private int _outputReads;
 
         public string GetCliPath() => "fake-claude";
         public bool IsAvailable() => true;
@@ -879,10 +916,14 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
         public bool Stop(string jobKey, RunStopReason reason = RunStopReason.UserStop) => false;
         public bool SendInput(string jobKey, string input) => false;
-        public List<CliOutputLine> GetOutput(string jobKey) =>
-            _finishedStatus == RunStatuses.Completed
+        public List<CliOutputLine> GetOutput(string jobKey)
+        {
+            if (Interlocked.Exchange(ref _outputReads, 1) == 0)
+                BeforeFirstOutputRead?.Invoke();
+            return _finishedStatus == RunStatuses.Completed
                 ? [new CliOutputLine { Timestamp = _now(), Stream = "stdout", Text = "[[TASK_DONE]]" }]
                 : [];
+        }
         public void DiscardPersistedOutput(string jobKey) { }
         public void ReleaseOutputResources(string jobKey) { }
         public CliExecution? GetExecution(string jobKey) => null;
