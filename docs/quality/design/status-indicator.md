@@ -9,9 +9,11 @@ Repositories, AGT-3402).
 This page extends the badge and dot rules of
 [R1](style-guide-hard-rules.md#r1---no-left-accent-lines-or-bars) and
 [R4](style-guide-hard-rules.md#r4---acute-signals-only-for-acute-states). The
-hard rules still win. The full list of other status displays and their
-migration plan lives in the
-[status display inventory](status-display-inventory.md).
+hard rules still win. Every status display and its final form (migrated, or
+kept with a reason) lives in the
+[status display inventory](status-display-inventory.md); AGT-3403 moved the
+board, card detail, Operations, Environment, Deploy, review and pipeline
+views, usage and the project hub onto the indicator.
 
 ## Component
 
@@ -94,6 +96,36 @@ fall back to `neutral`.
 | Access | user, enrollment code, enrolled host, service account | Active, Used → success; Invited, Open → info; Disabled, Revoked, Expired or revoked → neutral. |
 | Updates | update state, deploy history | ok → success; behind → warning; running → running; failed → danger (the text says "Last update failed"); history degraded or aborted → warning. |
 | First-run checklist | each step, provider probe, device login, Git setup | Verified → success; Pending → neutral; `providerAuthTone`, `deviceLoginTone`, `gitSetupTone`. |
+
+### Tone decisions from the app-wide migration (AGT-3403)
+
+- **History stays calm (R4).** A failure in a list of past runs, deploys,
+  reviews, test runs or token steps is `warning`; only the current or latest
+  outcome keeps `danger`. A superseded attempt is `neutral`.
+- **Card badges are current truth.** Board card badges use the compact form
+  and show only the current lane, integration status and latest run outcome.
+- **A missed target is `warning`** (behind), not `danger` (broken), for example
+  flow health targets.
+- **Leading glyphs go.** A label drops its own glyph (warning sign, check mark,
+  hourglass, loop arrow); the tone icon carries it.
+- **Links and buttons stay controls.** The indicator sits inside the existing
+  `<a>` or `<button>`; the control keeps its role.
+- **Free-length messages stay messages.** The indicator truncates its label,
+  so a sentence that must wrap stays a message with its own container.
+
+## Enforcement
+
+`npm run lint:structure` runs `frontend/scripts/check-status-chips.mjs`. It
+flags a template element whose class names it a `pill`, `badge`, `chip` or
+`dot` and whose look follows a state: a `data-tone`, `data-state`,
+`data-status` (and similar) attribute, a tone modifier class such as
+`--failed` or `--warn`, or a computed `[class]`. Displays that match but are
+not states (tags, filters, counts, lane tones, dense marks, wrappers that keep
+a data attribute for Playwright) are listed in
+`frontend/scripts/status-chip-baseline.json` with a reason and a pinned
+element signature, so editing or adding such an element fails until it is
+reviewed. The check is a pattern match, not a proof: a state label built
+without any of these signals is not caught, and review still applies.
 
 ## When to use it, and when not
 

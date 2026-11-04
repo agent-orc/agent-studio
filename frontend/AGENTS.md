@@ -157,8 +157,19 @@ Map states to tones in a typed record or pure function next to the data, with
 unknown states falling back to `neutral`. Tags, counts, filters, lanes and
 banners are not states; the boundary and the mapping table live in
 [docs/quality/design/status-indicator.md](../docs/quality/design/status-indicator.md),
-and the legacy displays still to migrate are listed in
-[status-display-inventory.md](../docs/quality/design/status-display-inventory.md).
+and the final state of every display is in
+[status-display-inventory.md](../docs/quality/design/status-display-inventory.md)
+(migrated across the app by AGT-3403).
+
+**Enforced by `npm run lint:structure`** →
+[`scripts/check-status-chips.mjs`](scripts/check-status-chips.mjs). It fails
+when a template styles a `pill`, `badge`, `chip` or `dot` element from a state
+(a tone, state or status data attribute, a tone modifier class, or a computed
+class). Tags, filters, counts, lane tones and dense marks that match the
+pattern are pinned in
+[`scripts/status-chip-baseline.json`](scripts/status-chip-baseline.json) with a
+written reason and the element signature; the failure message prints the new
+signatures.
 
 ## Single-choice segmented controls
 

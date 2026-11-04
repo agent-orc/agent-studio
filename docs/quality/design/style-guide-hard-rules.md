@@ -159,6 +159,10 @@ hard-coded lane string. The full contract is in
 - **Prompt anchoring:** referenced from [AGENTS.md](../../../AGENTS.md) and
   [frontend/AGENTS.md](../../../frontend/AGENTS.md), which the coding CLIs load as
   project instructions on every run.
+- **Status chips:** `npm run lint:structure`
+  (`frontend/scripts/check-status-chips.mjs`) fails on a hand-built status
+  pill, badge, chip or dot; state labels use `<app-status-indicator>`
+  ([status-indicator.md](status-indicator.md)).
 - **Design system:** the token and component vocabulary that makes these rules
   cheap to follow lives in
   [docs/quality/frontend/design-system.md](../frontend/design-system.md) and

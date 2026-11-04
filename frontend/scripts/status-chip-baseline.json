@@ -1,0 +1,184 @@
+{
+  "documented": {
+    "src/app/components/task-reference-microcard/task-reference-microcard.html": {
+      "reason": "Ghost reference shows the lane dot of a missing task; lane presentation (R9), the state label sits beside it.",
+      "signatures": [
+        "be62adc8ce2ad4a2"
+      ]
+    },
+    "src/app/components/task-status-card/task-status-card.component.html": {
+      "reason": "Lane chip: the lane word and tone come from lane-presentation.ts (R9), not from a status tone.",
+      "signatures": [
+        "d8f03b7f33961e27"
+      ]
+    },
+    "src/app/features/access/components/access-bindings/access-bindings.component.html": {
+      "reason": "Role name of a binding is a tag; the owner tint marks the role, not a state.",
+      "signatures": [
+        "f9f8678a96e95b75"
+      ]
+    },
+    "src/app/features/access/components/access-groups/access-groups.component.html": {
+      "reason": "Binding count of a group is a tag with a count, not a state.",
+      "signatures": [
+        "ca1597ce10c1fa67"
+      ]
+    },
+    "src/app/features/board/components/filters-dropdown/filters-dropdown.component.html": {
+      "reason": "Task type filter pills are interactive filters, not states.",
+      "signatures": [
+        "e157d961e00a4af3"
+      ]
+    },
+    "src/app/features/board/components/task-card/task-card.component.html": {
+      "reason": "Task mode is a tag; the four pipeline step dots are a dense progress mark with per-dot tooltips (inventory row kept, AGT-3403).",
+      "signatures": [
+        "01c0726bdd07d325",
+        "d3743142aa55d9d6"
+      ]
+    },
+    "src/app/features/board/components/task-column/task-column.html": {
+      "reason": "Collapsed lane rail dots are an aggregate mark inside the rail toggle button, aria-hidden with counts in data-count (AGT-3403).",
+      "signatures": [
+        "60736156608d3a28",
+        "b607b518f48d4062"
+      ]
+    },
+    "src/app/features/orchestrator/components/orchestrator-context-header/orchestrator-context-header.component.html": {
+      "reason": "Lane pill: the lane word and tone come from lane-presentation.ts (R9).",
+      "signatures": [
+        "8f26edeb813bb9aa"
+      ]
+    },
+    "src/app/features/project-detail/components/project-git-history/project-git-history.component.html": {
+      "reason": "Legend samples, task keys and git ref chips are tags; deployment and presence states inside the chips use the indicator.",
+      "signatures": [
+        "0eaddc7517166666",
+        "1c96ced00e0ff6c5",
+        "1e58a12beacf1e54",
+        "31b20d9667f1a3f1",
+        "443f032c80e0f78f",
+        "dd87ac0936ad9c1f",
+        "e8c0926adbb90575",
+        "fee0f9b9ac856ddc"
+      ]
+    },
+    "src/app/features/project-detail/components/project-observability/project-observability-panel.component.html": {
+      "reason": "Observation kind badge is a category tag, not a state.",
+      "signatures": [
+        "c66db42809f26f57"
+      ]
+    },
+    "src/app/features/project-detail/components/project-security-section/project-security-section.html": {
+      "reason": "Component is not mounted anywhere; migrate the rating pill when the section is mounted again.",
+      "signatures": [
+        "5e15dba6f0d74536"
+      ]
+    },
+    "src/app/features/project-detail/components/project-steering-docs-section/project-steering-docs-section.html": {
+      "reason": "Read count of the tool-use analytics is a count, not a state.",
+      "signatures": [
+        "74f87d40b298b89d"
+      ]
+    },
+    "src/app/features/project-detail/components/project-url-preview-tab/project-url-preview-tab.component.html": {
+      "reason": "Wrapper keeps data-status for Playwright; the state inside renders through app-status-indicator (AGT-3403).",
+      "signatures": [
+        "324a6ec7baceddfa"
+      ]
+    },
+    "src/app/features/project-detail/components/project-wiki-section/project-wiki-section.html": {
+      "reason": "Page type chips are tags; status chips in the same loop render through app-status-indicator (AGT-3403).",
+      "signatures": [
+        "476e14655402b433"
+      ]
+    },
+    "src/app/features/project-detail/components/project-wiki-section/wiki-folder-view/wiki-folder-view.component.html": {
+      "reason": "Page type chips are tags; status chips in the same loop render through app-status-indicator (AGT-3403).",
+      "signatures": [
+        "f41527a388e14526"
+      ]
+    },
+    "src/app/features/project-detail/components/project-wiki-section/wiki-grade-panel/wiki-grade-panel.component.html": {
+      "reason": "Critical finding count badge is a count, not a state.",
+      "signatures": [
+        "aa04095c3c57517f"
+      ]
+    },
+    "src/app/features/project-detail/components/project-wiki-section/wiki-pulse/wiki-pulse.component.html": {
+      "reason": "Attention and live-run badges are counts on section headings, not states.",
+      "signatures": [
+        "49f4d69cf899fea7",
+        "f0d82d63cbbc1395"
+      ]
+    },
+    "src/app/features/project-detail/components/uxui-panel/uxui-panel.component.html": {
+      "reason": "Accepted and rejected screenshot chips are counts, not states.",
+      "signatures": [
+        "aaacaa3e27250c3c",
+        "cae0f6e5afe68917"
+      ]
+    },
+    "src/app/features/remote-hosts/components/remote-host-card/remote-host-card.html": {
+      "reason": "Wrapper keeps data-state for Playwright; the provider sign-in state inside renders through app-status-indicator (AGT-3402).",
+      "signatures": [
+        "ccb818bcc20d98c7"
+      ]
+    },
+    "src/app/features/studio-shell/components/explorer-workbench-history/explorer-workbench-history.component.html": {
+      "reason": "Label-less status dot in a dense tree row; the group heading names the state (AGT-3403).",
+      "signatures": [
+        "c10b2d669bc5644d"
+      ]
+    },
+    "src/app/features/studio-shell/components/explorer-workbench-list/explorer-workbench-list.component.html": {
+      "reason": "Label-less status dots in dense tree rows; the group heading and tooltip carry the state (AGT-3403).",
+      "signatures": [
+        "c10b2d669bc5644d",
+        "d234fe8a8de0a6cc"
+      ]
+    },
+    "src/app/features/studio-shell/components/explorer-workspace-tree/explorer-workspace-tree.component.html": {
+      "reason": "Label-less URL probe dot in a dense tree row; state in aria-label and row tooltip (AGT-3403).",
+      "signatures": [
+        "30daa270f594a2f7"
+      ]
+    },
+    "src/app/features/task-detail/components/detail-header/detail-header.component.html": {
+      "reason": "Task mode badge is a tag, not a state.",
+      "signatures": [
+        "06bf1bd73ad0ebbd"
+      ]
+    },
+    "src/app/features/task-detail/components/prompt-pane/overview-pane/overview-title-block/overview-title-block.component.html": {
+      "reason": "Lane pill: the lane word and tone come from lane-presentation.ts (R9).",
+      "signatures": [
+        "397c8bcc85f88663"
+      ]
+    },
+    "src/app/features/tokens/components/workspace-token-timeline/workspace-token-timeline.html": {
+      "reason": "Chart legend category dot is a series colour, not a state.",
+      "signatures": [
+        "c28381fb1c6a7431"
+      ]
+    },
+    "src/app/features/usage-cockpit/components/usage-cli-chip/usage-cli-chip.html": {
+      "reason": "Usage cockpit chip is an interactive control in the header owned by AGT-3356.",
+      "signatures": [
+        "dbfe85cde94ef7a0"
+      ]
+    },
+    "src/app/features/usage-cockpit/components/usage-cost-chip/usage-cost-chip.html": {
+      "reason": "Usage cockpit chip is an interactive control in the header owned by AGT-3356.",
+      "signatures": [
+        "d3d440a27a64aae8"
+      ]
+    },
+    "src/app/features/usage-cockpit/components/usage-slot-chip/usage-slot-chip.html": {
+      "reason": "Usage cockpit chip is an interactive control in the header owned by AGT-3356.",
+      "signatures": [
+        "8699dcc5755d6f08"
+      ]
+    }
+  }
+}
