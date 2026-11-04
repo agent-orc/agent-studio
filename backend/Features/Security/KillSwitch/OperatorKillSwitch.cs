@@ -57,7 +57,7 @@ public sealed class OperatorKillSwitch(
         {
             Id = "kill_" + Guid.NewGuid().ToString("N"), Kind = OperatorKillKinds.All, Trigger = trigger, Actor = actor.Actor,
             Reason = reason, At = ended.At, OperatorAgentIds = ended.OperatorAgentIds, SessionIds = ended.SessionIds,
-            AllOperators = true, RequestId = requestId,
+            StandingGrantIds = ended.StandingGrantIds, AllOperators = true, RequestId = requestId,
             OperationsServer = new OperatorKillPropagation(revocation.Configured
                 ? OperatorKillPropagationStates.Pending : OperatorKillPropagationStates.NotConfigured),
         };
@@ -172,7 +172,11 @@ public sealed class OperatorKillSwitch(
             var enforced = store.EnforceOperatorKill(request.RequestedAt);
             if (enforced.OperatorAgentIds.Count > 0)
                 store.AppendOperatorKillAudit(OperatorKillActors.OutOfBand, OperatorKillEvents.Enforced, "ok", "operator-agents:all",
-                    new { killId = record.Id, requestId = request.Id, operatorAgentIds = enforced.OperatorAgentIds, sessionIds = enforced.SessionIds });
+                    new
+                    {
+                        killId = record.Id, requestId = request.Id, operatorAgentIds = enforced.OperatorAgentIds,
+                        sessionIds = enforced.SessionIds, standingGrantIds = enforced.StandingGrantIds,
+                    });
         }
         if (removeLatch) File.Delete(store.OperatorKillRequestPath);
         else if (request.AppliedRecordId is null)
@@ -262,7 +266,7 @@ public sealed class OperatorKillSwitch(
     private static object AuditDetails(OperatorKillRecord record) => new
     {
         killId = record.Id, record.Kind, record.Trigger, record.Reason, record.OperatorAgentIds, record.SessionIds,
-        record.AllOperators, record.RequestId, operationsServer = record.OperationsServer.State,
+        record.StandingGrantIds, record.AllOperators, record.RequestId, operationsServer = record.OperationsServer.State,
     };
 
     private static string? NormalizeReason(string? reason)

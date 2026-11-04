@@ -19,9 +19,10 @@ public sealed partial class AccessSecurityStore
 
     /// <summary>
     /// Disables every operator agent (<paramref name="agentIds"/> <c>null</c>)
-    /// or the named ones and revokes each of their sessions in one save, so
-    /// the next request of any of them is refused. A Studio kill requires an
-    /// active Owner; the out-of-band command and a drill do not.
+    /// or the named ones and revokes each of their sessions and standing
+    /// grants in one save, so the next request of any of them is refused. A
+    /// Studio kill requires an active Owner; the out-of-band command and a
+    /// drill do not.
     /// </summary>
     public OperatorAccessEnded EndOperatorAccess(IReadOnlyCollection<string>? agentIds, OperatorKillActor actor)
     {
@@ -38,8 +39,13 @@ public sealed partial class AccessSecurityStore
                 .Where(session => session.RevokedAt is null && session.ExpiresAt > now).Select(session => session.Id)).ToList();
             foreach (var account in targets)
                 next.ServiceAccounts[next.ServiceAccounts.IndexOf(account)] = DisabledLocked(account, now, actor.OwnerId ?? actor.Actor);
+            var grants = RevokeKilledGrantsLocked(next, targets, now, actor.OwnerId ?? actor.Actor);
             SaveLocked(next);
-            return new OperatorAccessEnded(now, targets.Select(account => account.Id).ToList(), sessions);
+            AuditKilledGrants(actor.OwnerId, grants);
+            return new OperatorAccessEnded(now, targets.Select(account => account.Id).ToList(), sessions)
+            {
+                StandingGrantIds = grants.Select(grant => grant.Id).ToList(),
+            };
         }
     }
 
@@ -79,14 +85,20 @@ public sealed partial class AccessSecurityStore
             var next = Copy(StateLocked());
             var now = Now;
             var targets = next.ServiceAccounts.Where(account => IsOperatorAgent(account) && account.CreatedAt <= requestedAt
-                && (account.DisabledAt is null || account.Sessions?.Any(session => session.RevokedAt is null) == true)).ToList();
+                && (account.DisabledAt is null || account.Sessions?.Any(session => session.RevokedAt is null) == true
+                    || next.StandingGrants.Any(grant => grant.PrincipalId == account.Id && grant.RevokedAt is null))).ToList();
             var sessions = targets.SelectMany(account => (account.Sessions ?? [])
                 .Where(session => session.RevokedAt is null && session.ExpiresAt > now).Select(session => session.Id)).ToList();
             if (targets.Count == 0) return new OperatorAccessEnded(now, [], []);
             foreach (var account in targets)
                 next.ServiceAccounts[next.ServiceAccounts.IndexOf(account)] = DisabledLocked(account, now, OperatorKillActors.OutOfBand);
+            var grants = RevokeKilledGrantsLocked(next, targets, now, OperatorKillActors.OutOfBand);
             SaveLocked(next);
-            return new OperatorAccessEnded(now, targets.Select(account => account.Id).ToList(), sessions);
+            AuditKilledGrants(null, grants);
+            return new OperatorAccessEnded(now, targets.Select(account => account.Id).ToList(), sessions)
+            {
+                StandingGrantIds = grants.Select(grant => grant.Id).ToList(),
+            };
         }
     }
 
@@ -168,6 +180,18 @@ public sealed partial class AccessSecurityStore
         var element = System.Text.Json.JsonSerializer.SerializeToElement(details, details.GetType(), ControlPlaneAuditLog.Json);
         return ControlPlaneAudit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.KillSwitch, actor, operation, outcome, target,
             ParameterDigest: ControlPlaneAuditLog.Sha256Hex(element.GetRawText()), Details: element));
+    }
+
+    /// <summary>The live standing grants (SM-4) of the killed principals, revoked in the caller's save.</summary>
+    private static List<StandingGrant> RevokeKilledGrantsLocked(SecurityState state, IEnumerable<ServiceAccount> targets, DateTime now,
+        string revokedBy)
+        => targets.SelectMany(account => RevokeAgentGrantsLocked(state, account.Id, now, revokedBy, "operator kill switch")).ToList();
+
+    /// <summary>Each revoked grant goes to the IAM audit like any other grant change.</summary>
+    private void AuditKilledGrants(string? ownerId, IEnumerable<StandingGrant> grants)
+    {
+        foreach (var grant in grants)
+            AppendIamAudit(ownerId, "standing-grant.revoke", "standing-grant", grant.Id, new { grant.PrincipalId, grant.RevokeReason });
     }
 
     private void RequireNoOperatorKillRequest()

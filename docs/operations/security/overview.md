@@ -627,9 +627,14 @@ do.
   state. The next request of any session is refused (`401`), and no new
   session can be started for a disabled principal. The same step then revokes
   the operator's Operations Server principals and cancels their queued
-  operations (running ones are asked to stop). Standing grants (SM-4),
-  approval requests (SM-5), and host certificates (SM-6) join this step when
-  those slices exist; until then a session holds no other credential.
+  operations (running ones are asked to stop). The same save revokes every
+  live standing grant (SM-4) of those agents (`RevokedBy` is the Owner, or
+  `system:control-plane-host` for the out-of-band command, reason `operator
+  kill switch`), each with a `standing-grant.revoke` IAM audit entry, and the
+  kill record lists them in `standingGrantIds`. No future grant can be issued
+  or renewed, because a grant needs an enabled operator agent. A per-session
+  kill keeps the agent's grants. Approval requests (SM-5) and host
+  certificates (SM-6) join this step when those slices exist.
 - **End session** on one session row
   (`POST /api/auth/iam/operator-agents/{id}/sessions/{sid}/kill`) refuses that
   session at once while the agent and its other sessions keep working.

@@ -11,7 +11,7 @@
     <div class="kill__action">
       <div class="kill__copy">
         <h4>End all operator access</h4>
-        <p class="access-hint">Disables every operator agent, ends every session, revokes their Operations Server principals, and cancels their queued host operations. Every operator call is refused within 60 seconds. When Studio is unreachable, run the host command from the operator agent guide.</p>
+        <p class="access-hint">Disables every operator agent, ends every session and standing grant, revokes their Operations Server principals, and cancels their queued host operations. Every operator call is refused within 60 seconds. When Studio is unreachable, run the host command from the operator agent guide.</p>
       </div>
       <label>Reason
         <input data-testid="access-kill-reason" placeholder="Optional" maxlength="500" [value]="reason()" (input)="reason.set($any($event.target).value)" />

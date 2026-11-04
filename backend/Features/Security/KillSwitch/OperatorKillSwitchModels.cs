@@ -57,7 +57,11 @@ public sealed record OperatorKillActor(string Actor, string? OwnerId)
 }
 
 /// <summary>What the access store changed for one kill: the principals disabled and the sessions revoked.</summary>
-public sealed record OperatorAccessEnded(DateTime At, IReadOnlyList<string> OperatorAgentIds, IReadOnlyList<string> SessionIds);
+public sealed record OperatorAccessEnded(DateTime At, IReadOnlyList<string> OperatorAgentIds, IReadOnlyList<string> SessionIds)
+{
+    /// <summary>The standing grants (SM-4) the kill revoked; a per-session kill keeps them.</summary>
+    public IReadOnlyList<string> StandingGrantIds { get; init; } = [];
+}
 
 public sealed record OperatorKillPropagation(
     string State,
@@ -79,6 +83,8 @@ public sealed record OperatorKillRecord
     public DateTime At { get; init; }
     public IReadOnlyList<string> OperatorAgentIds { get; init; } = [];
     public IReadOnlyList<string> SessionIds { get; init; } = [];
+    /// <summary>The standing grants (SM-4) the kill revoked.</summary>
+    public IReadOnlyList<string> StandingGrantIds { get; init; } = [];
     /// <summary><c>true</c> when the kill covered every operator agent rather than named ones.</summary>
     public bool AllOperators { get; init; }
     public OperatorKillPropagation OperationsServer { get; init; } = new(OperatorKillPropagationStates.NotRequired);

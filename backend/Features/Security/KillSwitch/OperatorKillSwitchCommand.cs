@@ -106,7 +106,7 @@ public static class OperatorKillSwitchCommand
     private static async Task<int> ReportAsync(OperatorKillRecord record, TextWriter output)
     {
         await output.WriteLineAsync($"Ended all operator access: {record.Id}, {record.OperatorAgentIds.Count} operator agents, "
-            + $"{record.SessionIds.Count} live sessions. Audit event {OperatorKillEvents.All}.");
+            + $"{record.SessionIds.Count} live sessions, {record.StandingGrantIds.Count} standing grants. Audit event {OperatorKillEvents.All}.");
         await output.WriteLineAsync($"Operations Server principals: {record.OperationsServer.State}"
             + (record.OperationsServer.LastError is { } error ? $" ({error})" : ""));
         if (record.OperationsServer.State == OperatorKillPropagationStates.Revoked) return ExitOk;

@@ -137,8 +137,9 @@ this page are listed in the
 ## 5. Kill switch
 
 **Settings > Access > Kill switch > End all operator access** disables every
-operator agent, ends every session, revokes their Operations Server
-principals, and cancels their queued host operations (security model SM-2).
+operator agent, ends every session, revokes every standing grant and their
+Operations Server principals, and cancels their queued host operations
+(security model SM-2).
 Every operator call is refused within 60 seconds; in practice the next Studio
 request already gets `401`. To resume, create a new operator agent and start a
 session. Each use appears in the audit trail with its own event type
