@@ -1046,6 +1046,8 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
+// SM-4: the operator policy step reads gate evidence to classify stage deploys and promotions (D2).
+builder.Services.AddSingleton<AgentStudio.Security.IOperatorGateEvidence, AgentStudio.Security.PostMergeGateEvidence>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeIncidentService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeModeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();

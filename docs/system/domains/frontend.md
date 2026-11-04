@@ -905,8 +905,12 @@ occur. It is not a claim about tunnel transfer time.
   the existing `POST /api/auth/invitations` with one initial binding, resets
   passwords, disables users with a `{ disabled }` PUT that leaves bindings
   alone, shows a service-account token or enrollment code once, and reloads
-  after every change. Expiry math reads the injectable `ACCESS_CLOCK`. The
-  rights model is described in
+  after every change. Expiry math reads the injectable `ACCESS_CLOCK`. Its
+  Standing grants panel reads `GET /api/auth/iam/operator-catalogue` and
+  `GET /api/auth/iam/standing-grants`, and issues, renews, and revokes through
+  `POST /api/auth/iam/standing-grants`, `.../{id}/renew`, and
+  `.../{id}/revoke` (security model SM-4), stepping up before an issue or
+  renewal. The rights model is described in
   [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
