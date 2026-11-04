@@ -1227,15 +1227,17 @@ public static class TaskCrudEndpoints
 
         group.MapPut("/{jobId}/model", (string jobId, string? project, string? watchPath, SetJobModelRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            if (req.PinMode is not ("preference" or "hard")) return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var success = mutations.SetJobModel(jobId, req?.Model, watchPath);
+            var success = mutations.SetJobModel(jobId, req.Model, watchPath, req.PinMode);
             return success ? Results.Ok() : Results.NotFound();
         });
 
         group.MapPut("/{jobId}/thinking-level", (string jobId, string? project, string? watchPath, SetJobThinkingLevelRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            if (req.PinMode is not ("preference" or "hard")) return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var success = mutations.SetJobThinkingLevel(jobId, req?.ThinkingLevel, watchPath);
+            var success = mutations.SetJobThinkingLevel(jobId, req.ThinkingLevel, watchPath, req.PinMode);
             return success ? Results.Ok() : Results.NotFound();
         });
 
@@ -1243,8 +1245,9 @@ public static class TaskCrudEndpoints
         {
             if (req is null || !CliTypes.IsValid(req.CliType))
                 return Results.BadRequest(new { error = $"cliType must be one of {string.Join(", ", CliTypes.All)}" });
+            if (req.PinMode is not ("preference" or "hard")) return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var ok = mutations.SetJobCliType(jobId, req.CliType, watchPath);
+            var ok = mutations.SetJobCliType(jobId, req.CliType, watchPath, req.PinMode);
             if (!ok) return Results.NotFound();
             if (req.UseOwnSession.HasValue)
                 mutations.SetJobUseOwnSession(jobId, req.UseOwnSession.Value, watchPath);

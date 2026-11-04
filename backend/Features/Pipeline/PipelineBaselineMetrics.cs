@@ -217,9 +217,14 @@ internal static class PipelineBaselineMetrics
         try
         {
             foreach (var (path, _) in Recent(TaskPaths.LogsDir(folder), "remote-review-settlement-*.json"))
-                if (BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.EvidenceTextBytes) is { } json
-                    && ParseSettlement(json) is { } review)
+            {
+                if (new FileInfo(path).Length > BoundedFileRead.EvidenceTextBytes) continue;
+                var attemptId = Path.GetFileNameWithoutExtension(path)["remote-review-settlement-".Length..];
+                if (RemoteReviewSettlementJournal.Read(folder, attemptId).Entry is { } entry
+                    && ParseSettlement(JsonSerializer.Serialize(entry,
+                        new JsonSerializerOptions(JsonSerializerDefaults.Web))) is { } review)
                     reviews.TryAdd(review.AttemptId, review);
+            }
             foreach (var (path, written) in Recent(folder, "remote-review-grade-*.md"))
                 if (BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.EvidenceTextBytes) is { } text)
                 {

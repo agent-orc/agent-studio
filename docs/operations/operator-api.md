@@ -34,9 +34,14 @@ The steps are `drain`, `task-server`, `readiness`, `engine`, `hosts` in one
 window. A plan expires at `expiresAtUtc`; no route here executes a host update.
 
 `POST /api/operator/preflight/{restart|deploy}/override` is a T2 operation.
-It returns 403 `owner-approval-unavailable` until SM-5 provides digest-bound
-Owner approval with step-up. Passing `overrideBlocker=true` to the read or
-plan routes is refused with the same code.
+An operator session with installation scope first receives `approval-required`;
+the Owner approves the exact request in Studio after step-up. Repeating it with
+`X-Operator-Approval` returns `allowed: true`, the current blockers and
+`overrideApprovalId`. The approval is single use and its result is audited.
+An API token or direct human call cannot redeem it. Passing
+`overrideBlocker=true` to a read or plan route returns 403
+`override-requires-t2-request`. The override response is evidence for the
+manual runbook decision; the plan route continues to enforce preflight.
 
 ## Batch triage
 

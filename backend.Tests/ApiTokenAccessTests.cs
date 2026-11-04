@@ -27,7 +27,8 @@ public sealed class ApiTokenAccessTests : IDisposable
         var principal = store.AuthenticateServiceAccount(made.Secret);
         Assert.Equal(("service-account:sa_" + made.Token.Id, made.Token.Id), (principal?.ActorId, principal?.TokenId));
         Assert.Equal("PROJ-002", Assert.Single(store.ListApiTokens().Single(token => token.Id == made.Token.Id).Projects));
-        Assert.Equal(IamRoles.Admin, Assert.Single(store.ReadIamSnapshot().Bindings,
+        // An operator token binds the narrow operator agent role (OP-1), never Admin.
+        Assert.Equal(IamRoles.OperatorAgent, Assert.Single(store.ReadIamSnapshot().Bindings,
             binding => binding.PrincipalId == principal!.AccountId).Role);
         Assert.DoesNotContain(made.Secret, File.ReadAllText(Path.Combine(store.SecurityFolder, "access-state.json")), StringComparison.Ordinal);
         var listed = Assert.Single(store.ListApiTokens());
@@ -77,7 +78,7 @@ public sealed class ApiTokenAccessTests : IDisposable
         var middleware = new AccessSecurityMiddleware(context => { called++; context.Response.StatusCode = 204; return Task.CompletedTask; },
             configuration, store);
 
-        var allowed = await Invoke(middleware, "PUT", "/api/projects/mine/settings", operatorToken.Secret);
+        var allowed = await Invoke(middleware, "POST", "/api/projects/mine/batch-gate/close-now", operatorToken.Secret);
         Assert.Equal(204, allowed.Response.StatusCode);
         Assert.Equal("service-account:sa_" + operatorToken.Token.Id, allowed.Items["ClientId"]);
         Assert.Equal(StudioRoles.Operator,
@@ -86,7 +87,7 @@ public sealed class ApiTokenAccessTests : IDisposable
         Assert.Equal(403, foreign.Response.StatusCode);
         var globalMutation = await Invoke(middleware, "POST", "/api/settings", operatorToken.Secret);
         Assert.Equal(403, globalMutation.Response.StatusCode);
-        var viewerMutation = await Invoke(middleware, "PUT", "/api/projects/mine/settings", viewerToken.Secret);
+        var viewerMutation = await Invoke(middleware, "POST", "/api/projects/mine/batch-gate/close-now", viewerToken.Secret);
         Assert.Equal(403, viewerMutation.Response.StatusCode);
         var admin = await Invoke(middleware, "GET", "/api/auth/users", operatorToken.Secret);
         Assert.Equal(403, admin.Response.StatusCode);
@@ -116,8 +117,11 @@ public sealed class ApiTokenAccessTests : IDisposable
         var called = 0;
         var middleware = new AccessSecurityMiddleware(_ => { called++; return Task.CompletedTask; }, configuration, store);
 
-        var projectWrite = await Invoke(middleware, "PUT", "/api/projects/mine/settings", token.Secret);
+        var projectWrite = await Invoke(middleware, "POST", "/api/projects/mine/batch-gate/close-now", token.Secret);
         Assert.Equal(200, projectWrite.Response.StatusCode);
+        // Project settings are not part of the operator surface (OP-1).
+        var settingsWrite = await Invoke(middleware, "PUT", "/api/projects/mine/settings", token.Secret);
+        Assert.Equal(403, settingsWrite.Response.StatusCode);
         var installationWrite = await Invoke(middleware, "PUT", "/api/settings/cli", token.Secret);
         Assert.Equal(403, installationWrite.Response.StatusCode);
         // Even a routed installation-wide write the workspace binding grants
@@ -217,6 +221,7 @@ public sealed class ApiTokenAccessTests : IDisposable
         var pattern = path switch
         {
             "/api/projects/mine/settings" => "/api/projects/{projectName}/settings",
+            "/api/projects/mine/batch-gate/close-now" => "/api/projects/{projectName}/batch-gate/close-now",
             "/api/workspaces/main/autonomy" => "/api/workspaces/{id}/autonomy",
             _ when path.StartsWith("/api/workspace/", StringComparison.Ordinal) => path,
             _ => null,

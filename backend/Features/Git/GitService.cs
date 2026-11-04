@@ -4640,6 +4640,17 @@ public partial class GitService
         return string.IsNullOrWhiteSpace(sha) ? null : sha;
     }
 
+    /// <summary>The sole root reachable from a commit, when its repository history has one.</summary>
+    public string? GetRootCommit(string repoRoot, string commitSha)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !AgentStudio.Pipeline.ReviewSubjectStore.IsValidResultSha(commitSha)) return null;
+        var (output, _, code) = RunGitArgs(repoRoot, "rev-list", "--max-parents=0", commitSha);
+        if (code != 0) return null;
+        var roots = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        return roots.Length == 1 && AgentStudio.Pipeline.ReviewSubjectStore.IsValidResultSha(roots[0]) ? roots[0] : null;
+    }
+
     /// <summary>
     /// Tip SHA of a local or remote-tracking ref (<c>rev-parse --verify</c>), or
     /// null when the ref does not exist. ASS-1724 reads the <c>task/&lt;id&gt;</c>

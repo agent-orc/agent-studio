@@ -14,6 +14,54 @@ namespace AgentStudio.Tests;
 public sealed class ProjectBasicsEndpointsTests
 {
     [Fact]
+    public async Task PutPipelineStep_keeps_the_route_and_writes_a_consumer_override()
+    {
+        var root = TempPath("pipeline-step-consumer-override");
+        Directory.CreateDirectory(root);
+        try
+        {
+            await using var factory = BuildFactory(root);
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+            var project = await CreateProject(client, "Consumer Override Project", "COP");
+            var response = await client.PutAsJsonAsync(
+                $"/api/projects/{Uri.EscapeDataString(project.DisplayName)}/pipeline-step",
+                new SetPipelineStepRequest
+                {
+                    StepId = "aspect-code-quality", PipelineType = PipelineTypes.Bug,
+                    CliType = "claude", Model = "claude-opus-5", PinMode = "hard",
+                });
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var settingsService = factory.Services.GetRequiredService<ProjectSettingsService>();
+            var settings = settingsService.Get(project.DisplayName);
+            var overrideRoute = settings.ModelSelectionOverrides!["review-aspect"]
+                .ByPipelineType![PipelineTypes.Bug].ByStep!["aspect-code-quality"];
+            Assert.Equal("claude-opus-5", overrideRoute.Primary?.Model);
+            Assert.Equal("hard", overrideRoute.PinMode);
+            Assert.Equal("claude-opus-5", PipelineTypeSettings.ForType(settings, PipelineTypes.Bug)!
+                .PipelineSteps!["aspect-code-quality"].Model);
+            Assert.Equal("hard", PipelineTypeSettings.ForType(settings, PipelineTypes.Bug)!
+                .PipelineSteps!["aspect-code-quality"].PinMode);
+            settingsService.SetModelSelectionOverride(project.DisplayName, "review-aspect",
+                new ModelSelectionOverride
+                {
+                    Primary = new AgentStudio.TaskServer.Contracts.SelectionRoute("claude", "claude-opus-5", "high"),
+                });
+            var catalogue = await client.GetAsync(
+                $"/api/projects/pipeline-catalogue?projectName={Uri.EscapeDataString(project.DisplayName)}&pipelineType=bug");
+            Assert.Equal(HttpStatusCode.OK, catalogue.StatusCode);
+            using var catalogueBody = JsonDocument.Parse(await catalogue.Content.ReadAsStringAsync());
+            var codeQuality = catalogueBody.RootElement.GetProperty("steps").EnumerateArray()
+                .Single(step => step.GetProperty("id").GetString() == "aspect-code-quality");
+            Assert.True(codeQuality.GetProperty("overridesWorkspace").GetBoolean());
+            var requirementFit = catalogueBody.RootElement.GetProperty("steps").EnumerateArray()
+                .Single(step => step.GetProperty("id").GetString() == "aspect-requirement-fit");
+            Assert.True(requirementFit.GetProperty("overridesWorkspace").GetBoolean());
+        }
+        finally { DeleteBestEffort(root); }
+    }
+
+    [Fact]
     public async Task PutPipelineStep_RefusesAModelThatDoesNotBelongToTheStepCli()
     {
         var taskRepository = TempPath("pipeline-step-model-pair");

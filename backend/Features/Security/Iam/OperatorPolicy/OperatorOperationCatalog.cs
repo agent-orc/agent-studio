@@ -190,6 +190,7 @@ public static class OperatorOperationCatalog
         new("DELETE", "/api/auth/runners/{}/credentials/{}", OperatorOperationIds.KeysRotate),
         new("PUT", "/api/auth/runners/{}/projects", OperatorOperationIds.AccessChange),
         new("W", "/api/auth/iam/standing-grants/**", OperatorOperationIds.GrantChange),
+        new("W", "/api/auth/iam/operator-approvals/**", OperatorOperationIds.GrantChange),
         new("W", "/api/auth/users/**", OperatorOperationIds.AccessChange),
         new("POST", "/api/auth/invitations", OperatorOperationIds.AccessChange),
         new("W", "/api/auth/api-tokens/**", OperatorOperationIds.AccessChange),

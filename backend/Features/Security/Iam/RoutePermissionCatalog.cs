@@ -354,6 +354,7 @@ public static class RoutePermissionCatalog
             "/api/workspaces/**", "/api/watch-paths/**", "/api/tags/**", "/api/admin/**",
             "/api/cli/quota/caps", "/api/cli/quota/fallback-preference", "/api/cli/quota/model-routes",
             "/api/cli/quota/wait-policy", "/api/cli/maintenance-model", "/api/cli/model-routing/**",
+            "/api/model-selection/policy/consumers/{}",
             "/api/clients/{}/defaults", "/api/clients/{}/runner-capacity", "/api/git/branch-sweep/settings",
             "/api/orchestration/rollout/**");
         Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/component-routing/resolve");
@@ -369,6 +370,7 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/types", "/api/cli/contracts", "/api/cli/model-migrations");
         Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/effective");
+        Add("R", IamPermissions.WorkspaceRead, "/api/model-selection/policy");
         // These return configuration or cached data without reading sessions.
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/{}/models", "/api/cli/maintenance-model", "/api/cli/{}/effective-mode",
@@ -449,10 +451,14 @@ public static class RoutePermissionCatalog
             "wiki/**", "workbenches/**", "security/files/**", "security/meta");
 
         // --- Project settings ----------------------------------------------
+        // One step override at a time; the operator agent changes review step
+        // models here without the rest of the project settings (OP-1).
+        Add("PUT", IamPermissions.ProjectPipelineWrite, "/api/projects/{}/pipeline-step");
         // Only project settings writers may enable shadow package review.
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/review-package");
         Add("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}");
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/*");
+        Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/model-selection-overrides/{}");
         Under("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}",
             "areas/{}/glossary", "build-profile", "build-profile/validate", "execution/override", "test-execution",
             "publish/automation", "urls", "urls/**", "ownership-mappings/**", "pipeline-definition/**");

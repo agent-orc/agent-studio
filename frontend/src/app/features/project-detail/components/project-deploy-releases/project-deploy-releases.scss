@@ -44,6 +44,12 @@
 
 .releases__detail h3 { margin: 0 0 var(--studio-spacing-3); color: var(--studio-fg-strong); font-size: 1rem; }
 .releases__verdict { margin: 0 0 var(--studio-spacing-3); color: var(--studio-fg-muted); overflow-wrap: anywhere; }
+.releases__quality { margin-bottom: var(--studio-spacing-4); }
+.releases__quality h4 { margin: 0 0 var(--studio-spacing-2); color: var(--studio-fg-strong); }
+.releases__quality p { margin: 0 0 var(--studio-spacing-2); }
+.releases__quality-cards { margin: 0 0 var(--studio-spacing-3); padding: 0; list-style: none; }
+.releases__quality-cards li { display: flex; justify-content: space-between; gap: var(--studio-spacing-3); border-bottom: 1px solid var(--studio-border); padding: var(--studio-spacing-1) 0; }
+.releases__quality button { @include deploy.button; }
 .releases__facts { @include deploy.fact-list; }
 .releases__digests { margin: 0; padding: 0; list-style: none; }
 .releases__pages { display: flex; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-3); }

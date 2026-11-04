@@ -21,7 +21,7 @@ public static class DeployPreflightEndpoints
             DeployPlanRequest request, CancellationToken ct) =>
         {
             if (ScopeRefusal(context) is { } scope) return scope;
-            if (request.OverrideBlocker) return OverrideUnavailable();
+            if (request.OverrideBlocker) return OverrideRequiresApproval();
             if (string.IsNullOrWhiteSpace(request.TargetVersion)
                 || request.TargetVersion.Length > 64
                 || request.TargetVersion.Any(char.IsControl))
@@ -36,11 +36,27 @@ public static class DeployPreflightEndpoints
                 return Results.Json(new { error = "task-server-version-unavailable" }, statusCode: 503);
             }
         }).RequirePermission(IamPermissions.WorkspaceRead);
-        // SM-5 has not delivered digest-bound Owner approval. A blocker
-        // override is classified T2 and remains refused for every caller.
-        group.MapPost("/preflight/{operation}/override", (string operation) =>
-            operation is "restart" or "deploy" ? OverrideUnavailable()
-                : Results.NotFound(new { error = "unknown-preflight" }))
+        // SM-5 admits this T2 request only after the Owner approves the exact
+        // operator-session request with a fresh step-up. An API token or a
+        // direct human call has no redeemed approval and cannot override.
+        group.MapPost("/preflight/{operation}/override", (HttpContext context,
+            DeployPreflightService service, string operation) =>
+        {
+            if (operation is not ("restart" or "deploy"))
+                return Results.NotFound(new { error = "unknown-preflight" });
+            if (ScopeRefusal(context) is { } scope) return scope;
+            if (context.Items[AccessSecurityMiddleware.OperatorApprovalItem] is not string approvalId)
+                return OverrideRequiresApproval();
+            var snapshot = service.Check(operation);
+            return Results.Ok(new
+            {
+                snapshot.Operation,
+                Allowed = true,
+                snapshot.CheckedAtUtc,
+                snapshot.Blockers,
+                OverrideApprovalId = approvalId,
+            });
+        })
             .RequirePermission(IamPermissions.WorkspaceOperate);
     }
 
@@ -48,7 +64,7 @@ public static class DeployPreflightEndpoints
         string operation, bool overrideBlocker)
     {
         if (ScopeRefusal(context) is { } scope) return scope;
-        if (overrideBlocker) return OverrideUnavailable();
+        if (overrideBlocker) return OverrideRequiresApproval();
         var snapshot = service.Check(operation);
         return snapshot.Allowed ? Results.Ok(snapshot) : Results.Conflict(snapshot);
     }
@@ -59,7 +75,7 @@ public static class DeployPreflightEndpoints
             ? Results.Json(new { error = "installation-scope-required" }, statusCode: 403)
             : null;
 
-    private static IResult OverrideUnavailable()
-        => Results.Json(new { error = "owner-approval-unavailable", tier = "T2",
-            message = "Blocker override requires Owner step-up approval, which is not available yet." }, statusCode: 403);
+    private static IResult OverrideRequiresApproval()
+        => Results.Json(new { error = "override-requires-t2-request", tier = "T2",
+            message = "Use the preflight override operation with an Owner approval made after step-up." }, statusCode: 403);
 }

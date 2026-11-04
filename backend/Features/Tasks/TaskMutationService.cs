@@ -101,7 +101,7 @@ public class TaskMutationService
         return true;
     }
 
-    public bool SetJobModel(string jobId, string? model, string? watchPath = null)
+    public bool SetJobModel(string jobId, string? model, string? watchPath = null, string pinMode = "preference")
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
@@ -109,6 +109,7 @@ public class TaskMutationService
         var normalizedModel = ModelMetadataRegistry.NormalizeForCli(info.CliType, model);
         TaskJsonFile.UpdateField(info.FolderPath, "model", normalizedModel ?? "", _logger);
         TaskJsonFile.UpdateField(info.FolderPath, "modelExplicit", !string.IsNullOrWhiteSpace(model), _logger);
+        TaskJsonFile.UpdateField(info.FolderPath, "pinMode", pinMode, _logger);
         TaskJsonFile.UpdateField(
             info.FolderPath,
             "thinkingLevel",
@@ -157,23 +158,25 @@ public class TaskMutationService
         }
     }
 
-    public bool SetJobThinkingLevel(string jobId, string? thinkingLevel, string? watchPath = null)
+    public bool SetJobThinkingLevel(string jobId, string? thinkingLevel, string? watchPath = null, string pinMode = "preference")
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var normalized = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, info.Model, thinkingLevel);
         TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", normalized ?? "", _logger);
         TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevelExplicit", !string.IsNullOrWhiteSpace(thinkingLevel), _logger);
+        TaskJsonFile.UpdateField(info.FolderPath, "pinMode", pinMode, _logger);
         return Updated(info);
     }
 
-    public bool SetJobCliType(string jobId, string cliType, string? watchPath = null)
+    public bool SetJobCliType(string jobId, string cliType, string? watchPath = null, string pinMode = "preference")
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var normalized = CliTypes.Normalize(cliType);
         var normalizedModel = ModelMetadataRegistry.NormalizeForCli(normalized, info.Model);
         TaskJsonFile.UpdateField(info.FolderPath, "cliType", normalized, _logger);
+        TaskJsonFile.UpdateField(info.FolderPath, "pinMode", pinMode, _logger);
         TaskJsonFile.UpdateField(info.FolderPath, "model", normalizedModel ?? "", _logger);
         TaskJsonFile.UpdateField(
             info.FolderPath,
@@ -331,6 +334,19 @@ public class TaskMutationService
             .OrderBy(c => c.At)
             .ToList();
         return WriteCommitState(folderPath, ordered);
+    }
+
+    /// <summary>Temporary sibling preference; never replaces an operator's card pin.</summary>
+    public bool SetJobPreferencePin(string jobId, string model, string? thinkingLevel,
+        DateTime expiresAt, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info is null) return false;
+        TaskJsonFile.UpdateField(info.FolderPath, "preferenceModel", model, _logger);
+        TaskJsonFile.UpdateField(info.FolderPath, "preferenceThinkingLevel", thinkingLevel, _logger);
+        TaskJsonFile.UpdateField(info.FolderPath, "preferencePinMode", "preference", _logger);
+        TaskJsonFile.UpdateField(info.FolderPath, "preferenceExpiresAt", expiresAt, _logger);
+        return Updated(info);
     }
 
     public bool SetJobDossier(string jobId, TaskDossier? dossier, string? watchPath = null)

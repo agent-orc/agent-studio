@@ -64,6 +64,37 @@ public sealed class ModelSelectionPlannerTests
     }
 
     [Fact]
+    public void Preference_pin_switch_is_logged_while_hard_pin_waits_with_reason()
+    {
+        var preference = Request() with
+        {
+            Pins = new SelectionPins(CliTypes.Claude, ModelIds.ClaudeOpus5, "high",
+                SelectionPinMode.Preference),
+        };
+        var hard = preference with { Pins = preference.Pins with { Mode = SelectionPinMode.Hard } };
+        var switched = ModelSelectionPlanner.Plan(preference, Facts(claudeUsed: 97));
+        var waiting = ModelSelectionPlanner.Plan(hard, Facts(claudeUsed: 97));
+        var switchEntry = SelectionLedgerEntry.For(preference, switched, "local-coding-launch", "switch", Now);
+        var waitEntry = SelectionLedgerEntry.For(hard, waiting, "local-coding-launch", "wait", Now);
+        Assert.Equal(SelectionLedgerKinds.Switched, switchEntry?.Kind);
+        Assert.Equal(SelectionRules.QuotaCap, switchEntry?.Rule);
+        Assert.Equal(SelectionLedgerKinds.Waiting, waitEntry?.Kind);
+        Assert.Contains("hard pin", waitEntry?.Reason);
+
+        var operatorFacts = Facts(claudeUsed: 30) with
+        {
+            OperatorSwitch = new CliFallbackPreference(CliTypes.Claude, true, Now.AddMinutes(-5), Now.AddDays(2)),
+        };
+        var operatorSwitch = ModelSelectionPlanner.Plan(preference, operatorFacts);
+        var hardHold = ModelSelectionPlanner.Plan(hard, operatorFacts);
+        Assert.Equal(SelectionRules.OperatorSwitch, operatorSwitch.Rule);
+        Assert.Equal(SelectionLedgerKinds.Switched,
+            SelectionLedgerEntry.For(preference, operatorSwitch, "local-coding-launch", "operator", Now)?.Kind);
+        Assert.Equal(SelectionOutcome.Wait, hardHold.Outcome);
+        Assert.Contains("hard pin", hardHold.Reason);
+    }
+
+    [Fact]
     public void Same_session_continuation_keeps_the_session_provider()
     {
         var request = Request() with

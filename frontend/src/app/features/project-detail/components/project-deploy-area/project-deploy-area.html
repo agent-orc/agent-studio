@@ -33,7 +33,7 @@
           <p class="deploy-area__tools-link">Find promotion, rollback and deploy commands in
             <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">deployment tools</button>.</p>
         }
-        @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [environments]="cards()" [now]="now()" [highlightedReleaseId]="highlightedReleaseId()"
+        @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [projectName]="projectName()" [environments]="cards()" [now]="now()" [highlightedReleaseId]="highlightedReleaseId()"
           [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" /> }
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading…</p> } }
         @case ('flow') { @defer { <app-flow-health-page [projectName]="projectName()" (openDetail)="openFlowDetail($event)" /> } @placeholder { <p>Loading flow health…</p> } }

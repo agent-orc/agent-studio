@@ -1,0 +1,31 @@
+@if (policy(); as selection) {
+  <section class="consumer-policy" data-testid="consumer-policy-editor">
+    <header>
+      <strong>Model selection by consumer</strong>
+      <small>Workspace defaults · migration: {{ selection.migration.inheritedSteps }} inherited, {{ selection.migration.explicitSteps }} explicit</small>
+    </header>
+    <div class="consumer-policy__scroll">
+      <table>
+        <thead><tr><th>Consumer</th><th>Primary (CLI:model:thinking)</th><th>Ordered fallbacks or catalogue</th><th>Effective route</th></tr></thead>
+        <tbody>
+          @for (row of rows(); track row.id) {
+            <tr [attr.data-testid]="'consumer-policy-' + row.id">
+              <td><strong>{{ row.id }}</strong></td>
+              <td><input [value]="routeText(row.setting.primary)" [disabled]="saving() !== null || row.setting.route === 'qualification'"
+                  [attr.aria-label]="'Primary route for ' + row.id"
+                  (change)="update(row.id, 'primary', $any($event.target).value)" />
+                  @if (row.setting.route === 'qualification') { <small>Task qualification</small> }</td>
+              <td><input [value]="fallbackText(row.setting)" [disabled]="saving() !== null"
+                  [attr.aria-label]="'Fallback routes for ' + row.id"
+                  (change)="update(row.id, 'fallbacks', $any($event.target).value)" /></td>
+              <td>@for (effective of effectiveRoutes(); track effective.consumer + ':' + (effective.stepId ?? '')) {
+                @if (effective.consumer === row.id) { {{ effective.effective?.cliType ?? 'wait' }} · {{ effective.effective?.model ?? 'default' }} }
+              }</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    @if (error()) { <p role="alert">{{ error() }}</p> }
+  </section>
+}

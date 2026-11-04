@@ -103,6 +103,7 @@ public sealed record SelectionRequest
     public string? AttemptId { get; init; }
     public int? Round { get; init; }
     public SelectionPins Pins { get; init; } = new();
+    public bool IsExplicitPin { get; init; }
     public string? TaskType { get; init; }
     /// <summary>The card's correctness floor; a fallback below it waits instead (rule 7).</summary>
     public ModelRoutingTier? CorrectnessFloor { get; init; }

@@ -1048,6 +1048,8 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
 // SM-4: the operator policy step reads gate evidence to classify stage deploys and promotions (D2).
 builder.Services.AddSingleton<AgentStudio.Security.IOperatorGateEvidence, AgentStudio.Security.PostMergeGateEvidence>();
+// SM-5: approval requests of T2 operator requests notify the Owner through the operator feed and an optional push link.
+builder.Services.AddOperatorApprovals();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeIncidentService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeModeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
@@ -1099,8 +1101,15 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateTransportSelector>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport>(services =>
     services.GetRequiredService<AgentStudio.Pipeline.GateTransportSelector>());
-builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
-    AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateRunLedger(
+    AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "gate-run-ledger")));
+builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner>(sp =>
+    new AgentStudio.Pipeline.LedgeredBuildTestGateRunner(
+        sp.GetRequiredService<AgentStudio.Pipeline.RemoteBuildTestGateRunner>(),
+        sp.GetRequiredService<AgentStudio.Pipeline.GateRunLedger>(),
+        sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineStepProbeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreDevelopBuildGate>();
@@ -1511,6 +1520,7 @@ builder.Services.AddSingleton<CliFallbackPreferenceService>();
 builder.Services.AddSingleton<ModelSelectionEffectiveService>();
 builder.Services.AddSingleton<AgentStudio.Cli.IModelEquivalenceCatalog, AgentStudio.Cli.ModelEquivalenceCatalog>();
 builder.Services.AddSingleton<CliQuotaFallbackService>();
+builder.Services.AddSingleton<ModelSelectionPolicyStore>();
 // MS-5: one selection service decides CLI, model and thinking level for every
 // launch path; QuotaAdmissionService is its legacy adapter until MS-6. MS-2
 // replaces the interim logging ledger with the JSONL store.
@@ -1657,6 +1667,20 @@ if (underTestHost)
 }
 
 var networkedSecurityProfile = SecurityProfiles.IsNetworked(app.Configuration);
+// Load the access state now, so a pending IAM migration (for example the
+// operator token rebinding of OP-1) and its audit entries run at start
+// rather than on the first request. An unreadable state does not stop the
+// host: the load retries on every request, and the exception handler answers
+// each of them with a 500 until the file is repaired.
+if (networkedSecurityProfile)
+{
+    try { _ = app.Services.GetRequiredService<AccessSecurityStore>().BootstrapRequired; }
+    catch (InvalidOperationException exception)
+    {
+        app.Services.GetRequiredService<ILogger<Program>>().LogError(exception,
+            "The access state could not be loaded at start; a pending IAM migration runs on the first request that reads it.");
+    }
+}
 var projectScopedSignalRProfile = networkedSecurityProfile || publicDemoExecutionProfile;
 var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");

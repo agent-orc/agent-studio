@@ -381,6 +381,7 @@ export interface PipelineCatalogueStep {
   model?: string | null;
   resolvedModel?: string | null;
   modelSource?: string | null;
+  overridesWorkspace?: boolean;
   resolvedThinkingLevel?: string | null;
   thinkingLevelSource?: string | null;
   usesModel: boolean;
@@ -466,6 +467,7 @@ export interface PipelineStepProbeResult {
  * default". `enabled` is nullable on the wire (null/true both mean on).
  */
 export interface PipelineStepSetting {
+  pinMode?: 'preference' | 'hard';
   enabled?: boolean | null;
   economyModel?: boolean | null;
   maxIterations?: number | null;

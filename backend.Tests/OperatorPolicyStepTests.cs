@@ -39,8 +39,10 @@ public sealed class OperatorPolicyStepTests : IDisposable
         await AssertRefused(client.PostAsJsonAsync("/api/tasks/alpha-card/preview-comments",
             new { previewId = "preview-1", comment = "Looks fine." }), OperatorPolicyReasons.NotCatalogued);
         await AssertRefused(client.DeleteAsync("/api/tasks/alpha-card"), OperatorPolicyReasons.ApprovalRequired);
+        // A T2 request waits for the Owner's approval (SM-5) only once the bindings admit it:
+        // Developer holds no secrets.write, so no approval request opens.
         await AssertRefused(client.PostAsJsonAsync("/api/projects/alpha/secrets", new { name = "DEPLOY_VALUE", value = "x" }),
-            OperatorPolicyReasons.ApprovalRequired);
+            "permission-denied");
         await AssertRefused(client.PostAsJsonAsync("/api/tasks/alpha-card/move",
             new MoveJobRequest { TargetState = TaskStates.Completed }), OperatorPolicyReasons.ApprovalRequired);
         // Access changes are T2 as well; the policy step answers before the access floor.
