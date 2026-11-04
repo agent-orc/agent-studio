@@ -53,6 +53,8 @@ export interface BatchGateState {
     parentBatchId?: string | null;
     phase: string;
     phaseReason?: string | null;
+    formationReason?: string | null;
+    exclusions?: { taskKey: string; reason: string; detail?: string | null }[];
     baseSha: string;
     candidateSha?: string | null;
     members: { taskKey: string; replay: BatchReplay; released: boolean }[];

@@ -24,6 +24,8 @@ const state = {
     members: [{ taskKey: 'AGT-2', replay: 'applied', released: false }],
     runs: [{ batchRunId: 'run-7', host: 'agent-runner-01', outcome: 'failed', classification: 'test-failure', startedAtUtc: '2026-10-11T13:00:00Z', finishedAtUtc: '2026-10-11T13:05:00Z' }] },
   { batchId: 'batch-8', parentBatchId: 'batch-7', phase: 'running', baseSha: 'b'.repeat(40), candidateSha: 'd'.repeat(40),
+    formationReason: 'new batch: overlap separate from waiting batch batch-7, files src/shared.cs',
+    exclusions: [{ taskKey: 'AGT-3', reason: 'overlapSeparate', detail: 'overlap separate: src/shared.cs' }],
     members: [{ taskKey: 'AGT-2', replay: 'applied', released: false }],
     runs: [{ batchRunId: 'run-8', host: 'agent-runner-02', startedAtUtc: '2026-10-11T13:06:00Z' }] }],
   members: { 'AGT-2': { status: 'in-batch', batchId: 'batch-8', phase: 'running', position: 1, size: 1 } },
@@ -121,6 +123,8 @@ test('board badge, batch panel and project settings save use batch contract', as
   await expect(page.getByTestId('batch-panel')).toContainText('pre-check green');
   await expect(page.getByTestId('batch-panel')).toContainText('from batch-7');
   await expect(page.getByTestId('batch-panel')).toContainText('test-failure');
+  await expect(page.getByTestId('batch-panel')).toContainText('AGT-3 · overlap separate: src/shared.cs');
+  await expect(page.getByTestId('batch-panel')).toContainText('new batch: overlap separate from waiting batch batch-7, files src/shared.cs');
   await captureThemes(page, evidence, 'batch-panel');
   await page.locator('.batch-panel__body').evaluate(element => { element.scrollTop = element.scrollHeight; });
   await captureThemes(page, evidence, 'batch-panel-history');
