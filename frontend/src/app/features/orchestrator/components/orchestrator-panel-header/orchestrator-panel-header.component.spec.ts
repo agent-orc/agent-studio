@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { OrchestratorPanelHeaderComponent } from './orchestrator-panel-header.component';
+import type { ChatExecutionContext } from '../../models/orchestrator.model';
 
 describe('OrchestratorPanelHeaderComponent', () => {
   it('uses the task identity as the primary header context', async () => {
@@ -72,5 +73,28 @@ describe('OrchestratorPanelHeaderComponent', () => {
     host.querySelector<HTMLButtonElement>('[data-testid="orch-open-chats-panel"]')!.click();
     expect(actions).toBe(1);
     expect(chats).toBe(1);
+  });
+
+  it('shows the execution context state through the shared status indicator', async () => {
+    await TestBed.configureTestingModule({
+      imports: [OrchestratorPanelHeaderComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(OrchestratorPanelHeaderComponent);
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+    const indicator = () => host.querySelector('[data-testid="orch-chat-active-indicator"]') as HTMLElement;
+    expect(indicator().dataset['tone']).toBe('neutral');
+    expect(indicator().textContent?.trim()).toBe('Resolving');
+
+    fixture.componentRef.setInput('executionContext', { state: 'ready' } as ChatExecutionContext);
+    fixture.detectChanges();
+    expect(indicator().dataset['tone']).toBe('success');
+    expect(indicator().textContent?.trim()).toBe('Ready');
+
+    fixture.componentRef.setInput('active', true);
+    fixture.detectChanges();
+    expect(indicator().dataset['tone']).toBe('running');
+    expect(indicator().textContent?.trim()).toBe('Active');
   });
 });

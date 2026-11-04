@@ -1,3 +1,5 @@
+import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+
 /** Server readiness report (AGT-3412): `GET /api/system/readiness`. */
 export type ReadinessState = 'pass' | 'unknown' | 'warn' | 'fail';
 export type ReadinessScope = 'server' | 'project' | 'host';
@@ -26,6 +28,13 @@ export const READINESS_STATE_LABEL: Record<ReadinessState, string> = {
   unknown: 'Unknown',
   warn: 'Attention',
   fail: 'Failing',
+};
+
+export const READINESS_STATE_TONE: Record<ReadinessState, StatusTone> = {
+  pass: 'success',
+  unknown: 'neutral',
+  warn: 'warning',
+  fail: 'danger',
 };
 
 export interface ReadinessGroup {

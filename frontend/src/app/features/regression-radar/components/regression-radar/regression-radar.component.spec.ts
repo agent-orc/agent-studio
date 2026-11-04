@@ -5,7 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { of } from 'rxjs';
-import { RegressionRadarComponent } from './regression-radar.component';
+import { RegressionRadarComponent, specCategoryDisplay } from './regression-radar.component';
 import type { RegressionRadarResult } from '../../models/regression-radar.model';
 import { TaskService } from '../../../../services/task.service';
 
@@ -99,6 +99,7 @@ describe('RegressionRadarComponent empty states', () => {
 
     const note = root.querySelector<HTMLElement>('[data-testid="regression-radar-error"]');
     expect(note?.textContent).toContain('Git repository unavailable');
+    expect(note?.querySelector<HTMLElement>('[data-testid="regression-radar-error-state"]')?.dataset['tone']).toBe('danger');
     expect(note?.classList.contains('radar-inline-note')).toBe(true);
     expect(note?.classList.contains('radar')).toBe(false);
   });
@@ -112,7 +113,39 @@ describe('RegressionRadarComponent empty states', () => {
 
     const note = root.querySelector<HTMLElement>('[data-testid="regression-radar-empty"]');
     expect(note?.textContent).toContain('No changes for this task');
+    expect(note?.querySelector<HTMLElement>('[data-testid="regression-radar-empty-state"]')?.dataset['tone']).toBe('neutral');
     expect(note?.classList.contains('radar-inline-note')).toBe(true);
     expect(note?.classList.contains('radar')).toBe(false);
+  });
+});
+
+describe('RegressionRadarComponent status indicators', () => {
+  it('maps spec categories to tones and falls back to neutral', () => {
+    expect(['Intended', 'AtRisk', 'Drift', 'Other'].map(category => specCategoryDisplay(category)))
+      .toEqual([
+        { tone: 'success', label: 'Intended' },
+        { tone: 'warning', label: 'At Risk' },
+        { tone: 'danger', label: 'Drift' },
+        { tone: 'neutral', label: 'Other' },
+      ]);
+  });
+
+  it('shows the overall verdict and the counts on the shared indicator', async () => {
+    const root = await renderWith({
+      ...baseResult,
+      overallStatus: 'Drift',
+      intendedCount: 1,
+      driftCount: 1,
+      totalSpecChanges: 2,
+    });
+
+    const badge = root.querySelector<HTMLElement>('[data-testid="regression-radar-badge"]');
+    expect(badge?.dataset['tone']).toBe('danger');
+    expect(badge?.textContent?.trim()).toBe('Drift detected');
+    const intended = root.querySelector<HTMLElement>('[data-testid="radar-intended-count"]');
+    expect(intended?.dataset['tone']).toBe('success');
+    expect(intended?.textContent?.trim()).toBe('1 intended');
+    expect(root.querySelector<HTMLElement>('[data-testid="radar-drift-count"]')?.dataset['tone']).toBe('danger');
+    expect(root.querySelector('[data-testid="radar-at-risk-count"]')).toBeNull();
   });
 });

@@ -1,15 +1,14 @@
 @if (loading()) {
   <div class="radar radar--loading" data-testid="regression-radar-loading">
-    <span class="radar__spinner"></span>
-    <span class="radar__loading-text">Analyzing spec changes...</span>
+    <app-status-indicator tone="running" label="Analyzing spec changes..." testId="regression-radar-loading-state" />
   </div>
 } @else if (result()?.error) {
   <div class="radar-inline-note" data-testid="regression-radar-error">
-    <span class="radar-inline-note__text">{{ result()!.error }}</span>
+    <app-status-indicator tone="danger" [label]="result()!.error!" [detail]="result()!.error" [compact]="true" testId="regression-radar-error-state" />
   </div>
 } @else if (isEmpty()) {
   <div class="radar-inline-note" data-testid="regression-radar-empty">
-    <span class="radar-inline-note__text">{{ emptyLabel() }}</span>
+    <app-status-indicator tone="neutral" [label]="emptyLabel()" [compact]="true" testId="regression-radar-empty-state" />
   </div>
 } @else if (hasData()) {
   <div class="radar" [class.radar--inline]="variant() === 'inline'" data-testid="regression-radar">
@@ -21,36 +20,19 @@
                          label="How does Regression Radar work?" />
       </div>
       @if (statusIcon(); as si) {
-        <span class="radar__overall-badge"
-              [class]="'radar__overall-badge--' + si.tone"
-              [cacTooltip]="si.label"
-              data-testid="regression-radar-badge">
-          {{ si.label }}
-        </span>
+        <app-status-indicator [tone]="si.tone" [label]="si.label" testId="regression-radar-badge" />
       }
     </div>
 
     <div class="radar__summary">
       @if (result()!.intendedCount > 0) {
-        <span class="radar__count radar__count--intended"
-              data-testid="radar-intended-count">
-          <span class="radar__dot radar__dot--intended"></span>
-          {{ result()!.intendedCount }} intended
-        </span>
+        <app-status-indicator tone="success" [label]="result()!.intendedCount + ' intended'" [compact]="true" testId="radar-intended-count" />
       }
       @if (result()!.atRiskCount > 0) {
-        <span class="radar__count radar__count--at-risk"
-              data-testid="radar-at-risk-count">
-          <span class="radar__dot radar__dot--at-risk"></span>
-          {{ result()!.atRiskCount }} at risk
-        </span>
+        <app-status-indicator tone="warning" [label]="result()!.atRiskCount + ' at risk'" [compact]="true" testId="radar-at-risk-count" />
       }
       @if (result()!.driftCount > 0) {
-        <span class="radar__count radar__count--drift"
-              data-testid="radar-drift-count">
-          <span class="radar__dot radar__dot--drift"></span>
-          {{ result()!.driftCount }} drift
-        </span>
+        <app-status-indicator tone="danger" [label]="result()!.driftCount + ' drift'" [compact]="true" testId="radar-drift-count" />
       }
     </div>
 
@@ -105,21 +87,15 @@
 }
 
 <ng-template #entryRow let-entry="entry" let-expandKey="expandKey">
-  <div class="radar__entry"
-       [class]="'radar__entry--' + categoryIcon(entry)"
-       data-testid="radar-entry">
+  <div class="radar__entry" data-testid="radar-entry">
     <button type="button"
             class="radar__entry-header"
             (click)="toggleExpand(expandKey)"
             [attr.aria-expanded]="expanded() === expandKey">
-      <span class="radar__entry-dot"
-            [class]="'radar__entry-dot--' + categoryIcon(entry)"></span>
       <span class="radar__entry-file">{{ entry.fileName }}</span>
       <span class="radar__entry-status">({{ statusLabel(entry.gitStatus) }})</span>
-      <span class="radar__entry-category"
-            [class]="'radar__entry-category--' + categoryIcon(entry)">
-        {{ categoryLabel(entry) }}
-      </span>
+      @let category = categoryDisplay(entry);
+      <app-status-indicator class="radar__entry-category" [tone]="category.tone" [label]="category.label" [compact]="true" testId="radar-entry-category" />
       <span class="radar__entry-lines">
         @if (entry.linesAdded > 0) {
           <span class="radar__lines-added">+{{ entry.linesAdded }}</span>
@@ -148,9 +124,9 @@
             <span class="radar__detail-value">
               {{ entry.companionPath }}
               @if (entry.companionChanged) {
-                <span class="radar__companion-changed">(also changed)</span>
+                <app-status-indicator tone="success" label="(also changed)" [compact]="true" testId="radar-companion-state" />
               } @else {
-                <span class="radar__companion-unchanged">(unchanged)</span>
+                <app-status-indicator tone="warning" label="(unchanged)" [compact]="true" testId="radar-companion-state" />
               }
             </span>
           </div>

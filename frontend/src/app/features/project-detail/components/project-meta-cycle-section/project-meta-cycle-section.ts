@@ -7,6 +7,9 @@ import {
   MetaCycleReport,
   MetaCycleVerdict,
 } from '../../../../models/supervisor.model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { findingSeverityTone } from '../analysis-report-drilldown/analysis-report-status';
+import { metaCycleHistoryTone, metaCycleVerdictTone } from './meta-cycle-status';
 
 /**
  * Project-level meta-cycle panel: shows whether the per-project pause-inspect-resume
@@ -21,6 +24,7 @@ import {
 @Component({
   selector: 'app-project-meta-cycle-section',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-meta-cycle-section.html',
   styleUrl: './project-meta-cycle-section.scss'
@@ -49,6 +53,13 @@ export class ProjectMetaCycleSectionComponent implements OnInit, OnDestroy {
     if (v == null) return 'idle';
     return this.verdictLabel(v);
   });
+
+  /** Off and idle are neutral; otherwise the current verdict's tone. */
+  readonly statusTone = computed(() => (this.enabled() ? metaCycleVerdictTone(this.lastVerdict()) : 'neutral'));
+
+  readonly verdictTone = metaCycleVerdictTone;
+  readonly historyTone = metaCycleHistoryTone;
+  readonly findingTone = findingSeverityTone;
 
   ngOnInit(): void {
     this.refresh();

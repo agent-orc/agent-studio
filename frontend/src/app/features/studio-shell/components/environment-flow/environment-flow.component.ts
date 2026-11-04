@@ -2,11 +2,12 @@ import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject
 import { HttpClient } from '@angular/common/http';
 import type { TaskInfo } from '../../../../models/task.model';
 import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
-import type { RemoteHost } from '../../../remote-hosts/models/remote-host.model';
+import { hostStatusIndicatorTone, type RemoteHost } from '../../../remote-hosts/models/remote-host.model';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { freshHostTelemetry } from '../../../remote-hosts/models/running-truth';
 import { hostZonePolicy } from '../../../remote-hosts/models/zone-policy';
 import type { WatcherCase } from '../../../watcher/models/watcher.model';
-import { minutes, type AttemptVisibility, type AttemptVisibilitySnapshot,
+import { attemptCleanupTone, attemptOccupancyDisplay, minutes, providerStatusTone, zonePolicyTone, type AttemptVisibility, type AttemptVisibilitySnapshot,
   type EnvironmentFlowSnapshot } from './environment-flow.model';
 import { EnvironmentHealthOverviewComponent } from '../../../environment-health';
 import { ServerReadinessPanelComponent } from '../../../server-readiness';
@@ -18,7 +19,7 @@ interface DecisionReceipt {
 @Component({
   selector: 'app-environment-flow',
   standalone: true,
-  imports: [EnvironmentHealthOverviewComponent, ServerReadinessPanelComponent],
+  imports: [EnvironmentHealthOverviewComponent, ServerReadinessPanelComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './environment-flow.component.html',
   styleUrl: './environment-flow.component.scss',
@@ -97,6 +98,11 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
     return minutes(Number.isFinite(elapsed) ? Math.max(0, elapsed) : null);
   }
   readonly zonePolicy = hostZonePolicy;
+  readonly zoneTone = zonePolicyTone;
+  readonly providerTone = providerStatusTone;
+  readonly occupancyDisplay = attemptOccupancyDisplay;
+  readonly cleanupTone = attemptCleanupTone;
+  readonly hostTone = hostStatusIndicatorTone;
   private hostFresh(host: RemoteHost): boolean {
     const heartbeatAt = host.lastHeartbeatAt ? Date.parse(host.lastHeartbeatAt) : Number.NaN;
     return host.status !== 'offline' && host.status !== 'retired'

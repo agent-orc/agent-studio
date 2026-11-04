@@ -1,10 +1,27 @@
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import type { OrchestratorContextReceipt, OrchestratorContextSourceReceipt } from '../../models/orchestrator.model';
+
+/** Context source status to indicator tone; a status the backend adds later stays neutral. */
+const CONTEXT_SOURCE_STATUS_TONES: Readonly<Record<string, StatusTone>> = {
+  included: 'success',
+  excerpted: 'warning',
+  unresolved: 'danger',
+  unavailable: 'danger',
+  blocked: 'danger',
+  oversize: 'danger',
+  'omitted-budget': 'neutral',
+};
+
+export function contextSourceStatusTone(status: string): StatusTone {
+  return CONTEXT_SOURCE_STATUS_TONES[status] ?? 'neutral';
+}
 
 @Component({
   selector: 'app-orchestrator-context-receipt',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [StatusIndicatorComponent],
   templateUrl: './orchestrator-context-receipt.component.html',
   styleUrl: './orchestrator-context-receipt.component.scss',
 })
@@ -34,6 +51,10 @@ export class OrchestratorContextReceiptComponent {
       case 'omitted-budget': return 'Excluded by budget';
       default: return this.kindLabel(source.status);
     }
+  }
+
+  statusTone(source: OrchestratorContextSourceReceipt): StatusTone {
+    return contextSourceStatusTone(source.status);
   }
 
   shortRevision(revision: string | null | undefined): string | null {

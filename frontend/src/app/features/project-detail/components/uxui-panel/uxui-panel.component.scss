@@ -104,7 +104,6 @@
   border: 1px solid transparent;
   font-weight: 600;
 }
-.ux-panel__chip--error { background: color-mix(in srgb, var(--studio-error) 16%, transparent); color: var(--severity-high); border-color: color-mix(in srgb, var(--studio-error) 36%, transparent); }
 .ux-panel__chip--ok { background: color-mix(in srgb, var(--studio-success) 16%, transparent); color: var(--severity-pass); border-color: color-mix(in srgb, var(--studio-success) 36%, transparent); }
 .ux-panel__chip--bad { background: color-mix(in srgb, var(--studio-error) 16%, transparent); color: var(--severity-high); border-color: color-mix(in srgb, var(--studio-error) 36%, transparent); }
 
@@ -147,8 +146,12 @@
 .ux-panel__council-actions { display: flex; gap: 6px; }
 
 .ux-panel__warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   margin: 0;
-  color: var(--severity-warn);
+  color: var(--studio-fg-muted);
   font-size: 0.78rem;
   padding: 6px 10px;
   background: color-mix(in srgb, var(--studio-warn) 8%, transparent);

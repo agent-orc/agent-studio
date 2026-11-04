@@ -70,14 +70,3 @@
 }
 .readiness__state { white-space: nowrap; }
 .readiness__none { color: var(--studio-text-secondary); }
-.readiness__dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: var(--studio-spacing-1);
-  border-radius: 50%;
-  background: var(--studio-text-secondary);
-  &[data-state='pass'] { background: var(--studio-success); }
-  &[data-state='warn'] { background: var(--studio-warn); }
-  &[data-state='fail'] { background: var(--studio-error); }
-}

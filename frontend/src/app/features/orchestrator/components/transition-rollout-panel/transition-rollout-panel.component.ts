@@ -1,6 +1,16 @@
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import {
+  applierContractStatus,
+  canaryStatus,
+  decisionMatchStatus,
+  effectCheckStatus,
+  profileStateTone,
+  type EffectCheck,
+  type ProfileState,
+} from './transition-rollout-status';
 
 interface DecisionReceipt {
   occurrence: string;
@@ -37,33 +47,6 @@ interface ShadowDecision {
   endedAt: string;
 }
 
-/** AGT-3218: what the effect probe found for one applied engine decision. */
-interface EffectCheck {
-  occurrence: string;
-  action: string;
-  verified: boolean;
-  missing: string[];
-  evidence: string;
-  checkedAt: string;
-  basis?: 'row' | 'ask' | 'checkpoint' | 'review-input-handoff' | 'agent-round-handoff'
-    | 'source-exit' | 'gate-superseded' | 'probe-failed';
-  completedAt?: string | null;
-  awaitingDownstream?: boolean;
-  waitingOn?: 'card-not-found' | 'integration-in-flight' | null;
-}
-
-/** Why a check is not counted although it is no applier defect. */
-const REFUSED: Partial<Record<NonNullable<EffectCheck['basis']>, string>> = {
-  'source-exit': 'not counted, card left the source lane',
-  'gate-superseded': 'not counted, card moved on before the gate dispatch',
-  'probe-failed': 'not counted, probe failed',
-};
-
-const WAITS: Record<NonNullable<EffectCheck['waitingOn']>, string> = {
-  'card-not-found': 'waiting for the card',
-  'integration-in-flight': 'integration in flight',
-};
-
 interface CanaryStatus {
   status: 'watching' | 'passed' | 'failed' | 'stopped';
   required: number;
@@ -83,7 +66,7 @@ interface ApplierContract {
 
 interface Profile {
   profile: string;
-  state: 'monolith' | 'shadow' | 'ready' | 'canary' | 'engine' | 'rolled-back';
+  state: ProfileState;
   streak: number;
   threshold: number;
   mismatchCount: number;
@@ -105,6 +88,7 @@ interface SpendSummary {
   selector: 'app-transition-rollout-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [StatusIndicatorComponent],
   templateUrl: './transition-rollout-panel.component.html',
   styleUrl: './transition-rollout-panel.component.scss',
 })
@@ -116,6 +100,11 @@ export class TransitionRolloutPanelComponent implements OnInit {
   readonly reason = signal('');
   readonly busy = signal<string | null>(null);
   readonly error = signal<string | null>(null);
+  readonly profileStateTone = profileStateTone;
+  readonly applierContractStatus = applierContractStatus;
+  readonly canaryStatus = canaryStatus;
+  readonly effectCheckStatus = effectCheckStatus;
+  readonly decisionMatchStatus = decisionMatchStatus;
 
   ngOnInit(): void { void this.refresh(); }
 
@@ -149,25 +138,17 @@ export class TransitionRolloutPanelComponent implements OnInit {
     return spend.pricedUsd === 0 ? '<$0.0001 priced' : `$${spend.pricedUsd.toFixed(4)} priced`;
   }
 
-  canaryText(canary: CanaryStatus): string {
+  /** Canary progress after the status word, e.g. " · 1 / 3 decisions applied". */
+  canaryDetail(canary: CanaryStatus): string {
     const skipped = canary.observations?.filter(item => item.status === 'not-counted').length ?? 0;
     const here = canary.passedOnThisInstance ? ' · passed on this instance' : '';
-    return `${canary.status} · ${canary.verified} / ${canary.required} decisions applied`
+    return ` · ${canary.verified} / ${canary.required} decisions applied`
       + `${skipped ? ` · ${skipped} not counted` : ''}${here}${canary.override ? ' · operator override' : ''}`
       + `${canary.awaitingRecoveryPass ? ' · awaiting recovery pass' : ''}`;
   }
 
-  effectText(check: EffectCheck): string {
-    return `${check.action} · ${this.effectResult(check)} · ${check.checkedAt.slice(0, 16).replace('T', ' ')} UTC`;
-  }
-
-  private effectResult(check: EffectCheck): string {
-    const refused = check.basis ? REFUSED[check.basis] : undefined;
-    if (refused) return refused;
-    if (check.verified) return check.basis && check.basis !== 'row' ? `not counted, ${check.basis}` : 'applied';
-    if (check.waitingOn) return WAITS[check.waitingOn];
-    if (!check.completedAt && check.missing.includes('DecisionReceipt')) return 'applier still running';
-    return `${check.awaitingDownstream ? 'waiting for' : 'missing'} ${check.missing.join(', ')}`;
+  effectTime(check: EffectCheck): string {
+    return `${check.checkedAt.slice(0, 16).replace('T', ' ')} UTC`;
   }
 
   async switch(profile: Profile,

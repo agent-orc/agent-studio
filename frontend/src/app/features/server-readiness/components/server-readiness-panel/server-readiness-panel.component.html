@@ -24,7 +24,7 @@
             <tr class="readiness__group"><th colspan="4" scope="colgroup">{{ group.label }}</th></tr>
             @for (check of group.checks; track key(check)) {
               <tr [attr.data-state]="check.state" [attr.data-check]="check.id" [attr.data-testid]="'readiness-' + key(check)">
-                <td class="readiness__state"><span class="readiness__dot" [attr.data-state]="check.state" aria-hidden="true"></span>{{ label[check.state] }}</td>
+                <td class="readiness__state"><app-status-indicator [tone]="stateTone(check.state)" [label]="label[check.state]" [compact]="true" /></td>
                 <th scope="row">{{ check.title }} @if (check.subject && check.scope !== 'project') { <small>{{ check.subject }}</small> }</th>
                 <td>{{ check.meaning }}</td>
                 <td>@if (check.remedy) { <code>{{ check.remedy }}</code> } @else { <span class="readiness__none">None needed</span> }</td>

@@ -28,12 +28,12 @@
       <div class="environment-flow__grid">
         <section aria-labelledby="environment-queues-title"><h2 id="environment-queues-title">Queues</h2>
           <div class="environment-flow__table-wrap"><table><thead><tr><th>Queue</th><th>Waiting</th><th>Oldest wait</th><th>Out / h</th></tr></thead><tbody>
-            @for (queue of snapshot.queues; track queue.queue) { <tr><th>{{ queue.queue }} @if (queueMarkers(queue.queue)) { <span class="environment-flow__marker">{{ queueMarkers(queue.queue) }} open</span> }</th><td>{{ queue.waiting ?? '—' }}</td><td>{{ minutes(queue.oldestWaitMinutes) }}</td><td>{{ queue.throughputPerHour === null ? '—' : queue.throughputPerHour.toFixed(1) }}</td></tr> }
+            @for (queue of snapshot.queues; track queue.queue) { <tr><th>{{ queue.queue }} @if (queueMarkers(queue.queue)) { <app-status-indicator tone="warning" [label]="queueMarkers(queue.queue) + ' open'" [compact]="true" testId="environment-flow-marker" /> }</th><td>{{ queue.waiting ?? '—' }}</td><td>{{ minutes(queue.oldestWaitMinutes) }}</td><td>{{ queue.throughputPerHour === null ? '—' : queue.throughputPerHour.toFixed(1) }}</td></tr> }
           </tbody></table></div>
         </section>
         <section aria-labelledby="environment-lanes-title"><h2 id="environment-lanes-title">Lane flow <small>last 24 h</small></h2>
           <div class="environment-flow__table-wrap"><table><thead><tr><th>Lane</th><th>Entered</th><th>Left</th><th>Median stay</th></tr></thead><tbody>
-            @for (lane of snapshot.lanes; track lane.lane) { <tr><th>{{ lane.lane }} @if (laneMarkers(lane.lane)) { <span class="environment-flow__marker">{{ laneMarkers(lane.lane) }} open</span> }</th><td>{{ lane.entered }}</td><td>{{ lane.left }}</td><td>{{ minutes(lane.medianMinutes) }}</td></tr> }
+            @for (lane of snapshot.lanes; track lane.lane) { <tr><th>{{ lane.lane }} @if (laneMarkers(lane.lane)) { <app-status-indicator tone="warning" [label]="laneMarkers(lane.lane) + ' open'" [compact]="true" testId="environment-flow-marker" /> }</th><td>{{ lane.entered }}</td><td>{{ lane.left }}</td><td>{{ minutes(lane.medianMinutes) }}</td></tr> }
           </tbody></table></div>
         </section>
       </div>
@@ -51,17 +51,17 @@
       <div class="environment-flow__hosts">
         @for (host of hosts(); track host.id) {
           <article class="environment-flow__host" [class.environment-flow__host--alert]="host.status === 'offline' || host.status === 'degraded'" [attr.data-host-id]="host.id">
-            <div class="environment-flow__host-head"><h3>{{ host.name }} @if (hostMarkers(host)) { <span class="environment-flow__marker">{{ hostMarkers(host) }} open</span> }</h3><span>{{ host.serviceRole ?? host.role }} · {{ host.status }}</span></div>
+            <div class="environment-flow__host-head"><h3>{{ host.name }} @if (hostMarkers(host)) { <app-status-indicator tone="warning" [label]="hostMarkers(host) + ' open'" [compact]="true" testId="environment-flow-marker" /> }</h3><span class="environment-flow__host-role">{{ host.serviceRole ?? host.role }}<app-status-indicator [tone]="hostTone(host.status)" [label]="host.status" testId="environment-host-status" /></span></div>
             <dl><div><dt>Load / core</dt><dd>{{ loadPerCore(host) }}</dd></div><div><dt>Memory used</dt><dd>{{ memory(host) }}</dd></div>
               <div><dt>Slots used / total</dt><dd>{{ usedSlots(host) ?? '—' }} / {{ totalSlots(host) ?? '—' }}</dd></div>
               <div><dt>Free slots</dt><dd>{{ freeSlots(host) ?? '—' }}</dd></div></dl>
             <div class="environment-flow__host-detail"><strong>Provider auth</strong>
-              @for (provider of auth(host); track provider.name) { <span>{{ provider.name }}: {{ provider.status }}</span> }
-              @if (!auth(host).length) { <span>Unavailable</span> }
+              @for (provider of auth(host); track provider.name) { <app-status-indicator [tone]="providerTone(provider.status)" [label]="provider.name + ': ' + provider.status" [compact]="true" testId="environment-host-provider-auth" /> }
+              @if (!auth(host).length) { <app-status-indicator tone="neutral" label="Unavailable" [compact]="true" testId="environment-host-provider-auth" /> }
             </div>
             @let zone = zonePolicy(host);
             <div class="environment-flow__host-detail" data-testid="environment-host-zone-policy" [attr.data-zone-policy-state]="zone.state"><strong>Zone policy</strong>
-              <span>{{ zone.label }}</span>
+              <app-status-indicator [tone]="zoneTone(zone.state)" [label]="zone.label" [compact]="true" testId="environment-host-zone-policy-state" />
               @if (zone.detail) { <span>{{ zone.detail }}</span> }
             </div>
             <div class="environment-flow__host-detail"><strong>Running attempts</strong>
@@ -74,12 +74,13 @@
                 @for (attempt of hostAttempts(host); track attempt.attemptId) {
                   <article class="environment-flow__attempt" [attr.data-attempt-id]="attempt.attemptId"
                     [attr.data-occupancy]="attempt.occupancy" [attr.data-cleanup]="attempt.cleanupStatus">
-                    <div><b>{{ attempt.project }} · {{ attempt.subject }}</b><span class="environment-flow__attempt-state">{{ attempt.occupancy }}</span></div>
+                    <div><b>{{ attempt.project }} · {{ attempt.subject }}</b>@let occupancy = occupancyDisplay(attempt.occupancy);
+                      <app-status-indicator [tone]="occupancy.tone" [label]="occupancy.label" [compact]="true" testId="environment-attempt-occupancy" /></div>
                     <p>{{ attempt.role }} · {{ attempt.executor }} · attempt {{ attempt.attemptId }} · fence {{ attempt.fence }}</p>
                     <p>Lease {{ attempt.leaseState }} · {{ attempt.leaseId }} · age {{ attemptAge(attempt) }}</p>
                     <p>Grant {{ attempt.grantHalfCores ?? 'unreported' }} half cores · {{ attempt.grantSource }}</p>
                     <p>Image {{ attempt.imageDigest ?? 'unreported' }} · cache {{ attempt.cacheOutcome }}</p>
-                    <p>Cleanup {{ attempt.cleanupStatus }} · {{ attempt.provenance }}</p>
+                    <p><app-status-indicator [tone]="cleanupTone(attempt.cleanupStatus)" [label]="'Cleanup ' + attempt.cleanupStatus" [compact]="true" testId="environment-attempt-cleanup" /> · {{ attempt.provenance }}</p>
                   </article>
                 } @empty { <p>No attempt receipts for this host.</p> }
               </div>
@@ -91,7 +92,8 @@
         <div class="environment-flow__unlinked"><strong>Attempts on hosts absent from the current host list</strong>
           @for (attempt of unlinkedAttempts(); track attempt.attemptId) {
             <p [attr.data-attempt-id]="attempt.attemptId">{{ attempt.hostId }} · {{ attempt.project }} · {{ attempt.subject }} ·
-              {{ attempt.executor }} · {{ attempt.occupancy }} · lease {{ attempt.leaseState }} · cleanup {{ attempt.cleanupStatus }}</p>
+              {{ attempt.executor }} · <app-status-indicator [tone]="occupancyDisplay(attempt.occupancy).tone" [label]="occupancyDisplay(attempt.occupancy).label" [compact]="true" testId="environment-attempt-occupancy" />
+              · lease {{ attempt.leaseState }} · <app-status-indicator [tone]="cleanupTone(attempt.cleanupStatus)" [label]="'cleanup ' + attempt.cleanupStatus" [compact]="true" testId="environment-attempt-cleanup" /></p>
           }
         </div>
       }

@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ServerReadinessService } from '../../services/server-readiness.service';
 import {
-  READINESS_STATE_LABEL, groupReadiness, readinessKey, type ServerReadinessReport,
+  READINESS_STATE_LABEL, READINESS_STATE_TONE, groupReadiness, readinessKey, type ReadinessState, type ServerReadinessReport,
 } from '../../models/server-readiness.model';
 
 /**
@@ -12,7 +13,7 @@ import {
 @Component({
   selector: 'app-server-readiness-panel',
   standalone: true,
-  imports: [DisclosureMarkerComponent],
+  imports: [DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './server-readiness-panel.component.html',
   styleUrl: './server-readiness-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -38,6 +39,11 @@ export class ServerReadinessPanelComponent implements OnInit, OnDestroy {
     return `${counts} · checked ${at} UTC`;
   });
   readonly label = READINESS_STATE_LABEL;
+
+  /** A state the server adds later stays neutral until it is mapped. */
+  stateTone(state: ReadinessState): StatusTone {
+    return READINESS_STATE_TONE[state] ?? 'neutral';
+  }
   readonly key = readinessKey;
   private timer: ReturnType<typeof setInterval> | null = null;
 

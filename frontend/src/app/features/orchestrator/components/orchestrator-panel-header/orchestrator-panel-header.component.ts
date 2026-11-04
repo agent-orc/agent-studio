@@ -9,6 +9,16 @@ import {
   type PageContext,
 } from '../../../../models/page-context.model';
 import type { ChatExecutionContext } from '../../models/orchestrator.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+export type PanelExecutionState = 'active' | 'ready' | 'resolving';
+
+/** Chat execution context state to indicator tone and label. */
+export const PANEL_EXECUTION_STATUS: Readonly<Record<PanelExecutionState, { tone: StatusTone; label: string }>> = {
+  active: { tone: 'running', label: 'Active' },
+  ready: { tone: 'success', label: 'Ready' },
+  resolving: { tone: 'neutral', label: 'Resolving' },
+};
 
 interface PanelContextIdentity {
   icon: StudioIconName;
@@ -19,7 +29,7 @@ interface PanelContextIdentity {
 @Component({
   selector: 'app-orchestrator-panel-header',
   standalone: true,
-  imports: [StudioIconComponent],
+  imports: [StudioIconComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-panel-header.component.html',
   styleUrl: './orchestrator-panel-header.component.scss',
@@ -96,8 +106,9 @@ export class OrchestratorPanelHeaderComponent {
       `HEAD: ${context.headSha ?? 'unknown'}`,
     ].join('\n');
   });
-  readonly statusState = computed(() => {
+  readonly statusState = computed((): PanelExecutionState => {
     if (this.active()) return 'active';
     return this.executionContext()?.state === 'ready' ? 'ready' : 'resolving';
   });
+  readonly status = computed(() => PANEL_EXECUTION_STATUS[this.statusState()]);
 }

@@ -35,9 +35,12 @@
       }
 
       @if (pinned()) {
-        <span class="octx__pin"
-              data-testid="orch-context-pin"
-              [cacTooltip]="'Context pinned — the sheet is not following navigation'">📌 Pinned</span>
+        <app-status-indicator class="octx__pin"
+                              tone="info"
+                              label="Pinned"
+                              detail="Context pinned — the sheet is not following navigation"
+                              [compact]="true"
+                              testId="orch-context-pin" />
       }
     </div>
 
@@ -55,8 +58,7 @@
           <span class="octx__run"
                 data-testid="orch-context-run"
                 [cacTooltip]="runTooltip()">
-            <span class="octx__run-pulse" aria-hidden="true"></span>
-            <span class="octx__run-label">Live</span>
+            <app-status-indicator tone="running" label="Live" [compact]="true" testId="orch-context-run-state" />
             <span class="octx__run-sep" aria-hidden="true">·</span>
             <span class="octx__run-model" data-testid="orch-context-run-model">{{ runModelLabel() }}</span>
             @if (runDurationLabel(); as dur) {

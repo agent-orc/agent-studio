@@ -36,14 +36,14 @@
         <div><dt>Cache read / created</dt><dd>{{ formatTokens(s.cumulativeCacheReadTokens) }} / {{ formatTokens(s.cumulativeCacheCreationTokens) }}</dd></div>
         <div><dt>Reference</dt><dd><app-concept-help concept="orchestrator" /></dd></div>
         @if (s.lastError) {
-          <div><dt>Last error</dt><dd class="global-orch__error">{{ s.lastError }}</dd></div>
+          <div><dt>Last error</dt><dd class="global-orch__error"><app-status-indicator tone="danger" [label]="s.lastError" [detail]="s.lastError" [compact]="true" testId="global-orchestrator-last-error" /></dd></div>
         }
       </dl>
     }
   } @else if (loading()) {
-    <p class="global-orch__loading">Global orchestrator · Reading session status…</p>
+    <p class="global-orch__loading">Global orchestrator · <app-status-indicator tone="running" label="Reading session status…" [compact]="true" testId="global-orchestrator-loading" /></p>
   } @else {
-    <p class="global-orch__empty">Global orchestrator · No session booted</p>
+    <p class="global-orch__empty">Global orchestrator · <app-status-indicator tone="neutral" label="No session booted" [compact]="true" testId="global-orchestrator-empty" /></p>
   }
 </article>
   

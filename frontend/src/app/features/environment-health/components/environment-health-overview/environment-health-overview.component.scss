@@ -25,15 +25,3 @@
   tbody th small { color: var(--studio-text-secondary); }
   tr[data-status='down'] { background: color-mix(in srgb, var(--studio-error) 8%, var(--studio-surface)); }
 }
-.health-overview__dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: var(--studio-spacing-1);
-  border-radius: 50%;
-  background: var(--studio-text-secondary);
-  &[data-status='up'] { background: var(--studio-success); }
-  &[data-status='degraded'],
-  &[data-status='invalid'] { background: var(--studio-warn); }
-  &[data-status='down'] { background: var(--studio-error); }
-}

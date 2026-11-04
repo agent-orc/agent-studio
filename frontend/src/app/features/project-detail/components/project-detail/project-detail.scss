@@ -72,17 +72,6 @@
 .proj-detail__live-banner__icon { font-size: 1.05rem; }
 .proj-detail__live-banner__chip {
   margin-left: auto;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--severity-high) 20%, transparent);
-  color: var(--severity-high);
-  font-size: 0.72rem;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-.proj-detail__live-banner--blocked .proj-detail__live-banner__chip {
-  background: color-mix(in srgb, var(--severity-pending) 20%, transparent);
-  color: var(--severity-pending);
 }
 .proj-detail__live-banner__title {
   margin: 0 0 2px;

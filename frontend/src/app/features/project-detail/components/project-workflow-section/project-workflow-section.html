@@ -53,8 +53,8 @@
         <div class="wf__transition-head">
           <span class="wf__transition-facet">{{ row.facetLabel }}</span>
           <span class="wf__transition-hop">{{ row.hop }}</span>
-          <span class="wf__transition-state"
-                [attr.data-testid]="'workflow-transition-state-' + row.key">{{ row.state }}</span>
+          <app-status-indicator class="wf__transition-state" [tone]="row.tone" [label]="row.state" [compact]="true"
+                                [testId]="'workflow-transition-state-' + row.key" />
         </div>
         <p class="wf__transition-detail">{{ row.detail }}</p>
         <p class="wf__transition-config">Configured in: <strong>{{ row.configuredIn }}</strong></p>

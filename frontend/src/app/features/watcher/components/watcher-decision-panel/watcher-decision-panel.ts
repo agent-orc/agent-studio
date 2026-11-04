@@ -2,6 +2,23 @@ import { ChangeDetectionStrategy, Component, OnInit, computed, inject, input, ou
 import { FormsModule } from '@angular/forms';
 import { WatcherApiService } from '../../services/watcher-api.service';
 import type { WatcherProposal, WatcherProposalOutcome } from '../../models/watcher.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/**
+ * A recorded proposal decision on the shared indicator. Approval and edited
+ * acceptance are the wanted outcome; a merge into an existing card is a fact
+ * worth noticing; a rejection is a settled operator choice, not a failure (R4).
+ */
+export const WATCHER_OUTCOME_TONE: Readonly<Record<WatcherProposalOutcome, StatusTone>> = {
+  approved: 'success',
+  edited: 'success',
+  merged: 'info',
+  rejected: 'neutral',
+};
+
+export function watcherOutcomeTone(outcome: string): StatusTone {
+  return Object.hasOwn(WATCHER_OUTCOME_TONE, outcome) ? WATCHER_OUTCOME_TONE[outcome as WatcherProposalOutcome] : 'neutral';
+}
 
 /** Minimal shape this panel needs from an Activity feed entry - kept decoupled from the orchestrator feature's own model type. */
 export interface WatcherDecisionEntry {
@@ -21,7 +38,7 @@ export interface WatcherDecisionEntry {
 @Component({
   selector: 'app-watcher-decision-panel',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, StatusIndicatorComponent],
   templateUrl: './watcher-decision-panel.html',
   styleUrl: './watcher-decision-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -29,6 +46,7 @@ export interface WatcherDecisionEntry {
 export class WatcherDecisionPanelComponent implements OnInit {
   readonly entry = input.required<WatcherDecisionEntry>();
   readonly decided = output<void>();
+  readonly outcomeTone = watcherOutcomeTone;
 
   private readonly watcherApi = inject(WatcherApiService);
 

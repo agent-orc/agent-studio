@@ -22,6 +22,16 @@ import { AnalysisReport } from '../../../../models/analysis-report.model';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ProjectWorkflowSectionComponent } from '../project-workflow-section/project-workflow-section';
 import { ProjectCliEnvironmentSectionComponent } from '../project-cli-environment-section/project-cli-environment-section';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+/**
+ * Live pending decision chip (AGT-3403): a blocked agent is blocked right now
+ * (danger); any other pending decision (`needs-input`) is a question waiting
+ * on an operator step (warning), matching the banner's "asking" wording.
+ */
+export function liveDecisionTone(kind: string): StatusTone {
+  return kind === 'blocked' ? 'danger' : 'warning';
+}
 interface ProjectSettingsRow {
   autoCommit: boolean;
   crashRecoveryEnabled: boolean;
@@ -90,7 +100,8 @@ export type ProjectDetailView =
     ProjectWorkflowSectionComponent,
     ProjectCliEnvironmentSectionComponent,
     AutonomySliderComponent,
-    TooltipDirective],
+    TooltipDirective,
+    StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-detail.html',
   styleUrl: './project-detail.scss'
@@ -100,6 +111,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   readonly view = input<ProjectDetailView>('overview');
   readonly openFeed = output<string>();
   readonly openReport = output<AnalysisReport>();
+  readonly liveDecisionTone = liveDecisionTone;
 
   private readonly jobService = inject(TaskService);
   private readonly cliCatalog = inject(CliCatalogStore);

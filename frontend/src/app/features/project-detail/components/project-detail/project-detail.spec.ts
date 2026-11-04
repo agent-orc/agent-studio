@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { ProjectDetailComponent } from './project-detail';
+import { ProjectDetailComponent, liveDecisionTone } from './project-detail';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -221,5 +221,11 @@ describe('ProjectDetailComponent (smoke)', () => {
     expect(text).not.toContain('Repository');
     expect(text).not.toContain('Onboarding status');
     expect(host.querySelector('[data-testid="project-cli-onboarding-status"]')).toBeNull();
+  });
+});
+
+describe('liveDecisionTone', () => {
+  it('shows a blocked agent as danger and a pending question as warning', () => {
+    expect(['blocked', 'needs-input', 'asking'].map(liveDecisionTone)).toEqual(['danger', 'warning', 'warning']);
   });
 });

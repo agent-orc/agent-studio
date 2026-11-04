@@ -8,6 +8,7 @@ import {
 } from '@angular/core';
 
 import { FormsModule } from '@angular/forms';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import {
   OrchestratorConfigOption,
   OrchestratorConfigService,
@@ -21,7 +22,7 @@ interface OptionGroup {
 @Component({
   selector: 'app-orchestrator-logic-panel',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-logic-panel.component.html',
   styleUrl: './orchestrator-logic-panel.component.scss',

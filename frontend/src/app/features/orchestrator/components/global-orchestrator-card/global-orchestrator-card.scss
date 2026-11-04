@@ -139,7 +139,7 @@
 }
 
 .global-orch__details .global-orch__error {
-  color: var(--notify-error-icon-fg);
+  min-width: 0;
 }
 
 .global-orch__loading,

@@ -16,7 +16,6 @@
 .rollout__reason input { color: inherit; background: var(--studio-bg-elevated); border: 1px solid var(--studio-border); padding: var(--studio-spacing-2); }
 .rollout__profiles { display: grid; gap: var(--studio-spacing-3); }
 .rollout__profile { background: var(--studio-bg-elevated); padding: var(--studio-spacing-3); }
-.rollout__state { background: var(--studio-bg-surface); padding: var(--studio-spacing-1) var(--studio-spacing-2); }
 .rollout__number { font-variant-numeric: tabular-nums; }
 .rollout__checks { display: grid; grid-template-columns: max-content 1fr; gap: var(--studio-spacing-1) var(--studio-spacing-3); margin: 0 0 var(--studio-spacing-3); }
 .rollout__checks dt { color: var(--studio-fg-muted); }

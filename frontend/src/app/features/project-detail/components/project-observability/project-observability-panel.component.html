@@ -7,10 +7,11 @@
           </h2>
           <span class="obs__spacer"></span>
           @if (loading()) {
-            <span class="obs__chip obs__chip--info" data-testid="observability-loading">Loading…</span>
+            <app-status-indicator tone="running" label="Loading…" [compact]="true" testId="observability-loading" />
           }
           @if (sourceLabel(); as src) {
-            <span class="obs__chip" [class.obs__chip--fixture]="usingFixture()" data-testid="observability-source">{{ src }}</span>
+            <app-status-indicator [tone]="usingFixture() ? 'warning' : 'neutral'" [label]="src" [compact]="true"
+                                  testId="observability-source" />
           }
           <button type="button"
                   class="obs__refresh"
@@ -316,9 +317,8 @@
                       </td>
                       <td class="obs__messages-cell">
                         @if (m.severity) {
-                          <span class="obs__sev"
-                                [class.obs__sev--warn]="m.severity === 'Warn'"
-                                [class.obs__sev--high]="m.severity === 'High'">{{ m.severity }}</span>
+                          <app-status-indicator [tone]="severityTone(m.severity)" [label]="m.severity" [compact]="true"
+                                                testId="observability-message-severity" />
                         }
                       </td>
                       <td class="obs__messages-cell obs__messages-cell--ids">
@@ -348,7 +348,7 @@
               <div><dt>Created</dt><dd>{{ formatTime(sel.createdAt) }}</dd></div>
               <div><dt>Participant</dt><dd>{{ sel.participantId }} ({{ sel.role }})</dd></div>
               <div><dt>Kind</dt><dd>{{ sel.kind }}</dd></div>
-              @if (sel.severity) { <div><dt>Severity</dt><dd>{{ sel.severity }}</dd></div> }
+              @if (sel.severity) { <div><dt>Severity</dt><dd><app-status-indicator [tone]="severityTone(sel.severity)" [label]="sel.severity" [compact]="true" testId="observability-detail-severity" /></dd></div> }
               @if (sel.jobId) { <div><dt>Task</dt><dd><code>{{ sel.jobId }}</code></dd></div> }
               @if (sel.runId) { <div><dt>Run</dt><dd><code>{{ sel.runId }}</code></dd></div> }
               @if (sel.cliSessionId) { <div><dt>CLI session</dt><dd><code>{{ sel.cliSessionId }}</code></dd></div> }

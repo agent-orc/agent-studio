@@ -33,12 +33,14 @@
       [attr.title]="executionTitle()"
       data-testid="orch-execution-context"
     >
-      <span
-        class="panel-head__status-dot"
+      <app-status-indicator
+        class="panel-head__status"
         [attr.data-state]="statusState()"
-        data-testid="orch-chat-active-indicator"
-        aria-hidden="true"
-      ></span>
+        [tone]="status().tone"
+        [label]="status().label"
+        [compact]="true"
+        testId="orch-chat-active-indicator"
+      />
       <span class="panel-head__execution-copy">
         <strong data-testid="orch-execution-host">{{ executionHostLabel() }}</strong>
         <small data-testid="orch-execution-ref" [attr.aria-label]="executionRefLabel()">

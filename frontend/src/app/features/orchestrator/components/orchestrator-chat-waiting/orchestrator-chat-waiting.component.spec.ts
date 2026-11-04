@@ -36,6 +36,9 @@ describe('OrchestratorChatWaitingComponent', () => {
     });
     fixture.detectChanges();
     expect((fixture.nativeElement as HTMLElement).textContent).toContain('Waiting for runner-1');
+    const waitingState = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="orchestrator-chat-waiting-state"]') as HTMLElement;
+    expect(waitingState.dataset['tone']).toBe('warning');
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Runner busy');
 
     fixture.componentRef.setInput('sending', false);
     fixture.detectChanges();

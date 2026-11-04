@@ -9,16 +9,30 @@ import {
   OnDestroy,
 } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
-import type { RegressionRadarResult, RegressionRadarTaskGroup, SpecChangeEntry } from '../../models/regression-radar.model';
+import type { RegressionRadarResult, RegressionRadarTaskGroup, SpecChangeCategory, SpecChangeEntry } from '../../models/regression-radar.model';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { TaskService } from '../../../../services/task.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { InfoButtonComponent } from '../../../../components/info-button/info-button.component';
+
+/** Spec file category on the shared indicator: drift is a regression, at risk needs review. */
+export const SPEC_CATEGORY_DISPLAY: Readonly<Record<SpecChangeCategory, { tone: StatusTone; label: string }>> = {
+  Intended: { tone: 'success', label: 'Intended' },
+  AtRisk: { tone: 'warning', label: 'At Risk' },
+  Drift: { tone: 'danger', label: 'Drift' },
+};
+
+export function specCategoryDisplay(category: string): { tone: StatusTone; label: string } {
+  return Object.hasOwn(SPEC_CATEGORY_DISPLAY, category)
+    ? SPEC_CATEGORY_DISPLAY[category as SpecChangeCategory]
+    : { tone: 'neutral', label: category };
+}
 
 @Component({
   selector: 'app-regression-radar',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgTemplateOutlet, TooltipDirective, InfoButtonComponent],
+  imports: [NgTemplateOutlet, TooltipDirective, InfoButtonComponent, StatusIndicatorComponent],
   templateUrl: './regression-radar.component.html',
   styleUrl: './regression-radar.component.scss',
 })
@@ -138,12 +152,12 @@ export class RegressionRadarComponent implements OnInit, OnDestroy {
     return r !== null && !r.error && r.totalSpecChanges === 0;
   });
 
-  readonly statusIcon = computed(() => {
+  readonly statusIcon = computed((): { label: string; tone: StatusTone } | null => {
     const r = this.result();
     if (!r || r.error || r.totalSpecChanges === 0) return null;
-    if (r.driftCount > 0) return { icon: 'drift', label: 'Drift detected', tone: 'danger' };
-    if (r.atRiskCount > 0) return { icon: 'review', label: 'Review needed', tone: 'warning' };
-    return { icon: 'ok', label: 'All intended', tone: 'success' };
+    if (r.driftCount > 0) return { label: 'Drift detected', tone: 'danger' };
+    if (r.atRiskCount > 0) return { label: 'Review needed', tone: 'warning' };
+    return { label: 'All intended', tone: 'success' };
   });
 
   ngOnInit(): void {
@@ -174,22 +188,8 @@ export class RegressionRadarComponent implements OnInit, OnDestroy {
     this.detailsOpen.update(v => !v);
   }
 
-  categoryIcon(entry: SpecChangeEntry): string {
-    switch (entry.category) {
-      case 'Intended': return 'intended';
-      case 'AtRisk':   return 'at-risk';
-      case 'Drift':    return 'drift';
-      default:         return '';
-    }
-  }
-
-  categoryLabel(entry: SpecChangeEntry): string {
-    switch (entry.category) {
-      case 'Intended': return 'Intended';
-      case 'AtRisk':   return 'At Risk';
-      case 'Drift':    return 'Drift';
-      default:         return entry.category;
-    }
+  categoryDisplay(entry: SpecChangeEntry): { tone: StatusTone; label: string } {
+    return specCategoryDisplay(entry.category);
   }
 
   statusLabel(status: string): string {

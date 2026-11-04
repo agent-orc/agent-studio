@@ -19,12 +19,6 @@
     .radar__title {
       @include m.type-label;
     }
-
-    .radar__overall-badge {
-      font-weight: 600;
-      text-transform: none;
-      letter-spacing: 0;
-    }
   }
 
   &--loading,
@@ -34,16 +28,6 @@
     gap: 8px;
     color: var(--studio-fg-muted);
     font-size: 0.82rem;
-  }
-
-  &__spinner {
-    display: inline-block;
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--studio-fg-muted);
-    border-top-color: var(--studio-accent-3);
-    border-radius: 50%;
-    animation: radar-spin 0.8s linear infinite;
   }
 
   &__empty-icon {
@@ -73,54 +57,11 @@
     letter-spacing: 0.01em;
   }
 
-  &__overall-badge {
-    font-size: 0.7rem;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-
-    &--success {
-      background: color-mix(in srgb, var(--severity-pass) 15%, transparent);
-      color: var(--severity-pass);
-    }
-
-    &--warning {
-      background: color-mix(in srgb, var(--severity-warn) 15%, transparent);
-      color: var(--severity-warn);
-    }
-
-    &--danger {
-      background: color-mix(in srgb, var(--severity-high) 15%, transparent);
-      color: var(--severity-high);
-    }
-  }
-
   &__summary {
     display: flex;
     gap: 12px;
     margin-bottom: 10px;
     flex-wrap: wrap;
-  }
-
-  &__count {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 0.78rem;
-    color: var(--studio-fg-dim);
-  }
-
-  &__dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-
-    &--intended { background: var(--severity-pass); }
-    &--at-risk  { background: var(--severity-warn); }
-    &--drift    { background: var(--severity-high); }
   }
 
   &__meta {
@@ -237,17 +178,6 @@
     }
   }
 
-  &__entry-dot {
-    flex-shrink: 0;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-
-    &--intended { background: var(--severity-pass); }
-    &--at-risk  { background: var(--severity-warn); }
-    &--drift    { background: var(--severity-high); }
-  }
-
   &__entry-file {
     font-weight: 500;
     color: var(--studio-fg-strong);
@@ -265,13 +195,7 @@
 
   &__entry-category {
     margin-left: auto;
-    font-size: 0.72rem;
-    font-weight: 600;
     flex-shrink: 0;
-
-    &--intended { color: var(--severity-pass); }
-    &--at-risk  { color: var(--severity-warn); }
-    &--drift    { color: var(--severity-high); }
   }
 
   &__entry-lines {
@@ -338,14 +262,6 @@
   &__detail-value {
     word-break: break-all;
   }
-
-  &__companion-changed {
-    color: var(--severity-pass);
-  }
-
-  &__companion-unchanged {
-    color: var(--severity-warn);
-  }
 }
 
 .radar-inline-note {
@@ -355,12 +271,4 @@
   font-size: 0.82rem;
   line-height: 1.4;
   padding-block: var(--studio-spacing-1);
-
-  &__text {
-    min-width: 0;
-  }
-}
-
-@keyframes radar-spin {
-  to { transform: rotate(360deg); }
 }

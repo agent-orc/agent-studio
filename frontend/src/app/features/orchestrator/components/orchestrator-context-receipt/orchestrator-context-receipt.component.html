@@ -41,7 +41,11 @@
                 [attr.data-testid]="'orch-context-receipt-source-' + source.sourceId">
               <div class="receipt__source-head">
                 <strong>{{ kindLabel(source.kind) }}</strong>
-                <span class="receipt__status">{{ statusLabel(source) }}</span>
+                <app-status-indicator class="receipt__status"
+                                      [tone]="statusTone(source)"
+                                      [label]="statusLabel(source)"
+                                      [compact]="true"
+                                      [testId]="'orch-context-receipt-status-' + source.sourceId" />
               </div>
               <code [title]="source.sourceId">{{ source.sourceId }}</code>
               <div class="receipt__source-meta">

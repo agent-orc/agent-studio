@@ -121,9 +121,12 @@
             <span class="sheet__scope sheet__scope--active"
                   aria-current="true"
                   data-testid="orch-context-scope">{{ contextDigestState.scopeLabel() }}</span>
-            <span class="sheet__memory"
-                  [appTooltip]="contextDigestState.statusTitle()"
-                  data-testid="orch-context-freshness">{{ contextDigestState.statusText() }}</span>
+            <app-status-indicator class="sheet__memory"
+                                  [tone]="contextFreshnessTone()"
+                                  [label]="contextDigestState.statusText()"
+                                  [detail]="contextDigestState.statusTitle()"
+                                  [compact]="true"
+                                  testId="orch-context-freshness" />
           </nav>
         </div>
       </section>
