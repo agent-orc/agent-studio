@@ -75,6 +75,7 @@ public sealed class ModelSelectionService : IModelSelectionService
     private readonly CliFallbackPreferenceService? _preference;
     private readonly ModelRoutingPolicyRegistry? _routing;
     private readonly IModelSelectionLedger? _ledger;
+    private readonly ModelSelectionPolicyStore? _policy;
     private readonly TimeProvider _timeProvider;
 
     public ModelSelectionService(
@@ -87,7 +88,8 @@ public sealed class ModelSelectionService : IModelSelectionService
         BetterCandidateService? betterCandidates = null,
         CliFallbackPreferenceService? preference = null,
         ModelRoutingPolicyRegistry? routing = null,
-        IModelSelectionLedger? ledger = null)
+        IModelSelectionLedger? ledger = null,
+        ModelSelectionPolicyStore? policy = null)
     {
         _quota = quota;
         _caps = caps;
@@ -98,6 +100,7 @@ public sealed class ModelSelectionService : IModelSelectionService
         _preference = preference;
         _routing = routing;
         _ledger = ledger;
+        _policy = policy;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -111,13 +114,49 @@ public sealed class ModelSelectionService : IModelSelectionService
         var project = string.IsNullOrWhiteSpace(request.Project)
             ? null
             : _projectSettings.Get(request.Project);
+        var consumer = request.Consumer.StartsWith("one-shot:", StringComparison.Ordinal)
+            ? "one-shot" : request.Consumer;
+        var consumerPolicy = _policy?.Get().Consumers.GetValueOrDefault(consumer);
+        var projectOverride = project?.ModelSelectionOverrides?.GetValueOrDefault(consumer);
+        projectOverride = projectOverride?.ByPipelineType?.GetValueOrDefault(
+            request.PipelineType ?? PipelineTypes.Task) ?? projectOverride;
+        if (request.StepId is not null)
+            projectOverride = projectOverride?.ByStep?.GetValueOrDefault(request.StepId) ?? projectOverride;
+        var preferred = projectOverride?.Primary ?? consumerPolicy?.Primary?.ToSelectionRoute();
+        if (!request.IsExplicitPin && preferred is not null)
+            request = request with { Pins = new SelectionPins(preferred.CliType, preferred.Model,
+                preferred.ThinkingLevel, request.Pins.Mode) };
+        if (projectOverride?.PinMode == "hard")
+            request = request with { Pins = request.Pins with { Mode = SelectionPinMode.Hard } };
+        IReadOnlyList<SelectionRoute>? configuredFallback = projectOverride?.Fallbacks
+            ?? consumerPolicy?.Fallbacks?.Routes.Select(route => route.ToSelectionRoute()).ToArray();
+        var explicitKey = $"{request.Pins.Model}:{request.Pins.ThinkingLevel}";
+        var modelFallbacks = _policy?.Get().ModelFallbacks;
+        if (modelFallbacks is not null && modelFallbacks.TryGetValue(explicitKey, out var explicitFallback))
+            configuredFallback = [explicitFallback];
+        var routing = _fallback.RoutingFacts();
+        if (configuredFallback is { Count: > 0 })
+        {
+            var original = routing.Profile;
+            routing = routing with { Profile = cli =>
+            {
+                var fallback = configuredFallback[0];
+                var previous = original(cli);
+                return (previous ?? new CliModelRouteProfile { CliType = cli }) with
+                {
+                    FallbackCliType = fallback.CliType,
+                    FallbackModel = fallback.Model,
+                    FallbackThinkingLevel = fallback.ThinkingLevel,
+                };
+            } };
+        }
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var facts = new SelectionFacts
         {
             NowUtc = now,
             Caps = _caps,
             SnapshotFor = cli => string.IsNullOrWhiteSpace(cli) ? null : _quota.GetCachedFor(cli),
-            Routing = _fallback.RoutingFacts(),
+            Routing = routing,
             OccupiedSlots = call.OccupiedSlots,
             WaitPolicy = _waitPolicy.Resolve(project),
             OperatorSwitch = _preference?.Get(request.Pins.CliType ?? CliTypes.Claude),

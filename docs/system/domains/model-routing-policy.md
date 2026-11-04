@@ -6,6 +6,28 @@ Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical 
 
 Owner: Pipeline and CLI domains
 
+## Consumer policy and project overrides (AGT-3479)
+
+The workspace policy is `model-selection-policy.json` under `TaskRepository`.
+It holds consumer-class primary and ordered fallback routes, cap values, the
+cost-guard factor, and hysteresis parameters. `GET /api/model-selection/policy`
+returns the policy and the one-time migration count. The CLI Management editor
+updates one consumer row with `PUT /api/model-selection/policy/consumers/{consumer}`.
+
+`ProjectSettings.ModelSelectionOverrides` can replace the route for a consumer,
+pipeline type, or step. `PUT /api/projects/{projectName}/pipeline-step` continues
+to store its compatibility fields and writes the matching step override. On the
+first policy read, step model pins equal to the old global primary model become
+inherited; other pins remain explicit. The migration emits `policy-migrated`
+to the selection ledger. The old `cli-model-routing.json` is read once and
+remains read only during this compatibility release.
+
+Card and project pins default to `preference`. A `hard` pin waits with a reason
+when the route cannot launch. Provider-refusal continuation stores a temporary
+preference with an expiry instead of replacing the operator's card pin.
+The policy declares `gpt-6-sol:xhigh` to `claude-opus-5:xhigh` as the explicit
+cross-provider fallback recommended in D5 of the concept Dossier.
+
 This page is the authoritative answer to two questions:
 
 1. Which model and thinking level should perform a task or bounded pipeline
@@ -15,8 +37,9 @@ This page is the authoritative answer to two questions:
 
 The policy selects the cheapest tier that clears the required capability floor.
 It does not claim that a larger model repairs a vague task, a broken gate, or
-missing evidence. Explicit operator pins still win, but the UI or orchestrator
-should explain when a pin is below the policy floor.
+missing evidence. A preference pin wins over defaults but may switch under
+quota or operator rules. A hard pin waits instead of switching. The UI or
+orchestrator should explain when a pin is below the policy floor.
 
 ## Routing tiers
 

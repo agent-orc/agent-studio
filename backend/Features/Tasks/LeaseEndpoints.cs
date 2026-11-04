@@ -914,7 +914,14 @@ public static class LeaseEndpoints
                             Project = task.ProjectName,
                             TaskKey = task.Key ?? (string.IsNullOrEmpty(task.TaskKey) ? task.Id : task.TaskKey),
                             Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
-                                task.CliType, task.Model, task.ThinkingLevel),
+                                task.CliType,
+                                task.PinMode != "hard" && task.PreferenceExpiresAt > DateTime.UtcNow
+                                    ? task.PreferenceModel ?? task.Model : task.Model,
+                                task.PinMode != "hard" && task.PreferenceExpiresAt > DateTime.UtcNow
+                                    ? task.PreferenceThinkingLevel ?? task.ThinkingLevel : task.ThinkingLevel,
+                                task.PinMode == "hard" ? AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard
+                                    : AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference),
+                            IsExplicitPin = task.ModelExplicit,
                             TaskType = task.TaskType,
                             Host = new AgentStudio.TaskServer.Contracts.SelectionHost(req.RunnerName),
                         },

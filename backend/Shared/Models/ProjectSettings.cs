@@ -248,6 +248,9 @@ public record ProjectSettings
         Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public Dictionary<string, PipelineStepSetting>? PipelineSteps { get; init; }
 
+    /// <summary>Consumer class routes that override the workspace selection policy.</summary>
+    public Dictionary<string, ModelSelectionOverride>? ModelSelectionOverrides { get; init; }
+
     /// <summary>
     /// Per-project pipeline-step overrides keyed first by
     /// <see cref="PipelineTypes"/> and then by pipeline step id. Each type owns
@@ -634,6 +637,15 @@ public record PipelineStepCondition
     /// runtime default" so a partial entry (e.g. only a model choice) leaves
 /// the other dimensions on their defaults.
 /// </summary>
+public sealed record ModelSelectionOverride
+{
+    public AgentStudio.TaskServer.Contracts.SelectionRoute? Primary { get; init; }
+    public IReadOnlyList<AgentStudio.TaskServer.Contracts.SelectionRoute>? Fallbacks { get; init; }
+    public string PinMode { get; init; } = "preference";
+    public Dictionary<string, ModelSelectionOverride>? ByPipelineType { get; init; }
+    public Dictionary<string, ModelSelectionOverride>? ByStep { get; init; }
+}
+
 public record PipelineStepSetting
 {
     /// <summary>Built-in prompt-enrichment block ids explicitly adopted by this project.</summary>
@@ -688,6 +700,9 @@ public record PipelineStepSetting
     /// falls through to the selected model's default level.
     /// </summary>
     public string? ThinkingLevel { get; init; }
+
+    /// <summary>Preference is the default; hard waits when a switch is required.</summary>
+    public string PinMode { get; init; } = "preference";
 
     /// <summary>
     /// Prompt override for LLM-backed steps. Null means "use the catalogue

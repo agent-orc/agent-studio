@@ -8,6 +8,7 @@ import { DisclosureMarkerComponent } from '../../../../components/disclosure-mar
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService, type CliFallbackState, type CliModelFallbackRoute, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
 import type { EffectiveModelSelection } from '../../../quota/services/quota-api.service';
+import { ConsumerModelPolicyComponent } from '../consumer-model-policy/consumer-model-policy.component';
 import { TaskService } from '../../../../services/task.service';
 import {
   WorkspaceOrchestratorSettingsService,
@@ -37,7 +38,7 @@ interface CliModelGroup {
   standalone: true,
   // The badge reads the migration store through the CLI barrel. Defer it so
   // file-order-dependent barrel evaluation cannot leave Angular an undefined dependency.
-  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent],
+  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -113,6 +114,7 @@ export class CliModelsPanelComponent implements OnInit {
     this.refreshEffectiveRoutes();
     this.loadWorkspaceAutoApply();
   }
+
 
   /** AGT-2716 — resolve the registry's default workspace, then load its
    *  auto-apply-model-migrations toggle. */
