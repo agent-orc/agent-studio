@@ -61,6 +61,25 @@ public sealed class ModelSelectionLedgerTests : IDisposable
         Assert.Empty(Create(_now).Active());
     }
 
+    [Fact]
+    public void HealthClearClosesTheMatchingHostModelWithoutAStoredMarkId()
+    {
+        var ledger = Create(_now);
+        var mark = Sample(_now) with
+        {
+            Kind = "health-marked", Host = "host-a", Rule = "model-capacity",
+            From = new("codex", "gpt-6-sol", "medium"),
+            To = new("codex", "gpt-6-sol", "medium"), ReturnToPrimaryAt = _now.AddHours(1),
+        };
+        Assert.True(ledger.Append(mark));
+        Assert.True(ledger.Append(mark with { Id = "other-host", Host = "host-b" }));
+        Assert.True(ledger.Append(mark with { Id = "cleared", Kind = "health-cleared",
+            At = _now.AddMinutes(1), ReturnToPrimaryAt = null }));
+
+        Assert.Equal("other-host", Assert.Single(ledger.Active()).Id);
+        Assert.Equal("other-host", Assert.Single(Create(_now).Active()).Id);
+    }
+
     private ModelSelectionLedger Create(DateTimeOffset now)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build();

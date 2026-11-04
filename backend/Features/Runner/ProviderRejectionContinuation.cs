@@ -247,7 +247,9 @@ public sealed class ProviderRejectionContinuationService
                 ["selectionEventId"] = _selectionLedger is null ? string.Empty : selectionEvent.Id,
             });
         _timeline.Append(folder, "model.switched", TimelineActors.System,
-            $"Switched from {fallback.FromModel} to {fallback.ToModel} for the next attempt.",
+            _selectionLedger is null
+                ? $"Switched from {fallback.FromModel} to {fallback.ToModel} for the next attempt."
+                : $"Model selection event {selectionEvent.Id}.",
             runId: attemptId,
             details: new Dictionary<string, string>
             {
@@ -255,6 +257,7 @@ public sealed class ProviderRejectionContinuationService
                 ["toModel"] = fallback.ToModel,
                 ["provider"] = fallback.CliType,
                 ["rule"] = fallbackInfo.Reason,
+                ["selectionEventId"] = _selectionLedger is null ? string.Empty : selectionEvent.Id,
             });
         _logger.LogWarning(
             "provider-rejection-continuation task={TaskKey} attempt={AttemptId} from={FromModel} to={ToModel} code={Code} parameter={Parameter} pinned={Pinned}",

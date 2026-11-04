@@ -234,6 +234,12 @@ public sealed class ModelSelectionLedger
         if (entry.Kind is "returned" or "health-cleared")
         {
             if (entry.ClosesId is not null) _active.Remove(entry.ClosesId);
+            if (entry.Kind == "health-cleared")
+                foreach (var earlier in _active.Values.Where(e => e.Kind == "health-marked"
+                    && e.Host == entry.Host && e.Rule == entry.Rule
+                    && e.From?.CliType == entry.From?.CliType
+                    && e.From?.Model == entry.From?.Model).ToArray())
+                    _active.Remove(earlier.Id);
         }
     }
 
