@@ -336,6 +336,15 @@ public static class RoutePermissionCatalog
         AddProjectChecked("POST", IamPermissions.ProjectRunsOperate,
             "/api/orchestration/decision-receipts/{}/operator-intent");
 
+        // Operator decision stream and watcher lease (operator agent level
+        // OP-2). The stream handlers filter events per readable project. The
+        // lease is one per installation; holding it needs a binding that may
+        // operate runs in at least one project.
+        Add("R", IamPermissions.ProjectRead,
+            "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease");
+        AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
+            "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
+
         // --- Workspace administration, settings, and operation -------------
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/usage-calendar");
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/systems/{}");
