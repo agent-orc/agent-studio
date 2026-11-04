@@ -50,8 +50,13 @@ instead of a fixed `primary`. Consumer keys include `coding`, `review-aspect`,
 
 The project override map is `ModelSelectionOverrides[consumerClass]`, with
 optional `byPipelineType[pipelineType]` and `byStep[stepId]` entries. Each entry
-may supply `primary`, ordered `fallbacks`, and `pinMode`. The migration compares
-old step models with the old global primary for their CLI. Matching models
+may supply `primary`, ordered `fallbacks`, and `pinMode`.
+Explicit fallback routes are tried in order. A route whose provider is capped,
+whose model is rejected by the claiming host, or whose capability or correctness
+floor is insufficient is skipped. The chosen route and its position in the
+ordered list appear in the selection ledger's switch reason. The policy maps
+retain case-insensitive consumer, provider, window, and model keys after reload.
+The migration compares old step models with the old global primary for their CLI. Matching models
 inherit; different models become explicit step overrides. The policy response
 reports the counts, and the selection ledger receives one `policy-migrated`
 entry. `cli-model-routing.json` is only read during that initial migration and

@@ -386,9 +386,65 @@ public static class ModelSelectionPlanner
         }
 
         var preferFallback = preference?.Active == true;
-        var route = facts.Routing is null ? null : ResolveRoute(cli, requestedModel, requestedThinking, facts.Routing,
-            Admission, preferFallback, facts.HostAcceptsFallback ?? facts.HostAccepts,
-            request.Required.SameClassOnly, facts.FallbackProviderAllowed);
+        var route = facts.Routing is null ? null : ResolveConfiguredRoute();
+
+        CliRouteDecision ResolveConfiguredRoute()
+        {
+            var routing = facts.Routing!;
+            var accepted = facts.HostAcceptsFallback ?? facts.HostAccepts;
+            if (facts.ConfiguredFallbacks is not { Count: > 0 } configured)
+                return ResolveRoute(cli, requestedModel, requestedThinking, routing, Admission,
+                    preferFallback, accepted, request.Required.SameClassOnly, facts.FallbackProviderAllowed);
+
+            // Keep the list in planner facts so every host applies the same
+            // admission checks and the ledger records the route actually used.
+            CliRouteDecision? rejected = null;
+            for (var index = 0; index < configured.Count; index++)
+            {
+                var candidate = configured[index];
+                if (string.IsNullOrWhiteSpace(candidate.Model) || string.IsNullOrWhiteSpace(candidate.CliType))
+                    continue;
+                if (Admission(candidate.CliType).Blocked)
+                {
+                    rejected = new CliRouteDecision(cli, requestedModel, requestedThinking, false,
+                        $"configured fallback {index + 1} provider quota is exhausted", Admission(cli));
+                    continue;
+                }
+                var candidateRouting = routing with { Profile = candidateCli =>
+                {
+                    var previous = routing.Profile(candidateCli);
+                    return (previous ?? new CliModelRouteProfile { CliType = candidateCli }) with
+                    {
+                        FallbackCliType = candidate.CliType,
+                        FallbackModel = candidate.Model,
+                        FallbackThinkingLevel = candidate.ThinkingLevel,
+                    };
+                } };
+                var evaluated = ResolveRoute(cli, requestedModel, requestedThinking, candidateRouting,
+                    Admission, preferFallback, accepted, request.Required.SameClassOnly,
+                    facts.FallbackProviderAllowed);
+                if (!evaluated.IsFallback)
+                {
+                    rejected = evaluated;
+                    continue;
+                }
+                var floor = request.CorrectnessFloor ?? facts.CorrectnessFloor?.Invoke();
+                if (floor is not null && !RouteMeetsFloor(facts.Tiers,
+                    evaluated.Model ?? string.Empty, evaluated.ThinkingLevel, floor, facts.NormalizeModelId))
+                {
+                    rejected = evaluated with { IsFallback = false,
+                        Reason = $"configured fallback {index + 1} does not clear the correctness floor" };
+                    continue;
+                }
+                return evaluated with
+                {
+                    Reason = $"{evaluated.Reason}; selected configured fallback {index + 1} of {configured.Count}",
+                    FallbackSource = "policy",
+                };
+            }
+            return rejected ?? new CliRouteDecision(cli, requestedModel, requestedThinking, false,
+                "no configured fallback route is usable", Admission(cli));
+        }
 
         if (preferFallback && route?.IsFallback != true)
             return Decided(SelectionOutcome.Wait,

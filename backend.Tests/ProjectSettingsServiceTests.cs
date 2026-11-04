@@ -34,6 +34,22 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void Clearing_last_step_model_override_prunes_empty_parent_maps()
+    {
+        var svc = Build();
+        svc.SetModelSelectionStepOverride("demo", "task", "aspect-code-quality",
+            new ModelSelectionOverride
+            {
+                Primary = new AgentStudio.TaskServer.Contracts.SelectionRoute("claude", "claude-opus-5", "high"),
+            });
+
+        svc.SetModelSelectionStepOverride("demo", "task", "aspect-code-quality", null);
+
+        Assert.Null(svc.Get("demo").ModelSelectionOverrides);
+        Assert.Null(Build().Get("demo").ModelSelectionOverrides);
+    }
+
+    [Fact]
     public void ChatMetadataOverride_PersistsAndCanBeCleared()
     {
         var svc = Build();

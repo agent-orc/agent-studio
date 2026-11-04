@@ -940,7 +940,9 @@ builder.Services.AddSingleton<AgentStudio.Drift.DocsMarketingDriftAnalysisServic
 builder.Services.AddSingleton<AgentStudio.Drift.SpecTaskDriftAnalysisService>();
 builder.Services.AddSingleton<AgentStudio.Drift.SoftwareArchitectureDriftAnalysisService>();
 builder.Services.AddSingleton<AgentStudio.Drift.ArchitectureElementStateStore>();
-builder.Services.AddSingleton<AgentStudio.Drift.DriftPostStepRunner>();
+builder.Services.AddSingleton<AgentStudio.Drift.DriftPostStepRunner>(sp =>
+    ActivatorUtilities.CreateInstance<AgentStudio.Drift.DriftPostStepRunner>(sp,
+        sp.GetRequiredService<AgentStudio.Cli.IModelSelectionService>()));
 builder.Services.AddSingleton<AgentStudio.Tags.TagRegistryService>();
 builder.Services.AddSingleton<AgentStudio.Tags.ITagMaintenanceWorkspace, AgentStudio.Tags.TagMaintenanceWorkspace>();
 builder.Services.AddSingleton<AgentStudio.Tags.ITagMaintenanceSynthesis, AgentStudio.Tags.TagMaintenanceSynthesis>();
