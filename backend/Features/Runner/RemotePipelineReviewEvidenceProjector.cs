@@ -436,9 +436,11 @@ public sealed class RemotePipelineReviewEvidenceProjector
             StartedAt = first.StartedAt,
             CompletedAt = receivedAt,
             DurationMs = Math.Max(0, (long)(last.FinishedAt - first.StartedAt).TotalMilliseconds),
-            Reason = passed
+            Reason = (passed
                 ? $"{tools.Length} remote tool gate command(s) passed at the immutable Result-SHA."
-                : "A remote tool gate command failed at the immutable Result-SHA.",
+                : "A remote tool gate command failed at the immutable Result-SHA.")
+                + (review.Subject.Plan?.BuildTestDeferralDisabledReason is { } reason
+                    ? $" Batch deferral disabled: {reason}" : string.Empty),
             Verdict = passed ? "pass" : "block",
             ReviewFindings = !passed && citedProductFailure
                 && string.Equals(report.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)

@@ -54,9 +54,20 @@ every resource without a live lease and fence, and never starts a container.
 Role images are digest-pinned in a manifest that keeps the previous digest
 for rollback; the release builds `agent-work` from
 `deploy/work-container/Dockerfile`. `RUNNER_WORK_CONTAINER_MODE` defaults to
-`off`. `shadow` records an `executor-shadow.json` beside each detached
+`contained` on Linux and `off` elsewhere (SM-11, security-model decision SM-D6
+H2): `AttemptContainmentPolicy` selects the container executor once the host's
+proof recorded a go `rollout-verdict.json`, and afterwards refuses work when the
+service user can reach the runtime, the launcher or a pinned image is missing,
+or the work-zone policy does not cover the container network; the
+`attempt-containment` capability carries that decision into claim admission.
+Each attempt runs under its own UID (`WorkContainerIdentity`), with
+per-repository caches, a one-shot ownership step, and every runtime call
+through the root-owned `agent-work-launcher`, whose
+`WorkContainerLauncherPolicy` admits only the executor's own calls.
+`work-container check` and `work-container probe` report and prove the
+boundary. `shadow` records an `executor-shadow.json` beside each detached
 worker. `canary` enables `agent-host work-container run`. Detached coding and
-review workers keep the process executor. DP-S5 adds an opt-in coding canary:
+review workers keep the process executor until provider attempt tokens exist. DP-S5 adds an opt-in coding canary:
 the host obtains a one-use Task Server exchange capability after a live claim,
 injects a one-repository read token through runtime stdin into the container's
 private tmpfs, and revokes it on teardown. The Git helper accepts only the

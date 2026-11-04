@@ -66,16 +66,18 @@ profile retains host build validation with its operator environment and gives
 URL start rules the local environment. Its canonical Claude one-shot runner
 keeps the requested working directory and tools.
 
-**Accepted risk for single-team installs (2026-10-25).** Coding agents on
-`agent-runner-01` currently run with skip-all permissions in a shared host
-environment. A Developer-authored card executed there can read that host's
-provider credentials and other projects' checkouts. Treat all users allowed to
-submit coding work to that runner as one trust group. Before admitting separate
-teams, implement the Stage 2 per-job isolation proposed by the
-[dynamic placement Dossier](../../dynamic-placement/index.html) (AGT-3171):
-place each job in its own container, mount only that job's repository, and give
-it a short-lived credential scoped to that job. Do not put persistent provider
-credentials or another project's checkout in the job container.
+**Accepted risk for single-team installs (2026-10-25), narrowed by SM-11.**
+On a host still running agents with the process executor, a Developer-authored
+card can read that host's provider credentials and other projects'
+checkouts, so everyone allowed to submit coding work to it is one trust group.
+SM-11 (see [Per-attempt containment](#per-attempt-containment-sm-11)) makes
+the per-attempt work container the Linux default once a host's canary verdict
+is go, removes the host service user from the container-runtime group, and
+binds attempt tokens to one finished-or-live attempt. Until a host has a go
+verdict, and for detached Claude and Codex coding and review sessions until
+provider attempt tokens exist, the accepted risk still holds for that host. Do
+not admit a second team to a host before `agent-host work-container check`
+reports `contained-default` for its roles and the containment probe passes.
 
 ## Networked threat model
 
@@ -221,6 +223,15 @@ that is already allowed to edit that project's checkout.
   expensive-jobs lists, and screenshots, require the `*` project grant. A
   `?project=` query cannot turn a workspace route into a project route.
 - A Runner never receives a human password or session cookie.
+
+#### Operator chat readiness read
+
+`GET /api/runner/{contextKey}/orchestrator-chat` and the legacy project form
+return `executionReadiness` alongside the transcript. The read reports whether
+the configured Runner is polling and advertises a fresh Codex CLI and login;
+it returns a reason code without exposing credentials. It grants no execution
+authority. The browser disables chat submission when the read says the Runner
+cannot execute. The POST route retains its server-side placement refusal.
 
 ### Rights model: role bindings per scope (IP-8)
 
@@ -592,6 +603,89 @@ decide the route family; the binding decides which work inside it.
   already registered host into an explicit all-projects policy
   (`host-project-policy.migrated`). Narrow the projects and rotate each such
   credential to adopt the default.
+
+### Per-attempt containment (SM-11)
+
+Security-model Dossier SM-11 implements decision SM-D6 option H2 (one host,
+separate users, per-attempt containers) and SM-D10 option A (no workflow
+permission on attempt tokens). The executor code is in
+[`runner/WorkContainers/`](../../../runner/WorkContainers/); the host setup is in
+the [work-container section of the Linux runner guide](../setup/linux-runner-host.md#per-attempt-containment-by-default-sm-11).
+
+- **Default after the canary.** `RUNNER_WORK_CONTAINER_MODE` defaults to
+  `contained` on Linux (`off` elsewhere). Contained mode runs an attempt in a
+  container only after `agent-host work-container proof` recorded a go
+  verdict on the host (`rollout-verdict.json`); before that the process
+  executor keeps running. `off` and `shadow` remain the operator rollback.
+- **Fail closed after the canary.** With a go verdict, the
+  `attempt-containment` capability becomes a claim requirement for coding and
+  review. It is `unavailable`, and the Task Server refuses claims, when the
+  service user can reach the runtime directly (`runtime-group-member`), the
+  launcher is missing, the role image is not digest pinned, the work-zone
+  egress policy is not applied and verified, or the container network is not
+  a work-zone network.
+- **One container per attempt, its own UID, only its repository.** Each
+  attempt runs as a UID from 200000 to 265535 that no live attempt on the
+  host holds, with a read-only root, all capabilities dropped,
+  `no-new-privileges`, `--restart no` and a private tmpfs for secrets. A
+  one-shot step without network, with only `CHOWN` and `FOWNER`, hands the
+  fresh attempt volume to that UID. npm, NuGet and repository-mirror caches
+  are per repository (`agent-cache-<cache>-<repository>-v<n>`), so no attempt
+  sees another project's mirror or package cache.
+- **Narrow launcher.** The host service user is not in the `docker` (or
+  `podman`) group and has no sudo rule for the runtime. The host agent sends
+  each runtime call as one JSON request to `/run/agent-work-launcher.sock`
+  (root-owned, the service group, mode 0660). Socket activation starts the
+  root-owned `/usr/local/sbin/agent-work-launcher` wrapper per connection,
+  which checks root ownership of itself, its configuration and the agent-host
+  release, then runs `agent-host work-container launch --stdio`; no setuid
+  step is involved, so the daemon keeps `NoNewPrivileges=true`.
+  `WorkContainerLauncherPolicy`
+  admits only the executor's own calls: `agent-work-*` names, digest-pinned
+  images, an attempt UID, the fixed entry, prepare and secret-injection
+  scripts, volume or read-only bind mounts that pass the socket and
+  provider-home deny list, and a network of the applied, verified work zone.
+  Anything else, including `--privileged`, `--cap-add`, `-v`, host networking
+  and arbitrary `exec` or `run`, exits 126 before the runtime runs.
+- **Egress on every agent host.** The launcher refuses every container while
+  the host has no applied and verified work zone, and contained mode defaults
+  the container network to the zone's `agent-work`.
+- **Attempt tokens.** Task Server mints a one-repository GitHub App token with
+  `contents:read` (never `workflows`) per attempt after a one-use capability
+  exchange bound to host, role, subject, attempt, lease, fence, epoch and,
+  since SM-11, a project the host still holds (`project-not-bound`). It is
+  injected through runtime stdin into the container's tmpfs. A sweep every
+  15 seconds revokes the token of every attempt whose lease was released,
+  completed, fenced or revoked, deletes the root copy, and records
+  `revoked-at-completion`; renewal and new exchanges for that attempt are
+  refused. Process-unknown attempts keep their token until re-adoption or
+  the one-hour backstop.
+- **Outside the container.** The launch plan refuses runtime sockets, provider
+  homes (`.claude`, `.codex`, `.config/gh`), SSH, Git, cloud and kube
+  credentials, and any secret-shaped environment name. Host enrollment
+  credentials stay with the host agent; the attempt file carries no token.
+- **No self-approval.** Task Server records the principal that claimed a
+  coding attempt (`runs.claim_principal_id`). A review verdict is refused
+  (`review-principal-is-coder`) when the review executor coded the delivery or
+  the reporting principal claimed its coding attempt, and an authenticated
+  caller that is not a runner principal cannot report a verdict
+  (`review-principal-not-reviewer`). Review claims skip such deliveries
+  (`coding-principal-excluded`). The monolith review plane refuses a report
+  whose executor coded the delivery.
+- **Probe.** `agent-host work-container probe` runs one attempt through the
+  executor whose command tries to read the named host credential, provider
+  login and other-project paths, find a runtime socket or a secret variable,
+  see another repository's mirror, and connect to a non-allowlisted address.
+  It writes `containment-probe.json` and exits non-zero unless every check
+  passed.
+
+Not yet contained: detached Claude and Codex coding and review sessions still
+run as host processes, because provider root logins may not enter a container
+and per-attempt provider tokens need the host provider broker gated by the
+dynamic placement S5 concurrency proof. The policy records
+`contained-default` for those roles, but the detached worker reports
+`worker=process` in `executor-shadow.json`. Gate attempts need no repository
+token; they receive their source as a bundle.
 
 ## Transport and exposed surfaces
 

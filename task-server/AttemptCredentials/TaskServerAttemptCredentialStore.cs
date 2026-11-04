@@ -44,6 +44,21 @@ public sealed partial class TaskServerStore
         await EnsureLeaseCurrentAsync(connection, transaction, lease, ct);
         if (lease.TaskId != identity.SubjectId)
             throw new TaskServerConflictException("stale-fence", "Attempt subject does not match the claim.");
+        // SM-11: the token is bound to a project this host still holds (SM-9 host project policy).
+        var bound = Convert.ToInt64(await ScalarAsync(connection, """
+            SELECT CASE
+                WHEN NOT EXISTS (SELECT 1 FROM host_project_policies WHERE host_id = $host)
+                    THEN CASE WHEN $requirePolicy = 1 THEN 0 ELSE 1 END
+                WHEN EXISTS (SELECT 1 FROM host_project_policies WHERE host_id = $host AND allow_all_projects = 1)
+                    THEN 1
+                WHEN EXISTS (SELECT 1 FROM host_allowed_projects a JOIN tasks t ON t.project_id = a.project_id
+                              WHERE a.host_id = $host AND t.id = $task)
+                    THEN 1
+                ELSE 0 END;
+            """, ct, transaction, ("$host", identity.HostId), ("$task", lease.TaskId),
+            ("$requirePolicy", RequiresHostProjectPolicy ? 1 : 0)), CultureInfo.InvariantCulture);
+        if (bound != 1)
+            throw new TaskServerConflictException("project-not-bound", "The host no longer holds this attempt's project.");
         var host = Convert.ToString(await ScalarAsync(connection,
             "SELECT host_id FROM runners WHERE id = $runner AND instance_id = $instance AND status = 'active';",
             ct, transaction, ("$runner", identity.RunnerId), ("$instance", identity.InstanceId)), CultureInfo.InvariantCulture);
@@ -179,6 +194,7 @@ public sealed partial class TaskServerStore
         IAttemptRootSecretStore roots, CancellationToken ct)
     {
         RequireWritable();
+        string? closedStatus = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var changed = await ExecuteAsync(connection, """
@@ -192,8 +208,24 @@ public sealed partial class TaskServerStore
                 ("$host", identity.HostId), ("$role", identity.Role),
                 ("$subject", identity.SubjectId));
             if (changed != 1)
-                throw new TaskServerConflictException("credential-already-closed", "Attempt credential is not active for this identity.");
+            {
+                // SM-11: the server may have revoked it at completion already.
+                closedStatus = Convert.ToString(await ScalarAsync(connection, """
+                    SELECT revocation_status FROM attempt_credential_issuances
+                     WHERE issuance_id = $id AND run_id = $run AND lease_id = $lease
+                       AND fence = $fence AND epoch = $epoch AND host_id = $host
+                       AND role = $role AND subject_id = $subject AND revoked_at IS NOT NULL;
+                    """, ct, transaction, ("$id", issuanceId),
+                    ("$run", identity.AttemptId), ("$lease", identity.LeaseId),
+                    ("$fence", identity.Fence), ("$epoch", identity.Epoch),
+                    ("$host", identity.HostId), ("$role", identity.Role),
+                    ("$subject", identity.SubjectId)), CultureInfo.InvariantCulture);
+                if (closedStatus is null)
+                    throw new TaskServerConflictException("credential-already-closed", "Attempt credential is not active for this identity.");
+            }
         }, ct);
+        if (closedStatus is not null)
+            return new AttemptCredentialReceipt(issuanceId, closedStatus, "host-receipt-pending", UtcNow);
         var token = await roots.ReadAsync("issued-" + issuanceId, CancellationToken.None);
         bool revoked;
         try { revoked = token is not null && await issuer.RevokeAsync(token, CancellationToken.None); }
@@ -233,6 +265,57 @@ public sealed partial class TaskServerStore
         if (changed != 1)
             throw new TaskServerConflictException("deletion-receipt-refused", "Credential was not revoked for this attempt identity.");
         return new AttemptCredentialReceipt(request.IssuanceId, "revocation-recorded", request.DeletionStatus, UtcNow);
+    }
+
+    /// <summary>
+    /// SM-11: revoke every attempt credential whose attempt has finished, even
+    /// when its host never tore down: a released, completed, fenced or revoked
+    /// lease (or a lease that no longer exists) ends the token at the issuer
+    /// and deletes its root copy. The host's later teardown receives the
+    /// recorded receipt. Process-unknown attempts keep their token; they may
+    /// still be re-adopted and their token expires within the one-hour backstop.
+    /// </summary>
+    public async Task<int> RevokeFinishedAttemptCredentialsAsync(
+        IRepositoryTokenIssuer issuer, IAttemptRootSecretStore roots, CancellationToken ct)
+    {
+        RequireWritable();
+        var finished = new List<string>();
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            await using (var command = Command(connection, """
+                SELECT i.issuance_id
+                  FROM attempt_credential_issuances i
+                  LEFT JOIN leases l ON l.run_id = i.run_id AND l.lease_id = i.lease_id
+                 WHERE i.revoked_at IS NULL
+                   AND (l.run_id IS NULL OR l.status NOT IN ('active', 'process-unknown'));
+                """, transaction))
+            await using (var reader = await command.ExecuteReaderAsync(ct))
+                while (await reader.ReadAsync(ct)) finished.Add(reader.GetString(0));
+            foreach (var issuance in finished)
+                await ExecuteAsync(connection, """
+                    UPDATE attempt_credential_issuances
+                       SET revoked_at = $now, revocation_status = 'revocation-pending'
+                     WHERE issuance_id = $id AND revoked_at IS NULL;
+                    """, ct, transaction, ("$now", Iso(UtcNow)), ("$id", issuance));
+        }, ct);
+        foreach (var issuance in finished)
+        {
+            var token = await roots.ReadAsync("issued-" + issuance, CancellationToken.None);
+            bool revoked;
+            try { revoked = token is not null && await issuer.RevokeAsync(token, CancellationToken.None); }
+            catch (Exception) { revoked = false; }
+            await roots.DeleteAsync("issued-" + issuance, CancellationToken.None);
+            await InWriteTransactionAsync(async (connection, transaction) =>
+                await ExecuteAsync(connection, """
+                    UPDATE attempt_credential_issuances
+                       SET revocation_status = $status,
+                           deletion_status = COALESCE(deletion_status, 'host-receipt-pending')
+                     WHERE issuance_id = $id;
+                    """, CancellationToken.None, transaction,
+                    ("$status", token is null ? "not-issued" : revoked ? "revoked-at-completion" : "expiry-backstop"),
+                    ("$id", issuance)), CancellationToken.None);
+        }
+        return finished.Count;
     }
 
     public async Task<AttemptCredentialMaterial> RenewAttemptCredentialAsync(

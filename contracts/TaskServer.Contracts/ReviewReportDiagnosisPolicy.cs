@@ -128,7 +128,8 @@ public static class ReviewReportDiagnosisPolicy
                 continue;
             }
             if (command.Diagnosis.ChargesCard
-                && (command.BaselineExitCode != 0 || clean.ExitCode == 0))
+                && (clean.ExitCode == 0
+                    || (command.BaselineExitCode != 0 && !HasNewTestFailures(command, plan))))
             {
                 unproven ??= "DiagnosisEvidenceInvalid";
                 continue;
@@ -171,4 +172,9 @@ public static class ReviewReportDiagnosisPolicy
             && command.WorkspaceRole == "candidate"
             && command.ExitCode != 0
             && !ReviewCommandKinds.IsAgent(command.ExecutionKind)).ToArray();
+
+    public static bool HasNewTestFailures(ReviewCommandEvidenceDto command, ReviewPlanDto? plan)
+        => command.NewFailures is { Count: > 0 }
+           && plan?.Commands.FirstOrDefault(step => step.StepId == command.StepId) is { } planned
+           && !ReviewBaselineModes.IsExitStatus(planned.BaselineMode);
 }

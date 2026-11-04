@@ -64,6 +64,83 @@ public sealed class AttemptCredentialBrokerTests
         Assert.Equal("container-tmpfs-removed", deletion.DeletionStatus);
     }
 
+    private sealed record LiveClaim(TaskServerStore Store, AttemptCredentialIdentity Identity, ClaimResponse Claim, string ProjectId);
+
+    private static async Task<LiveClaim> ClaimAsync(string dataDirectory, TimeProvider clock)
+    {
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions
+            { DataDirectory = dataDirectory, AttemptCredentialCanaryEnabled = true }), clock);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Workspace"), "test", default);
+        var project = await store.CreateProjectAsync(
+            new CreateProjectRequest(workspace.WorkspaceId, "Project", "PROJ"), "test", default);
+        const string repositoryUrl = "https://github.com/example/attempt-proof.git";
+        await store.RegisterProjectRepositoryAsync(new RegisterProjectRepositoryRequest(
+            project.ProjectId, project.WorkspaceId, project.Name, project.TaskKeyPrefix,
+            repositoryUrl, "develop"), "test", default);
+        await store.CreateTaskAsync(project.ProjectId,
+            new CreateTaskRequest("Task", "work", "2-ready"), "test", default);
+        await store.RegisterRunnerAsync("runner", new RegisterRunnerRequest("runner", "host", "instance", "1.0",
+            TaskServerProtocol.Current, [ReviewCapabilities.CodingExecutor]), "test", default);
+        await store.RecordProjectRepositoryProbeAsync(project.ProjectId, "runner",
+            new ProjectRepositoryProbeRequest(repositoryUrl, repositoryUrl, true, true, false), default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner", "instance"), "test", default);
+        Assert.True(claim.Status == "claimed", $"Claim was {claim.Status}: {claim.PlacementReason}");
+        var identity = new AttemptCredentialIdentity("host", "coding", claim.Task!.TaskId,
+            claim.Run!.RunId, "runner", "instance", claim.Lease!.LeaseId, claim.Lease.Fence, claim.Lease.Fence);
+        return new LiveClaim(store, identity, claim, project.ProjectId);
+    }
+
+    /// <summary>SM-11: a finished attempt's token is revoked by the server even when its host never tears down.</summary>
+    [Fact]
+    public async Task Token_taken_from_a_finished_attempt_is_refused()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 3, 10, 0, 0, TimeSpan.Zero));
+        var (store, identity, claim, _) = await ClaimAsync(temp.Path, clock);
+        var roots = new MemoryRoots();
+        var issuer = new FakeIssuer();
+        var capability = await store.CreateAttemptCredentialCapabilityAsync(identity, default);
+        var material = await store.ExchangeAttemptCredentialAsync(identity,
+            capability.IssuanceId, capability.Capability, issuer, roots, default);
+        Assert.Equal(0, await store.RevokeFinishedAttemptCredentialsAsync(issuer, roots, default));
+        Assert.Empty(issuer.Revoked);
+
+        await store.ReleaseLeaseAsync(claim.Run!.RunId, new LeaseReleaseRequest(
+            "runner", "instance", claim.Lease!.LeaseId, claim.Lease.Fence, "failed"), "test", default);
+
+        Assert.Equal(1, await store.RevokeFinishedAttemptCredentialsAsync(issuer, roots, default));
+        Assert.Equal([material.Token], issuer.Revoked);
+        Assert.Null(await roots.ReadAsync("issued-" + capability.IssuanceId, default));
+        Assert.Equal(0, await store.RevokeFinishedAttemptCredentialsAsync(issuer, roots, default));
+
+        await Assert.ThrowsAsync<TaskServerConflictException>(() => store.RenewAttemptCredentialAsync(
+            identity, capability.IssuanceId, issuer, roots, default));
+        await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.CreateAttemptCredentialCapabilityAsync(identity, default));
+        // The host's own teardown still gets a receipt instead of a conflict.
+        var receipt = await store.RevokeAttemptCredentialAsync(identity, capability.IssuanceId, issuer, roots, default);
+        Assert.Equal("revoked-at-completion", receipt.RevocationStatus);
+        Assert.Single(issuer.Revoked);
+    }
+
+    /// <summary>SM-11: an attempt token is bound to a project the host still holds.</summary>
+    [Fact]
+    public async Task Exchange_is_refused_when_the_host_no_longer_binds_the_project()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 3, 10, 0, 0, TimeSpan.Zero));
+        var (store, identity, _, projectId) = await ClaimAsync(temp.Path, clock);
+        var capability = await store.CreateAttemptCredentialCapabilityAsync(identity, default);
+        await store.UpdateHostProjectPolicyAsync("host",
+            new UpdateHostProjectPolicyRequest(false, [], 0), "owner", default);
+
+        var refused = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.ExchangeAttemptCredentialAsync(
+            identity, capability.IssuanceId, capability.Capability, new FakeIssuer(), new MemoryRoots(), default));
+        Assert.Equal("project-not-bound", refused.Code);
+        Assert.False(string.IsNullOrEmpty(projectId));
+    }
+
     private sealed class MemoryRoots : IAttemptRootSecretStore
     {
         private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);

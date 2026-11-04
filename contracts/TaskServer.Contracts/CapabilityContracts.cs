@@ -39,6 +39,14 @@ public static class CapabilityProtocol
     public const string ZonePolicy = "zone-policy";
 
     /// <summary>
+    /// SM-11: the host's per-attempt containment decision (executor and
+    /// reason). Advertised by every host; a claim requirement only after the
+    /// host's work-container canary verdict is go, so a host that lost a
+    /// containment prerequisite stops claiming instead of running unconfined.
+    /// </summary>
+    public const string AttemptContainment = "attempt-containment";
+
+    /// <summary>
     /// The runner can execute a card through the named coding CLI binary.
     /// Authentication remains a separate capability so binary loss and expired
     /// provider credentials stay independently diagnosable.
