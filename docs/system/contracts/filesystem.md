@@ -429,6 +429,16 @@ The completion gate writes this structured sidecar before aspect review. It pres
 
 The gate does not derive open work from `status.md` bullets or narrative. Only structured terminal/process evidence and explicit `TASK_BLOCKED` or `TASK_NEEDS_INPUT` terminals drive the pre-review completion ruling. The structured aspect verdict updates `taskAccepted`; deployment/push pending never masquerades as incomplete implementation.
 
+### results/quality-studio/review-<attempt>.json (optional)
+
+One frozen Review Plane change range per attempt. The application writes this
+artifact from the fenced report's workspace proof and its optional
+`change-review-verdict.v1.json` artifact. It includes the repository id,
+merge-base SHA, Result SHA, delivery generation, run and review attempt ids,
+non-superseded commit count, mode, and the validated verdict document. Older
+rounds remain readable after a later delivery. The file is an application
+artifact, not a repository-owned policy file.
+
 ### results/review-evidence.jsonl (optional)
 
 Append-only JSON-Lines file holding **task-level review evidence**: findings produced by security audits, code-review passes, task checks, or notes written by a reviewer. Lives next to the screenshots in `results/` so it travels with the job folder and stays out of the app source repository.

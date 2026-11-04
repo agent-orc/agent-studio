@@ -1010,6 +1010,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.MergeIntoDevelopRunner>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateStore(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gates")));
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchIsolationGuard>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateLeaseService(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gate-leases")));
@@ -1196,6 +1197,8 @@ builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityStudioConnectionS
 builder.Services.AddHttpClient("quality-studio-integration", client => client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityStudioRevokeOutbox>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.QualityStudio.QualityStudioRevokeOutbox>());
+builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityChangeReviewOutbox>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.QualityStudio.QualityChangeReviewOutbox>());
 builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());

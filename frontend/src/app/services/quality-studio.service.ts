@@ -39,6 +39,15 @@ export class QualityStudioService {
     window.open('/api/integrations/quality-studio/open?project=' + encodeURIComponent(project), '_blank', 'noopener');
   }
 
+  openRange(project: string, repositoryId: string, base: string, head: string, card: string): void {
+    const target = '/?repo=' + encodeURIComponent(repositoryId)
+      + '&view=change&base=' + encodeURIComponent(base)
+      + '&head=' + encodeURIComponent(head)
+      + '&card=' + encodeURIComponent(card);
+    window.open('/api/integrations/quality-studio/open?project=' + encodeURIComponent(project)
+      + '&return=' + encodeURIComponent(target), '_blank', 'noopener');
+  }
+
   connectionChanged(): void {
     const projects = Object.keys(this.statuses());
     this.statuses.set({});

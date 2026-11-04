@@ -165,6 +165,8 @@ public record TaskInfo
     /// without <c>commits</c> are surfaced as <c>[commit]</c> by the scanner.
     /// </summary>
     public List<TaskCommitInfo> Commits { get; init; } = [];
+    /// <summary>Latest frozen Quality Studio verdict for a review-lane board signal.</summary>
+    public string? QualityStudioVerdict { get; init; }
     /// <summary>
     /// Append-only application bookkeeping for historical integration truth.
     /// Live acceptance records remain in pipeline/timeline history; this list
