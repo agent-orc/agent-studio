@@ -65,16 +65,27 @@ public static class BatchGateStateSnapshotReader
                 publication = store.ReadPublication(manifest.BatchId),
             };
         }).ToArray();
+        // AGT-3466: why a member left the batch route, by review generation.
+        var causes = pending.Select(item => item.Subject.Project)
+            .Concat(manifests.Select(manifest => manifest.Scope.Project)).Append(project)
+            .Distinct(StringComparer.Ordinal)
+            .SelectMany(store.ListFallbackCauses).ToArray();
         var members = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (var check in preChecks.Where(check => check.Outcome == "red"))
             members.TryAdd(check.TaskKey, new { status = "pre-check-red", batchId = (string?)null,
                 phase = (string?)null, position = (int?)null, size = (int?)null,
                 preCheck = check });
         foreach (var item in pending)
-            members[item.Subject.TaskKey] = new { status = "pending", batchId = (string?)null,
+        {
+            var cause = causes.LastOrDefault(entry => entry.ReviewAttemptId == item.ReviewAttemptId);
+            members[item.Subject.TaskKey] = new { status = cause is null ? "pending" : "fallback",
+                batchId = cause?.BatchId,
                 phase = (string?)null, position = (int?)null, size = (int?)null,
+                reason = cause?.Rule, reasonDetail = cause?.Event,
+                fallbackRule = cause?.Rule, fallbackEvent = cause?.Event,
                 preCheck = preChecks.FirstOrDefault(check => check.ResultSha == item.Subject.ResultSha
                     && check.GateProfileDigest == item.Subject.GateProfileDigest) };
+        }
         foreach (var manifest in manifests.Reverse())
         {
             var phase = store.LatestState(manifest.BatchId).Phase;
@@ -93,17 +104,29 @@ public static class BatchGateStateSnapshotReader
                     continue;
                 }
                 var ejected = replay is { Outcome: "unattributable" };
+                var left = phase == BatchPhase.Abandoned || ejected;
+                var cause = left
+                    ? causes.LastOrDefault(entry => entry.TaskKey == member.TaskKey
+                        && entry.RunAttempt == member.RunAttempt && entry.RecordedAtUtc >= manifest.ClosedAtUtc)
+                    : null;
+                // A member of a batch abandoned before its gate that is queued
+                // again waits for the next batch; it is no per-task fallback.
+                var requeued = left && cause is null && !ejected && pending.Any(item =>
+                    item.Subject.TaskKey == member.TaskKey && item.Subject.RunAttempt == member.RunAttempt);
                 members[member.TaskKey] = new
                 {
-                    status = replay is { Outcome: "cascade-deferred" } ? "pending"
+                    status = replay is { Outcome: "cascade-deferred" } || requeued ? "pending"
                         : released ? "published"
-                        : phase == BatchPhase.Abandoned || ejected ? "fallback" : "in-batch",
+                        : left ? "fallback" : "in-batch",
                     batchId = manifest.BatchId,
                     phase = phase.ToString().ToLowerInvariant(),
                     position = (int?)(index + 1),
                     size = (int?)manifest.Members.Count,
-                    reason = ejected ? replay!.Outcome : null,
-                    reasonDetail = ejected ? EjectionDetail(replay!) : null,
+                    reason = ejected ? replay!.Outcome : requeued ? "requeued" : cause?.Rule,
+                    reasonDetail = ejected ? EjectionDetail(replay!)
+                        : requeued ? store.LatestState(manifest.BatchId).Reason : cause?.Event,
+                    fallbackRule = cause?.Rule,
+                    fallbackEvent = cause?.Event,
                     preCheck = preChecks.FirstOrDefault(check => check.ResultSha == member.ResultSha
                         && check.BaseSha == manifest.BaseSha
                         && check.GateProfileDigest == member.GateProfileDigest),

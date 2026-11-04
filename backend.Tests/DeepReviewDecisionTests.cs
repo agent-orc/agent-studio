@@ -9,6 +9,23 @@ namespace AgentStudio.Tests;
 
 public sealed class DeepReviewDecisionTests
 {
+    [Theory]
+    [InlineData(false, "unavailable")]
+    [InlineData(true, "available")]
+    public void Operator_switch_keeps_deep_review_dispatchable_while_quota_cap_does_not(
+        bool operatorSwitch, string expected)
+    {
+        var plan = new AgentStudio.Cli.QuotaAdmissionPlan(
+            AgentStudio.Cli.QuotaAdmissionOutcome.LaunchFallback,
+            CliTypes.Codex, ModelIds.Gpt56Sol, "high", true,
+            "fallback", null, null);
+
+        Assert.Equal(expected, RemoteReviewPlanBuilder.DeepReviewQuotaState(plan, operatorSwitch));
+        var waiting = plan with { Outcome = AgentStudio.Cli.QuotaAdmissionOutcome.Wait };
+        Assert.Equal(operatorSwitch ? "available" : "capped",
+            RemoteReviewPlanBuilder.DeepReviewQuotaState(waiting, operatorSwitch));
+    }
+
     private static DeepReviewGrounds Facts(string risk = "routine", string[]? paths = null,
         int lines = 20, int blocks = 0, int rounds = 0, int gates = 0,
         string quota = "available")

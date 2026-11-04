@@ -27,11 +27,14 @@ for service in ('api', 'frontend', 'edge'):
         ('read-only root', r'^    read_only: true$'),
         ('cap_drop', r'^    cap_drop: \[ALL\]$'),
         ('no-new-privileges', r'^    security_opt: \[no-new-privileges:true\]$'),
-        ('writable tmpfs', r'^    tmpfs: \[/tmp\]$'),
-    )
+    ) + ((('disk-backed /tmp volume', r'^      - \$\{STUDIO_DATA_DIR\}/api-tmp:/tmp$'),) if service == 'api'
+         else (('writable tmpfs', r'^    tmpfs: \[/tmp\]$'),))
     for reason, pattern in checks:
         if not re.search(pattern, body, re.M):
             sys.exit(f'{service}: missing {reason}')
+    # Agent CLI and build scratch files would count against the API memory limit.
+    if service == 'api' and re.search(r'^    tmpfs:', body, re.M):
+        sys.exit('api: memory-backed /tmp; mount the disk-backed api-tmp volume instead')
     required = ('/data/workspace', '/data/projects', '/data/home') if service == 'api' else ('/data', '/config')
     for mount in required:
         if not re.search(r'^      - [^\n]+:' + re.escape(mount) + r'$', body, re.M):

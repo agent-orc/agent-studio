@@ -16,7 +16,8 @@ public sealed record QuotaAdmissionRequest(
     string ExecutionPath,
     Func<string, string?, bool>? ModelAccepted = null,
     string? ClaimingHost = null,
-    Func<string, string?, bool>? FallbackModelAccepted = null);
+    Func<string, string?, bool>? FallbackModelAccepted = null,
+    bool SameClassOnly = false);
 
 /// <summary>
 /// Canonical application boundary around <see cref="QuotaAdmissionPlanner"/>.
@@ -25,6 +26,8 @@ public sealed record QuotaAdmissionRequest(
 /// </summary>
 public sealed class QuotaAdmissionService
 {
+    public bool IsOperatorSwitchActive(string? cliType)
+        => _preference?.Get(cliType ?? CliTypes.Claude).Active == true;
     private readonly QuotaService _quota;
     private readonly CliQuotaCapsService _caps;
     private readonly CliQuotaFallbackService _fallback;
@@ -73,7 +76,9 @@ public sealed class QuotaAdmissionService
             _preference?.Get(request.CliType ?? CliTypes.Claude),
             request.ModelAccepted,
             request.ClaimingHost,
-            request.FallbackModelAccepted);
+            request.FallbackModelAccepted,
+            request.SameClassOnly,
+            cli => _preference?.Get(cli).Active != true);
         return plan with
         {
             BetterCandidates = _betterCandidates.FindRoute(

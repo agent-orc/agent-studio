@@ -19,7 +19,7 @@
         }
     }
 
-    @api path /api /api/* /hubs /hubs/*
+    @api path /api /api/* /hubs /hubs/* /.well-known/agent-studio/*
     handle @api {
         reverse_proxy api:5031 {
             header_up X-Forwarded-Proto https

@@ -16,6 +16,14 @@ public static class CliEndpoints
 
         var cliGroup = app.MapGroup("/api/cli");
 
+        app.MapGet("/api/model-selection/effective", (
+            string? project, string? pipelineType, ModelSelectionEffectiveService selection) =>
+        {
+            if (!string.IsNullOrWhiteSpace(pipelineType) && !AgentStudio.Shared.PipelineTypes.IsValid(pipelineType))
+                return Results.BadRequest(new { error = "Unknown pipelineType." });
+            return Results.Ok(new { project, pipelineType, routes = selection.Get(project, pipelineType) });
+        });
+
         cliGroup.MapGet("/types", () => Results.Ok(CliTypes.All));
 
         // Per-CLI completion contract: how each backend signals turn
@@ -289,11 +297,12 @@ public static class CliEndpoints
             SetCliFallbackPreferenceRequest req,
             CliFallbackPreferenceService preferences,
             QuotaService quota,
-            CliQuotaCapsService caps) =>
+            CliQuotaCapsService caps,
+            TimeProvider clock) =>
         {
             if (!CliTypes.IsValid(req.CliType))
                 return Results.BadRequest(new { error = $"Unknown cliType '{req.CliType}'" });
-            var now = DateTime.UtcNow;
+            var now = clock.GetUtcNow().UtcDateTime;
             var reset = quota.GetCachedFor(req.CliType)?.Windows
                 .Where(window => window.ResetAt > now)
                 .OrderByDescending(window => (window.UsedPct ?? 0)

@@ -16,3 +16,17 @@
         header_up X-Forwarded-For {client_ip}
     }
 }
+
+{$QUALITY_DOMAIN} {
+    tls internal
+    encode zstd gzip
+    header {
+        >Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        >X-Content-Type-Options nosniff
+        >Referrer-Policy same-origin
+        -Server
+    }
+    reverse_proxy quality-studio:8080 {
+        header_up X-Forwarded-For {client_ip}
+    }
+}

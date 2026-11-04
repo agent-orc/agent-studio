@@ -48,57 +48,23 @@ const activeButtons = (page: Page) =>
 test.describe('studio-shell · Activity Bar marks exactly one active item', () => {
   test.setTimeout(45_000);
 
-  test('opening Settings while Explorer sidebar is open leaves only ONE active marker', async ({ page }) => {
+  test('Settings opens from the header without a rail destination', async ({ page }) => {
     await bootStudio(page);
-
-    // Baseline: Explorer sidebar is the default panel, so exactly one marker
-    // (Explorer) is active.
     await expect(activeButtons(page)).toHaveCount(1);
     await expect(page.getByTestId('studio-ab-explorer')).toHaveClass(/studio-ab__btn--active/);
 
-    await page.getByTestId('studio-ab-settings').click();
-
-    // Still exactly one marker, and it moved to Settings (the shown surface).
-    await expect(activeButtons(page)).toHaveCount(1);
-    await expect(page.getByTestId('studio-ab-settings')).toHaveClass(/studio-ab__btn--active/);
-    await expect(page.getByTestId('studio-ab-explorer')).not.toHaveClass(/studio-ab__btn--active/);
+    await page.getByTestId('studio-titlebar-settings').click();
+    await expect(page.getByTestId('studio-ab-settings')).toHaveCount(0);
+    await expect(activeButtons(page)).toHaveCount(0);
+    await expect(page.getByTestId('studio-titlebar-settings')).toBeVisible();
   });
 
-  test('opening Settings never lights a second marker', async ({ page }) => {
+  test('keyboard focus on the header Settings control does not change the rail marker', async ({ page }) => {
     await bootStudio(page);
-    await page.getByTestId('studio-ab-settings').click();
-
+    await page.getByTestId('studio-titlebar-settings').focus();
+    await expect(page.getByTestId('studio-titlebar-settings')).toBeFocused();
     await expect(activeButtons(page)).toHaveCount(1);
-    await expect(page.getByTestId('studio-ab-settings')).toHaveClass(/studio-ab__btn--active/);
-  });
-
-  test('keyboard focus does not set an active marker (focus != active)', async ({ page }) => {
-    await bootStudio(page);
-    await expect(activeButtons(page)).toHaveCount(1);
-
-    // Move keyboard focus onto the Settings button WITHOUT activating it.
-    await page.getByTestId('studio-ab-settings').focus();
-    await expect(page.getByTestId('studio-ab-settings')).toBeFocused();
-
-    // Focusing changes nothing about the active marker: still exactly one, and
-    // still Explorer (the shown surface), not the focused Settings button.
-    await expect(activeButtons(page)).toHaveCount(1);
-    await expect(page.getByTestId('studio-ab-settings')).not.toHaveClass(/studio-ab__btn--active/);
     await expect(page.getByTestId('studio-ab-explorer')).toHaveClass(/studio-ab__btn--active/);
-  });
-
-  test('evidence screenshot — one active marker with Settings open', async ({ page }, testInfo) => {
-    await bootStudio(page);
-    await page.getByTestId('studio-ab-settings').click();
-    await expect(activeButtons(page)).toHaveCount(1);
-
-    const bar = page.getByTestId('studio-activity-bar');
-    const dir = process.env.EVIDENCE_DIR;
-    const path = dir
-      ? `${dir}/activity-bar-single-active--mocked.png`
-      : testInfo.outputPath('activity-bar-single-active--mocked.png');
-    await bar.screenshot({ path });
-    await testInfo.attach('activity-bar-single-active--mocked', { path, contentType: 'image/png' });
   });
 
   // AGT-3351: the marker follows the most recent activation — a sidebar panel

@@ -6,6 +6,7 @@ using AgentStudio.Proposals;
 using AgentStudio.Quota;
 using AgentStudio.Telemetry;
 using AgentStudio.Review;
+using AgentStudio.QualityStudio;
 
 namespace AgentStudio.Host;
 
@@ -25,6 +26,7 @@ public static class EndpointMapping
         var mapsLocalV1 = MapsLocalV1(app.Configuration);
         if (!mapsLocalV1) app.MapTaskServerPlaneProxy();
         app.MapAccessSecurityEndpoints();
+        app.MapQualityStudioEndpoints();
         app.MapSecretEndpoints();
         app.MapPullGateEndpoints();
         var tasks = app.MapGroup("/api/tasks")

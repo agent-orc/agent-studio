@@ -39,7 +39,7 @@ public sealed class ReviewReportArtifactBudgetTests
             "verification failed",
             new ReviewWorkspaceProofDto("example/repo", new string('a', 40), new string('a', 40),
                 new string('b', 40), false, false, "workspace", "namespace"),
-            new ReviewEnvironmentDto("host", "runner", "instance", "linux", "x64", "10", 
+            new ReviewEnvironmentDto("host", "runner", "instance", "linux", "x64", "10",
                 new Dictionary<string, string>(), new Dictionary<string, string>()),
             [], artifacts, [new ReviewVerdictDto("tests", "block", "NewTestFailures", "failed")]);
 }

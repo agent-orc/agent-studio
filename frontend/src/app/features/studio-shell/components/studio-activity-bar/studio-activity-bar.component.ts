@@ -30,7 +30,7 @@ export class StudioActivityBarComponent {
   readonly activeKey = input.required<StudioActivityItemKey | null>();
   /** Per-item badge counts. Items with count > 0 show a small badge on the icon. */
   readonly badgeCounts = input<Readonly<Record<string, number>>>({});
-  readonly panelToggle = output<StudioActivityPanelKey | 'settings' | 'chats'>();
+  readonly panelToggle = output<StudioActivityPanelKey | 'chats'>();
   readonly openWorkbenchesRequest = output<void>();
 
   badgeLabel(item: StudioActivityBarItem, count: number): string {
