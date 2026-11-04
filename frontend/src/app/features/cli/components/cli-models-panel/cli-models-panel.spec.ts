@@ -57,7 +57,22 @@ describe('CliModelsPanelComponent', () => {
       tiers: [],
       taskTypeDefaults: {},
     });
-    http.expectOne('/api/model-selection/effective').flush({
+    http.expectOne('/api/model-selection/policy').flush({
+      version: 1,
+      consumers: {
+        'review-grade': {
+          primary: { cli: 'claude', model: 'claude-opus-5', thinking: 'high' },
+          route: null, fallbacks: [{ cli: 'codex', model: 'gpt-6-sol', thinking: 'high' }],
+          sameClassOnly: true, stickyWithinCard: true, costGuardFactor: null,
+        },
+      },
+      caps: {}, costGuardFactor: 2,
+      hysteresis: { returnBelowCapPoints: 10, minDwellMinutes: 30 },
+      migration: { inheritedSteps: 36, explicitSteps: 36, projects: 12, applied: true },
+    });
+    const initialEffective = http.match('/api/model-selection/effective');
+    expect(initialEffective).toHaveLength(2);
+    for (const request of initialEffective) request.flush({
       routes: [{
         consumer: 'review-grade', stepId: 'post-code-review-grade',
         configured: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
@@ -66,6 +81,8 @@ describe('CliModelsPanelComponent', () => {
       }],
     });
     fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="consumer-policy-review-grade"]')).toBeTruthy();
+    expect(fixture.nativeElement.textContent).toContain('36 inherited');
 
     const groups = fixture.componentInstance.groups();
     expect(groups.length).toBe(CLI_TYPES.length);

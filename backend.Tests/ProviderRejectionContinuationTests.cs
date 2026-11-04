@@ -139,7 +139,7 @@ public sealed class ProviderRejectionContinuationTests : IDisposable
     }
 
     [Fact]
-    public async Task Second_refusal_pins_the_card_to_the_sibling()
+    public async Task Second_refusal_sets_expiring_preference_without_overwriting_operator_pin()
     {
         WriteJob();
         var result = await BuildService().StartAsync(
@@ -156,9 +156,12 @@ public sealed class ProviderRejectionContinuationTests : IDisposable
         Assert.True(result.Started, result.Reason);
         Assert.True(result.CardPinned);
         var queued = _scanner.FindJob(JobId, _watchPath)!;
-        Assert.Equal(ModelIds.Gpt56Sol, queued.Model);
+        Assert.Equal(ModelIds.Gpt6Astra, queued.Model);
         Assert.Equal("high", queued.ThinkingLevel);
-        Assert.Contains("Card pinned", result.Reason, StringComparison.Ordinal);
+        Assert.Equal(ModelIds.Gpt56Sol, queued.PreferenceModel);
+        Assert.Equal("high", queued.PreferenceThinkingLevel);
+        Assert.NotNull(queued.PreferenceExpiresAt);
+        Assert.Contains("Temporary preference", result.Reason, StringComparison.Ordinal);
     }
 
     [Fact]

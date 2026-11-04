@@ -16,6 +16,7 @@ describe('access model', () => {
     expect(bindableRoles(ACCESS_ROLES, 'user', 'workspace').map(role => role.id)).toEqual(['owner', 'admin', 'developer', 'viewer', 'approver']);
     expect(bindableRoles(ACCESS_ROLES, 'user', 'project').map(role => role.id)).toEqual(['admin', 'developer', 'contributor', 'viewer', 'approver']);
     expect(bindableRoles(ACCESS_ROLES, 'service-account', 'environment').map(role => role.id)).toEqual(['developer', 'viewer']);
+    expect(bindableRoles(ACCESS_ROLES, 'service-account', 'workspace').map(role => role.id)).toEqual(['admin', 'developer', 'operator-agent', 'viewer']);
   });
 
   it('names principals and formats times in UTC', () => {

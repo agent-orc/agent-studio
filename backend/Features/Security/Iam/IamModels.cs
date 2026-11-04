@@ -202,7 +202,7 @@ public sealed record OneTimeServiceAccountTokenResponse(
     string ServiceAccountId, string TokenId, string Token, DateTime? ExpiresAt);
 public sealed record IamRoleResponse(
     string Id, string DisplayName, string Description, IReadOnlyList<string> Permissions,
-    IReadOnlyList<IamScopeKind> BindableScopes, bool ServiceAccountBindable);
+    IReadOnlyList<IamScopeKind> BindableScopes, bool ServiceAccountBindable, bool UserBindable = true);
 public sealed record IamPermissionResponse(string Name, PermissionLevel Level, string Description);
 public sealed record IamInvitationResponse(string Id, string UserId, DateTime ExpiresAt, bool Used);
 public sealed record IamOverviewResponse(

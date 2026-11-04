@@ -53,13 +53,33 @@ Every mutating request **must** carry the `X-Client-Id: local-default` header.
 The `ClientIdentityMiddleware` rejects mutations without it as 401. Read
 requests do not need the header but it is harmless to include.
 
-For a `networked` installation, set `TASKBOARD_URL` to its HTTPS origin and
-`AGENT_STUDIO_API_TOKEN` to an owner-created operator token scoped to the
-target project. The reference scripts add `Authorization: Bearer` from that
-environment variable and keep `X-Client-Id` for local attribution. A client
-ID alone does not authenticate a networked request. Use a viewer token only
-for read-only scripts. Never put the token value in a command argument, task
-body, output file, or repository source.
+For a `networked` installation, set `TASKBOARD_URL` to its HTTPS origin. The
+token lives only in the file `~/.config/agent-studio/operator-token`, with
+owner-only permissions (`chmod 600`). The Owner creates it with
+`POST /api/auth/api-tokens` (role `operator` binds the narrow
+`operator-agent` role, default expiry 30 days, at most 365) and writes the
+secret into that file once. The reference scripts read the bearer only from
+that file and keep `X-Client-Id` for local attribution. A client ID alone does
+not authenticate a networked request. Use a viewer token only for read-only
+scripts.
+
+The scripts refuse, with a named error and before any request leaves:
+
+- `token-file-permissions`: the file is readable, writable, or executable by
+  group or others. Run `chmod 600` on it.
+- `token-environment-refused`: the retired `AGENT_STUDIO_API_TOKEN` variable is
+  set. Unset it; there is no environment variable path and no fallback.
+- `token-argument-refused`: a token-shaped value appears on the command line.
+- `token-file-missing`: an HTTPS origin and no token file.
+- `token-requires-https`: a token would go over plain HTTP to a non-loopback
+  host.
+
+A token never goes into an environment variable, a command-line argument, a
+chat message, a prompt, a task body, a log, an output file, or repository
+source. Do not paste it into the conversation; if a token was exposed, ask the
+Owner to revoke it in Settings > Access and issue a new one. Script output
+passes through a redaction guard, so the token never appears on stdout or
+stderr even when a response echoes it.
 
 **Use `/api/tasks`.** The route is canonical; the former `/api/jobs`
 compatibility alias has been removed (see

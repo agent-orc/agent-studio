@@ -27,6 +27,9 @@
                   <span>{{ release.channel }}</span>
                   <span class="releases__numeric">{{ age(release.createdAtUtc) }}</span>
                   <span class="releases__muted">{{ release.cardKeys.length }} {{ release.cardKeys.length === 1 ? 'card' : 'cards' }} · {{ shortSha(release.commitSha) }}</span>
+                  @if (release.quality; as quality) {
+                    <span class="releases__muted" [attr.data-testid]="'deploy-release-quality-' + release.id">Quality: {{ verdictLabel(quality.worstVerdict) }} · {{ quality.pass }} pass, {{ quality.concerns }} concerns, {{ quality.block }} block, {{ quality.notReviewed }} not reviewed</span>
+                  }
                 </button>
               </li>
             }
@@ -36,6 +39,23 @@
               <h3 id="deploy-release-detail-title">Release {{ release.version }}</h3>
               @if (release.preDeliveryVerdict; as verdict) {
                 <p class="releases__verdict" data-testid="deploy-release-verdict">Full suite: {{ verdict.status }} · SHA <code>{{ verdict.commitSha }}</code></p>
+              }
+              @if (release.quality; as quality) {
+                <section class="releases__quality" data-testid="deploy-release-quality-detail" aria-label="Release Quality">
+                  <h4>Quality: {{ verdictLabel(quality.worstVerdict) }}</h4>
+                  <p class="releases__numeric" data-testid="deploy-release-quality-counts">{{ quality.pass }} pass · {{ quality.concerns }} concerns · {{ quality.block }} block · {{ quality.notReviewed }} not reviewed</p>
+                  <ul class="releases__quality-cards" aria-label="Card Quality verdicts">
+                    @for (card of quality.cards; track card.key) {
+                      <li [attr.data-testid]="'deploy-release-quality-card-' + card.key"><span>{{ card.key }}</span><span>{{ verdictLabel(card.verdict) }}</span></li>
+                    }
+                  </ul>
+                  <p data-testid="deploy-release-range-verdict">Release range: {{ verdictLabel(quality.rangeVerdict) }}</p>
+                  @if (quality.range) {
+                    <button type="button" data-testid="deploy-release-open-quality" (click)="openRange(release)">Open release range in Quality Studio</button>
+                  } @else {
+                    <p class="releases__muted">{{ quality.rangeUnavailableReason }}</p>
+                  }
+                </section>
               }
               <dl class="releases__facts">
                 <dt>Created</dt><dd><time [attr.datetime]="release.createdAtUtc">{{ release.createdAtUtc | date:'medium' }}</time></dd>

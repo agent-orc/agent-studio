@@ -19,7 +19,7 @@ public sealed record ProviderRejectionContinuationPlan(
 /// <summary>
 /// Pure policy for a provider refusal. A declared sibling may finish salvaged
 /// work only when it clears the card's correctness floor. The second refusal
-/// of the configured model makes that sibling the card's explicit route.
+/// of the configured model stores an expiring preference for the sibling.
 /// </summary>
 public static class ProviderRejectionContinuationPolicy
 {
@@ -181,8 +181,8 @@ public sealed class ProviderRejectionContinuationService
 
         if (pinCard)
         {
-            if (!_mutations.SetJobModel(task.Id, fallback.ToModel, task.WatchPath)
-                || !_mutations.SetJobThinkingLevel(task.Id, thinkingLevel, task.WatchPath))
+            if (!_mutations.SetJobPreferencePin(task.Id, fallback.ToModel, thinkingLevel,
+                    DateTime.UtcNow.AddMinutes(30), task.WatchPath))
             {
                 return RollBackAndFail(checkpoint, "The sibling route could not be pinned on the card.");
             }
@@ -208,7 +208,7 @@ public sealed class ProviderRejectionContinuationService
         var folder = queued?.FolderPath ?? move.NewFolderPath ?? task.FolderPath;
         var summary =
             $"Provider refused the request ({ProviderRejectionContinuationPolicy.Describe(rejection)}); continued on {fallback.ToModel}."
-            + (pinCard ? $" Card pinned to {fallback.ToModel} after {ProviderRejectionContinuationPolicy.RefusalsBeforePin} refusals." : string.Empty);
+            + (pinCard ? $" Temporary preference for {fallback.ToModel} expires in 30 minutes after {ProviderRejectionContinuationPolicy.RefusalsBeforePin} refusals." : string.Empty);
         _timeline.Append(
             folder,
             TimelineEventKinds.ProviderRejectionContinuationStarted,
@@ -227,6 +227,7 @@ public sealed class ProviderRejectionContinuationService
                 ["salvageBranch"] = salvage.Branch,
                 ["salvageCommitSha"] = salvage.CommitSha,
                 ["cardPinned"] = pinCard ? "true" : "false",
+                ["pinMode"] = pinCard ? "preference" : "none",
                 ["runAttemptId"] = attemptId,
             });
         _logger.LogWarning(

@@ -50,6 +50,22 @@ export class AccessServiceAccountsComponent {
       .map(binding => `${overview.roles.find(role => role.id === binding.role)?.displayName ?? binding.role} · ${scopeLabel(binding.scope, this.access.projects())}`);
   }
 
+  /**
+   * The roles an API token is bound to, by display name and description, so
+   * the Owner sees what an operator token may do (OP-1: `operator-agent`).
+   */
+  tokenRoles(account: ServiceAccount): { id: string; name: string; description: string }[] {
+    const overview = this.access.overview();
+    if (!overview) return [];
+    const ids = [...new Set(overview.bindings
+      .filter(binding => binding.principalKind === 'service-account' && binding.principalId === account.id)
+      .map(binding => binding.role))];
+    return ids.map(id => {
+      const role = overview.roles.find(candidate => candidate.id === id);
+      return { id, name: role?.displayName ?? id, description: role?.description ?? '' };
+    });
+  }
+
   isApiToken(account: ServiceAccount): boolean {
     return account.origin === 'api-token';
   }

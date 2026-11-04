@@ -26,6 +26,17 @@ export interface Release {
   cardKeys: string[];
   createdAtUtc: string;
   channel: string;
+  quality?: {
+    cards: { key: string; verdict: 'pass' | 'concerns' | 'block' | 'not-reviewed' }[];
+    pass: number;
+    concerns: number;
+    block: number;
+    notReviewed: number;
+    worstVerdict: 'pass' | 'concerns' | 'block' | 'not-reviewed';
+    rangeVerdict: 'not-reviewed' | 'pass' | 'concerns' | 'block';
+    range: { repositoryId: string; baseSha: string; headSha: string; requiresConfirmation: boolean } | null;
+    rangeUnavailableReason: string | null;
+  } | null;
   preDeliveryVerdict?: {
     project: string;
     commitSha: string;
