@@ -497,6 +497,32 @@ public class IntakeRunnerTests : IDisposable
         Assert.Equal(2, first.OptionalBlockLimit);
     }
 
+    [Theory]
+    [InlineData("Studio header")]
+    [InlineData("Task toolbar")]
+    [InlineData("Tab strip")]
+    [InlineData("detail-header")]
+    [InlineData("task-live-status")]
+    [InlineData("pickup-hold")]
+    [InlineData("Task detail")]
+    public void BuildEnrichmentManifest_HeaderAreaOutranksGenericFrontendGuides(string title)
+    {
+        var task = new TaskInfo { Id = "header-card", Title = title, State = TaskStates.Ready,
+            Mode = TaskModes.Coding, Tags = ["frontend"] };
+        ProjectStyleGuide Guide(string id, string area) => new(
+            id, id, $"quality/{id}.md", id, $"Apply {id}.", "1",
+            new StyleGuideAppliesTo(["*"], ["angular"], [area]));
+        var manifest = IntakeRunner.BuildEnrichmentManifest(task,
+            "Update the Angular component layout.",
+            [Guide("angular-components", "frontend"), Guide("frontend-styling", "frontend"),
+             Guide("header-zones", "header")]);
+
+        Assert.Contains("header", manifest.Areas);
+        Assert.Contains(manifest.Constraints, item => item.Id == "style-guide:header-zones");
+        Assert.Contains(manifest.Omissions, item => item.Id == "style-guide:frontend-styling"
+            && item.Reason == "optional-block-limit");
+    }
+
     [Fact]
     public void BuildEnrichmentManifest_DelegationTask_IncludesDelegationEconomy()
     {

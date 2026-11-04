@@ -190,7 +190,12 @@ export class StudioShellComponent {
 
   /** Keep every newly activated editor tab inside the horizontally scrolling
    *  strip without moving the page or disturbing an already visible tab. */
-  private readonly keepActiveTabVisibleFx = effect(() => {
+  private readonly keepActiveTabVisibleFx = effect(() => this.keepActiveTabVisible('smooth'));
+
+  @HostListener('window:resize')
+  onViewportResize(): void { this.keepActiveTabVisible('auto'); }
+
+  private keepActiveTabVisible(behavior: ScrollBehavior): void {
     const activeKey = this.activeKey();
     const tabs = this.tabs();
     if (!activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
@@ -203,12 +208,8 @@ export class StudioShellComponent {
     const listRect = activeElement.parentElement?.getBoundingClientRect();
     const activeRect = activeElement.getBoundingClientRect();
     if (!listRect || (activeRect.left >= listRect.left && activeRect.right <= listRect.right)) return;
-    activeElement.scrollIntoView({
-      behavior: 'smooth',
-      block: 'nearest',
-      inline: 'nearest',
-    });
-  });
+    activeElement.scrollIntoView({ behavior, block: 'nearest', inline: 'nearest' });
+  }
 
   /** Sidebar panel state re-exposed for the template. */
   readonly activePanel = this.panelState.active;
