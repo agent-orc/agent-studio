@@ -326,6 +326,28 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
         Assert.Null(plan.ModelFallback?.CatalogueVersion);
     }
 
+    [Fact]
+    public void Operator_switch_without_same_class_review_route_waits_until_expiry()
+    {
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = CliTypes.Claude,
+            PrimaryModel = ModelIds.ClaudeOpus5,
+            FallbackCliType = CliTypes.Codex,
+            FallbackModel = ModelIds.Gpt56Luna,
+        });
+        var expiry = Now.AddHours(2);
+        var plan = QuotaAdmissionPlanner.Plan(
+            CliTypes.Claude, ModelIds.ClaudeOpus5, "high", fallback, _caps,
+            _ => null, Now, 0,
+            preference: new CliFallbackPreference(CliTypes.Claude, true, Now, expiry),
+            sameClassOnly: true);
+
+        Assert.Equal(QuotaAdmissionOutcome.Wait, plan.Outcome);
+        Assert.Equal(expiry, plan.NextResetAt);
+        Assert.Contains("same Token Economy capability class", plan.Reason);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
     [Fact]
     public void Capped_primary_uses_only_host_accepted_fallback()
