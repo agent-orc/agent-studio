@@ -32,17 +32,20 @@ Reading the columns:
 | Outcome | Rows |
 |---|---|
 | Done in AGT-3402 | 53 |
-| Done in AGT-3403 | 441 |
+| Done in AGT-3403 | 440 |
 | Kept own form, reason recorded in AGT-3403 | 30 |
 | Not a status | 470 |
 | Lane tone (R9) | 36 |
-| Header or footer (AGT-3356) | 32 |
+| Header or footer (AGT-3356) | 27 |
+| Removed on develop (surface deleted) | 7 |
 | Stays, other reason | 432 |
-| **Total** | **1494** |
+| **Total** | **1495** |
 
 AGT-3403 recounted the outcomes from the final cells; the earlier split of
-the untouched categories differed by a few rows. Seven rows marked "added
-after AGT-3402" cover displays built after the first inventory.
+the untouched categories differed by a few rows. Eight rows marked "added
+after AGT-3402" cover displays built after the first inventory. Seven
+status-bar usage rows are marked removed: develop deleted the header quota
+hover and the per-CLI usage modal while this card was open.
 
 | Surface group | Rows |
 |---|---|
@@ -63,7 +66,7 @@ after AGT-3402" cover displays built after the first inventory.
 | Orchestrator feed | 12 |
 | Orchestrator side sheet | 16 |
 | Project detail | 8 |
-| Project hub | 516 |
+| Project hub | 517 |
 | Project overview | 1 |
 | Project settings | 1 |
 | Settings | 216 |
@@ -410,6 +413,7 @@ after AGT-3402" cover displays built after the first inventory.
 | Project hub > Deploy > Pipeline; Project hub > Settings > Execution definition | `.pipeline-diagram__node[data-issues]` | `frontend/src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.html:22` | Node background turns amber when its definition has issues (also line 43) | true→warning; false→neutral | No: whole-node tint inside a dense diagram |
 | Project hub > Deploy > Pipeline; Project hub > Settings > Execution definition | `.pipeline-diagram__badge` (artifact type) | `frontend/src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.html:27` | Static bundle / Container image | n/a | No: not a status (tag) |
 | Project hub > Deploy > Pipeline; Project hub > Settings > Execution definition | `.pipeline-diagram__issues` | `frontend/src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.html:35` | "N issue(s)" on the artifact node and on each environment node (also line 87) | Has issues→warning | Done (AGT-3403, compact) |
+| Project hub > Settings > Quality Studio | `app-status-indicator` (was `.quality-panel__badge[data-state]`) | `frontend/src/app/features/project-detail/components/quality-studio-panel/quality-studio-panel.component.html:4` | Quality Studio connection: Not connected / Unreachable / Version too old / Not registered / Connected | ready=success; unreachable=danger; version-too-old=warning; not-registered=warning; not-connected=neutral | Done (AGT-3403; added after AGT-3402) |
 | Project hub > Deploy > Pipeline; Project hub > Settings > Execution definition | `.pipeline-diagram__badge` (environment rules) | `frontend/src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.html:47` | "Automatic", "Approval: roles", "After env" (lines 47, 53, 56) | n/a | No: not a status (tag) |
 | Project hub > Deploy > Pipeline; Project hub > Settings > Execution definition | `.pipeline-diagram__badge--protected` | `frontend/src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.html:49` | "Protected" | n/a | No: not a status (tag) |
 | Project hub > Deploy > Pipeline; Project hub > Settings > Execution definition | `.pipeline-diagram__badge` (variable) | `frontend/src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.html:81` | "secret ref" | n/a | No: not a status (key) |

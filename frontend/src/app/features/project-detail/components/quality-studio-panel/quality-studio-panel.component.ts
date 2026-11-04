@@ -1,11 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { QualityStudioService, type QualityStudioState } from '../../../../services/quality-studio.service';
 import { AuthSessionState } from '../../../../services/auth.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { QualityStudioStatusService } from './quality-studio-status.service';
 
 @Component({
   selector: 'app-quality-studio-panel',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './quality-studio-panel.component.html',
   styleUrl: './quality-studio-panel.component.scss',
@@ -46,5 +48,16 @@ export class QualityStudioPanelComponent {
       'not-registered': 'Not registered',
       ready: 'Connected',
     }[state];
+  }
+
+  stateTone(state: QualityStudioState): StatusTone {
+    const tones: Record<QualityStudioState, StatusTone> = {
+      'not-connected': 'neutral',
+      unreachable: 'danger',
+      'version-too-old': 'warning',
+      'not-registered': 'warning',
+      ready: 'success',
+    };
+    return tones[state];
   }
 }

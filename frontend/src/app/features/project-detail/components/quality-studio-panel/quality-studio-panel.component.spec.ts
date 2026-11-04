@@ -25,6 +25,8 @@ describe('QualityStudioPanelComponent', () => {
       const button = fixture.nativeElement.querySelector('[data-testid="quality-studio-open"]') as HTMLButtonElement;
       expect(button.disabled).toBe(state !== 'ready');
       expect(fixture.nativeElement.querySelector('[data-state]')?.getAttribute('data-state')).toBe(state);
+      expect(fixture.nativeElement.querySelector('[data-testid="quality-studio-state"]')?.getAttribute('data-tone'))
+        .toBe(fixture.componentInstance.stateTone(state));
       if (state === 'ready') { button.click(); expect(open).toHaveBeenCalledWith('Demo'); }
     });
   }
