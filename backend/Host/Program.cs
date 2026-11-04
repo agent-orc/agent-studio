@@ -1350,7 +1350,10 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBat
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPendingPushFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.BatchIntegrationReservationService>(),
-    jobId => sp.GetRequiredService<AgentStudio.TaskAccess.ITaskAccess>().FindJob(jobId) is { } task
+    // The card key comes from the published board, like the task facts
+    // above, so a sweep never refreshes the task index.
+    jobId => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
+        && TaskScannerService.FindMatches(live, jobId, null) is [var task, ..]
         ? OperatorDecisionFacts.CardKey(task) : null));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
     sp.GetRequiredService<ProviderLimitRegistry>()));
