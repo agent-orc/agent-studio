@@ -81,7 +81,7 @@ namespace AgentStudio.Tests;
 [Collection(RemoteRunnerSerialCollection.Name)]
 [Trait("Category", "MachineBound")]
 [Trait("Category", "ReviewFlaky")]
-public sealed class RemoteRunnerEndToEndTests : IDisposable
+public sealed partial class RemoteRunnerEndToEndTests : IDisposable
 {
     private static readonly JsonSerializerOptions ApiJson = CreateApiJson();
     private const string ProjectName = "agent-runner-01";

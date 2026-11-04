@@ -143,8 +143,13 @@ internal static class TaskScopedTestEvidenceReader
             "failed" => "Failed",
             _ => "Not proven",
         };
+        var preExisting = buildRows
+            .Where(row => row.Classification.Equals("IntegrationBranchDefect", StringComparison.OrdinalIgnoreCase))
+            .Select(row => TrimSentence(row.Summary))
+            .ToList();
         var buildReason = buildResult switch
         {
+            "passed" when preExisting.Count > 0 => Sentence(string.Join("; ", preExisting)),
             "passed" when buildSteps.Count > 0 => Sentence($"{NaturalList(buildSteps)} passed"),
             "passed" => "All build-tests verdicts passed.",
             "failed" => FailedBuildReason(buildRows, buildStepByRow),

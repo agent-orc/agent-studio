@@ -2794,7 +2794,8 @@ public sealed partial class RemoteReviewAuthorityTests
         string title = "Task",
         bool policyDifferentHost = false,
         string codingHost = "coding-host",
-        ReviewPlanDto? plan = null)
+        ReviewPlanDto? plan = null,
+        string? codingPrincipal = null)
     {
         var workspaces = await store.ListWorkspacesAsync(default);
         var workspace = workspaces.FirstOrDefault()
@@ -2814,7 +2815,8 @@ public sealed partial class RemoteReviewAuthorityTests
                 [ReviewCapabilities.CodingExecutor]),
             "test",
             default);
-        var coding = await store.ClaimAsync(new ClaimRequest(codingId, codingInstance), codingId, default);
+        var coding = await store.ClaimAsync(
+            new ClaimRequest(codingId, codingInstance), codingId, default, codingPrincipal);
         var resultRef = FencedGitRefs.ImmutableResult(
             coding.Run!.RunId,
             coding.Lease!.Fence,

@@ -57,17 +57,18 @@ public class WorkContainerPolicyTests
     }
 
     [Fact]
-    public void Settings_default_to_off_and_keep_the_host_reserve()
+    public void Settings_default_to_off_off_linux_and_keep_the_host_reserve()
     {
-        var settings = WorkContainerSettings.FromEnvironment(_ => null, 12, 62L << 30, "/state");
+        // SM-11: Linux defaults to contained (AttemptContainmentTests); other platforms stay off.
+        var settings = WorkContainerSettings.FromEnvironment(_ => null, 12, 62L << 30, "/state", isLinux: false);
 
         Assert.Equal(WorkContainerMode.Off, settings.Mode);
         Assert.Equal(20, settings.ProfileMaxHalfCores);
         Assert.Equal("bridge", settings.Network);
         Assert.Throws<InvalidOperationException>(() => WorkContainerSettings.FromEnvironment(
-            name => name == WorkContainerSettings.NetworkVariable ? "host" : null, 12, 62L << 30, "/state"));
+            name => name == WorkContainerSettings.NetworkVariable ? "host" : null, 12, 62L << 30, "/state", isLinux: false));
         Assert.Throws<InvalidOperationException>(() => WorkContainerSettings.FromEnvironment(
-            name => name == WorkContainerSettings.ModeVariable ? "always" : null, 12, 62L << 30, "/state"));
+            name => name == WorkContainerSettings.ModeVariable ? "always" : null, 12, 62L << 30, "/state", isLinux: false));
     }
 
     [Theory]
@@ -103,7 +104,8 @@ public class WorkContainerPolicyTests
         var args = plan.CreateArguments;
 
         Assert.Equal("agent-work-attempt-42-f7", plan.ContainerName);
-        AssertPair(args, "--user", "10001:10001");
+        // SM-11: an attempt UID, never the image's shared 10001.
+        Assert.Matches("^2[0-9]{5}:10001$", args[args.ToList().IndexOf("--user") + 1]);
         AssertPair(args, "--restart", "no");
         AssertPair(args, "--cpus", "1.5");
         AssertPair(args, "--memory", (3L << 30).ToString());
@@ -114,8 +116,8 @@ public class WorkContainerPolicyTests
         Assert.Contains(args, value => value.StartsWith("/run/agent-secrets:", StringComparison.Ordinal) && value.Contains("mode=0700"));
         Assert.Contains("agent-studio.fence=7", args);
         Assert.Contains("agent-studio.attempt=attempt-42", args);
-        Assert.Contains("type=volume,source=agent-cache-npm-v7,target=/cache/npm", args);
-        Assert.Contains("type=volume,source=agent-cache-repo-v7,target=/cache/repo", args);
+        Assert.Contains("type=volume,source=agent-cache-npm-agent-studio-v7,target=/cache/npm", args);
+        Assert.Contains("type=volume,source=agent-cache-repo-agent-studio-v7,target=/cache/repo", args);
         Assert.Contains("type=bind,source=/srv/mirrors/project.git,target=/mnt/source,readonly", args);
         Assert.Contains("AGENT_EXPECTED_SHA=" + Sha, args);
         Assert.DoesNotContain(args, value => value.Contains(".sock", StringComparison.Ordinal));
