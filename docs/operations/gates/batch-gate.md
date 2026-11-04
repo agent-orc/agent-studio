@@ -126,6 +126,12 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   `proven-red`, `proven-green`, and `superseded`.
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
   and member state. The existing report includes observed batch green rate.
+- `GET /api/operator/batch-triage` (OP-4, AGT-3462) reads the same state for
+  every project the caller may read. It lists open flights, open members with
+  red and isolating markers, pending pushes with age and the
+  `BatchGate:PendingPushAlertMinutes` threshold (`overdue`), queue stalls, and
+  the next safe member operation (`eject`, `wait` or `close-now`). The rules
+  are in the [operator API reference](../operator-api.md#batch-triage).
 - AGT-3055 (D16 option A): the batch suite is claimable gate work by default.
   The backend pushes the candidate to its fenced candidate ref and creates a
   batch `GateSubject` that binds the membership digest. A runner host with the

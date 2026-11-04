@@ -1201,6 +1201,10 @@ public sealed class AccessSecurityMiddleware
         // project against the route's permission in the handler.
         if (path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase))
             return ProjectRouteAddress.DeferredToHandler;
+        // OP-4: the batch triage read lists only the projects the caller may
+        // read; its handler checks project.read per project.
+        if (path.Equals("/api/operator/batch-triage", StringComparison.OrdinalIgnoreCase))
+            return ProjectRouteAddress.DeferredToHandler;
         // Report, supervisor, bus, and runtime routes name their project in the
         // segment after the area (/api/drift/{project}/...); their literal
         // routes, such as /api/drift/actions/code-pattern-drift, stay unaddressed.

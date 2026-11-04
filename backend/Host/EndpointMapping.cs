@@ -1,3 +1,4 @@
+using AgentStudio.Operator;
 using AgentStudio.Deploy;
 using AgentStudio.GitHubApp;
 using AgentStudio.HostSetup;
@@ -98,6 +99,7 @@ public static class EndpointMapping
         app.MapWorkspaceSettingsEndpoints();
         app.MapWorkspaceQuotaEndpoints();
         app.MapProjectSettingsEndpoints();
+        app.MapOperatorBatchTriageEndpoints();
         app.MapProjectCheckoutEndpoints();
         app.MapCrashRecoveryEndpoints();
         app.MapProjectRegressionRadarEndpoints();
