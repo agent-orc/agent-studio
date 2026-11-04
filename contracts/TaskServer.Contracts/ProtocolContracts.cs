@@ -70,6 +70,11 @@ public sealed record ProtocolCompatibilityResponse(
     ProtocolRangeDto Server,
     string? Reason = null);
 
+/// <summary>Typed installation event when a host or Engine cannot start against this Task Server.</summary>
+public sealed record ProtocolStartupRefusalEvent(
+    string Code, string ClientKind, string ClientVersion, int ClientProtocolVersion,
+    string ServerVersion, int ServerProtocolVersion, string Reason);
+
 /// <summary>
 /// Authenticated attach handshake of the loopback Studio connector. The
 /// connector sends the inclusive <c>/api/v1</c> and Studio hub ranges it can

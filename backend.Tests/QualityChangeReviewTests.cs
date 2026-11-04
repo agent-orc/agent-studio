@@ -22,6 +22,36 @@ public sealed class QualityChangeReviewTests : IDisposable
     private string Card => Path.Combine(root, "card");
 
     [Fact]
+    public void Release_range_uses_only_a_stored_decisive_verdict_for_its_exact_range()
+    {
+        var baseSha = new string('a', 40);
+        var headSha = new string('b', 40);
+        var previous = new Release("previous", "demo", "1", baseSha, [], "1", "1", [],
+            Now.AddDays(-1), "default");
+        var current = new Release("current", "demo", "2", headSha, [], "1", "1", [], Now, "default");
+        var response = JsonSerializer.SerializeToElement(new
+        {
+            records = new object[]
+            {
+                new { decisive = false, document = new { verdict = "block" } },
+                new { decisive = true, document = new { verdict = "concerns" } },
+            },
+        });
+        Assert.Equal("concerns", QualityReleaseRangeVerdictClient.StoredVerdict(response));
+        var calls = new List<(string Repository, string Base, string Head)>();
+        var projected = ReleaseQualityProjection.Project([current, previous], [], "repo",
+            (_, _) => baseSha, [current], storedVerdict: (repository, rangeBase, rangeHead) =>
+            {
+                calls.Add((repository, rangeBase, rangeHead));
+                return QualityReleaseRangeVerdictClient.StoredVerdict(response);
+            });
+        Assert.Equal("concerns", Assert.Single(projected).Quality!.RangeVerdict);
+        Assert.Equal([("repo", baseSha, headSha)], calls);
+        Assert.Null(QualityReleaseRangeVerdictClient.StoredVerdict(
+            JsonSerializer.SerializeToElement(new { records = Array.Empty<object>() })));
+    }
+
+    [Fact]
     public void Release_quality_uses_current_card_artifacts_and_fixture_merge_base()
     {
         Init();

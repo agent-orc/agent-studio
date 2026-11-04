@@ -226,6 +226,30 @@ test.describe('Project Deploy area (mocked)', () => {
     expect(reviewRequests).toBe(0);
   });
 
+  test('shows a stored release range verdict in both themes without starting a review', async ({ page }) => {
+    const releases = deployReleasesFixture();
+    releases[0].quality = {
+      cards: [], pass: 0, concerns: 0, block: 0, notReviewed: 0,
+      worstVerdict: 'not-reviewed', rangeVerdict: 'concerns',
+      range: { repositoryId: 'repo-website', baseSha: 'a'.repeat(40),
+        headSha: releases[0].commitSha, requiresConfirmation: false },
+      rangeUnavailableReason: null,
+    };
+    let reviewRequests = 0;
+    await page.route(/\/change-review(?:\?|$)/, route => {
+      reviewRequests++;
+      return route.fulfill({ status: 500, body: 'Unexpected review request' });
+    });
+    await openDeploy(page, fullMocks({ releases }));
+    await page.getByTestId('deploy-tab-releases').click();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(page.getByTestId('deploy-release-range-verdict')).toContainText('Release range: Concerns');
+      await capture(page, `deploy-release-stored-range-${theme}`);
+    }
+    expect(reviewRequests).toBe(0);
+  });
+
   test('shows the pre-delivery verdict and candidate SHA on the release header', async ({ page }) => {
     const releases = deployReleasesFixture();
     releases[0].preDeliveryVerdict = { project: PROJECT, commitSha: 'c'.repeat(40),

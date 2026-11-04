@@ -37,6 +37,28 @@ public sealed class OperatorApprovalFlowTests : IDisposable
     private string _ownerTotpSecret = string.Empty;
 
     [Fact]
+    public async Task Preflight_blocker_override_requires_a_redeemed_owner_approval()
+    {
+        using var factory = BuildFactory();
+        var (_, _, token) = StartSession(factory, installationScope: true);
+        using var owner = await OwnerClientAsync(factory);
+        using var agent = BearerClient(factory, token);
+        const string route = "/api/operator/preflight/restart/override";
+
+        var request = await AssertRefused(agent.SendAsync(Request(HttpMethod.Post, route,
+            source: "owner-chat", reason: "Restart in the approved window")), "approval-required");
+        var approvalId = request.GetProperty("approvalId").GetString()!;
+        await StepUpAsync(factory, owner);
+        await ReadOk(owner.PostAsJsonAsync($"/api/auth/iam/operator-approvals/{approvalId}/approve", new { }));
+
+        var allowed = await ReadOk(agent.SendAsync(Request(HttpMethod.Post, route, approvalId)));
+        Assert.True(allowed.GetProperty("allowed").GetBoolean());
+        Assert.Equal(approvalId, allowed.GetProperty("overrideApprovalId").GetString());
+        Assert.Equal("used", (await Approval(owner, approvalId)).GetProperty("state").GetString());
+        await AssertRefused(agent.SendAsync(Request(HttpMethod.Post, route, approvalId)), "approval-used");
+    }
+
+    [Fact]
     public async Task A_t2_request_runs_only_after_an_owner_approval_made_with_step_up()
     {
         using var factory = BuildFactory();
@@ -301,12 +323,15 @@ public sealed class OperatorApprovalFlowTests : IDisposable
         return client;
     }
 
-    private static (string AgentId, string SessionId, string Token) StartSession(WebApplicationFactory<Program> factory)
+    private static (string AgentId, string SessionId, string Token) StartSession(WebApplicationFactory<Program> factory,
+        bool installationScope = false)
     {
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
-        var agent = store.CreateOperatorAgent(new CreateOperatorAgentRequest("ops console", null,
-            [new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))]), ownerId);
+        var grant = installationScope
+            ? new IamGrantRequest(IamRoles.OperatorAgent, IamScope.Workspace)
+            : new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"));
+        var agent = store.CreateOperatorAgent(new CreateOperatorAgentRequest("ops console", null, [grant]), ownerId);
         var started = store.StartOperatorSession(agent.Id, new StartOperatorSessionRequest(null, null), ownerId);
         return (agent.Id, started.Session.Id, started.Secret);
     }

@@ -45,6 +45,7 @@ public sealed class OperatorOperationCatalogInventoryTests : IDisposable
         { OperatorOperationIds.AccessChange, OperatorTier.T2 },
         { OperatorOperationIds.GrantChange, OperatorTier.T2 },
         { OperatorOperationIds.CatalogueChange, OperatorTier.T2 },
+        { OperatorOperationIds.DeployBlockerOverride, OperatorTier.T2 },
     };
 
     [Theory]

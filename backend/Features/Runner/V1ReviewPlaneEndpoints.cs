@@ -2724,9 +2724,11 @@ public static class V1ReviewPlaneEndpoints
         deferredReason = deferred;
         hostCapabilityDeferredCode = capabilityDeferred;
         if (deferredPlan is { Outcome: not QuotaAdmissionOutcome.HostCapabilityMissing })
-            recorder.EmitAdmissionDecision(task, deferredPlan, source: "review-claim", decisionIdentity: decisionIdentity);
+            recorder.EmitAdmissionDecision(task, deferredPlan, source: "review-claim", decisionIdentity: decisionIdentity,
+                host: claimingHost, attemptId: decisionIdentity);
         else if (launchedPlan is not null)
-            recorder.EmitAdmissionDecision(task, launchedPlan, source: "review-claim", decisionIdentity: decisionIdentity);
+            recorder.EmitAdmissionDecision(task, launchedPlan, source: "review-claim", decisionIdentity: decisionIdentity,
+                host: claimingHost, attemptId: decisionIdentity);
 
         if (!string.IsNullOrWhiteSpace(deferredReason))
         {

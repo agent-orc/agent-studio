@@ -22,6 +22,7 @@ public sealed class OperatorApprovalTests : IDisposable
     private const string Digest = "sha256:aa";
     private readonly string _root = Path.Combine(Path.GetTempPath(), "operator-approvals-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 11, 4, 9, 0, 0, TimeSpan.Zero));
+    private readonly IConfiguration _config;
     private readonly AccessSecurityStore _store;
     private readonly string _ownerId;
     private readonly string _totpSecret;
@@ -31,12 +32,12 @@ public sealed class OperatorApprovalTests : IDisposable
 
     public OperatorApprovalTests()
     {
-        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        _config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _root,
             ["Security:Profile"] = "networked",
         }).Build();
-        _store = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock);
+        _store = new AccessSecurityStore(_config, NullLogger<AccessSecurityStore>.Instance, _clock);
         var bootstrap = _store.Bootstrap(new BootstrapRequest("first.owner", Password, null));
         _ownerId = bootstrap.User.Id;
         var owner = _store.AuthenticateSession(bootstrap.SessionToken)!;
@@ -205,6 +206,49 @@ public sealed class OperatorApprovalTests : IDisposable
         _store.DisableOperatorAgent(_agentId, _ownerId);
         Assert.Equal(OperatorApprovalStates.Cancelled, State(other.Id));
         Assert.Equal(3, _store.ControlPlaneAudit.Read(1, 10_000).Count(entry => entry.Operation == "operator-approval.cancel"));
+    }
+
+    [Fact]
+    public void A_session_kill_cancels_the_approvals_of_its_session_and_ending_all_operator_access_cancels_every_open_one()
+    {
+        var pending = Request();
+        var approved = Request(digest: "sha256:bb");
+        _store.DecideOperatorApproval(approved.Id, true, new DecideOperatorApprovalRequest(null), SteppedUpOwner());
+        var otherSession = _store.StartOperatorSession(_agentId, new StartOperatorSessionRequest("second", null), _ownerId).Session.Id;
+        var other = _store.RequestOperatorApproval(Facts(Digest, otherSession)).Approval;
+
+        var killed = _store.KillOperatorSession(_agentId, _sessionId, _ownerId);
+
+        Assert.Equal([pending.Id, approved.Id], killed.ApprovalIds);
+        Assert.Equal((OperatorApprovalStates.Cancelled, OperatorApprovalStates.Cancelled, OperatorApprovalStates.Pending),
+            (State(pending.Id), State(approved.Id), State(other.Id)));
+        Assert.Equal(OperatorApprovalReasons.Cancelled,
+            _store.RedeemOperatorApproval(approved.Id, _agentId, _sessionId, Delete, "sha256:bb").Reason);
+
+        var ended = _store.EndOperatorAccess(null, OperatorKillActor.Owner(_ownerId));
+
+        Assert.Equal([other.Id], ended.ApprovalIds);
+        Assert.Equal(OperatorApprovalStates.Cancelled, State(other.Id));
+        Assert.Equal("operator kill switch", _store.ListOperatorApprovals().Single(candidate => candidate.Id == other.Id).CancelReason);
+        Assert.Equal(3, _store.ControlPlaneAudit.Read(1, 10_000).Count(entry => entry.Operation == "operator-approval.cancel"));
+    }
+
+    [Fact]
+    public async Task The_out_of_band_kill_cancels_every_open_approval_with_the_api_stopped()
+    {
+        var pending = Request();
+
+        Assert.Equal(OperatorKillSwitchCommand.ExitOk,
+            await OperatorKillSwitchCommand.RunAsync(["--reason", "Studio unreachable"], new StringWriter(), _config, _clock));
+
+        var restarted = new AccessSecurityStore(_config, NullLogger<AccessSecurityStore>.Instance, _clock);
+        var cancelled = restarted.ListOperatorApprovals().Single(candidate => candidate.Id == pending.Id);
+        Assert.Equal(OperatorApprovalStates.Cancelled, OperatorApprovalPolicy.State(cancelled, Now));
+        Assert.Equal("operator kill switch", cancelled.CancelReason);
+        var kill = restarted.ControlPlaneAudit.ReadNewest(entry => entry.Operation == OperatorKillEvents.All, 1).Single();
+        Assert.Equal([pending.Id], kill.Details!.Value.GetProperty("approvalIds").EnumerateArray().Select(id => id.GetString()));
+        Assert.Contains(restarted.ControlPlaneAudit.ReadNewest(entry => entry.Operation == "operator-approval.cancel", 10),
+            entry => entry.Target == $"operator-approval:{pending.Id}");
     }
 
     [Fact]

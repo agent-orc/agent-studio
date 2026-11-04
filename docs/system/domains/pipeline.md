@@ -1513,7 +1513,12 @@ comparison before Quality Studio's verdict contract can decide a review.
   Human acceptance is a quality and sight-review decision only. For a coding
   delivery, `TaskTransitionService` validates that `review-subject.json` still
   names the current Attempt and that Git already projects the delivery as
-  `integrated`. It then performs only the lane move. Acceptance never fetches,
+  `integrated`. A passed gate on the delivery's recorded verification tree
+  remains valid after the branch advances when that tree is on the published
+  first-parent line and every later publication has its own passed per-task or
+  batch gate. A rewritten tree or a later publication without gate evidence
+  refuses acceptance. The completion claim names the gate that verified the
+  delivery. Acceptance then performs only the lane move. It never fetches,
   merges, gates, resets the merge row, or enqueues `AcceptedIntegrationQueue`.
   An unintegrated delivery returns the typed `IntegrationFailed` move outcome
   (HTTP 409 for the single-card API) and remains in Human Review with its

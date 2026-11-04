@@ -1,15 +1,54 @@
+extern alias TaskServerAssembly;
+
 using AgentStudio.OrchestratorEngine;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Xunit;
+using TaskServerProgram = TaskServerAssembly::Program;
 
 namespace OrchestratorEngine.Tests;
 
 public sealed class EngineContractTests
 {
+    [Fact]
+    public async Task Engine_startup_against_an_older_task_server_protocol_refuses_with_a_typed_feed_event()
+    {
+        using var directory = new TempDirectory();
+        await using var server = new ProtocolApiFactory(directory.Path);
+        using var http = server.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", "engine-protocol-test");
+        using var engine = new EngineTaskServerClient(http,
+            protocolVersion: TaskServerProtocol.Current + 1);
+
+        await Assert.ThrowsAsync<EngineProtocolException>(() => engine.EnsureCompatibleAsync(CancellationToken.None));
+        var feed = await server.Services.GetRequiredService<TaskServerStore>()
+            .GetOrchestratorFeedAsync(20, CancellationToken.None);
+        Assert.Contains(feed.Entries, item => item.Kind == "protocol.startup-refused"
+            && item.Text.Contains("task-server-protocol-older", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Engine_refuses_a_task_server_with_an_older_current_protocol()
+    {
+        var server = new ProtocolRangeDto(TaskServerProtocol.Current - 1, 1, TaskServerProtocol.Current - 1,
+            "1.0.0", "server-1", [TaskServerProtocol.EngineClientKind]);
+        using var http = new HttpClient(new CaptureHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent.Create(new ProtocolCompatibilityResponse(true, server)),
+        }))) { BaseAddress = new Uri("http://localhost") };
+        using var client = new EngineTaskServerClient(http);
+
+        await Assert.ThrowsAsync<EngineProtocolException>(() => client.EnsureCompatibleAsync(CancellationToken.None));
+    }
+
     [Fact]
     public async Task Engine_file_credential_reloads_on_an_existing_client()
     {
@@ -583,6 +622,21 @@ public sealed class EngineContractTests
             try { Directory.Delete(Path, recursive: true); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private sealed class ProtocolApiFactory(string dataDirectory) : WebApplicationFactory<TaskServerProgram>
+    {
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            builder.UseEnvironment("Testing");
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskServer:DataDirectory"] = dataDirectory,
+                    ["TaskServer:ListenUrl"] = string.Empty,
+                    ["TaskServer:RetentionSchedulerEnabled"] = "false",
+                }));
         }
     }
 }

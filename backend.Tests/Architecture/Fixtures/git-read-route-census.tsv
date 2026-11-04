@@ -27,6 +27,7 @@
 /api/auth/iam/operator-agents/	free	-	-	-
 /api/auth/iam/operator-approvals/	free	-	-	-
 /api/auth/iam/operator-catalogue	free	-	-	-
+/api/auth/iam/operator-kill-switch/	free	-	-	-
 /api/auth/iam/standing-grants/	free	-	-	-
 /api/auth/runner	free	-	-	-
 /api/auth/runner-enrollments	free	-	-	-
@@ -91,9 +92,11 @@
 /api/filesystem-layer/snapshot	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
 /api/first-run/git-setups/{id}	free	-	-	-
 /api/first-run/projects/{projectId}/repository	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
+/api/model-selection/active	free	-	-	-
 /api/model-selection/effective	free	-	-	-
 /api/model-selection/active	free	-	-	-
 /api/model-selection/policy	free	-	-	-
+/api/model-selection/events	free	-	-	-
 /api/gate-artifacts/{runId}	free	-	-	-
 /api/gate-artifacts/{runId}/{name}	free	-	-	-
 /api/gate-economics	free	-	-	-
@@ -115,6 +118,8 @@
 /api/operator/batch-triage	free	-	-	-
 /api/operator/decisions	free	-	-	-
 /api/operator/decisions/stream	free	-	-	-
+/api/operator/preflight/deploy	free	-	-	-
+/api/operator/preflight/restart	free	-	-	-
 /api/operator/watcher/lease/	free	-	-	-
 /api/orchestration/decision-receipts/	free	-	-	-
 /api/orchestration/decision-receipts/spend	free	-	-	-

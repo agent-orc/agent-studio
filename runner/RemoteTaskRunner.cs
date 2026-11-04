@@ -1587,7 +1587,24 @@ public sealed class RemoteTaskRunner
                             $"[runner] provider rejected model request provider={invocation.CliType}; provider-auth capability unchanged");
                         if (!string.IsNullOrWhiteSpace(invocation.Model)
                             && RunnerModelAcceptanceProbe.IsModelRejection(processResult, invocation.Model))
+                        {
                             RunnerModelAcceptanceProbe.Shared.RecordRejection(invocation.CliType, invocation.Model);
+                            var recorded = await _client.PostModelSelectionEventAsync(new
+                            {
+                                id = TaskServerClient.NewModelSelectionId(), at = DateTimeOffset.UtcNow,
+                                kind = "health-marked", consumer = "remote-coding-run", host = _options.RunnerId,
+                                taskKey = slot.TaskKey, attemptId = slot.AttemptId,
+                                @from = new { cliType = invocation.CliType, model = invocation.Model, thinkingLevel = invocation.ThinkingLevel },
+                                rule = "provider-rejection", reason = "The provider refused the selected model on this host.",
+                                evidence = new
+                                {
+                                    excerpt = processResult.StdErr is { Length: > 300 } message
+                                        ? message[..300] : processResult.StdErr,
+                                    classifierKind = "model-unavailable",
+                                },
+                            }, waitStop.Token);
+                            if (!recorded) _log("model-selection health receipt could not reach Studio after bounded retry");
+                        }
                     }
                     var capacityRetry = classified.Decision.Outcome == ExecutionOutcomeKind.TransientModelCapacity
                         && classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession;
