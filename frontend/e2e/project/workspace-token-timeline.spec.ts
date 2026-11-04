@@ -9,7 +9,7 @@ import { setTheme, dismissDevErrorDialog, sampleColours } from '../helpers/theme
  * timeline of orchestrator token spend across every watched project,
  * stacked per project. The page mounts the
  * `<app-workspace-token-timeline>` component inside an overlay; the
- * usage-hover-panel header carries a deep link.
+ * the footer usage detail carries a link to the workspace ledger.
  *
  * This spec stubs `/api/workspace/tokens/timeline` so the assertions do
  * not depend on whatever the live workspace happens to have done in the

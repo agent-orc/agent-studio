@@ -43,7 +43,7 @@ public static class CredentialRedactor
         Linear);
 
     private static readonly Regex NamedSecret = new(
-        """(?ix)(["']?(?:authorization|proxy-authorization|password|currentpassword|newpassword|temporarypassword|cookie|set-cookie|x-csrf-token|csrftoken|enrollmentcode|secret|authtoken|access_token|refresh_token|claude_code_oauth_token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;}&]+)""",
+        """(?ix)(["']?(?:authorization|proxy-authorization|password|currentpassword|newpassword|temporarypassword|cookie|set-cookie|x-csrf-token|csrftoken|enrollmentcode|secret|authtoken|access_token|refresh_token|claude_code_oauth_token|handoff)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;}&]+)""",
         Linear);
 
     /// <summary>Shortest literal worth registering; shorter text would mask ordinary words.</summary>

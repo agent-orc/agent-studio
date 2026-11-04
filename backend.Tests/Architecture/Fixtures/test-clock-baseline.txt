@@ -126,7 +126,7 @@ wall-clock backend.Tests/ProjectCycleTimeServiceTests.cs 1
 wall-clock backend.Tests/ProjectObservationServiceTests.cs 4
 wall-clock backend.Tests/ProjectProposalManagementTests.cs 1
 wall-clock backend.Tests/ProjectRunnerModeTests.cs 6
-wall-clock backend.Tests/ProjectRunnerPickupAtomicityTests.cs 29
+wall-clock backend.Tests/ProjectRunnerPickupAtomicityTests.cs 25
 wall-clock backend.Tests/ProjectSettingsServiceTests.cs 2
 wall-clock backend.Tests/ProjectTokenUsageEndpointPerfTests.cs 1
 wall-clock backend.Tests/ProjectUrlDiagnosticsTests.cs 2

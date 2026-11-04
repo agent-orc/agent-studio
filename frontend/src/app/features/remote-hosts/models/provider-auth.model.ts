@@ -189,7 +189,7 @@ export function providerAuthBadgesForSnapshot(
 
 export function providerAuthBadgesForHost(host: RemoteHost, nowMs: number): ProviderAuthBadge[] {
   const capabilities = host.capabilityHealth ?? [];
-  return providerNames(capabilities).map(provider => badgeFromCapability(
+  return providerNames(capabilities).map(provider => ({ ...badgeFromCapability(
     provider,
     capabilities.find(item => item.key === `${PROVIDER_AUTH_PREFIX}${provider}`),
     host.id,
@@ -199,7 +199,9 @@ export function providerAuthBadgesForHost(host: RemoteHost, nowMs: number): Prov
     host.status !== 'offline' && host.status !== 'retired' && isRecent(host.lastHeartbeatAt, nowMs),
     host.runnerLink?.lastHeartbeatAt ?? host.lastHeartbeatAt,
     nowMs,
-  ));
+  ), acceptedModels: capabilities.filter(item => item.key.startsWith(`model-acceptance:${provider}:`)
+    && item.advertisedStatus === 'ready' && item.isFresh)
+    .map(item => item.key.slice(`model-acceptance:${provider}:`.length)).sort() }));
 }
 
 export function providerAuthWaitReason(

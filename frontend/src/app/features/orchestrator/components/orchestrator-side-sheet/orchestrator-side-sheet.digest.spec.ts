@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrchestratorContextDigest } from '../../models/orchestrator.model';
 import { OrchestratorSideSheetComponent } from './orchestrator-side-sheet.component';
 import { OrchestratorChatWaitingComponent } from '../orchestrator-chat-waiting/orchestrator-chat-waiting.component';
+import { ChatComponent } from 'coding-agent-chat/composer';
 
 describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
   beforeEach(() => {
@@ -63,6 +64,25 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     expect(request.request.method).toBe('GET');
     return request;
   }
+
+  it('shows Runner setup and blocks a first question until execution is ready', async () => {
+    const fixture = await makeFixture();
+    const component = fixture.componentInstance;
+    component.activeProject.set('demo-project');
+    component.executionReadiness.set({ ready: false, code: 'runner-not-configured', reason: 'No Runner is configured for this project.' });
+    fixture.detectChanges();
+    const setup = fixture.nativeElement.querySelector('[data-testid="orch-chat-runner-setup"]');
+    expect(setup?.textContent).toContain('No Runner is configured');
+    expect(setup?.querySelector('a')?.getAttribute('href')).toContain('linux-runner-host.md');
+    const composer = fixture.debugElement.query(By.directive(ChatComponent)).componentInstance as ChatComponent;
+    expect(composer.disabled()).toBe(true);
+    component.executionReadiness.set({ ready: true, code: 'runner-ready', reason: null });
+    component.loading.set(false);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="orch-chat-runner-setup"]')).toBeNull();
+    expect(composer.disabled()).toBe(false);
+    fixture.destroy();
+  });
 
   it('shows the assigned runner and queued time while a remote turn waits', async () => {
     const fixture = await makeFixture();

@@ -1,6 +1,8 @@
 /** Shell feature public API. Cycle 9h / ADR-0034. */
 export { AutoReviewIndicatorComponent } from './components/auto-review-indicator/auto-review-indicator';
 export { StatusBarComponent } from './components/status-bar/status-bar';
+export { StatusBarUsageHostComponent } from './components/status-bar-usage-host/status-bar-usage-host';
+export { AccountControlComponent } from './components/account-control/account-control';
 export { WorkspaceBannerComponent } from './components/workspace-banner/workspace-banner';
 export { WorkspaceOverlaysComponent } from './components/workspace-overlays/workspace-overlays.component';
 export { WorkspaceManagementComponent } from './components/workspace-management/workspace-management.component';

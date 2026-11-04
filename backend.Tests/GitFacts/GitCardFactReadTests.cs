@@ -194,8 +194,9 @@ public sealed class GitCardFactReadTests(GitFactsBoardFixture board)
             File.WriteAllText(taskJson, original.Replace($"Git facts card {card}", title, StringComparison.Ordinal));
             var mark = runs.Completed.Count;
             host.Services.GetRequiredService<GitStateIndexService>().RequestRefresh(GitFactsBoardFixture.ProjectName, "task-event");
-            var run = await runs.NextAsync(mark);
+            var run = await runs.NextAsync(mark, candidate => candidate.Trigger == "task-event");
 
+            Assert.Equal("task-event", run.Trigger);
             Assert.Equal(0, run.Spawns);
             var view = reader.Read(board.WatchPath).Facts!.ProjectView!;
             Assert.True(view.TaskGeneration > viewBefore.TaskGeneration);

@@ -175,7 +175,10 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
 
     // ── Test B: review-claim (/api/v1/runners/{id}/review-claims) re-resolves ──
     [Theory]
-    [InlineData(CliTypes.Codex, ModelIds.Gpt56Sol, "medium", CliTypes.Claude, ModelIds.ClaudeSonnet5, "high")]
+    // D4 keeps review fallbacks in the same capability class. The review route
+    // retains medium thinking when Sonnet supports it, per the Dossier's
+    // equivalence rule; the coding claim above still uses the catalogue's high.
+    [InlineData(CliTypes.Codex, ModelIds.Gpt56Sol, "medium", CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium")]
     [InlineData(CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium", CliTypes.Codex, ModelIds.Gpt56Sol, "medium")]
     public async Task Review_claim_re_resolves_a_pinned_aspect_without_mutating_the_frozen_plan(
         string configuredCli,

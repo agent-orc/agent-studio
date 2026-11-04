@@ -6,6 +6,79 @@ namespace AgentStudio.Tests;
 
 public sealed class CliQuotaFallbackServiceTests : IDisposable
 {
+    [Fact]
+    public void Review_switch_rejects_an_explicit_lower_capability_class()
+    {
+        var service = NewServiceWithCatalog();
+        service.Set(new CliModelRouteProfile
+        {
+            CliType = CliTypes.Claude,
+            PrimaryModel = ModelIds.ClaudeOpus5,
+            FallbackCliType = CliTypes.Codex,
+            FallbackModel = ModelIds.Gpt56Luna,
+        });
+
+        var result = service.Resolve(CliTypes.Claude, ModelIds.ClaudeOpus5, "high",
+            _ => CapEvaluation.NotBlocked, preferFallback: true, sameClassOnly: true);
+
+        Assert.False(result.IsFallback);
+        Assert.Contains("same Token Economy capability class", result.Reason);
+    }
+
+    [Fact]
+    public void Review_switch_accepts_a_matching_capability_class()
+    {
+        var service = NewServiceWithCatalog();
+        var result = service.Resolve(CliTypes.Claude, ModelIds.ClaudeOpus5, "high",
+            _ => CapEvaluation.NotBlocked, preferFallback: true, sameClassOnly: true);
+
+        Assert.True(result.IsFallback);
+        Assert.Equal(CliTypes.Codex, result.CliType);
+        Assert.Equal(ModelIds.Gpt56Sol, result.Model);
+        Assert.Equal("high", result.ThinkingLevel);
+    }
+
+    [Fact]
+    public void Review_switch_never_reduces_an_explicit_thinking_level()
+    {
+        var service = NewServiceWithCatalog();
+        service.Set(new CliModelRouteProfile
+        {
+            CliType = CliTypes.Claude,
+            PrimaryModel = ModelIds.ClaudeOpus5,
+            FallbackCliType = CliTypes.Codex,
+            FallbackModel = ModelIds.Gpt56Sol,
+            FallbackThinkingLevel = "low",
+        });
+
+        var result = service.Resolve(CliTypes.Claude, ModelIds.ClaudeOpus5, "high",
+            _ => CapEvaluation.NotBlocked, preferFallback: true, sameClassOnly: true);
+
+        Assert.True(result.IsFallback);
+        Assert.Equal("high", result.ThinkingLevel);
+    }
+
+    [Fact]
+    public void A_capped_provider_cannot_fallback_into_the_conserved_provider()
+    {
+        var service = NewServiceWithCatalog();
+        service.Set(new CliModelRouteProfile
+        {
+            CliType = CliTypes.Codex,
+            PrimaryModel = ModelIds.Gpt56Sol,
+            FallbackCliType = CliTypes.Claude,
+            FallbackModel = ModelIds.ClaudeOpus5,
+        });
+
+        var result = service.Resolve(CliTypes.Codex, ModelIds.Gpt56Sol, "xhigh",
+            cli => cli == CliTypes.Codex
+                ? new CapEvaluation(true, cli, "Weekly", 100, 95)
+                : CapEvaluation.NotBlocked,
+            fallbackProviderAllowed: cli => cli != CliTypes.Claude);
+
+        Assert.False(result.IsFallback);
+        Assert.Contains("conserving provider claude", result.Reason);
+    }
     private readonly string _root = Path.Combine(Path.GetTempPath(), "atp-quota-fallback-" + Guid.NewGuid().ToString("N"));
     private readonly IConfiguration _config;
 

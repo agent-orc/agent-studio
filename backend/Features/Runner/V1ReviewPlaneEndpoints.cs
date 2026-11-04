@@ -964,7 +964,8 @@ public static class V1ReviewPlaneEndpoints
             var priorReport = acceptedReplay && reviewTask is not null
                 ? RemoteReviewSettlementJournal.Read(reviewTask.FolderPath, attemptId).Entry
                 : null;
-            if (priorReport?.SubmittedReportSha256 is { } originalHash)
+            if (priorReport is not null
+                && RemoteReviewSettlementJournal.SubmittedReportHash(priorReport) is { } originalHash)
             {
                 if (!string.Equals(originalHash, submittedReportHash, StringComparison.Ordinal))
                     return Results.Conflict(new Contract.ApiError(
@@ -1282,7 +1283,7 @@ public static class V1ReviewPlaneEndpoints
                     return Results.Json(new Contract.ApiError("review-settlement-repair-required",
                         replayJournal.Reason ?? "The settled report has no recoverable journal or evidence."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
-                if (replayJournal.Entry is { } prior && prior.ReportSha256 != preparedHash)
+                if (replayJournal.Entry is { } prior && RemoteReviewSettlementJournal.ReportHash(prior) != preparedHash)
                     return Results.Conflict(new Contract.ApiError("idempotency-conflict",
                         "The review report key is bound to a different payload."));
             }
@@ -2638,7 +2639,9 @@ public static class V1ReviewPlaneEndpoints
         var resolvedCommands = subject.Plan.Commands.Select(command =>
         {
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)) return command;
-            if (immutablePlan && !string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+            var operatorSwitch = quotaAdmission.IsOperatorSwitchActive(command.CliType);
+            if (immutablePlan && !operatorSwitch
+                && !string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
                 return command;
             string? deniedFallbackKey = null;
             Contract.ModelAcceptanceAdmission? deniedFallbackDecision = null;
@@ -2652,6 +2655,7 @@ public static class V1ReviewPlaneEndpoints
                 ModelAccepted: (provider, model) => modelAdmission(provider, model)
                     is Contract.ModelAcceptanceAdmission.Accepted or Contract.ModelAcceptanceAdmission.Legacy,
                 ClaimingHost: claimingHost,
+                SameClassOnly: true,
                 FallbackModelAccepted: (provider, model) =>
                 {
                     var decision = modelAdmission(provider, model);
@@ -2685,7 +2689,8 @@ public static class V1ReviewPlaneEndpoints
             }
             launchedPlan ??= plan;
             if (!plan.IsFallback) return command;
-            if (string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+            if (!operatorSwitch
+                && string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
             {
                 // This plan froze the deep-review correctness floor. A quota
                 // sibling may be useful for ordinary aspects, but accepting a

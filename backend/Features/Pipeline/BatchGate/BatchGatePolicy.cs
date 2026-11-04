@@ -152,7 +152,7 @@ public static class BatchGatePolicy
         string baseSha, BatchGateFormationOptions options,
         DateTimeOffset now, int reviewQueueLength = 0, bool loadThrottled = false,
         bool gateBacklog = false, bool baseRed = false,
-        IReadOnlySet<string>? priorityKeys = null)
+        IReadOnlySet<string>? priorityKeys = null, int queuedPartners = 0)
     {
         if (!options.IsValid) throw new ArgumentOutOfRangeException(nameof(options));
         var eligible = new List<BatchGateSubject>();
@@ -186,6 +186,10 @@ public static class BatchGatePolicy
         var closesAtOnce = !gateBacklog && !baseRed
             && eligible.All(subject => subject.DocumentationOnly);
         if (eligible.Count < options.CloseSize && !deadline && !pressure && !closesAtOnce)
+            return new(null, exclusions, keys, false);
+        // AGT-3466: a lone card past its deadline waits for queued cards that
+        // only lack their pre-check; they join it at their own deadline.
+        if (eligible.Count == 1 && deadline && queuedPartners > 0)
             return new(null, exclusions, keys, false);
         if (eligible.Count == 1 && deadline)
             return new(null, exclusions, keys, !gateBacklog || reviewQueueLength == 0

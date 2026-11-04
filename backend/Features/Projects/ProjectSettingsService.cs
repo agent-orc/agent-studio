@@ -119,8 +119,20 @@ public class ProjectSettingsService
         {
             var key = ResolveAliasLocked(projectName);
             var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
-            if (current.QualityStudio == registration) return;
-            _cache[key] = current with { QualityStudio = registration };
+            if (current.QualityStudio == registration && current.QualityStudioRepositoryId == registration.RepositoryId) return;
+            _cache[key] = current with { QualityStudio = registration, QualityStudioRepositoryId = registration.RepositoryId };
+            Persist();
+        }
+    }
+
+    public void SetQualityStudioRepositoryId(string projectName, string? repositoryId)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { QualityStudioRepositoryId = repositoryId };
             Persist();
         }
     }

@@ -270,7 +270,6 @@ test('keeps start, settings, live output, and stop in the embed in both themes',
   await expect(proxiedFrame).toHaveAttribute('src', `/api/projects/${PROJECT_ID}/urls/website/preview/`);
   await expect(proxiedFrame).not.toHaveAttribute('sandbox', /allow-same-origin/);
   await expect(page.getByTestId('url-preview-addr-input')).toBeDisabled();
-  await expect(page.getByTestId('hquota-card-claude')).toBeDisabled();
   await proxiedFrame.screenshot({ path: join(shots, 'preview-networked-edge--mocked.png') });
 });
 

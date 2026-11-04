@@ -642,7 +642,12 @@ review report or a tick that meets a running fallback waits for it instead of
 starting a second gate. The card marker records that per-card gate as active
 with a start count; a marker still active with no gate running in the process
 (restart, or a gate that threw) is resumed on the next tick, and after two
-interrupted starts the card escalates as `GateInfra`. A batch that pauses (a second
+interrupted starts the card escalates as `GateInfra`. Across all review
+generations of the process, at most one gate slot fewer than the gate host has
+runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
+slot before they choose their merged candidate, so the batch slot stays free. A
+formed batch whose base moved before replay closes again with the same members
+on the new base, and its members do not reach a per-task gate. A batch that pauses (a second
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
 unexpected fault) keeps `Paused` in its state history; on the next tick the
 worker returns every member it still owns to that per-card gate and records the
@@ -1435,13 +1440,15 @@ comparison before Quality Studio's verdict contract can decide a review.
   separate `POST /api/projects/{project}/checkout/sync` action. Local task
   worktrees cut and rebase from the published ref, without taking unapproved
   merges from the Studio lane. If an outside push makes the lane diverge,
-  synchronization drops only lane merges whose delivery is already on origin
+  synchronization drops only lane merges or net-change commits whose source delivery is already on origin
   by ancestry, tree, or patch equality, or that a newer published delivery of
   the same card superseded (AGT-3215, `IntegrationLaneDivergencePolicy`).
+  Net-change commits record the source delivery in an `Agent-Studio-Net-Change-Of`
+  trailer; older commits resolve their source from the abbreviated SHA in the subject.
   It backs the old tip up under `refs/agent-studio/integration-backup/` and
   restarts the lane at origin when nothing unpublished remains; otherwise it
-  refuses, names the unpublished merges, and raises the
-  `integration-lane-diverged` pipeline health alarm with the blocked cards. Before a legacy acceptance
+  refuses, names the unpublished deliveries and their cards, and raises the
+  `integration-lane-diverged` pipeline health alarm with cards still blocked at alarm time. Before a legacy acceptance
   sweep moves a Completed card back to Human Review, it fetches origin and
   checks the card's delivery there. It resolves that delivery from the review
   subject, card attribution, or local task branch, including local deliveries
