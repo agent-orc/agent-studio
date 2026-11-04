@@ -1,5 +1,9 @@
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
+using System.Text;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -62,6 +66,39 @@ public sealed class OperatorPolicyTests
         var decision = OperatorPolicy.Decide(Requeue, "opa_1", Alpha, [Grant()], Now, Same);
         Assert.True(decision.Admitted);
         Assert.Equal("sgr_1", decision.GrantId);
+    }
+
+    [Theory]
+    [InlineData("/api/tasks/{}/attention", OperatorOperationIds.CardAttention)]
+    [InlineData("/api/operator/log", OperatorOperationIds.OperatorLogAppend)]
+    public void Attention_and_log_writes_are_project_scoped_t1_operations(string route, string id)
+    {
+        var operation = OperatorOperationCatalog.ResolveWrite("POST", route)!;
+        Assert.Equal(id, operation.OperationId);
+        Assert.Equal(OperatorTier.T1, OperatorOperationCatalog.Find(id)!.Tier);
+        Assert.False(OperatorPolicy.Decide(OperatorOperationCatalog.Find(id), "opa_1", Alpha, [], Now, Same).Admitted);
+        Assert.True(OperatorPolicy.Decide(OperatorOperationCatalog.Find(id), "opa_1", Alpha,
+            [Grant(operations: [id])], Now, Same).Admitted);
+    }
+
+    [Fact]
+    public async Task Log_write_classification_carries_the_project_into_the_grant_target()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = "POST";
+        context.Request.Path = "/api/operator/log";
+        context.SetEndpoint(new RouteEndpointBuilder(_ => Task.CompletedTask,
+            RoutePatternFactory.Parse("/api/operator/log"), 0).Build());
+        context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes("{\"project\":\"alpha\"}"));
+        context.Request.ContentLength = context.Request.Body.Length;
+
+        var operation = await OperatorRequestClassifier.ClassifyAsync(context, false, null,
+            (_, _) => null, _ => null);
+        var target = OperatorRequestClassifier.GrantTarget(operation!, PermissionTarget.Unaddressed,
+            key => key == "project" ? context.Items["OperatorLog.Project"] as string : null);
+
+        Assert.Equal(OperatorOperationIds.OperatorLogAppend, operation?.Id);
+        Assert.Equal("alpha", target.Project);
     }
 
     public static TheoryData<string, StandingGrant> NotCovering() => new()

@@ -584,6 +584,7 @@ export interface BetterCandidateNote {
 }
 
 export interface TaskInfo {
+  attentionHolder?: string | null;
   qualityStudioVerdict?: 'pass' | 'concerns' | 'block' | string | null;
   id: string;
   taskKey: string;

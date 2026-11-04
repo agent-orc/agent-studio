@@ -23,6 +23,13 @@ public static class StudioEndpoints
 
         MapAuthEndpoints(studio);
         MapOrchestratorEndpoints(studio);
+        studio.MapGet("/operator-log", (string? project, long? after, TaskServerStore store) =>
+            after is < 0 ? Results.BadRequest(new { error = "invalid-cursor" })
+                : Results.Ok(new { entries = store.ReadOperatorLog(project, after ?? 0) }));
+        studio.MapPost("/operator-log", (HttpContext context, TaskServerOperatorLogWrite write,
+            TaskServerStore store, CancellationToken ct) => TaskServerEndpoints.InvokeAsync(
+                () => store.AppendOperatorLogAsync(write, TaskServerEndpoints.Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         MapRunnerEndpoints(studio);
         studio.MapGet("/board", async (HttpContext context, TaskServerStore store, CancellationToken ct)
             => await TaskServerEndpoints.InvokeAsync(async () =>

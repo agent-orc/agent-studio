@@ -34,6 +34,8 @@ public static class OperatorOperationIds
     public const string HostInspect = "host.inspect";
     public const string CardRequeue = "card.requeue";
     public const string CardSteer = "card.steer";
+    public const string CardAttention = "card.attention";
+    public const string OperatorLogAppend = "operator-log.append";
     public const string ServiceRestart = "service.restart";
     public const string HostDrain = "host.drain";
     public const string HostResume = "host.resume";
@@ -109,6 +111,8 @@ public static class OperatorOperationCatalog
         new(OperatorOperationIds.HostInspect, OperatorTier.T0, OperatorScopeKinds.Host, "Inspect a host"),
         new(OperatorOperationIds.CardRequeue, OperatorTier.T1, OperatorScopeKinds.Project, "Requeue a card"),
         new(OperatorOperationIds.CardSteer, OperatorTier.T1, OperatorScopeKinds.Project, "Steer a card's run"),
+        new(OperatorOperationIds.CardAttention, OperatorTier.T1, OperatorScopeKinds.Project, "Take card attention"),
+        new(OperatorOperationIds.OperatorLogAppend, OperatorTier.T1, OperatorScopeKinds.Project, "Append an operator log entry"),
         new(OperatorOperationIds.ServiceRestart, OperatorTier.T1, OperatorScopeKinds.Host, "Restart an allowlisted service"),
         new(OperatorOperationIds.HostDrain, OperatorTier.T1, OperatorScopeKinds.Host, "Drain a host"),
         new(OperatorOperationIds.HostResume, OperatorTier.T1, OperatorScopeKinds.Host, "Resume a host"),
@@ -165,6 +169,8 @@ public static class OperatorOperationCatalog
         new("POST", "/api/tasks/{}/move", OperatorOperationIds.CardRequeue, OperatorRouteRefinement.CardMove),
         new("POST", "/api/tasks/{}/restore-from-failed-pickup", OperatorOperationIds.CardRequeue),
         new("POST", "/api/tasks/{}/continue", OperatorOperationIds.CardSteer),
+        new("POST", "/api/tasks/{}/attention", OperatorOperationIds.CardAttention),
+        new("POST", "/api/operator/log", OperatorOperationIds.OperatorLogAppend),
         new("POST", "/api/hosts/{}/certificates", OperatorOperationIds.HostCertificateIssue),
         new("POST", "/api/hosts/{}/certificates/{}/revoke", OperatorOperationIds.HostCertificateRevoke),
         new("POST", "/api/hosts/{}/inspect", OperatorOperationIds.HostInspect),

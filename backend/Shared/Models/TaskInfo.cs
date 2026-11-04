@@ -9,6 +9,8 @@ public record TaskInfo
     [JsonIgnore] internal string TokenReceiptStamp { get; init; } = "none";
     public string Id { get; init; } = "";
     public string TaskKey { get; init; } = "";
+    /// <summary>The active short attention lease holder, projected at detail read time.</summary>
+    public string? AttentionHolder { get; init; }
     /// <summary>Current card preview, projected from its sidecar rather than task.json.</summary>
     public TaskPreview? Preview { get; init; }
     /// <summary>
