@@ -51,7 +51,8 @@ public sealed class LoggingModelSelectionLedger : IModelSelectionLedger
             AttemptId = entry.AttemptId,
             Round = entry.Round,
             From = new ModelSelectionRoute(entry.From.CliType, entry.From.Model, entry.From.ThinkingLevel),
-            To = new ModelSelectionRoute(entry.To.CliType, entry.To.Model, entry.To.ThinkingLevel),
+            To = entry.Kind == SelectionLedgerKinds.Waiting ? null
+                : new ModelSelectionRoute(entry.To.CliType, entry.To.Model, entry.To.ThinkingLevel),
             Rule = entry.Rule,
             Reason = entry.Reason,
             Quota = quota is null ? null : new ModelSelectionQuota(entry.From.CliType,

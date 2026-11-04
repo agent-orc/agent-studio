@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using System.Security.Cryptography;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -46,27 +46,7 @@ public sealed record ModelSelectionEventPage(IReadOnlyList<ModelSelectionEvent> 
 /// <summary>One synchronized writer for workspace model selection receipts.</summary>
 public sealed class ModelSelectionLedger
 {
-    private const string UlidAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-    public static string NewId()
-    {
-        Span<byte> data = stackalloc byte[16];
-        var milliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        for (var i = 5; i >= 0; i--) { data[i] = (byte)milliseconds; milliseconds >>= 8; }
-        RandomNumberGenerator.Fill(data[6..]);
-        Span<char> chars = stackalloc char[26];
-        var bit = 0;
-        for (var i = 0; i < chars.Length; i++)
-        {
-            var value = 0;
-            for (var b = 0; b < 5; b++)
-            {
-                var position = bit++ - 2;
-                value = (value << 1) | (position < 0 ? 0 : (data[position / 8] >> (7 - position % 8)) & 1);
-            }
-            chars[i] = UlidAlphabet[value];
-        }
-        return new string(chars);
-    }
+    public static string NewId() => ModelSelectionEventId.New();
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,

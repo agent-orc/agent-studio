@@ -237,6 +237,7 @@ public sealed class QuotaAdmissionRecorder
         string? requestedCli, string? requestedModel, string? host = null, string? attemptId = null,
         string? stepId = null)
     {
+        if (plan.SelectionEventId is not null) return plan.SelectionEventId;
         if (_ledger is null) return null;
         if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary && plan.ProjectionWarning is null)
             return _ledger.ReturnToPrimary(source, project, taskKey,
