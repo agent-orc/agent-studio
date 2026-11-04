@@ -29,6 +29,28 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+### Gate run ledger (AGT-3500)
+
+The instance-local gate run ledger lives under `gate-run-ledger` beside the
+batch gate store, outside the workspace repository. Each execution writes one
+create-only JSON record, retained for 90 days. `GET
+/api/projects/{projectName}/batch-gate/ledger?day=YYYY-MM-DD&type=batch-gate&page=1&pageSize=50`
+returns newest-first rows and a total count. The `type` filter accepts the
+stored run types: `batch-gate`, `batch-base`, `batch-pre-check`,
+`per-task-fallback`, `per-task-gate`, and `clean-diagnostic-rerun`.
+
+Rows carry request, slot, lease, command start and finish times, process and
+shard evidence (including class names and measured class durations), rerun cost,
+host load, and trigger. A base run names the red
+candidate or fallback that requested it. A cache hit executes no host gate and
+does not add a row. The batch gate state includes a UTC `dailySummary` with
+minutes by type, batch and fallback published cards per hour (the UTC day's
+24-hour rate), and
+median and nearest-rank p90 batch gate minutes. Its reconciliation percentage
+compares ledger durations with existing execution facts for the same day; a
+missing host total is Unknown. Historical days before the ledger was enabled
+cannot be reconstructed from card receipts.
+
 Each gate-economics row also carries the grouping figures of its window
 (AGT-3399): `batchesClosed` (distinct batches whose gate ran), `meanBatchSize`
 (largest membership per batch, averaged), and `soloGatedMerges` (merges
