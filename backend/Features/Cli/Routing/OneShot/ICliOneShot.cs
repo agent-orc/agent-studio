@@ -256,9 +256,9 @@ public sealed class CliOneShotRegistry
             _quotaRecorder?.EmitAdmissionDecision(task, plan, source);
         else if (!string.IsNullOrWhiteSpace(request.WatchPath))
             _quotaRecorder?.EmitProjectAdmissionDecision(
-                request.WatchPath, request.Project, plan, source);
+                request.WatchPath, request.Project, plan, source, request.CliType, request.Model);
         else
-            _quotaRecorder?.EmitUnscopedAdmissionDecision(plan, source);
+            _quotaRecorder?.EmitUnscopedAdmissionDecision(plan, source, request.CliType, request.Model, request.Project);
 
         if (!plan.ShouldLaunch)
         {

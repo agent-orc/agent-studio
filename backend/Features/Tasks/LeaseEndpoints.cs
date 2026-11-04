@@ -943,7 +943,8 @@ public static class LeaseEndpoints
                                 Reason = quotaPlan.Reason,
                                 Scope = "quota",
                             });
-                        quotaAdmissionRecorder.EmitAdmissionDecision(task, quotaPlan, source: "remote-claim");
+                        quotaAdmissionRecorder.EmitAdmissionDecision(task, quotaPlan, source: "remote-claim",
+                            host: req.RunnerId);
                         RecordRejection(task, "quota-admission", quotaPlan.Reason);
                         logger.LogInformation(
                             "remote-runner-coding-claim-skipped-quota runner={Runner} task={TaskKey} outcome={Outcome} reason={Reason}",
@@ -1353,7 +1354,8 @@ public static class LeaseEndpoints
                 if (candidateQuotaPlan is not null)
                 {
                     var claimedInfo = candidate with { FolderPath = claimedFolderPath };
-                    quotaAdmissionRecorder.EmitAdmissionDecision(claimedInfo, candidateQuotaPlan, source: "remote-claim");
+                    quotaAdmissionRecorder.EmitAdmissionDecision(claimedInfo, candidateQuotaPlan, source: "remote-claim",
+                        host: req.RunnerId, attemptId: acquire.Lease.AttemptId);
                     QuotaWaitMarker.Clear(claimedInfo.FolderPath);
                     if (candidateQuotaPlan.IsFallback)
                     {
@@ -1527,6 +1529,7 @@ public static class LeaseEndpoints
             RunTimeoutContinuationService timeoutContinuations,
             RemoteRunStopRequestStore stops,
             ProviderRejectionContinuationService providerRejectionContinuations,
+            ModelSelectionLedger selectionLedger,
             ModelRoutingPolicyRegistry modelRouting,
             V1ReviewExecutorRegistry capabilityRegistry,
             QuotaAdmissionService quotaAdmission,
@@ -2554,6 +2557,16 @@ public static class LeaseEndpoints
                         Scope = "model-capability",
                     });
                     scanner.InvalidateCache();
+                    var selection = new ModelSelectionEvent
+                    {
+                        Kind = "waiting", Consumer = "remote-completion", Host = req.RunnerId,
+                        Project = task.ProjectName, TaskKey = task.TaskKey, AttemptId = attemptId,
+                        From = new ModelSelectionRoute(task.CliType, providerRejectionModel, task.ThinkingLevel),
+                        Rule = "host-model-unavailable", Reason = holdReason,
+                        Evidence = new ModelSelectionEvidence(providerRejection.Message, "model-unavailable"),
+                        ReturnToPrimaryAt = holdPlan.NextResetAt,
+                    };
+                    selectionLedger.Append(selection);
                     timeline.Append(holdFolder, TimelineEventKinds.QuotaAdmissionDecision,
                         TimelineActors.System, holdReason, runId: attemptId,
                         details: new Dictionary<string, string>
@@ -2562,6 +2575,7 @@ public static class LeaseEndpoints
                             ["reason"] = "host-model-unavailable",
                             ["host"] = req.RunnerId,
                             ["model"] = providerRejectionModel!,
+                            ["selectionEventId"] = selection.Id,
                         });
                     return Results.Ok(new RemoteRunCompletionResponse(
                         req.TaskKey, responseOutcome, TaskStates.Ready, holdReason,

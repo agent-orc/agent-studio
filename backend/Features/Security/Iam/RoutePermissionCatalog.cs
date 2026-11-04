@@ -209,6 +209,7 @@ public static class RoutePermissionCatalog
 
         // --- Runner and engine service routes (credential scopes decide) ----
         Add("R", IamPermissions.RunnerService, "/api/quota/admission/{}");
+        Add("POST", IamPermissions.RunnerService, "/api/model-selection/events");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/claim");
         Add("PUT", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/report");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/review-package-claims");
@@ -360,6 +361,7 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/types", "/api/cli/contracts", "/api/cli/model-migrations");
         Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/effective");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/events", "/api/model-selection/active");
         // These return configuration or cached data without reading sessions.
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/{}/models", "/api/cli/maintenance-model", "/api/cli/{}/effective-mode",

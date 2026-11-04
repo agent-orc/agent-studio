@@ -23,18 +23,22 @@ public sealed class QuotaAdmissionRecorder
     private readonly OrchestratorChatLog _chatLog;
     private readonly OrchestratorLog _orchestratorLog;
     private readonly ILogger<QuotaAdmissionRecorder> _logger;
+    private readonly ModelSelectionLedger? _ledger;
+    private readonly ConcurrentDictionary<string, string> _selectionIds = new();
     private readonly ConcurrentDictionary<string, string> _lastDecisionByJob = new();
 
     public QuotaAdmissionRecorder(
         TimelineLog timeline,
         OrchestratorChatLog chatLog,
         OrchestratorLog orchestratorLog,
-        ILogger<QuotaAdmissionRecorder> logger)
+        ILogger<QuotaAdmissionRecorder> logger,
+        ModelSelectionLedger? ledger = null)
     {
         _timeline = timeline;
         _chatLog = chatLog;
         _orchestratorLog = orchestratorLog;
         _logger = logger;
+        _ledger = ledger;
     }
 
     /// <summary>
@@ -47,7 +51,8 @@ public sealed class QuotaAdmissionRecorder
     /// does not spam its timeline.
     /// </summary>
     public void EmitAdmissionDecision(
-        TaskInfo info, QuotaAdmissionPlan plan, string source, string? decisionIdentity = null)
+        TaskInfo info, QuotaAdmissionPlan plan, string source, string? decisionIdentity = null,
+        string? host = null, string? attemptId = null, string? stepId = null)
     {
         var warning = plan.ProjectionWarning;
         var logLevel = warning is null ? LogLevel.Information : LogLevel.Warning;
@@ -60,6 +65,9 @@ public sealed class QuotaAdmissionRecorder
                 "cli_quota_admission_decision source={Source} jobId={JobId} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason}",
                 source, info.Id, info.ProjectName, plan.Outcome, plan.CliType, plan.Model ?? "<default>", plan.IsFallback, plan.Reason);
         if (!changed) return;
+        var selectionId = RecordSelection(plan, source, info.ProjectName, info.TaskKey, info.CliType, info.Model,
+            host, attemptId, stepId);
+        if (selectionId is not null) _selectionIds[$"{info.Id}|{source}"] = selectionId;
 
         // Keep every admission boundary in the durable decision log. The
         // usage report uses the latest boundary for a job to determine whether
@@ -77,7 +85,7 @@ public sealed class QuotaAdmissionRecorder
 
         if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary
             && warning is null
-            && plan.BetterCandidates is null) return;
+            && plan.BetterCandidates is null && selectionId is null) return;
 
         _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-admission] " + plan.Reason);
         _timeline.Append(
@@ -98,6 +106,7 @@ public sealed class QuotaAdmissionRecorder
                 ["modelFallback"] = plan.ModelFallback is null
                     ? string.Empty
                     : JsonSerializer.Serialize(plan.ModelFallback),
+                ["selectionEventId"] = selectionId ?? string.Empty,
             });
     }
 
@@ -123,8 +132,10 @@ public sealed class QuotaAdmissionRecorder
     /// such as title generation or prompt enrichment. The structured runtime
     /// log is its durable receipt because there is no narrower timeline.
     /// </summary>
-    public void EmitUnscopedAdmissionDecision(QuotaAdmissionPlan plan, string source)
+    public void EmitUnscopedAdmissionDecision(QuotaAdmissionPlan plan, string source,
+        string? requestedCli = null, string? requestedModel = null, string? project = null)
     {
+        RecordSelection(plan, source, project, null, requestedCli, requestedModel);
         _logger.LogInformation(
             "cli_quota_admission_decision source={Source} scope=workspace outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason} modelFallback={ModelFallback}",
             source,
@@ -150,6 +161,8 @@ public sealed class QuotaAdmissionRecorder
         ModelFallbackInfo? modelFallback = null)
     {
         var fallbackNote = $"Fallback: {route.CliType}/{route.Model}; reason: quota ({route.Reason})";
+        _selectionIds.TryGetValue($"{info.Id}|{source}", out var selectionId);
+        selectionId ??= _ledger is null ? null : RecordFallback(info, primaryCli, primaryModel, route, source, modelFallback);
         _logger.LogWarning(
             "cli_quota_fallback_activated source={Source} jobId={JobId} primaryCli={PrimaryCli} fallbackCli={FallbackCli} fallbackModel={FallbackModel} reason={Reason}",
             source, info.Id, primaryCli, route.CliType, route.Model, route.Reason);
@@ -172,6 +185,7 @@ public sealed class QuotaAdmissionRecorder
                 ["modelFallback"] = modelFallback is null
                     ? string.Empty
                     : JsonSerializer.Serialize(modelFallback),
+                ["selectionEventId"] = selectionId ?? string.Empty,
             });
     }
 
@@ -183,8 +197,11 @@ public sealed class QuotaAdmissionRecorder
         string? watchPath,
         string? projectName,
         QuotaAdmissionPlan plan,
-        string source)
+        string source,
+        string? requestedCli = null,
+        string? requestedModel = null)
     {
+        RecordSelection(plan, source, projectName, null, requestedCli, requestedModel);
         _logger.Log(
             plan.ProjectionWarning is null ? LogLevel.Information : LogLevel.Warning,
             "cli_quota_admission_decision source={Source} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason}",
@@ -206,5 +223,49 @@ public sealed class QuotaAdmissionRecorder
             BetterCandidates = plan.BetterCandidates,
             ModelFallback = plan.ModelFallback,
         });
+    }
+
+    private string? RecordSelection(QuotaAdmissionPlan plan, string source, string? project, string? taskKey,
+        string? requestedCli, string? requestedModel, string? host = null, string? attemptId = null,
+        string? stepId = null)
+    {
+        if (_ledger is null) return null;
+        if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary && plan.ProjectionWarning is null)
+            return _ledger.ReturnToPrimary(source, project, taskKey,
+                new ModelSelectionRoute(plan.CliType, plan.Model, plan.ThinkingLevel), plan.Reason)?.Id;
+        var kind = plan.IsFallback ? "switched" : plan.IsDeferred ? "waiting" : "health-marked";
+        var fallback = plan.ModelFallback;
+        var entry = new ModelSelectionEvent
+        {
+            Kind = kind, Consumer = source, Host = host, Project = project, TaskKey = taskKey,
+            AttemptId = attemptId, StepId = stepId,
+            From = new ModelSelectionRoute(requestedCli ?? fallback?.CliType ?? plan.CliType,
+                requestedModel ?? fallback?.From ?? plan.Model, plan.ThinkingLevel),
+            To = plan.IsFallback ? new ModelSelectionRoute(plan.CliType, plan.Model, plan.ThinkingLevel) : null,
+            Rule = plan.IsFallback ? fallback?.Reason ?? "quota-cap" : plan.Outcome.ToString(),
+            Reason = plan.Reason,
+            Quota = plan.Projection is { } p ? new ModelSelectionQuota(requestedCli, p.WindowLabel,
+                p.CurrentUsedPct, p.CapPct, p.ProjectedUsedPct, p.ResetAt, null)
+                : fallback is { Window: not null } or { UsedPct: not null }
+                    ? new ModelSelectionQuota(requestedCli, fallback.Window, fallback.UsedPct, 95, null, plan.NextResetAt, null)
+                    : null,
+            Equivalence = fallback?.CatalogueVersion is null ? null : new ModelSelectionEquivalence(null, fallback.CatalogueVersion, "catalogue"),
+            ReturnToPrimaryAt = plan.NextResetAt,
+        };
+        return _ledger.Append(entry) ? entry.Id : null;
+    }
+
+    private string? RecordFallback(TaskInfo info, string? primaryCli, string? primaryModel, CliRouteDecision route,
+        string source, ModelFallbackInfo? fallback)
+    {
+        var entry = new ModelSelectionEvent
+        {
+            Kind = "switched", Consumer = source, Project = info.ProjectName, TaskKey = info.TaskKey,
+            From = new ModelSelectionRoute(primaryCli, primaryModel, null),
+            To = new ModelSelectionRoute(route.CliType, route.Model, route.ThinkingLevel),
+            Rule = fallback?.Reason ?? route.FallbackReason ?? "quota-cap", Reason = route.Reason,
+            Equivalence = route.CatalogueVersion is null ? null : new ModelSelectionEquivalence(null, route.CatalogueVersion, "catalogue"),
+        };
+        return _ledger!.Append(entry) ? entry.Id : null;
     }
 }

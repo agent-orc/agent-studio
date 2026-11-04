@@ -36,7 +36,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
     {
         var claude = new RecordingOneShot(CliTypes.Claude);
         var codex = new RecordingOneShot(CliTypes.Codex);
-        var registry = BuildRegistry(claude, codex);
+        var registry = BuildRegistryWithRecorder(claude, codex);
         var configured = new CliOneShotRequest(
             CliTypes.Claude,
             ModelIds.ClaudeOpus5,
@@ -64,6 +64,11 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         Assert.Equal("high", dispatched.ThinkingLevel);
         Assert.Equal(CliTypes.Claude, configured.CliType);
         Assert.Equal(ModelIds.ClaudeOpus5, configured.Model);
+        var ledger = new ModelSelectionLedger(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build());
+        var selection = Assert.Single(ledger.Query(provider: CliTypes.Codex, project: "quota-test",
+            consumer: source, rule: "quota-cap", from: ModelIds.ClaudeOpus5, to: ModelIds.Gpt56Sol).Events);
+        Assert.Equal(CliTypes.Claude, selection.From?.CliType);
     }
 
     [Fact]
@@ -206,7 +211,8 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
                 new TimelineLog(NullLogger<TimelineLog>.Instance),
                 new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance),
                 new OrchestratorLog(NullLogger<OrchestratorLog>.Instance),
-                NullLogger<QuotaAdmissionRecorder>.Instance);
+                NullLogger<QuotaAdmissionRecorder>.Instance,
+                new ModelSelectionLedger(configuration));
         }
         return new CliOneShotRegistry(implementations, admission, recorder);
     }
