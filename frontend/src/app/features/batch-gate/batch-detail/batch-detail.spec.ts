@@ -32,6 +32,7 @@ describe('BatchDetailComponent', () => {
     expect(summary).toContain('running');
     expect(section!.textContent).toContain('Phase: running');
     expect(host.querySelector('[data-testid="task-batch-open-panel"]')!.classList).toContain('btn--ghost');
+    expect(host.querySelector('[data-testid="task-batch-open-panel"]')!.classList).toContain('studio-button');
   });
 
   it('counts a queued member', async () => {

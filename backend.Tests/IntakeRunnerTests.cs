@@ -524,6 +524,23 @@ public class IntakeRunnerTests : IDisposable
     }
 
     [Fact]
+    public void BuildEnrichmentManifest_NonHeaderAreaDoesNotOutrankFrontendGuides()
+    {
+        var task = new TaskInfo { Id = "backend-card", Title = "Update backend UI status",
+            State = TaskStates.Ready, Mode = TaskModes.Coding, Tags = ["frontend"] };
+        ProjectStyleGuide Guide(string id, string area) => new(
+            id, id, $"quality/{id}.md", id, $"Apply {id}.", "1",
+            new StyleGuideAppliesTo(["*"], ["angular"], [area]));
+        var manifest = IntakeRunner.BuildEnrichmentManifest(task,
+            "Update the Angular frontend backend status component.",
+            [Guide("angular-components", "frontend"), Guide("frontend-styling", "frontend"),
+             Guide("backend-visuals", "backend")]);
+
+        Assert.DoesNotContain(manifest.Constraints, item => item.Id == "style-guide:backend-visuals");
+        Assert.Contains(manifest.Omissions, item => item.Id == "style-guide:backend-visuals");
+    }
+
+    [Fact]
     public void BuildEnrichmentManifest_DelegationTask_IncludesDelegationEconomy()
     {
         var target = new TaskInfo

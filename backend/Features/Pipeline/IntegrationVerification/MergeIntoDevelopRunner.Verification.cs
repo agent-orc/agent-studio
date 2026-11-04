@@ -58,6 +58,7 @@ public sealed partial class MergeIntoDevelopRunner
         string? watchPath,
         string repoRoot,
         string branch,
+        string pipelineType,
         DeliveryRefResolution delivery,
         MergeIntoIntegrationResult result)
     {
@@ -148,8 +149,10 @@ public sealed partial class MergeIntoDevelopRunner
         var verifiedSha = decision.Evidence == IntegrationVerificationEvidence.CarriedTree
             ? facts.CarriedVerifiedTreeSha
             : sha;
-        RecordVerification(jobFolderPath, repoRoot, branch, verifiedSha, decision, gate, result.EvidenceShas, containmentSha,
-            decision.Evidence == IntegrationVerificationEvidence.CarriedTree ? carried?.CoveredDeliveryShas : null);
+        if (noOp || !PublishWithinGate(project, pipelineType, repoRoot, branch)
+            || decision.State != IntegrationVerificationStates.Verified)
+            RecordVerification(jobFolderPath, repoRoot, branch, verifiedSha, decision, gate, result.EvidenceShas, containmentSha,
+                decision.Evidence == IntegrationVerificationEvidence.CarriedTree ? carried?.CoveredDeliveryShas : null);
         _logger.LogInformation(
             "merge-into-develop contained-delivery verification project={Project} job={JobId} integration={Integration} sha={Sha} noOp={NoOp} containedIn={ContainedIn} state={State} evidence={Evidence} action={Action}",
             project, jobId, branch, sha, noOp, containmentSha ?? "none", decision.State, decision.Evidence, decision.Action);

@@ -66,6 +66,14 @@
               }</p>
               @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
               <p><strong>{{ batch.phase }}</strong>@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
+              @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
+              @if (batch.exclusions?.length) {
+                <ul aria-label="Cards placed in another batch">
+                  @for (exclusion of batch.exclusions; track exclusion.taskKey) {
+                    <li>{{ exclusion.taskKey }} · {{ exclusion.detail ?? exclusion.reason }}</li>
+                  }
+                </ul>
+              }
               <p>Members: @for (member of batch.members; track member.taskKey) { <span>{{ member.taskKey }} ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }}) </span> }</p>
               <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
                 @if (publishedSha(batch.publication); as sha) { · Published {{ sha }} }

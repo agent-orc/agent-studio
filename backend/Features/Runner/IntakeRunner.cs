@@ -158,8 +158,9 @@ public sealed class IntakeRunner
                     Source = $"docs/{guide.RelPath}",
                     Revision = guide.Version,
                     Tier = "optional",
-                    Priority = matchedAreas.Any(area => !string.Equals(area, "frontend", StringComparison.OrdinalIgnoreCase))
-                        ? 10 : 20,
+                    Priority = matchedAreas.Contains("header", StringComparer.OrdinalIgnoreCase)
+                        ? 10
+                        : matchedAreas.Contains("frontend", StringComparer.OrdinalIgnoreCase) ? 20 : 30,
                     Areas = matchedAreas,
                     Text = $"Style-guide version {guide.Version}; matched task area(s): {string.Join(", ", matchedAreas)}. {guide.PromptSummary}"
                 });

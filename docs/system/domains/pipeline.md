@@ -535,6 +535,18 @@ review test level, gate timeout, and the optional LLM advisor. Legacy threshold
 fields remain accepted on input. The default scope is `documentation`.
 `GET` returns the settings and hard maximum of eight. `GET .../state` returns
 the latest plan decision, pending members, recent batches and member status.
+For the threshold planner, while a project gate holds the lease, newly eligible
+cards can join a formed batch that has not started. The pilot closes a
+replacement snapshot with the largest compatible membership up to
+`maximumSize` and retires the earlier
+formed snapshot. A lone card past its deadline waits for a partner while the
+project gate is busy. If a formed batch cannot accept it because of size or
+file overlap, it takes the per-task fallback. When the lease frees, the pilot
+starts the largest formed batch.
+With `overlap: separate`, cards touching a selected member's file wait for a
+different batch. The state response includes each batch's `exclusions` with
+the rule and conflicting file paths, and `formationReason` explains why a
+new batch stayed separate from one already waiting.
 `POST .../close-now` and `POST .../members/{taskKey}/eject` request operator
 intervention. Mutations require `X-Client-Id`.
 
@@ -680,6 +692,14 @@ pending. It is reconstructed only after the base SHA moves; a red run never
 validates the build profile. An operator eject reconstructs a held batch and
 sends only the requested member to per-card fallback. Code integrations also
 keep batches waiting from the local merge until its approved SHA reaches origin.
+For a per-task code integration, the project reservation and ref mutation lease
+span merge, gate, remote base check, and push. The card receives its verified
+merge record only after origin accepts the exact gated commit. If origin moves
+before publication, the rejected lane tip is saved under
+`refs/agent-studio/integration-backup/` and the lane returns to the fetched
+origin tip. A move in files outside the delivery can replay the merge with the
+prior green verdict; an overlapping move returns the review to the batch queue.
+The queue also receives a replay that cannot publish on its second attempt.
 The persisted pending-push marker is also the restart recovery job: the integration
 push backstop processes it even while its card is in Auto Review and regardless of
 the project's automatic artifact-push strategy. A terminal push failure is recorded

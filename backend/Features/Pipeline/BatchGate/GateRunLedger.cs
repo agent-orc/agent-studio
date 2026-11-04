@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Pipeline;
 
@@ -27,12 +29,14 @@ public sealed record GateRunDailySummary(DateOnly Day,
     double? P90BatchGateMinutes, double? HostMinutes, double? ReconciliationPercent);
 
 /// <summary>Instance-local records outside the workspace repository. Ninety days are retained.</summary>
-public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null)
+public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null,
+    ILogger<GateRunLedger>? logger = null)
 {
     public const int RetentionDays = 90;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly object _writeLock = new();
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+    private readonly ILogger<GateRunLedger> _logger = logger ?? NullLogger<GateRunLedger>.Instance;
 
     public void Append(GateRunLedgerRow row)
     {
@@ -54,7 +58,14 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
                     JsonSerializer.Serialize(file, row, Json);
                     file.Flush(true);
                 }
-                File.Move(temporary, path, false);
+                try { File.Move(temporary, path, false); }
+                catch (IOException) when (File.Exists(path))
+                {
+                    if (!File.ReadAllBytes(temporary).AsSpan().SequenceEqual(File.ReadAllBytes(path)))
+                        _logger.LogWarning("gate-run-ledger-conflict run_id={RunId} path={Path}",
+                            row.RunId, path);
+                    return;
+                }
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
             Prune(_time.GetUtcNow().UtcDateTime.Date.AddDays(-RetentionDays));
@@ -163,7 +174,7 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
         return new GateRunLedgerRow(runId ?? request.LedgerRunId ?? result.GateRunId ?? Guid.NewGuid().ToString("N"),
             type, request.Project ?? "unknown", request.LedgerCards ?? (request.JobId is null ? [] : [request.JobId]),
             request.IntegrationRef, result.GateProfileDigest ?? request.LedgerProfile, requested, slot,
-            slot, result.Processes.Count > 0
+            request.LedgerLeaseAcquiredAtUtc, result.Processes.Count > 0
                 ? result.Processes.Min(process => process.StartedAtUtc) : slot,
             finished, result.Verdict.ToString(),
             result.DurationMs, result.GateQueueWaitMs, spans,
@@ -177,7 +188,7 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
 
 /// <summary>Captures a run once at the caller boundary, including remote failures.</summary>
 public sealed class LedgeredBuildTestGateRunner(IBuildTestGateRunner inner, GateRunLedger ledger,
-    BatchGateStore? store = null)
+    BatchGateStore? store = null, ILogger<LedgeredBuildTestGateRunner>? logger = null)
     : IBuildTestGateRunner
 {
     public async Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
@@ -186,7 +197,7 @@ public sealed class LedgeredBuildTestGateRunner(IBuildTestGateRunner inner, Gate
     {
         if (mode == PostStepMode.Off)
             return await inner.RunAsync(request, changedFiles, profile, mode, timeout, ct).ConfigureAwait(false);
-        var requested = DateTimeOffset.UtcNow;
+        var requested = request.LedgerRequestedAtUtc ?? DateTimeOffset.UtcNow;
         var load = GateRunLedger.HostLoad();
         DateTimeOffset? slot = null;
         var acquired = request.OnMachineGateAcquired;
@@ -204,14 +215,22 @@ public sealed class LedgeredBuildTestGateRunner(IBuildTestGateRunner inner, Gate
         var finished = DateTimeOffset.UtcNow;
         slot ??= result.GateStartedAtUtc is { } start && result.GateQueueWaitMs >= 0
             ? start.AddMilliseconds(result.GateQueueWaitMs) : null;
-        var row = GateRunLedger.FromResult(request, result, requested, finished, slot,
-            load, GateRunLedger.HostLoad());
-        ledger.Append(row);
-        if (store is not null && row.Type is ("batch-pre-check" or "per-task-gate"))
-            store.RecordExecution(new BatchGateExecutionFact(row.Project, null, row.RunId,
-                result.TestedSha ?? request.ExpectedSha ?? "", row.Outcome, Environment.MachineName,
-                requested, finished, row.QueueWaitMs, 0, result.OriginEvidencePath ?? "",
-                row.DurationMs, row.Cards));
+        try
+        {
+            var row = GateRunLedger.FromResult(request, result, requested, finished, slot,
+                load, GateRunLedger.HostLoad());
+            ledger.Append(row);
+            if (store is not null && row.Type is ("batch-pre-check" or "per-task-gate"))
+                store.RecordExecution(new BatchGateExecutionFact(row.Project, null, row.RunId,
+                    result.TestedSha ?? request.ExpectedSha ?? "", row.Outcome, Environment.MachineName,
+                    requested, finished, row.QueueWaitMs, 0, result.OriginEvidencePath ?? "",
+                    row.DurationMs, row.Cards));
+        }
+        catch (Exception exception)
+        {
+            (logger ?? NullLogger<LedgeredBuildTestGateRunner>.Instance).LogError(exception,
+                "gate-run-ledger-append-failed run_id={RunId}", request.LedgerRunId ?? result.GateRunId);
+        }
         return result;
     }
 }

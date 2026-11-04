@@ -7,7 +7,7 @@ namespace AgentStudio.Pipeline;
 
 public sealed record BatchCoordinatorLease(
     string LeaseId, BatchGateScope Scope, string Owner, long Fence,
-    DateTimeOffset ExpiresAtUtc);
+    DateTimeOffset ExpiresAtUtc, DateTimeOffset AcquiredAtUtc = default);
 
 /// <summary>
 /// Persistent coordinator lease scoped to project, repository, branch and
@@ -36,9 +36,19 @@ public sealed class BatchGateLeaseService
         if (existing is { } current && current.ExpiresAtUtc > now)
             return null;
         var next = new BatchCoordinatorLease(Guid.NewGuid().ToString("N"), scope,
-            owner, (existing?.Fence ?? 0) + 1, now + Ttl);
+            owner, (existing?.Fence ?? 0) + 1, now + Ttl, now);
         Write(scope, next);
         return next;
+    }
+
+    public bool IsBusy(BatchGateScope scope)
+    {
+        try
+        {
+            using var guard = Guard(scope);
+            return Read(scope) is { } current && current.ExpiresAtUtc > _now();
+        }
+        catch (IOException) { return true; }
     }
 
     public BatchCoordinatorLease? Renew(BatchCoordinatorLease lease)

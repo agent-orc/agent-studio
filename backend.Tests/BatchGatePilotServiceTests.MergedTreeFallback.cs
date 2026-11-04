@@ -141,7 +141,7 @@ public sealed partial class BatchGatePilotServiceTests
 
         Assert.Equal(1, _gate.FallbackRuns);
         Assert.Equal(0, _gate.MergeRuns);
-        var receipt = Directory.GetFiles(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key, "post-steps"),
+        var receipt = Directory.GetFiles(Path.Combine(Card(factory, member.Key).FolderPath, "post-steps"),
             IntegrationGateJournal.PreDevelopBuildGateStep + "-*.log").Single();
         Assert.Contains("verdictSource=CacheHit", File.ReadAllText(receipt));
         var report = pilot.Report(ProjectName);
