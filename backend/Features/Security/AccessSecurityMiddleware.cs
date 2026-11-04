@@ -315,6 +315,11 @@ public sealed class AccessSecurityMiddleware
         // to a live deploy-job or run lease and checks the matching scope.
         if (path.Equals(AgentStudio.Secrets.SecretEndpoints.ResolvePath, StringComparison.OrdinalIgnoreCase))
         {
+            if (serviceAccount is not null)
+            {
+                await Reject(context, 403, "secret-resolve-denied", "Service accounts and API tokens never read secret values.");
+                return;
+            }
             if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
             await _next(context);
             return;
@@ -652,6 +657,14 @@ public sealed class AccessSecurityMiddleware
         if (!safeMethod && projected.LegacyRole == StudioRoles.Viewer)
         {
             await Reject(context, 403, "role-denied", "Viewer role is read-only.");
+            return;
+        }
+        // The operator agent role keeps installation operation read-only: its
+        // writes address projects, whatever principal holds it (OP-1).
+        if (!safeMethod && projected.Role == IamRoles.OperatorAgent
+            && target.Scope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler))
+        {
+            await Reject(context, 403, "project-scope-denied", "The operator agent role cannot make installation-wide changes.");
             return;
         }
         // An API token (AGT-3186) writes only project-addressed routes, even

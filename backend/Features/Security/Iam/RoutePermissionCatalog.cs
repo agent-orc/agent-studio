@@ -433,6 +433,9 @@ public static class RoutePermissionCatalog
             "wiki/**", "workbenches/**", "security/files/**", "security/meta");
 
         // --- Project settings ----------------------------------------------
+        // One step override at a time; the operator agent changes review step
+        // models here without the rest of the project settings (OP-1).
+        Add("PUT", IamPermissions.ProjectPipelineWrite, "/api/projects/{}/pipeline-step");
         // Only project settings writers may enable shadow package review.
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/review-package");
         Add("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}");

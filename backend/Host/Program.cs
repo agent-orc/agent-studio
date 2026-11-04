@@ -1596,6 +1596,10 @@ if (underTestHost)
 }
 
 var networkedSecurityProfile = SecurityProfiles.IsNetworked(app.Configuration);
+// Load the access state now, so a pending IAM migration (for example the
+// operator token rebinding of OP-1) and its audit entries run at start
+// rather than on the first request.
+if (networkedSecurityProfile) _ = app.Services.GetRequiredService<AccessSecurityStore>().BootstrapRequired;
 var projectScopedSignalRProfile = networkedSecurityProfile || publicDemoExecutionProfile;
 var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");
