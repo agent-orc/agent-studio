@@ -179,6 +179,12 @@ public static class RoutePermissionCatalog
         // The move tool reads this health probe from inside the API container;
         // the endpoint itself rejects non-loopback callers before returning host facts.
         Add("GET", IamPermissions.Anonymous, "/healthz/readiness");
+        Add("R", IamPermissions.Anonymous, "/.well-known/agent-studio/jwks.json");
+        Add("R", IamPermissions.WorkspaceAdminister, "/api/integrations/quality-studio/connection");
+        Add("W", IamPermissions.WorkspaceAdminister, "/api/integrations/quality-studio/connection", "/api/integrations/quality-studio/token",
+            "/api/integrations/quality-studio/projects/{}/repository");
+        AddProjectChecked("R", IamPermissions.ProjectRead, "/api/integrations/quality-studio/status",
+            "/api/integrations/quality-studio/open");
         Add("*", IamPermissions.Anonymous, "/healthz/**");
         Add("R", IamPermissions.Anonymous, "/api/auth/status", "/recovery");
         Add("POST", IamPermissions.Anonymous,

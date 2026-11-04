@@ -14,11 +14,13 @@ namespace AgentStudio.Registry;
 public sealed class QualityStudioRegistrationService(
     HttpClient client, IConfiguration configuration, ISecretProvider secrets,
     ProjectRegistry projects, ProjectSettingsService settings,
-    ILogger<QualityStudioRegistrationService> logger)
+    ILogger<QualityStudioRegistrationService> logger,
+    AgentStudio.QualityStudio.QualityStudioConnectionStore? connectionStore = null)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
 
-    public bool Connected => !string.IsNullOrWhiteSpace(configuration["QualityStudio:BaseUrl"]);
+    public bool Connected => connectionStore?.Get() is not null
+        || !string.IsNullOrWhiteSpace(configuration["QualityStudio:BaseUrl"]);
 
     public async Task<QualityStudioRegistration> ReconcileProjectAsync(string projectId, CancellationToken cancellationToken = default)
     {
@@ -95,7 +97,7 @@ public sealed class QualityStudioRegistrationService(
 
     private Uri Origin()
     {
-        var raw = configuration["QualityStudio:BaseUrl"];
+        var raw = connectionStore?.Get()?.InternalBaseUrl ?? configuration["QualityStudio:BaseUrl"];
         if (!Uri.TryCreate(raw?.TrimEnd('/') + "/", UriKind.Absolute, out var origin)
             || origin.Scheme is not ("http" or "https"))
             throw new InvalidOperationException("Quality Studio URL is invalid.");
@@ -124,7 +126,7 @@ public sealed class QualityStudioRegistrationService(
             && !string.IsNullOrWhiteSpace(configuration["QualityStudio:ApiToken"]))
             return configuration["QualityStudio:ApiToken"]!;
         var reference = configuration["QualityStudio:ApiTokenReference"]
-            ?? "secret://workspace/quality-studio-api-token";
+            ?? AgentStudio.QualityStudio.QualityStudioEndpoints.TokenReference;
         try
         {
             return (await secrets.GetForPlatformAsync(SecretReference.Parse(reference),
@@ -160,7 +162,7 @@ public sealed class QualityStudioRegistrationService(
     {
         using var request = new HttpRequestMessage(method, new Uri(origin, path));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        request.Headers.Add("X-Client-Id", configuration["QualityStudio:ClientId"] ?? "agent-studio");
+        request.Headers.Add("X-Client-Id", connectionStore?.Get()?.ServiceClientId ?? configuration["QualityStudio:ClientId"] ?? "agent-studio");
         if (body is not null) request.Content = JsonContent.Create(body);
         return await client.SendAsync(request, ct);
     }
