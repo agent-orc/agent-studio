@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentStudio.Runner;
 using AgentStudio.Tasks;
+using AgentStudio.Tests.Architecture;
 using Microsoft.Extensions.Logging.Abstractions;
 using Contract = AgentStudio.TaskServer.Contracts;
 using Xunit;
@@ -294,7 +295,7 @@ public sealed class RemoteReviewSettlementJournalFormatTests : IDisposable
         var folder = Path.Combine(_root, attemptId);
         var path = RemoteReviewSettlementJournal.PathFor(folder, attemptId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.Copy(Path.Combine(AppContext.BaseDirectory, "Fixtures", "review-settlement", fixture), path);
+        File.Copy(Path.Combine(CSharpSourceScanner.RepoRoot(), "backend.Tests", "Fixtures", "review-settlement", fixture), path);
         return folder;
     }
 
