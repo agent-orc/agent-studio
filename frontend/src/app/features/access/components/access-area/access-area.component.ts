@@ -6,6 +6,7 @@ import { OperatorAgentsService } from '../../services/operator-agents.service';
 import { OperatorApprovalsService } from '../../services/operator-approvals.service';
 import { StandingGrantsService } from '../../services/standing-grants.service';
 import { AccessBindingsComponent } from '../access-bindings/access-bindings.component';
+import { AccessBreakGlassComponent } from '../access-break-glass/access-break-glass';
 import { AccessGroupsComponent } from '../access-groups/access-groups.component';
 import { AccessInviteFormComponent } from '../access-invite-form/access-invite-form.component';
 import { AccessOperatorActivityComponent } from '../access-operator-activity/access-operator-activity.component';
@@ -30,7 +31,7 @@ import { StatusIndicatorComponent, type StatusTone } from '../../../../component
   selector: 'app-access-area',
   standalone: true,
   imports: [
-    AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
+    AccessBindingsComponent, AccessBreakGlassComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
     AccessOperatorAgentsComponent, AccessOperatorApprovalsComponent, AccessOperatorKillSwitchComponent, AccessRunnersComponent,
     AccessServiceAccountsComponent, AccessStandingGrantsComponent, SessionManagerComponent, StatusIndicatorComponent,
   ],

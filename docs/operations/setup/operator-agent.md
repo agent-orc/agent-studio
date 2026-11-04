@@ -283,3 +283,42 @@ ControlPlaneAudit__Sink__AppendTokenFile=/run/secrets/audit-sink-append
 The append credential must only be able to add entries. Without a sink the
 chain is still verified locally and the activity view says that no sink is
 configured.
+
+## Break-glass custody and host recovery
+
+In **Settings > Access > Break-glass windows**, enter a fresh authenticator
+code or use a passkey and choose **Issue sealed credential**. Studio shows the
+random value once. Seal it in offline Owner custody, away from the operator
+agent's OS user, host credential files, and the repository. Opening consumes
+the credential; issue and seal a replacement after each use. The Owner then
+enters the credential, another fresh second factor, the exact operator session
+IDs, a project ID or short code for the review card, and one or two hours.
+The window ends automatically at its deadline or when the Owner closes it.
+
+If Studio is stopped, run the host command from the control-plane host under
+the administrative account that can read the security state. It requires a
+configured off-host audit sink. The command reads the sealed credential and
+current TOTP code from the terminal without echo and never accepts either as
+a command argument:
+
+```sh
+dotnet OrchestratorApi.dll --open-break-glass \
+  --owner '<owner username>' --project '<project id>' \
+  --sessions '<operator session id>' --hours 2
+```
+
+The host command writes the opening entry to the separate host journal and
+forwards it to the sink. On recovery, Studio alerts on the window, closes it
+when due, and creates a Human review card listing the break-glass audit entries.
+The reviewer compares the card with the host journal and sink. Revoke the
+named sessions with the kill switch if any action must stop sooner.
+
+While Studio remains stopped, record each host action with its operation,
+target, and outcome. The command requires the current authenticator code on
+hidden input and confirms the host journal and sink acknowledgement:
+
+```sh
+dotnet OrchestratorApi.dll --record-break-glass \
+  --owner '<owner username>' --window '<window id>' \
+  --operation 'service.restart' --target '<allowlisted service>' --outcome 'ok'
+```

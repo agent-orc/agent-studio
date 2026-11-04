@@ -23,6 +23,7 @@
 /api/auth/api-tokens	free	-	-	-
 /api/auth/audit/operator-activity	free	-	-	-
 /api/auth/iam/	free	-	-	-
+/api/auth/iam/break-glass/windows	free	-	-	-
 /api/auth/iam/check	free	-	-	-
 /api/auth/iam/operator-agents/	free	-	-	-
 /api/auth/iam/operator-approvals/	free	-	-	-
