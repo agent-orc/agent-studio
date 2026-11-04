@@ -54,6 +54,12 @@ public sealed record BuildTestGateRequest(
     public string? Project { get; init; }
     public string? WatchPath { get; init; }
     public string? JobId { get; init; }
+    public IReadOnlyList<string>? LedgerCards { get; init; }
+    public string? LedgerBatchId { get; init; }
+    public string? LedgerTriggerEvent { get; init; }
+    public string? LedgerType { get; init; }
+    public string? LedgerRunId { get; init; }
+    public string? LedgerProfile { get; init; }
     public string? AttemptChainId { get; init; }
     public string? SubjectRef { get; init; }
     /// <summary>Explicit project directories from a frozen test plan; null checks out the complete tree.</summary>
@@ -144,6 +150,7 @@ public sealed record BuildTestGateRequest(
 
 public sealed record BuildTestGateProcessEvidence
 {
+    public string? Host { get; init; }
     public GateResourceEvidence? Resources { get; init; }
     public GateBudgetExtensionEvidence? BudgetExtension { get; init; }
     public bool FailedTestsObserved { get; init; }
@@ -230,6 +237,8 @@ public sealed record BuildTestGateResult(
     public string? ServerArtifactRunId { get; init; }
     public DateTimeOffset? GateStartedAtUtc { get; init; }
     public DateTimeOffset? GateCompletedAtUtc { get; init; }
+    public double? GateHostLoadAtStart { get; init; }
+    public double? GateHostLoadAtEnd { get; init; }
     public long GateQueueWaitMs { get; init; }
     public bool GateCollisionDetected { get; init; }
     public bool SelfHealed { get; init; }
@@ -489,6 +498,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         string? profileDigest = null;
         var gateRunId = Guid.NewGuid().ToString("N");
         var startedAt = DateTimeOffset.UtcNow;
+        var hostLoadAtStart = GateRunLedger.HostLoad();
         var infrastructureTimeout = request.InfrastructureTimeout > TimeSpan.Zero
             ? request.InfrastructureTimeout
             : TimeSpan.FromMinutes(2);
@@ -525,6 +535,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 {
                     request.OnMachineGateAcquired?.Invoke();
                     acquiredAtUtc = DateTime.UtcNow;
+                    hostLoadAtStart = GateRunLedger.HostLoad();
                 }
                 else
                 {
@@ -556,6 +567,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                         request.OnMachineGateAcquired?.Invoke();
                         request.OnMachineGateSlotAcquired?.Invoke(lease.Slot, lease.Count);
                         acquiredAtUtc = DateTime.UtcNow;
+                        hostLoadAtStart = GateRunLedger.HostLoad();
                         _logger.LogInformation(
                             "build_test_gate_acquired gate_run_id={GateRunId} repository={Repository} slot={Slot} gate_slots={GateSlots} collision={CollisionDetected} queue_wait_ms={QueueWaitMs}",
                             gateRunId, repositoryPath, lease.Slot, lease.Count, lease.CollisionDetected, lease.QueueWaitMs);
@@ -908,6 +920,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 GateId = request.GateId,
                 GateStartedAtUtc = completed.VerdictSource == GateVerdictSource.CacheHit ? completed.GateStartedAtUtc : startedAt,
                 GateCompletedAtUtc = completed.VerdictSource == GateVerdictSource.CacheHit ? completed.GateCompletedAtUtc : DateTimeOffset.UtcNow,
+                GateHostLoadAtStart = completed.VerdictSource == GateVerdictSource.CacheHit
+                    ? completed.GateHostLoadAtStart : hostLoadAtStart,
+                GateHostLoadAtEnd = completed.VerdictSource == GateVerdictSource.CacheHit
+                    ? completed.GateHostLoadAtEnd : GateRunLedger.HostLoad(),
                 GateQueueWaitMs = machineLease?.QueueWaitMs ?? fallbackQueueWaitMs,
                 GateCollisionDetected = machineLease?.CollisionDetected ?? fallbackCollision,
                 SelfHealed = selfHealed,

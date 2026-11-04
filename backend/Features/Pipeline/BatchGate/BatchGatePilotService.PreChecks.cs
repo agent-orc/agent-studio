@@ -45,6 +45,8 @@ public sealed partial class BatchGatePilotService
                     Project = pending.Subject.Project,
                     JobId = pending.Subject.TaskKey,
                     GateId = "batch-pre-check",
+                    LedgerTriggerEvent = "pending:" + pending.ReviewAttemptId,
+                    LedgerProfile = pending.Subject.GateProfileDigest,
                     SubjectRef = pending.Subject.ResultRef,
                     IntegrationRef = baseSha,
                     RequiredTestLevel = TestExecutionLevels.BatchPreCheck,

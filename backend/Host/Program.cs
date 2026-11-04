@@ -1094,8 +1094,15 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateTransportSelector>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport>(services =>
     services.GetRequiredService<AgentStudio.Pipeline.GateTransportSelector>());
-builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
-    AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateRunLedger(
+    AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "gate-run-ledger")));
+builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner>(sp =>
+    new AgentStudio.Pipeline.LedgeredBuildTestGateRunner(
+        sp.GetRequiredService<AgentStudio.Pipeline.RemoteBuildTestGateRunner>(),
+        sp.GetRequiredService<AgentStudio.Pipeline.GateRunLedger>(),
+        sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineStepProbeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreDevelopBuildGate>();

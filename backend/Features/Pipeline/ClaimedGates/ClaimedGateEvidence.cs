@@ -81,6 +81,16 @@ public static class ClaimedGateEvidence
                 System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture,
                 out var version) ? version : null,
             Executor = $"gate:{attempt.HostId ?? "unclaimed"}/{attempt.AttemptId}#{attempt.Fence}",
+            Processes = (report?.Commands ?? []).Select(command => new BuildTestGateProcessEvidence
+            {
+                Host = attempt.HostId,
+                Phase = "verification",
+                Command = command.StepId,
+                StartedAtUtc = new DateTimeOffset(DateTime.SpecifyKind(command.StartedAt, DateTimeKind.Utc)),
+                CompletedAtUtc = new DateTimeOffset(DateTime.SpecifyKind(command.FinishedAt, DateTimeKind.Utc)),
+                ExitCode = command.ExitCode,
+                TimedOut = command.TimedOut,
+            }).ToArray(),
             FailureKind = kind,
         };
     }

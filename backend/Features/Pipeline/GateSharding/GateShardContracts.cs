@@ -136,6 +136,11 @@ public sealed record GateShardEvidence(
     GateTestCounts Tests,
     IReadOnlyList<string> FailedTests)
 {
+    public DateTimeOffset? StartedAtUtc { get; init; }
+    public DateTimeOffset? CompletedAtUtc { get; init; }
+    public IReadOnlyList<string> ClassNames { get; init; } = [];
+    public IReadOnlyDictionary<string, double> ClassDurationsMs { get; init; } =
+        new Dictionary<string, double>(StringComparer.Ordinal);
     public BuildTestGateFailureKind FailureKind { get; init; } = BuildTestGateFailureKind.None;
     public GateShardRerunEvidence? Rerun { get; init; }
 
