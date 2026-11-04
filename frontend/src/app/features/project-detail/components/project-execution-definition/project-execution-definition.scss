@@ -46,18 +46,6 @@ h3 {
   font-size: 0.76rem;
 }
 
-.execution__status,
-.execution__cache-state {
-  border-radius: 999px;
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  background: var(--studio-card-muted-bg);
-}
-
-.execution__status[data-valid='true'] {
-  background: color-mix(in srgb, var(--studio-success) 12%, var(--studio-bg-elevated));
-  color: var(--studio-success);
-}
-
 .execution__details,
 .execution__manifest {
   padding-block: var(--studio-spacing-2);

@@ -4,7 +4,7 @@
             [attr.aria-expanded]="open()" data-testid="branch-sweep-toggle">
       <app-disclosure-marker [open]="open()" [size]="10" />
       <span class="swp__title">Stale-branch sweep</span>
-      <span class="swp__pill" [attr.data-mode]="mode()" data-testid="branch-sweep-mode">{{ mode() }}</span>
+      <app-status-indicator [tone]="modeTone(mode())" [label]="mode()" [compact]="true" testId="branch-sweep-mode" />
       @if (report(); as run) {
         <span class="swp__pill swp__num">{{ run.refsAfter }} refs</span>
       }
@@ -145,7 +145,8 @@
                 @if (candidate.ageDays !== null) {
                   <span class="swp__num swp__age">{{ candidate.ageDays }}d</span>
                 }
-                <span class="swp__status" [attr.data-eligible]="candidate.eligible">{{ candidate.decision }}</span>
+                <app-status-indicator [tone]="decisionTone(candidate.eligible)" [label]="candidate.decision" [compact]="true"
+                                      testId="branch-sweep-decision" />
               </span>
               <span class="swp__reason">{{ candidate.reason }}</span>
             </li>

@@ -32,11 +32,13 @@
       </span>
 
       @if (card.probeFailureLabel) {
-        <span class="hquota__stale-label"
-              data-testid="hquota-stale-marker"
-              [cacTooltip]="card.error ?? card.probeFailureLabel">stale</span>
+        <span class="hquota__stale" [cacTooltip]="card.error ?? card.probeFailureLabel">
+          <app-status-indicator tone="warning" label="stale" [compact]="true" testId="hquota-stale-marker" />
+        </span>
       } @else if (card.stale) {
-        <span class="hquota__stale-dot" aria-label="Stale snapshot">●</span>
+        <span class="hquota__stale" cacTooltip="Stale snapshot">
+          <app-status-indicator tone="warning" label="stale" [compact]="true" testId="hquota-stale-snapshot" />
+        </span>
       }
     </button>
   }

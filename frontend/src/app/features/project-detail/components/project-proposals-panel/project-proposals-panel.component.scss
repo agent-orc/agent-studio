@@ -32,22 +32,16 @@
 .proposal-row__preview--loaded img { opacity: 1; }
 .proposal-row__copy { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
 .proposal-row__copy strong { display: -webkit-box; overflow: hidden; font-size: 13px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.proposal-row__meta { display: flex; align-items: center; gap: 6px; color: var(--proposal-muted); font-size: 10px; text-transform: uppercase; }
-.severity-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--proposal-warning); }
-[data-severity="critical"] .severity-dot { background: var(--proposal-danger); }
-.status-chip, .proposal-detail__severity { align-self: start; padding: 2px 7px; border-radius: 999px; background: var(--proposal-raised); color: var(--proposal-muted); font-size: 10px; text-transform: uppercase; }
-.status-chip[data-status="spawned"] { background: color-mix(in srgb, var(--proposal-success) 16%, transparent); color: var(--proposal-success); }
-.status-chip[data-status="rejected"] { opacity: .7; }
+.proposal-row__meta { display: flex; align-items: center; gap: 6px; color: var(--proposal-muted); font-size: 10px; }
+.proposal-row__status { align-self: start; }
+.proposal-row__status[data-status="rejected"] { opacity: .7; }
 .topic-chip { width: fit-content; padding: var(--studio-spacing-1) var(--studio-spacing-2); border-radius: 999px; background: color-mix(in srgb, var(--studio-accent) 13%, transparent); color: var(--studio-accent); font-size: 10px; font-weight: 750; line-height: 1; text-transform: uppercase; }
 .proposal-detail { @include m.deck-panel(0); min-width: 0; overflow: hidden; }
 .proposal-detail__hero { position: relative; display: grid; height: 260px; place-items: center; overflow: hidden; background: var(--proposal-raised); }
 .proposal-detail__hero img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .18s ease; }
 .proposal-detail__hero .proposal-detail__image--loaded { opacity: 1; }
 .proposal-detail__image-status { display: flex; align-items: center; gap: var(--studio-spacing-2); color: var(--proposal-muted); font-size: 12px; }
-.proposal-detail__image-status--error { color: var(--proposal-danger); }
-.proposal-detail__spinner { width: 16px; height: 16px; border: 2px solid color-mix(in srgb, var(--proposal-muted) 30%, transparent); border-top-color: var(--studio-accent); border-radius: 50%; animation: proposal-spin .8s linear infinite; }
-.proposal-detail__severity { position: absolute; top: 14px; right: 14px; background: var(--proposal-surface); box-shadow: var(--studio-card-shadow); }
-.proposal-detail__severity[data-severity="critical"] { color: var(--proposal-danger); }
+.proposal-detail__severity { position: absolute; top: 14px; right: 14px; padding: 2px 7px; border-radius: 999px; background: var(--proposal-surface); box-shadow: var(--studio-card-shadow); }
 .proposal-detail__body { padding: 24px; }
 .proposal-detail__topic { display: flex; align-items: center; gap: var(--studio-spacing-2); margin-bottom: var(--studio-spacing-3); }
 .proposal-detail__topic > span:first-child { color: var(--proposal-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
@@ -78,16 +72,15 @@
 .proposal-action:hover:not(:disabled) { filter: brightness(1.06); }
 .proposal-action:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 .proposal-action:disabled { opacity: .58; cursor: wait; }
-.proposal-detail__resolved, .proposals__empty { color: var(--proposal-muted); }
+.proposals__empty { color: var(--proposal-muted); }
 .proposal-rejection-form { display: grid; gap: var(--studio-spacing-3); margin-top: var(--studio-spacing-3); padding: var(--studio-spacing-4); border: 1px solid color-mix(in srgb, var(--studio-error) 35%, var(--studio-card-muted-border)); border-radius: 8px; background: var(--studio-card-muted-bg); }
 .proposal-rejection-form h4 { color: var(--proposal-text); }
 .proposal-remove { display: flex; align-items: center; justify-content: flex-end; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-4); color: var(--proposal-muted); font-size: 11px; }
 .proposal-link-danger { padding: var(--studio-spacing-1); border: 0; background: transparent; color: var(--proposal-muted); font: inherit; text-decoration: underline; cursor: pointer; }
 .proposal-link-danger:hover { color: var(--proposal-danger); }
 .proposals__error { @include m.deck-panel; @include m.deck-panel-attention; color: var(--proposal-danger); }
-@keyframes proposal-spin { to { transform: rotate(360deg); } }
 @keyframes proposal-shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 @media (max-width: 980px) { .proposals__header { flex-direction: column; } .proposals__workspace { grid-template-columns: 1fr; } .proposals__list { max-height: 360px; } }
 @media (max-width: 760px) { .proposal-management { align-items: stretch; flex-direction: column; } .proposal-management__cleanup { margin-left: 0; } .proposal-confirm { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .proposal-detail__actions { align-items: stretch; flex-direction: column; } .proposal-detail__action-buttons { display: grid; grid-template-columns: 1fr; } }
-@media (prefers-reduced-motion: reduce) { .proposal-row__preview::after, .proposal-detail__spinner { animation-duration: 0s; } .proposal-row__preview img, .proposal-detail__hero img { transition-duration: 0s; } }
+@media (prefers-reduced-motion: reduce) { .proposal-row__preview::after { animation-duration: 0s; } .proposal-row__preview img, .proposal-detail__hero img { transition-duration: 0s; } }

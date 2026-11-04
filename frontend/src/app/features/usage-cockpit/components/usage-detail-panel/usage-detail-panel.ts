@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, ElementRef, computed, inject, input } from '@angular/core';
 
 import { UsageCostDetailComponent } from '../usage-cost-detail/usage-cost-detail';
+import { usageStateTone } from '../usage-cost-detail/usage-detail-status';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
 import {
   buildUsageDetailView,
@@ -21,7 +23,7 @@ import {
 @Component({
   selector: 'app-usage-detail-panel',
   standalone: true,
-  imports: [UsageCostDetailComponent],
+  imports: [UsageCostDetailComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './usage-detail-panel.html',
   styleUrl: './usage-detail-panel.scss',
@@ -34,6 +36,7 @@ export class UsageDetailPanelComponent {
   /** Prefix for section ids so two panels never share an id. */
   readonly idPrefix = input('usage-detail');
 
+  readonly stateTone = usageStateTone;
   readonly cliManagementHref = CLI_MANAGEMENT_HREF;
 
   private readonly host = inject(ElementRef<HTMLElement>).nativeElement as HTMLElement;

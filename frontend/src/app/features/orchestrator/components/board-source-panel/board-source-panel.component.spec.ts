@@ -76,6 +76,8 @@ describe('BoardSourcePanelComponent', () => {
     expect(text(root, 'board-source-differences-count')).toBe('1 unexplained, 0 explained');
     expect(text(root, 'board-source-readiness')).toContain('Clean window open');
     expect(text(root, 'board-source-readiness')).toContain('2.0 of 7 days clean');
+    expect(root.querySelector('[data-testid="board-source-sync-state"]')?.getAttribute('data-tone')).toBe('success');
+    expect(root.querySelector('[data-testid="board-source-readiness-state"]')?.getAttribute('data-tone')).toBe('running');
     expect(text(root, 'board-source-board-read')).toContain('p95 120 ms (target under 200 ms)');
     expect(text(root, 'board-source-board-read')).toContain('0 Git spawns per read (target 0)');
     const row = root.querySelector('[data-fingerprint="Agent Studio|AGT-1|title"]')!;

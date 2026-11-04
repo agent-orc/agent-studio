@@ -49,14 +49,18 @@
 
   @if (selectedHost(); as host) {
     <div class="execution-card__host" data-testid="project-execution-selected-host">
-      <span class="execution-card__status-dot" [attr.data-status]="host.status" aria-hidden="true"></span>
-      <span><strong>{{ host.name }}</strong> · {{ host.status }} · {{ host.os }}</span>
+      <strong>{{ host.name }}</strong> ·
+      <app-status-indicator [tone]="hostTone(host.status)" [label]="host.status" [compact]="true"
+                            testId="project-execution-selected-host-status" />
+      · {{ host.os }}
     </div>
   }
 
   @if (deliveryPreflight(); as preflight) {
     <p class="execution-card__delivery" [attr.data-status]="preflight.status" data-testid="project-delivery-preflight">
-      <strong>Delivery preflight {{ preflight.status === 'ready' ? 'passed' : 'blocked' }}.</strong>
+      <app-status-indicator [tone]="preflight.status === 'ready' ? 'success' : 'danger'"
+                            [label]="preflight.status === 'ready' ? 'Delivery preflight passed' : 'Delivery preflight blocked'"
+                            testId="project-delivery-preflight-status" />
       @if (preflight.targetBranch) {
         Target {{ preflight.targetBranch }}.
       }
@@ -94,26 +98,15 @@
     <ol class="execution-card__checks" data-testid="project-execution-checklist">
       @for (check of checks(); track check.key) {
         <li class="execution-card__check" [attr.data-state]="check.state" [attr.data-testid]="'project-execution-check-' + check.key">
-          <span class="execution-card__check-icon" aria-hidden="true">
-            @switch (check.state) {
-              @case ('passed') { ✓ }
-              @case ('failed') { × }
-              @case ('running') { ··· }
-              @default { ○ }
-            }
-          </span>
-          <span>
-            <strong>{{ check.label }}</strong>
-            <small>{{ check.detail }}</small>
-          </span>
+          <app-status-indicator [tone]="probeTone(check.state)" [label]="check.label" />
+          <small>{{ check.detail }}</small>
         </li>
       }
     </ol>
 
     @if (probePassed()) {
-      <p class="execution-card__ready" data-testid="project-execution-ready">
-        Ready for project execution on {{ selectedHost()?.name }}.
-      </p>
+      <app-status-indicator tone="success" testId="project-execution-ready"
+                            [label]="'Ready for project execution on ' + (selectedHost()?.name ?? '') + '.'" />
     }
   </div>
 </article>

@@ -2,6 +2,21 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, signal } fro
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { ArchitectureOverview } from '../../../../models/project-docs.model';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
+type AdrStatusClass = 'accepted' | 'superseded' | 'deprecated' | 'other';
+
+/**
+ * ADR status tones: an accepted decision is the live one; a superseded one
+ * points at its replacement (info); a deprecated one is retired and stays
+ * calm (R4); free-form statuses such as Proposed are neutral.
+ */
+const ADR_STATUS_TONES: Record<AdrStatusClass, StatusTone> = {
+  accepted: 'success',
+  superseded: 'info',
+  deprecated: 'neutral',
+  other: 'neutral',
+};
 
 /**
  * Project-level Architecture section: browse the project's
@@ -13,7 +28,7 @@ import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 @Component({
   selector: 'app-project-architecture-section',
   standalone: true,
-  imports: [MarkdownViewComponent],
+  imports: [MarkdownViewComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-architecture-section.html',
   styleUrl: './project-architecture-section.scss'
@@ -52,12 +67,16 @@ export class ProjectArchitectureSectionComponent {
     this.openedId.update(curr => curr === id ? null : id);
   }
 
-  statusClass(s: string): 'accepted' | 'superseded' | 'deprecated' | 'other' {
+  statusClass(s: string): AdrStatusClass {
     const k = s.toLowerCase();
     if (k.includes('accept')) return 'accepted';
     if (k.includes('super')) return 'superseded';
     if (k.includes('depr')) return 'deprecated';
     return 'other';
+  }
+
+  statusTone(s: string): StatusTone {
+    return ADR_STATUS_TONES[this.statusClass(s)];
   }
 
   /**

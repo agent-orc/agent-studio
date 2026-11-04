@@ -583,7 +583,7 @@ describe('ProjectWikiSectionComponent', () => {
     expect(strip, 'classification strip').toBeTruthy();
     const status = strip!.querySelector('[data-testid="project-wiki-class-concepts/overview.md-status"]');
     expect(status?.textContent?.trim()).toBe('überholt');
-    expect(status?.getAttribute('data-tone')).toBe('superseded');
+    expect(status?.getAttribute('data-tone')).toBe('warning');
     const type = strip!.querySelector('[data-testid="project-wiki-class-concepts/overview.md-type"]');
     expect(type?.textContent?.trim()).toBe('KON');
     expect(type?.getAttribute('data-tone')).toBe('muted');
@@ -615,7 +615,7 @@ describe('ProjectWikiSectionComponent', () => {
     // Status chip in tree optics; the successor renders as a navigable link.
     const chip = panel!.querySelector('[data-testid="project-wiki-classification-status-chip"]');
     expect(chip?.textContent?.trim()).toBe('überholt');
-    expect(chip?.getAttribute('data-tone')).toBe('superseded');
+    expect(chip?.getAttribute('data-tone')).toBe('warning');
 
     // Type is spelled out, not the compact tree code; analysis date is visible.
     const type = panel!.querySelector('[data-testid="project-wiki-classification-type"]');
@@ -817,8 +817,9 @@ describe('ProjectWikiSectionComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.componentInstance.openedContent()).toBe('# Changed\n');
-    expect(el(fixture).querySelector('[data-testid="project-wiki-save-result"]')!.textContent)
-      .toContain('docs-branch');
+    const saveResult = el(fixture).querySelector('[data-testid="project-wiki-save-result"]')!;
+    expect(saveResult.textContent?.trim()).toBe('Committed on docs-branch at def1234');
+    expect(saveResult.getAttribute('data-tone')).toBe('success');
     http.verify();
   });
 
@@ -1506,6 +1507,7 @@ describe('ProjectWikiSectionComponent', () => {
     expect(missing.getAttribute('data-anchor-state')).toBe('missing');
     expect(missing.getAttribute('aria-disabled')).toBe('true');
     expect(missing.textContent).toContain('Missing');
+    expect(missing.querySelector('[data-testid="project-wiki-linked-element-missing"]')?.getAttribute('data-tone')).toBe('danger');
 
     const postMessage = vi.spyOn(frame!.contentWindow!, 'postMessage');
     live.click();

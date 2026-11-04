@@ -201,26 +201,6 @@
   overflow-wrap: anywhere;
 }
 
-.pwiki__drift-msg,
-.pwiki__drift-error {
-  margin: 0;
-  padding: var(--studio-spacing-2);
-  border-radius: 5px;
-  font-size: 0.78rem;
-}
-
-.pwiki__drift-msg {
-  border: 1px solid color-mix(in srgb, var(--studio-accent-teal) 35%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-accent-teal) 10%, transparent);
-  color: var(--studio-fg);
-}
-
-.pwiki__drift-error {
-  border: 1px solid color-mix(in srgb, var(--severity-high) 35%, var(--studio-border));
-  background: color-mix(in srgb, var(--severity-high) 10%, transparent);
-  color: var(--severity-high);
-}
-
 .pwiki__drift-result {
   min-width: 0;
   min-height: 0;
@@ -246,6 +226,12 @@
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+/* The head is an uppercase caption; the status label keeps sentence case. */
+.pwiki__drift-loading {
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .pwiki__drift-result pre {

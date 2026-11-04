@@ -14,10 +14,14 @@
       <div class="cum__stale"
            data-testid="cli-usage-probe-stale"
            [cacTooltip]="row()?.error ?? failure">
-        {{ failure }} · showing last-good quota values
+        <app-status-indicator tone="warning"
+                              [label]="failure + ' · showing last-good quota values'"
+                              testId="cli-usage-probe-stale-status" />
       </div>
     } @else if (row()?.error; as err) {
-      <div class="cum__error" role="alert">{{ err }}</div>
+      <div class="cum__error" role="alert">
+        <app-status-indicator tone="danger" [label]="err" testId="cli-usage-probe-error" />
+      </div>
     }
 
     <section class="cum__panel">

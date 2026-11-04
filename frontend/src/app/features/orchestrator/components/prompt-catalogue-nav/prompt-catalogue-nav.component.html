@@ -60,13 +60,9 @@
                 {{ overrideLabel(item) }}
               </span>
               @if (isStale(item)) {
-                <span class="prompt-catalogue__stale"
-                      role="img"
-                      aria-label="Override based on outdated shipped default - review needed"
-                      cacTooltip="Override based on outdated shipped default - review needed"
-                      [attr.data-testid]="'prompt-admin-stale-' + item.name">
-                  <app-studio-icon name="warn" [size]="12" />
-                </span>
+                <app-status-indicator tone="warning" label="stale" [compact]="true"
+                                      detail="Override based on outdated shipped default - review needed"
+                                      [testId]="'prompt-admin-stale-' + item.name" />
               }
             }
             @if (hasTelemetry()) {

@@ -150,7 +150,7 @@ describe('WikiFolderViewComponent', () => {
     const statusChip = root.querySelector(
       '[data-testid="wiki-folder-class-concepts/deep/detail.md-status"]')!;
     expect(statusChip.textContent?.trim()).toBe('überholt');
-    expect(statusChip.getAttribute('data-tone')).toBe('superseded');
+    expect(statusChip.getAttribute('data-tone')).toBe('warning');
     const typeChip = root.querySelector(
       '[data-testid="wiki-folder-class-concepts/deep/detail.md-type"]')!;
     expect(typeChip.textContent?.trim()).toBe('KON');

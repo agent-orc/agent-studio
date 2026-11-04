@@ -95,8 +95,12 @@ import {
   wikiJoinRel,
   wikiParentDir,
 } from './wiki-path.util';
-import { wikiReadStoredExpandedIds, wikiSafeReportAnchor, wikiSafeViewerTab } from './wiki-state.util';
-import { WikiClassMeta, classificationBadges, classificationMeta } from './wiki-classification';
+import {
+  type WikiPersistedState, type WikiViewerTab, wikiReadStoredExpandedIds, wikiSafeReportAnchor, wikiSafeViewerTab, wikiSaveResultLabel,
+} from './wiki-state.util';
+import { WikiClassMeta, classificationBadges, classificationMeta, classificationStatusTone } from './wiki-classification';
+import { driftScoreBandTone } from './wiki-drift-band';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { withRouteSegment } from '../../../../services/url-hash.util';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { ClientService } from '../../../../services/client.service';
@@ -128,23 +132,13 @@ const WIKI_CONTEXT_MIN_WIDTH = 232;
 const WIKI_CONTEXT_MAX_WIDTH = 420;
 const WIKI_CONTEXT_DEFAULT_WIDTH = 284;
 const WIKI_RESIZE_STEP = 16;
-type WikiViewerTab = 'doc' | 'report' | 'source' | 'edit';
 type WikiResizablePanel = 'nav' | 'context';
-interface WikiPersistedState {
-  navCollapsed?: boolean;
-  openedRel?: string | null;
-  viewerTab?: WikiViewerTab;
-  navWidth?: number;
-  contextWidth?: number;
-  expandedIds?: string[];
-}
 interface WikiResizeState {
   panel: WikiResizablePanel;
   pointerId: number;
   startX: number;
   startWidth: number;
 }
-
 
 /**
  * Project-level knowledge view backed by the physical docs/ folder hierarchy:
@@ -188,6 +182,7 @@ interface WikiResizeState {
     WikiSearchResultsComponent,
     WikiSourceBadgeComponent,
     WikiDriftModalComponent,
+    StatusIndicatorComponent,
   ],
   providers: [
     WikiLiveRefreshService,
@@ -369,6 +364,9 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   protected readonly nodeId = nodeId;
   protected readonly documentMetricChips = documentMetricChips;
   protected readonly classificationBadges = classificationBadges;
+  protected readonly classificationStatusTone = classificationStatusTone;
+  protected readonly driftScoreBandTone = driftScoreBandTone;
+  protected readonly saveResultLabel = wikiSaveResultLabel;
 
   constructor() {
     effect(() => {

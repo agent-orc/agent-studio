@@ -57,9 +57,6 @@
     background: var(--studio-bg);
     padding: 1px 8px;
     border-radius: 999px;
-
-    &[data-mode='reclaim'] { color: var(--studio-warn); }
-    &[data-mode='report-only'] { color: var(--studio-accent); }
   }
 
   &__body {
@@ -285,17 +282,6 @@
     border-radius: 3px;
   }
 
-  &__status {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 1px 6px;
-    border-radius: 3px;
-    background: var(--studio-bg);
-    color: var(--studio-fg-dim);
-
-    &[data-eligible='true'] { color: var(--studio-warn); }
-  }
 
   &__reason {
     grid-column: 2;

@@ -67,7 +67,14 @@
             </div>
             <div>
               <dt>Result</dt>
-              <dd>{{ report.scoreBand }} · {{ report.summary }}</dd>
+              <dd>
+                <app-status-indicator
+                    [tone]="bandTone(report.scoreBand)"
+                    [label]="report.scoreBand"
+                    [compact]="true"
+                    testId="project-wiki-drift-result-band" />
+                · {{ report.summary }}
+              </dd>
             </div>
           } @else {
             <div>
@@ -78,10 +85,19 @@
         </dl>
 
         @if (driftMessage(); as msg) {
-          <p class="pwiki__drift-msg" data-testid="project-wiki-drift-message">{{ msg }}</p>
+          <app-status-indicator
+              tone="success"
+              [label]="msg"
+              [detail]="msg"
+              testId="project-wiki-drift-message" />
         }
         @if (driftError(); as err) {
-          <p class="pwiki__drift-error" data-testid="project-wiki-drift-error">{{ err }}</p>
+          <app-status-indicator
+              role="alert"
+              tone="danger"
+              [label]="err"
+              [detail]="err"
+              testId="project-wiki-drift-error" />
         }
       </section>
 
@@ -89,7 +105,12 @@
         <div class="pwiki__drift-result-head">
           <span>{{ driftReportDetail() ? 'Report markdown' : 'CLI prompt' }}</span>
           @if (driftPromptLoading()) {
-            <span>Loading prompt...</span>
+            <app-status-indicator
+                class="pwiki__drift-loading"
+                tone="running"
+                label="Loading prompt..."
+                [compact]="true"
+                testId="project-wiki-drift-prompt-loading" />
           }
         </div>
         <pre data-testid="project-wiki-drift-result">{{ driftModalText() }}</pre>

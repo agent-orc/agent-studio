@@ -6,7 +6,8 @@
     <span class="verify-notice__copy">
       <span class="verify-notice__title-row">
         <strong id="project-settings-no-verify-title">No verify commands defined</strong>
-        <span class="verify-notice__badge">Merges refused</span>
+        <app-status-indicator class="verify-notice__badge" tone="warning" label="Merges refused" [compact]="true"
+                              testId="project-settings-no-verify-state" />
       </span>
       <span>
         <code>{{ summary().verifyDefinition?.path }}</code> is missing, and no build or test
@@ -29,7 +30,8 @@
     <span class="verify-notice__copy">
       <span class="verify-notice__title-row">
         <strong id="project-settings-no-verify-title">No build/test commands</strong>
-        <span class="verify-notice__badge">Not applicable</span>
+        <app-status-indicator class="verify-notice__badge" tone="neutral" label="Not applicable" [compact]="true"
+                              testId="project-settings-no-verify-state" />
       </span>
       <span>
         @if (summary().verifyDefinition?.state === 'declared-empty') {

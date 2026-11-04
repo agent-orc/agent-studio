@@ -2,6 +2,7 @@ import { SegmentedControlComponent } from '../../../../components/segmented-cont
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 export interface ProjectGraphSize {
   files: number;
@@ -96,10 +97,26 @@ const ROW_STEP = 126;
 const GRAPH_MARGIN = 28;
 const MAX_GRAPH_COMPONENTS = 36;
 
+const SOURCE_STATE_TONES: Record<string, StatusTone> = {
+  clean: 'success',
+  dirty: 'warning',
+  unavailable: 'neutral',
+};
+
+/** Tone of the checkout state the graph was discovered from; unknown states are neutral. */
+export function graphSourceStateTone(state: string): StatusTone {
+  return SOURCE_STATE_TONES[state] ?? 'neutral';
+}
+
+/** Tone of a component relation: an unresolved target needs attention. */
+export function graphRelationTone(resolution: string): StatusTone {
+  return resolution === 'unresolved' ? 'warning' : 'neutral';
+}
+
 @Component({
   selector: 'app-project-graph',
   standalone: true,
-  imports: [SegmentedControlComponent, LoadingSurfaceComponent],
+  imports: [SegmentedControlComponent, LoadingSurfaceComponent, StatusIndicatorComponent],
   templateUrl: './project-graph.component.html',
   styleUrl: './project-graph.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -108,6 +125,8 @@ export class ProjectGraphComponent {
   readonly viewOptions = [{ value: 'graph', label: 'Graph', testid: 'project-graph-view-graph' }, { value: 'list', label: 'Components', testid: 'project-graph-view-list' }] as const;
   private readonly http = inject(HttpClient);
   private requestVersion = 0;
+  readonly sourceStateTone = graphSourceStateTone;
+  readonly relationTone = graphRelationTone;
 
   readonly projectName = input.required<string>();
   readonly view = signal<'graph' | 'list'>('graph');

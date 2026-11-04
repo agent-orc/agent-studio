@@ -18,11 +18,10 @@
   } @else {
     <!-- Status strip: overall running count + rebuild-all. -->
     <div class="project-urls__strip" data-testid="project-urls-strip">
-      <span class="project-urls__strip-dot"
-            [class.project-urls__strip-dot--ok]="startableCount() > 0 && runningCount() >= startableCount()"
-            [class.project-urls__strip-dot--building]="anyBuilding()"></span>
       <span class="project-urls__strip-label">
-        <b>{{ runningCount() }}/{{ urls().length }}</b> dev servers running
+        <app-status-indicator [tone]="stripTone()"
+                              [label]="runningCount() + '/' + urls().length + ' dev servers running'"
+                              [compact]="true" />
       </span>
       <button type="button"
               class="project-urls__strip-btn"
@@ -49,12 +48,11 @@
             <div class="project-urls__meta">
               <div class="project-urls__name">
                 {{ u.label }}
-                <span class="project-urls__pill"
-                      [class.project-urls__pill--running]="pillFor(u) === 'running'"
-                      [class.project-urls__pill--offline]="pillFor(u) === 'offline'"
-                      [class.project-urls__pill--building]="pillFor(u) === 'building'"
-                      [attr.data-testid]="'project-urls-pill-' + u.id"
-                      [attr.data-status]="pillFor(u)">{{ pillFor(u) | projectUrlStatusLabel }}</span>
+                <app-status-indicator [tone]="pillTone(pillFor(u))"
+                                      [label]="pillFor(u) | projectUrlStatusLabel"
+                                      [compact]="true"
+                                      [testId]="'project-urls-pill-' + u.id"
+                                      [attr.data-status]="pillFor(u)" />
               </div>
               <div class="project-urls__host">
                 {{ host(u.url) }}
@@ -175,7 +173,9 @@
             <div class="project-urls__test-result"
                  [attr.data-state]="result.classification"
                  data-testid="project-urls-test-result">
-              <b>{{ result.classification }}</b>
+              <app-status-indicator [tone]="diagnosisTone(result.classification)"
+                                    [label]="result.classification"
+                                    testId="project-urls-test-result-state" />
               <span>{{ result.summary }}</span>
               <details data-testid="project-urls-test-details">
                 <summary>Technical details</summary>

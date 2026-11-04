@@ -95,10 +95,7 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
 .wfolder__state {
   margin: 0;
   padding: var(--studio-spacing-3) 0;
-  font-size: 0.78rem;
-  color: var(--wfolder-muted);
 }
-.wfolder__state--error { color: var(--studio-error); }
 
 /* ---- table ----
    table-layout: fixed is the actual fix for the squeeze bug: under the
@@ -267,21 +264,11 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
   line-height: 1.6;
   color: var(--wfolder-muted);
 }
-.wfolder__class-chip + .wfolder__class-chip { margin-left: var(--studio-spacing-1); }
+.wfolder__class-status + .wfolder__class-chip { margin-left: var(--studio-spacing-1); }
 .wfolder__class-chip[data-kind='type'] {
   font-weight: 600;
   letter-spacing: 0.04em;
   color: color-mix(in srgb, var(--wfolder-muted) 82%, transparent);
-}
-.wfolder__class-chip[data-tone='stale'] {
-  color: color-mix(in srgb, var(--studio-error) 55%, var(--wfolder-muted));
-  border-color: color-mix(in srgb, var(--studio-error) 30%, var(--wfolder-muted));
-  background: color-mix(in srgb, var(--studio-error) 7%, transparent);
-}
-.wfolder__class-chip[data-tone='superseded'] {
-  color: color-mix(in srgb, var(--studio-warn, var(--wfolder-fg)) 45%, var(--wfolder-muted));
-  border-color: color-mix(in srgb, var(--studio-warn, var(--wfolder-muted)) 25%, var(--wfolder-muted));
-  background: color-mix(in srgb, var(--studio-warn, transparent) 6%, transparent);
 }
 .wfolder__cell-when {
   white-space: nowrap;

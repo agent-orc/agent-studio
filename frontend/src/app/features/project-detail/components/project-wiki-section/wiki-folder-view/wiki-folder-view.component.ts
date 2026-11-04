@@ -1,10 +1,11 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { WikiFolderChild, WikiFolderOverview, WikiNodeType } from '../../../../../models/project-docs.model';
 import { ProjectDocsService } from '../../../../../services/project-docs.service';
 import { WikiStarsService } from '../wiki-stars.service';
-import { WikiClassBadge, classificationBadges } from '../wiki-classification';
+import { WikiClassBadge, classificationBadges, classificationStatusTone } from '../wiki-classification';
 
 const FILE_ORDER_DRAG_TYPE = 'application/x-wiki-file-order';
 
@@ -33,7 +34,7 @@ interface WikiFolderCrumb {
 @Component({
   selector: 'app-wiki-folder-view',
   standalone: true,
-  imports: [StudioIconComponent, TooltipDirective],
+  imports: [StatusIndicatorComponent, StudioIconComponent, TooltipDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './wiki-folder-view.component.html',
   styleUrl: './wiki-folder-view.component.scss',
@@ -221,6 +222,9 @@ export class WikiFolderViewComponent {
     if (child.kind === 'folder') return 'Ordner';
     return child.fileType ?? 'md';
   }
+
+  /** Status-indicator tone of a classification status badge. */
+  readonly statusTone = classificationStatusTone;
 
   /** Status/Typ cell: curated classification badges (pages only, often empty). */
   classBadges(child: WikiFolderChild): WikiClassBadge[] {

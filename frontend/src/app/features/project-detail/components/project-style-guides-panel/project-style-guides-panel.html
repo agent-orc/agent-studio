@@ -21,11 +21,11 @@
 
   @if (loading()) {
     <p class="style-guides__state" role="status" data-testid="project-wiki-style-guides-loading">
-      Loading engineering style guides...
+      <app-status-indicator tone="running" label="Loading engineering style guides..." />
     </p>
   } @else if (error(); as loadError) {
-    <p class="style-guides__state style-guides__state--error" role="alert" data-testid="project-wiki-style-guides-error">
-      {{ loadError }}
+    <p class="style-guides__state" role="alert" data-testid="project-wiki-style-guides-error">
+      <app-status-indicator tone="danger" [label]="loadError" />
     </p>
   } @else if (catalogue(); as guideCatalogue) {
     @if (guideCatalogue.guides.length > 0) {

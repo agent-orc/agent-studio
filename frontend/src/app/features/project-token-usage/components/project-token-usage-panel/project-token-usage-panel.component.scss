@@ -14,20 +14,10 @@
 
 .tup__freshness {
   display: inline-flex;
-  align-items: center;
   align-self: flex-start;
-  gap: var(--studio-space-2, 8px);
-  color: var(--studio-fg-muted);
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
 }
-.tup__freshness-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--severity-pass);
-}
-.tup__freshness--warning .tup__freshness-dot { background: var(--severity-high); }
 
 .tup__source-warning {
   @include m.deck-panel;

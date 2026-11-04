@@ -47,9 +47,12 @@
           <span class="wdash__stat-label">Stale</span>
         </span>
         @if (overallDrift(); as overall) {
-          <span class="wdash__status" data-testid="project-wiki-pulse-overall">
-            <i class="wdash__status-dot" [attr.data-tone]="overall.tone" aria-hidden="true"></i>
-            <span>Drift {{ overall.grade }}</span>
+          <span class="wdash__status">
+            <app-status-indicator
+                [tone]="overall.tone"
+                [label]="'Drift ' + overall.grade"
+                [compact]="true"
+                testId="project-wiki-pulse-overall" />
           </span>
         }
       </div>

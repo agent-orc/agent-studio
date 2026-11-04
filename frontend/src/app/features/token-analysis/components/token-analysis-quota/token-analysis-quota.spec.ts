@@ -20,7 +20,8 @@ describe('TokenAnalysisQuotaComponent', () => {
     fixture.detectChanges();
     await fixture.whenStable();
     const root: HTMLElement = fixture.nativeElement;
-    expect(root.querySelectorAll('path').length).toBe(1);
+    expect(root.querySelectorAll('path.qc__line').length).toBe(1);
     expect(root.querySelector('[data-testid="token-analysis-quota-table"]')?.textContent).toContain('running');
+    expect(root.querySelector('[data-testid="token-analysis-quota-open"]')?.getAttribute('data-tone')).toBe('running');
   });
 });

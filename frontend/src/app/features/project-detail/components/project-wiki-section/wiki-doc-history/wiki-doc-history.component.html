@@ -27,7 +27,8 @@
         @if (meta()?.status; as status) {
           <div class="wdh__row">
             <dt>Status</dt>
-            <dd>{{ status }}</dd>
+            <!-- Free-text provenance status: no mapping, so neutral (AGT-3403). -->
+            <dd><app-status-indicator tone="neutral" [label]="status" [compact]="true" testId="wiki-doc-history-status" /></dd>
           </div>
         }
         @if (meta()?.taskKey; as taskKey) {

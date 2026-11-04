@@ -17,6 +17,8 @@ import {
   SecurityReviewSummary,
 } from './security-panel.types';
 import { ConceptHelpComponent } from '../../../../components/concept-help/concept-help.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { baselineTone, historyVerdictTone, verdictTone } from './security-panel-status';
 
 /**
  * Project Security panel (slice 1 of the quality-system mockup,
@@ -40,7 +42,7 @@ import { ConceptHelpComponent } from '../../../../components/concept-help/concep
 @Component({
   selector: 'app-security-panel',
   standalone: true,
-  imports: [ConceptHelpComponent],
+  imports: [ConceptHelpComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './security-panel.component.html',
   styleUrl: './security-panel.component.scss',
@@ -85,6 +87,8 @@ export class SecurityPanelComponent {
     if (status.includes('fail') || status.includes('crit')) return 'failing';
     return 'unknown';
   });
+
+  readonly baselineTone = computed(() => baselineTone(this.baselineBadge()));
 
   readonly baselineBadgeLabel = computed<string>(() => {
     switch (this.baselineBadge()) {
@@ -230,12 +234,8 @@ export class SecurityPanelComponent {
     return idx > 0 ? iso.slice(0, idx) : iso;
   }
 
-  verdictTone(verdict: string | null): string {
-    if (!verdict) return 'unknown';
-    const v = verdict.toLowerCase();
-    if (v.includes('ok') || v.includes('pass')) return 'ok';
-    if (v.includes('stale') || v.includes('warn')) return 'stale';
-    if (v.includes('fail') || v.includes('crit')) return 'fail';
-    return 'unknown';
-  }
+  /** Status tone of a free-text review verdict (AGT-3403). */
+  readonly verdictTone = verdictTone;
+  /** History rows: a past failure is not acute (R4). */
+  readonly historyVerdictTone = historyVerdictTone;
 }

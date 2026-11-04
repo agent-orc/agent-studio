@@ -9,10 +9,24 @@ import {
   signal,
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { RemoteHostsService, type RemoteHost } from '../../../remote-hosts';
+import { hostStatusIndicatorTone } from '../../../remote-hosts/models/remote-host.model';
 
 type ProbeState = 'pending' | 'running' | 'passed' | 'failed';
 type ProbeKey = 'code' | 'branch' | 'toolchain' | 'noop';
+
+const PROBE_TONES: Record<ProbeState, StatusTone> = {
+  passed: 'success',
+  failed: 'danger',
+  running: 'running',
+  pending: 'neutral',
+};
+
+/** Tone of one readiness probe check; an unknown state is neutral. */
+export function probeCheckTone(state: ProbeState): StatusTone {
+  return PROBE_TONES[state] ?? 'neutral';
+}
 
 interface ProbeCheck {
   key: ProbeKey;
@@ -33,7 +47,7 @@ interface ProjectExecutionSettings {
 @Component({
   selector: 'app-execution-assignment-card',
   standalone: true,
-  imports: [SegmentedControlComponent],
+  imports: [SegmentedControlComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './execution-assignment-card.html',
   styleUrl: './execution-assignment-card.scss',
@@ -43,6 +57,9 @@ export class ExecutionAssignmentCardComponent implements OnInit {
 
   private readonly http = inject(HttpClient);
   readonly hostRegistry = inject(RemoteHostsService);
+
+  readonly hostTone = hostStatusIndicatorTone;
+  readonly probeTone = probeCheckTone;
 
   readonly selectedHostId = signal('local');
   readonly pickupMode = signal<'auto' | 'manual' | 'paused'>('manual');

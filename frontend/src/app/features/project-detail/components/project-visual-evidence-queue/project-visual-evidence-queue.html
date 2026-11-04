@@ -26,7 +26,7 @@
               <button type="button" (click)="inspect(item)">Inspect</button>
               @if (item.reviewStatus === 'unseen') {
                 <button type="button" class="evidence-queue__ack" [disabled]="acknowledging().has(item.id)" [attr.data-testid]="'project-overview-evidence-ack-' + item.id" (click)="acknowledge(item)">{{ acknowledging().has(item.id) ? 'Saving...' : 'Mark reviewed' }}</button>
-              } @else { <span class="evidence-queue__status">{{ item.reviewStatus === 'reviewed' ? 'Reviewed' : 'No longer actionable' }}</span> }
+              } @else { <app-status-indicator [tone]="reviewIndicator(item).tone" [label]="reviewIndicator(item).label" [compact]="true" /> }
             </div>
           </li>
         }

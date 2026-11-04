@@ -187,29 +187,7 @@
   font-size: 0.9rem;
 }
 
-.cli-env__status {
-  margin-left: auto;
-  padding: 0 var(--studio-spacing-2);
-  border: 1px solid var(--cli-env-control-border);
-  border-radius: 999px;
-  color: var(--studio-fg-muted);
-  font-size: 0.68rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.cli-env__status--ready {
-  border-color: var(--cli-env-ready-border);
-  background: var(--cli-env-ready-bg);
-  color: var(--severity-pass);
-}
-
-.cli-env__status--issue {
-  border-color: var(--cli-env-issue-border);
-  background: var(--cli-env-issue-bg);
-  color: var(--severity-high);
-}
+.cli-env__status { margin-left: auto; }
 
 .cli-env__facts {
   display: grid;

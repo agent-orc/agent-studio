@@ -18,6 +18,7 @@ import { QuotaApiService } from '../../services/quota-api.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
 import { formatQuotaAge, quotaProbeFailureLabel, quotaSnapshotIsStale } from '../../quota-freshness.util';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { AuthService } from '../../../../services/auth.service';
 import { ProviderAuthStatusService } from '../../../remote-hosts/services/provider-auth-status.service';
 import { runnerQuotaCard } from './runner-quota-card';
@@ -99,7 +100,7 @@ export interface QuotaCardModel {
 @Component({
   selector: 'app-header-quota',
   standalone: true,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './header-quota.html',
   styleUrl: './header-quota.scss'

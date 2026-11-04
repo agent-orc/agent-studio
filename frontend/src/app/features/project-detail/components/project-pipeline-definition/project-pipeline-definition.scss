@@ -51,19 +51,6 @@ h4 {
   font-size: 0.76rem;
 }
 
-.pipeline__status {
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--studio-warn) 14%, var(--studio-bg-elevated));
-  color: var(--studio-fg-strong);
-  font-variant-numeric: tabular-nums;
-}
-
-.pipeline__status[data-valid='true'] {
-  background: color-mix(in srgb, var(--studio-success) 12%, var(--studio-bg-elevated));
-  color: var(--studio-success);
-}
-
 .pipeline__issues,
 .pipeline__notes {
   display: flex;

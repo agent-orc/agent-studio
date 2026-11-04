@@ -82,6 +82,9 @@
                       [attr.title]="'Select commit attributed to ' + task.key + ': ' + task.title"
                       (click)="selectTaskCommit($event, row.commit)"
                       [attr.aria-label]="'Select commit attributed to card ' + task.key + ': ' + task.title">{{ chip.label }}</button>
+            } @else if (chipStatusTone(chip); as tone) {
+              <app-status-indicator [compact]="true" [tone]="tone" [label]="chip.label" [detail]="chip.detail"
+                                    [attr.data-kind]="chip.kind" testId="git-history-commit-state" />
             } @else {
               <span class="history__chip" [attr.data-kind]="chip.kind"
                     [attr.data-tone]="chip.tone" [attr.title]="chip.detail"

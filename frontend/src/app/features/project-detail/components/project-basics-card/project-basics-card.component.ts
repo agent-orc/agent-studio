@@ -3,6 +3,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { catchError, forkJoin, of } from 'rxjs';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   PROJECT_COLOR_SWATCHES,
   effectiveProjectRootPath,
@@ -29,10 +30,24 @@ interface CheckoutStatus {
   reason: string | null;
 }
 
+const CHECKOUT_TONES: Record<string, StatusTone> = {
+  behind: 'warning',
+  diverged: 'warning',
+  'missing-branch': 'danger',
+  error: 'danger',
+  'up-to-date': 'success',
+  'fast-forwarded': 'success',
+};
+
+/** Tone of the observed checkout sync state; an unknown state is neutral. */
+export function checkoutStatusTone(status: string): StatusTone {
+  return CHECKOUT_TONES[status] ?? 'neutral';
+}
+
 @Component({
   selector: 'app-project-basics-card',
   standalone: true,
-  imports: [ProjectBasicsFormComponent, PendingButtonDirective],
+  imports: [ProjectBasicsFormComponent, PendingButtonDirective, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-basics-card.component.html',
   styleUrl: './project-basics-card.component.scss',
@@ -58,6 +73,7 @@ export class ProjectBasicsCardComponent {
   readonly savedMessage = signal<string | null>(null);
   readonly checkout = signal<CheckoutStatus | null>(null);
   readonly syncingCheckout = signal(false);
+  readonly checkoutTone = checkoutStatusTone;
 
   readonly workspaceId = signal('');
   readonly displayName = signal('');

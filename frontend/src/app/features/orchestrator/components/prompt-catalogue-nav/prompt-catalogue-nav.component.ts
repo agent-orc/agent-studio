@@ -1,7 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
 import {
   PromptCatalogItem,
@@ -25,7 +25,7 @@ interface PromptGroup {
   imports: [
     DatePipe,
     SectionHeaderComponent,
-    StudioIconComponent,
+    StatusIndicatorComponent,
     TreeRowComponent,
     TooltipDirective,
   ],

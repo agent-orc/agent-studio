@@ -53,7 +53,9 @@ describe('ProjectExecutionDefinitionComponent', () => {
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('[data-testid="execution-repository-definition"]')?.textContent)
       .toContain('schemaVersion: 1');
-    expect(root.querySelector('.execution__cache-state')?.textContent).toContain('hit');
+    const cacheState = root.querySelector('[data-testid="execution-cache-state"]') as HTMLElement;
+    expect(cacheState.textContent).toContain('hit');
+    expect(cacheState.dataset['tone']).toBe('success');
     expect(root.querySelector('[data-testid="execution-preparation-warnings"]')?.textContent)
       .toContain('redirects or unsets NUGET_PACKAGES');
     expect((root.querySelector('[data-testid="execution-save-override"]') as HTMLButtonElement).disabled).toBe(true);

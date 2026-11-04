@@ -624,29 +624,6 @@
   font-size: 0.72rem;
 }
 
-.psd__sev {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.1rem;
-  padding: 0 var(--studio-spacing-1);
-  border-radius: 4px;
-  background: var(--psd-info-bg);
-  color: var(--studio-fg);
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.psd__sev--warn {
-  background: var(--psd-warn-bg);
-  color: var(--severity-warn);
-}
-
-.psd__sev--high {
-  background: var(--psd-error-bg);
-  color: var(--severity-high);
-}
-
 .psd__actions {
   display: flex;
   flex-wrap: wrap;

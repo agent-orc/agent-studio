@@ -5,7 +5,10 @@
         @if (detail(); as d) { {{ d.card.key ?? d.card.jobId }} · {{ d.card.title }} } @else { Card drill-down }
       </h3>
       @if (detail(); as d) {
-        <p data-testid="card-token-drilldown-summary">{{ d.card.project }} · {{ d.card.outcome }} · {{ d.card.rounds }} rounds ·
+        <p data-testid="card-token-drilldown-summary">{{ d.card.project }} ·
+          <app-status-indicator [tone]="outcomeTone(d.card.outcome)" [label]="d.card.outcome" [compact]="true"
+                                testId="card-token-drilldown-outcome" />
+          · {{ d.card.rounds }} rounds ·
           {{ fmt(d.card.totalTokens) }} tokens · {{ usd(d.card.costUsd) }} theoretical</p>
       }
     </div>
@@ -39,7 +42,10 @@
             <span class="dd__label">{{ item.event.label }}</span>
             <span class="dd__dim">Attempt {{ item.event.attempt }} · {{ item.event.model }} · {{ item.event.level }} ·
               {{ item.event.cli }} on {{ item.event.host }}@if (item.event.calls > 1) { · {{ item.event.calls }} calls }</span>
-            @if (item.event.result) { <span class="dd__result">{{ item.event.result }}</span> }
+            @if (item.event.result) {
+              <app-status-indicator class="dd__result" [tone]="resultTone(item.event.result)" [label]="item.event.result"
+                                    [compact]="true" testId="card-token-drilldown-result" />
+            }
           </div>
           <div class="dd__tokens dd__num">
             <span class="dd__bar"><span [style.width.%]="item.share * 100" [style.background]="kindColor(item.event.kind)"></span></span>

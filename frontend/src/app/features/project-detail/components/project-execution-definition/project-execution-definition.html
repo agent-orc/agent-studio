@@ -16,9 +16,9 @@
     <p class="execution__muted">Loading execution definition…</p>
   } @else if (data(); as execution) {
     <div class="execution__summary">
-      <span class="execution__status" [attr.data-valid]="execution.valid">
-        {{ execution.valid ? 'Valid repository definition' : 'Definition needs attention' }}
-      </span>
+      @let validity = definitionValidity(execution.valid);
+      <app-status-indicator [compact]="true" [tone]="validity.tone" [label]="validity.label"
+                            testId="execution-definition-status" />
       @if (execution.definitionSha256) {
         <code data-testid="execution-definition-sha">{{ execution.definitionSha256.slice(0, 12) }}</code>
       }
@@ -58,13 +58,16 @@
         <div class="execution__manifest-head">
           <strong>Last manifest</strong>
           <span class="execution__metric">{{ manifest.durationMs }} ms</span>
-          <span>{{ manifest.succeeded ? 'Passed' : 'Failed' }}</span>
+          @let outcome = manifestOutcome(manifest.succeeded);
+          <app-status-indicator [compact]="true" [tone]="outcome.tone" [label]="outcome.label"
+                                testId="execution-manifest-outcome" />
         </div>
         <ul>
           @for (cache of manifest.caches; track cacheIdentity(cache)) {
             <li>
               <span>{{ cache.block }}</span>
-              <span class="execution__cache-state">{{ cache.state }}</span>
+              <app-status-indicator [compact]="true" [tone]="cacheTone(cache.state)" [label]="cache.state"
+                                    testId="execution-cache-state" />
               <code>{{ cache.key.slice(0, 12) }}</code>
             </li>
           }

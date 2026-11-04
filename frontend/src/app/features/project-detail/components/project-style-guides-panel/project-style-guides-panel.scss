@@ -167,18 +167,7 @@
 
 .style-guides__state {
   margin: 0;
-  padding: var(--studio-spacing-3);
-  border: 1px solid var(--pwiki-paper-border);
-  border-radius: 6px;
-  background: var(--pwiki-paper-bg);
-  color: var(--pwiki-paper-muted);
   font-size: 0.78rem;
-}
-
-.style-guides__state--error {
-  border-color: color-mix(in srgb, var(--studio-error) 38%, var(--pwiki-paper-border));
-  background: color-mix(in srgb, var(--studio-error) 7%, var(--pwiki-paper-bg));
-  color: var(--studio-error);
 }
 
 .style-guides__warnings {

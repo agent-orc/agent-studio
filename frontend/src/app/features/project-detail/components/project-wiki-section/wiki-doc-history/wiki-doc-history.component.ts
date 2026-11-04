@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { WikiFileHistory } from '../../../../../models/project-docs.model';
+import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
 
 /**
  * Read-only provenance + git-history panel for a single wiki document. Shows
@@ -13,6 +14,7 @@ import { WikiFileHistory } from '../../../../../models/project-docs.model';
 @Component({
   selector: 'app-wiki-doc-history',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './wiki-doc-history.component.html',
   styleUrl: './wiki-doc-history.component.scss',

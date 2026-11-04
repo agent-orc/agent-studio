@@ -14,8 +14,13 @@
           <section class="wbinbox__group" data-state="decision-cards"
                    data-testid="project-wiki-lifecycle-group-decision-cards">
             <div class="wbinbox__group-head">
-              <span class="wbinbox__state-dot" data-tone="review" aria-hidden="true"></span>
-              <h5>Decisions waiting</h5>
+              <h5>
+                <app-status-indicator
+                    [tone]="groupTone('decision-cards')"
+                    label="Decisions waiting"
+                    [compact]="true"
+                    testId="project-wiki-lifecycle-status-decision-cards" />
+              </h5>
               <span>{{ decisionCards().length }}</span>
             </div>
             <ul>
@@ -45,8 +50,13 @@
           <section class="wbinbox__group" [attr.data-state]="group.state"
                    [attr.data-testid]="'project-wiki-lifecycle-group-' + group.state">
             <div class="wbinbox__group-head">
-              <span class="wbinbox__state-dot" [attr.data-tone]="stateTone(group.state)" aria-hidden="true"></span>
-              <h5>{{ group.label }}</h5>
+              <h5>
+                <app-status-indicator
+                    [tone]="groupTone(group.state)"
+                    [label]="group.label"
+                    [compact]="true"
+                    [testId]="'project-wiki-lifecycle-status-' + group.state" />
+              </h5>
               <span>{{ group.items.length }}</span>
             </div>
             <ul>

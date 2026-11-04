@@ -1,6 +1,12 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { GitTelemetryService } from '../../../../services/git-telemetry.service';
+
+/** Background index state of one repository: refreshing now, or idle. */
+export function repositoryRefreshState(refreshing: boolean): { label: string; tone: StatusTone } {
+  return refreshing ? { label: 'refreshing', tone: 'running' } : { label: 'idle', tone: 'neutral' };
+}
 
 /**
  * Admin panel section for the AGT-2726 board-performance SLO: per-endpoint
@@ -11,7 +17,7 @@ import { GitTelemetryService } from '../../../../services/git-telemetry.service'
 @Component({
   selector: 'app-git-telemetry-panel',
   standalone: true,
-  imports: [DatePipe, DecimalPipe],
+  imports: [DatePipe, DecimalPipe, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './git-telemetry-panel.component.html',
   styleUrl: './git-telemetry-panel.component.scss',
@@ -28,6 +34,8 @@ export class GitTelemetryPanelComponent implements OnInit {
   refresh(): void {
     void this.api.load();
   }
+
+  readonly refreshState = repositoryRefreshState;
 
   ageLabel(seconds: number | null): string {
     if (seconds === null) return 'never indexed';

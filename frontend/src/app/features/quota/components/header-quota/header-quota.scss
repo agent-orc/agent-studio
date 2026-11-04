@@ -99,18 +99,10 @@
   line-height: 1;
   color: var(--studio-fg-strong);
 }
-.hquota__stale-dot {
-  color: var(--severity-warn);
-  font-size: 9px;
+.hquota__stale {
+  display: inline-flex;
+  font-size: 10px;
   line-height: 1;
-}
-
-.hquota__stale-label {
-  color: var(--studio-accent-warn-strong);
-  font-size: 9px;
-  font-weight: 750;
-  line-height: 1;
-  text-transform: uppercase;
 }
 
 .hquota__chips {

@@ -1,6 +1,7 @@
 import {
   classificationBadges,
   classificationMeta,
+  classificationStatusTone,
   classificationTypeAbbreviation,
   classificationTypeLabel,
   formatAnalyzedDate,
@@ -160,5 +161,15 @@ describe('formatAnalyzedDate', () => {
 
   it('falls back to the raw value for non-ISO input', () => {
     expect(formatAnalyzedDate('Juli 2026')).toBe('Juli 2026');
+  });
+});
+
+describe('classificationStatusTone', () => {
+  it('maps veraltet to danger, überholt to warning and everything else to neutral', () => {
+    expect(classificationStatusTone('stale')).toBe('danger');
+    expect(classificationStatusTone('superseded')).toBe('warning');
+    expect(classificationStatusTone('muted')).toBe('neutral');
+    expect(classificationStatusTone(null)).toBe('neutral');
+    expect(classificationStatusTone(undefined)).toBe('neutral');
   });
 });

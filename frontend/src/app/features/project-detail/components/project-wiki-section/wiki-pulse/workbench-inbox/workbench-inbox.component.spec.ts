@@ -1,7 +1,7 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { WikiLifecycleItem, WikiPulseLifecycle, WorkbenchCatalogue, WorkbenchListItem } from '../../../../../../models/project-docs.model';
-import { WorkbenchInboxComponent } from './workbench-inbox.component';
+import { WorkbenchInboxComponent, lifecycleGroupTone } from './workbench-inbox.component';
 import type { DecisionInboxItem } from '../../../../../../models/decision-card-presentation';
 
 function item(id: string, valid = true): WorkbenchListItem {
@@ -75,6 +75,10 @@ describe('WorkbenchInboxComponent', () => {
       '[data-testid="project-wiki-lifecycle-group-documented"]')?.textContent).toContain('Delivery record');
     expect(fixture.nativeElement.querySelector(
       '[data-testid="project-wiki-lifecycle-group-review-requested"]')?.textContent).not.toContain('Descriptor needs repair.');
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="project-wiki-lifecycle-status-review-requested"]')?.getAttribute('data-tone')).toBe('warning');
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="project-wiki-lifecycle-status-invalid"]')?.textContent?.trim()).toBe('Needs metadata repair');
     const pageButton = fixture.nativeElement.querySelector(
       '[data-testid="project-wiki-lifecycle-open-concepts/indicator.md"]') as HTMLButtonElement;
     const validButton = fixture.nativeElement.querySelector(
@@ -149,5 +153,18 @@ describe('WorkbenchInboxComponent decision cards (AGT-2795)', () => {
   it('renders no card when there is neither a lifecycle nor a pending decision', async () => {
     const fixture = await mount(null, []);
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="project-wiki-pulse-lifecycle"]')).toBeNull();
+  });
+});
+
+describe('lifecycleGroupTone', () => {
+  it('maps every lifecycle group onto a status tone, unknown states stay neutral', () => {
+    expect(lifecycleGroupTone('decision-cards')).toBe('warning');
+    expect(lifecycleGroupTone('review-requested')).toBe('warning');
+    expect(lifecycleGroupTone('in-progress')).toBe('info');
+    expect(lifecycleGroupTone('invalid')).toBe('danger');
+    expect(lifecycleGroupTone('decided')).toBe('neutral');
+    expect(lifecycleGroupTone('documented')).toBe('neutral');
+    expect(lifecycleGroupTone('done')).toBe('neutral');
+    expect(lifecycleGroupTone('something-new')).toBe('neutral');
   });
 });

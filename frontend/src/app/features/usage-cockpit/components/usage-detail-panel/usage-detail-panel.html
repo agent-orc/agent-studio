@@ -25,7 +25,8 @@
       </h3>
       <p class="usage-detail__meta">
         @if (cli.stateLabel) {
-          <span class="usage-detail__badge" [attr.data-state]="cli.state" data-testid="usage-detail-cli-state">{{ cli.stateLabel }}</span>
+          <app-status-indicator [tone]="stateTone(cli.state)" [label]="cli.stateLabel" [attr.data-state]="cli.state"
+                                testId="usage-detail-cli-state" />
           @if (cli.stateReason) { <span>{{ cli.stateReason }}</span> }
         }
         @if (cli.updated; as u) {

@@ -132,8 +132,6 @@
   color: var(--studio-fg);
 }
 
-.project-graph__warnings strong { color: var(--studio-warn); }
-
 .project-graph__error {
   @include m.deck-panel-attention;
   color: var(--studio-error);
@@ -260,7 +258,6 @@ app-segmented-control { display: inline-block; margin-bottom: var(--studio-spaci
 .project-graph__relations summary:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 .project-graph__relations ul { display: grid; gap: var(--studio-spacing-2); margin: var(--studio-spacing-2) 0 0; padding: 0; list-style: none; }
 .project-graph__relations li { display: grid; gap: var(--studio-spacing-1); }
-.project-graph__relations li.is-unresolved strong { color: var(--studio-warn); }
 .project-graph__relations span,
 .project-graph__empty-relation { color: var(--studio-fg-muted); font-size: 0.7rem; overflow-wrap: anywhere; }
 

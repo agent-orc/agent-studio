@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
 import { ProjectStyleGuide, ProjectStyleGuideCatalogue } from '../../../../models/project-docs.model';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 /**
  * Compact Wiki Pulse projection of the repository style-guide catalogue.
@@ -10,6 +11,7 @@ import { ProjectDocsService } from '../../../../services/project-docs.service';
 @Component({
   selector: 'app-project-style-guides-panel',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-style-guides-panel.html',
   styleUrl: './project-style-guides-panel.scss',

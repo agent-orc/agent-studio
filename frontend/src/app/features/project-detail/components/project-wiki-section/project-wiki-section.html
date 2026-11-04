@@ -33,7 +33,7 @@
       </div>
     }
     @if (busy()) {
-      <span class="pwiki__saving" data-testid="project-wiki-saving">Saving...</span>
+      <app-status-indicator tone="running" label="Saving..." [compact]="true" testId="project-wiki-saving" />
     }
     <span class="pwiki__spacer"></span>
     @if (tree()) {
@@ -241,12 +241,17 @@
                     @if (classificationBadges(row.node.classification).length || row.node.taggingStatus === 'tagged') {
                       <span class="pwiki__class-strip" [attr.data-testid]="'project-wiki-class-' + row.node.relPath">
                         @if (row.node.taggingStatus === 'tagged') {
-                          <span class="pwiki__class-chip" [attr.data-testid]="'project-wiki-tagging-' + row.node.relPath" cacTooltip="Auto-tagged article">Tagged</span>
+                          <app-status-indicator tone="neutral" label="Tagged" [compact]="true" detail="Auto-tagged article" [testId]="'project-wiki-tagging-' + row.node.relPath" />
                         }
                         @for (badge of classificationBadges(row.node.classification); track badge.key) {
-                          <span class="pwiki__class-chip" [attr.data-kind]="badge.key" [attr.data-tone]="badge.tone"
-                                [attr.data-testid]="'project-wiki-class-' + row.node.relPath + '-' + badge.key"
-                                [cacTooltip]="badge.tooltip">{{ badge.label }}</span>
+                          @if (badge.key === 'status') {
+                            <app-status-indicator [tone]="classificationStatusTone(badge.tone)" [label]="badge.label"
+                                                  [compact]="true" [detail]="badge.tooltip" [testId]="'project-wiki-class-' + row.node.relPath + '-' + badge.key" />
+                          } @else {
+                            <span class="pwiki__class-chip" [attr.data-kind]="badge.key" [attr.data-tone]="badge.tone"
+                                  [attr.data-testid]="'project-wiki-class-' + row.node.relPath + '-' + badge.key"
+                                  [cacTooltip]="badge.tooltip">{{ badge.label }}</span>
+                          }
                         }
                       </span>
                     }
@@ -438,18 +443,14 @@
                         <span>Editing</span>
                         <code>{{ rel }}</code>
                         @if (saveBusy()) {
-                          <span>Saving...</span>
+                          <app-status-indicator tone="running" label="Saving..." [compact]="true" testId="project-wiki-save-busy" />
                         } @else if (saveResult(); as saved) {
-                          <span data-testid="project-wiki-save-result">
-                            {{ saved.changed ? 'Committed' : 'Saved' }}
-                            @if (saved.branch) { on {{ saved.branch }} }
-                            @if (saved.sha) { at {{ saved.sha.slice(0, 7) }} }
-                          </span>
+                          <app-status-indicator tone="success" [label]="saveResultLabel(saved)" [compact]="true" testId="project-wiki-save-result" />
                         }
                       </div>
                     </app-markdown-rich-editor>
                     @if (saveError(); as error) {
-                      <p class="pwiki__save-error" data-testid="project-wiki-save-error">{{ error }}</p>
+                      <div class="pwiki__save-error"><app-status-indicator tone="danger" [label]="error" [detail]="error" testId="project-wiki-save-error" /></div>
                     }
                   </div>
                 } @else {
@@ -598,9 +599,7 @@
                         <div data-testid="project-wiki-classification-status">
                           <dt>Status</dt>
                           <dd class="pwiki__class-status">
-                            <span class="pwiki__class-chip"
-                                  [attr.data-tone]="status.tone"
-                                  data-testid="project-wiki-classification-status-chip">{{ status.label }}</span>
+                            <app-status-indicator [tone]="classificationStatusTone(status.tone)" [label]="status.label" [compact]="true" testId="project-wiki-classification-status-chip" />
                             @if (status.supersededBy; as successor) {
                               <button class="pwiki__class-successor"
                                       type="button"
@@ -665,7 +664,7 @@
                   toggleTestId="project-wiki-section-toggle-drift-metadata"
                   bodyId="project-wiki-section-drift-metadata">
                   @if (latestDriftReport(); as report) {
-                    <span meta-section-count>{{ report.scoreBand }}</span>
+                    <app-status-indicator meta-section-count [tone]="driftScoreBandTone(report.scoreBand)" [label]="report.scoreBand" [compact]="true" testId="project-wiki-drift-meta-band" />
                   }
                   @if (latestDriftReport(); as report) {
                     <dl class="pwiki__info-list">

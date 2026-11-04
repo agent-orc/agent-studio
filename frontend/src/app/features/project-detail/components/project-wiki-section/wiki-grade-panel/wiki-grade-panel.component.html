@@ -53,7 +53,12 @@
            [attr.aria-valuenow]="gradingProgressPct()" aria-valuemin="0" aria-valuemax="100">
         <span class="wgrade__fill" [style.width.%]="gradingProgressPct()"></span>
       </div>
-      <span class="wgrade__state" data-testid="project-wiki-pulse-grade-state">{{ gradingStateLabel() }}</span>
+      <app-status-indicator
+          class="wgrade__state"
+          [tone]="gradingStateTone(g.state)"
+          [label]="gradingStateLabel()"
+          [detail]="g.state === 'failed' ? gradingStateLabel() : null"
+          testId="project-wiki-pulse-grade-state" />
       @if (g.currentRelPath && gradingRunning()) {
         <code class="wgrade__current">{{ g.currentRelPath }}</code>
       }
@@ -91,9 +96,12 @@
           }
         </ul>
       } @else {
-        <div class="wgrade__healthy" data-testid="project-wiki-pulse-critical-empty">
-          <app-studio-icon name="check" [size]="16"></app-studio-icon>
-          <p>{{ c.reason || 'No critical pages.' }}</p>
+        <div class="wgrade__healthy">
+          <app-status-indicator
+              tone="success"
+              [label]="c.reason || 'No critical pages.'"
+              [detail]="c.reason"
+              testId="project-wiki-pulse-critical-empty" />
         </div>
       }
     }

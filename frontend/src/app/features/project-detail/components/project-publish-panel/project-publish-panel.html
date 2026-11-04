@@ -63,7 +63,8 @@
 
         @if (run(); as currentRun) {
           <div class="publish__run" data-testid="publish-workflow-status">
-            <div><strong>{{ currentRun.status }}</strong>@if (currentRun.conclusion) { <span> · {{ currentRun.conclusion }}</span> }</div>
+            @let runState = runStatus(currentRun);
+            <app-status-indicator [tone]="runState.tone" [label]="runState.label" testId="publish-workflow-state" />
             <small>{{ currentRun.workflow }}@if (currentRun.version) { · v{{ currentRun.version }} }</small>
             @if (currentRun.error) { <p>{{ currentRun.error }}</p> }
             <button type="button" class="publish__quiet" [disabled]="busy()" (click)="refreshRun()">Refresh workflow</button>

@@ -67,7 +67,10 @@
           <tr>
             <td>{{ repo.projectName }}</td>
             <td>{{ ageLabel(repo.ageSeconds) }}</td>
-            <td>{{ repo.refreshing ? 'refreshing' : 'idle' }}</td>
+            <td>
+              @let state = refreshState(repo.refreshing);
+              <app-status-indicator [tone]="state.tone" [label]="state.label" [compact]="true" testId="git-telemetry-repo-status" />
+            </td>
           </tr>
         } @empty {
           <tr><td colspan="3" class="git-telemetry__muted">No repositories discovered yet.</td></tr>

@@ -99,16 +99,6 @@ time + .usage-detail__muted,
   font-weight: 600;
 }
 
-.usage-detail__badge {
-  display: inline-block;
-  padding-inline: var(--studio-spacing-1);
-  border-radius: var(--studio-action-radius-sm);
-  background: var(--studio-bg-selected);
-  color: var(--studio-text-primary);
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .usage-detail__route {
   padding-inline: var(--studio-spacing-1);
   border: 1px solid var(--studio-border-strong);

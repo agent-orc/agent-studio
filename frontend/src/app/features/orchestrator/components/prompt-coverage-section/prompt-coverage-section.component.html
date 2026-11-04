@@ -11,9 +11,8 @@
       @for (item of cov.items; track item.component) {
         <tr [attr.data-testid]="'prompt-admin-coverage-row-' + item.status">
           <td>
-            <span class="prompt-coverage__pill"
-              [class.prompt-coverage__pill--ok]="item.status === 'covered'"
-              [class.prompt-coverage__pill--warn]="item.status === 'pending'">{{ item.status }}</span>
+            <app-status-indicator [tone]="coverageTone(item.status)" [label]="item.status" [compact]="true"
+                                  testId="prompt-admin-coverage-status" />
           </td>
           <td><code>{{ item.component }}</code></td>
           <td class="prompt-coverage__muted">{{ item.detail }}</td>

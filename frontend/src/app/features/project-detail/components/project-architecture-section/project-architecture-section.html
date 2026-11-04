@@ -30,12 +30,9 @@
                   [attr.data-testid]="'project-architecture-' + d.id">
             <span class="parch__id">{{ d.id }}</span>
             <span class="parch__title">{{ d.title }}</span>
-            <span class="parch__status"
-                  [class.parch__status--accepted]="statusClass(d.status) === 'accepted'"
-                  [class.parch__status--super]="statusClass(d.status) === 'superseded'"
-                  [class.parch__status--depr]="statusClass(d.status) === 'deprecated'">
-              {{ inlineStatus(d.status) }}
-            </span>
+            <app-status-indicator class="parch__status" [compact]="true"
+                                  [tone]="statusTone(d.status)" [label]="inlineStatus(d.status)"
+                                  [testId]="'project-architecture-status-' + d.id" />
             @if (d.date) {
               <span class="parch__date">{{ d.date }}</span>
             }

@@ -93,8 +93,6 @@
 /* ---- semantic hint + term chips ---- */
 .wsearch__notice {
   margin: 0;
-  font-size: 0.72rem;
-  color: var(--studio-fg-muted);
 }
 .wsearch__terms {
   display: flex;
@@ -114,10 +112,7 @@
 .wsearch__state {
   margin: 0;
   padding: var(--studio-spacing-3) 0;
-  font-size: 0.78rem;
-  color: var(--studio-fg-muted);
 }
-.wsearch__state--error { color: var(--studio-error); }
 
 /* ---- result list ---- */
 .wsearch__list {

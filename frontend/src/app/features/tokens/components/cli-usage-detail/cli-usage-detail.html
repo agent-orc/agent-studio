@@ -127,10 +127,12 @@
           <div class="cud__stale"
                data-testid="cli-usage-detail-probe-stale"
                [cacTooltip]="row.error ?? row.probeFailureLabel">
-            {{ row.probeFailureLabel }} · showing last-good quota values
+            <app-status-indicator tone="warning" [label]="row.probeFailureLabel + ' · showing last-good quota values'" testId="cli-usage-detail-probe-stale-status" />
           </div>
         } @else if (row.error) {
-          <div class="cud__error">{{ row.error }}</div>
+          <div class="cud__error">
+            <app-status-indicator tone="danger" [label]="row.error" testId="cli-usage-detail-probe-error" />
+          </div>
         }
 
         <div class="cud__grid">

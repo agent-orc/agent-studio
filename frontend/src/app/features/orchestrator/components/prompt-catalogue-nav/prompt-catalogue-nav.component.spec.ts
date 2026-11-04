@@ -107,8 +107,10 @@ describe('PromptCatalogueNavComponent', () => {
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelector('[data-testid="prompt-admin-override-review-aspect-code-quality.md"]')
       ?.textContent).toContain('overridden - Agent Studio');
-    expect(host.querySelector('[data-testid="prompt-admin-stale-review-aspect-code-quality.md"]')
-      ?.getAttribute('aria-label')).toBe('Override based on outdated shipped default - review needed');
+    const stale = host.querySelector('[data-testid="prompt-admin-stale-review-aspect-code-quality.md"]') as HTMLElement;
+    expect(stale.dataset['tone']).toBe('warning');
+    expect(stale.textContent?.trim()).toBe('stale');
+    expect(stale.getAttribute('tabindex')).toBe('0');
   });
 
   it('filters by scoped overrides without duplicating the catalogue tree', async () => {

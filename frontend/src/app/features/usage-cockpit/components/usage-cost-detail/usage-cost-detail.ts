@@ -1,12 +1,14 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import type { UsageCostDetailView } from '../../usage-detail.util';
 import { ReviewStatisticsComponent } from '../../../tokens/components/review-statistics/review-statistics';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { liveRunInclusionTone, usageStateTone } from './usage-detail-status';
 
 /** Cost breakdown shared by the desktop popover and phone sheet. */
 @Component({
   selector: 'app-usage-cost-detail',
   standalone: true,
-  imports: [ReviewStatisticsComponent],
+  imports: [ReviewStatisticsComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './usage-cost-detail.html',
   styleUrl: '../usage-detail-panel/usage-detail-panel.scss',
@@ -14,5 +16,7 @@ import { ReviewStatisticsComponent } from '../../../tokens/components/review-sta
 export class UsageCostDetailComponent {
   readonly cost = input.required<UsageCostDetailView>();
   readonly sectionId = input.required<string>();
+  readonly stateTone = usageStateTone;
+  readonly inclusionTone = liveRunInclusionTone;
   readonly reviewProjects = computed(() => this.cost().projects.filter(project => !project.unattributed).map(project => project.name));
 }

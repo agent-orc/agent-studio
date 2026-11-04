@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
 import type { DecisionInboxItem } from '../../../../../models/decision-card-presentation';
 import type { CliModelInfo } from '../../../../cli';
@@ -13,7 +14,16 @@ import { WikiHomeLinksComponent } from '../wiki-home-links/wiki-home-links.compo
 import { WikiPulseComponent, WikiPulseOpenRequest } from '../wiki-pulse/wiki-pulse.component';
 import { WikiStarredPanelComponent } from '../wiki-starred-panel/wiki-starred-panel.component';
 
-type WikiDashboardTone = 'good' | 'warn' | 'bad' | 'muted';
+/** Overall drift grade to status tone; unknown grades (Empty, later additions) stay neutral. */
+const DRIFT_GRADE_TONES: Readonly<Record<string, StatusTone>> = {
+  Fresh: 'success',
+  Aging: 'warning',
+  Stale: 'danger',
+};
+
+export function driftGradeTone(grade: string | null | undefined): StatusTone {
+  return (grade && DRIFT_GRADE_TONES[grade]) || 'neutral';
+}
 
 /**
  * Wiki landing dashboard: the entry surface the wiki opens on when no page is
@@ -31,6 +41,7 @@ type WikiDashboardTone = 'good' | 'warn' | 'bad' | 'muted';
   standalone: true,
   imports: [
     ProjectStyleGuidesPanelComponent,
+    StatusIndicatorComponent,
     StudioIconComponent,
     WikiGradePanelComponent,
     WikiHomeLinksComponent,
@@ -73,15 +84,11 @@ export class WikiDashboardComponent {
   readonly driftCounts = computed(() => this.pulse()?.drift?.counts ?? null);
 
   /** Overall drift verdict for the head status chip (small icon + label only). */
-  readonly overallDrift = computed<{ grade: string; tone: WikiDashboardTone } | null>(() => {
+  readonly overallDrift = computed<{ grade: string; tone: StatusTone } | null>(() => {
     const drift = this.pulse()?.drift;
     if (!drift?.available) return null;
     const grade = drift.overallGrade;
-    const tone: WikiDashboardTone = grade === 'Fresh' ? 'good'
-      : grade === 'Aging' ? 'warn'
-        : grade === 'Stale' ? 'bad'
-          : 'muted';
-    return { grade, tone };
+    return { grade, tone: driftGradeTone(grade) };
   });
 
   /** "vor X" caption of the newest feed entry (the feed arrives newest first). */

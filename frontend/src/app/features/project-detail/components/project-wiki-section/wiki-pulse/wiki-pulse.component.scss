@@ -23,11 +23,9 @@
   @include m.knowledge-card-icon;
 }
 
+/* The card head is an uppercase caption; the status label keeps sentence case. */
 .wpulse__loading {
   margin-left: auto;
-  color: var(--pwiki-paper-muted);
-  font-size: 0.72rem;
-  font-weight: 400;
   text-transform: none;
   letter-spacing: normal;
 }
@@ -243,15 +241,6 @@
 }
 
 .wpulse__signal-kind,
-.wpulse__status {
-  color: var(--pwiki-paper-muted);
-  font-size: 0.62rem;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.wpulse__status { color: var(--studio-warn); }
-
 .wpulse__action {
   color: var(--pwiki-paper-fg);
   font-size: 0.72rem;

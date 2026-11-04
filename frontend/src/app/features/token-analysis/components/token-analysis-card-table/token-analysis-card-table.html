@@ -35,8 +35,15 @@
               }
             </th>
             <td>
-              @if (row.outcome) { <span class="tt__badge">{{ row.outcome }}</span> }
-              @if (row.inFlight) { <span class="tt__badge tt__badge--live">in flight</span> }
+              <span class="tt__states">
+                @if (row.outcome) {
+                  <app-status-indicator [tone]="outcomeTone(row.outcome)" [label]="row.outcome" [compact]="true"
+                                        testId="token-analysis-row-outcome" />
+                }
+                @if (row.inFlight) {
+                  <app-status-indicator tone="running" label="in flight" [compact]="true" testId="token-analysis-row-in-flight" />
+                }
+              </span>
             </td>
             <td class="tt__num">{{ row.rounds ?? '' }}</td>
             <td class="tt__split">

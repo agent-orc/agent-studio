@@ -36,7 +36,13 @@
   </header>
 
   @if (semanticUnavailable()) {
-    <p class="wsearch__notice" data-testid="wiki-search-semantic-unavailable">Semantische Erweiterung nicht verfügbar</p>
+    <p class="wsearch__notice">
+      <app-status-indicator
+          tone="neutral"
+          label="Semantische Erweiterung nicht verfügbar"
+          [compact]="true"
+          testId="wiki-search-semantic-unavailable" />
+    </p>
   }
 
   @if (expandedTerms().length > 0) {
@@ -48,11 +54,20 @@
   }
 
   @if (loading()) {
-    <p class="wsearch__state" data-testid="wiki-search-loading">Suche läuft…</p>
+    <p class="wsearch__state">
+      <app-status-indicator tone="running" label="Suche läuft…" testId="wiki-search-loading" />
+    </p>
   } @else if (error(); as message) {
-    <p class="wsearch__state wsearch__state--error" data-testid="wiki-search-error">{{ message }}</p>
+    <p class="wsearch__state">
+      <app-status-indicator tone="danger" [label]="message" [detail]="message" testId="wiki-search-error" />
+    </p>
   } @else if (results().length === 0 && response()) {
-    <p class="wsearch__state" data-testid="wiki-search-empty">Keine Treffer für „{{ query() }}“.</p>
+    <p class="wsearch__state">
+      <app-status-indicator
+          tone="neutral"
+          [label]="'Keine Treffer für „' + query() + '“.'"
+          testId="wiki-search-empty" />
+    </p>
   } @else if (viewMode() === 'tree') {
     <ul class="wsearch__list wsearch__list--tree" data-testid="wiki-search-tree">
       @for (row of treeRows(); track rowId(row)) {

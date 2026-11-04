@@ -71,11 +71,10 @@
             <header class="cli-env__head">
               <span class="cli-env__icon" aria-hidden="true">{{ row.icon }}</span>
               <strong>{{ row.label }}</strong>
-              <span class="cli-env__status"
-                    [class.cli-env__status--ready]="row.available"
-                    [class.cli-env__status--issue]="!row.available && row.error">
-                {{ statusLabel(row) }}
-              </span>
+              @let availability = availabilityStatus(row);
+              <app-status-indicator class="cli-env__status" [compact]="true"
+                                    [tone]="availability.tone" [label]="availability.label"
+                                    [testId]="'project-detail-cli-env-status-' + row.cliType" />
             </header>
 
             <dl class="cli-env__facts">

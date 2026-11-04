@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../../../components/status-indicator/status-indicator.component';
 import { StudioIconComponent } from '../../../../../../components/studio-icon/studio-icon.component';
 import { CopyableTaskKeyComponent } from '../../../../../../components/copyable-task-key/copyable-task-key.component';
 import type {
@@ -25,10 +26,30 @@ const GROUPS: readonly { state: WikiLifecycleState; label: string }[] = [
   { state: 'done', label: 'Archived' },
 ];
 
+/**
+ * Status-indicator tone of a lifecycle group heading (AGT-3403): waiting
+ * decisions and review requests need attention, work in progress is a quiet
+ * fact, broken metadata is a failure, settled groups stay neutral. A state the
+ * backend adds later falls back to neutral.
+ */
+const GROUP_TONES: Readonly<Partial<Record<WikiLifecycleState | 'invalid' | 'decision-cards', StatusTone>>> = {
+  'decision-cards': 'warning',
+  'review-requested': 'warning',
+  'in-progress': 'info',
+  invalid: 'danger',
+  decided: 'neutral',
+  documented: 'neutral',
+  done: 'neutral',
+};
+
+export function lifecycleGroupTone(state: string): StatusTone {
+  return GROUP_TONES[state as keyof typeof GROUP_TONES] ?? 'neutral';
+}
+
 @Component({
   selector: 'app-workbench-inbox',
   standalone: true,
-  imports: [StudioIconComponent, CopyableTaskKeyComponent],
+  imports: [StatusIndicatorComponent, StudioIconComponent, CopyableTaskKeyComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-inbox.component.html',
   styleUrl: './workbench-inbox.component.scss',
@@ -78,6 +99,8 @@ export class WorkbenchInboxComponent {
     const blocks = item.blocks.length > 0 ? `blocks ${item.blocks.join(', ')}` : null;
     return [`decider ${item.decider}`, due, blocks].filter(Boolean).join(' · ');
   }
+
+  readonly groupTone = lifecycleGroupTone;
 
   stateTone(state: string): string {
     if (state === 'invalid') return 'repair';

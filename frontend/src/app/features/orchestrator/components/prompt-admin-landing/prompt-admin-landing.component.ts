@@ -1,6 +1,8 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { PromptCatalogItem, PromptProjectOverride } from '../../../../services/prompt-admin.service';
+import { promptReviewStatus } from '../prompt-review-section/prompt-review-status';
 
 interface PromptClassSummary {
   id: PromptCatalogItem['promptClass'];
@@ -14,7 +16,7 @@ type PromptSortKey = 'title' | 'calls' | 'lastCalled' | 'lastChange' | 'lastRevi
 @Component({
   selector: 'app-prompt-admin-landing',
   standalone: true,
-  imports: [DatePipe, DecimalPipe],
+  imports: [DatePipe, DecimalPipe, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './prompt-admin-landing.component.html',
   styleUrl: './prompt-admin-landing.component.scss',
@@ -86,9 +88,11 @@ export class PromptAdminLandingComponent {
     return this.sortDescending() ? ' ▼' : ' ▲';
   }
 
-  status(item: PromptCatalogItem): string {
-    if (item.reviewStatus === 'needs-review') return 'needs review';
-    return item.reviewStatus ?? 'not reviewed';
+  readonly reviewStatus = promptReviewStatus;
+
+  /** A prompt called within deadPromptDays is active; a quiet one stays neutral. */
+  activityTone(item: PromptCatalogItem): StatusTone {
+    return item.calls.isDead ? 'neutral' : 'success';
   }
 
   cost(item: PromptCatalogItem, sevenDays = false): string {

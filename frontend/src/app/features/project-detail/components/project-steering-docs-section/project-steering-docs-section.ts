@@ -13,6 +13,8 @@ import {
 import { TaskState } from '../../../../models/task.model';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { STEERING_ACTIONS, steeringWarningSeverityTone, type SteeringAction } from './project-steering-docs-status';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
 /**
@@ -35,12 +37,6 @@ interface StatusBucket {
   label: string;
   count: number;
   cls: 'present' | 'missing';
-}
-
-interface SteeringAction {
-  slug: string;
-  label: string;
-  description: string;
 }
 
 interface AgentDocsTreeNode {
@@ -66,30 +62,22 @@ interface ToolUseRow {
   byCli: string;
 }
 
-const ACTIONS: SteeringAction[] = [
-  { slug: 'summarize', label: 'Summarize Steering Docs', description: 'Spawn a task that reads the inventory below and produces a human summary of what agents are currently told.' },
-  { slug: 'check-drift', label: 'Check Docs Drift', description: 'Spawn a task that compares the steering files against current code and flags stale rules or contradictions.' },
-  { slug: 'analyze-failures', label: 'Analyze Recurring Job Failures', description: 'Spawn a task that scans recent blocked / needs-input outcomes and proposes steering-doc changes.' },
-  { slug: 'propose-readme', label: 'Propose README Update', description: 'Spawn a task that drafts a README change for review, evidence-first.' },
-  { slug: 'propose-agents', label: 'Propose AGENTS Update', description: 'Spawn a task that drafts an AGENTS.md change for review, evidence-first.' },
-  { slug: 'create-followup', label: 'Create Follow-up Task', description: 'Queue a generic follow-up tied to the steering surface for later scoping.' },
-];
-
 @Component({
   selector: 'app-project-steering-docs-section',
   standalone: true,
-  imports: [TooltipDirective, AppTooltipDirective, MarkdownViewComponent, StudioIconComponent],
+  imports: [TooltipDirective, AppTooltipDirective, MarkdownViewComponent, StudioIconComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-steering-docs-section.html',
   styleUrl: './project-steering-docs-section.scss'
 })
 export class ProjectSteeringDocsSectionComponent implements OnInit, OnDestroy {
+  readonly severityTone = steeringWarningSeverityTone;
   readonly projectName = input.required<string>();
 
   private readonly svc = inject(SteeringDocsService);
   private readonly jobs = inject(TaskService);
 
-  readonly actions = ACTIONS;
+  readonly actions = STEERING_ACTIONS;
 
   readonly overview = signal<SteeringDocsOverview | null>(null);
   readonly loading = signal<boolean>(false);

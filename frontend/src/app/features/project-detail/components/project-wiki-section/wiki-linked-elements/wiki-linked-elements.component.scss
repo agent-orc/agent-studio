@@ -77,16 +77,6 @@
   white-space: nowrap;
 }
 
-.linked-element__status {
-  padding: 0 var(--studio-spacing-1);
-  border: 1px solid color-mix(in srgb, var(--severity-high) 45%, var(--studio-border));
-  border-radius: 999px;
-  color: var(--severity-high);
-  font-size: 0.62rem;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
 .linked-element code {
   grid-column: 2 / -1;
   min-width: 0;
