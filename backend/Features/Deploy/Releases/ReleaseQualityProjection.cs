@@ -16,7 +16,8 @@ public static class ReleaseQualityProjection
 {
     public static IReadOnlyList<Release> Project(IReadOnlyList<Release> releases,
         IEnumerable<TaskInfo> tasks, string? repositoryId, Func<string, string, string?> mergeBase,
-        IReadOnlyList<Release>? visible = null, Func<string, string?>? rootCommit = null)
+        IReadOnlyList<Release>? visible = null, Func<string, string?>? rootCommit = null,
+        Func<string, string, string, string?>? storedVerdict = null)
     {
         var ordered = releases.OrderBy(item => item.CreatedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
         visible ??= releases;
@@ -40,12 +41,16 @@ public static class ReleaseQualityProjection
             views[release.Id] = release with { Quality = new ReleaseQuality(cards, pass, concerns, block,
                 cards.Length - pass - concerns - block,
                 block > 0 ? "block" : concerns > 0 ? "concerns" : pass > 0 ? "pass" : "not-reviewed",
-                "not-reviewed", range is null ? null : new ReleaseQualityRange(repositoryId!, range, release.CommitSha, index == 0),
+                range is null ? "not-reviewed" : NormalizeVerdict(storedVerdict?.Invoke(repositoryId!, range, release.CommitSha)),
+                range is null ? null : new ReleaseQualityRange(repositoryId!, range, release.CommitSha, index == 0),
                 range is not null ? null : index == 0 ? "The repository root range is unavailable."
                     : "The release range is unavailable until the repository mapping and commits can be read.") };
         }
         return visible.Select(release => views[release.Id]).ToArray();
     }
+
+    private static string NormalizeVerdict(string? verdict)
+        => verdict is "pass" or "concerns" or "block" ? verdict : "not-reviewed";
 
     private static string CurrentVerdict(TaskInfo task)
     {

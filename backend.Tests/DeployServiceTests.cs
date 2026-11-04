@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentStudio.Deploy;
+using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Security;
@@ -35,6 +36,49 @@ public sealed class DeployServiceTests : IDisposable
     private TaskScannerService? _scanner;
     private GitService? _git;
     private ProjectSettingsService? _settings;
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Warm_release_page_uses_cached_quality_without_git_or_archive_scan()
+    {
+        var (deploy, environments, store) = Build();
+        _settings!.SetQualityStudioRepositoryId("demo", "repo");
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        var secondSha = Commit("second release");
+        Card("DEMO-10", secondSha);
+        var second = CreateRelease(deploy, Artifact('b'), secondSha);
+        Assert.Contains("DEMO-10", second.CardKeys);
+        var indexedCard = _scanner!.ScanAllJobsWithArchive().Single(task => task.Key == "DEMO-10");
+        Assert.Equal("demo", indexedCard.ProjectName);
+        var scans = 0;
+        var qualityDeploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null, projectSettings: _settings,
+            qualityTaskScan: () => { scans++; return _scanner!.ScanAllJobsWithArchive(); });
+        var cold = qualityDeploy.ReleasePage("demo", 0, 25)!;
+        Assert.Equal(1, scans);
+        Assert.Equal(second.Id, cold.Items[0].Id);
+        Assert.Equal(first.Id, cold.Items[1].Id);
+        Assert.NotNull(cold.Items[0].Quality!.Range);
+
+        using (var scope = GitReadRequestGuard.BeginRead("GET", "/api/projects/{projectName}/deploy/releases/page"))
+        {
+            var warm = qualityDeploy.ReleasePage("demo", 0, 25)!;
+            Assert.Equal(0, scope.Spawns);
+            Assert.Equal(cold.Items[0].Quality, warm.Items[0].Quality);
+        }
+        Assert.Equal(1, scans);
+
+        var qualityFolder = Path.Combine(indexedCard.FolderPath, "results", "quality-studio");
+        Directory.CreateDirectory(qualityFolder);
+        File.WriteAllText(Path.Combine(qualityFolder, "latest-review-index.json"), "{}");
+        qualityDeploy.ReleasePage("demo", 0, 25);
+        Assert.Equal(2, scans);
+
+        var thirdSha = Commit("third release");
+        CreateRelease(deploy, Artifact('c'), thirdSha);
+        qualityDeploy.ReleasePage("demo", 0, 25);
+        Assert.Equal(3, scans);
+    }
 
     [Fact]
     public void Delivery_columns_read_does_not_write_environment_state()
