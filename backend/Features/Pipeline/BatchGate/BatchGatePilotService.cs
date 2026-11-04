@@ -636,9 +636,7 @@ public sealed partial class BatchGatePilotService
                             provenGreenKeys, queuedPartners);
                     }
                     planReason = formed.Manifest is not null ? "threshold reached"
-                        : formed.UsePerTaskGate ? closeNow
-                            ? "operator close-now below minimum batch size"
-                            : formed.Reason ?? "per-task gate selected"
+                        : formed.UsePerTaskGate ? formed.Reason ?? "per-task gate selected"
                         : queuedPartners > 0 ? BatchGateLookAheadPlanner.QueuedPartnersReason
                         : "waiting for threshold or deadline";
                     _store.AppendPlanDecision(first.Subject.Project,
