@@ -48,7 +48,6 @@ public sealed partial class BatchGatePilotService
         new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _tick = new(1, 1);
     private readonly Dictionary<string, Task> _fallbackFlights = new(StringComparer.Ordinal);
-    private readonly SemaphoreSlim _fallbackGateSlots;
     private readonly HashSet<string> _fallbackClearEjectOnFinish = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Task> _runningBatches = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _replanAfterBatch = new(StringComparer.Ordinal);
@@ -113,7 +112,6 @@ public sealed partial class BatchGatePilotService
         _healthAlerts = healthAlerts;
         _services = services;
         _configuration = configuration;
-        _fallbackGateSlots = new SemaphoreSlim(Math.Max(1, ConfiguredGateSlots() - 1));
     }
 
     public async Task<BatchGatePendingRecord> EnqueueAsync(TaskInfo task, ReviewAttemptDto review,
@@ -2387,25 +2385,21 @@ public sealed partial class BatchGatePilotService
                            BatchEnabled(manifest.Scope.Project)
                            && _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed))
                     await Task.Delay(250, ct).ConfigureAwait(false);
-                await _fallbackGateSlots.WaitAsync(ct).ConfigureAwait(false);
-                try
-                {
-                    gate = await _gate.RunAsync(new BuildTestGateRequest(
-                            pending.RepositoryPath, subject.TestedSha, "batch-fallback")
-                        {
-                            Project = pending.Subject.Project,
-                            SubjectRef = subject.Merged ? subject.TestedSha : pending.Subject.ResultRef,
-                            RequiredTestLevel = level,
-                            TestExecution = _settings.Get(pending.Subject.Project).TestExecution,
-                            OnMachineGateSlotWaiting = (busy, total) => _queueStalls.Waiting(
-                                pending.Subject.Project, pending.ReviewAttemptId, busy, total),
-                            OnMachineGateAcquired = () => _queueStalls.Left(pending.ReviewAttemptId),
-                        }, null, _settings.Get(pending.Subject.Project).BuildProfile,
-                        PostStepMode.Fail,
-                        TimeSpan.FromMinutes(_settings.Get(pending.Subject.Project)
-                            .BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
-                }
-                finally { _fallbackGateSlots.Release(); }
+                // AGT-3466: the per-task slot taken above already keeps the batch slot free.
+                gate = await _gate.RunAsync(new BuildTestGateRequest(
+                        pending.RepositoryPath, subject.TestedSha, "batch-fallback")
+                    {
+                        Project = pending.Subject.Project,
+                        SubjectRef = subject.Merged ? subject.TestedSha : pending.Subject.ResultRef,
+                        RequiredTestLevel = level,
+                        TestExecution = _settings.Get(pending.Subject.Project).TestExecution,
+                        OnMachineGateSlotWaiting = (busy, total) => _queueStalls.Waiting(
+                            pending.Subject.Project, pending.ReviewAttemptId, busy, total),
+                        OnMachineGateAcquired = () => _queueStalls.Left(pending.ReviewAttemptId),
+                    }, null, _settings.Get(pending.Subject.Project).BuildProfile,
+                    PostStepMode.Fail,
+                    TimeSpan.FromMinutes(_settings.Get(pending.Subject.Project)
+                        .BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested && !recordInStore)
             {
