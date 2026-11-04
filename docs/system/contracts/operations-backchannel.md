@@ -17,13 +17,18 @@ contract and outbound channel as its first delivery stage.
 `operations-server` and `operations-agent` are independently executable .NET
 services. Shared wire records live in `contracts/Operations.Contracts`.
 `host.inspect` version 1 returns OS, architecture and processor count without
-starting a child process or reading a project filesystem. `service.restart`
-version 1 (AGT-3207, the AI Operator's bounded restart) is the only mutating
-definition; see below. Several frontend service principals can submit commands,
+starting a child process or reading a project filesystem. SM-6 (AGT-3377)
+added `host.drain`, `host.resume`, `host.logs.collect` and
+`host.configuration.apply` to the earlier `service.restart` definition. Each
+has an exact input and output schema. Several frontend service principals can submit commands,
 but can only read or cancel their own attempts. An agent authenticates outbound;
 it has no inbound listener and cannot use service routes or another agent's ID.
 
-This is a service-boundary foundation, not full one-box product parity. Existing
+The networked Compose stack now starts the Operations Server and an outbound
+local agent, and Studio submits the six routine host commands after its
+operator policy step. The local agent advertises inspection until a host-owned
+allowlist enables other capabilities. This remains short of full one-box
+product parity. Existing
 Connector handlers and BFF routes have not migrated. File, Git, CLI, launcher,
 dossier, render/capture, host-control, review-subject permits, artifact upload,
 usage accounting, result acceptance into task history, automatic enrollment and
@@ -98,6 +103,9 @@ executor advertises no filesystem roots.
 | `POST /attempts/{id}/cancel` | Cancels queued work or marks running work cancelling |
 | `POST /agents/register` | Enrolled agent advertises boot generation and allowed capabilities |
 | `POST /agents/{agentId}/poll` | Outbound claim; same boot gets the same outstanding assignment |
+| `POST /agents/{agentId}/journal` | Refuses a host execution receipt without a matching dispatched central history entry and emits an alert |
+| `GET /agents/{agentId}/revocations` | Agent-scoped current OpenSSH KRL for host installation |
+| `PUT /certificates/revocations` | Service-scoped, versioned KRL publication from Studio |
 | `POST /attempts/{id}/renew` | Agent, boot and fence check, then live permit introspection |
 | `POST /attempts/{id}/result` | Bounded typed result with matching subject digest and cleanup proof |
 

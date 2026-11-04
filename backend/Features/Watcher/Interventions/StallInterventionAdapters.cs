@@ -178,6 +178,7 @@ public sealed class OperationsServerRestartControl(
     IHttpClientFactory http,
     IConfiguration configuration,
     TimeProvider time,
+    AgentStudio.Security.ControlPlaneAuditLog audit,
     ILogger<OperationsServerRestartControl> logger) : IServiceRestartControl
 {
     public const string HttpClientName = "operations-server";
@@ -233,6 +234,10 @@ public sealed class OperationsServerRestartControl(
                 configuration[$"Operations:Agents:{host}"]!, OperationCatalogue.ServiceRestart.Id,
                 OperationCatalogue.ServiceRestart.Version, input, OperationsProtocol.Digest(input), deadline,
                 OperationsProtocol.Digest(reason)[..32]);
+            audit.Append(new AgentStudio.Security.ControlPlaneAuditRecord(
+                AgentStudio.Security.ControlPlaneAuditStreams.Operator, command.Actor,
+                command.OperationId, "dispatch-requested", host, ParameterDigest: command.InputDigest,
+                Details: new { command.IdempotencyKey, command.AgentId, command.CorrelationId }));
             using var submitted = await client.PostAsJsonAsync("api/operations/v1/commands", command, OperationsProtocol.Json, ct);
             // A 4xx refusal never queued the command. A 5xx may hide an accepted
             // one, so the claim fence stays until the command expired.

@@ -199,6 +199,29 @@ public sealed class OperatorAgentIdentityTests : IDisposable
         return new OperatorAgentIdentityTestsAgent(account.Id, account.Origin);
     }
 
+    [Fact]
+    public async Task Break_glass_admits_the_host_certificate_policy_step_only_during_its_window()
+    {
+        var agent = NewAgent(new IamGrantRequest(IamRoles.Admin, IamScope.Workspace));
+        var session = _store.StartOperatorSession(agent.Id, new StartOperatorSessionRequest(null, null), _ownerId);
+        const string pattern = "/api/hosts/{id}/certificates";
+        const string path = "/api/hosts/sample-host/certificates";
+
+        var withoutWindow = await Run("POST", pattern, path, session.Secret, "{}");
+        Assert.Equal(OperatorPolicyReasons.GrantRequired, withoutWindow.Error);
+
+        var credential = _store.IssueBreakGlassCredential(SteppedUpOwner());
+        _store.OpenBreakGlassWindow(SteppedUpOwner(), credential, [session.Session.Id], 2, "sample-project");
+        var duringWindow = await Run("POST", pattern, path, session.Secret, "{}");
+        Assert.True(duringWindow.Called);
+        Assert.True(Assert.IsType<OperatorPolicyDecision>(
+            duringWindow.Context.Items[AccessSecurityMiddleware.OperatorPolicyItem]).Admitted);
+
+        _clock.Advance(TimeSpan.FromHours(2));
+        var afterWindow = await Run("POST", pattern, path, session.Secret, "{}");
+        Assert.Equal(OperatorPolicyReasons.GrantRequired, afterWindow.Error);
+    }
+
     private async Task<Outcome> Run(string method, string pattern, string path, string token, string? body = null,
         Action<HttpContext>? handler = null, IOperatorGateEvidence? evidence = null)
     {
@@ -225,6 +248,7 @@ public sealed class OperatorAgentIdentityTests : IDisposable
             context.Request.ContentType = "application/json";
         }
         object[] metadata = pattern.StartsWith("/api/v1/", StringComparison.Ordinal)
+                            || pattern.StartsWith("/api/hosts/", StringComparison.Ordinal)
             ? [new MethodPermissionMetadata(IamPermissions.WorkspaceRead, IamPermissions.WorkspaceOperate)]
             : [];
         context.SetEndpoint(new RouteEndpoint(_ => Task.CompletedTask, RoutePatternFactory.Parse(pattern), 0,

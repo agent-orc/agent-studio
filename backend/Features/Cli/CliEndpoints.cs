@@ -38,6 +38,16 @@ public static class CliEndpoints
                 return Results.BadRequest(new { error = "Fallback route has an unknown CLI." });
             return Results.Ok(policy.SetConsumer(consumer, setting));
         });
+        app.MapGet("/api/model-selection/events", (string? provider, string? project,
+            string? consumer, string? rule, string? from, string? to, string? cursor,
+            ModelSelectionLedger ledger) => Results.Ok(ledger.Query(provider, project, consumer, rule, from, to, cursor)));
+        app.MapGet("/api/model-selection/active", (ModelSelectionLedger ledger) => Results.Ok(ledger.Active()));
+        app.MapPost("/api/model-selection/events", (ModelSelectionEvent entry, ModelSelectionLedger ledger) =>
+        {
+            if (string.IsNullOrWhiteSpace(entry.Id) || string.IsNullOrWhiteSpace(entry.Kind)
+                || string.IsNullOrWhiteSpace(entry.Consumer)) return Results.BadRequest(new { error = "Missing selection event fields." });
+            return Results.Ok(new { added = ledger.Append(entry), id = entry.Id });
+        });
 
         cliGroup.MapGet("/types", () => Results.Ok(CliTypes.All));
 

@@ -1679,6 +1679,7 @@ public static class ProjectSettingsEndpoints
             value.LookAheadMinutes,
             urgentTags = value.EffectiveUrgentTags,
             value.RiskPolicy,
+            value.Calibration,
             value.Overlap,
             value.ReviewTestLevel,
             value.GateTimeoutMinutes,

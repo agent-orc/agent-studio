@@ -640,6 +640,8 @@ public sealed class AccessSecurityMiddleware
             var gate = breakGlass is null || operation is null ? OperatorPolicy.TierGate(operation) : null;
             var awaitsApproval = breakGlass is null && operation is { Tier: OperatorTier.T2 } && !IsTokenDeniedRoute(path);
             if (gate is not null && !awaitsApproval) context.Items[OperatorPolicyItem] = gate;
+            if (breakGlass is not null && operation is not null)
+                context.Items[OperatorPolicyItem] = OperatorPolicyDecision.Admit(operation);
             if (gate is { Admitted: false } && !awaitsApproval)
             {
                 await Reject(context, 403, gate.Reason!, gate.Message, policy: gate);
@@ -1134,6 +1136,7 @@ public sealed class AccessSecurityMiddleware
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/orchestrator-decisions/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/logs", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Logs;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/model-selection/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
         if ((HttpMethods.IsPost(method) || HttpMethods.IsGet(method))
             && path.StartsWith("/api/runner/artifacts", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Artifacts;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/completion", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;

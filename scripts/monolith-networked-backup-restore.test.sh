@@ -22,6 +22,8 @@ stack="$repo_root/deploy/compose/monolith-networked"
 version="$(tr -d '\r\n' < "$repo_root/VERSION")"
 api_image="ghcr.io/agent-orc/agent-studio-api:v$version"
 web_image="ghcr.io/agent-orc/agent-studio-web:v$version"
+operations_server_image="agent-operations-server:website-smoke"
+operations_agent_image="agent-operations-agent:website-smoke"
 subnet="${STUDIO_TEST_SUBNET_PREFIX:-172.30.184}"
 port="${STUDIO_TEST_HTTPS_PORT:-18443}"
 work="$(mktemp -d)"
@@ -65,7 +67,18 @@ trap finish EXIT
 if [ "${WEBSITE_REUSE_WEBSITE_IMAGES:-0}" != 1 ]; then
   docker build -f "$repo_root/backend/Dockerfile" --build-arg VERSION="$version" -t "$api_image" "$repo_root"
   docker build -f "$repo_root/frontend/Dockerfile" --build-arg VERSION="$version" -t "$web_image" "$repo_root"
+  docker build -f "$repo_root/operations-server/Dockerfile" -t "$operations_server_image" "$repo_root"
+  docker build -f "$repo_root/operations-agent/Dockerfile" -t "$operations_agent_image" "$repo_root"
 fi
+docker pull caddy:2-alpine >/dev/null
+edge_reference="$(docker image inspect --format '{{index .RepoDigests 0}}' caddy:2-alpine)"
+export STUDIO_API_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_WEB_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_EDGE_DIGEST="${edge_reference##*@sha256:}"
+export STUDIO_OPERATIONS_SERVER_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_OPERATIONS_AGENT_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_ACCESS_AUTH_URL=https://access.example.test
+export STUDIO_ACCESS_MFA_ENFORCED=true
 
 # A copy of the release stack with an override that moves it off the
 # production subnet and ports. Compose loads compose.override.yaml by
@@ -79,11 +92,13 @@ new_stack() {
   cat > "$work/$side/stack/compose.override.yaml" <<EOF
 services:
   api:
+    image: $api_image
     environment:
       Security__TrustedProxyAddresses: $subnet.3,$subnet.2
     networks: !override
       website: {ipv4_address: $subnet.4}
   frontend:
+    image: $web_image
     volumes: !override
       - ./Caddyfile.frontend.test:/etc/caddy/Caddyfile:ro
     networks: !override
@@ -93,6 +108,17 @@ services:
       - '127.0.0.1:$port:443'
     networks: !override
       website: {ipv4_address: $subnet.2}
+  operations-bootstrap:
+    image: $operations_server_image
+  operations-server:
+    image: $operations_server_image
+    ports: !override []
+    networks: !override
+      website: {ipv4_address: $subnet.6}
+  operations-agent:
+    image: $operations_agent_image
+    networks: !override
+      website: {ipv4_address: $subnet.7}
 networks:
   website:
     driver_opts: !reset {}
@@ -140,7 +166,7 @@ grep -q 'Backups are off' "$work/a/setup.log"
 compose_in "$work/a/stack" "$project_a" up -d --no-build
 wait_ready
 compose_in "$work/a/stack" "$project_a" ps --status running --services | sort > "$work/a/running"
-printf 'api\nedge\nfrontend\n' | cmp -s - "$work/a/running" || { cat "$work/a/running" >&2; exit 1; }
+printf 'api\nedge\nfrontend\noperations-agent\noperations-server\n' | cmp -s - "$work/a/running" || { cat "$work/a/running" >&2; exit 1; }
 (cd "$work/a/stack" && COMPOSE_PROJECT_NAME="$project_a" bash backup.sh) > "$work/a/off.txt"
 grep -q '^Backups are off' "$work/a/off.txt"
 (cd "$work/a/stack" && COMPOSE_PROJECT_NAME="$project_a" bash backup.sh status) | grep -q '^Backups are off'

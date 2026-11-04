@@ -93,8 +93,10 @@
 /api/filesystem-layer/snapshot	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
 /api/first-run/git-setups/{id}	free	-	-	-
 /api/first-run/projects/{projectId}/repository	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
+/api/model-selection/active	free	-	-	-
 /api/model-selection/effective	free	-	-	-
 /api/model-selection/policy	free	-	-	-
+/api/model-selection/events	free	-	-	-
 /api/gate-artifacts/{runId}	free	-	-	-
 /api/gate-artifacts/{runId}/{name}	free	-	-	-
 /api/gate-economics	free	-	-	-
@@ -110,6 +112,7 @@
 /api/git/project-commit/diff	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/project-commit/files	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/summary	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
+/api/hosts/{id}/operations/{attemptId}	free	-	-	-
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-

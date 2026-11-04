@@ -1411,6 +1411,7 @@ builder.Services.AddSingleton<AgentStudio.Watcher.IHostAdmissionControl, AgentSt
 builder.Services.AddHttpClient(AgentStudio.Watcher.OperationsServerRestartControl.HttpClientName,
     client => client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddSingleton<AgentStudio.Watcher.IServiceRestartControl, AgentStudio.Watcher.OperationsServerRestartControl>();
+builder.Services.AddSingleton<AgentStudio.Security.HostCertificateAuthority>();
 builder.Services.AddSingleton<AgentStudio.Watcher.IServiceWorkload, AgentStudio.Watcher.ServiceWorkloadReader>();
 builder.Services.AddSingleton<AgentStudio.Watcher.IProviderRouteControl, AgentStudio.Watcher.ReviewProviderRouteControl>();
 builder.Services.AddSingleton<AgentStudio.Watcher.IBatchGateControl, AgentStudio.Watcher.BatchGateInterventionControl>();
@@ -1517,6 +1518,7 @@ builder.Services.AddSingleton<IQuotaProbe, CodexQuotaProbe>();
 builder.Services.AddSingleton<IQuotaProbe, AntigravityQuotaProbe>();
 builder.Services.AddSingleton<QuotaCacheStore>();
 builder.Services.AddSingleton<QuotaHistoryStore>();
+builder.Services.AddSingleton<ModelSelectionLedger>();
 builder.Services.AddSingleton<CliVersionTracker>();
 builder.Services.AddSingleton<NpmGlobalInstaller>();
 builder.Services.AddSingleton<LocalCliRepairService>();

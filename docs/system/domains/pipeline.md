@@ -749,7 +749,23 @@ If both candidate and base report failing test names with no overlap, the
 candidate enters member isolation. A confirmed deterministic candidate red
 also enters isolation when another test was quarantined as flaky. Per-task
 fallback gates admit at most one fewer concurrent request than configured gate
-slots, leaving a slot for a batch. The pilot reconciles a current passed review
+slots, leaving a slot for a batch.
+
+For look-ahead planning, `batchGate.calibration` selects `legacy` or
+`empirical`. `legacy` restores the previous risk limit and size rule. The
+empirical rule starts at target size 4 and the configured risk limit (0.35,
+0.55, or 0.75). It records each original batch's first candidate verdict,
+membership size, changed top-level areas, shared-path group, and maximum
+relative card score. A deterministic red also records the count and host
+minutes of diagnostic child suites. Infrastructure and pre-existing-base
+red verdicts do not train candidate failure rates. After at least 12 usable
+outcomes, the rule may move the target by one member and the admission limit
+by 0.05 per UTC day. It uses only previous days' outcomes and requires enough
+observations in a matching area and overlap group before using that group.
+These recorded red frequencies are batch-level outcomes; the relative card
+score is never interpreted as a red probability in empirical mode.
+
+The pilot reconciles a current passed review
 in Auto Review with a missing pending record back into the batch queue.
 Admission accepts a passed per-card model review whose required agent aspects
 were carried from a passed equivalent-delivery review. A plan with no agent
@@ -2954,6 +2970,15 @@ whose `task.integration` said `integrated`. Two defects met.
   one card and a lookup of the whole board agree by construction. This does not
   weaken AGT-2817: the proof is still Git ancestry of the delivery against the
   integration branch, never a lane state or a pipeline record.
+- **Verified ancestor acceptance.** Acceptance retains a delivery's passed
+  gate after later publications only when its recorded verification tree is on
+  the published branch's first-parent line. One bounded first-parent range from
+  that tree to the current tip identifies the later publication commits. Each
+  must be covered by its own passed per-task gate or by a passed batch gate
+  spanning those commits. Batch evidence cannot substitute for the original
+  tree's first-parent ancestry. A branch rewrite or an uncovered later
+  publication is refused; acceptance evidence names the gate that verified
+  the delivery.
 - **One refusal per state change.** A refused rail action is a decision, not a
   symptom to retry. `AcceptanceRailAttemptPolicy`
   (`backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs`) is a
