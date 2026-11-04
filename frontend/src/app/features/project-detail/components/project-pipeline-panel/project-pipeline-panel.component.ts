@@ -119,6 +119,8 @@ export class ProjectPipelinePanelComponent {
         effectiveCliType: ov?.cliType ?? step.cliType ?? (step.usesModel ? 'claude' : ''),
         effectiveModel: ov?.model ?? step.resolvedModel ?? step.model ?? '',
         effectiveModelSource: ov?.model ? 'step' : (step.modelSource ?? ''),
+        overridesWorkspace: step.overridesWorkspace === true || !!ov?.model || !!ov?.cliType || !!ov?.thinkingLevel,
+        pinMode: ov?.pinMode ?? 'preference',
         effectiveThinkingLevel: ov?.thinkingLevel ?? step.resolvedThinkingLevel ?? '',
         prompt: ov?.prompt ?? '',
         promptTemplate: step.promptTemplate ?? '',
@@ -328,6 +330,10 @@ export class ProjectPipelinePanelComponent {
       model: selection.model, thinkingLevel: selection.thinkingLevel });
   }
 
+  onStepPinModeChange(stepId: string, pinMode: 'preference' | 'hard'): void {
+    this.writeStep(stepId, { pinMode });
+  }
+
   /**
    * The condition <select> changed. A non-value token persists immediately;
    * a value-bearing token (task-type / tag) keeps a draft until a value
@@ -402,6 +408,7 @@ export class ProjectPipelinePanelComponent {
       prompt?: string | null;
       mode?: string;
       condition?: PipelineStepCondition | null;
+      pinMode?: 'preference' | 'hard';
     },
   ): void {
     const cur = this.overrides()[stepId] ?? {};
@@ -414,6 +421,7 @@ export class ProjectPipelinePanelComponent {
     const prompt = (patch.prompt !== undefined ? patch.prompt : (cur.prompt ?? ''))?.trim() ?? '';
     const mode = (patch.mode ?? cur.mode ?? '').trim();
     const condition = patch.condition !== undefined ? patch.condition : (cur.condition ?? null);
+    const pinMode = patch.pinMode ?? cur.pinMode ?? 'preference';
     const pipelineType = this.pipelineType();
 
     this.stepBusy[stepId] = true;
@@ -428,6 +436,7 @@ export class ProjectPipelinePanelComponent {
       prompt: prompt || null,
       mode: mode || null,
       condition: condition ?? null,
+      pinMode,
     }).subscribe({
       next: (res) => {
         this.stepBusy[stepId] = false;

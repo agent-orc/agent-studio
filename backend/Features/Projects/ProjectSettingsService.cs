@@ -69,6 +69,158 @@ public class ProjectSettingsService
         }
     }
 
+    /// <summary>One-time conversion of old global-default step pins to inheritance.</summary>
+    public AgentStudio.Cli.ModelSelectionMigration MigrateModelSelectionSteps(
+        IReadOnlyDictionary<string, AgentStudio.Cli.CliModelRouteProfile> oldProfiles)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var inherited = 0;
+            var explicitCount = 0;
+            var touched = 0;
+            foreach (var (project, settings) in _cache.ToArray())
+            {
+                var changed = false;
+                var selection = settings.ModelSelectionOverrides is null
+                    ? new Dictionary<string, ModelSelectionOverride>(StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, ModelSelectionOverride>(settings.ModelSelectionOverrides, StringComparer.OrdinalIgnoreCase);
+                Dictionary<string, PipelineStepSetting>? MigrateMap(Dictionary<string, PipelineStepSetting>? source, string pipelineType)
+                {
+                    if (source is null) return null;
+                    var copy = new Dictionary<string, PipelineStepSetting>(source, StringComparer.OrdinalIgnoreCase);
+                    foreach (var (stepId, setting) in source)
+                    {
+                        if (string.IsNullOrWhiteSpace(setting.Model)) continue;
+                        var cli = setting.CliType ?? (setting.Model.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase) ? "codex" : "claude");
+                        if (oldProfiles.TryGetValue(cli, out var profile)
+                            && string.Equals(setting.Model, profile.PrimaryModel, StringComparison.OrdinalIgnoreCase))
+                        {
+                            copy[stepId] = setting with
+                            {
+                                Model = null,
+                                CliType = string.Equals(setting.CliType, profile.CliType, StringComparison.OrdinalIgnoreCase)
+                                    ? null : setting.CliType,
+                                ThinkingLevel = string.Equals(setting.ThinkingLevel, profile.PrimaryThinkingLevel,
+                                    StringComparison.OrdinalIgnoreCase) ? null : setting.ThinkingLevel,
+                            };
+                            inherited++;
+                            changed = true;
+                        }
+                        else
+                        {
+                            explicitCount++;
+                            var consumer = ModelConsumerForStep(stepId);
+                            var parent = selection.GetValueOrDefault(consumer) ?? new ModelSelectionOverride();
+                            var byType = parent.ByPipelineType is null
+                                ? new Dictionary<string, ModelSelectionOverride>(StringComparer.OrdinalIgnoreCase)
+                                : new Dictionary<string, ModelSelectionOverride>(parent.ByPipelineType, StringComparer.OrdinalIgnoreCase);
+                            var typeEntry = byType.GetValueOrDefault(pipelineType) ?? new ModelSelectionOverride();
+                            var byStep = typeEntry.ByStep is null
+                                ? new Dictionary<string, ModelSelectionOverride>(StringComparer.OrdinalIgnoreCase)
+                                : new Dictionary<string, ModelSelectionOverride>(typeEntry.ByStep, StringComparer.OrdinalIgnoreCase);
+                            byStep[stepId] = new ModelSelectionOverride
+                            {
+                                Primary = new AgentStudio.TaskServer.Contracts.SelectionRoute(cli, setting.Model, setting.ThinkingLevel),
+                                PinMode = setting.PinMode,
+                            };
+                            byType[pipelineType] = typeEntry with { ByStep = byStep };
+                            selection[consumer] = parent with { ByPipelineType = byType };
+                            changed = true;
+                        }
+                    }
+                    return copy;
+                }
+                var flat = MigrateMap(settings.PipelineSteps, PipelineTypes.Task);
+                var byType = settings.PipelineStepsByType?.ToDictionary(
+                    pair => pair.Key, pair => MigrateMap(pair.Value, pair.Key)!, StringComparer.OrdinalIgnoreCase);
+                if (!changed) continue;
+                _cache[project] = settings with { PipelineSteps = flat, PipelineStepsByType = byType,
+                    ModelSelectionOverrides = selection.Count == 0 ? null : selection };
+                touched++;
+            }
+            if (touched > 0) Persist();
+            return new AgentStudio.Cli.ModelSelectionMigration(inherited, explicitCount, _cache.Count, true);
+        }
+    }
+
+    internal static bool HasModelSelectionOverride(ProjectSettings? settings, string pipelineType, string stepId)
+    {
+        if (settings?.ModelSelectionOverrides?.GetValueOrDefault(ModelConsumerForStep(stepId)) is not { } consumer)
+            return false;
+        static bool Configured(ModelSelectionOverride? value) => value is not null &&
+            (value.Primary is not null || value.Fallbacks is not null || value.PinMode == "hard");
+        var byType = consumer.ByPipelineType?.GetValueOrDefault(PipelineTypes.Normalize(pipelineType));
+        var byStep = byType?.ByStep?.GetValueOrDefault(stepId);
+        return Configured(consumer) || Configured(byType) || Configured(byStep);
+    }
+
+    private static string ModelConsumerForStep(string stepId) =>
+        stepId.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase) ? "review-aspect"
+        : stepId.Contains("deep-review", StringComparison.OrdinalIgnoreCase) ? "review-deep"
+        : stepId.Contains("grade", StringComparison.OrdinalIgnoreCase) ? "review-grade"
+        : stepId.Contains("conflict", StringComparison.OrdinalIgnoreCase) ? "merge-resolver"
+        : "one-shot";
+
+    public ProjectSettings SetModelSelectionOverride(string projectName, string consumer,
+        ModelSelectionOverride? value, string? pipelineType = null)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var stored) ? stored : new ProjectSettings();
+            var map = current.ModelSelectionOverrides is null
+                ? new Dictionary<string, ModelSelectionOverride>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, ModelSelectionOverride>(current.ModelSelectionOverrides, StringComparer.OrdinalIgnoreCase);
+            if (pipelineType is null)
+            {
+                if (value is null) map.Remove(consumer); else map[consumer] = value;
+            }
+            else
+            {
+                var parent = map.GetValueOrDefault(consumer) ?? new ModelSelectionOverride();
+                var types = parent.ByPipelineType is null
+                    ? new Dictionary<string, ModelSelectionOverride>(StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, ModelSelectionOverride>(parent.ByPipelineType, StringComparer.OrdinalIgnoreCase);
+                if (value is null) types.Remove(pipelineType); else types[pipelineType] = value;
+                map[consumer] = parent with { ByPipelineType = types.Count == 0 ? null : types };
+            }
+            _cache[key] = current with { ModelSelectionOverrides = map.Count == 0 ? null : map };
+            Persist();
+            return _cache[key];
+        }
+    }
+
+    public ProjectSettings SetModelSelectionStepOverride(string projectName, string pipelineType,
+        string stepId, ModelSelectionOverride? value)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var stored) ? stored : new ProjectSettings();
+            var consumer = ModelConsumerForStep(stepId);
+            var map = current.ModelSelectionOverrides is null
+                ? new Dictionary<string, ModelSelectionOverride>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, ModelSelectionOverride>(current.ModelSelectionOverrides, StringComparer.OrdinalIgnoreCase);
+            var parent = map.GetValueOrDefault(consumer) ?? new ModelSelectionOverride();
+            var types = parent.ByPipelineType is null
+                ? new Dictionary<string, ModelSelectionOverride>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, ModelSelectionOverride>(parent.ByPipelineType, StringComparer.OrdinalIgnoreCase);
+            var typeEntry = types.GetValueOrDefault(pipelineType) ?? new ModelSelectionOverride();
+            var steps = typeEntry.ByStep is null
+                ? new Dictionary<string, ModelSelectionOverride>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, ModelSelectionOverride>(typeEntry.ByStep, StringComparer.OrdinalIgnoreCase);
+            if (value is null) steps.Remove(stepId); else steps[stepId] = value;
+            types[pipelineType] = typeEntry with { ByStep = steps.Count == 0 ? null : steps };
+            map[consumer] = parent with { ByPipelineType = types };
+            _cache[key] = current with { ModelSelectionOverrides = map };
+            Persist();
+            return _cache[key];
+        }
+    }
+
     public void SetAutoCommit(string projectName, bool enabled)
     {
         EnsureLoaded();
@@ -1113,6 +1265,7 @@ public class ProjectSettingsService
                     CliType = normalizedCliType,
                     Model = normalizedModel,
                     ThinkingLevel = normalizedThinkingLevel,
+                    PinMode = setting.PinMode,
                     Prompt = normalizedPrompt,
                     PromptBaseDefaultSha = normalizedPrompt is null
                         ? null
@@ -1282,6 +1435,7 @@ public class ProjectSettingsService
             CliType = normalizedCliType,
             Model = normalizedModel,
             ThinkingLevel = normalizedThinkingLevel,
+            PinMode = setting.PinMode,
             Prompt = normalizedPrompt,
             PromptBaseDefaultSha = normalizedPrompt is null ? null : setting.PromptBaseDefaultSha,
             PromptBaseDefaultContent = normalizedPrompt is null ? null : setting.PromptBaseDefaultContent,

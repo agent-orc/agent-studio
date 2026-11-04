@@ -26,15 +26,18 @@ public sealed class CliQuotaCapsService : IQuotaCapTable
 
     private readonly ILogger<CliQuotaCapsService> _logger;
     private readonly IConfiguration _config;
+    private readonly ModelSelectionPolicyStore? _policy;
     private readonly object _lock = new();
     private Dictionary<string, Dictionary<string, int>> _cache =
         new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
 
-    public CliQuotaCapsService(ILogger<CliQuotaCapsService> logger, IConfiguration config)
+    public CliQuotaCapsService(ILogger<CliQuotaCapsService> logger, IConfiguration config,
+        ModelSelectionPolicyStore? policy = null)
     {
         _logger = logger;
         _config = config;
+        _policy = policy;
     }
 
     public Dictionary<string, Dictionary<string, int>> GetAll()
@@ -96,6 +99,13 @@ public sealed class CliQuotaCapsService : IQuotaCapTable
         {
             if (_loaded) return;
             _loaded = true;
+            if (_policy is not null)
+            {
+                _cache = _policy.Get().Caps.ToDictionary(pair => pair.Key,
+                    pair => new Dictionary<string, int>(pair.Value, StringComparer.OrdinalIgnoreCase),
+                    StringComparer.OrdinalIgnoreCase);
+                return;
+            }
             var path = ResolveStorePath();
             if (path == null || !File.Exists(path)) return;
             try
@@ -123,6 +133,12 @@ public sealed class CliQuotaCapsService : IQuotaCapTable
 
     private void Persist()
     {
+        if (_policy is not null)
+        {
+            foreach (var (cli, windows) in _cache)
+            foreach (var (window, cap) in windows) _policy.SetCap(cli, window, cap);
+            return;
+        }
         var path = ResolveStorePath();
         if (path == null) return;
         try
