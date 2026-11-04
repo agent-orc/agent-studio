@@ -480,7 +480,10 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   `.security/iam-audit.jsonl` (token id, from and to role, bindings). Legacy
   operator tokens from version 0 or 1 bind `operator-agent` directly and get
   the same entry. Service accounts created in the Access area keep their
-  bindings. An older binary does not know the role and grants such a token
+  bindings. A networked server loads the state at start, so the migration
+  and its audit entries run before the first request; an unreadable state
+  file is logged and does not stop the start, and every request that reads it
+  answers 500 until the file is repaired. An older binary does not know the role and grants such a token
   nothing until it is upgraded again.
 - Each user record keeps `role`, `projects`, and `productionApprovalProjects`
   as a downgrade-safe summary: only Admin is summarized as `operator` (with
