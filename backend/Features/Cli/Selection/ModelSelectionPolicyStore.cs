@@ -107,8 +107,19 @@ public sealed class ModelSelectionPolicyStore(
             if (_cached is not null) return _cached;
             var path = Path.Combine(Root(), "model-selection-policy.json");
             if (File.Exists(path))
-                return _cached = JsonSerializer.Deserialize<ModelSelectionPolicy>(File.ReadAllText(path), Json)
+            {
+                var stored = JsonSerializer.Deserialize<ModelSelectionPolicy>(File.ReadAllText(path), Json)
                     ?? throw new InvalidDataException($"Invalid model selection policy: {path}");
+                return _cached = stored with
+                {
+                    Consumers = new(stored.Consumers, StringComparer.OrdinalIgnoreCase),
+                    Caps = stored.Caps.ToDictionary(pair => pair.Key,
+                        pair => new Dictionary<string, int>(pair.Value, StringComparer.OrdinalIgnoreCase),
+                        StringComparer.OrdinalIgnoreCase),
+                    ModelFallbacks = new(stored.ModelFallbacks, StringComparer.OrdinalIgnoreCase),
+                    LegacyProfiles = new(stored.LegacyProfiles, StringComparer.OrdinalIgnoreCase),
+                };
+            }
 
             var policy = new ModelSelectionPolicy();
             var legacyPath = Path.Combine(Root(), "cli-model-routing.json");

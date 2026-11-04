@@ -93,6 +93,10 @@ public sealed class ModelSelectionPolicyStoreTests
             Assert.Equal(new SelectionRoute("claude", "claude-opus-5", "xhigh"),
                 reloaded.ModelFallbacks["gpt-6-sol:xhigh"]);
             Assert.Equal("catalogue", reloaded.Consumers["coding"].Fallbacks?.Mode);
+            Assert.Equal(reloaded.Consumers["coding"], reloaded.Consumers["CODING"]);
+            Assert.Equal(reloaded.Caps["CLAUDE"]["WEEKLY"], reloaded.Caps["claude"]["weekly"]);
+            Assert.Equal(reloaded.ModelFallbacks["GPT-6-SOL:XHIGH"], reloaded.ModelFallbacks["gpt-6-sol:xhigh"]);
+            Assert.Equal(reloaded.LegacyProfiles["CLAUDE"], reloaded.LegacyProfiles["claude"]);
             Assert.Equal(oldContent, File.ReadAllText(oldPath));
             Assert.True(File.Exists(Path.Combine(root, "model-selection-policy.json")));
             Assert.Null(PipelineTypeSettings.ForType(projects.Get("project"), PipelineTypes.Task)!
