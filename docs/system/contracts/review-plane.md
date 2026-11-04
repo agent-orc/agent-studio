@@ -125,6 +125,18 @@ The file-backed endpoint has these durable and asynchronous parts:
    matching `RemoteDeliverySettlementStore` sidecar before integration. A failed
    required write returns typed `review-settlement-repair-required` instead of
    acknowledging incomplete work.
+   Journal hashes are versioned (AGT-3467). Format 1 hashed the compact
+   serialization of each member, so a release that added a record member
+   (AGT-3430 `outputTail`) could no longer recompute them from the typed record
+   and every earlier entry read as repair. The reader therefore verifies every
+   hash against the JSON members as stored, with the rules of the entry's
+   format: format 1 compact, format 2 canonical (members holding null, false
+   or zero omitted, so an added optional member keeps every hash). The writer
+   writes format 2 and upgrades a rewritten format 1 entry; the legacy
+   submitted hash of such an entry is dropped, so its replay is compared by the
+   canonical report hash. A changed stored member still reads as repair, with
+   the first failing check in the reason (for example
+   `corrupt-review-settlement-journal:report-sha256-mismatch`).
 2. **Project evidence (asynchronous, durable pending work).** The endpoint
    enqueues a `RemoteReviewEvidenceProjectionRequest` onto
    `IRemoteReviewEvidenceProjectionQueue` (`backend/Features/Runner/RemoteReviewEvidenceProjectionQueue.cs`).
