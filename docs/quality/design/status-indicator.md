@@ -57,7 +57,10 @@ The six `--studio-status-*` tokens are declared in both theme blocks of
 pigments (`--studio-success`, `--studio-warn`, `--studio-error`,
 `--studio-accent-teal`, `--studio-accent-3-strong`, `--studio-fg-dim`). The
 component mixes its tint and border from the tone token, so both themes flip
-through the token alone. The running spinner stops under
+through the token alone. The icon uses the pure tone; the label mixes 70% tone
+with 30% `--studio-fg-strong`, which keeps every tone at or above 6:1 on its
+own tint in both themes and at AA on tinted banners (AGT-3403 measured the
+pure pigment at 4.25:1 for warning and success in the light theme). The running spinner stops under
 `prefers-reduced-motion: reduce`; the static spinner icon still differs from
 every other tone.
 

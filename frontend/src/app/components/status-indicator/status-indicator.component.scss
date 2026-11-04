@@ -24,7 +24,10 @@
   border: 1px solid color-mix(in srgb, var(--status-tone) 40%, transparent);
   border-radius: var(--studio-card-pill-radius);
   background: color-mix(in srgb, var(--status-tone) 12%, transparent);
-  color: var(--status-tone);
+  /* The label leans 30% toward the strongest foreground so it clears WCAG AA
+     on its own tint and on tinted surfaces in both themes (AGT-3403); the
+     icon keeps the pure tone. */
+  color: color-mix(in srgb, var(--status-tone) 70%, var(--studio-fg-strong));
   font-size: 12px;
   font-weight: 600;
   line-height: 1.2;
@@ -52,6 +55,7 @@
 .status-indicator__icon {
   display: inline-flex;
   flex: 0 0 auto;
+  color: var(--status-tone);
 }
 
 .status-indicator__label {
