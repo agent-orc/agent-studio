@@ -9,7 +9,8 @@ namespace AgentStudio.Cli;
 
 /// <summary>Networked one-shot transport. Provider credentials remain on runner hosts.</summary>
 public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
-    IConfiguration configuration, AdHocUsageRecorder? usageRecorder = null) : ICliOneShot
+    IConfiguration configuration, AdHocUsageRecorder? usageRecorder = null,
+    TimeProvider? clock = null) : ICliOneShot
 {
     public string CliType => cliType;
 
@@ -42,15 +43,30 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
             if (job is null) return Failed("Task Server returned no one-shot job.");
             if (job.Status == "waiting") return Failed(job.Error ?? $"waiting for a host with {job.Capability}");
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            deadline.CancelAfter(TimeSpan.FromSeconds(timeout + 30));
+            var time = clock ?? TimeProvider.System;
+            // The queue may use its whole admission window. A claim starts a new
+            // provider budget on the server, so the caller must renew its budget
+            // when it first observes that claim.
+            using var deadlineTimer = time.CreateTimer(_ => deadline.Cancel(), null,
+                TimeSpan.FromSeconds(timeout + 35), Timeout.InfiniteTimeSpan);
+            var sawClaim = false;
             while (true)
             {
-                await Task.Delay(TimeSpan.FromSeconds(2), deadline.Token);
+                await Task.Delay(TimeSpan.FromSeconds(2), time, deadline.Token);
                 using var response = await client.GetAsync($"/api/v1/one-shot-jobs/{job.JobId}", deadline.Token);
                 response.EnsureSuccessStatusCode();
                 var current = await response.Content.ReadFromJsonAsync<OneShotJobDto>(cancellationToken: deadline.Token);
                 if (current is null) return Failed("Task Server lost the one-shot job.");
-                if (current.Status is "pending" or "claimed") continue;
+                if (current.Status == "pending") continue;
+                if (current.Status == "claimed")
+                {
+                    if (!sawClaim)
+                    {
+                        deadlineTimer.Change(TimeSpan.FromSeconds(timeout + 30), Timeout.InfiniteTimeSpan);
+                        sawClaim = true;
+                    }
+                    continue;
+                }
                 if (current.Status != "completed") return Failed(current.Error ?? "Remote one-shot job failed.");
                 var end = DateTime.UtcNow;
                 var usage = current.Usage;
