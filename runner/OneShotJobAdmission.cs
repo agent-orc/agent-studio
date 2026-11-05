@@ -127,7 +127,10 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
         try
         {
             var outputExceeded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var stdout = ReadBoundedAsync(process.StandardOutput, 262_144, process, outputExceeded, ct);
+            // The requested cap also bounds raw CLI output, including JSON framing.
+            // Reject it while reading so a provider that keeps running cannot turn
+            // an over-cap result into a timeout.
+            var stdout = ReadBoundedAsync(process.StandardOutput, request.MaxOutputBytes, process, outputExceeded, ct);
             var stderr = ReadBoundedAsync(process.StandardError, 8_192, process, outputExceeded, ct);
             var input = request.Cli == "claude" ? ClaudeImageEnvelope(request) : request.Prompt;
             var write = WriteInputAsync(process.StandardInput, input, ct);
