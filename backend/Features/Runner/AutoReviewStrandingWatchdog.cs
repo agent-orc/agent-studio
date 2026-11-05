@@ -57,7 +57,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         var now = DateTime.UtcNow;
         var pending = _batches.ListPending();
         var activeBatchMembers = _batches.ListManifests()
-            .Where(IsActiveManifest)
+            .Where(manifest => IsActiveManifest(_batches, manifest))
             .SelectMany(manifest => manifest.Members.Select(member =>
                 manifest.Scope.Project + "\u001f" + member.TaskKey))
             .ToHashSet(StringComparer.Ordinal);
@@ -97,7 +97,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 if (action == AutoReviewStrandingAction.Leave) continue;
                 // A batch can form after the pass snapshot. Recheck before any
                 // side effect so formation never races a recovery intervention.
-                if (IsBatchMember(card.ProjectName, key, review?.AttemptId)) continue;
+                if (IsBatchMember(_batches, card.ProjectName, key, review?.AttemptId)) continue;
                 var writeKey = NextWriteKey(writePrefix, interventions);
                 var repeated = action == AutoReviewStrandingAction.Escalate
                     && (facts.StartedStepBefore || facts.ReenteredBatchBefore);
@@ -108,6 +108,10 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 var escalated = false;
                 if (!done)
                 {
+                    // Formation can consume the pending entry while recovery is
+                    // running. A closed batch now owns the card, even if the
+                    // recovery call did not observe a pending entry itself.
+                    if (IsBatchMember(_batches, card.ProjectName, key, review?.AttemptId)) continue;
                     var parked = await _escalation.EscalateAsync(card.Id, card.WatchPath,
                         card.ProjectName, HumanReviewEscalationCategories.Environmental,
                         $"Auto Review had no active owner for {facts.InLane.TotalMinutes:0} minutes. {detail}",
@@ -160,7 +164,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     && review.TerminalAt is { } reviewedAt)
                 {
                     await _batchPilot.EnqueueAsync(card, review, run, new DateTimeOffset(reviewedAt), ct);
-                    if (_batches.ListPending().Any(item => item.ReviewAttemptId == review.AttemptId))
+                    if (IsBatchMember(_batches, card.ProjectName, CardKey(card), review.AttemptId))
                         return (true, false, "Re-entered the batch gate for the passed review.");
                     return (false, false,
                         "The batch gate retained only a resolved record for this review attempt.");
@@ -200,22 +204,23 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         return true;
     }
 
-    private bool IsBatchMember(string project, string taskKey, string? reviewAttemptId)
+    internal static bool IsBatchMember(BatchGateStore batches, string project, string taskKey,
+        string? reviewAttemptId)
     {
-        if (_batches.ListPending().Any(item => item.Subject.Project == project
-            && item.Subject.TaskKey == taskKey
-            || item.ReviewAttemptId == reviewAttemptId)) return true;
-        return _batches.ListManifests().Any(manifest =>
+        if (batches.ListPending().Any(item => item.Subject.Project == project
+            && (item.Subject.TaskKey == taskKey
+                || reviewAttemptId is not null && item.ReviewAttemptId == reviewAttemptId))) return true;
+        return batches.ListManifests().Any(manifest =>
             manifest.Scope.Project == project
             && manifest.Members.Any(member => member.TaskKey == taskKey)
-            && IsActiveManifest(manifest));
+            && IsActiveManifest(batches, manifest));
     }
 
-    private bool IsActiveManifest(BatchGateManifest manifest)
+    private static bool IsActiveManifest(BatchGateStore batches, BatchGateManifest manifest)
     {
-        var stateFolder = Path.Combine(_batches.BatchDirectory(manifest.BatchId), "state");
+        var stateFolder = Path.Combine(batches.BatchDirectory(manifest.BatchId), "state");
         return !Directory.Exists(stateFolder)
-            || IsActiveBatchPhase(_batches.LatestState(manifest.BatchId).Phase);
+            || IsActiveBatchPhase(batches.LatestState(manifest.BatchId).Phase);
     }
 
     internal static bool IsActiveBatchPhase(BatchPhase phase)

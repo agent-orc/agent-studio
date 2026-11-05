@@ -96,6 +96,46 @@ public sealed class AutoReviewStrandingPolicyTests
     public void Settled_batch_does_not_own_card(BatchPhase phase)
         => Assert.False(AutoReviewStrandingWatchdog.IsActiveBatchPhase(phase));
 
+    [Fact]
+    public void Batch_formed_during_reentry_still_owns_recovered_card_after_pending_resolves()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "auto-review-stranding-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new BatchGateStore(root);
+            // clock-independent: these fixture timestamps are compared only with each other.
+            var now = new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
+            const string sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            var scope = new BatchGateScope("project", "repo", "develop", "full", "digest", "v1");
+            BatchGateSubject Subject(string key) => new(
+                key, "project", "repo", "develop", "full", "digest", "v1",
+                "refs/heads/agent-studio/results/one", sha, "run-1", 1, 1, sha,
+                true, true, true, true, false, null, true, now, 0);
+            var pending = store.Enqueue(new BatchGatePendingRecord("review-1", Subject("card-1"),
+                root, root, root, "direct-merge", "task", now));
+            Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", "review-1"));
+
+            var manifest = BatchGatePolicy.Form([pending.Subject,
+                    Subject("card-2") with { EnqueueSequence = 2 },
+                    Subject("card-3") with { EnqueueSequence = 3 },
+                    Subject("card-4") with { EnqueueSequence = 4 }],
+                scope, sha, new BatchGateFormationOptions(Enabled: true), now.AddMinutes(20)).Manifest!;
+            store.CloseManifest(manifest);
+            store.ResolvePending("review-1", "formed");
+
+            Assert.Empty(store.ListPending());
+            Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "other-project", "card-1", "review-1"));
+            store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+                BatchPhase.Published, null, 0, now.AddMinutes(21)));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", "review-1"));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("running-step")]
     [InlineData("running-review")]
