@@ -18,6 +18,27 @@ public static class TaskServerEndpoints
         var api = app.MapGroup("/api/v1")
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
         api.MapGet("/protocol", (TaskServerStore store) => Results.Ok(store.Status().Protocol));
+        api.MapPost("/one-shot-jobs", async (OneShotJobRequest request, TaskServerStore store,
+            CancellationToken ct) => await InvokeAsync(() => store.CreateOneShotJobAsync(request, ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start)
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        api.MapGet("/one-shot-jobs/{jobId}", async (string jobId, TaskServerStore store,
+            CancellationToken ct) => await InvokeAsync(() => store.GetOneShotJobAsync(jobId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        api.MapPost("/one-shot-jobs/claim", async (HttpContext context, OneShotJobClaimRequest request,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            if (RunnerIdentityMismatch(context, request.RunnerId) is { } mismatch) return mismatch;
+            return await InvokeAsync(() => store.ClaimOneShotJobAsync(request, ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
+            .RequireAnyTaskServerScope(TaskServerScopes.RunsClaim, TaskServerScopes.ReviewsClaim);
+        api.MapPost("/one-shot-jobs/complete", async (HttpContext context, OneShotJobCompletion request,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            if (RunnerIdentityMismatch(context, request.RunnerId) is { } mismatch) return mismatch;
+            return await InvokeAsync(() => store.CompleteOneShotJobAsync(request, ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
+            .RequireAnyTaskServerScope(TaskServerScopes.RunsWrite, TaskServerScopes.ReviewsWrite);
         api.MapGet("/failure-fingerprints", async (
             string? fingerprint, DateTime? sinceUtc, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ReadFailureFingerprintsAsync(fingerprint, sinceUtc, ct)));

@@ -142,5 +142,7 @@ public static class ResultFinalizationPolicy
             TimelineSummary: $"Summary pending (degraded: {error})",
             ScheduleRetry: true);
 
-    private static string Humanize(string reason) => reason.Replace('-', ' ');
+    private static string Humanize(string reason)
+        => reason.StartsWith("waiting for a host with model-acceptance:", StringComparison.Ordinal)
+            ? reason : reason.Replace('-', ' ');
 }

@@ -377,7 +377,7 @@ public sealed class CliOneShotRegistry
                 Pins = new SelectionPins(request.CliType, request.Model, request.ThinkingLevel),
                 Required = new SelectionRequirements(SameClassOnly: SelectionConsumers.IsReview(consumer)),
             },
-            source);
+            source, RecordEveryCall: true);
     }
 
     /// <summary>Admit a CLI whose aspect adapter does not use the one-shot protocol.</summary>

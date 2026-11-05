@@ -18,7 +18,8 @@ public sealed record ModelSelectionCall(
     Func<string, string?, bool>? HostAccepts = null,
     Func<string, string?, bool>? HostAcceptsFallback = null,
     Func<ModelRoutingTier?>? CorrectnessFloor = null,
-    string? DecisionKey = null)
+    string? DecisionKey = null,
+    bool RecordEveryCall = false)
 {
     /// <summary>The selection call behind a legacy admission request (adapter until MS-6).</summary>
     public static ModelSelectionCall FromAdmission(QuotaAdmissionRequest request)
@@ -183,8 +184,20 @@ public sealed class ModelSelectionService : IModelSelectionService
                 request.AttemptId, request.Round, call.ExecutionPath, active.To, result.Route,
                 active.Rule, "Returned to the primary route after the quota return rule cleared.",
                 result.Quota, result.Equivalence, null, null) { ClosesId = active.Id }
+            : result.Outcome == SelectionOutcome.Primary && call.RecordEveryCall
+                ? new SelectionLedgerEntry(ModelSelectionLedger.NewId(), now,
+                    SelectionLedgerKinds.Selected, request.Consumer, request.Host?.HostId,
+                    request.Project, request.PipelineType, request.StepId, request.TaskKey,
+                    request.AttemptId, request.Round, call.ExecutionPath, result.Primary, result.Route,
+                    result.Rule, result.Reason, result.Quota, result.Equivalence, null, null)
             : result.Outcome == SelectionOutcome.Fallback && active?.To == result.Route
-                ? null
+                ? call.RecordEveryCall
+                    ? new SelectionLedgerEntry(ModelSelectionLedger.NewId(), now,
+                        SelectionLedgerKinds.Selected, request.Consumer, request.Host?.HostId,
+                        request.Project, request.PipelineType, request.StepId, request.TaskKey,
+                        request.AttemptId, request.Round, call.ExecutionPath, result.Primary, result.Route,
+                        result.Rule, result.Reason, result.Quota, result.Equivalence, null, null)
+                    : null
                 : SelectionLedgerEntry.For(
             request, result, call.ExecutionPath,
             ModelSelectionLedger.NewId(), now);

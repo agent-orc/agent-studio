@@ -156,6 +156,7 @@ public sealed class SummaryGenerationService
             }
 
             error = state?.ErrorMessage ?? "Generated status.md is missing.";
+            if (error.StartsWith("waiting for a host with ", StringComparison.Ordinal)) break;
             // Structural failures have already consumed their one retry with
             // identical inputs. Do not multiply that budget in finalization.
             if (error.StartsWith(SummaryProtocolValidation.ErrorPrefix, StringComparison.Ordinal)) break;
