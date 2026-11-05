@@ -101,22 +101,34 @@ public class TaskMutationService
         return true;
     }
 
+    // Routing edits do not change task identity, lane, or references. Publish
+    // the durable card into both resident projections without invalidating the
+    // entire workspace snapshot and making the next lookup rescan every card.
+    private bool RoutingUpdated(TaskInfo info)
+    {
+        using (TaskSwitchTrace.Span("mutation.publish"))
+            _scanner.PublishRoutingFromFolder(info.FolderPath, info.WatchPath, info.ProjectName, info.State);
+        _notifier.PublishUpdated(info.ProjectName, info.Id, info.WatchPath);
+        return true;
+    }
+
     public bool SetJobModel(string jobId, string? model, string? watchPath = null, string pinMode = "preference")
     {
-        var info = _scanner.FindJob(jobId, watchPath);
+        TaskInfo? info;
+        using (TaskSwitchTrace.Span("mutation.lookup")) info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var previousModel = ModelMetadataRegistry.NormalizeForCli(info.CliType, info.Model);
         var normalizedModel = ModelMetadataRegistry.NormalizeForCli(info.CliType, model);
-        TaskJsonFile.UpdateField(info.FolderPath, "model", normalizedModel ?? "", _logger);
-        TaskJsonFile.UpdateField(info.FolderPath, "modelExplicit", !string.IsNullOrWhiteSpace(model), _logger);
-        TaskJsonFile.UpdateField(info.FolderPath, "pinMode", pinMode, _logger);
-        TaskJsonFile.UpdateField(
-            info.FolderPath,
-            "thinkingLevel",
-            ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, normalizedModel, info.ThinkingLevel) ?? "",
-            _logger);
+        using (TaskSwitchTrace.Span("mutation.write"))
+            if (!TaskJsonFile.UpdateFields(info.FolderPath, new Dictionary<string, object>
+                {
+                    ["model"] = normalizedModel ?? "",
+                    ["modelExplicit"] = !string.IsNullOrWhiteSpace(model),
+                    ["pinMode"] = pinMode,
+                    ["thinkingLevel"] = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, normalizedModel, info.ThinkingLevel) ?? "",
+                }, _logger, _keyFileWriter)) return false;
         AppendModelChangeMarker(info, previousModel, normalizedModel);
-        return Updated(info);
+        return RoutingUpdated(info);
     }
 
     /// <summary>
@@ -160,29 +172,35 @@ public class TaskMutationService
 
     public bool SetJobThinkingLevel(string jobId, string? thinkingLevel, string? watchPath = null, string pinMode = "preference")
     {
-        var info = _scanner.FindJob(jobId, watchPath);
+        TaskInfo? info;
+        using (TaskSwitchTrace.Span("mutation.lookup")) info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var normalized = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, info.Model, thinkingLevel);
-        TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", normalized ?? "", _logger);
-        TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevelExplicit", !string.IsNullOrWhiteSpace(thinkingLevel), _logger);
-        TaskJsonFile.UpdateField(info.FolderPath, "pinMode", pinMode, _logger);
-        return Updated(info);
+        using (TaskSwitchTrace.Span("mutation.write"))
+            if (!TaskJsonFile.UpdateFields(info.FolderPath, new Dictionary<string, object>
+                {
+                    ["thinkingLevel"] = normalized ?? "",
+                    ["thinkingLevelExplicit"] = !string.IsNullOrWhiteSpace(thinkingLevel),
+                    ["pinMode"] = pinMode,
+                }, _logger, _keyFileWriter)) return false;
+        return RoutingUpdated(info);
     }
 
-    public bool SetJobCliType(string jobId, string cliType, string? watchPath = null, string pinMode = "preference")
+    public bool SetJobCliType(string jobId, string cliType, string? watchPath = null, string pinMode = "preference", bool? useOwnSession = null)
     {
-        var info = _scanner.FindJob(jobId, watchPath);
+        TaskInfo? info;
+        using (TaskSwitchTrace.Span("mutation.lookup")) info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var normalized = CliTypes.Normalize(cliType);
         var normalizedModel = ModelMetadataRegistry.NormalizeForCli(normalized, info.Model);
-        TaskJsonFile.UpdateField(info.FolderPath, "cliType", normalized, _logger);
-        TaskJsonFile.UpdateField(info.FolderPath, "pinMode", pinMode, _logger);
-        TaskJsonFile.UpdateField(info.FolderPath, "model", normalizedModel ?? "", _logger);
-        TaskJsonFile.UpdateField(
-            info.FolderPath,
-            "thinkingLevel",
-            ModelMetadataRegistry.ResolveThinkingLevel(normalized, normalizedModel, info.ThinkingLevel) ?? "",
-            _logger);
+        var fields = new Dictionary<string, object>
+        {
+            ["cliType"] = normalized,
+            ["pinMode"] = pinMode,
+            ["model"] = normalizedModel ?? "",
+            ["thinkingLevel"] = ModelMetadataRegistry.ResolveThinkingLevel(normalized, normalizedModel, info.ThinkingLevel) ?? "",
+            ["agent"] = normalized,
+        };
         // Keep the parallel `agent` field in lockstep with `cliType`. The two
         // were originally meant to address different layers (which CLI vs.
         // which logical agent) but every supported CLI maps 1:1 to one agent
@@ -190,13 +208,15 @@ public class TaskMutationService
         // icon reads `cliType`. A mass-flip of cliType without syncing agent
         // produced cards showing "claude" with the Codex icon on 2026-05-12
         // (see job bug-clitype-and-agent-fields-drift-on-mass-flip).
-        TaskJsonFile.UpdateField(info.FolderPath, "agent", normalized, _logger);
         // Switching CLI invalidates the previous session - clear it so the next run mints a new one.
         if (!string.Equals(normalized, info.CliType, StringComparison.OrdinalIgnoreCase))
         {
-            TaskJsonFile.UpdateField(info.FolderPath, "sessionName", "", _logger);
+            fields["sessionName"] = "";
         }
-        return Updated(info);
+        if (useOwnSession.HasValue) fields["useOwnSession"] = useOwnSession.Value;
+        using (TaskSwitchTrace.Span("mutation.write"))
+            if (!TaskJsonFile.UpdateFields(info.FolderPath, fields, _logger, _keyFileWriter)) return false;
+        return RoutingUpdated(info);
     }
 
     public bool SetJobUseOwnSession(string jobId, bool useOwn, string? watchPath = null)
@@ -1948,8 +1968,12 @@ public class TaskMutationService
         // cannot shadow another project's card during authorization.
         // Capture resident identities before the create lock. A refresh may be
         // running, but creates must not queue behind a workspace scan.
-        var jobs = _scanner.GetResidentIdentityFacts();
-        using (_laneMutex.Acquire(entry.Path))
+        IReadOnlyList<TaskInfo> jobs;
+        using (TaskSwitchTrace.Span("mutation.lookup")) jobs = _scanner.GetResidentIdentityFacts();
+        IDisposable laneLock;
+        using (TaskSwitchTrace.Span("mutation.lock")) laneLock = _laneMutex.Acquire(entry.Path);
+        using (laneLock)
+        using (TaskSwitchTrace.Span("mutation.key"))
         {
             lock (_createIdentityLock)
             {
@@ -2117,17 +2141,23 @@ public class TaskMutationService
 
         jobJson["key"] = storageId;
 
-        File.WriteAllText(Path.Combine(jobDir, "task.json"),
-            JsonSerializer.Serialize(jobJson, new JsonSerializerOptions { WriteIndented = true }));
+        using (TaskSwitchTrace.Span("mutation.write"))
+        {
+            File.WriteAllText(Path.Combine(jobDir, "task.json"),
+                JsonSerializer.Serialize(jobJson, new JsonSerializerOptions { WriteIndented = true }));
 
-        if (!string.IsNullOrWhiteSpace(req.PromptMarkdown))
-            File.WriteAllText(Path.Combine(jobDir, "prompt.md"), req.PromptMarkdown);
+            if (!string.IsNullOrWhiteSpace(req.PromptMarkdown))
+                File.WriteAllText(Path.Combine(jobDir, "prompt.md"), req.PromptMarkdown);
+        }
 
         var location = TaskStorageLayout.Location(storageNumber, storageId);
-        TaskLayoutIndex.Upsert(entry.Path, storageId, location, targetState, _logger);
+        using (TaskSwitchTrace.Span("mutation.index"))
+            TaskLayoutIndex.Upsert(entry.Path, storageId, location, targetState, _logger);
 
         // ADR-0049: open the per-job timeline with prompt_created so the
         // Overview strip has something to render before the first agent run.
+        using (TaskSwitchTrace.Span("mutation.timeline"))
+        {
         _timeline?.Append(
             jobDir,
             TimelineEventKinds.PromptCreated,
@@ -2169,9 +2199,10 @@ public class TaskMutationService
                 Summary = $"Decision requested: {decisionContent.Question}",
                 JobId = jobId,
             });
+        }
 
-        _scanner.InvalidateCache();
-        _scanner.PublishCoreFromFolder(jobDir, entry.Path, entry.Name, targetState ?? string.Empty);
+        using (TaskSwitchTrace.Span("mutation.publish"))
+            _scanner.PublishCreatedFromFolder(jobDir, entry.Path, entry.Name, targetState ?? string.Empty);
         // Push a typed jobCreated to connected clients so other tabs render
         // the new card within ~1s instead of waiting for the next board poll.
         // Resolve the just-written TaskInfo so the bridge can ship the canonical
