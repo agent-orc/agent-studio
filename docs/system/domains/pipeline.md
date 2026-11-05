@@ -2086,6 +2086,12 @@ move-error dialog.
   restore never wrote to (NETSDK1064, TE-52). The folder is released when the
   gate finishes or the run's slot is freed; an unreleased folder is reclaimed by
   age after 24 hours.
+- Dependency input discovery excludes the entire product cache when that cache
+  sits inside the repository workspace. Each writer owns its staging folder;
+  a complete entry becomes readable only after an atomic rename to its
+  published path. Readers inspect and copy that path under the entry's key
+  lock. A writer that finds an existing entry keeps its private run copy and
+  uses the published path for the shared cache binding.
 - Empty preparation blocks remain misses and are never published. Lookup and
   publication share one validity rule for non-empty entries: manifest and
   content exist, identity matches, recorded size equals content size, and NuGet
