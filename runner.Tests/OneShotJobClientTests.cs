@@ -10,6 +10,74 @@ namespace AgentRunner.Tests;
 public sealed class OneShotJobClientTests
 {
     [Fact]
+    public async Task Provider_turn_does_not_inherit_runner_edge_credentials()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        const string variable = "CONNECTOR_AGT3505_TEST";
+        var previous = Environment.GetEnvironmentVariable(variable);
+        var directory = Path.Combine(Path.GetTempPath(), "one-shot-env-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, "runtime-test-" + Guid.NewGuid().ToString("N"));
+            var cli = Path.Combine(directory, "fake-cli.sh");
+            await File.WriteAllTextAsync(cli,
+                "#!/bin/sh\ncat >/dev/null\nif [ -n \"$CONNECTOR_AGT3505_TEST\" ]; then echo leaked; else echo clean; fi\n");
+            File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var options = new RunnerOptions
+            {
+                ServerUrl = "http://localhost/", RunnerId = "test-runner", RunnerName = "test-runner",
+                Hostname = "localhost", BackendName = "test", WorkDir = directory,
+                BaseBranch = "develop", CodexCliBin = cli,
+            };
+            var runner = new OneShotJobAdmission(options, null!, _ => { });
+            var request = new OneShotJobRequest("codex", "test-model", "describe", null, 10, 65_536);
+
+            var result = await runner.RunProviderTurnAsync(request, directory, CancellationToken.None);
+
+            Assert.Equal("clean", result.StdOut.Trim());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, previous);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Non_image_turn_stops_when_raw_output_exceeds_the_cap()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var directory = Path.Combine(Path.GetTempPath(), "one-shot-text-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var cli = Path.Combine(directory, "fake-cli.sh");
+            await File.WriteAllTextAsync(cli, "#!/bin/sh\ncat ./payload\nsleep 20\n");
+            File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            await File.WriteAllTextAsync(Path.Combine(directory, "payload"), new string('x', 270_000));
+            var options = new RunnerOptions
+            {
+                ServerUrl = "http://localhost/", RunnerId = "test-runner", RunnerName = "test-runner",
+                Hostname = "localhost", BackendName = "test", WorkDir = directory,
+                BaseBranch = "develop", CodexCliBin = cli,
+            };
+            var runner = new OneShotJobAdmission(options, null!, _ => { });
+            var request = new OneShotJobRequest("codex", "test-model", "describe", null,
+                20, 65_536);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+            var elapsed = Stopwatch.StartNew();
+
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                runner.RunProviderTurnAsync(request, directory, deadline.Token));
+
+            Assert.Contains("byte cap", error.Message);
+            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(8), $"Exceeded cap after {elapsed}.");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
     public async Task Image_turn_rejects_oversize_output_before_the_deadline()
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -33,7 +101,7 @@ public sealed class OneShotJobClientTests
             var elapsed = Stopwatch.StartNew();
 
             var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
-                runner.RunImageTurnAsync(request, directory, deadline.Token));
+                runner.RunProviderTurnAsync(request, directory, deadline.Token));
 
             Assert.Contains("byte cap", error.Message);
             Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(5), $"Exceeded cap after {elapsed.Elapsed}.");
