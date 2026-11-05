@@ -197,4 +197,33 @@ public sealed class BatchGateFailureRankingTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("{broken")]
+    [InlineData("{}")]
+    public void Incomplete_evidence_line_remains_pending_until_repaired(string initialEvidence)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var evidence = Path.Combine(root, "gate-evidence.jsonl");
+        try
+        {
+            File.WriteAllText(evidence, initialEvidence);
+            var store = new BatchGateStore(root);
+            store.RecordExecution(new BatchGateExecutionFact("Project", "one", "one-run", "sha", "fail", "host",
+                Now, Now, 0, 0, evidence, MemberKeys: ["AGT-1"]));
+
+            var pending = store.FailedTestRanking("Project", Now);
+            Assert.Empty(pending.Tests);
+            Assert.Equal(1, pending.PendingEvidenceRuns);
+
+            File.WriteAllText(evidence,
+                """{"GateRunId":"one-run","RecordedFailedTests":["Product.Tests.Unstable"]}""" + "\n");
+            var recovered = store.FailedTestRanking("Project", Now);
+            Assert.Equal(0, recovered.PendingEvidenceRuns);
+            Assert.Equal(1, Assert.Single(recovered.Tests).Batches);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }

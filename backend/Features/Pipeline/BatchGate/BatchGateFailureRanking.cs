@@ -61,7 +61,8 @@ public static class BatchGateFailureRanking
         var lines = File.ReadLines(fact.EvidencePath).ToArray();
         var selected = lines.Select((line, index) => (line, index, distance: Distance(line, fact)))
             .OrderBy(item => item.distance).ThenByDescending(item => item.index).FirstOrDefault();
-        if (selected.line is null) return [];
+        if (selected.line is null || selected.distance == double.MaxValue)
+            throw new InvalidDataException("Batch gate failure ranking evidence has no readable line for this execution.");
         foreach (var line in new[] { selected.line })
         {
             try
@@ -103,7 +104,7 @@ public static class BatchGateFailureRanking
             }
             catch (JsonException exception)
             {
-                SilentCatch.Note(exception, "Batch gate failure ranking skipped an invalid evidence line");
+                throw new InvalidDataException("Batch gate failure ranking selected an invalid evidence line.", exception);
             }
         }
         return found;
