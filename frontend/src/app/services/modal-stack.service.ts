@@ -78,8 +78,8 @@ export class ModalStackService {
    * bindings on the same Escape can still fire). Any other return value
    * consumes the keystroke.
    */
-  push(id: string, close: () => boolean | void, modal?: ModalScope): () => void {
-    const entry: ModalEntry = { id, close, modal };
+  push(id: string, close: () => boolean | void, scope?: ModalScope | OverlayScope): () => void {
+    const entry: ModalEntry = { id, close, scope };
     this.entries.update(list => [...list, entry]);
     this.refreshModalScope();
     return () => {
@@ -94,8 +94,8 @@ export class ModalStackService {
    * component is destroyed, so a forgotten dispose in a teardown branch
    * cannot leave a phantom entry on the stack.
    */
-  pushUntilDestroyed(id: string, close: () => boolean | void, destroyRef: DestroyRef, modal?: ModalScope): () => void {
-    const dispose = this.push(id, close, modal);
+  pushUntilDestroyed(id: string, close: () => boolean | void, destroyRef: DestroyRef, scope?: ModalScope | OverlayScope): () => void {
+    const dispose = this.push(id, close, scope);
     destroyRef.onDestroy(dispose);
     return dispose;
   }
@@ -110,13 +110,23 @@ export class ModalStackService {
   refreshModalScope(): void {
     for (const [element, wasInert] of this.inertBefore) element.inert = wasInert;
     this.inertBefore.clear();
-    const root = this.activeModal()?.backgroundRoot();
+    const modal = this.activeModal();
+    const root = modal?.backgroundRoot();
     if (!root?.isConnected) return;
-    for (let node: HTMLElement | null = root; node && node !== document.body; node = node.parentElement) {
+    const protectedPaths = new Set<HTMLElement>();
+    const roots = [root, ...this.overlayRootsAboveModal()];
+    for (const protectedRoot of roots) {
+      for (let node: HTMLElement | null = protectedRoot; node; node = node.parentElement) {
+        protectedPaths.add(node);
+        if (node === document.body) break;
+      }
+    }
+    for (const node of protectedPaths) {
+      if (node === document.body) continue;
       const parent: HTMLElement | null = node.parentElement;
       if (!parent) break;
       for (const sibling of Array.from(parent.children)) {
-        if (sibling === node || !(sibling instanceof HTMLElement)) continue;
+        if (!(sibling instanceof HTMLElement) || protectedPaths.has(sibling) || this.inertBefore.has(sibling)) continue;
         this.inertBefore.set(sibling, sibling.inert);
         sibling.inert = true;
       }
@@ -124,16 +134,32 @@ export class ModalStackService {
   }
 
   private activeModal(): ModalScope | undefined {
-    // A higher overlay owns focus while it is on the stack. Keeping a lower
-    // modal's inert subtree active would make a portaled child impossible to use.
     const list = this.entries();
-    const modal = list[list.length - 1]?.modal;
-    return modal?.dialog()?.isConnected ? modal : undefined;
+    for (let index = list.length - 1; index >= 0; index--) {
+      const scope = list[index].scope;
+      if (scope && 'dialog' in scope && scope.dialog()?.isConnected) return scope;
+    }
+    return undefined;
+  }
+
+  private overlayRootsAboveModal(): HTMLElement[] {
+    const list = this.entries();
+    const roots: HTMLElement[] = [];
+    for (let index = list.length - 1; index >= 0; index--) {
+      const scope = list[index].scope;
+      if (scope && 'dialog' in scope && scope.dialog()?.isConnected) break;
+      if (scope && 'interactiveRoot' in scope) {
+        const root = scope.interactiveRoot();
+        if (root?.isConnected) roots.push(root);
+      }
+    }
+    return roots;
   }
 
   private readonly onFocusIn = (event: FocusEvent): void => {
     const dialog = this.activeModal()?.dialog();
-    if (!dialog || dialog.contains(event.target as Node)) return;
+    if (!dialog || dialog.contains(event.target as Node) ||
+        this.overlayRootsAboveModal().some(root => root.contains(event.target as Node))) return;
     this.focusBoundary(dialog, false);
   };
 
@@ -150,6 +176,7 @@ export class ModalStackService {
     if (event.key === 'Tab') {
       const dialog = this.activeModal()?.dialog();
       if (!dialog) return;
+      if (this.overlayRootsAboveModal().some(root => root.contains(document.activeElement))) return;
       const controls = Array.from(dialog.querySelectorAll<HTMLElement>(
         'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
       )).filter(element => !element.inert && !element.closest('[inert]') &&
@@ -205,11 +232,16 @@ export class ModalStackService {
 interface ModalEntry {
   readonly id: string;
   readonly close: () => boolean | void;
-  readonly modal?: ModalScope;
+  readonly scope?: ModalScope | OverlayScope;
 }
 
 /** A true modal's focus surface and the containing subtree kept interactive. */
 export interface ModalScope {
   dialog: () => HTMLElement | null | undefined;
   backgroundRoot: () => HTMLElement | null | undefined;
+}
+
+/** A floating child above a modal that remains interactive without releasing the page. */
+export interface OverlayScope {
+  interactiveRoot: () => HTMLElement | null | undefined;
 }

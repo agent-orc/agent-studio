@@ -124,24 +124,60 @@ describe('ModalStackService', () => {
     }
   });
 
-  it('yields the focus scope to a higher overlay and restores it when that overlay closes', () => {
+  it('keeps a lower modal active when a nonmodal overlay is on top', () => {
     const page = document.createElement('main');
     page.inert = false;
+    const pageButton = document.createElement('button');
+    page.append(pageButton);
     const host = document.createElement('div');
     const dialog = document.createElement('section');
+    const dialogButton = document.createElement('button');
+    dialog.append(dialogButton);
+    Object.defineProperty(dialogButton, 'getClientRects', { value: () => [new DOMRect(0, 0, 1, 1)] });
     host.append(dialog);
     document.body.append(page, host);
     try {
       service.push('modal', () => undefined, { dialog: () => dialog, backgroundRoot: () => host });
       expect(page.inert).toBe(true);
       const disposeOverlay = service.push('higher-overlay', () => undefined);
-      expect(page.inert).toBe(false);
+      expect(page.inert).toBe(true);
+      pageButton.focus();
+      expect(document.activeElement).toBe(dialogButton);
       disposeOverlay();
       expect(page.inert).toBe(true);
     } finally {
       service.clearForTest();
       page.remove();
       host.remove();
+    }
+  });
+
+  it('keeps a portaled child interactive while the rest of the page stays inert', () => {
+    const page = document.createElement('main');
+    const host = document.createElement('div');
+    const dialog = document.createElement('section');
+    const portal = document.createElement('div');
+    const menu = document.createElement('div');
+    const otherOverlay = document.createElement('div');
+    const menuButton = document.createElement('button');
+    menu.append(menuButton);
+    portal.append(menu, otherOverlay);
+    host.append(dialog);
+    document.body.append(page, host, portal);
+    try {
+      service.push('modal', () => undefined, { dialog: () => dialog, backgroundRoot: () => host });
+      service.push('menu', () => undefined, { interactiveRoot: () => menu });
+      expect(page.inert).toBe(true);
+      expect(menu.inert).not.toBe(true);
+      expect(portal.inert).not.toBe(true);
+      expect(otherOverlay.inert).toBe(true);
+      menuButton.focus();
+      expect(document.activeElement).toBe(menuButton);
+    } finally {
+      service.clearForTest();
+      page.remove();
+      host.remove();
+      portal.remove();
     }
   });
 
