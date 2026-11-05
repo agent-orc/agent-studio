@@ -100,10 +100,18 @@ function grouped(includePeer = false) {
 }
 
 async function mockApplication(page: Page, includePeer = false): Promise<void> {
+  await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+    v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__',
+  })));
   await page.route('**/api/**', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
+  await page.route('**/api/v1/projects', route => json(route, [{
+    id: 'fixture', displayName: 'fixture', shortCode: 'FIX', archived: false,
+    sourceType: 'local-folder', workspaceId: 'workspace', storageLocation: WATCH_PATH,
+    repositoryPath: WATCH_PATH, rootPath: WATCH_PATH,
+  }]));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/watch-paths**', route => json(route, [
     { id: 'fixture', name: 'fixture', shortCode: 'FIX', path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
@@ -148,12 +156,41 @@ async function mockApplication(page: Page, includePeer = false): Promise<void> {
 }
 
 async function clickCard(page: Page): Promise<void> {
+  const boardTab = page.getByRole('tab', { name: /All projects.*Board/ });
+  if (await boardTab.count()) await boardTab.click({ force: true });
   const card = page.locator('[data-testid="task-card"], [data-testid="job-card"]')
     .filter({ hasText: 'Heavy task with many runs and artifacts' });
   await expect(card).toBeVisible();
-  const box = await card.boundingBox();
-  if (!box) throw new Error('Task card has no layout box');
-  await card.click({ position: { x: box.width / 2, y: box.height - 4 }, force: true });
+  const heading = card.getByRole('heading', { name: 'Heavy task with many runs and artifacts' });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await heading.click({ force: true });
+    const opened = await page.waitForURL(/#\/tasks\/AGT-2577/, { timeout: 3000 })
+      .then(() => true, () => false);
+    if (opened) return;
+  }
+  throw new Error('Card click did not open the task route');
+}
+
+async function selectPromptTab(page: Page, testId: string, label: string): Promise<void> {
+  const tabId = testId.replace('prompt-tab-', '');
+  const body = page.getByTestId('pane-prompt-body');
+  const inline = page.getByTestId(testId);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (await body.getAttribute('data-active-tab') === tabId) {
+      const backdrop = page.getByTestId('app-menu-backdrop');
+      if (await backdrop.count()) await page.keyboard.press('Escape');
+      await expect(backdrop).toHaveCount(0);
+      return;
+    }
+    try {
+      if (await inline.isVisible()) await inline.click({ force: true, timeout: 2000 });
+      else {
+        await page.getByTestId('pane-tabs-overflow').click({ force: true, timeout: 2000 });
+        await page.getByRole('menuitem', { name: label, exact: true }).click({ force: true, timeout: 2000 });
+      }
+    } catch { /* Tab widths can change while a response paints; try the current layout. */ }
+  }
+  await expect(body).toHaveAttribute('data-active-tab', tabId);
 }
 
 async function firstHeadPaintMs(page: Page): Promise<number> {
@@ -165,6 +202,141 @@ async function firstHeadPaintMs(page: Page): Promise<number> {
     return Math.round(paint.startTime - click.startTime);
   });
 }
+
+test('loads hidden tab data on selection, reuses it, and shows tab failures', async ({ page }) => {
+  await mockApplication(page);
+  const seen: string[] = [];
+  let timelineFailures = 1;
+  let historyFailures = 1;
+  let evidenceFailures = 1;
+  let qualityFailures = 1;
+  let fileFailures = 1;
+  let codeReviewFailures = 1;
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith(`/api/tasks/${TASK_ID}/`)) seen.push(url.pathname + url.search);
+  });
+  await page.route(`**/api/tasks/${TASK_ID}/core**`, route => json(route, core()));
+  await page.route(`**/api/tasks/${TASK_ID}/details/documents**`, route => {
+    const name = new URL(route.request().url()).searchParams.get('name');
+    return json(route, resource('documents', { name, markdown: name === 'prompt' ? '# Task' : 'Ready' }));
+  });
+  await page.route(`**/api/tasks/${TASK_ID}/details/overview**`, route => json(route, resource('overview', {})));
+  await page.route(`**/api/tasks/${TASK_ID}/artifacts**`, route => json(route, {
+    files: [
+      { name: 'review.md', kind: 'codeReview', sizeBytes: 14, mtime: '2026-11-05T00:00:00Z' },
+      { name: 'notes.txt', kind: 'other', sizeBytes: 11, mtime: '2026-11-05T00:00:00Z' },
+    ],
+  }));
+  await page.route(`**/api/tasks/${TASK_ID}/screenshots**`, route => json(route, { screenshots: [] }));
+  await page.route(`**/api/tasks/${TASK_ID}/timeline**`, route =>
+    timelineFailures-- > 0 ? json(route, { error: 'offline' }, 503) : json(route, []));
+  await page.route(`**/api/tasks/${TASK_ID}/details/history**`, route =>
+    historyFailures-- > 0 ? json(route, { error: 'offline' }, 503) : json(route,
+      resource('history', { promptHistory: [], titleHistory: [], log: [] })));
+  await page.route(`**/api/tasks/${TASK_ID}/details/review**`, route => {
+    const evidence = new URL(route.request().url()).searchParams.get('evidence') === 'true';
+    return evidence && evidenceFailures-- > 0
+      ? json(route, { error: 'offline' }, 503)
+      : json(route, resource('review', { reviewProjection: null, evidence: evidence ? [] : null }));
+  });
+  await page.route(`**/api/tasks/${TASK_ID}/quality-studio**`, route =>
+    qualityFailures-- > 0 ? json(route, { error: 'offline' }, 503)
+      : json(route, { state: 'not-registered', repositoryId: null, currentHead: null,
+        rounds: [], landedSha: null, landedBaseSha: null, landedPatchEqualsReviewedPatch: null }));
+  await page.route(`**/api/tasks/${TASK_ID}/code-review/list**`, async route => {
+    const activeTab = await page.getByTestId('pane-prompt-body').getAttribute('data-active-tab').catch(() => null);
+    return activeTab === 'code-review' && codeReviewFailures-- > 0
+      ? json(route, { error: 'offline' }, 503)
+      : json(route, { entries: [] });
+  });
+  await page.route(`**/api/tasks/${TASK_ID}/files/review.md**`, route =>
+    fileFailures-- > 0
+      ? json(route, { error: 'offline' }, 503)
+      : route.fulfill({ status: 200, contentType: 'text/plain', body: '# Review ready' }));
+  await page.route(`**/api/tasks/${TASK_ID}/files/notes.txt**`, route =>
+    route.fulfill({ status: 200, contentType: 'text/plain', body: 'Notes ready' }));
+
+  await gotoApp(page, '/');
+  await dismissDevErrorDialog(page);
+  await clickCard(page);
+  await expect(page.getByTestId('pane-prompt-body')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('task-core')).toHaveCount(0);
+  expect(seen.filter(url => /\/timeline\?|\/details\/history|\/files\/review.md|\/artifacts|\/screenshots/.test(url))).toEqual([]);
+  expect(seen.some(url => url.includes('/details/review') && url.includes('evidence=true'))).toBe(false);
+
+  await page.getByTestId('prompt-tab-timeline').click();
+  await expect(page.getByTestId('timeline-load-error')).toBeVisible();
+  await expect(page.getByTestId('timeline-history-error')).toBeVisible();
+  if (process.env.JOB_RESULTS_DIR) {
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'timeline-error-dark.png') });
+    await setTheme(page, 'light');
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'timeline-error-light.png') });
+    await setTheme(page, 'dark');
+  }
+  await page.getByTestId('timeline-retry').click();
+  await page.getByTestId('timeline-history-error').getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByTestId('timeline-load-error')).toHaveCount(0);
+  await expect(page.getByTestId('timeline-history-error')).toHaveCount(0);
+  const timelineReads = seen.filter(url => url.includes('/timeline?')).length;
+  const historyReads = seen.filter(url => url.includes('/details/history')).length;
+  await page.getByTestId('prompt-tab-overview').click();
+  await page.getByTestId('prompt-tab-timeline').click();
+  expect(seen.filter(url => url.includes('/timeline?')).length).toBe(timelineReads);
+  expect(seen.filter(url => url.includes('/details/history')).length).toBe(historyReads);
+
+  await page.getByTestId('prompt-tab-evidence').click();
+  await expect.poll(() => seen.filter(url => url.includes('/screenshots')).length).toBe(1);
+  await expect(page.getByTestId('evidence-load-error')).toBeVisible();
+  await expect(page.getByTestId('quality-load-error')).toBeVisible();
+  if (process.env.JOB_RESULTS_DIR) {
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'evidence-error-dark.png') });
+    await setTheme(page, 'light');
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'evidence-error-light.png') });
+    await setTheme(page, 'dark');
+  }
+  await page.getByTestId('evidence-load-error').getByRole('button', { name: 'Retry' }).click();
+  await page.getByTestId('quality-retry').click();
+  await expect(page.getByTestId('evidence-load-error')).toHaveCount(0);
+  await expect(page.getByTestId('quality-load-error')).toHaveCount(0);
+  const evidenceReads = seen.filter(url => url.includes('/details/review') && url.includes('evidence=true')).length;
+  const qualityReads = seen.filter(url => url.includes('/quality-studio')).length;
+  await page.getByTestId('prompt-tab-overview').click();
+  await page.getByTestId('prompt-tab-evidence').click();
+  expect(seen.filter(url => url.includes('/details/review') && url.includes('evidence=true')).length).toBe(evidenceReads);
+  expect(seen.filter(url => url.includes('/quality-studio')).length).toBe(qualityReads);
+  expect(seen.filter(url => url.includes('/screenshots')).length).toBe(1);
+
+  await selectPromptTab(page, 'prompt-tab-code-review', 'Code Review');
+  await expect(page.getByTestId('code-review-error')).toBeVisible();
+  await page.getByTestId('code-review-retry').click();
+  await expect(page.getByTestId('code-review-error')).toHaveCount(0);
+  const codeReviewReads = seen.filter(url => url.includes('/code-review/list')).length;
+  await page.getByTestId('prompt-tab-overview').click();
+  await selectPromptTab(page, 'prompt-tab-code-review', 'Code Review');
+  expect(seen.filter(url => url.includes('/code-review/list')).length).toBe(codeReviewReads);
+
+  await selectPromptTab(page, 'prompt-tab-description', 'Docs');
+  await expect.poll(() => seen.filter(url => url.includes('/artifacts')).length).toBe(1);
+  expect(seen.some(url => url.includes('/files/notes.txt'))).toBe(false);
+  await expect(page.getByTestId('file-card-retry-review.md')).toBeVisible();
+  await page.getByTestId('file-card-retry-review.md').click();
+  await expect(page.getByTestId('file-card-review.md')).toContainText('Review ready');
+  await page.getByTestId('file-card-expand-notes.txt').click();
+  await expect(page.getByTestId('file-card-notes.txt')).toContainText('Notes ready');
+  const fileReads = seen.filter(url => url.includes('/files/review.md')).length;
+  const notesReads = seen.filter(url => url.includes('/files/notes.txt')).length;
+  await page.getByTestId('prompt-tab-overview').click();
+  await selectPromptTab(page, 'prompt-tab-description', 'Docs');
+  expect(seen.filter(url => url.includes('/files/review.md')).length).toBe(fileReads);
+  expect(seen.filter(url => url.includes('/files/notes.txt')).length).toBe(notesReads);
+  expect(seen.filter(url => url.includes('/artifacts')).length).toBe(1);
+  if (process.env.JOB_RESULTS_DIR) {
+    mkdirSync(process.env.JOB_RESULTS_DIR, { recursive: true });
+    writeFileSync(path.join(process.env.JOB_RESULTS_DIR, 'tab-loading-after-requests.json'),
+      `${JSON.stringify({ fixture: 'AGT-2577 mocked task', requests: seen }, null, 2)}\n`);
+  }
+});
 
 test('paints complete bounded core before large documents resolve in both themes', async ({ page }) => {
   await mockApplication(page);
