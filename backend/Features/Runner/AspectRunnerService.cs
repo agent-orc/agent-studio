@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
@@ -122,6 +123,8 @@ public sealed class AspectRunnerService
                 var selected = await _oneShotRegistry!.RunSelectedAsync(new CliOneShotRequest(
                     admitted.CliType, admitted.Model ?? model, prompt)
                 {
+                    InlineImages = aspectId == "visual-review"
+                        ? LocalVisualScreenshotEvidence.Images(jobFolderPath) : null,
                     ThinkingLevel = admitted.ThinkingLevel,
                     Timeout = timeout,
                     Source = AdHocUsageSources.ReviewDecision,
@@ -142,6 +145,8 @@ public sealed class AspectRunnerService
             Model: model,
             Prompt: prompt)
         {
+            InlineImages = aspectId == "visual-review"
+                ? LocalVisualScreenshotEvidence.Images(jobFolderPath) : null,
             ThinkingLevel = thinkingLevel,
             Timeout = timeout,
             Source = AdHocUsageSources.ReviewDecision,
@@ -198,7 +203,13 @@ public sealed class AspectRunnerService
                 ConcernNamespace: "quality",
                 PromptTemplate: "review-aspect-tests-and-evidence.md",
                 Title: "Tests and evidence",
-                FallbackSystem: "Did the agent ship tests that fail before the change and pass after? Is screenshot/log evidence present where AGENTS.md requires it?")
+                FallbackSystem: "Did the agent ship tests that fail before the change and pass after? Is screenshot/log evidence present where AGENTS.md requires it?"),
+            ["visual-review"] = new AspectDefinition(
+                Id: "visual-review",
+                ConcernNamespace: "visual",
+                PromptTemplate: "review-aspect-visual-review.md",
+                Title: "Visual review",
+                FallbackSystem: "Inspect the delivered screenshots for layout, spacing, separation, alignment, and contrast. Name each screenshot and region in a finding. A frontend template or style change without screenshots is a concern.")
         };
 
     /// <summary>
@@ -272,8 +283,8 @@ public sealed class AspectRunnerService
                 checkpointed.OrderBy(item => item.Index).Select(item => item.Verdict).ToList());
         }
 
-        // Bounded parallel fan-out. Default cap = 4 (today's catalogue
-        // ships exactly four aspects); a future catalogue with more
+        // Bounded parallel fan-out. The catalogue may contain more than four
+        // aspects, so a future addition still has
         // aspects gets a real ceiling instead of unbounded WhenAll.
         var maxParallel = Math.Min(pending.Count, 4);
         using var gate = new SemaphoreSlim(maxParallel, maxParallel);
@@ -398,6 +409,15 @@ public sealed class AspectRunnerService
                 model,
                 promptOverride,
                 pipelineStepId);
+            if (def.Id == "visual-review")
+            {
+                prompt += LocalVisualScreenshotEvidence.PromptSection(inputs.JobFolderPath);
+                if (inputs.VisualChangedPaths is not null)
+                    prompt += "\n## Changed files at the reviewed result\n"
+                              + (inputs.VisualChangedPaths.Count == 0
+                                  ? "No changed files."
+                                  : string.Join("\n", inputs.VisualChangedPaths));
+            }
             string response;
             OrchestratorTokenUsage? callUsage = null;
             long durationMs = 0;
@@ -479,6 +499,28 @@ public sealed class AspectRunnerService
                         break;
                     }
                 }
+            }
+
+            if (def.Id == "visual-review" && LocalVisualScreenshotEvidence.Images(inputs.JobFolderPath).Count == 0
+                && verdict.Status != AspectStatus.Block)
+            {
+                var changedVisual = (inputs.VisualChangedPaths
+                        ?? Regex.Matches(inputs.DiffSummary,
+                                @"frontend/[A-Za-z0-9_./-]+\.(?:html|scss|css)", RegexOptions.IgnoreCase)
+                            .Select(match => match.Value)
+                            .ToArray())
+                    .Where(path => AgentStudio.TaskServer.Contracts.VisualReviewEvidence.IsFrontendVisualChange([path]))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (changedVisual.Length > 0)
+                    verdict = verdict with
+                    {
+                        Status = AspectStatus.Concerns,
+                        Summary = "Frontend template or style changed without readable screenshot evidence.",
+                        Body = $"Checked: {string.Join(", ", changedVisual)}. Missing: delivered after screenshots under results/.",
+                        ConcernTagId = "visual:concerns",
+                        EvidenceChecked = string.Join(", ", changedVisual),
+                    };
             }
 
             try
@@ -928,6 +970,8 @@ public sealed record AspectRunInputs(
     string DiffSummary,
     string StatusSummary)
 {
+    /// <summary>Exact changed paths when the local reviewer could resolve its Git subject.</summary>
+    public IReadOnlyList<string>? VisualChangedPaths { get; init; }
     public string? ReviewAttemptId { get; init; }
     /// <summary>
     /// Inventory of the job's <c>results/</c> folder (file list + short

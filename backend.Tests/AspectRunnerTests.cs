@@ -89,6 +89,25 @@ public class AspectRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Visual_aspect_without_screenshot_names_missing_frontend_evidence()
+    {
+        var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
+        var inputs = BuildInputs() with
+        {
+            DiffSummary = "Files changed: 1",
+            VisualChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
+        };
+
+        var report = await runner.RunAsync(inputs, ["visual-review"], "claude",
+            "claude-sonnet-5", TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        var verdict = Assert.Single(report.Verdicts);
+        Assert.Equal(AspectStatus.Concerns, verdict.Status);
+        Assert.Contains("screenshot", verdict.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("footer.component.scss", verdict.EvidenceChecked);
+    }
+
+    [Fact]
     public async Task Local_aspect_preserves_evidence_checked_for_scoped_rereview()
     {
         var runner = BuildRunner(_ =>
