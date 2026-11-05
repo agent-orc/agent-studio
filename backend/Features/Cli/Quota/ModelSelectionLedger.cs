@@ -118,7 +118,8 @@ public sealed class ModelSelectionLedger
     }
 
     public ModelSelectionEventPage Query(string? provider = null, string? project = null, string? consumer = null,
-        string? rule = null, string? from = null, string? to = null, string? cursor = null, int limit = 100)
+        string? rule = null, string? from = null, string? to = null, string? cursor = null, int limit = 100,
+        string? taskKey = null, string? eventId = null, DateTimeOffset? since = null, DateTimeOffset? until = null)
     {
         lock (_sync)
         {
@@ -132,7 +133,10 @@ public sealed class ModelSelectionLedger
             var matches = ordered.Where(e => Match(provider, e.From?.CliType) || Match(provider, e.To?.CliType))
                 .Where(e => Match(project, e.Project)).Where(e => Match(consumer, e.Consumer))
                 .Where(e => Match(rule, e.Rule)).Where(e => Match(from, e.From?.Model))
-                .Where(e => Match(to, e.To?.Model)).Take(Math.Clamp(limit, 1, 200) + 1).ToList();
+                .Where(e => Match(to, e.To?.Model)).Where(e => Match(taskKey, e.TaskKey))
+                .Where(e => Match(eventId, e.Id))
+                .Where(e => (since is null || e.At >= since) && (until is null || e.At <= until))
+                .Take(Math.Clamp(limit, 1, 200) + 1).ToList();
             var page = matches.Take(Math.Clamp(limit, 1, 200)).ToList();
             return new(page, matches.Count > page.Count ? page.Last().Id : null);
         }

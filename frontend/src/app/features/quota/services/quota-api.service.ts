@@ -71,6 +71,19 @@ export interface ActiveModelSwitch {
   rule: string;
   returnToPrimaryAt: string | null;
 }
+export interface ModelSelectionEvent extends ActiveModelSwitch {
+  host: string | null;
+  pipelineType: string | null;
+  stepId: string | null;
+  attemptId: string | null;
+  round: number | null;
+  reason: string;
+  evidence: { excerpt: string | null; classifierKind: string | null } | null;
+  quota: { provider: string | null; window: string | null; usedPct: number | null;
+    capPct: number | null; projectedPct: number | null; resetAt: string | null;
+    snapshotAgeSeconds: number | null } | null;
+}
+export interface ModelSelectionEventPage { events: ModelSelectionEvent[]; nextCursor: string | null }
 export interface ConsumerPolicyRoute { cli: string; model: string | null; thinking: string | null }
 export interface ConsumerModelPolicy {
   primary: ConsumerPolicyRoute | null;
@@ -236,6 +249,10 @@ export class QuotaApiService {
 
   getActiveModelSwitches() {
     return this.http.get<ActiveModelSwitch[]>(`${this.baseUrl}/model-selection/active`);
+  }
+
+  getModelSelectionEvents(filters: Record<string, string>) {
+    return this.http.get<ModelSelectionEventPage>(`${this.baseUrl}/model-selection/events`, { params: filters });
   }
 
   setConsumerPolicy(consumer: string, setting: ConsumerModelPolicy) {

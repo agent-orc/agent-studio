@@ -40,7 +40,10 @@ public static class CliEndpoints
         });
         app.MapGet("/api/model-selection/events", (string? provider, string? project,
             string? consumer, string? rule, string? from, string? to, string? cursor,
-            ModelSelectionLedger ledger) => Results.Ok(ledger.Query(provider, project, consumer, rule, from, to, cursor)));
+            string? taskKey, string? eventId, DateTimeOffset? since, DateTimeOffset? until,
+            ModelSelectionLedger ledger) =>
+            Results.Ok(ledger.Query(provider, project, consumer, rule, from, to, cursor,
+                taskKey: taskKey, eventId: eventId, since: since, until: until)));
         app.MapGet("/api/model-selection/active", (ModelSelectionLedger ledger) => Results.Ok(ledger.Active()));
         app.MapPost("/api/model-selection/events", (ModelSelectionEvent entry, ModelSelectionLedger ledger) =>
         {
