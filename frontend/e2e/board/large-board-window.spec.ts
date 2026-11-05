@@ -10,6 +10,21 @@ const scrollLaneToEnd = (lane: Locator) => lane.evaluate(element => {
   else element.scrollTop = element.scrollHeight;
 });
 
+test('a 41-card lane keeps its footer and header actions', async ({ page }) => {
+  await installSyntheticBoard(page, 41, true);
+  await page.goto('/');
+  const lane = page.getByTestId('lane-scroll-2-ready');
+  await expect(page.getByTestId('lane-count-2-ready')).toContainText('41');
+  await expect(page.getByTestId('lane-collapse-2-ready')).toBeVisible();
+  await expect(page.getByTestId('archive-all-btn')).toBeVisible();
+  await scrollLaneToEnd(lane);
+  await expect(lane.getByTestId('lane-drop-slot-end')).toHaveCount(1);
+  await expect(lane.getByTestId('lane-add-task')).toBeVisible();
+  await lane.getByTestId('lane-add-task').click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByTestId('create-dialog-header')).toHaveText('New Ready Task');
+});
+
 test('a generated 830-card lane retains totals, search, scrolling and offscreen reorder', async ({ page }) => {
   test.setTimeout(180_000);
   await installSyntheticBoard(page, 830, true);
@@ -31,6 +46,10 @@ test('a generated 830-card lane retains totals, search, scrolling and offscreen 
   await scrollLaneToEnd(lane);
   await expect(lane.locator('app-job-card').filter({ hasText: 'Window target AGT-S00829' })).toBeVisible();
   expect(await lane.locator('app-job-card').count()).toBeLessThan(40);
+  await expect(lane.getByTestId('lane-drop-slot-end')).toHaveCount(1);
+  await expect(lane.getByTestId('lane-add-task')).toBeVisible();
+  await expect(page.getByTestId('lane-collapse-2-ready')).toBeVisible();
+  await expect(page.getByTestId('archive-all-btn')).toBeVisible();
 
   let reordered: string[] | null = null;
   await page.route('**/api/tasks/reorder', async route => {
@@ -109,12 +128,14 @@ test('a generated 830-card lane retains totals, search, scrolling and offscreen 
 
 test('a generated 3,000-card board mounts a bounded window and renders in both themes and widths', async ({ page }) => {
   test.setTimeout(180_000);
-  await installSyntheticBoard(page, 3000);
+  await installSyntheticBoard(page, 3000, true);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   const lane = page.getByTestId('lane-scroll-2-ready');
   await expect(page.getByTestId('lane-count-2-ready')).toContainText('3000', { timeout: 30_000 });
   expect(await lane.locator('app-job-card').count()).toBeLessThan(40);
+  await expect(page.getByTestId('lane-collapse-2-ready')).toBeVisible();
+  await expect(page.getByTestId('archive-all-btn')).toBeVisible();
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 800 });
     for (const theme of ['light', 'dark'] as const) {
@@ -125,4 +146,6 @@ test('a generated 3,000-card board mounts a bounded window and renders in both t
   await scrollLaneToEnd(lane);
   await expect(lane.locator('app-job-card').filter({ hasText: 'Window target AGT-S02999' })).toBeVisible();
   expect(await lane.locator('app-job-card').count()).toBeLessThan(40);
+  await expect(lane.getByTestId('lane-drop-slot-end')).toHaveCount(1);
+  await expect(lane.getByTestId('lane-add-task')).toBeVisible();
 });
