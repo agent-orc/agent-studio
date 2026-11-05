@@ -61,6 +61,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             .SelectMany(manifest => manifest.Members.Select(member =>
                 manifest.Scope.Project + "\u001f" + member.TaskKey))
             .ToHashSet(StringComparer.Ordinal);
+        var interventions = _records.All().ToList();
         var count = 0;
         foreach (var card in _scanner.ScanAllAutomationJobs().Where(item =>
                      item.State == TaskStates.AutoReview && !item.Fixture))
@@ -72,6 +73,10 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 var projection = _authority.GetTaskProjection(key);
                 var review = projection.CurrentReviewAttempt;
                 var run = projection.CurrentRunAttempt;
+                var writePrefix = $"auto-review-stranding:{card.ProjectName}:{key}:{card.EnteredLaneAt.Ticks}:";
+                var previous = interventions.Where(item => item.WriteKey.StartsWith(writePrefix, StringComparison.Ordinal)
+                    && item.Status == StallInterventionStatuses.Verified).ToArray();
+                var latest = previous.LastOrDefault();
                 var facts = new AutoReviewStrandingFacts(now - card.EnteredLaneAt, threshold,
                     _pipeline.Read(card.FolderPath)?.Steps.Any(step => step.Status == PipelineStepStatus.Running) == true
                         || IntegrationGateJournal.Read(card.FolderPath) is not null,
@@ -84,16 +89,21 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     TaskModes.IsReportOnly(card.Mode),
                     run is { State: AttemptLifecycleState.Completed, ResultEnvelope: not null },
                     review is not null,
-                    review is { Outcome: ReviewTerminalOutcome.Pass });
+                    review is { Outcome: ReviewTerminalOutcome.Pass },
+                    latest is null ? null : now - latest.DecidedAtUtc,
+                    previous.Any(item => item.Action == AutoReviewStrandingAction.StartStep.ToString()),
+                    previous.Any(item => item.Action == AutoReviewStrandingAction.ReenterBatch.ToString()));
                 var action = MonolithTransitionAdapter.AutoReviewStranding(facts);
                 if (action == AutoReviewStrandingAction.Leave) continue;
                 // A batch can form after the pass snapshot. Recheck before any
                 // side effect so formation never races a recovery intervention.
                 if (IsBatchMember(card.ProjectName, key, review?.AttemptId)) continue;
-                var writeKey = $"auto-review-stranding:{key}:{card.EnteredLaneAt.Ticks}";
-                if (_records.FindByWriteKey(writeKey) is { Status: not StallInterventionStatuses.Failed })
-                    continue;
-                var (done, deferred, detail) = await InterveneAsync(card, action, review, run, ct);
+                var writeKey = NextWriteKey(writePrefix, interventions);
+                var repeated = action == AutoReviewStrandingAction.Escalate
+                    && (facts.StartedStepBefore || facts.ReenteredBatchBefore);
+                var (done, deferred, detail) = repeated
+                    ? (false, false, "The previous automatic recovery did not keep an owner for this card.")
+                    : await InterveneAsync(card, action, review, run, ct);
                 if (deferred) continue;
                 var escalated = false;
                 if (!done)
@@ -105,7 +115,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     done = parked.Status == MoveJobStatus.Success;
                     escalated = done;
                 }
-                Publish(card, writeKey, action, done, escalated, detail, now);
+                interventions.Add(Publish(card, writeKey, action, done, escalated, detail, now));
                 count++;
             }
             catch (Exception ex)
@@ -212,7 +222,10 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         => phase is BatchPhase.Formed or BatchPhase.Assembling or BatchPhase.Assembled
             or BatchPhase.Running or BatchPhase.Green or BatchPhase.Publishing;
 
-    private void Publish(TaskInfo card, string writeKey, AutoReviewStrandingAction action,
+    internal static string NextWriteKey(string prefix, IReadOnlyCollection<StallInterventionRecord> interventions)
+        => prefix + interventions.Count(item => item.WriteKey.StartsWith(prefix, StringComparison.Ordinal));
+
+    private StallInterventionRecord Publish(TaskInfo card, string writeKey, AutoReviewStrandingAction action,
         bool succeeded, bool escalated, string detail, DateTime now)
     {
         var record = new StallInterventionRecord
@@ -231,6 +244,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         };
         _records.Save(record);
         _receipts.Publish(record, _records.All());
+        return record;
     }
 
     private static string CardKey(TaskInfo card)

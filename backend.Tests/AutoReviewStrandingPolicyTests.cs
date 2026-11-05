@@ -1,6 +1,7 @@
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
+using AgentStudio.Watcher;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -35,6 +36,48 @@ public sealed class AutoReviewStrandingPolicyTests
     public void Terminal_failed_review_without_owner_escalates()
         => Assert.Equal(AutoReviewStrandingAction.Escalate,
             AutoReviewStrandingPolicy.Decide(Stranded() with { HasReview = true }));
+
+    [Fact]
+    public void Successful_step_recovery_can_advance_to_batch_recovery_in_same_lane_visit()
+    {
+        var facts = Stranded() with { HasReview = true, PassedReview = true,
+            SinceLastIntervention = TimeSpan.FromMinutes(31), StartedStepBefore = true };
+
+        Assert.Equal(AutoReviewStrandingAction.ReenterBatch, AutoReviewStrandingPolicy.Decide(facts));
+    }
+
+    [Fact]
+    public void Successful_intervention_gets_a_distinct_receipt_key_for_later_recovery()
+    {
+        const string prefix = "auto-review-stranding:project:AGT-1:123:";
+        var first = AutoReviewStrandingWatchdog.NextWriteKey(prefix, []);
+        var receipt = new StallInterventionRecord
+        {
+            Id = StallInterventionStore.IdFor(first), WriteKey = first,
+            Subject = "auto-review:AGT-1", Kind = "auto-review-stranded",
+            Host = "task-server", Action = AutoReviewStrandingAction.StartStep.ToString(),
+            Autonomy = "A1", Disposition = "act", ReasonCode = "auto-review-no-owner",
+            Status = StallInterventionStatuses.Verified,
+        };
+
+        Assert.NotEqual(first, AutoReviewStrandingWatchdog.NextWriteKey(prefix, [receipt]));
+        Assert.Equal(prefix + "1", AutoReviewStrandingWatchdog.NextWriteKey(prefix, [receipt]));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Successful_recovery_gets_a_follow_up_after_threshold_and_escalates_if_it_failed_to_hold(
+        bool passedReview)
+    {
+        var facts = Stranded() with { HasReview = passedReview, PassedReview = passedReview,
+            SinceLastIntervention = TimeSpan.FromMinutes(29),
+            StartedStepBefore = !passedReview, ReenteredBatchBefore = passedReview };
+
+        Assert.Equal(AutoReviewStrandingAction.Leave, AutoReviewStrandingPolicy.Decide(facts));
+        Assert.Equal(AutoReviewStrandingAction.Escalate,
+            AutoReviewStrandingPolicy.Decide(facts with { SinceLastIntervention = TimeSpan.FromMinutes(31) }));
+    }
 
     [Theory]
     [InlineData(BatchPhase.Formed)]
