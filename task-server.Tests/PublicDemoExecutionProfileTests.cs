@@ -102,7 +102,20 @@ public sealed class PublicDemoExecutionProfileTests
         // AGT-3426 adds package creation and attempt renewal/report (Review),
         // plus a review package claim (Claim); all four deny execution here.
         // AGT-3371 adds artifact chunk status, upload and completion (PostStep).
-        Assert.Equal(72, routes.Count);
+        // AGT-3505 adds one-shot creation (Start), claim (Claim), and completion
+        // (Continue). The read route only observes an existing job.
+        Assert.Equal(75, routes.Count);
+        foreach (var (path, admissionPath) in new[]
+        {
+            ("/api/v1/one-shot-jobs", ExecutionAdmissionPath.Start),
+            ("/api/v1/one-shot-jobs/claim", ExecutionAdmissionPath.Claim),
+            ("/api/v1/one-shot-jobs/complete", ExecutionAdmissionPath.Continue),
+        })
+        {
+            var jobRoute = Assert.Single(routes, route => route.RoutePattern.RawText == path);
+            Assert.Equal(admissionPath,
+                jobRoute.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
+        }
         foreach (var path in new[]
         {
             "/api/v1/runs/{runId}/artifact-chunks/{sha256}",
@@ -188,9 +201,9 @@ public sealed class PublicDemoExecutionProfileTests
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 8,
-                [ExecutionAdmissionPath.Start] = 7,
-                [ExecutionAdmissionPath.Continue] = 20,
+                [ExecutionAdmissionPath.Claim] = 9,
+                [ExecutionAdmissionPath.Start] = 8,
+                [ExecutionAdmissionPath.Continue] = 21,
                 [ExecutionAdmissionPath.Review] = 5,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,

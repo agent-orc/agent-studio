@@ -17,6 +17,31 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         Path.GetTempPath(), "quota-one-shot-" + Guid.NewGuid().ToString("N"));
     private readonly DateTime _now = new(2026, 9, 8, 7, 0, 0, DateTimeKind.Utc);
 
+    [Fact]
+    public async Task Ordinary_primary_one_shot_is_written_to_selection_ledger()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build();
+        var quota = new QuotaService(NullLogger<QuotaService>.Instance, [], configuration,
+            new QuotaCacheStore(configuration, NullLogger<QuotaCacheStore>.Instance));
+        var ledger = new RecordingSelectionLedger();
+        var selection = new ModelSelectionService(quota,
+            new CliQuotaCapsService(NullLogger<CliQuotaCapsService>.Instance, configuration),
+            new CliQuotaFallbackService(configuration, NullLogger<CliQuotaFallbackService>.Instance),
+            new CliQuotaWaitPolicyService(NullLogger<CliQuotaWaitPolicyService>.Instance, configuration),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration),
+            new FixedTimeProvider(_now), ledger: ledger);
+        var registry = new CliOneShotRegistry([new RecordingOneShot(CliTypes.Claude)],
+            modelSelection: selection);
+        var result = await registry.Require(CliTypes.Claude).RunAsync(
+            new(CliTypes.Claude, ModelIds.ClaudeOpus5, "bounded prompt")
+            { Source = "result-summary" });
+        Assert.True(result.Ok);
+        var entry = Assert.Single(ledger.Entries);
+        Assert.Equal(SelectionLedgerKinds.Selected, entry.Kind);
+        Assert.Equal(SelectionConsumers.OneShot("result-summary"), entry.Consumer);
+    }
+
     [Theory]
     [InlineData("pre-orchestrator-prep")]
     [InlineData("aspect-requirement-fit")]
@@ -362,6 +387,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         Assert.True(result.Ok);
         var call = Assert.Single(spy.Calls);
         Assert.Equal(source, call.ExecutionPath);
+        Assert.True(call.RecordEveryCall);
         Assert.Equal(consumer, call.Request.Consumer);
         Assert.Equal(sameClassOnly, call.Request.Required.SameClassOnly);
         Assert.Equal("quota-test", call.Request.Project);

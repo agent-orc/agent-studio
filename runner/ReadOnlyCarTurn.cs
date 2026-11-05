@@ -33,7 +33,8 @@ internal static class ReadOnlyCarTurn
         CancellationToken timeoutToken,
         CancellationToken shutdown,
         int? maxOutputTokens = null,
-        int? maxInputTokens = null)
+        int? maxInputTokens = null,
+        int? maxRawOutputBytes = null)
     {
         var logDirectory = Path.Combine(Path.GetTempPath(), logFolder, runId);
         var runner = new CliRunner(
@@ -48,15 +49,23 @@ internal static class ReadOnlyCarTurn
         var driver = runner.Get(cliType);
         var stdout = new System.Text.StringBuilder();
         var stderr = new System.Text.StringBuilder();
+        var rawOutputExceeded = false;
         var finished = new TaskCompletionSource<CliRunInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         void OnOutput(string id, CarOutputLine line)
         {
             if (!string.Equals(id, runId, StringComparison.Ordinal)) return;
-            if (line.Stream == "stdout") stdout.AppendLine(line.Text);
+            if (line.Stream == "stdout")
+            {
+                if (maxRawOutputBytes is { } cap
+                    && System.Text.Encoding.UTF8.GetByteCount(line.Text) + stdout.Length > cap)
+                    rawOutputExceeded = true;
+                else if (!rawOutputExceeded) stdout.AppendLine(line.Text);
+            }
             else if (line.Stream == "stderr")
             {
-                stderr.AppendLine(line.Text);
+                if (maxRawOutputBytes is null || stderr.Length + line.Text.Length <= maxRawOutputBytes)
+                    stderr.AppendLine(line.Text);
                 log($"{logPrefix}-{cliType} stderr: {line.Text}");
             }
         }
@@ -101,6 +110,8 @@ internal static class ReadOnlyCarTurn
             }
 
             var info = await finished.Task;
+            if (rawOutputExceeded)
+                throw new InvalidDataException("one-shot raw output exceeds the byte cap");
             return new ProcessResult(info.ExitCode ?? 1, stdout.ToString(), stderr.ToString());
         }
         finally
