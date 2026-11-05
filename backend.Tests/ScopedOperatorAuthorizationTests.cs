@@ -69,7 +69,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     public async Task Change_project_on_a_foreign_task_is_refused_even_with_a_member_project_query()
     {
         var fixture = NewTaskFixture();
-        var login = await SignedIn(fixture.Store, StudioRoles.Operator, [fixture.Mine.Id]);
+        var login = fixture.SignIn(StudioRoles.Operator, [fixture.Mine.Id]);
 
         var viaProject = await fixture.Invoke("POST", $"/api/tasks/{ForeignTask}/change-project",
             $"?project={fixture.Mine.Id}", login);
@@ -90,7 +90,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     public async Task Own_task_is_allowed_and_a_foreign_project_query_narrows_it_to_denied()
     {
         var fixture = NewTaskFixture();
-        var login = await SignedIn(fixture.Store, StudioRoles.Operator, [fixture.Mine.Id]);
+        var login = fixture.SignIn(StudioRoles.Operator, [fixture.Mine.Id]);
 
         var own = await fixture.Invoke("POST", $"/api/tasks/{MineTask}/change-project", $"?project={fixture.Mine.Id}", login);
         Assert.True(own.Called.Value);
@@ -118,7 +118,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     public async Task A_project_query_never_replaces_the_route_project(string method, string pathTemplate, string queryTemplate)
     {
         var fixture = NewTaskFixture();
-        var login = await SignedIn(fixture.Store, StudioRoles.Operator, [fixture.Mine.Id]);
+        var login = fixture.SignIn(StudioRoles.Operator, [fixture.Mine.Id]);
         string Fill(string value) => value.Replace("{mine}", fixture.Mine.Id).Replace("{foreign}", fixture.Foreign.Id);
 
         var result = await fixture.Invoke(method, Fill(pathTemplate), Fill(queryTemplate), login);
@@ -140,7 +140,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
         string method, string pathTemplate)
     {
         var fixture = NewTaskFixture();
-        var login = await SignedIn(fixture.Store, StudioRoles.Operator, [fixture.Mine.Id]);
+        var login = fixture.SignIn(StudioRoles.Operator, [fixture.Mine.Id]);
         string Path(string project) => pathTemplate.Replace("{project}", project).Replace("{task}", MineTask);
 
         var member = await fixture.Invoke(method, Path(fixture.Mine.Id), "", login);
@@ -156,7 +156,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     public async Task Runner_context_prefixes_do_not_change_the_project_on_other_routes()
     {
         var fixture = NewTaskFixture();
-        var login = await SignedIn(fixture.Store, StudioRoles.Operator, [fixture.Mine.Id]);
+        var login = fixture.SignIn(StudioRoles.Operator, [fixture.Mine.Id]);
 
         var result = await fixture.Invoke("GET", $"/api/runner/task:{fixture.Mine.Id}/token-summary", "", login);
 
@@ -257,8 +257,8 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     public async Task Empty_membership_operator_is_denied_project_routes_that_the_all_projects_grant_allows()
     {
         var fixture = NewTaskFixture();
-        var empty = await SignedIn(fixture.Store, StudioRoles.Operator, []);
-        var granted = await SignedIn(fixture.Store, StudioRoles.Operator, [ProjectAccessAuthorization.AllProjectsGrant], "granted.op");
+        var empty = fixture.SignIn(StudioRoles.Operator, []);
+        var granted = fixture.SignIn(StudioRoles.Operator, [ProjectAccessAuthorization.AllProjectsGrant]);
 
         foreach (var (method, path) in new[]
         {
@@ -303,7 +303,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     [Fact]
     public async Task Hub_connection_with_a_forced_password_change_is_aborted()
     {
-        var fixture = NewTaskFixture();
+        var fixture = NewTaskFixture(seedSignedInUsers: false);
         fixture.Store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
         var created = fixture.Store.CreateUser(new CreateUserRequest("temp.hub", "Temp", StudioRoles.Operator, [fixture.Mine.Id], "temporary hub phrase!"));
         var login = fixture.Store.Login(created.User.Username, created.TemporaryPassword, "temp|127.0.0.1");
@@ -320,9 +320,9 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     public async Task Hub_groups_follow_the_project_scope_and_empty_membership_joins_nothing()
     {
         var fixture = NewTaskFixture();
-        var scoped = await SignedIn(fixture.Store, StudioRoles.Operator, [fixture.Mine.Id], "scoped.hub");
-        var empty = await SignedIn(fixture.Store, StudioRoles.Viewer, [], "empty.hub");
-        var granted = await SignedIn(fixture.Store, StudioRoles.Viewer, [ProjectAccessAuthorization.AllProjectsGrant], "granted.hub");
+        var scoped = fixture.SignIn(StudioRoles.Operator, [fixture.Mine.Id]);
+        var empty = fixture.SignIn(StudioRoles.Viewer, []);
+        var granted = fixture.SignIn(StudioRoles.Viewer, [ProjectAccessAuthorization.AllProjectsGrant]);
 
         var (scopedHub, _, scopedGroups) = fixture.Hub(scoped);
         await scopedHub.OnConnectedAsync();
@@ -342,8 +342,8 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     public async Task Hub_conversation_subscription_is_limited_to_member_projects()
     {
         var fixture = NewTaskFixture();
-        var scoped = await SignedIn(fixture.Store, StudioRoles.Operator, [fixture.Mine.Id], "scoped.sub");
-        var empty = await SignedIn(fixture.Store, StudioRoles.Operator, [], "empty.sub");
+        var scoped = fixture.SignIn(StudioRoles.Operator, [fixture.Mine.Id]);
+        var empty = fixture.SignIn(StudioRoles.Operator, []);
 
         var (hub, _, groups) = fixture.Hub(scoped);
         await hub.SubscribeToConversation(MineTask);
@@ -359,7 +359,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     private const string MineTask = "AGT-mine-1";
     private const string ForeignTask = "AGT-foreign-1";
 
-    private TaskFixture NewTaskFixture()
+    private TaskFixture NewTaskFixture(bool seedSignedInUsers = true)
     {
         var minePath = Path.Combine(_root, "projects", "mine");
         var foreignPath = Path.Combine(_root, "projects", "foreign");
@@ -378,7 +378,8 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         Assert.Equal("Foreign", scanner.FindJob(ForeignTask)?.ProjectName);
-        return new TaskFixture(config, store, scanner, registry, mine, foreign, minePath);
+        var sessions = seedSignedInUsers ? SeedSessions(store, mine.Id) : [];
+        return new TaskFixture(config, store, scanner, registry, mine, foreign, minePath, sessions);
     }
 
     private static void Seed(string watchPath, string id)
@@ -395,17 +396,48 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
 
     private sealed record SignedInUser(string SessionToken, string CsrfToken);
 
-    private static int _userCounter;
+    private static string ProfileKey(string role, IEnumerable<string> projects)
+        => role + ":" + string.Join(",", projects.Order(StringComparer.Ordinal));
 
-    private static Task<SignedInUser> SignedIn(AccessSecurityStore store, string role, string[] projects, string? username = null)
+    // These cases exercise project authorization with valid sessions. The two
+    // forced-password-change cases below still use the real login path.
+    private static Dictionary<string, SignedInUser> SeedSessions(AccessSecurityStore store, string mineId)
     {
-        if (store.ListUsers().Count == 0) store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
-        username ??= $"scoped.user{Interlocked.Increment(ref _userCounter)}";
-        var created = store.CreateUser(new CreateUserRequest(username, username, role, projects, "temporary scoped phrase!"));
-        var login = store.Login(created.User.Username, created.TemporaryPassword, $"{username}|127.0.0.1");
-        store.ChangePassword(new HumanPrincipal(login.User, store.AuthenticateSession(login.SessionToken)!.Session),
-            new ChangePasswordRequest(created.TemporaryPassword, "new scoped password phrase!"));
-        return Task.FromResult(new SignedInUser(login.SessionToken, login.CsrfToken));
+        var state = new SecurityState();
+        var sessions = new Dictionary<string, SignedInUser>(StringComparer.Ordinal);
+        var profiles = new (string Role, string[] Projects)[]
+        {
+            (StudioRoles.Operator, [mineId]),
+            (StudioRoles.Operator, []),
+            (StudioRoles.Operator, [ProjectAccessAuthorization.AllProjectsGrant]),
+            (StudioRoles.Viewer, []),
+            (StudioRoles.Viewer, [ProjectAccessAuthorization.AllProjectsGrant]),
+        };
+        foreach (var (role, projects) in profiles)
+        {
+            var id = Guid.NewGuid().ToString("N");
+            var sessionId = Guid.NewGuid().ToString("N");
+            var token = $"ssn.{sessionId}.{PasswordSecretHasher.RandomToken()}";
+            var csrf = PasswordSecretHasher.RandomToken();
+            state.Users.Add(new StudioUser
+            {
+                Id = "usr_" + id, Username = "scoped." + id,
+                DisplayName = "Scoped test user", Role = role, Projects = [.. projects],
+                PasswordHash = "unused", CreatedAt = Now, PasswordChangedAt = Now,
+            });
+            state.Sessions.Add(new StudioSession
+            {
+                Id = sessionId, UserId = "usr_" + id,
+                TokenHash = PasswordSecretHasher.HashSecret(token),
+                CsrfHash = PasswordSecretHasher.HashSecret(csrf),
+                CreatedAt = Now, LastSeenAt = Now,
+                ExpiresAt = Now.AddHours(1), AbsoluteExpiresAt = Now.AddHours(8),
+            });
+            sessions.Add(ProfileKey(role, projects), new SignedInUser(token, csrf));
+        }
+        Directory.CreateDirectory(store.SecurityFolder);
+        File.WriteAllText(Path.Combine(store.SecurityFolder, "access-state.json"), JsonSerializer.Serialize(state));
+        return sessions;
     }
 
     private sealed record TaskFixture(
@@ -415,8 +447,11 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
         ProjectRegistry Registry,
         ProjectRecord Mine,
         ProjectRecord Foreign,
-        string MinePath)
+        string MinePath,
+        IReadOnlyDictionary<string, SignedInUser> Sessions)
     {
+        public SignedInUser SignIn(string role, string[] projects) => Sessions[ProfileKey(role, projects)];
+
         public Task<(DefaultHttpContext Context, BoolBox Called)> Invoke(string method, string path, string query, SignedInUser user)
             => InvokeRaw(Config, Store, method, path, query, user.SessionToken, user.CsrfToken, scanner: Scanner, registry: Registry);
 
