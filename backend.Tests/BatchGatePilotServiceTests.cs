@@ -3822,13 +3822,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                 // Keep only the queue consumer needed by report requests; the
                 // periodic host loops can otherwise resume a seeded review or
                 // move its lane between the tick and the assertion.
-                for (var index = services.Count - 1; index >= 0; index--)
-                {
-                    var descriptor = services[index];
-                    if (descriptor.ServiceType == typeof(IHostedService)
-                        && descriptor.ImplementationType?.Namespace?.StartsWith("AgentStudio.", StringComparison.Ordinal) == true)
-                        services.RemoveAt(index);
-                }
+                services.RemoveAll<IHostedService>();
                 services.AddHostedService<RemoteReviewEvidenceProjectionWorker>();
                 services.AddSingleton<MonolithOrchestrationRecoveryService>();
             });
