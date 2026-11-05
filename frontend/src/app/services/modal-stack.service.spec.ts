@@ -181,6 +181,47 @@ describe('ModalStackService', () => {
     }
   });
 
+  it('returns Tab from a portaled menu to the open modal in both directions', () => {
+    const page = document.createElement('main');
+    const host = document.createElement('div');
+    const dialog = document.createElement('section');
+    const first = document.createElement('button');
+    const last = document.createElement('button');
+    dialog.append(first, last);
+    host.append(dialog);
+    const portal = document.createElement('div');
+    const menu = document.createElement('div');
+    const menuRow = document.createElement('button');
+    menuRow.tabIndex = -1;
+    menu.append(menuRow);
+    portal.append(menu);
+    document.body.append(page, host, portal);
+    for (const button of [first, last, menuRow]) {
+      Object.defineProperty(button, 'getClientRects', { value: () => [new DOMRect(0, 0, 1, 1)] });
+    }
+    try {
+      service.push('modal', () => undefined, { dialog: () => dialog, backgroundRoot: () => host });
+      service.push('menu', () => undefined, { interactiveRoot: () => menu });
+      menuRow.focus();
+      const forward = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      menuRow.dispatchEvent(forward);
+      expect(forward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(first);
+      expect(page.inert).toBe(true);
+
+      menuRow.focus();
+      const backward = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+      menuRow.dispatchEvent(backward);
+      expect(backward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(last);
+    } finally {
+      service.clearForTest();
+      page.remove();
+      host.remove();
+      portal.remove();
+    }
+  });
+
   it('wraps Tab and Shift+Tab at the modal boundaries', () => {
     const dialog = document.createElement('section');
     const first = document.createElement('button');

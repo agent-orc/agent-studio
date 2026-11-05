@@ -163,12 +163,16 @@ export class ModalStackService {
     this.focusBoundary(dialog, false);
   };
 
-  private focusBoundary(dialog: HTMLElement, last: boolean): void {
-    const controls = Array.from(dialog.querySelectorAll<HTMLElement>(
+  private focusableControls(root: HTMLElement): HTMLElement[] {
+    return Array.from(root.querySelectorAll<HTMLElement>(
       'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
     )).filter(element => !element.inert && !element.closest('[inert]') &&
       !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true' &&
       element.getClientRects().length > 0 && element.tabIndex >= 0);
+  }
+
+  private focusBoundary(dialog: HTMLElement, last: boolean): void {
+    const controls = this.focusableControls(dialog);
     (last ? controls.at(-1) ?? dialog : controls[0] ?? dialog).focus();
   }
 
@@ -176,13 +180,25 @@ export class ModalStackService {
     if (event.key === 'Tab') {
       const dialog = this.activeModal()?.dialog();
       if (!dialog) return;
-      if (this.overlayRootsAboveModal().some(root => root.contains(document.activeElement))) return;
-      const controls = Array.from(dialog.querySelectorAll<HTMLElement>(
-        'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
-      )).filter(element => !element.inert && !element.closest('[inert]') &&
-        !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true' &&
-        element.getClientRects().length > 0 && element.tabIndex >= 0);
       const active = document.activeElement;
+      const overlay = this.overlayRootsAboveModal().find(root => root.contains(active));
+      if (overlay) {
+        // A portaled menu is outside the dialog's DOM subtree. Its rows may
+        // have tabindex=-1, so the browser's next Tab target can be the page.
+        // Move through its tab stops, then return to the modal boundary when
+        // that sequence ends.
+        const overlayControls = this.focusableControls(overlay);
+        const index = overlayControls.indexOf(active as HTMLElement);
+        const next = event.shiftKey ? index - 1 : index + 1;
+        event.preventDefault();
+        if (index >= 0 && next >= 0 && next < overlayControls.length) {
+          overlayControls[next].focus();
+        } else {
+          this.focusBoundary(dialog, event.shiftKey);
+        }
+        return;
+      }
+      const controls = this.focusableControls(dialog);
       if (!dialog.contains(active) || controls.length === 0 ||
           (event.shiftKey ? active === controls[0] : active === controls.at(-1))) {
         event.preventDefault();
