@@ -3,7 +3,7 @@ Description=Agent Studio website and orchestrator engine
 Before=slices.target
 
 [Slice]
-CPUWeight=1000
-IOWeight=1000
+CPUWeight=100
+IOWeight=100
 # The apply script replaces this safe bootstrap value from host MemTotal.
 MemoryLow=512M
