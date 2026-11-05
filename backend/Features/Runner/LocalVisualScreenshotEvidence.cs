@@ -1,6 +1,7 @@
 using System.Text;
 using AgentStudio.Cli;
 using AgentStudio.Prompts;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
@@ -40,4 +41,9 @@ internal static class LocalVisualScreenshotEvidence
             : path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ? "image/webp"
             : "image/jpeg"))
         .ToArray();
+
+    internal static bool HasAfterScreenshot(string jobFolderPath) =>
+        Paths(jobFolderPath).Any(path =>
+            VisualReviewEvidence.IsAfterScreenshot(Path.GetRelativePath(
+                Path.Combine(jobFolderPath, "results"), path)));
 }

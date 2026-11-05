@@ -65,7 +65,8 @@ internal static class VisualReviewScreenshotBundle
                     continue;
                 }
                 var extension = Path.GetExtension(artifact.Name).ToLowerInvariant();
-                var path = Path.Combine(directory, $"image-{listed.Count + 1:D2}{extension}");
+                var stage = VisualReviewEvidence.IsAfterScreenshot(artifact.Name) ? "after" : "before";
+                var path = Path.Combine(directory, $"{stage}-image-{listed.Count + 1:D2}{extension}");
                 await File.WriteAllBytesAsync(path, bytes, ct);
                 total += bytes.LongLength;
                 listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: {JsonSerializer.Serialize(path)}");
@@ -73,6 +74,13 @@ internal static class VisualReviewScreenshotBundle
             if (artifacts.Length > MaximumImages)
                 listed.Add($"- {artifacts.Length - MaximumImages} more screenshots omitted by the 100-image review limit.");
             return string.Join('\n', listed);
+    }
+
+    internal static bool HasReadableAfterScreenshot(string attemptRoot)
+    {
+        var directory = Path.Combine(attemptRoot, "visual-evidence");
+        return Directory.Exists(directory)
+            && Directory.EnumerateFiles(directory, "after-image-*", SearchOption.TopDirectoryOnly).Any();
     }
 
     internal static string PromptSection(string screenshotEvidence, string repositoryPath)

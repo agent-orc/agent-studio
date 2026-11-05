@@ -501,7 +501,7 @@ public sealed class AspectRunnerService
                 }
             }
 
-            if (def.Id == "visual-review" && LocalVisualScreenshotEvidence.Images(inputs.JobFolderPath).Count == 0
+            if (def.Id == "visual-review" && !LocalVisualScreenshotEvidence.HasAfterScreenshot(inputs.JobFolderPath)
                 && verdict.Status != AspectStatus.Block)
             {
                 var changedVisual = (inputs.VisualChangedPaths

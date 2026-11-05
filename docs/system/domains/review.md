@@ -452,8 +452,8 @@ It opens each screenshot, compares matching before and after views, and checks
 layout, spacing, separation, alignment, clipping, and contrast across available
 themes and widths. A visual concern or block cites both the screenshot and the
 affected region. If a frontend template or style changed without a readable
-screenshot, the executor guarantees a `concerns` verdict naming the missing
-after evidence. Nonvisual changes skip this aspect.
+screenshot, or only before screenshots, the executor guarantees a `concerns`
+verdict naming the missing after evidence. Nonvisual changes skip this aspect.
 
 `runner/RemoteReviewWorkspace.cs` materializes the immutable delivery
 Result-SHA in a disposable candidate checkout. Before the first semantic aspect

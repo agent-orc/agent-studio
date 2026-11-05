@@ -1017,11 +1017,9 @@ public sealed class RemoteReviewWorkspace
                 : BaselineVerdict(command, comparison);
             if (string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase))
             {
-                var visualDirectory = Path.Combine(AttemptRoot, "visual-evidence");
-                var hasImage = Directory.Exists(visualDirectory)
-                    && Directory.EnumerateFiles(visualDirectory).Any();
                 verdict = VisualReviewEvidence.EnforceMissingScreenshots(verdict,
-                    await ChangedPathsAgainstBaselineAsync(ct), hasImage);
+                    await ChangedPathsAgainstBaselineAsync(ct),
+                    VisualReviewScreenshotBundle.HasReadableAfterScreenshot(AttemptRoot));
             }
             verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
                 verdict,

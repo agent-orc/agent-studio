@@ -19,6 +19,19 @@ public static class VisualReviewEvidence
             || artifact.Name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
             || artifact.Name.EndsWith(".webp", StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>Unmarked screenshots represent the delivered view; explicit before images do not.</summary>
+    public static bool IsAfterScreenshot(string name)
+    {
+        var normalized = name.Replace('\\', '/');
+        var parts = normalized.Split('/');
+        if (parts.SkipLast(1).Any(part => part.Equals("before", StringComparison.OrdinalIgnoreCase)))
+            return false;
+        var stem = Path.GetFileNameWithoutExtension(parts[^1]);
+        return !System.Text.RegularExpressions.Regex.IsMatch(stem,
+            @"(^before($|[-_.])|[-_.]before($|[-_.]))",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
     public static ReviewVerdictDto EnforceMissingScreenshots(ReviewVerdictDto verdict,
         IEnumerable<string> changedPaths, bool hasReadableScreenshot)
     {

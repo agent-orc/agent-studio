@@ -85,11 +85,51 @@ public sealed class VisualReviewScreenshotTests
                     artifact.SizeBytes)), root, default);
             Assert.Contains(before.Name, evidence);
             Assert.Contains(after.Name, evidence);
+            Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
             Assert.True(evidence.IndexOf(after.Name, StringComparison.Ordinal)
                 < evidence.IndexOf(before.Name, StringComparison.Ordinal));
             Assert.Equal(2, Directory.GetFiles(Path.Combine(root, "visual-evidence")).Length);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task Before_only_artifact_does_not_satisfy_after_evidence_requirement()
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "visual-review", "run-on-footer.png"));
+        var before = Artifact("before", "bars/before-1920-light.png", bytes);
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync([before],
+                (_, _) => Task.FromResult<ArtifactContentDto?>(new ArtifactContentDto(
+                    before.ArtifactId, before.RunId, before.Name, before.MediaType,
+                    before.Sha256, Convert.ToBase64String(bytes), before.SizeBytes)), root, default);
+            Assert.Contains(before.Name, evidence);
+            Assert.False(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
+
+            var reportedPass = new ReviewVerdictDto("visual-review", "pass", "RemoteAspectVerdict",
+                "Looks fine.", before.Name, "none");
+            var enforced = VisualReviewEvidence.EnforceMissingScreenshots(reportedPass,
+                ["frontend/src/app/layout/footer.component.html"],
+                VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
+            Assert.Equal("concerns", enforced.Status);
+            Assert.Contains("after screenshots", enforced.Missing);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData("bars/before-1920-light.png", false)]
+    [InlineData("before.png", false)]
+    [InlineData("bars/before/1920-light.png", false)]
+    [InlineData("bars/1920-light-before.png", false)]
+    [InlineData("bars/after-1920-light.png", true)]
+    [InlineData("bars/clean-footer.png", true)]
+    public void Screenshot_stage_uses_delivered_artifact_name(string name, bool expectedAfter)
+    {
+        Assert.Equal(expectedAfter, VisualReviewEvidence.IsAfterScreenshot(name));
     }
 
     private static ArtifactDto Artifact(string id, string name, byte[] bytes) => new(

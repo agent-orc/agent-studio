@@ -108,6 +108,26 @@ public class AspectRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Visual_aspect_with_before_only_screenshot_names_missing_after_evidence()
+    {
+        var results = Path.Combine(_jobFolder, "results", "bars");
+        Directory.CreateDirectory(results);
+        File.WriteAllBytes(Path.Combine(results, "before-1920-light.png"), [1, 2, 3]);
+        var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
+        var inputs = BuildInputs() with
+        {
+            VisualChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
+        };
+
+        var report = await runner.RunAsync(inputs, ["visual-review"], "claude",
+            "claude-sonnet-5", TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        var verdict = Assert.Single(report.Verdicts);
+        Assert.Equal(AspectStatus.Concerns, verdict.Status);
+        Assert.Contains("after screenshots", verdict.Body);
+    }
+
+    [Fact]
     public async Task Local_aspect_preserves_evidence_checked_for_scoped_rereview()
     {
         var runner = BuildRunner(_ =>
