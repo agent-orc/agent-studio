@@ -11,6 +11,19 @@ namespace AgentStudio.Tests;
 public sealed class BatchGateStoreTests : IDisposable
 {
     [Fact]
+    public void State_reports_capacity_and_current_slot_use_together()
+    {
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true),
+            gateSlots: new GateSlotUsage(2, 4),
+            gateCapacity: new GateCapacity(4, 6, 24, false)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(2, state.GetProperty("gateSlots").GetProperty("busy").GetInt32());
+        Assert.Equal(4, state.GetProperty("gateCapacity").GetProperty("slots").GetInt32());
+        Assert.Equal(6, state.GetProperty("gateCapacity").GetProperty("processorsPerGate").GetInt32());
+    }
+
+    [Fact]
     public void State_names_review_fix_wait_before_batch_admission()
     {
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(

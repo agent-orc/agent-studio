@@ -15,7 +15,8 @@ public static class BatchGateStateSnapshotReader
         IReadOnlyList<PendingIntegrationPushWait>? pushWaits = null,
         DateTimeOffset? now = null,
         GateRunLedger? ledger = null,
-        IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null)
+        IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
+        GateCapacity? gateCapacity = null)
     {
         var at = now ?? DateTimeOffset.UtcNow;
         var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
@@ -197,6 +198,7 @@ public static class BatchGateStateSnapshotReader
             pushWaits = pushWaits ?? (pushWait is null
                 ? Array.Empty<PendingIntegrationPushWait>() : [pushWait]),
             gateSlots,
+            gateCapacity,
             integrationGateLeaseCapMinutes = BatchIntegrationReservationService.IntegrationGateLeaseCap.TotalMinutes,
             preChecksRun = preChecks.Length,
             preChecksRed = preChecks.Count(check => check.Outcome == "red"),

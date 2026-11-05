@@ -24,15 +24,18 @@ public sealed class PullGateStore
     private readonly string _root;
     private readonly TimeProvider _clock;
     private readonly IConfiguration? _configuration;
+    private readonly GateCapacitySettings? _capacity;
     private readonly Dictionary<string, PullGateJob> _jobs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PullGateHost> _hosts = new(StringComparer.Ordinal);
     private readonly HashSet<string> _restartFences = new(StringComparer.Ordinal);
 
-    public PullGateStore(string root, TimeProvider clock, IConfiguration? configuration = null)
+    public PullGateStore(string root, TimeProvider clock, IConfiguration? configuration = null,
+        GateCapacitySettings? capacity = null)
     {
         _root = root;
         _clock = clock;
         _configuration = configuration;
+        _capacity = capacity;
         Directory.CreateDirectory(root);
         LoadRestartFences();
         foreach (var file in Directory.EnumerateFiles(root, "job.json", SearchOption.AllDirectories))
@@ -153,6 +156,11 @@ public sealed class PullGateStore
 
     private PullGateHost SnapshotHost(PullGateHost host)
     {
+        if (_capacity is { HasOverride: true })
+        {
+            var capacity = _capacity.Current(host.Id);
+            host = host with { Slots = capacity.Slots, ProcessorCount = capacity.ProcessorsPerGate };
+        }
         var active = _jobs.Values.Where(job => job.HostId == host.Id && job.State == "claimed"
             && job.ExpiresAt > Now).ToArray();
         return host with { Busy = active.Length, CurrentRun = active.FirstOrDefault()?.RunId };
@@ -166,9 +174,9 @@ public sealed class PullGateStore
         {
             // Host capacity is an operator decision held by the server. The
             // worker cannot raise it by advertising more local slots.
-            var slots = _configuration?.GetValue<int?>($"RemoteGate:HostCapacity:{id}:Slots")
+            var slots = _capacity?.Current(id).Slots ?? _configuration?.GetValue<int?>($"RemoteGate:HostCapacity:{id}:Slots")
                 ?? _configuration?.GetValue<int?>("RemoteGate:GateSlots") ?? 1;
-            var processors = _configuration?.GetValue<int?>($"RemoteGate:HostCapacity:{id}:ProcessorCount")
+            var processors = _capacity?.Current(id).ProcessorsPerGate ?? _configuration?.GetValue<int?>($"RemoteGate:HostCapacity:{id}:ProcessorCount")
                 ?? _configuration?.GetValue<int?>("RemoteGate:ProcessorCount") ?? 2;
             if (slots is < 1 or > 64 || processors is < 1 or > 64)
                 throw new ArgumentException("Server gate host capacity is invalid.");
@@ -204,6 +212,9 @@ public sealed class PullGateStore
             if (_restartFences.Contains("*") || _restartFences.Contains(hostId)) return null;
             if (!_hosts.TryGetValue(hostId, out var host) || Now - host.LastHeartbeat >= HealthyTime)
                 return null;
+            var capacity = _capacity?.Current(hostId);
+            if (capacity is not null) host = host with { Slots = capacity.Slots,
+                ProcessorCount = capacity.ProcessorsPerGate };
             var used = _jobs.Values.Count(job => job.HostId == hostId && job.State == "claimed"
                 && job.ExpiresAt > Now);
             if (used >= host.Slots) return null;

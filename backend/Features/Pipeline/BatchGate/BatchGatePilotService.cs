@@ -374,13 +374,17 @@ public sealed partial class BatchGatePilotService
                 publication => ReviewFixWaits(publication.Live, project));
         var pending = _store.ListPending().Where(item =>
             string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var slotUsage = _gateSlots is null ? null
+            : _services?.GetService<PullGateStore>() is { } pull
+                ? GateCapacityEndpoints.Usage(_gateSlots, pull) : _gateSlots.ReportedOrLocalSnapshot();
         // A read route starts no Git: risk and paths come from the planner tick's cache.
         return BatchGateStateSnapshotReader.Read(_store, project, options, history,
             _snapshots.Cached(project, pending),
             CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null,
-            _gateSlots?.Snapshot(),
+            slotUsage,
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
-            _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits);
+            _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
+            _services?.GetService<GateCapacitySettings>()?.Current());
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
