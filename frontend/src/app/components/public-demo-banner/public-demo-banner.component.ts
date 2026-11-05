@@ -2,8 +2,8 @@ import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { PublicDemoModeService } from '../../services/public-demo-mode.service';
 
 /**
- * App-wide "read-only public demo" banner (W34 §8 S4). Renders a fixed strip
- * at the top of the viewport whenever the backend reports the
+ * App-wide "read-only public demo" banner (W34 §8 S4). Renders in shell flow
+ * above the titlebar whenever the backend reports the
  * public-demo-readonly execution profile. The banner is explanatory UX only -
  * the server edge (PublicDemoEdgeMiddleware) is what actually denies every
  * mutation; this and publicDemoGuardInterceptor just make that boundary
