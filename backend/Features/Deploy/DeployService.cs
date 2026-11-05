@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
@@ -54,6 +55,9 @@ public sealed class DeployService
     private readonly AgentStudio.Projects.ProjectSettingsService? _projectSettings;
     private readonly QualityReleaseRangeVerdictClient? _rangeVerdicts;
     private readonly Func<IReadOnlyList<TaskInfo>> _qualityTaskScan;
+    private readonly DeliveryVerificationIndex _deliveryVerifications;
+    private readonly Action<TimeSpan>? _deliveryLockHoldObserved;
+    private readonly Action? _deliveryVerificationCaptured;
 
     /// <summary>
     /// Ancestry answers between release commits. Commits are immutable, so a
@@ -76,7 +80,10 @@ public sealed class DeployService
         PostMergeRunStore? postMerge = null, ProjectRegistry? registry = null,
         AgentStudio.Projects.ProjectSettingsService? projectSettings = null,
         QualityReleaseRangeVerdictClient? rangeVerdicts = null,
-        Func<IReadOnlyList<TaskInfo>>? qualityTaskScan = null)
+        Func<IReadOnlyList<TaskInfo>>? qualityTaskScan = null,
+        Func<string, IntegrationVerificationRecord?>? deliveryVerificationRead = null,
+        Action<TimeSpan>? deliveryLockHoldObserved = null,
+        Action? deliveryVerificationCaptured = null)
     {
         _environments = environments;
         _store = store;
@@ -91,6 +98,10 @@ public sealed class DeployService
         _projectSettings = projectSettings;
         _rangeVerdicts = rangeVerdicts;
         _qualityTaskScan = qualityTaskScan ?? _scanner.ScanAllJobsWithArchive;
+        _deliveryVerifications = new DeliveryVerificationIndex(clock,
+            deliveryVerificationRead ?? IntegrationVerificationStore.Read);
+        _deliveryLockHoldObserved = deliveryLockHoldObserved;
+        _deliveryVerificationCaptured = deliveryVerificationCaptured;
     }
 
     /// <summary>
@@ -641,17 +652,22 @@ public sealed class DeployService
     /// <summary>Read-only release placement; the cache changes with releases, deploy runs and integration evidence.</summary>
     public DeliveryLaneResponse? DeliveryLanes(string project)
     {
-        lock (_gate)
+        while (true)
         {
-            var snapshot = SyncLocked(project);
-            if (snapshot is null) return null;
-            var runs = snapshot.Deployments(project);
-            var (signature, integrated) = DeliveryInputs(project, snapshot, runs);
-            if (_deliveryLaneCache.TryGetValue(project, out var cached) && cached.Signature == signature)
-                return cached.Value;
-            var value = DeliveryLaneProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, integrated());
-            _deliveryLaneCache[project] = (signature, value);
-            return value;
+            var verification = CaptureDeliveryVerifications(project);
+            lock (_gate)
+            {
+                if (!_deliveryVerifications.IsCurrent(project, verification)) continue;
+                var snapshot = SyncLocked(project);
+                if (snapshot is null) return null;
+                var runs = snapshot.Deployments(project);
+                var (signature, integrated) = DeliveryInputs(snapshot, runs, verification);
+                if (_deliveryLaneCache.TryGetValue(project, out var cached) && cached.Signature == signature)
+                    return cached.Value;
+                var value = DeliveryLaneProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, integrated());
+                _deliveryLaneCache[project] = (signature, value);
+                return value;
+            }
         }
     }
 
@@ -663,50 +679,63 @@ public sealed class DeployService
     public DeliveryColumnsResponse? DeliveryColumns(string project,
         int releaseDepth = DeliveryColumnProjection.DefaultReleaseDepth)
     {
-        lock (_gate)
+        while (true)
         {
-            var snapshot = ReadOnlySnapshot(project);
-            if (snapshot is null) return null;
-            var runs = snapshot.Deployments(project).Where(item => item.Tenant is null).ToArray();
-            var health = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
-                StringComparer.Ordinal);
-            var (inputs, integrated) = DeliveryInputs(project, snapshot, runs);
-            var signature = inputs + "|" + releaseDepth + "|" + string.Join('|', health.Select(item => item.Key + ':' + item.Value));
-            if (_deliveryColumnCache.TryGetValue(project, out var cached) && cached.Signature == signature)
-                return cached.Value;
-            var value = DeliveryColumnProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, health,
-                snapshot.Records.ToDictionary(item => item.Key, item => item.Value.Lifecycle, StringComparer.Ordinal),
-                integrated().Keys, releaseDepth);
-            _deliveryColumnCache[project] = (signature, value);
-            return value;
+            var verification = CaptureDeliveryVerifications(project);
+            lock (_gate)
+            {
+                var started = _deliveryLockHoldObserved is null ? 0L : Stopwatch.GetTimestamp();
+                try
+                {
+                    if (!_deliveryVerifications.IsCurrent(project, verification)) continue;
+                    var snapshot = ReadOnlySnapshot(project);
+                    if (snapshot is null) return null;
+                    var runs = snapshot.Deployments(project).Where(item => item.Tenant is null).ToArray();
+                    var health = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
+                        StringComparer.Ordinal);
+                    var (inputs, integrated) = DeliveryInputs(snapshot, runs, verification);
+                    var signature = inputs + "|" + releaseDepth + "|" + string.Join('|', health.Select(item => item.Key + ':' + item.Value));
+                    if (_deliveryColumnCache.TryGetValue(project, out var cached) && cached.Signature == signature)
+                        return cached.Value;
+                    var value = DeliveryColumnProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, health,
+                        snapshot.Records.ToDictionary(item => item.Key, item => item.Value.Lifecycle, StringComparer.Ordinal),
+                        integrated().Keys, releaseDepth);
+                    _deliveryColumnCache[project] = (signature, value);
+                    return value;
+                }
+                finally
+                {
+                    if (_deliveryLockHoldObserved is not null)
+                        _deliveryLockHoldObserved(Stopwatch.GetElapsedTime(started));
+                }
+            }
         }
     }
 
     /// <summary>
-    /// The cache signature of a delivery read, and the archive-inclusive cards
-    /// with a verified integration by key and title. Only the stamps of the
-    /// verification files are read until the signature changes.
+    /// Archive-inclusive cards and their verification are captured before the
+    /// deploy lock. Store writes publish a generation; external edits are
+    /// reconciled on a bounded interval by the project-local index.
     /// </summary>
-    private (string Signature, Func<Dictionary<string, string>> Integrated) DeliveryInputs(string project,
-        Snapshot snapshot, IReadOnlyList<Deployment> runs)
+    private DeliveryVerificationIndex.Snapshot CaptureDeliveryVerifications(string project)
     {
         var tasks = _scanner.ScanAllJobsWithArchive()
             .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase))
-            .Select(task => (Task: task, Stamp: File.Exists(Path.Combine(task.FolderPath,
-                IntegrationVerificationStore.FileName))
-                ? File.GetLastWriteTimeUtc(Path.Combine(task.FolderPath, IntegrationVerificationStore.FileName)).Ticks : 0L))
             .ToArray();
+        var snapshot = _deliveryVerifications.Capture(project, tasks);
+        _deliveryVerificationCaptured?.Invoke();
+        return snapshot;
+    }
+
+    private static (string Signature, Func<Dictionary<string, string>> Integrated) DeliveryInputs(
+        Snapshot snapshot, IReadOnlyList<Deployment> runs, DeliveryVerificationIndex.Snapshot verification)
+    {
         var signature = string.Join('|', snapshot.Environments.Select(item =>
                 item.Id + ':' + item.Name + ':' + item.Order))
             + "|" + string.Join('|', snapshot.Releases.Select(item => item.Id + ':' + item.CardKeys.Count))
             + "|" + string.Join('|', runs.Select(item => item.Id + ':' + item.State + ':' + item.FinishedAtUtc?.Ticks))
-            + "|" + string.Join('|', tasks.Select(item => item.Task.Id + ':' + item.Task.Title + ':' + item.Stamp));
-        return (signature, () => tasks.Where(item => item.Stamp != 0)
-            .Select(item => (item.Task, Verification: IntegrationVerificationStore.Read(item.Task.FolderPath)))
-            .Where(item => item.Verification?.State == IntegrationVerificationStates.Verified)
-            .GroupBy(item => string.IsNullOrWhiteSpace(item.Task.Key) ? item.Task.Id : item.Task.Key!,
-                StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First().Task.Title, StringComparer.OrdinalIgnoreCase));
+            + "|" + verification.Signature;
+        return (signature, () => verification.Integrated);
     }
 
     public DeployMatrixResponse Matrix()

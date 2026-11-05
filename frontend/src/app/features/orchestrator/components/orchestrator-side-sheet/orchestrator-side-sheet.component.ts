@@ -69,6 +69,7 @@ import { UiPreferencesService } from '../../../shell/state/ui-preferences.servic
 import { PlanStripComponent } from '../../../plan-strip';
 import { OrchestratorTaskPlanStore } from '../../state/orchestrator-task-plan.store';
 import { StudioPanelStateService } from '../../../studio-shell/services/studio-panel-state.service';
+import { ConversationScrollFocusDirective } from '../../../../directives/conversation-scroll-focus.directive';
 
 /**
  * Push-layout side sheet hosting automatic context-keyed orchestrator chats.
@@ -81,6 +82,7 @@ import { StudioPanelStateService } from '../../../studio-shell/services/studio-p
   imports: [
     ChatComponent,
     ConversationViewComponent,
+    ConversationScrollFocusDirective,
     AppTooltipDirective,
     SidesheetComponent,
     OrchestratorContextHeaderComponent,

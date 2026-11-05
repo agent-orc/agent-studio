@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
+import { Subscription } from 'rxjs';
 import { QualityChangeRound, QualityChangeView, ReviewEvidenceEntry, TaskInfo } from '../../../../../models/task.model';
 import { QualityStudioService } from '../../../../../services/quality-studio.service';
 
@@ -20,11 +21,13 @@ const STATE_LABELS: Record<QualityChangeView['state'], string> = {
 export class QualityPanelComponent {
   private readonly http = inject(HttpClient);
   private readonly qualityStudio = inject(QualityStudioService);
+  private readonly destroyRef = inject(DestroyRef);
   readonly job = input.required<TaskInfo>();
   readonly evidence = input<ReviewEvidenceEntry[]>([]);
   readonly view = signal<QualityChangeView | null>(null);
   readonly loadError = signal(false);
   private loadedKey = '';
+  private request: Subscription | null = null;
   private readonly retrySerial = signal(0);
   readonly selectedAttempt = signal<string | null>(null);
   readonly qualityRows = computed(() => {
@@ -63,16 +66,17 @@ export class QualityPanelComponent {
     }));
   });
 
-  private readonly load = effect(onCleanup => {
+  private readonly load = effect(() => {
     const job = this.job();
     const key = `${job.taskKey}:${this.retrySerial()}`;
     if (key === this.loadedKey) return;
+    this.request?.unsubscribe();
     this.loadedKey = key;
     const params = new HttpParams().set('watchPath', job.watchPath);
     this.selectedAttempt.set(null);
     this.view.set(null);
     this.loadError.set(false);
-    const subscription = this.http.get<QualityChangeView>(
+    this.request = this.http.get<QualityChangeView>(
       '/api/tasks/' + encodeURIComponent(job.id) + '/quality-studio', { params }).subscribe({
       next: view => this.view.set(view),
       error: () => {
@@ -81,8 +85,11 @@ export class QualityPanelComponent {
           rounds: [], landedSha: null, landedBaseSha: null, landedPatchEqualsReviewedPatch: null });
       },
     });
-    onCleanup(() => subscription.unsubscribe());
   });
+
+  constructor() {
+    this.destroyRef.onDestroy(() => this.request?.unsubscribe());
+  }
 
   retry(): void { this.retrySerial.update(value => value + 1); }
 

@@ -424,6 +424,22 @@ Temporary worktree removal is retried, and cleanup leftovers do not discard
 a successful replay. Candidate refs use
 `refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
 
+The batch panel reads `GET /api/projects/{projectName}/batch-gate/failed-tests`
+to rank failed test names over a seven-day sliding window (`windowDays` may be
+1 through 90). The store reads historical execution evidence once per project
+and updates the in-memory projection when it records a new execution. Later
+requests rank the cached observations without rescanning evidence. The
+response counts batches, runs, distinct member sets, first and latest failure,
+the latest error excerpt, per-run failure facts, and whether a flaky rerun
+passed. Missing evidence is queued for retry without interrupting execution
+recording; the response counts pending evidence runs so the panel marks its
+ranking incomplete until those files become readable. A test is a flaky suspect
+only when it failed in three batches with pairwise disjoint member sets. The
+operator can open a prefilled bug card in the normal creation dialog. The dialog
+applies central model routing and requires submission to create it.
+Batch links request up to 500 historical manifests on demand; normal state
+polling stays at ten.
+
 Member replay routes (AGT-3104, chosen by the pure `BatchReplayPolicy`):
 
 | Delivery range from the candidate tip | Route | Attribution |
@@ -728,6 +744,14 @@ lease lives in `ref-mutation-leases` beside it. The card-local admission marker
 is `logs/batch-gate-ownership.json`. Native member records carry the gate
 identity and evidence; the integration-record endpoint only records integration
 bookkeeping.
+
+Each pilot tick retries formed manifests from the store. The oldest formed
+manifest takes the next available project gate slot, so later larger batches
+cannot indefinitely pass it. The state response includes every recoverable
+manifest even when it falls outside the requested history count. For a pending
+member past its planning deadline and absent from the last proposed member list,
+the plan names its current batch or fallback, or says that it awaits the next
+planner tick. Such a member never appears under an idle plan.
 
 The backend worker sends the full gate through `RemoteBuildTestGateRunner` to
 the configured remote gate host. A red candidate is compared on the server
@@ -2242,6 +2266,10 @@ move-error dialog.
   post-processing deferral pass, integrating only what is not already on the
   branch and never creating a second review attempt. See
   [review-plane contract](../contracts/review-plane.md).
+  The integration coordinator marks a delivery replay finished before it
+  completes the waiting caller. A resume that discards a completed owner
+  refusal can then enqueue a fresh integration after ownership returns,
+  instead of receiving the stale refusal again.
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so

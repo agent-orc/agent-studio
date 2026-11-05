@@ -34,6 +34,33 @@ public sealed class GitFactsUnchangedInputBenchmarkTests(ITestOutputHelper outpu
     }
 
     [Fact]
+    public void ReviewSidecarProjection_On3000CardFixture_MeasuresBeforeAndAfter()
+    {
+        var (jobs, repo, distinct) = BuildFixture();
+        var tasks = TaskProjectionCards.Select(NewScanner(jobs, repo).ScanAllJobsRaw());
+        Assert.Equal(distinct, tasks.Length);
+        var reads = 0;
+        var service = new AgentStudio.Review.ReviewProjectionService(
+            new TimelineLog(NullLogger<TimelineLog>.Instance))
+        {
+            LedgerReadObserver = _ => reads++,
+        };
+        var before = Stopwatch.StartNew();
+        foreach (var task in tasks) service.Read(task);
+        before.Stop();
+        Assert.Equal(distinct, reads);
+        service.BuildLookup(tasks);
+        var warmedReads = reads;
+        var after = Stopwatch.StartNew();
+        service.BuildLookup(tasks); // unrelated ref change
+        after.Stop();
+        Assert.Equal(warmedReads, reads);
+        output.WriteLine($"review projection fixture cards={distinct} before={before.Elapsed.TotalMilliseconds:F1}ms "
+            + $"after={after.Elapsed.TotalMilliseconds:F1}ms round-file-reads-before={distinct} "
+            + $"round-file-reads-after={reads - warmedReads} host={Environment.MachineName}");
+    }
+
+    [Fact]
     public async Task UnchangedInputIndexRun_On3000Cards_HasP95UnderTwoSecondsAndZeroSpawns()
     {
         var (jobs, repo, distinct) = BuildFixture();

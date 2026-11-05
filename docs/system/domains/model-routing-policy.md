@@ -26,7 +26,11 @@ selection. When no host advertises the route, Result finalization reports
 `waiting for a host with <capability>` and schedules a retry without consuming
 the summary retry budget. The task server publishes the model as a short-lived
 probe demand in capability advertisement responses, so a host can discover and
-advertise a newly requested route. Jobs already claimed expire after their timeout.
+advertise a newly requested route. Pending jobs have a queue window of their
+requested timeout plus 30 seconds. A claim starts a fresh execution window:
+the claim token expires after the requested timeout plus 20 seconds, and the
+job expires after the requested timeout plus 30 seconds. The caller renews its
+wait budget when it observes the claim, so a valid late claim can return.
 
 ### Task Server one-shot job API
 
@@ -49,9 +53,10 @@ The server rejects an empty or over-220,000-byte UTF-8 prompt, a timeout outside
 1-300 seconds, an output cap outside 1-65,536 bytes, more than four images,
 unsupported image media types, or over 5.6 million combined base64 characters
 with HTTP 400. A runner identity mismatch or insufficient scope returns HTTP
-403. Jobs expire 30 seconds after their requested timeout, and a claim token
-expires 20 seconds after that timeout. The runner reports timeout and output
-cap failures through `failed`.
+403. The pending job expires 30 seconds after its requested timeout. On claim,
+the server resets that expiry to 30 seconds after the claim plus the requested
+timeout; the claim token expires 20 seconds after the claim plus that timeout.
+The runner reports timeout and output cap failures through `failed`.
 
 ## Consumer policy and project overrides (AGT-3479)
 

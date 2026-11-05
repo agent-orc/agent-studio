@@ -7,8 +7,10 @@ public static class BatchGateWaitingPolicy
 
     public static IReadOnlyList<BatchGateManifest> OrderForStart(
         IEnumerable<BatchGateManifest> formed)
-        => formed.OrderByDescending(manifest => manifest.Members.Count)
-            .ThenBy(manifest => manifest.ClosedAtUtc)
+        // A larger batch can form on every tick while an older batch waits for
+        // the project slot. Size-first ordering could starve that older batch.
+        => formed.OrderBy(manifest => manifest.ClosedAtUtc)
+            .ThenByDescending(manifest => manifest.Members.Count)
             .ThenBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
 
     public static IReadOnlyList<Card> LargestCompatible(IReadOnlyList<Card> ordered,

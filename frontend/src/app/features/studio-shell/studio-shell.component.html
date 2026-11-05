@@ -41,24 +41,6 @@
                 [style.background]="activeProjectColor()"
                 aria-hidden="true">{{ activeProjectInitial() }}</span>
           <span class="studio-pill__label">{{ name }}</span>
-          <!-- Auto-pickup state sits inline behind the project name (per
-               user feedback) so the chip reads as one unit:
-               "<glyph> <name> <auto-dot> <count> <caret>". Clicking the
-               dot cycles auto-continuous ⇄ paused; clicking the rest of
-               the chip opens the project picker. `stopPropagation()`
-               keeps the two click targets independent. -->
-          <span class="studio-auto-toggle studio-auto-toggle--inline"
-                role="button"
-                tabindex="0"
-                [class.studio-auto-toggle--on]="autoModeFor(name) !== 'manual' && autoModeFor(name) !== 'paused'"
-                data-testid="studio-titlebar-auto-toggle"
-                [cacTooltip]="autoToggleTooltip(name)"
-                (click)="toggleAuto.emit(name); $event.stopPropagation()"
-                (keydown.enter)="toggleAuto.emit(name); $event.stopPropagation()"
-                (keydown.space)="toggleAuto.emit(name); $event.stopPropagation()">
-            <span class="studio-auto-toggle__dot" aria-hidden="true"></span>
-            <span class="studio-auto-toggle__label">{{ autoModeLabelFor(name) }}</span>
-          </span>
           <span class="studio-pill__count" aria-label="open tasks">{{ activeProjectTotalJobs() }}</span>
         } @else {
           <span class="studio-pill__glyph studio-pill__glyph--all" aria-hidden="true">
@@ -68,6 +50,18 @@
         }
         <span class="studio-pill__caret" aria-hidden="true">▾</span>
       </button>
+
+      @if (activeProjectName(); as name) {
+        <button type="button" class="studio-auto-toggle studio-auto-toggle--inline"
+                [class.studio-auto-toggle--on]="autoModeFor(name) !== 'manual' && autoModeFor(name) !== 'paused'"
+                data-testid="studio-titlebar-auto-toggle"
+                [attr.aria-label]="autoToggleTooltip(name)"
+                [cacTooltip]="autoToggleTooltip(name)"
+                (click)="toggleAuto.emit(name)">
+          <span class="studio-auto-toggle__dot" aria-hidden="true"></span>
+          <span class="studio-auto-toggle__label">{{ autoModeLabelFor(name) }}</span>
+        </button>
+      }
 
       <app-menu
         [items]="projectPickerItems()"
@@ -412,28 +406,25 @@
           @for (t of tabs(); track tabKey(t)) {
             <div #studioTab
                  class="studio-tab"
-                 role="tab"
-                 tabindex="0"
                  draggable="true"
                  [class.studio-tab--active]="activeKey() === tabKey(t)"
                  [class.studio-tab--dragging]="draggingTabKey() === tabKey(t)"
                  [class.studio-tab--drop-before]="dragOverTabKey() === tabKey(t) && draggingTabKey() !== tabKey(t)"
-                 [attr.aria-selected]="activeKey() === tabKey(t) ? 'true' : 'false'"
-                 [attr.aria-label]="tabLabel(t)"
                  [appTooltip]="tabTooltip(t)"
                  [attr.data-testid]="'studio-tab-' + tabKey(t)"
                  [attr.data-tab-key]="tabKey(t)"
                  [attr.data-tab-kind]="t.kind"
-                 (click)="selectTab(tabKey(t))"
                  (auxclick)="onTabAuxClick($event, tabKey(t))"
-                 (keydown.enter)="selectTab(tabKey(t))"
-                 (keydown.space)="selectTab(tabKey(t)); $event.preventDefault()"
                  (contextmenu)="openTabContextMenu($event, tabKey(t))"
                  (dragstart)="onTabDragStart($event, tabKey(t))"
                  (dragover)="onTabDragOver($event, tabKey(t))"
                  (dragleave)="onTabDragLeave($event, tabKey(t))"
                  (drop)="onTabDrop($event, tabKey(t))"
                  (dragend)="onTabDragEnd($event)">
+              <button type="button" class="studio-tab__select" role="tab"
+                      [attr.aria-selected]="activeKey() === tabKey(t) ? 'true' : 'false'"
+                      [attr.aria-label]="tabLabel(t)"
+                      (click)="selectTab(tabKey(t))">
               @if (tabDotColor(t); as dot) {
                 <span class="studio-tab__dot"
                       [style.background]="dot"
@@ -447,10 +438,12 @@
                 <app-studio-icon [name]="icon" [size]="13"></app-studio-icon>
               }
               <span class="studio-tab__title">{{ tabVisibleTitle(t) }}</span>
-              <button type="button"
-                      class="studio-tab__close"
-                      aria-label="Close tab"
-                      (click)="closeTab(tabKey(t), $event)">×</button>
+              </button>
+            <button type="button"
+                    class="studio-tab__close"
+                    [attr.data-testid]="'studio-tab-close-' + tabKey(t)"
+                    [attr.aria-label]="'Close ' + tabLabel(t)"
+                    (click)="closeTab(tabKey(t), $event)">×</button>
             </div>
           }
           <!-- Invisible spacer that catches drops past the last tab so users can

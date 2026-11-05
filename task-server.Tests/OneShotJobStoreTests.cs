@@ -67,6 +67,25 @@ public sealed class OneShotJobStoreTests
     }
 
     [Fact]
+    public async Task Late_claim_gets_a_full_execution_window()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = await StoreAsync(temp.Path, clock);
+        await RegisterAsync(store, clock);
+        var queued = await store.CreateOneShotJobAsync(Request(), default);
+
+        clock.Advance(TimeSpan.FromSeconds(59));
+        var claimed = (await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default))!;
+        Assert.Equal(queued.JobId, claimed.JobId);
+        clock.Advance(TimeSpan.FromSeconds(25));
+
+        Assert.True(await store.CompleteOneShotJobAsync(new("runner-a", claimed.JobId,
+            claimed.ClaimToken, true, "done", null, null), default));
+        Assert.Equal("completed", (await store.GetOneShotJobAsync(queued.JobId, default))?.Status);
+    }
+
+    [Fact]
     public async Task Refuses_unbounded_request_before_a_job_is_created()
     {
         using var temp = new TempDirectory();

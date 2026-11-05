@@ -34,7 +34,7 @@ public sealed class BatchGateWaitingPolicyTests
     }
 
     [Fact]
-    public void Largest_formed_batch_starts_before_an_older_smaller_one()
+    public void Older_formed_batch_starts_before_a_newer_larger_one()
     {
         var at = new DateTimeOffset(2026, 11, 4, 1, 0, 0, TimeSpan.Zero);
         BatchGateManifest Manifest(string id, int size, DateTimeOffset closed)
@@ -43,7 +43,7 @@ public sealed class BatchGateWaitingPolicyTests
         var older = Manifest("older", 2, at);
         var larger = Manifest("larger", 5, at.AddMinutes(10));
 
-        Assert.Equal(["larger", "older"], BatchGateWaitingPolicy
+        Assert.Equal(["older", "larger"], BatchGateWaitingPolicy
             .OrderForStart([older, larger]).Select(manifest => manifest.BatchId));
     }
 }
