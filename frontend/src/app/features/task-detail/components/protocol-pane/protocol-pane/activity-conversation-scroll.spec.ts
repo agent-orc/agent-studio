@@ -6,14 +6,13 @@ import {
   provideZonelessChangeDetection,
   signal,
 } from '@angular/core';
-import { ConversationViewComponent } from 'coding-agent-chat/conversation';
 import { ConversationEvent, MessageEvent } from 'coding-agent-chat/core';
-import { ConversationScrollFocusDirective } from '../../../../../directives/conversation-scroll-focus.directive';
+import { ProtocolConversationComponent } from '../protocol-conversation/protocol-conversation.component';
 
 @Component({
   selector: 'app-activity-conversation-scroll-host',
   standalone: true,
-  imports: [ConversationViewComponent, ConversationScrollFocusDirective],
+  imports: [ProtocolConversationComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './activity-conversation-scroll.host.html',
 })

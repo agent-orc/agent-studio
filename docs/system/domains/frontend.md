@@ -43,6 +43,23 @@ the ratchet. A delivery that reduces the bundle should lower `maximumError`
 to its measured initial size plus a small build-variance margin; preserve the
 `anyComponentStyle` budgets and component-size baselines.
 
+The board shell, columns, and cards stay eager. Workspace settings and the
+orchestrator sheet mount through small hosts when opened. Their view components
+and the execution-host dialogs use feature `lazy.ts` entry points; keep those
+components out of feature runtime barrels so a board service import cannot
+bring their chunks back into the initial graph. The browser bundle check in
+`frontend/e2e/perf/board-bundle-lazy.spec.ts` covers cold board paint, first
+detail open, route reuse, and first-use settings and chat rendering.
+Create-task, workspace, developer, and usage-detail dialogs use the same
+first-open boundary; the board's visible header and cards stay eager.
+The batch panel and shared media lightbox mount on first open as well.
+The detail Activity conversation renderer loads when that view has activity;
+an empty first detail pane does not fetch chat composer or conversation code.
+Markdown-capable view roots provide the library's task-reference token locally,
+so Markdown rendering code loads with those views. The app-level media token
+uses the library's shared entry point, leaving composer and conversation
+renderers outside the board startup graph.
+
 ## Environment flow
 
 DP-S6 renders canary attempt rows beneath their physical host using

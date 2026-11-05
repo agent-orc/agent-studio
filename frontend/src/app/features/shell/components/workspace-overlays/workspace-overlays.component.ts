@@ -3,20 +3,20 @@ import { ChangeDetectionStrategy, Component, DestroyRef, Injector, afterNextRend
 import { WorkspaceOverlaysService } from '../../state/workspace-overlays.service';
 import type { WorkspaceSettingsSection } from '../../state/workspace-overlays.service';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
-import { TokenUsageSectionComponent } from '../../../tokens';
-import { CliAdminPanelComponent } from '../../../cli';
-import { RemoteHostsPanelComponent } from '../../../remote-hosts';
+import { TokenUsageSectionComponent } from '../../../tokens/lazy';
+import { CliAdminPanelComponent } from '../../../cli/lazy';
+import { RemoteHostsPanelComponent } from '../../../remote-hosts/lazy';
 import { CredentialInventoryComponent } from '../../../credentials/credential-inventory/credential-inventory.component';
 import { SecretsPanelComponent } from '../../../secrets/secrets-panel/secrets-panel.component';
 import { TaskServerPanelComponent } from '../../../task-server';
-import { DecisionRulesPanelComponent, OrchestratorLogicPanelComponent, PromptAdminPanelComponent, TransitionRolloutPanelComponent } from '../../../orchestrator';
+import { DecisionRulesPanelComponent, OrchestratorLogicPanelComponent, PromptAdminPanelComponent, TransitionRolloutPanelComponent } from '../../../orchestrator/lazy';
 // Direct path (not the studio-shell barrel) so we don't pull StudioShellComponent
 // and re-form the shell <-> studio-shell import cycle (AGT-2035).
 import { AppearanceSettingsComponent } from '../../../studio-shell/components/appearance-settings/appearance-settings.component';
 import { UpdatesSettingsComponent } from '../../../update';
 import { WorkspaceManagementComponent } from '../workspace-management/workspace-management.component';
 import { RetentionAdminComponent } from '../../../retention';
-import { AccessAreaComponent } from '../../../access';
+import { AccessAreaComponent } from '../../../access/lazy';
 import { FirstRunChecklistComponent } from '../first-run-checklist/first-run-checklist.component';
 import { GitHubAppPanelComponent } from '../../../github-app/github-app-panel/github-app-panel.component';
 import type { TaskScreenshot } from '../../../../features/screenshots';

@@ -395,10 +395,12 @@
               @if (cliOutput().length > 0 || runnerEvents().length > 0 || isRunning() || isActiveJob() || queuedFollowUp()) {
                 @switch (activityView()) {
                   @case ('conversation') {
+                    @defer (on immediate) {
                     <app-plan-strip class="activity-stream__plan"
                                     [plan]="plan()"
                                     [isRunning]="isRunning()"
                                     variant="activity" />
+                    }
                     @if (nextGenConversationEnabled()) {
                       <app-runner-replay-metadata [events]="runnerEvents()" />
                       <!-- Activity rows have deliberately variable heights (short
@@ -406,16 +408,14 @@
                            library's fixed-height window cannot preserve a stable
                            anchor for that mix, so the pane renders real rows and
                            leaves scrolling plus Follow to the shared directive. -->
-                      <cac-conversation-view appConversationScrollFocus [events]="nextGenChatEvents()"
-                                             [appActivityEventPresentation]="nextGenChatEvents()"
-                                             [isRunning]="isRunning() || isActiveJob()"
-                                             [queuedFollowUp]="queuedFollowUp()"
-                                             [showHeader]="false"
-                                             [virtualised]="false"
-                                             variant="embedded"
-                                             (openTrace)="onConversationOpenTrace($event)"
-                                             (openFollowUp)="onOpenFollowup($event)"
-                                             (openVerboseDebug)="onConversationOpenVerboseDebug()" />
+                      @defer (on immediate) {
+                      <app-protocol-conversation [events]="nextGenChatEvents()"
+                                                 [isRunning]="isRunning() || isActiveJob()"
+                                                 [queuedFollowUp]="queuedFollowUp()"
+                                                 (openTrace)="onConversationOpenTrace($event)"
+                                                 (openFollowUp)="onOpenFollowup($event)"
+                                                 (openVerboseDebug)="onConversationOpenVerboseDebug()" />
+                      }
                     } @else {
                       <app-activity-log-view [lines]="filteredCliOutput()"
                                              [bodyMaxHeight]="'none'"
@@ -552,6 +552,7 @@
   (closeRequest)="closeSourceViewer()" />
 
 @if (verboseDebugOpen()) {
+  @defer (on immediate) {
   <app-verbose-debug-overlay
     data-testid="protocol-verbose-debug"
     [lines]="runnerTraceLines()"
@@ -562,4 +563,5 @@
     [source]="detail().info.id"
     (closeRequest)="verboseDebugOpen.set(false)"
     (openTrace)="onVerboseDebugOpenTrace($event)" />
+  }
 }

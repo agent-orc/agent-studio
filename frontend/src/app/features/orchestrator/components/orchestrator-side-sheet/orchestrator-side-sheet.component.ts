@@ -13,6 +13,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
+import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import type { WatchPathEntry } from '../../../../models/task.model';
 import type {
@@ -96,13 +97,10 @@ import { ConversationScrollFocusDirective } from '../../../../directives/convers
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-side-sheet.component.html',
   styleUrl: './orchestrator-side-sheet.component.scss',
-  providers: [OrchestratorContextDigestService, OrchestratorTaskPlanStore],
+  providers: [TASK_REFERENCE_CHAT_PROVIDER, OrchestratorContextDigestService, OrchestratorTaskPlanStore],
   host: {
     '[class.is-open]': 'open()',
-    // When open, drive the host width from the persisted user choice so
-    // the resize handle can grow / shrink the panel live. When closed the
-    // binding evaluates to null and the static `:host { width: 0 }` rule
-    // from the .scss wins, so the close transition still works.
+    // Use the saved width while open; the host style sets the closed width.
     '[style.width.px]': 'open() ? panelWidth() : null'
   }
 })
@@ -111,6 +109,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   readonly composerModel = inject(OrchestratorComposerModelService);
   readonly projects = input<string[]>([]);
   readonly preferredProject = input<string | null>(null);
+  readonly requestedProject = input<{ projectName: string } | null>(null);
+  readonly projectRequestHandled = output<{ projectName: string }>();
   /** One-shot shell event for an explicit project entry from an empty editor. */
   readonly projectEntryRevision = input(0);
   readonly watchPaths = input<WatchPathEntry[]>([]);
@@ -549,6 +549,13 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         if (projects.includes(preferred) && preferred !== this.activeProject()) {
           this.activeProject.set(preferred);
         }
+      });
+    });
+    effect(() => {
+      const request = this.requestedProject();
+      if (request) untracked(() => {
+        this.setActiveProject(request.projectName);
+        this.projectRequestHandled.emit(request);
       });
     });
 

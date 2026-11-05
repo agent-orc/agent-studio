@@ -2,11 +2,6 @@
 export { TokensApiService } from './services/tokens-api.service';
 export { CliUsageStore } from './services/cli-usage.store';
 export type { CliUsageQuotaRow } from './services/cli-usage.store';
-export { TokenSummaryBlockComponent } from './components/token-summary-block/token-summary-block';
-export { CliUsageDetailComponent } from './components/cli-usage-detail/cli-usage-detail';
-export { WorkspaceTokenTimelineComponent } from './components/workspace-token-timeline/workspace-token-timeline';
-export { TokenUsageSectionComponent } from './components/token-usage-section/token-usage-section.component';
-export { CostBreakdownDialogComponent } from './components/cost-breakdown-dialog/cost-breakdown-dialog';
 export { CostBreakdownTriggerDirective } from './components/cost-breakdown-trigger.directive';
 export { CostBreakdownService } from './services/cost-breakdown.service';
 export type { CostBreakdownRequestItem } from './services/cost-breakdown.service';

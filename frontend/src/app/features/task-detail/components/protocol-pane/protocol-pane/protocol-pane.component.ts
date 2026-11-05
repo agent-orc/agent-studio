@@ -41,10 +41,10 @@ import { RunTimelineComponent } from '../run-timeline/run-timeline.component';
 import { RunGitViewerComponent } from '../run-git-viewer/run-git-viewer.component';
 
 import { FeatureFlagsService } from '../../../../../services/feature-flags.service';
-import { VerboseDebugOverlayComponent } from '../../../../../features/verbose-debug';
+import { VerboseDebugOverlayComponent } from '../../../../../features/verbose-debug/lazy';
 import { TaskService } from '../../../../../services/task.service';
 import type { ConversationEvent, RawLineRange } from 'coding-agent-chat/core';
-import { ConversationViewComponent } from 'coding-agent-chat/conversation';
+import { ProtocolConversationComponent } from '../protocol-conversation/protocol-conversation.component';
 import { mergeByTimestamp, projectConversation } from 'coding-agent-chat/core';
 import { BeautifulResultsComponent } from '../../beautiful-results/beautiful-results.component';
 import { ResultViewComponent } from '../result-view/result-view.component';
@@ -67,7 +67,6 @@ import {
 import { generatedFileProvenance } from '../../generated-file-provenance.util';
 import { ModelPriceStore } from '../../../../tokens/model-prices';
 import { presentActivityEvents, stripLegacyCompletionLines } from '../activity-event-presentation';
-import { ActivityEventPresentationDirective } from '../activity-event-presentation.directive';
 import { mergeReplayEvents, projectRunnerReplay } from '../runner-event-replay';
 import { RunnerReplayMetadataComponent } from '../runner-replay-metadata/runner-replay-metadata';
 import { projectStructuredActivityContent } from '../structured-activity-projection';
@@ -75,7 +74,6 @@ import { TaskInspectorTabComponent } from '../task-inspector-tab/task-inspector-
 import { DecisionSurfaceComponent } from '../../decision-surface/decision-surface.component';
 import { TaskArtifactLinksDirective } from '../../task-artifact-links/task-artifact-links.directive';
 import { DetailKeyboardSurfaceDirective } from '../../detail-keyboard-surface/detail-keyboard-surface.directive';
-import { ConversationScrollFocusDirective } from '../../../../../directives/conversation-scroll-focus.directive';
 import { TaskPreviewComponent } from '../../../../../components/task-preview/task-preview.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -121,8 +119,7 @@ interface InterimSummaryState {
   imports: [
     ActivityLogViewComponent,
     PlanStripComponent,
-    ConversationViewComponent,
-    ConversationScrollFocusDirective,
+    ProtocolConversationComponent,
     RunTimelineComponent,
     RunGitViewerComponent,
     VerboseDebugOverlayComponent,
@@ -139,7 +136,6 @@ interface InterimSummaryState {
     RunnerReplayMetadataComponent,
     TaskInspectorTabComponent,
     DecisionSurfaceComponent,
-    ActivityEventPresentationDirective,
     TaskArtifactLinksDirective,
     DetailKeyboardSurfaceDirective,
     TaskPreviewComponent,

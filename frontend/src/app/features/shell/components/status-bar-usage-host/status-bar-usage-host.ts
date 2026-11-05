@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
-import { UsageCockpitService, UsageDetailSurfaceComponent } from '../../../usage-cockpit';
+import { UsageCockpitService } from '../../../usage-cockpit';
+import { UsageDetailSurfaceComponent } from '../../../usage-cockpit/lazy';
 import type { UsageDetailFocus, UsageDetailRequest } from '../../../usage-cockpit';
 import { StatusBarComponent } from '../status-bar/status-bar';
 

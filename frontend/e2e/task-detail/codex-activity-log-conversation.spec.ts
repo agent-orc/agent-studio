@@ -125,6 +125,24 @@ async function installRoutes(
   });
   await page.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  await page.route('**/api/usage/cockpit**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        snapshotVersion: 1,
+        workspaceId: 'fixture',
+        timeZone: 'UTC',
+        weekStart: 1,
+        generatedAt: '2026-11-05T09:00:00Z',
+        calendar: {},
+        clis: [],
+        cost: null,
+        runs: [],
+        slots: [],
+        sources: {},
+      }),
+    }));
   await page.route('**/api/projects/fixture/workbenches**', (route) =>
     route.fulfill({
       status: 200,

@@ -122,18 +122,24 @@
     </div>
   </app-studio-navigation-header>
   <app-workspace-quota-banner />
+  @defer (when headerCockpit.detailFocus() !== null) {
   <app-usage-detail-surface surfaceId="studio-usage-detail"
                             [snapshot]="headerCockpit.usage.snapshot()"
                             [focus]="headerCockpit.detailFocus()"
                             [returnTrigger]="headerCockpit.openRequest()?.section === 'details' ? 'details' : null"
                             [now]="headerCockpit.detailNow()"
                             (closed)="headerCockpit.closeDetail()" />
+  }
+  @defer (when globalSearchOpen()) {
   <app-global-search
     [tasks]="globalSearchTasks()"
     [open]="globalSearchOpen()"
     (openChange)="globalSearchOpen.set($event)"></app-global-search>
+  }
   @if (environmentOpen()) {
+    @defer (on immediate) {
     <app-environment-flow [tasks]="globalSearchTasks()" (closed)="environmentOpen.set(false)" />
+    }
   }
 
   <!-- ============ Body ============ -->
@@ -367,7 +373,9 @@
             @case ('chats') {
               <!-- The one place that lists orchestrator chat sessions. Rows
                    open in the orchestrator side sheet. -->
-              <app-chat-sessions-panel class="studio-chats" [projects]="knownProjectNames()" />
+              @defer (on immediate) {
+                <app-chat-sessions-panel class="studio-chats" [projects]="knownProjectNames()" />
+              }
             }
             @default {
               <app-empty-state>Panel not implemented.</app-empty-state>
