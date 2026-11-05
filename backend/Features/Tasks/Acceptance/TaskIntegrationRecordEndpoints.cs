@@ -33,7 +33,11 @@ public static class TaskIntegrationRecordEndpoints
                     error = "The task id is not unique. Address the record by the task key or folder name within the project.",
                 });
             }
-            var task = resolution.Task;
+            // Resolve ambiguity against one published generation, then read only
+            // the chosen folder to validate and mutate current card state.
+            var task = resolution.Task is { } candidate
+                ? TaskIntegrationRecordAddressResolver.RefreshFolder(scanner, candidate)
+                : null;
             if (task is null) return Results.NotFound(new { error = "Task not found." });
 
             var validation = TaskIntegrationRecordAppendPolicy.Validate(task.State, request);
@@ -249,9 +253,7 @@ internal static class TaskIntegrationRecordAddressResolver
         TaskScannerService scanner,
         string address,
         string? watchPath)
-        => Resolve(string.IsNullOrWhiteSpace(watchPath)
-            ? scanner.ScanAllJobsRaw()
-            : scanner.ScanWatchPathRaw(watchPath), address, watchPath);
+        => Resolve(scanner.GetResidentIdentityFacts(), address, watchPath);
 
     public static TaskIntegrationRecordAddressResolution Resolve(
         IEnumerable<TaskInfo> snapshot, string address, string? watchPath)

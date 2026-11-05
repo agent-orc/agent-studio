@@ -55,7 +55,8 @@ post-follow-up live result.
 | `GitStateIndexService.SweepAsync` | Periodic safety sweep | Full scan once for all repositories |
 | `AcceptedIntegrationBackstopHostedService` | Periodic reconciliation | Full scan; requires cross-project candidates |
 | `HistoricalIntegrationVerificationSweep` | One-time migration | Full scan; requires terminal cards and duplicates |
-| `TaskIntegrationRecordAddressResolver` | Request | One watch path when supplied; global only for unscoped ambiguity check; single-folder refresh |
+| `TaskIntegrationRecordAddressResolver` | Request | Published archive-inclusive identity facts for scoped or unscoped ambiguity; one fresh target folder read before mutation |
+| `OperatorCapacityEndpoints` | Request | Published archive-inclusive identity facts filtered by readable projects |
 | `OperatorCandidateVerificationEndpoints` | Request | One watch path |
 | `DeployService` failure-card reconciliation | Deployment event | One watch path |
 | `PublishActionService.GetPanel` | Request | Cached archive-inclusive snapshot |

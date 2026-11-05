@@ -393,8 +393,9 @@ public sealed class TaskListGitProjectionCache
     }
 
     /// <summary>
-    /// Fans the four independent Git-derived lookups for one repository's
-    /// task set out concurrently. Shared by <see cref="AgentStudio.Git.GitStateIndexService"/>
+    /// Runs the five synchronous Git-derived lookups for one repository on
+    /// one pool worker. The async overload still starts independent async
+    /// lookups together. Shared by <see cref="AgentStudio.Git.GitStateIndexService"/>
     /// (the sole caller in production) and tests.
     /// </summary>
     internal static async Task<TaskListGitProjection> BuildProjectionAsync(
@@ -405,13 +406,13 @@ public sealed class TaskListGitProjectionCache
         Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskTestRunEvidence>> testRunLookup,
         Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, AgentStudio.Review.ReviewProjectionView>> reviewProjectionLookup,
         ILogger? logger = null)
-        => await BuildProjectionAsync(
+        => await Task.Run(() => BuildProjectionAsync(
             tasks,
-            captured => Task.Run(() => mergeLookup(captured)),
-            captured => Task.Run(() => integrationLookup(captured)),
-            captured => Task.Run(() => publishLookup(captured)),
-            captured => Task.Run(() => testRunLookup(captured)),
-            captured => Task.Run(() => reviewProjectionLookup(captured)), logger);
+            captured => Task.FromResult(mergeLookup(captured)),
+            captured => Task.FromResult(integrationLookup(captured)),
+            captured => Task.FromResult(publishLookup(captured)),
+            captured => Task.FromResult(testRunLookup(captured)),
+            captured => Task.FromResult(reviewProjectionLookup(captured)), logger)).ConfigureAwait(false);
 
     internal static async Task<TaskListGitProjection> BuildProjectionAsync(
         IReadOnlyCollection<TaskInfo> tasks,

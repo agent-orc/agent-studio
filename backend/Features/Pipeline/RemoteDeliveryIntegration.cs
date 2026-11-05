@@ -461,7 +461,6 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         QueuedDelivery delivery,
         MergeIntoIntegrationResult result)
     {
-        delivery.Completion.TrySetResult(result);
         lock (_gate)
         {
             if (_deliveryReplays.TryGetValue(delivery.DeliveryKey, out var replay)
@@ -473,6 +472,10 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 };
             }
         }
+        // A caller can retry as soon as it observes completion. Publish the
+        // finished replay first so discardCompletedReplay cannot join the old
+        // refusal while the drain is still unwinding.
+        delivery.Completion.TrySetResult(result);
     }
 
     private void PruneCompletedReplays(DateTimeOffset nowUtc)

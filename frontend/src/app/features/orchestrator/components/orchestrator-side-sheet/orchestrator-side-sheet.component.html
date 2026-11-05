@@ -151,7 +151,7 @@
             }
           }
           <div #conversationHost class="sheet__conversation" data-testid="orchestrator-conversation">
-            <cac-conversation-view
+            <cac-conversation-view appConversationScrollFocus
               variant="embedded"
               [events]="conversationEvents()"
               [isRunning]="sending() || loading()"

@@ -133,7 +133,10 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             var stdout = ReadBoundedAsync(process.StandardOutput, request.MaxOutputBytes, process, outputExceeded, ct);
             var stderr = ReadBoundedAsync(process.StandardError, 8_192, process, outputExceeded, ct);
             var input = request.Cli == "claude" ? ClaudeImageEnvelope(request) : request.Prompt;
-            var write = WriteInputAsync(process.StandardInput, input, ct);
+            // A large prompt can fill the child's stdin pipe while it writes
+            // its response. Schedule the writer independently so the output
+            // cap remains observable even if writing blocks synchronously.
+            var write = Task.Run(() => WriteInputAsync(process.StandardInput, input, ct), ct);
             var all = Task.WhenAll(write, process.WaitForExitAsync(ct), stdout, stderr);
             if (ReferenceEquals(await Task.WhenAny(all, outputExceeded.Task), outputExceeded.Task))
                 throw new InvalidDataException("one-shot raw output exceeds the byte cap");

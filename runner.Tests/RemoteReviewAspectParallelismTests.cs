@@ -32,12 +32,19 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
     public async Task Four_ten_second_aspects_finish_in_under_twenty_seconds_with_verdicts_in_plan_order()
     {
         var runner = new FakeAspectRunner(_time);
-        runner.Work = (_, ct) => Task.Delay(TimeSpan.FromSeconds(10), _time, ct);
+        var registeredTimers = new ConcurrentQueue<string>();
+        runner.Work = (command, ct) =>
+        {
+            var delay = Task.Delay(TimeSpan.FromSeconds(10), _time, ct);
+            registeredTimers.Enqueue(command.StepId);
+            return delay;
+        };
         var workspace = await PreparedAsync("attempt-four-aspects", Aspects(4), runner);
         var startedAt = _time.GetUtcNow();
 
         var attempt = workspace.ExecutePlanAsync(default);
         await runner.InFlightReached(4).WaitAsync(Patience);
+        Assert.Equal(4, registeredTimers.Count);
         _time.Advance(TimeSpan.FromSeconds(10));
         var evidence = await attempt.WaitAsync(Patience);
 
@@ -453,14 +460,18 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
             var startedAt = time.GetUtcNow().UtcDateTime;
             Started.Enqueue(command.StepId);
             Prompts.Enqueue(command.Prompt ?? string.Empty);
-            var inFlight = Interlocked.Increment(ref _inFlight);
-            var max = Volatile.Read(ref _maxInFlight);
-            while (inFlight > max && Interlocked.CompareExchange(ref _maxInFlight, inFlight, max) != max)
-                max = Volatile.Read(ref _maxInFlight);
-            Signal(_inFlightWaiters, inFlight);
+            var counted = false;
             try
             {
-                await Work(command, ct);
+                // Count the aspect only after Work has registered any fake timer.
+                var work = Work(command, ct);
+                var inFlight = Interlocked.Increment(ref _inFlight);
+                counted = true;
+                var max = Volatile.Read(ref _maxInFlight);
+                while (inFlight > max && Interlocked.CompareExchange(ref _maxInFlight, inFlight, max) != max)
+                    max = Volatile.Read(ref _maxInFlight);
+                Signal(_inFlightWaiters, inFlight);
+                await work;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -469,7 +480,7 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
             }
             finally
             {
-                Interlocked.Decrement(ref _inFlight);
+                if (counted) Interlocked.Decrement(ref _inFlight);
             }
             var process = Reply(command) ?? new ProcessResult(
                 0,

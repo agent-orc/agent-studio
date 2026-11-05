@@ -227,16 +227,18 @@
           }
           @if (!reorderDisabled() && !mutationsBlocked()) {
             <div class="column__drop-zone column__drop-zone--last"
+                 data-testid="lane-drop-slot-end"
                  [class.column__drop-zone--active]="dropIndex === jobs().length"
                  (dragover)="onCardDragOver($event, jobs().length)" (dragleave)="onCardDragLeave()"
                  (drop)="onCardDrop($event, jobs().length)"></div>
           }
           @if (jobs().length === 0) { <div class="column__empty">No tasks</div> }
-          @if (canAddTask()) {
-            <button type="button" class="column__add" (click)="addTask.emit(state())">
-              <span class="column__add-icon">＋</span><span>Add task</span>
-            </button>
-          }
+        }
+        @if (canAddTask()) {
+          <button type="button" class="column__add" data-testid="lane-add-task"
+                  (click)="addTask.emit(state())">
+            <span class="column__add-icon">＋</span><span>Add task</span>
+          </button>
         }
       </div>
     </div>

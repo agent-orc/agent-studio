@@ -41,7 +41,7 @@ public static class OperatorCapacityEndpoints
                 .Where(project => ProjectAccessAuthorization.AllowsTasks(
                     context, [project], IamPermissions.ProjectRead, registry))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var tasks = scanner.ScanAllJobsRaw()
+            var tasks = scanner.GetResidentIdentityFacts()
                 .Where(task => projects.Contains(task.ProjectName)).ToArray();
             var active = ledger.Active().Where(entry =>
                 entry.Kind is "switched" or "operator-switch"
