@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { test, expect, type Page, type Route } from '@playwright/test';
 import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
@@ -99,7 +100,13 @@ function grouped(includePeer = false) {
   };
 }
 
-async function mockApplication(page: Page, includePeer = false): Promise<void> {
+async function mockApplication(page: Page, includePeer = false, benchmark = false): Promise<void> {
+  const demo = { ...task(), id: 'DEMO-9', taskKey: `${WATCH_PATH}::DEMO-9`,
+    key: 'DEMO-9', displayKey: 'DEMO-9', title: 'DEMO-9 benchmark card', order: 0 };
+  const peers = benchmark ? Array.from({ length: 829 }, (_, index) => ({ ...task(),
+    id: `SYN-${index}`, taskKey: `${WATCH_PATH}::SYN-${index}`,
+    key: `SYN-${index}`, displayKey: `SYN-${index}`, title: `Synthetic card ${index}`,
+    order: index + 1 })) : [];
   await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
     v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__',
   })));
@@ -135,8 +142,10 @@ async function mockApplication(page: Page, includePeer = false): Promise<void> {
   await page.route('**/api/projects/*/workbenches**', route => json(route, { items: [] }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0, offset: 0, limit: 50 }));
   await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
-  await page.route('**/api/tasks', route => json(route, includePeer ? [task(), peerTask()] : [task()]));
-  await page.route('**/api/v1/studio/board**', route => json(route, grouped(includePeer)));
+  await page.route('**/api/tasks', route => json(route,
+    benchmark ? [demo, ...peers] : includePeer ? [task(), peerTask()] : [task()]));
+  await page.route('**/api/v1/studio/board**', route => json(route,
+    benchmark ? { ...grouped(), humanReview: [demo, ...peers] } : grouped(includePeer)));
   await page.route(`**/api/tasks/${TASK_ID}/runs**`, route => json(route, {
     runCount: 0, firstStartedAt: null, lastActivityAt: null,
     hasActiveRun: false, runs: [], promptEntries: [], refinements: [], runnerEvents: [],
@@ -204,6 +213,7 @@ async function firstHeadPaintMs(page: Page): Promise<number> {
 }
 
 test('loads hidden tab data on selection, reuses it, and shows tab failures', async ({ page }) => {
+  test.setTimeout(180_000);
   await mockApplication(page);
   const seen: string[] = [];
   let timelineFailures = 1;
@@ -212,6 +222,8 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
   let qualityFailures = 1;
   let fileFailures = 1;
   let codeReviewFailures = 1;
+  let screenshotFailures = 1;
+  let artifactFailures = 1;
   page.on('request', request => {
     const url = new URL(request.url());
     if (url.pathname.startsWith(`/api/tasks/${TASK_ID}/`)) seen.push(url.pathname + url.search);
@@ -222,13 +234,15 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
     return json(route, resource('documents', { name, markdown: name === 'prompt' ? '# Task' : 'Ready' }));
   });
   await page.route(`**/api/tasks/${TASK_ID}/details/overview**`, route => json(route, resource('overview', {})));
-  await page.route(`**/api/tasks/${TASK_ID}/artifacts**`, route => json(route, {
+  await page.route(`**/api/tasks/${TASK_ID}/artifacts**`, route => artifactFailures-- > 0
+    ? json(route, { error: 'offline' }, 503) : json(route, {
     files: [
       { name: 'review.md', kind: 'codeReview', sizeBytes: 14, mtime: '2026-11-05T00:00:00Z' },
       { name: 'notes.txt', kind: 'other', sizeBytes: 11, mtime: '2026-11-05T00:00:00Z' },
     ],
   }));
-  await page.route(`**/api/tasks/${TASK_ID}/screenshots**`, route => json(route, { screenshots: [] }));
+  await page.route(`**/api/tasks/${TASK_ID}/screenshots**`, route => screenshotFailures-- > 0
+    ? json(route, { error: 'offline' }, 503) : json(route, { screenshots: [] }));
   await page.route(`**/api/tasks/${TASK_ID}/timeline**`, route =>
     timelineFailures-- > 0 ? json(route, { error: 'offline' }, 503) : json(route, []));
   await page.route(`**/api/tasks/${TASK_ID}/details/history**`, route =>
@@ -287,6 +301,15 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
 
   await page.getByTestId('prompt-tab-evidence').click();
   await expect.poll(() => seen.filter(url => url.includes('/screenshots')).length).toBe(1);
+  await expect(page.getByTestId('evidence-screenshots-error')).toBeVisible();
+  if (process.env.JOB_RESULTS_DIR) {
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'evidence-screenshots-error-dark.png') });
+    await setTheme(page, 'light');
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'evidence-screenshots-error-light.png') });
+    await setTheme(page, 'dark');
+  }
+  await page.getByTestId('evidence-screenshots-error').getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByTestId('evidence-screenshots-error')).toHaveCount(0);
   await expect(page.getByTestId('evidence-load-error')).toBeVisible();
   await expect(page.getByTestId('quality-load-error')).toBeVisible();
   if (process.env.JOB_RESULTS_DIR) {
@@ -305,7 +328,7 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
   await page.getByTestId('prompt-tab-evidence').click();
   expect(seen.filter(url => url.includes('/details/review') && url.includes('evidence=true')).length).toBe(evidenceReads);
   expect(seen.filter(url => url.includes('/quality-studio')).length).toBe(qualityReads);
-  expect(seen.filter(url => url.includes('/screenshots')).length).toBe(1);
+  expect(seen.filter(url => url.includes('/screenshots')).length).toBe(2);
 
   await selectPromptTab(page, 'prompt-tab-code-review', 'Code Review');
   await expect(page.getByTestId('code-review-error')).toBeVisible();
@@ -318,6 +341,16 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
 
   await selectPromptTab(page, 'prompt-tab-description', 'Docs');
   await expect.poll(() => seen.filter(url => url.includes('/artifacts')).length).toBe(1);
+  await expect(page.getByTestId('docs-artifacts-error')).toBeVisible();
+  if (process.env.JOB_RESULTS_DIR) {
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'docs-artifacts-error-dark.png') });
+    await setTheme(page, 'light');
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'docs-artifacts-error-light.png') });
+    await setTheme(page, 'dark');
+  }
+  await page.getByTestId('docs-artifacts-error').getByRole('button', { name: 'Retry' }).click();
+  await expect.poll(() => seen.filter(url => url.includes('/artifacts')).length).toBe(2);
+  await expect(page.getByTestId('docs-artifacts-error')).toHaveCount(0);
   expect(seen.some(url => url.includes('/files/notes.txt'))).toBe(false);
   await expect(page.getByTestId('file-card-retry-review.md')).toBeVisible();
   await page.getByTestId('file-card-retry-review.md').click();
@@ -330,7 +363,7 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
   await selectPromptTab(page, 'prompt-tab-description', 'Docs');
   expect(seen.filter(url => url.includes('/files/review.md')).length).toBe(fileReads);
   expect(seen.filter(url => url.includes('/files/notes.txt')).length).toBe(notesReads);
-  expect(seen.filter(url => url.includes('/artifacts')).length).toBe(1);
+  expect(seen.filter(url => url.includes('/artifacts')).length).toBe(2);
   if (process.env.JOB_RESULTS_DIR) {
     mkdirSync(process.env.JOB_RESULTS_DIR, { recursive: true });
     writeFileSync(path.join(process.env.JOB_RESULTS_DIR, 'tab-loading-after-requests.json'),
@@ -730,4 +763,99 @@ test('keeps the task head and gives every failed section a retry', async ({ page
   expect(attempt).toBe(2);
   releaseDocuments();
   await expect(page.getByTestId('task-resource-retry-documents')).toBeVisible();
+});
+
+test('DEMO-9 first-open request and paint benchmark on an 830-card board', async ({ page }) => {
+  test.skip(process.env.CARD_DETAIL_BENCH !== '1', 'Opt-in, single-worker comparison probe');
+  test.setTimeout(120_000);
+  await mockApplication(page, false, true);
+  const demoId = 'DEMO-9';
+  const demoKey = `${WATCH_PATH}::${demoId}`;
+  const demoCore = { ...core(), id: demoId, taskKey: demoKey, key: demoId,
+    title: 'DEMO-9 benchmark card', folderPath: `${WATCH_PATH}/${demoId}` };
+  const demoResource = (name: string, data: unknown) => ({ ...resource(name, data),
+    id: demoId, taskKey: demoKey });
+  await page.route(`**/api/tasks/${demoId}/core**`, route => json(route, demoCore));
+  await page.route(`**/api/tasks/${demoId}/details/documents**`, async route => {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const name = new URL(route.request().url()).searchParams.get('name');
+    return json(route, demoResource('documents', { name, markdown: name === 'prompt'
+      ? '# DEMO-9\\n\\nBenchmark detail.' : 'Ready for review.' }));
+  });
+  await page.route(`**/api/tasks/${demoId}/details/overview**`, route =>
+    json(route, demoResource('overview', {})));
+  await page.route(`**/api/tasks/${demoId}/details/usage**`, route =>
+    json(route, demoResource('usage', { contextUsage: null, tokenSummary: null, lastUsage: null })));
+  await page.route(`**/api/tasks/${demoId}/details/review**`, route =>
+    json(route, demoResource('review', { reviewProjection: null, evidence: [] })));
+  await page.route(`**/api/tasks/${demoId}/details/history**`, route =>
+    json(route, demoResource('history', { promptHistory: [], titleHistory: [], log: [] })));
+  await page.route(`**/api/tasks/${demoId}/artifacts**`, route => json(route, { files: [] }));
+  await page.route(`**/api/tasks/${demoId}/screenshots**`, route => json(route, { screenshots: [] }));
+  await page.route(`**/api/tasks/${demoId}/pipeline**`, route => json(route, {
+    pipeline: { id: 'fixture', displayName: 'Fixture', version: 1,
+      pre: [], core: [], post: [], allSteps: [] }, execution: null,
+    executions: [], config: {}, cost: null,
+  }));
+
+  await gotoApp(page, '/');
+  await dismissDevErrorDialog(page);
+  const card = page.getByTestId('task-card').filter({ hasText: 'DEMO-9 benchmark card' }).first();
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  await page.evaluate(() => {
+    document.addEventListener('click', () => performance.mark('card-detail-bench-click'),
+      { capture: true, once: true });
+    let coreMarked = false;
+    let paneScheduled = false;
+    const sections = ['identity', 'state', 'pins', 'execution', 'status', 'prompt', 'timeline'];
+    const observer = new MutationObserver(() => {
+      if (!coreMarked && document.querySelector('[data-testid="task-core"]')
+          && sections.every(id => document.querySelector(`[data-testid="task-core-${id}"]`))) {
+        coreMarked = true;
+        requestAnimationFrame(() => performance.mark('card-detail-bench-core-ready'));
+      }
+      if (!paneScheduled && document.querySelector('[data-testid="overview-title-key"]')
+          && document.querySelector('[data-testid="pane-prompt-body"]')) {
+        paneScheduled = true;
+        requestAnimationFrame(() => requestAnimationFrame(() =>
+          performance.mark('card-detail-bench-pane-painted')));
+      }
+      if (coreMarked && paneScheduled) observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+  const responses: { path: string; status: number; bytes: number; elapsedMs: number }[] = [];
+  const pending: Promise<void>[] = [];
+  let startedAt = 0;
+  page.on('response', response => {
+    if (!startedAt || !response.url().includes('/api/')) return;
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs > 1500) return;
+    pending.push(response.body().then(body => {
+      responses.push({ path: new URL(response.url()).pathname + new URL(response.url()).search,
+        status: response.status(), bytes: body.byteLength, elapsedMs });
+    }).catch(() => undefined));
+  });
+  startedAt = Date.now();
+  await card.dispatchEvent('click');
+  await page.waitForFunction(() => performance.getEntriesByName('card-detail-bench-core-ready').length > 0
+    && performance.getEntriesByName('card-detail-bench-pane-painted').length > 0,
+    undefined, { timeout: 20_000 });
+  const paint = await page.evaluate(() => {
+    const began = performance.getEntriesByName('card-detail-bench-click').at(-1)!.startTime;
+    return {
+      coreReadyMs: performance.getEntriesByName('card-detail-bench-core-ready').at(-1)!.startTime - began,
+      fullPanePaintMs: performance.getEntriesByName('card-detail-bench-pane-painted').at(-1)!.startTime - began,
+    };
+  });
+  await page.waitForTimeout(Math.max(0, 1500 - (Date.now() - startedAt)));
+  await Promise.all(pending);
+  responses.sort((left, right) => left.elapsedMs - right.elapsedMs);
+  const output = process.env.CARD_DETAIL_BENCH_OUTPUT;
+  if (!output) throw Error('CARD_DETAIL_BENCH_OUTPUT is required');
+  mkdirSync(path.dirname(output), { recursive: true });
+  writeFileSync(output, JSON.stringify({ revision: process.env.CARD_DETAIL_BENCH_REVISION,
+    hostLoad: os.loadavg(), logicalCpus: os.cpus().length, fixture: 'mocked DEMO-9, 829 synthetic peers',
+    ...paint, responseCount: responses.length,
+    apiBodyBytes: responses.reduce((sum, row) => sum + row.bytes, 0), responses }, null, 2) + '\n');
 });

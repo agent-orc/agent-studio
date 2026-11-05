@@ -8,11 +8,12 @@ import {
 } from '@angular/core';
 import { ConversationViewComponent } from 'coding-agent-chat/conversation';
 import { ConversationEvent, MessageEvent } from 'coding-agent-chat/core';
+import { ConversationScrollFocusDirective } from '../../../../../directives/conversation-scroll-focus.directive';
 
 @Component({
   selector: 'app-activity-conversation-scroll-host',
   standalone: true,
-  imports: [ConversationViewComponent],
+  imports: [ConversationViewComponent, ConversationScrollFocusDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './activity-conversation-scroll.host.html',
 })
@@ -98,6 +99,8 @@ describe('Activity next-gen conversation scroll contract', () => {
     const conversation = fixture.nativeElement.querySelector(
       '[data-testid="conversation-view"]',
     ) as HTMLElement;
+    expect(conversation.tabIndex).toBe(0);
+    expect(conversation.getAttribute('aria-label')).toBe('Conversation');
     const root = fixture.nativeElement.querySelector(
       '[data-testid="activity-scroll-root"]',
     ) as HTMLElement;
