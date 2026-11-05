@@ -46,37 +46,26 @@ public sealed class RemoteCliOneShotTests
     }
 
     [Fact]
-    public async Task Late_claim_can_complete_after_the_original_queue_deadline()
+    public async Task Claim_observed_after_the_queue_deadline_keeps_the_claimed_run_budget()
     {
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero));
-        var handler = new LateClaimHandler();
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://task-server/") };
+        var clock = new FakeTimeProvider();
+        var handler = new LateClaimHandler(clock);
+        var client = new HttpClient(handler) { BaseAddress = new Uri("http://task-server/") };
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskServer:BaseUrl"] = "http://task-server/",
         }).Build();
-        var run = new RemoteCliOneShot("codex", new ClientFactory(client), config, clock: clock)
-            .RunAsync(new("codex", "gpt-6-sol", "Summarize this card.")
-            { Timeout = TimeSpan.FromSeconds(1) });
-        await WaitUntilAsync(() => handler.Submitted);
-        await Task.Delay(10);
-        for (var poll = 1; poll <= 16; poll++)
+        var oneShot = new RemoteCliOneShot("codex", new ClientFactory(client), config,
+            timeProvider: clock, pollInterval: TimeSpan.Zero);
+
+        var result = await oneShot.RunAsync(new("codex", "gpt-6-sol", "Summarize this card.")
         {
-            await WaitUntilAsync(() => handler.Polls == poll - 1);
-            clock.Advance(TimeSpan.FromSeconds(2));
-            await WaitUntilAsync(() => handler.Polls == poll);
-        }
+            Timeout = TimeSpan.FromSeconds(1),
+        });
 
-        var result = await run;
-        Assert.True(result.Ok, result.Error);
-        Assert.Equal("Remote summary", result.ParsedText);
-    }
-
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        for (var attempt = 0; attempt < 100 && !condition(); attempt++)
-            await Task.Delay(10);
-        Assert.True(condition(), "Timed out waiting for the fake transport poll.");
+        Assert.True(result.Ok);
+        Assert.Equal("Late summary", result.ParsedText);
+        Assert.Equal(3, handler.Polls);
     }
 
     [Fact]
@@ -97,30 +86,6 @@ public sealed class RemoteCliOneShotTests
     private sealed class ClientFactory(HttpClient client) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => client;
-    }
-
-    private sealed class LateClaimHandler : HttpMessageHandler
-    {
-        private int _polls;
-        private int _submitted;
-        public int Polls => Volatile.Read(ref _polls);
-        public bool Submitted => Volatile.Read(ref _submitted) != 0;
-
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            if (request.Method == HttpMethod.Post) Volatile.Write(ref _submitted, 1);
-            var poll = request.Method == HttpMethod.Post ? 0 : Interlocked.Increment(ref _polls);
-            var body = request.Method == HttpMethod.Post
-                ? """{"jobId":"job-1","status":"pending","capability":"model-acceptance:codex:gpt-6-sol"}"""
-                : poll < 15
-                    ? """{"jobId":"job-1","status":"pending","capability":"model-acceptance:codex:gpt-6-sol"}"""
-                    : poll == 15
-                        ? """{"jobId":"job-1","status":"claimed","capability":"model-acceptance:codex:gpt-6-sol"}"""
-                        : """{"jobId":"job-1","status":"completed","capability":"model-acceptance:codex:gpt-6-sol","text":"Remote summary"}""";
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            { Content = new StringContent(body, Encoding.UTF8, "application/json") });
-        }
     }
 
     private sealed class RecordingHandler : HttpMessageHandler
@@ -145,6 +110,44 @@ public sealed class RemoteCliOneShotTests
             {
                 Content = new StringContent(responseBody, Encoding.UTF8, "application/json"),
             };
+        }
+    }
+
+    private sealed class LateClaimHandler(FakeTimeProvider clock) : HttpMessageHandler
+    {
+        public int Polls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            string body;
+            if (request.Method == HttpMethod.Post)
+            {
+                body = """{"jobId":"job-1","status":"pending","capability":"model-acceptance:codex:gpt-6-sol"}""";
+            }
+            else
+            {
+                Polls++;
+                body = Polls switch
+                {
+                    1 => """{"jobId":"job-1","status":"pending","capability":"model-acceptance:codex:gpt-6-sol"}""",
+                    2 => """{"jobId":"job-1","status":"claimed","capability":"model-acceptance:codex:gpt-6-sol"}""",
+                    3 => """{"jobId":"job-1","status":"completed","capability":"model-acceptance:codex:gpt-6-sol","text":"Late summary"}""",
+                    _ => throw new InvalidOperationException("Unexpected extra poll."),
+                };
+                // The claim occurs just before the queue deadline, but its
+                // response arrives just after it. Completion uses the run budget.
+                clock.Advance(Polls switch
+                {
+                    1 => TimeSpan.FromMilliseconds(30_500),
+                    2 => TimeSpan.FromMilliseconds(600),
+                    _ => TimeSpan.FromMilliseconds(30_500),
+                });
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            });
         }
     }
 }
