@@ -21,6 +21,14 @@
     <div class="cli-admin__error" data-testid="cli-admin-error">{{ err }}</div>
   }
 
+  <section class="cli-admin__section" data-testid="cli-admin-model-selection">
+    @defer (on viewport) {
+      <app-model-selection-view />
+    } @placeholder {
+      <div>Model selection</div>
+    }
+  </section>
+
   <section class="cli-admin__section" data-testid="cli-admin-models">
     <header class="cli-admin__section-head">
       <h3>CLIs &amp; models</h3>

@@ -1,0 +1,91 @@
+<div class="selection-view" data-testid="model-selection-view">
+  <header class="selection-view__heading">
+    <div><h3>Model selection</h3><p>Current fallbacks, selection events and effective routes across consumers.</p></div>
+    <button type="button" (click)="reload()">Refresh</button>
+  </header>
+
+  <section class="selection-view__active" aria-label="Active fallbacks and health marks" data-testid="model-selection-active">
+    <h4>Active fallbacks and health marks ({{ active().length }})</h4>
+    @if (active().length === 0) { <p>No active fallbacks or health marks.</p> }
+    @for (group of groupedActive(); track group.provider) {
+      <div class="selection-view__provider">
+        <h5>{{ group.provider }} <small>{{ group.cards }} affected {{ group.cards === 1 ? 'card' : 'cards' }}</small></h5>
+        <div class="selection-view__active-grid">
+          @for (item of group.items; track item.id) {
+            <article class="selection-view__mark" [attr.data-switch-id]="item.id">
+              <strong>{{ item.kind === 'health-marked' ? 'Health mark' : route(item.from) + ' → ' + route(item.to) }}</strong>
+              <span>{{ item.rule }} · {{ item.consumer }} @if (item.taskKey) { · {{ item.taskKey }} }</span>
+              <span>Expected return: {{ formatTime(item.returnToPrimaryAt) }}</span>
+              @if (item.rule === 'operator-switch') {
+                <div class="selection-view__actions">
+                  <button type="button" [disabled]="saving() === item.id" (click)="returnToPrimary(item)">End now</button>
+                  <button type="button" [disabled]="saving() === item.id" (click)="returnToPrimary(item)">Return to primary</button>
+                </div>
+              } @else {
+                <button type="button" disabled title="The selection policy controls quota and health returns">Return to primary</button>
+                <span>Returns when the selection policy allows it.</span>
+              }
+            </article>
+          }
+        </div>
+      </div>
+    }
+  </section>
+
+  <div class="selection-view__filters" aria-label="Model selection filters">
+    <label>Provider<select data-testid="selection-provider" [value]="filters().provider" (change)="setFilter('provider', $any($event.target).value)">
+      <option value="">All providers</option>@for (value of providers(); track value) { <option [value]="value" [selected]="value === filters().provider">{{ value }}</option> }
+    </select></label>
+    <label>Project<select data-testid="selection-project" [value]="filters().project" (change)="setFilter('project', $any($event.target).value)">
+      <option value="">All projects</option>@for (value of projects(); track value) { <option [value]="value" [selected]="value === filters().project">{{ value }}</option> }
+    </select></label>
+    <label>Consumer class<select data-testid="selection-consumer" [value]="filters().consumer" (change)="setFilter('consumer', $any($event.target).value)">
+      <option value="">All consumers</option>@for (value of consumers(); track value) { <option [value]="value" [selected]="value === filters().consumer">{{ value }}</option> }
+    </select></label>
+    <label>Rule<select data-testid="selection-rule" [value]="filters().rule" (change)="setFilter('rule', $any($event.target).value)">
+      <option value="">All rules</option>@for (value of rules(); track value) { <option [value]="value" [selected]="value === filters().rule">{{ value }}</option> }
+    </select></label>
+    <label>Period<select data-testid="selection-period" [value]="filters().period" (change)="setFilter('period', $any($event.target).value)">
+      <option value="24h">24 h</option><option value="7d">7 d</option><option value="30d">30 d</option><option value="custom">Custom</option>
+    </select></label>
+    @if (filters().period === 'custom') {
+      <label>From<input type="date" [value]="filters().start" (change)="setFilter('start', $any($event.target).value)" /></label>
+      <label>To<input type="date" [value]="filters().end" (change)="setFilter('end', $any($event.target).value)" /></label>
+    }
+    @if (filters().taskKey) { <button type="button" (click)="setFilter('taskKey', '')">Card: {{ filters().taskKey }} ×</button> }
+    @if (filters().eventId) { <button type="button" (click)="setFilter('eventId', '')">Event: {{ filters().eventId }} ×</button> }
+  </div>
+
+  @if (error(); as message) { <p class="selection-view__error" role="alert">{{ message }}</p> }
+  <div class="selection-view__body">
+    <section aria-label="Selection events" class="selection-view__events">
+      <h4>Selection events</h4>
+      @if (loading() && events().length === 0) { <p>Loading events…</p> }
+      @else if (events().length === 0) { <p data-testid="selection-empty">No selection events match these filters.</p> }
+      @else {
+        <div class="selection-view__scroll"><table><thead><tr><th>Time</th><th>Consumer</th><th>Card / project</th><th>From → to</th><th>Rule</th><th>Reason</th></tr></thead>
+          <tbody>@for (event of events(); track event.id) {
+            <tr><td><button class="selection-view__row-button" type="button" [attr.aria-expanded]="expanded() === event.id" (click)="toggle(event.id)"><app-disclosure-marker [open]="expanded() === event.id" [size]="10" /> {{ formatTime(event.at) }}</button></td>
+              <td>{{ event.consumer }}</td><td>{{ event.taskKey ?? event.project ?? 'Workspace' }}</td>
+              <td>{{ route(event.from) }} → {{ route(event.to) }}</td><td>{{ event.rule }}</td><td>{{ event.reason }}</td></tr>
+            @if (expanded() === event.id) {
+              <tr class="selection-view__detail"><td colspan="6">
+                @if (event.quota) { <p>Quota: {{ event.quota.provider }} · {{ event.quota.window }} · used {{ event.quota.usedPct ?? 'unknown' }}% · cap {{ event.quota.capPct ?? 'unknown' }}% · projected {{ event.quota.projectedPct ?? 'unknown' }}% · reset {{ formatTime(event.quota.resetAt) }}</p> }
+                @if (event.evidence?.excerpt) { <p>Evidence: {{ event.evidence?.excerpt }}</p> }
+                @if (event.taskKey) { <a [href]="cardHref(event)">Open card {{ event.taskKey }}</a> }
+              </td></tr>
+            }
+          }</tbody>
+        </table></div>
+        @if (nextCursor()) { <button type="button" [disabled]="loading()" (click)="loadEvents(nextCursor()!)">Load more</button> }
+      }
+    </section>
+    <aside class="selection-view__effective" aria-label="Effective routes">
+      <h4>Effective routes</h4>
+      @if (effective().length === 0) { <p>No effective routes reported.</p> }
+      @for (item of effective(); track item.consumer + ':' + item.stepId) {
+        <div class="selection-view__route"><strong>{{ item.consumer }}</strong><span>{{ route(item.effective) }}</span><small>{{ item.rule }}</small></div>
+      }
+    </aside>
+  </div>
+</div>

@@ -57,6 +57,14 @@ export class TaskTimelinePaneComponent {
   private readonly poll = inject(TaskTimelinePollService);
   private readonly runPoll = inject(RunTimelinePollService, { optional: true });
 
+  selectionViewHref(event: TaskTimelineEvent): string {
+    const params = new URLSearchParams();
+    const card = event.details?.['taskKey'] ?? new URLSearchParams(window.location.search).get('job');
+    if (card) params.set('msCard', card);
+    params.set('msEvent', event.details?.['selectionEventId'] ?? '');
+    return `${window.location.pathname}?${params.toString()}#/workspace/settings/caps`;
+  }
+
   /** Raw ledger rows, oldest first (the story reads forward). */
   readonly events = this.poll.events;
   readonly completionLoop = this.poll.completionLoop;

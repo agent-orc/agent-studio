@@ -178,14 +178,22 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
         };
         Assert.True(ledger.Append(first));
         Assert.True(ledger.Append(first with { Id = ModelSelectionLedger.NewId(), At = first.At.AddSeconds(1), Consumer = "one-shot" }));
+        Assert.True(ledger.Append(first with { Id = ModelSelectionLedger.NewId(), At = first.At.AddSeconds(2), TaskKey = "DEMO-2" }));
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
         var filtered = await client.GetFromJsonAsync<JsonElement>(
             "/api/model-selection/events?provider=codex&project=demo&consumer=remote-claim&rule=quota-cap&from=opus-5&to=gpt-6-sol");
-        Assert.Equal(first.Id, filtered.GetProperty("events")[0].GetProperty("id").GetString());
-        Assert.Equal(1, filtered.GetProperty("events").GetArrayLength());
+        Assert.Equal(2, filtered.GetProperty("events").GetArrayLength());
+        Assert.Equal(first.Id, filtered.GetProperty("events")[1].GetProperty("id").GetString());
+        var linked = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/model-selection/events?taskKey=DEMO-2&eventId={ledger.Query(taskKey: "DEMO-2").Events[0].Id}");
+        Assert.Equal("DEMO-2", Assert.Single(linked.GetProperty("events").EnumerateArray())
+            .GetProperty("taskKey").GetString());
+        var outsidePeriod = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/model-selection/events?since={Uri.EscapeDataString(first.At.AddDays(1).ToString("O"))}");
+        Assert.Empty(outsidePeriod.GetProperty("events").EnumerateArray());
         var all = await client.GetFromJsonAsync<JsonElement>("/api/model-selection/events");
-        Assert.Equal("one-shot", all.GetProperty("events")[0].GetProperty("consumer").GetString());
+        Assert.Equal("DEMO-2", all.GetProperty("events")[0].GetProperty("taskKey").GetString());
     }
 
     [Fact]

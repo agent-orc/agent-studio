@@ -26,6 +26,10 @@ public sealed class ModelSelectionLedgerTests : IDisposable
         Assert.DoesNotContain("private", saved.Evidence?.Excerpt);
         Assert.True(saved.Evidence?.Excerpt?.Length <= 300);
         Assert.Empty(restored.Query(provider: "gemini").Events);
+        Assert.Equal(entry.Id, Assert.Single(restored.Query(taskKey: "DEMO-1", eventId: entry.Id).Events).Id);
+        Assert.Empty(restored.Query(taskKey: "other-card", eventId: entry.Id).Events);
+        Assert.Empty(restored.Query(since: _now.AddMinutes(1)).Events);
+        Assert.Equal(entry.Id, Assert.Single(restored.Query(since: _now.AddMinutes(-1), until: _now.AddMinutes(1)).Events).Id);
     }
 
     [Fact]
