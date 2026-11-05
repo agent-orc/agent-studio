@@ -35,7 +35,8 @@
 
 .task-live--stalled {
   border-color: color-mix(in srgb, var(--studio-accent-warn) 48%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-accent-warn) 13%, var(--studio-bg-elevated));
+  background: var(--studio-live-stalled-bg);
+  --task-live-copy-fg: var(--studio-live-stalled-fg);
 }
 
 .task-live.task-live--detail {
@@ -58,7 +59,7 @@
 
 .task-live__label,
 .task-live__next-label {
-  color: var(--studio-fg-muted);
+  color: var(--task-live-copy-fg, var(--studio-fg-muted));
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.09em;
@@ -75,13 +76,13 @@
 }
 
 .task-live--active .task-live__signal {
-  background: var(--studio-accent-3);
+  background: var(--studio-accent-3-strong);
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent-3) 45%, transparent);
   animation: task-live-pulse 1.35s ease-out infinite;
 }
 
 .task-live--waiting .task-live__signal {
-  background: var(--studio-accent-4);
+  background: var(--studio-accent-4-strong);
 }
 
 .task-live--stalled .task-live__signal {
@@ -122,7 +123,7 @@
 }
 
 .task-live__attempt {
-  color: var(--studio-fg-muted);
+  color: var(--task-live-copy-fg, var(--studio-fg-muted));
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -133,7 +134,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--studio-fg-muted);
+  color: var(--task-live-copy-fg, var(--studio-fg-muted));
   font-size: 10px;
   line-height: 1.35;
 }

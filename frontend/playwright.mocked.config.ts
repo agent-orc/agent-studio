@@ -16,6 +16,9 @@ export default defineConfig({
     testMatch: [
       '**/board/card-state-pill-matches-lane.spec.ts',
       '**/board/failed-pickup-lane.spec.ts',
+      '**/board/stalled-progress-card.spec.ts',
+      '**/task-detail/pipeline-column-headers.spec.ts',
+      '**/system/semantic-contrast.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',
       '**/workspace/structure-view.spec.ts',
