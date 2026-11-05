@@ -107,6 +107,55 @@ public sealed class BatchGateFailureRankingTests
     }
 
     [Fact]
+    public async Task Concurrent_initialization_and_recording_project_each_execution_once()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        using var initialReadStarted = new ManualResetEventSlim();
+        using var allowInitialRead = new ManualResetEventSlim();
+        using var writerStarted = new ManualResetEventSlim();
+        try
+        {
+            var store = new BatchGateStore(root, fact =>
+            {
+                if (fact.BatchId == "one")
+                {
+                    initialReadStarted.Set();
+                    if (!allowInitialRead.Wait(TimeSpan.FromSeconds(10)))
+                        throw new TimeoutException("Initial evidence read was not released.");
+                }
+                return [new BatchTestFailure("Product.Tests.Unstable", fact.BatchId!, fact.BatchRunId!,
+                    fact.MemberKeys ?? [], fact.CompletedAtUtc, "", false)];
+            });
+            var first = new BatchGateExecutionFact("Project", "one", "one-run", "sha", "fail", "host",
+                Now, Now, 0, 0, "evidence", MemberKeys: ["AGT-1"]);
+            store.RecordExecution(first);
+
+            var initialization = Task.Run(() => store.FailedTestRanking("Project", Now));
+            Assert.True(initialReadStarted.Wait(TimeSpan.FromSeconds(10)));
+            var recording = Task.Run(() =>
+            {
+                writerStarted.Set();
+                store.RecordExecution(first with { BatchId = "two", BatchRunId = "two-run",
+                    MemberKeys = ["AGT-2"] });
+            });
+            Assert.True(writerStarted.Wait(TimeSpan.FromSeconds(10)));
+            allowInitialRead.Set();
+
+            Assert.Single(Assert.Single((await initialization).Tests).Failures);
+            await recording;
+            var failures = Assert.Single(store.FailedTestRanking("Project", Now).Tests).Failures;
+            Assert.Equal(2, failures.Count);
+            Assert.Equal(["one-run", "two-run"], failures.Select(failure => failure.RunId).Order());
+        }
+        finally
+        {
+            allowInitialRead.Set();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Evidence_read_failure_after_persistence_does_not_fail_recording_and_retries_only_that_fact()
     {
         var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
