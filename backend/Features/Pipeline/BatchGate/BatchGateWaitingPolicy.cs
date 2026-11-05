@@ -7,9 +7,10 @@ public static class BatchGateWaitingPolicy
 
     public static IReadOnlyList<BatchGateManifest> OrderForStart(
         IEnumerable<BatchGateManifest> formed)
-        // A larger batch can form on every tick while an older batch waits for
-        // the project slot. Size-first ordering could starve that older batch.
-        => formed.OrderBy(manifest => manifest.ClosedAtUtc)
+        // A stacked successor has already claimed the next place in the train.
+        // For other batches, age wins so continuous formation cannot starve one.
+        => formed.OrderByDescending(manifest => manifest.StackedOnBatchId is not null)
+            .ThenBy(manifest => manifest.ClosedAtUtc)
             .ThenByDescending(manifest => manifest.Members.Count)
             .ThenBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
 
