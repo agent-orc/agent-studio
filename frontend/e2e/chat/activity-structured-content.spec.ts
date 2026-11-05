@@ -770,6 +770,7 @@ test('Activity, Task, and Result links bind task artifacts to the open card', as
   })).toBe('quality/angular-components.md');
 
   await page.goto(`/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`);
+  await expect(page.getByTestId('pane-protocol')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('inspector-tab-protocol').click();
   await page.getByTestId('protocol-beautiful-results').getByRole('link', { name: 'Open task ASS-4242' }).click();
   await expect(page).toHaveURL(/#\/tasks\/ASS-4242/);
