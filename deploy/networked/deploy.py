@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 ARTIFACTS = ("api", "web", "engine", "agent_host", "gate_worker")
-ROLES = ("server", "gate", "coding", "review")
+ROLES = ("server", "gate", "engine", "coding", "review")
 ORDER = ("drain", "task-server", "readiness", "engine", "hosts")
 STEPS = (
     "build", "snapshot", "preflight", "work_state", "plan", "drain", "gate_publish", "gate_verify",
@@ -81,8 +81,8 @@ def validate(manifest):
         if host["id"] in ids:
             raise DeployError("duplicate host id")
         ids.add(host["id"])
-    if sum(h["role"] == "server" for h in hosts) != 1 or sum(h["role"] == "gate" for h in hosts) != 1:
-        raise DeployError("exactly one server and gate host are required")
+    if any(sum(h["role"] == role for h in hosts) != 1 for role in ("server", "gate", "engine")):
+        raise DeployError("exactly one server, gate and engine host are required")
     if not any(h["role"] == "coding" for h in hosts) or not any(h["role"] == "review" for h in hosts):
         raise DeployError("coding and review hosts are required")
     for artifact in ARTIFACTS:
@@ -213,7 +213,11 @@ def run_step(state, journal, name, action):
 
 
 def values(state, host=None, **extra):
-    data = {"commit": state["commit"], "target_version": state["commit"]}
+    if hashlib.sha256(Path(state["manifest"]).read_bytes()).hexdigest() != state["manifestSha256"]:
+        raise DeployError("manifest changed during the release window")
+    data = {"commit": state["commit"], "target_version": state["commit"],
+            "manifest": state["manifest"],
+            "adapter": str(Path(__file__).resolve().parent / "host_adapter.py")}
     for name, item in state.get("artifacts", {}).items():
         data[f"{name}_ref"] = item["ref"]
         data[f"{name}_sha256"] = item["sha256"]
@@ -230,7 +234,9 @@ def execute(manifest, name, state, host=None, **extra):
 
 
 def deploy(args, manifest):
-    state = {"schema": 1, "commit": args.commit, "status": "running", "startedAtUtc": timestamp(),
+    state = {"schema": 1, "commit": args.commit, "manifest": str(Path(args.manifest).resolve()),
+             "manifestSha256": hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest(),
+             "status": "running", "startedAtUtc": timestamp(),
              "steps": [], "artifacts": {}, "previous": {}, "reviewPlanDigests": {}, "reviewImages": {}}
     journal = Path(args.journal)
     if journal.exists():
@@ -270,17 +276,22 @@ def deploy(args, manifest):
     run_step(state, journal, "build", build)
 
     def snapshot():
-        required = {"server": {"apiImage", "webImage", "engineVersion", "workerPath"},
-                    "gate": {"workerPath"}, "coding": {"agentHostRelease"},
+        required = {"server": {"apiImage", "webImage", "gateSshHost", "workerPath"},
+                    "gate": {"workerPath"}, "engine": {"engineVersion"},
+                    "coding": {"agentHostRelease"},
                     "review": {"agentHostRelease", "image"}}
         for host in manifest["hosts"]:
+            values(state)
             result = invoke(command(manifest, "snapshot", host["role"]),
-                            {"commit": args.commit, "host": host["target"], "host_id": host["id"]})
+                            {"commit": args.commit, "host": host["target"], "host_id": host["id"],
+                             "manifest": state["manifest"],
+                             "adapter": str(Path(__file__).resolve().parent / "host_adapter.py")})
             value = result.get("value") if isinstance(result, dict) else None
             if not isinstance(value, dict) or not required[host["role"]].issubset(value) \
                     or any(not isinstance(value[key], str) or not value[key] for key in required[host["role"]]):
                 raise DeployError(f"snapshot for {host['id']} needs {sorted(required[host['role']])}")
-            state["previous"][host["id"]] = {"role": host["role"], "value": result["value"]}
+            state["previous"][host["id"]] = {"role": host["role"], "target": host["target"],
+                                            "value": result["value"]}
 
     run_step(state, journal, "snapshot", snapshot)
 
@@ -309,29 +320,37 @@ def deploy(args, manifest):
     run_step(state, journal, "plan", plan)
     gate = host_of(manifest, "gate")[0]
     server = host_of(manifest, "server")[0]
+    engine = host_of(manifest, "engine")[0]
 
     def checked(name, host=None, **extra):
         assert_window(state)
         return execute(manifest, name, state, host, **extra)
 
     run_step(state, journal, "drain", lambda: require(checked("drain", server), "drained", True))
+    run_step(state, journal, "preflight_after_drain", preflight)
+    run_step(state, journal, "work_state_after_drain", work_state)
     def publish_gate():
         result = checked("gate_publish", gate)
         require(result, "commit", args.commit)
-        require(result, "ref", state["artifacts"]["gate_worker"]["ref"])
+        require(result, "artifactRef", state["artifacts"]["gate_worker"]["ref"])
+        worker_path = result.get("workerPath")
+        if not isinstance(worker_path, str) or not worker_path.startswith("/"):
+            raise DeployError("gate publish needs an absolute workerPath")
+        state["gateWorkerPath"] = worker_path
     run_step(state, journal, "gate_publish", publish_gate)
     run_step(state, journal, "gate_verify", lambda: require(
         checked("gate_verify", gate), "sha256", state["artifacts"]["gate_worker"]["sha256"]))
     run_step(state, journal, "preflight_before_switch", preflight)
     run_step(state, journal, "work_state_before_switch", work_state)
-    run_step(state, journal, "server_switch", lambda: checked("server_switch", server))
+    run_step(state, journal, "server_switch", lambda: checked("server_switch", server,
+        gate_worker_path=state["gateWorkerPath"]))
     def health(name, host):
         result = checked(name, host)
         require(result, "healthy", True)
         require(result, "commit", args.commit)
     run_step(state, journal, "server_health", lambda: health("server_health", server))
-    run_step(state, journal, "engine_switch", lambda: checked("engine_switch", server))
-    run_step(state, journal, "engine_health", lambda: health("engine_health", server))
+    run_step(state, journal, "engine_switch", lambda: checked("engine_switch", engine))
+    run_step(state, journal, "engine_health", lambda: health("engine_health", engine))
     for host in host_of(manifest, "coding"):
         run_step(state, journal, f"coding_install:{host['id']}", lambda h=host: checked("coding_install", h))
         run_step(state, journal, f"coding_health:{host['id']}", lambda h=host: health("coding_health", h))
@@ -375,15 +394,24 @@ def deploy(args, manifest):
 def rollback(args, manifest):
     journal = Path(args.journal)
     state = read_json(journal)
+    state["manifest"] = str(Path(args.manifest).resolve())
+    values(state)
     if state.get("status") == "rolled-back" or not state.get("previous"):
         raise DeployError("journal has no rollback state")
     if state.get("commit") != args.commit:
         raise DeployError("rollback commit does not match journal")
+    for host in manifest["hosts"]:
+        captured = state["previous"].get(host["id"])
+        if captured is None or captured.get("role") != host["role"] \
+                or captured.get("target") != host["target"]:
+            raise DeployError(f"rollback host differs from captured snapshot: {host['id']}")
     touched = set()
     for step in state.get("steps", []):
         name = step.get("step", "")
-        if name in ("server_switch", "engine_switch"):
+        if name == "server_switch":
             touched.update(host["id"] for host in host_of(manifest, "server"))
+        elif name == "engine_switch":
+            touched.update(host["id"] for host in host_of(manifest, "engine"))
         elif name == "gate_publish":
             touched.update(host["id"] for host in host_of(manifest, "gate"))
         elif name.startswith("coding_install:") or name.startswith("review_recreate:"):
@@ -391,7 +419,7 @@ def rollback(args, manifest):
     if not touched:
         raise DeployError("no release-changing step reached; rollback is unnecessary")
     if args.dry_run:
-        for role in ("review", "coding", "server", "gate"):
+        for role in ("review", "coding", "engine", "server", "gate"):
             for host in reversed(host_of(manifest, role)):
                 if host["id"] in touched:
                     print(f"rollback {host['role']} {host['id']}")
@@ -410,7 +438,7 @@ def rollback(args, manifest):
     server = host_of(manifest, "server")[0]
     run_step(state, journal, "rollback_drain", lambda: require(
         execute(manifest, "drain", state, server), "drained", True))
-    for role in ("review", "coding", "server", "gate"):
+    for role in ("review", "coding", "engine", "server", "gate"):
         for host in reversed(host_of(manifest, role)):
             if host["id"] not in touched:
                 continue
@@ -433,7 +461,8 @@ def print_dry_run(commit, manifest):
         print(f"  build {artifact_name} (parallel)")
     for host in manifest["hosts"]:
         print(f"  snapshot {host['role']} {host['id']}")
-    for name in ("preflight", "work_state", "plan", "drain", "gate_publish", "gate_verify",
+    for name in ("preflight", "work_state", "plan", "drain", "preflight_after_drain",
+                 "work_state_after_drain", "gate_publish", "gate_verify",
                  "preflight_before_switch", "work_state_before_switch", "server_switch", "server_health",
                  "engine_switch", "engine_health"):
         print(f"  {name}")

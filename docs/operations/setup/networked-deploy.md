@@ -1,47 +1,70 @@
 # Networked installation deploy
 
 `deploy/networked/deploy.sh` drives one server-first release window. It builds
-the API, web, engine, agent-host, and gate-worker artifacts in parallel from
-one full Git commit SHA, then executes checked host operations in order. It
-does not contain installation host names, addresses, accounts, or credentials.
-This implements the OP-6 Dossier's server-first, no-blocker-override working
-choice; no different operator decision was recorded.
+API, web, engine, agent-host, and gate-worker artifacts from one full Git commit
+in parallel. The repository-owned [`host_adapter.py`](../../../deploy/networked/host_adapter.py)
+performs the artifact build, SSH transfer, host switch, health checks, and
+rollback. It sends [`remote_host.py`](../../../deploy/networked/remote_host.py)
+over SSH for each host action; no adapter is installed on the hosts. This
+implements the OP-6 Dossier's server-first, no-blocker-override option.
 
-## Local configuration
+## Private manifest
 
 Copy [`manifest.example.json`](../../../deploy/networked/manifest.example.json)
-to a private path outside the checkout. Replace each target and each
-`/path/to/local-adapter` command with the installation's operator-owned command
-or script. Keep the file owner-only. Command arrays execute directly, without
-a shell; use an explicit `bash` entry only when a local adapter needs one.
-The `studio-op` commands require the existing owner-only operator token file.
-The adapter can use the existing image-build scripts, SSH release transfer,
-`agent-runner-deploy`, and Compose setup for this installation. Each command
-must return one JSON object on stdout, send diagnostics to stderr, and exit
-nonzero on failure. Do not put credentials in command arguments or JSON output.
+to a private, owner-only path outside the checkout. Fill in the operator
+checkout, artifact directory, image repositories, host SSH targets, paths,
+Compose service names, and the site-specific command arrays. No host names,
+addresses, accounts, credentials, or private paths belong in the repository.
+The engine has its own manifest role and SSH target; it may share a physical
+host with a coding runner while remaining a separate release step.
+SSH uses batch mode and strict host-key checking. Registry and SSH credentials
+remain in the operator's normal local files; do not put them in the manifest
+or command arguments. The deploy journal records a SHA-256 of the manifest and
+refuses a changed manifest during deploy or rollback.
 
-The local adapter contract is:
+The manifest contains command arrays already wired to the repository adapter.
+Keep that wiring. `repository` must contain the requested commit; the adapter
+builds from `git archive <commit>`, never from a dirty working tree. Docker
+Buildx pushes API, web, and engine images and returns their registry digests.
+The agent-host and gate-worker releases are immutable tar archives under
+`artifactDirectory/<commit>` with checked SHA-256 values. The gate archive
+contains `OrchestratorApi.dll`; the coding archive is staged into the existing
+`agent-runner-deploy` incoming directory, then the installed helper performs
+its guarded promotion and service restart. Buildx, Docker registry access,
+`dotnet`, `git`, `ssh`, `scp`, and `studio-op` must be available where the
+command runs. Remote hosts need Python 3, plus their existing Docker, Compose,
+service, and release tools.
+The coding SSH account must own the helper's incoming directory and have its
+documented sudo grant for `agent-runner-deploy`; other SSH accounts need write
+access to the configured environment and release paths and permission to run
+their Docker or Compose commands.
 
-| Command | Required JSON output or effect |
-|---|---|
-| `build.*` | `{"commit":"<full SHA>","ref":"<immutable ref>","sha256":"<64 lowercase hex>"}`. API, web, and engine refs use `@sha256:`. Agent-host and worker refs identify immutable release paths. |
-| `snapshot.*` | `{"value":{...}}` with current installed values. Server: `apiImage`, `webImage`, `engineVersion`, `workerPath`; gate: `workerPath`; coding: `agentHostRelease`; review: `agentHostRelease`, `image`. Rollback receives this object as compact JSON in `{previous}`. |
-| `preflight` | `studio-op preflight deploy --json`; must report `allowed: true` and no blockers. |
-| `work_state` | `{"formedBatches":[],"runningGates":[]}` for a clear window. Populate both arrays from the current batch and gate inventory. Nonempty arrays stop the deploy. |
-| `plan` | `studio-op deploy plan --target-version <SHA> --json`. The runner verifies the OP-6 order and expiry. |
-| `drain`, `resume` | Drain admission before switching releases (`drained: true`). Resume only after host model probes and review verification (`admitting: true`). |
-| `gate_publish`, `gate_verify` | Publish the worker release on the gate host, then verify its SHA-256. Publish returns the target `commit` and `ref`; verify returns `sha256`. The server switch sets `RemoteGate__WorkerPath` to this release. |
-| `server_switch`, `server_health` | Switch only the API and web to the digest refs and set the worker path. Health returns `{"healthy":true,"commit":"<SHA>"}` after the switch. |
-| `engine_switch`, `engine_health` | Switch the engine after server readiness. Health has the same output shape. |
-| `coding_install`, `coding_health`, `model_probe` | Install the agent-host release and restart its services. Health names the running commit. Run model acceptance on each coding host before admitting work; probe returns `{"accepted":true}` only when the configured models are ready. |
-| `review_copy`, `review_build`, `review_idle`, `review_recreate`, `review_verify` | Copy the checked agent-host build to each review host (`sha256`), build its image (`commit`, matching `agentHostSha256`, `planDigest`, digest-pinned `imageRef`), prove every container to be replaced is idle (`idle: true`), then recheck idle state atomically in the recreate adapter before replacing it. Verification returns the running `commit`, matching `planDigest`, and matching `imageRef`. Leave busy containers untouched and fail the step. |
-| `rollback.*` | Restore and verify the snapshot for that host. The server rollback restores both image refs, engine version and `RemoteGate__WorkerPath`; coding restores the agent-host release and restarts services; review restores its release and image only when idle; gate restores its worker path. Return `{"restored":true}` only after observing the prior values and health. |
+Site-specific commands are **inline argument arrays**, not paths to operator
+scripts:
 
-The host adapter owns the actual SSH, image registry, service, and container
-commands for the installation. Its health and idle checks must observe the
-running state, not just successful command exits. In particular, the
-`review_recreate` adapter repeats the idle check at the point it changes a
-container, so a review starting after `review_idle` is never interrupted.
+- Server `admissionDrainCommand` and `admissionResumeCommand` must close and
+  reopen work admission through the installation's approved control. They
+  return success only after the state is observed.
+- Coding `modelProbes` lists each configured CLI/model acceptance command and
+  an output marker. Every command must succeed and emit its marker before
+  admission resumes. Execute the probes under the account that owns that
+  model's credential.
+- Review `reviewDrainCommand` closes new review admission before recreation.
+  `reviewIdleCommand` returns `{"idle":true}` only when every listed review
+  service has no active work. The adapter runs it once before recreation and
+  again after draining, immediately before changing the image. A busy result
+  fails the deploy and leaves the review image unchanged.
+
+The server Compose file reads `STUDIO_API_DIGEST`, `STUDIO_WEB_DIGEST`,
+`STUDIO_GATE_SSH_HOST`, and `STUDIO_GATE_WORKER_PATH` from its private
+environment file. The gate values become `RemoteGate__SshHost` and
+`RemoteGate__WorkerPath`. The engine Compose file reads the digest
+pinned `ORCHESTRATOR_ENGINE_IMAGE_REF`. The review Compose file must read
+`REVIEW_IMAGE_REF` for every service named in `reviewServices`. Its pinned
+`reviewBaseImage` must contain the coding CLIs and runner runtime. The adapter
+copies the checked agent-host publish output into the review image, records a
+plan digest from the base image, release SHA, and commit, and verifies that
+digest on the running containers.
 
 ## Run
 
@@ -53,14 +76,14 @@ bash deploy/networked/deploy.sh deploy "$commit" --manifest "$manifest" --journa
 bash deploy/networked/deploy.sh deploy "$commit" --manifest "$manifest" --journal "$journal"
 ```
 
-Dry run validates the manifest and prints the plan without invoking any build,
-host, API, or journal command. The live run refuses an existing journal. It
-rechecks OP-6 preflight and formed batches/running gates immediately before
-the server switch. It refuses any later change after the plan expires. All
-steps write start/end UTC timestamps, duration seconds, and pass/fail status
-into one owner-only JSON journal. The `steps` array directly supplies the
-deploy duration table. A failed step leaves the journal and previous values
-available for recovery.
+Dry run validates the manifest and prints the plan without invoking a build,
+SSH, API, or journal command. The live run refuses an existing journal. It
+checks OP-6 preflight, formed batches, and running gates before the plan and
+again after draining and immediately before the server switch. The server health check observes
+the running image revision before the engine and hosts change. The plan must
+stay within its expiry. Every step writes start/end UTC times, duration,
+status, and failure text into one owner-only JSON journal. The `steps` array
+supplies the deploy duration table. Keep the journal for recovery.
 
 ```sh
 bash deploy/networked/deploy.sh rollback "$commit" --manifest "$manifest" --journal "$journal" --dry-run
@@ -68,12 +91,16 @@ bash deploy/networked/deploy.sh rollback "$commit" --manifest "$manifest" --jour
 ```
 
 Rollback rechecks preflight and work state, drains admission, and restores only
-hosts whose release-changing step was reached, in review, coding, server, gate
-order. It resumes admission after the rollback adapters verify health. It uses captured
-previous values from the journal; keep that file with the release evidence.
-The adapter must refuse an unsafe downgrade after a store schema change and
-use the verified backup procedure in that case. A failed rollback remains
-visible in the same journal for operator repair.
+hosts whose release-changing step was reached, in review, coding, engine,
+server, gate order. It restores the captured API/web image digests, engine image ref,
+gate SSH host, worker path, and agent-host release. Review replacement again requires an idle
+observation. The host adapter verifies the resulting health before reporting a
+restore. If the release changed on-disk formats, use the installation's backup
+restore procedure before a downgrade.
 
-Run the fake-host contract checks with
-`bash deploy/networked/tests/deploy.test.sh`. They do not contact a host.
+Run fake-host checks without contacting an installation:
+
+```sh
+bash deploy/networked/tests/deploy.test.sh
+python3 -m unittest discover -s deploy/networked/tests -p 'test_*.py'
+```

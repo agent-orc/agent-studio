@@ -1,0 +1,378 @@
+#!/usr/bin/env python3
+"""Remote half of host_adapter.py. Sent over SSH, never installed on a host."""
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+
+def fail(message):
+    raise RuntimeError(message)
+
+
+def run(argv, cwd=None):
+    result = subprocess.run(argv, cwd=cwd, text=True, capture_output=True)
+    if result.returncode:
+        fail(f"{argv[0]} exited {result.returncode}: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def check_command(host, key):
+    argv = host.get(key)
+    if not isinstance(argv, list) or not argv or not all(isinstance(x, str) and x for x in argv):
+        fail(f"host needs {key} command array")
+    return run(argv)
+
+
+def digest(path):
+    result = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            result.update(block)
+    return result.hexdigest()
+
+
+def env_read(path):
+    result = {}
+    for line in Path(path).read_text().splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        result[key] = value
+    return result
+
+
+def env_set(path, changes):
+    source = Path(path)
+    lines = source.read_text().splitlines()
+    seen = set()
+    output = []
+    for line in lines:
+        key = line.split("=", 1)[0] if "=" in line else ""
+        if key in changes:
+            if key not in seen:
+                output.append(f"{key}={changes[key]}")
+                seen.add(key)
+        else:
+            output.append(line)
+    output.extend(f"{key}={value}" for key, value in changes.items() if key not in seen)
+    for value in changes.values():
+        if not isinstance(value, str) or "\n" in value or "\r" in value:
+            fail("invalid environment value")
+    descriptor, temporary = tempfile.mkstemp(prefix=".networked-env-", dir=source.parent)
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write("\n".join(output) + "\n")
+        os.chmod(temporary, source.stat().st_mode & 0o777)
+        os.replace(temporary, source)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def compose(directory, env_file, *args):
+    run(["docker", "compose", "--env-file", env_file, "up", "-d", "--no-build", "--no-deps", *args], cwd=directory)
+
+
+def compose_ps(directory, env_file, service):
+    return run(["docker", "compose", "--env-file", env_file, "ps", "-q", service], cwd=directory)
+
+
+def installed_commit(path):
+    return (Path(path).resolve() / "COMMIT").read_text().strip()
+
+
+def install_archive(archive, expected, release_root, commit):
+    source = Path(archive)
+    if not re.fullmatch(r"[0-9a-f]{64}", expected) or digest(source) != expected:
+        fail("transferred release digest mismatch")
+    destination = Path(release_root) / expected
+    if destination.exists():
+        if (destination / "COMMIT").read_text().strip() != commit:
+            fail("release digest has a different commit")
+    else:
+        destination.mkdir(parents=True)
+        with tarfile.open(source) as stream:
+            stream.extractall(destination, filter="data")
+        (destination / "COMMIT").write_text(commit + "\n")
+    return destination
+
+
+def replace_link(link, destination):
+    path = Path(link)
+    temporary = path.with_name(path.name + ".networked-next")
+    temporary.unlink(missing_ok=True)
+    temporary.symlink_to(destination)
+    os.replace(temporary, path)
+
+
+def require_idle(host):
+    output = check_command(host, "reviewIdleCommand")
+    try:
+        observation = json.loads(output)
+    except json.JSONDecodeError:
+        fail("review idle command must return JSON")
+    if observation.get("idle") is not True:
+        fail("review host is busy")
+
+
+def main(request):
+    action = request["action"]
+    host = request["host"]
+    fields = request["fields"]
+    config = request["settings"]
+    commit = fields[-1] if fields else None
+    if action == "snapshot":
+        role = host["role"]
+        if role == "server":
+            images = {}
+            for service in ("api", "frontend"):
+                container = compose_ps(host["composeDir"], host["envFile"], service)
+                if not container:
+                    fail(f"{service} is not running")
+                images[service] = run(["docker", "inspect", "--format", "{{.Config.Image}}", container])
+            api_container = compose_ps(host["composeDir"], host["envFile"], "api")
+            running_env = run(["docker", "inspect", "--format", '{{range .Config.Env}}{{println .}}{{end}}',
+                               api_container]).splitlines()
+            worker = next((line.split("=", 1)[1] for line in running_env
+                           if line.startswith("RemoteGate__WorkerPath=")), None)
+            gate_host = next((line.split("=", 1)[1] for line in running_env
+                              if line.startswith("RemoteGate__SshHost=")), None)
+            if not worker or not gate_host:
+                fail("running API has no remote gate host and worker path")
+            return {"value": {"apiImage": images["api"], "webImage": images["frontend"],
+                              "gateSshHost": gate_host, "workerPath": worker}}
+        if role == "engine":
+            container = compose_ps(host["engineComposeDir"], host["engineEnvFile"], "orchestrator-engine")
+            if not container:
+                fail("engine is not running")
+            return {"value": {"engineVersion": run(["docker", "inspect", "--format",
+                                                     "{{.Config.Image}}", container])}}
+        if role == "gate":
+            return {"value": {"workerPath": str(Path(host["gateCurrent"]).resolve())}}
+        if role == "coding":
+            return {"value": {"agentHostRelease": str(Path(host["runnerCurrent"]).resolve())}}
+        if role == "review":
+            return {"value": {"agentHostRelease": str(Path(host["runnerCurrent"]).resolve()),
+                              "image": env_read(host["reviewEnvFile"])["REVIEW_IMAGE_REF"]}}
+    if action == "drain":
+        check_command(host, "admissionDrainCommand")
+        return {"drained": True}
+    if action == "resume":
+        check_command(host, "admissionResumeCommand")
+        return {"admitting": True}
+    if action == "gate_publish":
+        archive, original, expected, commit = fields
+        destination = install_archive(archive, expected, host["gateReleaseRoot"], commit)
+        if not (destination / "OrchestratorApi.dll").is_file():
+            fail("gate worker release lacks OrchestratorApi.dll")
+        replace_link(host["gateCurrent"], destination)
+        return {"commit": commit, "artifactRef": original,
+                "workerPath": str(Path(host["gateCurrent"]).resolve() / "OrchestratorApi.dll")}
+    if action == "gate_verify":
+        archive, expected, commit = fields
+        current = Path(host["gateCurrent"]).resolve()
+        if digest(archive) != expected or not current.is_dir() or installed_commit(current) != commit:
+            fail("gate worker verification failed")
+        return {"sha256": expected}
+    if action == "server_switch":
+        api, web, worker = fields
+        api_digest = api.rsplit("@sha256:", 1)[1]
+        web_digest = web.rsplit("@sha256:", 1)[1]
+        if not all(re.fullmatch(r"[0-9a-f]{64}", x) for x in (api_digest, web_digest)):
+            fail("server images must be pinned digests")
+        run(["docker", "pull", api])
+        run(["docker", "pull", web])
+        env_set(host["envFile"], {"STUDIO_API_DIGEST": api_digest, "STUDIO_WEB_DIGEST": web_digest,
+                                   "STUDIO_GATE_SSH_HOST": host["gateSshHost"],
+                                   "STUDIO_GATE_WORKER_PATH": worker})
+        compose(host["composeDir"], host["envFile"], "api", "frontend")
+        return {"switched": True}
+    if action == "server_health":
+        expected = fields[0]
+        run(["curl", "-fsS", host["healthUrl"]])
+        for service in ("api", "frontend"):
+            container = compose_ps(host["composeDir"], host["envFile"], service)
+            revision = run(["docker", "inspect", "--format", '{{index .Config.Labels "org.opencontainers.image.revision"}}', container])
+            if revision != expected:
+                fail(f"{service} running revision {revision}, expected {expected}")
+        return {"healthy": True, "commit": expected}
+    if action == "engine_switch":
+        image = fields[0]
+        if not re.search(r"@sha256:[0-9a-f]{64}$", image):
+            fail("engine image must be pinned")
+        run(["docker", "pull", image])
+        env_set(host["engineEnvFile"], {"ORCHESTRATOR_ENGINE_IMAGE_REF": image})
+        compose(host["engineComposeDir"], host["engineEnvFile"], "orchestrator-engine")
+        return {"switched": True}
+    if action == "engine_health":
+        expected = fields[0]
+        container = compose_ps(host["engineComposeDir"], host["engineEnvFile"], "orchestrator-engine")
+        revision = run(["docker", "inspect", "--format", '{{index .Config.Labels "org.opencontainers.image.revision"}}', container])
+        if revision != expected:
+            fail("engine running revision mismatch")
+        if run(["docker", "inspect", "--format", "{{.State.Health.Status}}", container]) != "healthy":
+            fail("engine container is not healthy")
+        return {"healthy": True, "commit": expected}
+    if action == "coding_install":
+        archive, original, expected, commit = fields
+        incoming = Path(host["runnerIncoming"])
+        if any(incoming.iterdir()):
+            fail("runner incoming directory is not empty")
+        if digest(archive) != expected:
+            fail("transferred coding release digest mismatch")
+        with tarfile.open(archive) as stream:
+            stream.extractall(incoming, filter="data")
+        (incoming / "COMMIT").write_text(commit + "\n")
+        (incoming / "release-id").write_text(f"{commit[:12]}-{expected[:12]}\n")
+        run(["sudo", "/usr/local/sbin/agent-runner-deploy", "--restart-review-drain"])
+        return {"installed": True}
+    if action == "coding_health":
+        expected = fields[0]
+        if installed_commit(host["runnerCurrent"]) != expected:
+            fail("coding release commit mismatch")
+        run(["systemctl", "is-active", "--quiet", "agent-runner.service"])
+        run(["systemctl", "is-active", "--quiet", "agent-runner-review.service"])
+        return {"healthy": True, "commit": expected}
+    if action == "model_probe":
+        probes = host.get("modelProbes")
+        if not isinstance(probes, list) or not probes:
+            fail("coding host needs modelProbes")
+        for probe in probes:
+            argv, marker = probe["argv"], probe["contains"]
+            if not isinstance(argv, list) or not argv or not isinstance(marker, str) or not marker:
+                fail("invalid model acceptance probe")
+            if marker not in run(argv):
+                fail("model acceptance probe did not return its marker")
+        return {"accepted": True}
+    if action == "review_copy":
+        archive, original, expected, commit = fields
+        install_archive(archive, expected, host["runnerReleaseRoot"], commit)
+        return {"sha256": expected}
+    if action == "review_build":
+        expected_commit, agent_sha = fields
+        release = Path(host["runnerReleaseRoot"]) / agent_sha
+        if installed_commit(release) != expected_commit:
+            fail("review release commit mismatch")
+        base = host["reviewBaseImage"]
+        if not re.fullmatch(r"[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}", base):
+            fail("review base image must be pinned")
+        recipe = "review-copy-v1:FROM base;COPY publish /opt/agent-host;labels revision and plan"
+        plan = hashlib.sha256(f"{recipe}\n{base}\n{agent_sha}\n{expected_commit}\n".encode()).hexdigest()
+        image = host["reviewImageRepository"]
+        with tempfile.TemporaryDirectory(prefix="networked-review-") as scratch:
+            root = Path(scratch)
+            (root / "Dockerfile").write_text(f"FROM {base}\nCOPY publish/ /opt/agent-host/\nLABEL org.opencontainers.image.revision={expected_commit}\nLABEL org.agent-studio.review-plan={plan}\n")
+            shutil.copytree(release, root / "publish")
+            metadata = root / "metadata.json"
+            run(["docker", "buildx", "build", "--push", "--metadata-file", str(metadata),
+                 "-t", f"{image}:{expected_commit}-{plan[:12]}", "."], cwd=root)
+            digest_value = json.loads(metadata.read_text())["containerimage.digest"]
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest_value):
+            fail("review build did not return image digest")
+        return {"commit": expected_commit, "agentHostSha256": agent_sha,
+                "planDigest": plan, "imageRef": f"{image}@{digest_value}"}
+    if action == "review_idle":
+        require_idle(host)
+        return {"idle": True}
+    if action == "review_recreate":
+        image, plan, agent_sha = fields
+        check_command(host, "reviewDrainCommand")
+        require_idle(host)
+        run(["docker", "pull", image])
+        observed_plan = run(["docker", "image", "inspect", "--format",
+                             '{{index .Config.Labels "org.agent-studio.review-plan"}}', image])
+        if observed_plan != plan:
+            fail("review image plan digest mismatch")
+        release = Path(host["runnerReleaseRoot"]) / agent_sha
+        if not release.is_dir():
+            fail("review release is missing")
+        env_set(host["reviewEnvFile"], {"REVIEW_IMAGE_REF": image})
+        compose(host["reviewComposeDir"], host["reviewEnvFile"], *host["reviewServices"])
+        replace_link(host["runnerCurrent"], release)
+        return {"recreated": True}
+    if action == "review_verify":
+        commit = fields[0]
+        image = env_read(host["reviewEnvFile"])["REVIEW_IMAGE_REF"]
+        plans = set()
+        for service in host["reviewServices"]:
+            container = compose_ps(host["reviewComposeDir"], host["reviewEnvFile"], service)
+            revision = run(["docker", "inspect", "--format", '{{index .Config.Labels "org.opencontainers.image.revision"}}', container])
+            plan = run(["docker", "inspect", "--format", '{{index .Config.Labels "org.agent-studio.review-plan"}}', container])
+            if revision != commit:
+                fail("review running revision mismatch")
+            configured_image = run(["docker", "inspect", "--format", "{{.Config.Image}}", container])
+            if configured_image != image:
+                fail("review container image differs from pinned image")
+            if run(["docker", "inspect", "--format", "{{.State.Health.Status}}", container]) != "healthy":
+                fail("review container is not healthy")
+            plans.add(plan)
+        if len(plans) != 1:
+            fail("review containers use different plans")
+        return {"commit": commit, "planDigest": plans.pop(), "imageRef": image}
+    if action.startswith("rollback_"):
+        previous = json.loads(fields[0])
+        role = action.removeprefix("rollback_")
+        if role == "review":
+            check_command(host, "reviewDrainCommand")
+            require_idle(host)
+            replace_link(host["runnerCurrent"], previous["agentHostRelease"])
+            env_set(host["reviewEnvFile"], {"REVIEW_IMAGE_REF": previous["image"]})
+            compose(host["reviewComposeDir"], host["reviewEnvFile"], *host["reviewServices"])
+            require_idle(host)
+            for service in host["reviewServices"]:
+                container = compose_ps(host["reviewComposeDir"], host["reviewEnvFile"], service)
+                if run(["docker", "inspect", "--format", "{{.Config.Image}}", container]) != previous["image"]:
+                    fail("review rollback image mismatch")
+                if run(["docker", "inspect", "--format", "{{.State.Health.Status}}", container]) != "healthy":
+                    fail("review rollback container is not healthy")
+        elif role == "coding":
+            release = Path(previous["agentHostRelease"])
+            if not release.is_dir() or not release.is_relative_to(host["runnerReleaseRoot"]):
+                fail("coding rollback release is outside the release root")
+            run(["sudo", "ln", "-sfnT", str(release), host["runnerCurrent"]])
+            run(["sudo", "/usr/local/sbin/agent-runner-deploy", "restart-review"])
+            run(["sudo", "systemctl", "restart", "agent-runner.service"])
+            run(["systemctl", "is-active", "--quiet", "agent-runner.service"])
+            run(["systemctl", "is-active", "--quiet", "agent-runner-review.service"])
+        elif role == "server":
+            api = previous["apiImage"].rsplit("@sha256:", 1)[1]
+            web = previous["webImage"].rsplit("@sha256:", 1)[1]
+            env_set(host["envFile"], {"STUDIO_API_DIGEST": api, "STUDIO_WEB_DIGEST": web,
+                                       "STUDIO_GATE_SSH_HOST": previous["gateSshHost"],
+                                       "STUDIO_GATE_WORKER_PATH": previous["workerPath"]})
+            compose(host["composeDir"], host["envFile"], "api", "frontend")
+            run(["curl", "-fsS", host["healthUrl"]])
+            for service, expected in (("api", previous["apiImage"]), ("frontend", previous["webImage"])):
+                container = compose_ps(host["composeDir"], host["envFile"], service)
+                if run(["docker", "inspect", "--format", "{{.Config.Image}}", container]) != expected:
+                    fail(f"{service} rollback image mismatch")
+        elif role == "engine":
+            env_set(host["engineEnvFile"], {"ORCHESTRATOR_ENGINE_IMAGE_REF": previous["engineVersion"]})
+            compose(host["engineComposeDir"], host["engineEnvFile"], "orchestrator-engine")
+            container = compose_ps(host["engineComposeDir"], host["engineEnvFile"], "orchestrator-engine")
+            if run(["docker", "inspect", "--format", "{{.Config.Image}}", container]) != previous["engineVersion"]:
+                fail("engine rollback image mismatch")
+            if run(["docker", "inspect", "--format", "{{.State.Health.Status}}", container]) != "healthy":
+                fail("engine rollback container is not healthy")
+        elif role == "gate":
+            replace_link(host["gateCurrent"], previous["workerPath"])
+            if not Path(host["gateCurrent"]).resolve().is_dir():
+                fail("gate rollback target missing")
+        return {"restored": True}
+    fail(f"unknown action: {action}")
+
+
+if __name__ == "__main__":
+    try:
+        print(json.dumps(main(json.load(sys.stdin)), separators=(",", ":")))
+    except (RuntimeError, OSError, ValueError, KeyError, IndexError, TypeError) as error:
+        print(f"remote-host: {error}", file=sys.stderr)
+        sys.exit(1)

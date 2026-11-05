@@ -1,49 +1,387 @@
 {
   "schema": 1,
+  "repository": "SET_LOCAL_OPERATOR_CHECKOUT",
+  "artifactDirectory": "SET_LOCAL_PRIVATE_ARTIFACT_DIRECTORY",
+  "images": {
+    "api": "SET_API_IMAGE_REPOSITORY",
+    "web": "SET_WEB_IMAGE_REPOSITORY",
+    "engine": "SET_ENGINE_IMAGE_REPOSITORY"
+  },
   "hosts": [
-    {"id": "server", "role": "server", "target": "SET_LOCAL_SERVER_TARGET"},
-    {"id": "gate", "role": "gate", "target": "SET_LOCAL_GATE_TARGET"},
-    {"id": "coding", "role": "coding", "target": "SET_LOCAL_CODING_TARGET"},
-    {"id": "review", "role": "review", "target": "SET_LOCAL_REVIEW_TARGET"}
+    {
+      "id": "server",
+      "role": "server",
+      "target": "SET_LOCAL_SERVER_SSH_TARGET",
+      "envFile": "SET_SERVER_ENV_FILE",
+      "composeDir": "SET_SERVER_COMPOSE_DIR",
+      "healthUrl": "SET_SERVER_LOOPBACK_HEALTH_URL",
+      "admissionDrainCommand": [
+        "SET_TYPED_DRAIN_COMMAND"
+      ],
+      "admissionResumeCommand": [
+        "SET_TYPED_RESUME_COMMAND"
+      ],
+      "gateSshHost": "SET_SERVER_APPROVED_GATE_SSH_HOST"
+    },
+    {
+      "id": "gate",
+      "role": "gate",
+      "target": "SET_LOCAL_GATE_SSH_TARGET",
+      "gateReleaseRoot": "SET_GATE_RELEASE_DIRECTORY",
+      "gateCurrent": "SET_GATE_CURRENT_LINK"
+    },
+    {
+      "engineEnvFile": "SET_ENGINE_ENV_FILE",
+      "engineComposeDir": "SET_ENGINE_COMPOSE_DIR",
+      "id": "engine",
+      "role": "engine",
+      "target": "SET_LOCAL_ENGINE_SSH_TARGET"
+    },
+    {
+      "id": "coding",
+      "role": "coding",
+      "target": "SET_LOCAL_CODING_SSH_TARGET",
+      "runnerReleaseRoot": "SET_CODING_RELEASE_DIRECTORY",
+      "runnerCurrent": "SET_CODING_CURRENT_LINK",
+      "runnerIncoming": "SET_CODING_INCOMING_DIRECTORY",
+      "modelProbes": [
+        {
+          "argv": [
+            "codex",
+            "exec",
+            "-m",
+            "SET_CODEX_MODEL",
+            "Reply with ACCEPTED"
+          ],
+          "contains": "ACCEPTED"
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "role": "review",
+      "target": "SET_LOCAL_REVIEW_SSH_TARGET",
+      "runnerReleaseRoot": "SET_REVIEW_RELEASE_DIRECTORY",
+      "runnerCurrent": "SET_REVIEW_CURRENT_LINK",
+      "reviewBaseImage": "SET_PINNED_REVIEW_BASE_IMAGE",
+      "reviewImageRepository": "SET_REVIEW_IMAGE_REPOSITORY",
+      "reviewEnvFile": "SET_REVIEW_ENV_FILE",
+      "reviewComposeDir": "SET_REVIEW_COMPOSE_DIR",
+      "reviewServices": [
+        "SET_REVIEW_COMPOSE_SERVICE"
+      ],
+      "reviewDrainCommand": [
+        "SET_REVIEW_DRAIN_COMMAND"
+      ],
+      "reviewIdleCommand": [
+        "SET_REVIEW_IDLE_JSON_COMMAND"
+      ]
+    }
   ],
   "commands": {
     "build": {
-      "api": ["/path/to/local-adapter", "build-api", "{commit}"],
-      "web": ["/path/to/local-adapter", "build-web", "{commit}"],
-      "engine": ["/path/to/local-adapter", "build-engine", "{commit}"],
-      "agent_host": ["/path/to/local-adapter", "build-agent-host", "{commit}"],
-      "gate_worker": ["/path/to/local-adapter", "build-gate-worker", "{commit}"]
+      "api": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "build-api",
+        "{commit}"
+      ],
+      "web": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "build-web",
+        "{commit}"
+      ],
+      "engine": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "build-engine",
+        "{commit}"
+      ],
+      "agent_host": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "build-agent-host",
+        "{commit}"
+      ],
+      "gate_worker": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "build-gate-worker",
+        "{commit}"
+      ]
     },
     "snapshot": {
-      "server": ["/path/to/local-adapter", "snapshot-server", "{host}"],
-      "gate": ["/path/to/local-adapter", "snapshot-gate", "{host}"],
-      "coding": ["/path/to/local-adapter", "snapshot-coding", "{host}"],
-      "review": ["/path/to/local-adapter", "snapshot-review", "{host}"]
+      "server": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "snapshot",
+        "{host_id}"
+      ],
+      "gate": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "snapshot",
+        "{host_id}"
+      ],
+      "coding": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "snapshot",
+        "{host_id}"
+      ],
+      "review": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "snapshot",
+        "{host_id}"
+      ],
+      "engine": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "snapshot",
+        "{host_id}"
+      ]
     },
-    "preflight": ["studio-op", "preflight", "deploy", "--json"],
-    "work_state": ["/path/to/local-adapter", "work-state"],
-    "plan": ["studio-op", "deploy", "plan", "--target-version", "{commit}", "--json"],
-    "drain": ["/path/to/local-adapter", "drain-admission", "{host}"],
-    "gate_publish": ["/path/to/local-adapter", "publish-gate", "{host}", "{gate_worker_ref}", "{gate_worker_sha256}"],
-    "gate_verify": ["/path/to/local-adapter", "verify-gate", "{host}", "{gate_worker_ref}"],
-    "server_switch": ["/path/to/local-adapter", "switch-server", "{host}", "{api_ref}", "{web_ref}", "{gate_worker_ref}"],
-    "server_health": ["/path/to/local-adapter", "health-server", "{host}", "{commit}"],
-    "engine_switch": ["/path/to/local-adapter", "switch-engine", "{host}", "{engine_ref}"],
-    "engine_health": ["/path/to/local-adapter", "health-engine", "{host}", "{commit}"],
-    "coding_install": ["/path/to/local-adapter", "install-coding", "{host}", "{agent_host_ref}", "{agent_host_sha256}"],
-    "coding_health": ["/path/to/local-adapter", "health-coding", "{host}", "{commit}"],
-    "model_probe": ["/path/to/local-adapter", "model-probe", "{host}"],
-    "review_copy": ["/path/to/local-adapter", "copy-review", "{host}", "{agent_host_ref}", "{agent_host_sha256}"],
-    "review_build": ["/path/to/local-adapter", "build-review", "{host}", "{commit}", "{agent_host_sha256}"],
-    "review_idle": ["/path/to/local-adapter", "review-idle", "{host}"],
-    "review_recreate": ["/path/to/local-adapter", "recreate-idle-review", "{host}", "{review_image_ref}", "{review_plan_digest}"],
-    "review_verify": ["/path/to/local-adapter", "verify-review", "{host}", "{commit}"],
-    "resume": ["/path/to/local-adapter", "resume-admission", "{host}"],
+    "preflight": [
+      "studio-op",
+      "preflight",
+      "deploy",
+      "--json"
+    ],
+    "work_state": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "work-state"
+    ],
+    "plan": [
+      "studio-op",
+      "deploy",
+      "plan",
+      "--target-version",
+      "{commit}",
+      "--json"
+    ],
+    "drain": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "drain",
+      "{host_id}"
+    ],
+    "gate_publish": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "gate-publish",
+      "{host_id}",
+      "{gate_worker_ref}",
+      "{gate_worker_sha256}",
+      "{commit}"
+    ],
+    "gate_verify": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "gate-verify",
+      "{host_id}",
+      "{gate_worker_sha256}",
+      "{commit}"
+    ],
+    "server_switch": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "server-switch",
+      "{host_id}",
+      "{api_ref}",
+      "{web_ref}",
+      "{gate_worker_path}"
+    ],
+    "server_health": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "server-health",
+      "{host_id}",
+      "{commit}"
+    ],
+    "engine_switch": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "engine-switch",
+      "{host_id}",
+      "{engine_ref}"
+    ],
+    "engine_health": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "engine-health",
+      "{host_id}",
+      "{commit}"
+    ],
+    "coding_install": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "coding-install",
+      "{host_id}",
+      "{agent_host_ref}",
+      "{agent_host_sha256}",
+      "{commit}"
+    ],
+    "coding_health": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "coding-health",
+      "{host_id}",
+      "{commit}"
+    ],
+    "model_probe": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "model-probe",
+      "{host_id}"
+    ],
+    "review_copy": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "review-copy",
+      "{host_id}",
+      "{agent_host_ref}",
+      "{agent_host_sha256}",
+      "{commit}"
+    ],
+    "review_build": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "review-build",
+      "{host_id}",
+      "{commit}",
+      "{agent_host_sha256}"
+    ],
+    "review_idle": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "review-idle",
+      "{host_id}"
+    ],
+    "review_recreate": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "review-recreate",
+      "{host_id}",
+      "{review_image_ref}",
+      "{review_plan_digest}",
+      "{agent_host_sha256}"
+    ],
+    "review_verify": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "review-verify",
+      "{host_id}",
+      "{commit}"
+    ],
+    "resume": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "resume",
+      "{host_id}"
+    ],
     "rollback": {
-      "review": ["/path/to/local-adapter", "rollback-review", "{host}", "{previous}"],
-      "coding": ["/path/to/local-adapter", "rollback-coding", "{host}", "{previous}"],
-      "server": ["/path/to/local-adapter", "rollback-server", "{host}", "{previous}"],
-      "gate": ["/path/to/local-adapter", "rollback-gate", "{host}", "{previous}"]
+      "server": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "rollback-server",
+        "{host_id}",
+        "{previous}"
+      ],
+      "gate": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "rollback-gate",
+        "{host_id}",
+        "{previous}"
+      ],
+      "coding": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "rollback-coding",
+        "{host_id}",
+        "{previous}"
+      ],
+      "review": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "rollback-review",
+        "{host_id}",
+        "{previous}"
+      ],
+      "engine": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "rollback-engine",
+        "{host_id}",
+        "{previous}"
+      ]
     }
   }
 }
