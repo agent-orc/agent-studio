@@ -431,6 +431,7 @@
     Last activity: {{ relativeActivity() }}
   </div>
 </div>
+@if (cardContextMenu()) {
 <app-menu
   [items]="cardCtxMenuItems()"
   [open]="cardContextMenu() !== null"
@@ -440,3 +441,4 @@
   [minWidth]="180"
   (itemClick)="onCardCtxMenuItemClick($event)"
   (closeRequest)="closeCardContextMenu()" />
+}

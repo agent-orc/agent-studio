@@ -109,6 +109,7 @@
         [history]="detail().promptHistory || []"
         [titleHistory]="detail().titleHistory || []"
         [reviewEvidence]="detail().reviewEvidence || []"
+        [resourceStates]="jobSelection.resourceStates()"
         [screenshots]="screenshots()"
         [artifacts]="artifacts()"
         [job]="detail().info"
@@ -133,6 +134,7 @@
         (referencesChanged)="fileSaved.emit()"
         (titleSaved)="fileSaved.emit()"
         (activeTabChange)="detailTabChange.emit($event)"
+        (retryResource)="jobSelection.retryResource($event)"
         (reviewAttemptRequested)="openReviewAttempt($event)" />
     }
 
