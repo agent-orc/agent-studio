@@ -658,6 +658,7 @@ public sealed partial class BatchGateStore
 
     public void RecordPublication(BatchGatePublication publication)
     {
+        var manifest = ReadManifest(publication.BatchId);
         var run = ReadRun(publication.BatchId, publication.BatchRunId);
         var verdict = Read<BatchGateRunVerdict>(Path.Combine(BatchDirectory(publication.BatchId),
             "runs", SafeName(publication.BatchRunId) + ".verdict.json"));
@@ -668,6 +669,10 @@ public sealed partial class BatchGateStore
             || publication.CoordinatorFence < run.CoordinatorFence
             || publication.RefMutationFence <= 0 || verdict.Outcome != "pass")
             throw new InvalidDataException("Untested or unverified batch publication.");
+        if (manifest.StackedOnBatchId is { } predecessorId
+            && !BatchStackingPolicy.CanPublish(ReadManifest(predecessorId),
+                LatestState(predecessorId), ReadPublication(predecessorId), manifest))
+            throw new InvalidDataException("Stacked predecessor has no verified publication.");
         WriteOnce(Path.Combine(BatchDirectory(publication.BatchId), "publication.json"), publication);
     }
 

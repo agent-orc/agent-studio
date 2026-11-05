@@ -40,6 +40,23 @@ public static class BatchGateStateSnapshotReader
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
             .Select(item => store.LatestState(item.BatchId))
             .Where(state => state.BaseMoveToSha is not null).ToArray();
+        var stacked = store.ListManifests()
+            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
+                && item.StackedOnBatchId is not null).ToArray();
+        var executions = store.ListExecutions(project);
+        var stackedCancelled = stacked.Where(item =>
+            store.LatestState(item.BatchId).Phase == BatchPhase.Abandoned
+            && store.ReadPublication(item.BatchId) is null).ToArray();
+        var wastedMinutes = stackedCancelled.Sum(item =>
+        {
+            var facts = executions.Where(fact => fact.BatchId == item.BatchId).ToArray();
+            if (facts.Length > 0)
+                return facts.Sum(fact => Math.Max(0, (fact.DurationMs is { } ms
+                    ? ms : (long)(fact.CompletedAtUtc - fact.StartedAtUtc).TotalMilliseconds) / 60000d));
+            var started = store.ListRuns(item.BatchId).FirstOrDefault()?.StartedAtUtc;
+            return started is null ? 0 : Math.Max(0,
+                (store.LatestState(item.BatchId).RecordedAtUtc - started.Value).TotalMinutes);
+        });
         var baseMoves = moved.GroupBy(state => state.BaseMoveToSha!, StringComparer.OrdinalIgnoreCase)
             .Select(group => new { baseSha = group.Key,
                 kept = group.Count(state => state.BaseMoveOutcome == "kept"),
@@ -53,6 +70,7 @@ public static class BatchGateStateSnapshotReader
                 manifest.BatchId,
                 manifest.ParentBatchId,
                 manifest.ReformedFromBatchId,
+                manifest.StackedOnBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseReason = phase.Reason,
                 baseMoveToSha = phase.BaseMoveToSha,
@@ -188,6 +206,13 @@ public static class BatchGateStateSnapshotReader
                 };
             }).ToArray(),
             batches,
+            stacking = new
+            {
+                started = stacked.Count(item => store.ListRuns(item.BatchId).Count > 0),
+                published = stacked.Count(item => store.ReadPublication(item.BatchId) is not null),
+                cancelled = stackedCancelled.Length,
+                gateMinutesWasted = wastedMinutes,
+            },
             baseMoves,
             baseMoveTotals = new { kept = moved.Count(state => state.BaseMoveOutcome == "kept"),
                 abandoned = moved.Count(state => state.BaseMoveOutcome == "abandoned") },

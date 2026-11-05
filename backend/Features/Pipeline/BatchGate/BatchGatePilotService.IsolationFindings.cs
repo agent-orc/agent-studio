@@ -21,7 +21,7 @@ public sealed partial class BatchGatePilotService
                 || child.Members.Any(member => !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
                 continue;
             BatchCoordinatorLease? lease;
-            try { lease = _leases.TryAcquire(child.Scope, "green-isolation-recovery"); }
+            try { lease = _leases.TryAcquire(LeaseScope(child), "green-isolation-recovery"); }
             catch (IOException) { continue; }
             if (lease is null) continue;
             try

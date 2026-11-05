@@ -1,5 +1,45 @@
 # Batch gate delivery state
 
+## One-step speculative stacking (AGT-3546)
+
+The implemented choice is AGT-2994 D1 option C, a speculative train with ordered publication,
+adapted to the existing batch gate as one successor (`stacking: "1"`). The default
+is `"off"`. A formed batch N+1 may use a spare gate slot while N is gating.
+Its immutable manifest names N and uses N's assembled candidate SHA as its
+base; replaying N+1's members produces candidate N+1 = candidate N plus those
+members. Each batch keeps its own candidate ref, membership digest, exact SHA
+gate receipt and coordinator fence. Only one stacked successor may run per
+project, and it uses no slot when the host reports every gate slot busy.
+
+The successor does not reserve the project during its gate. Before publication
+it takes the project reservation and ref mutation lease, checks that N's
+publication receipt verifies exactly the SHA used as its base, checks its own
+green exact-SHA receipt and current members, then requires the remote tip to
+equal that base. The push is a compare-and-swap of that tip to the tested
+candidate. This gives strict N then N+1 publication; an unrelated external
+push makes the base stale and sends the members back to planning on the real
+tip. A confirmed red or abandoned predecessor cancels its successor. A
+same-candidate infrastructure retry or targeted flaky rerun leaves the chain
+in place; a terminal red or pause retires it. Supersession of a member retires
+that successor and excludes the old delivery from its next formation.
+
+After an API restart, an interrupted gate has no inherited verdict. The
+coordinator lease is allowed to expire, the interrupted manifest is abandoned,
+and its members are re-formed under the same fresh-tip rules as AGT-3466.
+An orphaned formed successor is also abandoned if its predecessor did not
+publish. The state route reports `stacking.started`, `published`, `cancelled`,
+and `gateMinutesWasted`. Wasted minutes sum measured host execution durations
+for cancelled stacked batches; if the cancelled gate has no completion fact,
+the run start to cancellation interval is the estimate. These are spent host
+minutes, not a projected delay saved.
+
+To pilot, set the project's batch gate `stacking` field to `"1"` through the
+batch gate settings API and keep at least two gate slots. During the first
+hours, watch those four counters, the batch predecessor links, slot occupancy,
+stale-base cancellations, and published cards per hour. Set `stacking` back
+to `"off"` to stop forming speculative successors; already formed or running
+successors retain their fenced publication checks.
+
 Decision D1 is option A: keep model review per card, run preparation, build,
 lint, and affected tests per code card, then run the complete suite once on
 the combined candidate before publication. This follows the operator direction
