@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, computed, effect, inject, input, model, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, Injector, afterNextRender, computed, effect, inject, input, model, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import type { TaskInfo } from '../../../../models/task.model';
 import { BoardFiltersService } from '../../../board';
@@ -6,6 +6,7 @@ import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import { DossierReferenceChipComponent } from '../../../../components/dossier-reference-chip/dossier-reference-chip';
 import { DossierCatalogueService } from '../../../../services/dossier-catalogue.service';
 import { resolveDossierReference, type DossierReference } from '../../../../services/dossier-reference.util';
+import { ModalStackService } from '../../../../services/modal-stack.service';
 import { GlobalSearchItem, GlobalSearchService, SEARCH_DOMAINS, SearchDomain } from './global-search.service';
 
 /** Debounce before a keystroke turns into a request. */
@@ -57,19 +58,43 @@ export class GlobalSearchComponent {
   readonly elapsedMs = signal(0);
   readonly activeIndex = signal(0);
   readonly inputRef = viewChild<ElementRef<HTMLInputElement>>('searchInput');
+  private readonly host = inject(ElementRef<HTMLElement>);
+  private readonly injector = inject(Injector);
+  private readonly modalStack = inject(ModalStackService);
+  private modalDispose: (() => void) | null = null;
+  private previousFocus: HTMLElement | null = null;
   private readonly focusWhenOpened = effect(() => {
-    if (!this.open()) return;
+    if (!this.open()) {
+      if (this.modalDispose) {
+        this.modalDispose();
+        this.modalDispose = null;
+        const opener = this.previousFocus;
+        this.previousFocus = null;
+        queueMicrotask(() => { if (opener?.isConnected) opener.focus(); });
+      }
+      return;
+    }
+    if (this.modalDispose) return;
+    this.previousFocus = document.activeElement as HTMLElement | null;
     // The catalogue is shared with every other reference surface, so opening
     // the palette costs at most one read for the whole session.
     this.dossiers.ensureLoaded().subscribe();
-    queueMicrotask(() => this.inputRef()?.nativeElement.focus());
+    afterNextRender(() => {
+      if (!this.open() || this.modalDispose) return;
+      this.modalDispose = this.modalStack.push('global-search', () => this.close(), {
+        dialog: () => (this.host.nativeElement as HTMLElement).querySelector<HTMLElement>('[role="dialog"]'),
+        backgroundRoot: () => this.host.nativeElement,
+      });
+      this.inputRef()?.nativeElement.focus();
+      this.modalStack.refreshModalScope();
+    }, { injector: this.injector });
   });
   private timer: ReturnType<typeof setTimeout> | null = null;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private controller: AbortController | null = null;
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => this.cancel());
+    inject(DestroyRef).onDestroy(() => { this.modalDispose?.(); this.cancel(); });
   }
 
   readonly searching = computed(() => Object.values(this.domains()).some(state => state.status === 'searching'));
@@ -130,7 +155,6 @@ export class GlobalSearchComponent {
 
   show(): void {
     this.open.set(true);
-    queueMicrotask(() => this.inputRef()?.nativeElement.focus());
   }
 
   close(): void {
@@ -299,9 +323,6 @@ export class GlobalSearchComponent {
       return;
     }
     if (!this.open()) return;
-    // Escape closes, and closing cancels: one press both retires the search in
-    // flight and dismisses the palette, so Escape never leaves work running.
-    if (event.key === 'Escape') { event.preventDefault(); this.close(); return; }
     const results = this.flatResults();
     if (event.key === 'ArrowDown' && results.length) {
       event.preventDefault(); this.activeIndex.update(i => (i + 1) % results.length);

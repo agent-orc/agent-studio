@@ -32,6 +32,7 @@ import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core'
 @Injectable({ providedIn: 'root' })
 export class ModalStackService {
   private readonly entries = signal<readonly ModalEntry[]>([]);
+  private readonly inertBefore = new Map<HTMLElement, boolean>();
 
   /** True when at least one modal/overlay is currently on the stack. */
   readonly hasOpen = computed(() => this.entries().length > 0);
@@ -57,6 +58,10 @@ export class ModalStackService {
       capture: true,
       signal: this.abortController.signal,
     });
+    document.addEventListener('focusin', this.onFocusIn, {
+      capture: true,
+      signal: this.abortController.signal,
+    });
     inject(DestroyRef).onDestroy(() => this.abortController?.abort());
   }
 
@@ -73,11 +78,13 @@ export class ModalStackService {
    * bindings on the same Escape can still fire). Any other return value
    * consumes the keystroke.
    */
-  push(id: string, close: () => boolean | void): () => void {
-    const entry: ModalEntry = { id, close };
+  push(id: string, close: () => boolean | void, modal?: ModalScope): () => void {
+    const entry: ModalEntry = { id, close, modal };
     this.entries.update(list => [...list, entry]);
+    this.refreshModalScope();
     return () => {
       this.entries.update(list => list.filter(e => e !== entry));
+      this.refreshModalScope();
     };
   }
 
@@ -87,8 +94,8 @@ export class ModalStackService {
    * component is destroyed, so a forgotten dispose in a teardown branch
    * cannot leave a phantom entry on the stack.
    */
-  pushUntilDestroyed(id: string, close: () => boolean | void, destroyRef: DestroyRef): () => void {
-    const dispose = this.push(id, close);
+  pushUntilDestroyed(id: string, close: () => boolean | void, destroyRef: DestroyRef, modal?: ModalScope): () => void {
+    const dispose = this.push(id, close, modal);
     destroyRef.onDestroy(dispose);
     return dispose;
   }
@@ -96,9 +103,66 @@ export class ModalStackService {
   /** Test-only: drains the stack. Production code should never need this. */
   clearForTest(): void {
     this.entries.set([]);
+    this.refreshModalScope();
+  }
+
+  /** Call after a conditional dialog has rendered so its background becomes inert. */
+  refreshModalScope(): void {
+    for (const [element, wasInert] of this.inertBefore) element.inert = wasInert;
+    this.inertBefore.clear();
+    const root = this.activeModal()?.backgroundRoot();
+    if (!root?.isConnected) return;
+    for (let node: HTMLElement | null = root; node && node !== document.body; node = node.parentElement) {
+      const parent: HTMLElement | null = node.parentElement;
+      if (!parent) break;
+      for (const sibling of Array.from(parent.children)) {
+        if (sibling === node || !(sibling instanceof HTMLElement)) continue;
+        this.inertBefore.set(sibling, sibling.inert);
+        sibling.inert = true;
+      }
+    }
+  }
+
+  private activeModal(): ModalScope | undefined {
+    // A higher overlay owns focus while it is on the stack. Keeping a lower
+    // modal's inert subtree active would make a portaled child impossible to use.
+    const list = this.entries();
+    const modal = list[list.length - 1]?.modal;
+    return modal?.dialog()?.isConnected ? modal : undefined;
+  }
+
+  private readonly onFocusIn = (event: FocusEvent): void => {
+    const dialog = this.activeModal()?.dialog();
+    if (!dialog || dialog.contains(event.target as Node)) return;
+    this.focusBoundary(dialog, false);
+  };
+
+  private focusBoundary(dialog: HTMLElement, last: boolean): void {
+    const controls = Array.from(dialog.querySelectorAll<HTMLElement>(
+      'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    )).filter(element => !element.inert && !element.closest('[inert]') &&
+      !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true' &&
+      element.getClientRects().length > 0 && element.tabIndex >= 0);
+    (last ? controls.at(-1) ?? dialog : controls[0] ?? dialog).focus();
   }
 
   private readonly onKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Tab') {
+      const dialog = this.activeModal()?.dialog();
+      if (!dialog) return;
+      const controls = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      )).filter(element => !element.inert && !element.closest('[inert]') &&
+        !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true' &&
+        element.getClientRects().length > 0 && element.tabIndex >= 0);
+      const active = document.activeElement;
+      if (!dialog.contains(active) || controls.length === 0 ||
+          (event.shiftKey ? active === controls[0] : active === controls.at(-1))) {
+        event.preventDefault();
+        (event.shiftKey ? controls.at(-1) ?? dialog : controls[0] ?? dialog).focus();
+      }
+      return;
+    }
     if (event.key !== 'Escape') return;
     if (event.defaultPrevented) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -140,5 +204,12 @@ export class ModalStackService {
  */
 interface ModalEntry {
   readonly id: string;
-  readonly close: () => void;
+  readonly close: () => boolean | void;
+  readonly modal?: ModalScope;
+}
+
+/** A true modal's focus surface and the containing subtree kept interactive. */
+export interface ModalScope {
+  dialog: () => HTMLElement | null | undefined;
+  backgroundRoot: () => HTMLElement | null | undefined;
 }

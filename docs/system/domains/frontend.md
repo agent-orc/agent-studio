@@ -1,11 +1,23 @@
 # Frontend Domain Map
 
-Version: 2026-11-02
+Version: 2026-11-05
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
+
+## Modal keyboard contract
+
+`ModalStackService` owns Escape ordering and the focus scope of registered true
+modals. A dialog registers its dialog element and the subtree that contains its
+backdrop. While it is the top stack entry, Tab and Shift+Tab wrap within the
+dialog, outside focus is redirected inside, and the rest of the page is inert.
+A higher overlay temporarily owns focus until it closes. The caller moves
+initial focus into the dialog after render and returns focus to its opener after
+closing. The batch gate panel, global search palette, and modal workspace
+settings view (including CLI Management) use this contract. Menus and popovers
+remain stack entries for Escape ordering without a modal focus scope.
 
 ## Initial bundle ratchet
 

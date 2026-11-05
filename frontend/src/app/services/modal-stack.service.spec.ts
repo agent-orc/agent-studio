@@ -102,4 +102,71 @@ describe('ModalStackService', () => {
     // Subsequent Escape will retry on the same top entry — the service does
     // not auto-pop, the owning component must.
   });
+
+  it('makes the background inert only while a modal is registered', () => {
+    const page = document.createElement('main');
+    page.inert = false;
+    const host = document.createElement('div');
+    const dialog = document.createElement('section');
+    host.append(dialog);
+    document.body.append(page, host);
+    try {
+      const dispose = service.push('modal', () => undefined, {
+        dialog: () => dialog,
+        backgroundRoot: () => host,
+      });
+      expect(page.inert).toBe(true);
+      dispose();
+      expect(page.inert).toBe(false);
+    } finally {
+      page.remove();
+      host.remove();
+    }
+  });
+
+  it('yields the focus scope to a higher overlay and restores it when that overlay closes', () => {
+    const page = document.createElement('main');
+    page.inert = false;
+    const host = document.createElement('div');
+    const dialog = document.createElement('section');
+    host.append(dialog);
+    document.body.append(page, host);
+    try {
+      service.push('modal', () => undefined, { dialog: () => dialog, backgroundRoot: () => host });
+      expect(page.inert).toBe(true);
+      const disposeOverlay = service.push('higher-overlay', () => undefined);
+      expect(page.inert).toBe(false);
+      disposeOverlay();
+      expect(page.inert).toBe(true);
+    } finally {
+      service.clearForTest();
+      page.remove();
+      host.remove();
+    }
+  });
+
+  it('wraps Tab and Shift+Tab at the modal boundaries', () => {
+    const dialog = document.createElement('section');
+    const first = document.createElement('button');
+    const last = document.createElement('button');
+    dialog.append(first, last);
+    document.body.append(dialog);
+    for (const button of [first, last]) {
+      Object.defineProperty(button, 'getClientRects', { value: () => [new DOMRect(0, 0, 1, 1)] });
+    }
+    try {
+      service.push('modal', () => undefined, { dialog: () => dialog, backgroundRoot: () => dialog });
+      last.focus();
+      const forward = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      last.dispatchEvent(forward);
+      expect(forward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(first);
+      const backward = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+      first.dispatchEvent(backward);
+      expect(backward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(last);
+    } finally {
+      dialog.remove();
+    }
+  });
 });

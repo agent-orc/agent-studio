@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
+import { auditModal } from '../helpers/audit-modal';
 
 test.use({ serviceWorkers: 'block' });
 
@@ -87,6 +88,41 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
   await page.route('**/api/projects/*/batch-gate', route => {
     if (route.request().method() === 'PUT') { onSave(); expect(route.request().headers()['x-client-id']).toBeTruthy(); return json(route, { settings: route.request().postDataJSON(), limits: { hardMaximumSize: 8 } }); }
     return json(route, { settings, limits: { hardMaximumSize: 8 } });
+  });
+}
+
+for (const width of [1280, 390]) {
+  test(`batch panel contains keyboard focus and restores it on Escape at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await routeBoard(page, state);
+    await page.goto('/?includeFixtures=true');
+    await page.getByRole('tab', { name: 'All projects · Board' }).click();
+    const opener = page.getByTestId('batch-lane-indicator').first();
+    await opener.click();
+    const dialog = page.getByTestId('batch-panel');
+    await expect(dialog).toBeVisible();
+    await auditModal(page, '[data-testid="batch-panel"]', `batch-panel-${width}`);
+    if (process.env.JOB_RESULTS_DIR) {
+      await page.screenshot({ path: nodePath.join(process.env.JOB_RESULTS_DIR, `batch-panel-keyboard-${width}.png`) });
+    }
+    await expect(dialog.getByRole('button', { name: 'Close batch panel' })).toBeFocused();
+    await expect.poll(() => page.evaluate(() => {
+      const host = document.querySelector('[data-testid="batch-panel"]')?.closest('app-batch-panel');
+      return !!host && [...document.body.children].filter(child => child !== host).every(child => (child as HTMLElement).inert);
+    })).toBe(true);
+    for (let index = 0; index < 12; index++) {
+      await page.keyboard.press('Tab');
+      await expect.poll(() => page.evaluate(() =>
+        !!document.querySelector('[data-testid="batch-panel"]')?.contains(document.activeElement))).toBe(true);
+    }
+    for (let index = 0; index < 12; index++) {
+      await page.keyboard.press('Shift+Tab');
+      await expect.poll(() => page.evaluate(() =>
+        !!document.querySelector('[data-testid="batch-panel"]')?.contains(document.activeElement))).toBe(true);
+    }
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
   });
 }
 
