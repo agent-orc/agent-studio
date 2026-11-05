@@ -88,80 +88,68 @@ public sealed class GitWorkspaceTests : IDisposable
             (await GitAsync(_origin, "show", $"refs/heads/{secured.Branch}:fixture.cs")).StdOut);
     }
 
-    // 1 November 2026: a salvage push refused with 403 escalated finished work.
+    // 4 November 2026: GitHub intermittently failed pushes while accepting others.
     [SkippableFact]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
-    public async Task A_refused_push_refreshes_the_credentials_and_pushes_again_before_escalating()
+    public async Task Transient_salvage_push_fails_twice_then_finishes_with_a_complete_result_ref()
     {
         PlatformGate.LinuxOnly("the origin refuses through an executable POSIX pre-receive hook");
         await SeedOriginAsync();
-        var flag = Path.Combine(_root, "read-token");
         var delays = new List<TimeSpan>();
-        var refreshes = 0;
         var logs = new List<string>();
+        var timeline = new List<string>();
         var workspace = CreateWorkspace(logs.Add, sourceRunAttemptId: "run_a", fencingToken: 41,
-            pushRecovery: new RepositoryPushRecovery(
-                _ =>
-                {
-                    refreshes++;
-                    File.Delete(flag);
-                    return Task.FromResult(true);
-                },
-                (delay, _) =>
+            pushRecovery: new RepositoryPushRecovery((delay, _) =>
                 {
                     delays.Add(delay);
                     return Task.CompletedTask;
                 }));
+        workspace.PushRetryRecorded = timeline.Add;
         await workspace.PrepareAsync(CancellationToken.None);
         await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "work.txt"), "finished work");
-        await RefusePushesWhileAsync(flag);
+        var attempts = await FailPushesAsync(2, "remote: Internal Server Error");
 
         var secured = await workspace.TeardownAsync("Done", "run_a", CancellationToken.None);
 
         Assert.True(secured.SecuredWork);
-        Assert.Equal(1, refreshes);
-        Assert.Equal([RepositoryPushRecoveryPolicy.Delays[0]], delays);
-        Assert.Contains(logs, line => line.StartsWith("worktree-push-refused ", StringComparison.Ordinal));
+        Assert.NotNull(secured.ImmutableResultRef);
+        Assert.Equal(4, int.Parse(await File.ReadAllTextAsync(attempts)));
+        Assert.Equal(RepositoryPushRecoveryPolicy.Delays.Take(2), delays);
+        Assert.Equal(2, logs.Count(line => line.StartsWith("worktree-push-transient-retry ", StringComparison.Ordinal)));
+        Assert.Equal(2, timeline.Count(line => line.Contains("worktree-push-transient-retry", StringComparison.Ordinal)));
         Assert.Equal("finished work", (await GitAsync(_origin, "show", $"refs/heads/{secured.Branch}:work.txt")).StdOut);
         Assert.False(Directory.Exists(workspace.RepoPath));
     }
 
     [SkippableFact]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
-    public async Task A_refusal_past_the_bounded_retries_retains_the_worktree_and_the_next_round_continues_from_it()
+    public async Task Transient_salvage_push_exhausts_retries_and_retains_the_worktree()
     {
         PlatformGate.LinuxOnly("the origin refuses through an executable POSIX pre-receive hook");
         await SeedOriginAsync();
-        var flag = Path.Combine(_root, "read-token");
         var delays = new List<TimeSpan>();
-        var refreshes = 0;
         var first = CreateWorkspace(sourceRunAttemptId: "run_a", fencingToken: 51,
-            pushRecovery: new RepositoryPushRecovery(
-                _ =>
-                {
-                    refreshes++;
-                    return Task.FromResult(true);
-                },
-                (delay, _) =>
+            pushRecovery: new RepositoryPushRecovery((delay, _) =>
                 {
                     delays.Add(delay);
                     return Task.CompletedTask;
                 }));
         await first.PrepareAsync(CancellationToken.None);
         await File.WriteAllTextAsync(Path.Combine(first.RepoPath, "work.txt"), "finished work");
-        await RefusePushesWhileAsync(flag);
+        var attempts = await FailPushesAsync(int.MaxValue, "remote: fatal error in commit_refs");
 
         var refused = await Assert.ThrowsAsync<WorktreeSalvageException>(() =>
             first.TeardownAsync("Done", "run_a", CancellationToken.None));
 
         Assert.Null(refused.PushProtection);
+        Assert.Contains("transient push retries exhausted after 4 retries", refused.InnerException?.Message);
         Assert.Equal(RepositoryPushRecoveryPolicy.Delays, delays);
-        Assert.Equal(RepositoryPushRecoveryPolicy.Delays.Count, refreshes);
+        Assert.Equal(5, int.Parse(await File.ReadAllTextAsync(attempts)));
         Assert.True(Directory.Exists(first.RepoPath));
         var retainedHead = (await GitAsync(first.RepoPath, "rev-parse", "HEAD")).StdOut;
 
         // The credential is repaired; the card's next round needs no manual step.
-        File.Delete(flag);
+        File.Delete(Path.Combine(_origin, "hooks", "pre-receive"));
         var logs = new List<string>();
         var second = CreateWorkspace(logs.Add, sourceRunAttemptId: "run_b", fencingToken: 52);
         await second.PrepareAsync(CancellationToken.None);
@@ -172,6 +160,82 @@ public sealed class GitWorkspaceTests : IDisposable
         Assert.True(secured.SecuredWork);
         Assert.Contains("/run_b/fence-52/", secured.Branch, StringComparison.Ordinal);
         Assert.Equal("finished work", (await GitAsync(_origin, "show", $"refs/heads/{secured.Branch}:work.txt")).StdOut);
+    }
+
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task Permission_failure_is_not_retried()
+    {
+        PlatformGate.LinuxOnly("the origin refuses through an executable POSIX pre-receive hook");
+        await SeedOriginAsync();
+        var delays = new List<TimeSpan>();
+        var workspace = CreateWorkspace(sourceRunAttemptId: "run_a", fencingToken: 53,
+            pushRecovery: new RepositoryPushRecovery((delay, _) =>
+            {
+                delays.Add(delay);
+                return Task.CompletedTask;
+            }));
+        await workspace.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "work.txt"), "finished work");
+        var attempts = await FailPushesAsync(int.MaxValue, "remote: Write access to repository not granted.");
+
+        await Assert.ThrowsAsync<WorktreeSalvageException>(() =>
+            workspace.TeardownAsync("Done", "run_a", CancellationToken.None));
+
+        Assert.Empty(delays);
+        Assert.Equal(1, int.Parse(await File.ReadAllTextAsync(attempts)));
+        Assert.True(Directory.Exists(workspace.RepoPath));
+    }
+
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task Transient_result_ref_push_fails_twice_then_completes_the_envelope()
+    {
+        PlatformGate.LinuxOnly("the origin refuses through an executable POSIX pre-receive hook");
+        await SeedOriginAsync();
+        var delays = new List<TimeSpan>();
+        var workspace = CreateWorkspace(sourceRunAttemptId: "run_a", fencingToken: 54,
+            pushRecovery: new RepositoryPushRecovery((delay, _) =>
+            {
+                delays.Add(delay);
+                return Task.CompletedTask;
+            }));
+        await workspace.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "work.txt"), "finished work");
+        var attempts = await FailPushesAsync(2, "remote: Internal Server Error", resultsOnly: true);
+
+        var secured = await workspace.TeardownAsync("Done", "run_a", CancellationToken.None);
+
+        Assert.NotNull(secured.ImmutableResultRef);
+        Assert.Equal(3, int.Parse(await File.ReadAllTextAsync(attempts)));
+        Assert.Equal(RepositoryPushRecoveryPolicy.Delays.Take(2), delays);
+        Assert.True((await GitAsync(_origin, "show-ref", "--verify", "--quiet", secured.ImmutableResultRef!)).Success);
+    }
+
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task Exhausted_result_ref_push_names_the_retries_in_the_missing_envelope()
+    {
+        PlatformGate.LinuxOnly("the origin refuses through an executable POSIX pre-receive hook");
+        await SeedOriginAsync();
+        var delays = new List<TimeSpan>();
+        var workspace = CreateWorkspace(sourceRunAttemptId: "run_a", fencingToken: 55,
+            pushRecovery: new RepositoryPushRecovery((delay, _) =>
+            {
+                delays.Add(delay);
+                return Task.CompletedTask;
+            }));
+        await workspace.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "work.txt"), "finished work");
+        var attempts = await FailPushesAsync(int.MaxValue, "remote: Internal Server Error", resultsOnly: true);
+
+        var secured = await workspace.TeardownAsync("Done", "run_a", CancellationToken.None);
+
+        Assert.Null(secured.ImmutableResultRef);
+        Assert.Contains("transient push retries exhausted after 4 retries", secured.ResultRefFailure);
+        Assert.Equal(5, int.Parse(await File.ReadAllTextAsync(attempts)));
+        Assert.Equal(RepositoryPushRecoveryPolicy.Delays, delays);
+        Assert.False(Directory.Exists(workspace.RepoPath));
     }
 
     [SkippableFact]
@@ -1256,8 +1320,25 @@ public sealed class GitWorkspaceTests : IDisposable
             continuationBaseSha: continuationBaseSha,
             continuationBaseReason: continuationBaseReason)
         {
-            PushRecovery = pushRecovery ?? new RepositoryPushRecovery(_ => Task.FromResult(false), (_, _) => Task.CompletedTask),
+            PushRecovery = pushRecovery ?? new RepositoryPushRecovery((_, _) => Task.CompletedTask),
         };
+
+    private async Task<string> FailPushesAsync(int failures, string message, bool resultsOnly = false)
+    {
+        var count = Path.Combine(_root, "push-attempts");
+        var hook = Path.Combine(_origin, "hooks", "pre-receive");
+        var filter = resultsOnly
+            ? "case \"$ref\" in refs/heads/agent-studio/results/*) ;; *) exit 0 ;; esac\n"
+            : "";
+        await File.WriteAllTextAsync(hook,
+            "#!/bin/sh\nread old new ref\n" + filter +
+            $"n=0; [ -f '{count}' ] && n=$(cat '{count}')\n" +
+            $"n=$((n+1)); echo \"$n\" > '{count}'\n" +
+            $"if [ \"$n\" -le {failures} ]; then echo '{message}' >&2; exit 1; fi\n" +
+            "exit 0\n");
+        File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return count;
+    }
 
     /// <summary>
     /// An origin that refuses every push like GitHub refuses a read token, while
