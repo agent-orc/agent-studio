@@ -167,7 +167,7 @@ cmd_up() {
   )
   if [[ "${demo_mode}" -eq 1 ]]; then
     backend_env+=(
-      "Security__Profile=public-demo-readonly"
+      "Security__Profile=${ATP_TEST_DEMO_PROFILE:-public-demo-readonly}"
       "WatchPaths__0__Name=Demo App"
       "WatchPaths__0__Path=${demo_app}"
       "WatchPaths__0__RootPath=${demo_app}"
@@ -191,7 +191,7 @@ cmd_up() {
     echo "export PW_BACKEND_URL=${backend_url}"
     echo "export TaskRepository=${workspace}"
     if [[ "${demo_mode}" -eq 1 ]]; then
-      echo "export Security__Profile=public-demo-readonly"
+      echo "export Security__Profile=${ATP_TEST_DEMO_PROFILE:-public-demo-readonly}"
     fi
   } > "${ENV_FILE}"
 
