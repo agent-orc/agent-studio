@@ -32,7 +32,9 @@ const PROJECT = 'Website';
 const STORAGE = '/srv/tasks/website';
 const REPO = '/srv/repo/website';
 const DEPLOY = `/api/projects/${PROJECT}/deploy`;
-const VIEWPORT = { width: 1440, height: 900 };
+const VIEWPORT = { width: 1280, height: 900 };
+/** Evidence widths: desktop and a phone (AGT-3403 follow-up). */
+const WIDTHS = [1280, 390];
 const RESULTS = process.env.JOB_RESULTS_DIR
   ? path.join(process.env.JOB_RESULTS_DIR, 'screenshots')
   : path.resolve(__dirname, '..', '..', 'test-results', 'status-indicator-surfaces');
@@ -438,13 +440,17 @@ async function hideDevOverlays(page: Page): Promise<void> {
 
 async function captureBothThemes(page: Page, name: string): Promise<void> {
   fs.mkdirSync(RESULTS, { recursive: true });
-  for (const theme of ['light', 'dark'] as Theme[]) {
-    await setTheme(page, theme);
-    await expect(page.locator('html')).toHaveAttribute('data-studio-theme', theme);
-    await hideDevOverlays(page);
-    await page.mouse.move(0, 0);
-    await page.screenshot({ path: path.join(RESULTS, `${name}-${theme}.png`), animations: 'disabled', caret: 'hide' });
+  for (const width of WIDTHS) {
+    await page.setViewportSize({ width, height: VIEWPORT.height });
+    for (const theme of ['light', 'dark'] as Theme[]) {
+      await setTheme(page, theme);
+      await expect(page.locator('html')).toHaveAttribute('data-studio-theme', theme);
+      await hideDevOverlays(page);
+      await page.mouse.move(0, 0);
+      await page.screenshot({ path: path.join(RESULTS, `${name}-${width}-${theme}.png`), animations: 'disabled', caret: 'hide' });
+    }
   }
+  await page.setViewportSize(VIEWPORT);
 }
 
 const card = (page: Page, title: string) => page.getByTestId('task-card').filter({ hasText: title });
