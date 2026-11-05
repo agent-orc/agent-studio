@@ -35,7 +35,7 @@ internal static class VisualReviewScreenshotBundle
     {
             var artifacts = runArtifacts
                 .Where(VisualReviewEvidence.IsScreenshot)
-                .OrderBy(artifact => artifact.Name.Contains("/after", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .OrderBy(artifact => VisualReviewEvidence.IsAfterScreenshot(artifact.Name) ? 0 : 1)
                 .ThenBy(artifact => artifact.Name, StringComparer.Ordinal)
                 .ToArray();
             if (artifacts.Length == 0) return "No delivered screenshots were attached to this run.";
@@ -43,8 +43,15 @@ internal static class VisualReviewScreenshotBundle
             Directory.CreateDirectory(directory);
             var listed = new List<string>();
             long total = 0;
-            foreach (var artifact in artifacts.Take(MaximumImages))
+            var copied = 0;
+            var omittedByCount = 0;
+            foreach (var artifact in artifacts)
             {
+                if (copied == MaximumImages)
+                {
+                    omittedByCount++;
+                    continue;
+                }
                 if (artifact.SizeBytes > MaximumImageBytes || total + artifact.SizeBytes > MaximumTotalBytes)
                 {
                     listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: omitted because of image evidence size limit");
@@ -69,10 +76,11 @@ internal static class VisualReviewScreenshotBundle
                 var path = Path.Combine(directory, $"{stage}-image-{listed.Count + 1:D2}{extension}");
                 await File.WriteAllBytesAsync(path, bytes, ct);
                 total += bytes.LongLength;
+                copied++;
                 listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: {JsonSerializer.Serialize(path)}");
             }
-            if (artifacts.Length > MaximumImages)
-                listed.Add($"- {artifacts.Length - MaximumImages} more screenshots omitted by the 100-image review limit.");
+            if (omittedByCount > 0)
+                listed.Add($"- {omittedByCount} more screenshots omitted by the 100-image review limit.");
             return string.Join('\n', listed);
     }
 

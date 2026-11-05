@@ -120,10 +120,62 @@ public sealed class VisualReviewScreenshotTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public async Task After_artifact_is_prioritized_ahead_of_one_hundred_before_artifacts()
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "visual-review", "clean-footer.png"));
+        var before = Enumerable.Range(0, 100)
+            .Select(index => Artifact($"before-{index}", $"bars/before-{index:D3}.png", bytes));
+        var after = Artifact("after", "bars/after-1920-light.png", bytes);
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync(
+                [.. before, after],
+                (artifact, _) => Task.FromResult<ArtifactContentDto?>(new ArtifactContentDto(
+                    artifact.ArtifactId, artifact.RunId, artifact.Name, artifact.MediaType,
+                    artifact.Sha256, Convert.ToBase64String(bytes), artifact.SizeBytes)),
+                root, default);
+
+            Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
+            Assert.StartsWith($"- \"{after.Name}\"", evidence);
+            Assert.Contains("omitted by the 100-image review limit", evidence);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task Image_limit_counts_readable_images_so_later_valid_after_evidence_is_loaded()
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "visual-review", "clean-footer.png"));
+        var bad = Enumerable.Range(0, 100)
+            .Select(index => Artifact($"bad-{index}", $"bars/after-{index:D3}.png", bytes));
+        var valid = Artifact("valid", "bars/after-999.png", bytes);
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync(
+                [.. bad, valid],
+                (artifact, _) => Task.FromResult<ArtifactContentDto?>(artifact.ArtifactId == "valid"
+                    ? new ArtifactContentDto(artifact.ArtifactId, artifact.RunId, artifact.Name,
+                        artifact.MediaType, artifact.Sha256, Convert.ToBase64String(bytes), artifact.SizeBytes)
+                    : null), root, default);
+
+            Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
+            Assert.Contains($"\"{valid.Name}\":", evidence);
+            Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
     [Theory]
     [InlineData("bars/before-1920-light.png", false)]
     [InlineData("before.png", false)]
     [InlineData("bars/before/1920-light.png", false)]
+    [InlineData("bars/before-1920-light/footer.png", false)]
+    [InlineData("bars/footer-before/screenshot.png", false)]
     [InlineData("bars/1920-light-before.png", false)]
     [InlineData("bars/after-1920-light.png", true)]
     [InlineData("bars/clean-footer.png", true)]

@@ -448,6 +448,10 @@ The executor fetches bounded image artifacts from the source run's `results/`
 delivery, preserves the screenshot names, and places read-only copies beside
 the exact-SHA review checkout. The visual prompt receives those paths, the
 authoritative diff, the hard visual rules, and the relevant admin design rules.
+After screenshots take priority over before screenshots at both the remote
+100-image cap and the local eight-image attachment cap. The remote cap counts
+successfully loaded images, so unavailable or invalid artifacts cannot crowd
+out a later valid after screenshot.
 It opens each screenshot, compares matching before and after views, and checks
 layout, spacing, separation, alignment, clipping, and contrast across available
 themes and widths. A visual concern or block cites both the screenshot and the

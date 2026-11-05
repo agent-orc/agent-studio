@@ -18,7 +18,8 @@ internal static class LocalVisualScreenshotEvidence
                 || path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase))
             .Where(path => new FileInfo(path).Length <= 8L * 1024 * 1024)
-            .OrderBy(path => path.Contains("/after", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .OrderBy(path => VisualReviewEvidence.IsAfterScreenshot(
+                Path.GetRelativePath(results, path)) ? 0 : 1)
             .ThenBy(path => path, StringComparer.Ordinal)
             .Take(8)
             .ToArray();

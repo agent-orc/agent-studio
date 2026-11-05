@@ -128,6 +128,27 @@ public class AspectRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Visual_aspect_prioritizes_after_screenshot_beyond_eight_before_images()
+    {
+        var results = Path.Combine(_jobFolder, "results", "bars");
+        Directory.CreateDirectory(results);
+        for (var i = 0; i < 8; i++)
+            File.WriteAllBytes(Path.Combine(results, $"before-{i:D2}.png"), [1, 2, 3]);
+        File.WriteAllBytes(Path.Combine(results, "after-1920-light.png"), [4, 5, 6]);
+        var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
+        var inputs = BuildInputs() with
+        {
+            VisualChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
+        };
+
+        var report = await runner.RunAsync(inputs, ["visual-review"], "claude",
+            "claude-sonnet-5", TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.Equal(AspectStatus.Pass, Assert.Single(report.Verdicts).Status);
+        Assert.Contains("after-1920-light.png", LocalVisualScreenshotEvidence.PromptSection(_jobFolder));
+    }
+
+    [Fact]
     public async Task Local_aspect_preserves_evidence_checked_for_scoped_rereview()
     {
         var runner = BuildRunner(_ =>

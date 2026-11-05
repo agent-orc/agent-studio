@@ -24,12 +24,11 @@ public static class VisualReviewEvidence
     {
         var normalized = name.Replace('\\', '/');
         var parts = normalized.Split('/');
-        if (parts.SkipLast(1).Any(part => part.Equals("before", StringComparison.OrdinalIgnoreCase)))
-            return false;
-        var stem = Path.GetFileNameWithoutExtension(parts[^1]);
-        return !System.Text.RegularExpressions.Regex.IsMatch(stem,
-            @"(^before($|[-_.])|[-_.]before($|[-_.]))",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return !parts.Select((part, index) => index == parts.Length - 1
+                ? Path.GetFileNameWithoutExtension(part) : part)
+            .Any(part => System.Text.RegularExpressions.Regex.IsMatch(part,
+                @"(^before($|[-_.])|[-_.]before($|[-_.]))",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase));
     }
 
     public static ReviewVerdictDto EnforceMissingScreenshots(ReviewVerdictDto verdict,
