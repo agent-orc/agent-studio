@@ -278,7 +278,7 @@ test.describe('Explorer · project destinations', () => {
       return;
     }
     await page.getByTestId(`studio-explorer-project-board-${expanded.name}`).click();
-    await expect(page.getByTestId(`studio-tab-board:${expanded.name}`))
+    await expect(page.getByTestId(`studio-tab-board:${expanded.name}`).getByRole('tab'))
       .toHaveAttribute('aria-selected', 'true', { timeout: 5_000 });
 
     await expect(page.getByTestId('studio-project-picker-trigger')).toContainText(expanded.name);

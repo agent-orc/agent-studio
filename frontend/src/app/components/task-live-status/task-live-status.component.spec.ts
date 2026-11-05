@@ -3,6 +3,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach } from 'vitest';
 import type { TaskInfo } from '../../models/task.model';
 import { TaskLiveStatusComponent } from './task-live-status.component';
+import { RemoteHostsService } from '../../features/remote-hosts';
 
 function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
   const now = Date.now();
@@ -35,9 +36,22 @@ describe('TaskLiveStatusComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [TaskLiveStatusComponent],
-      providers: [provideZonelessChangeDetection()],
+      providers: [provideZonelessChangeDetection(),
+        { provide: RemoteHostsService, useValue: { hosts: () => [] } }],
     }).compileComponents();
     fixture = TestBed.createComponent(TaskLiveStatusComponent);
+  });
+
+  it('shows a Ready pickup hold without a previous live run', () => {
+    fixture.componentRef.setInput('task', task({
+      state: '2-ready', liveStatus: null,
+      pickupHold: { mechanism: 'pickup-policy', classification: 'satisfiable-soon',
+        reason: 'Waiting for the runner.', sinceUtc: new Date().toISOString(),
+        unsatisfiable: false, resolutions: [] },
+    }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="pickup-hold-reason"]')?.textContent)
+      .toContain('Waiting for the runner.');
   });
 
   it('renders the active step with duration, host, model, CLI and next steps', () => {

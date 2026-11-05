@@ -4,6 +4,7 @@ export { RemoteHostCardComponent } from './components/remote-host-card/remote-ho
 export { AddHostWizardComponent } from './components/add-host-wizard/add-host-wizard';
 export { RunnerSetupDialogComponent } from './components/runner-setup-dialog/runner-setup-dialog';
 export { RemoteHostsService } from './services/remote-hosts.service';
+export { claimLoadGateLabel } from './models/claim-load-gate';
 export { ReviewQueueService } from './services/review-queue.service';
 export type { ReviewQueueSnapshot } from './services/review-queue.service';
 export { ProviderAuthStatusService } from './services/provider-auth-status.service';

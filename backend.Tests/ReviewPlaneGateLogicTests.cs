@@ -354,9 +354,14 @@ public sealed class ReviewPlaneGateLogicTests
         release.SetResult();
 
         await blocker.WaitAsync(Bounded);
-        Assert.Equal(MergeIntoIntegrationOutcome.Error, (await pending.WaitAsync(Bounded)).Outcome);
+        var refused = await pending.WaitAsync(Bounded);
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, refused.Outcome);
+        Assert.StartsWith(RemoteDeliveryIntegrationCoordinator.ReviewedDeliverySupersededError,
+            refused.Error);
         Assert.DoesNotContain("owner-switch", integrated);
 
+        // Completion must also publish the replay as finished before a retry
+        // can discard it. Otherwise this joins the old owner refusal.
         configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
         Assert.Equal(MergeIntoIntegrationOutcome.Merged,
             (await coordinator.EnqueueAsync(request, discardCompletedReplay: true).WaitAsync(Bounded)).Outcome);
