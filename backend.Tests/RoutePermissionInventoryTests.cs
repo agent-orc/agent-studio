@@ -28,6 +28,25 @@ public sealed class RoutePermissionInventoryTests : IDisposable
             RoutePermissionCatalog.Resolve("GET", "/api/model-selection/active")?.Permission);
     }
 
+    [Fact]
+    public void Failed_test_ranking_route_is_project_read_scoped()
+    {
+        Assert.Equal(IamPermissions.ProjectRead,
+            RoutePermissionCatalog.Resolve("GET", "/api/projects/{projectName}/batch-gate/failed-tests")?.Permission);
+        using var factory = Factory(SecurityProfiles.Local, null);
+        Assert.Contains(Routes(factory.Services), route =>
+            route.RoutePattern.RawText == "/api/projects/{projectName}/batch-gate/failed-tests");
+    }
+
+    [Fact]
+    public async Task Failed_test_ranking_route_rejects_unknown_project()
+    {
+        using var factory = Factory(SecurityProfiles.Local, null);
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/api/projects/unknown-project/batch-gate/failed-tests");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "route-permissions-" + Guid.NewGuid().ToString("N"));
 
     public static TheoryData<string, string?> Profiles => new()

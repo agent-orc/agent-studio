@@ -66,7 +66,7 @@ public static class BatchGateStateSnapshotReader
             };
         var manifests = projectManifests
             .OrderByDescending(item => item.ClosedAtUtc)
-            .Take(Math.Clamp(history, 0, 100))
+            .Take(Math.Clamp(history, 0, 500))
             .Concat(recoverable)
             .DistinctBy(item => item.BatchId)
             .OrderByDescending(item => item.ClosedAtUtc).ToArray();
