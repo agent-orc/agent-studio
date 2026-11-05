@@ -719,6 +719,14 @@ is `logs/batch-gate-ownership.json`. Native member records carry the gate
 identity and evidence; the integration-record endpoint only records integration
 bookkeeping.
 
+Each pilot tick retries formed manifests from the store. The oldest formed
+manifest takes the next available project gate slot, so later larger batches
+cannot indefinitely pass it. The state response includes every recoverable
+manifest even when it falls outside the requested history count. For a pending
+member past its planning deadline and absent from the last proposed member list,
+the plan names its current batch or fallback, or says that it awaits the next
+planner tick. Such a member never appears under an idle plan.
+
 The backend worker sends the full gate through `RemoteBuildTestGateRunner` to
 the configured remote gate host. A red candidate is compared on the server
 with a durable base verdict keyed by exact base SHA and gate profile. The
