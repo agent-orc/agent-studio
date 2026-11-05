@@ -95,7 +95,11 @@ hosts whose release-changing step was reached, in review, coding, engine,
 server, gate order. It restores the captured API/web image digests, engine image ref,
 gate SSH host, worker path, and agent-host release. Review replacement again requires an idle
 observation. The host adapter verifies the resulting health before reporting a
-restore. If the release changed on-disk formats, use the installation's backup
+restore. For a server container started from a tag, the snapshot resolves that
+running image's repository digest and image ID before any switch. Rollback
+pulls the captured digest and checks that the restored container has the same
+image ID. If Docker cannot resolve a unique repository digest, the deploy
+stops at snapshot. If the release changed on-disk formats, use the installation's backup
 restore procedure before a downgrade.
 
 Run fake-host checks without contacting an installation:

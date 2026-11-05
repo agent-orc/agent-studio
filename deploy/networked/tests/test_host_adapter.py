@@ -92,21 +92,30 @@ class HostAdapterTests(unittest.TestCase):
                     "gateSshHost": "new-gate"}
             settings = {"images": {"api": "repo/api", "web": "repo/web"}}
             request = {"host": host, "settings": settings, "fields": [], "action": "snapshot"}
-            old = {"api": "repo/api@sha256:" + "a" * 64,
-                   "frontend": "repo/web@sha256:" + "a" * 64,
-                   "orchestrator-engine": "repo/engine@sha256:" + "a" * 64}
+            old = {"api": "repo/api:old-tag", "frontend": "repo/web:old-tag"}
+            ids = {"api": "sha256:" + "c" * 64, "frontend": "sha256:" + "d" * 64}
             def snapshot_run(argv, cwd=None):
                 if "Config.Env" in argv[-2]:
                     return "RemoteGate__WorkerPath=/old/worker\nRemoteGate__SshHost=old-gate"
-                return old[argv[-1]]
+                if argv[:3] == ["docker", "image", "inspect"]:
+                    repository = "repo/api" if argv[-1] == ids["api"] else "repo/web"
+                    return json.dumps([repository + "@sha256:" + "a" * 64])
+                if ".Config.Image" in argv[-2]:
+                    return old[argv[-1]]
+                if ".Image" in argv[-2]:
+                    return ids[argv[-1]]
+                raise AssertionError(argv)
             with patch.object(remote, "run", side_effect=snapshot_run), \
                  patch.object(remote, "compose_ps", side_effect=lambda _dir, _env, service: service):
                 before = remote.main(request)["value"]
+            self.assertEqual(before["apiImage"], "repo/api:old-tag")
+            self.assertEqual(before["apiDigest"], "a" * 64)
+            self.assertEqual(before["apiImageId"], ids["api"])
             def fake_run(argv, cwd=None):
-                if argv[:2] == ["docker", "inspect"]:
-                    return old[argv[-1]]
+                if argv[:2] == ["docker", "inspect"] and ".Image" in argv[-2]:
+                    return ids[argv[-1]]
                 return ""
-            with patch.object(remote, "run", side_effect=fake_run), \
+            with patch.object(remote, "run", side_effect=fake_run) as commands, \
                  patch.object(remote, "compose_ps", side_effect=lambda _dir, _env, service: service):
                 request.update(action="server_switch", fields=[f"repo/api@sha256:{digest}",
                                                                f"repo/web@sha256:{digest}", "/new/worker"])
@@ -114,6 +123,10 @@ class HostAdapterTests(unittest.TestCase):
                 self.assertEqual(remote.env_read(env)["STUDIO_GATE_WORKER_PATH"], "/new/worker")
                 request.update(action="rollback_server", fields=[json.dumps(before)])
                 self.assertTrue(remote.main(request)["restored"])
+            pulls = [call.args[0][-1] for call in commands.call_args_list
+                     if call.args[0][:2] == ["docker", "pull"]]
+            self.assertIn("repo/api@sha256:" + "a" * 64, pulls)
+            self.assertIn("repo/web@sha256:" + "a" * 64, pulls)
             self.assertEqual(remote.env_read(env)["STUDIO_API_DIGEST"], "a" * 64)
             self.assertEqual(remote.env_read(env)["STUDIO_GATE_SSH_HOST"], "old-gate")
             self.assertEqual(remote.env_read(env)["STUDIO_GATE_WORKER_PATH"], "/old/worker")
@@ -139,6 +152,12 @@ class HostAdapterTests(unittest.TestCase):
                 request.update(action="rollback_engine", fields=[json.dumps(previous)])
                 self.assertTrue(remote.main(request)["restored"])
             self.assertEqual(remote.env_read(env)["ORCHESTRATOR_ENGINE_IMAGE_REF"], old)
+
+    def test_tagged_server_snapshot_refuses_unresolved_running_digest(self):
+        with patch.object(remote, "run", side_effect=["repo/api:old-tag", "sha256:" + "c" * 64,
+                                                        json.dumps(["other/api@sha256:" + "a" * 64])]):
+            with self.assertRaisesRegex(RuntimeError, "needs one digest for repo/api"):
+                remote.running_image("api-container", "repo/api")
 
     def test_review_recreate_refuses_busy_host_before_changing_image(self):
         with tempfile.TemporaryDirectory() as folder:

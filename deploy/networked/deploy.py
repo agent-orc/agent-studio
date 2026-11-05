@@ -276,7 +276,8 @@ def deploy(args, manifest):
     run_step(state, journal, "build", build)
 
     def snapshot():
-        required = {"server": {"apiImage", "webImage", "gateSshHost", "workerPath"},
+        required = {"server": {"apiImage", "webImage", "apiDigest", "webDigest",
+                                "apiImageId", "webImageId", "gateSshHost", "workerPath"},
                     "gate": {"workerPath"}, "engine": {"engineVersion"},
                     "coding": {"agentHostRelease"},
                     "review": {"agentHostRelease", "image"}}
@@ -290,6 +291,12 @@ def deploy(args, manifest):
             if not isinstance(value, dict) or not required[host["role"]].issubset(value) \
                     or any(not isinstance(value[key], str) or not value[key] for key in required[host["role"]]):
                 raise DeployError(f"snapshot for {host['id']} needs {sorted(required[host['role']])}")
+            if host["role"] == "server" and (any(
+                    not re.fullmatch(r"[0-9a-f]{64}", value[key])
+                    for key in ("apiDigest", "webDigest")) or any(
+                    not re.fullmatch(r"sha256:[0-9a-f]{64}", value[key])
+                    for key in ("apiImageId", "webImageId"))):
+                raise DeployError("server snapshot needs valid image digests and IDs")
             state["previous"][host["id"]] = {"role": host["role"], "target": host["target"],
                                             "value": result["value"]}
 

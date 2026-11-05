@@ -123,6 +123,26 @@ def require_idle(host):
         fail("review host is busy")
 
 
+def running_image(container, repository):
+    original = run(["docker", "inspect", "--format", "{{.Config.Image}}", container])
+    image_id = run(["docker", "inspect", "--format", "{{.Image}}", container])
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        fail("running container has no image ID")
+    if re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", original):
+        pinned = original
+    else:
+        refs = json.loads(run(["docker", "image", "inspect", "--format",
+                               "{{json .RepoDigests}}", image_id]))
+        if not isinstance(refs, list):
+            fail("running image has no repository digests")
+        matches = [ref for ref in refs if isinstance(ref, str) and
+                   re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", ref)]
+        if len(matches) != 1:
+            fail(f"running image needs one digest for {repository}")
+        pinned = matches[0]
+    return {"image": original, "digest": pinned.rsplit("@sha256:", 1)[1], "imageId": image_id}
+
+
 def main(request):
     action = request["action"]
     host = request["host"]
@@ -133,11 +153,12 @@ def main(request):
         role = host["role"]
         if role == "server":
             images = {}
-            for service in ("api", "frontend"):
+            for service, repository in (("api", config["images"]["api"]),
+                                        ("frontend", config["images"]["web"])):
                 container = compose_ps(host["composeDir"], host["envFile"], service)
                 if not container:
                     fail(f"{service} is not running")
-                images[service] = run(["docker", "inspect", "--format", "{{.Config.Image}}", container])
+                images[service] = running_image(container, repository)
             api_container = compose_ps(host["composeDir"], host["envFile"], "api")
             running_env = run(["docker", "inspect", "--format", '{{range .Config.Env}}{{println .}}{{end}}',
                                api_container]).splitlines()
@@ -147,7 +168,12 @@ def main(request):
                               if line.startswith("RemoteGate__SshHost=")), None)
             if not worker or not gate_host:
                 fail("running API has no remote gate host and worker path")
-            return {"value": {"apiImage": images["api"], "webImage": images["frontend"],
+            return {"value": {"apiImage": images["api"]["image"],
+                              "webImage": images["frontend"]["image"],
+                              "apiDigest": images["api"]["digest"],
+                              "webDigest": images["frontend"]["digest"],
+                              "apiImageId": images["api"]["imageId"],
+                              "webImageId": images["frontend"]["imageId"],
                               "gateSshHost": gate_host, "workerPath": worker}}
         if role == "engine":
             container = compose_ps(host["engineComposeDir"], host["engineEnvFile"], "orchestrator-engine")
@@ -343,16 +369,21 @@ def main(request):
             run(["systemctl", "is-active", "--quiet", "agent-runner.service"])
             run(["systemctl", "is-active", "--quiet", "agent-runner-review.service"])
         elif role == "server":
-            api = previous["apiImage"].rsplit("@sha256:", 1)[1]
-            web = previous["webImage"].rsplit("@sha256:", 1)[1]
+            api = previous["apiDigest"]
+            web = previous["webDigest"]
+            if not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (api, web)):
+                fail("server rollback snapshot has invalid image digests")
+            run(["docker", "pull", f'{config["images"]["api"]}@sha256:{api}'])
+            run(["docker", "pull", f'{config["images"]["web"]}@sha256:{web}'])
             env_set(host["envFile"], {"STUDIO_API_DIGEST": api, "STUDIO_WEB_DIGEST": web,
                                        "STUDIO_GATE_SSH_HOST": previous["gateSshHost"],
                                        "STUDIO_GATE_WORKER_PATH": previous["workerPath"]})
             compose(host["composeDir"], host["envFile"], "api", "frontend")
             run(["curl", "-fsS", host["healthUrl"]])
-            for service, expected in (("api", previous["apiImage"]), ("frontend", previous["webImage"])):
+            for service, expected in (("api", previous["apiImageId"]),
+                                      ("frontend", previous["webImageId"])):
                 container = compose_ps(host["composeDir"], host["envFile"], service)
-                if run(["docker", "inspect", "--format", "{{.Config.Image}}", container]) != expected:
+                if run(["docker", "inspect", "--format", "{{.Image}}", container]) != expected:
                     fail(f"{service} rollback image mismatch")
         elif role == "engine":
             env_set(host["engineEnvFile"], {"ORCHESTRATOR_ENGINE_IMAGE_REF": previous["engineVersion"]})

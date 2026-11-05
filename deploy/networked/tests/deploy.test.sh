@@ -24,7 +24,7 @@ case "$action" in
     printf '{"commit":"%s","ref":"example/%s@sha256:%s","sha256":"%s"}\n' "$1" "$name" "$digest" "$digest" ;;
   build:agent_host|build:gate_worker)
     printf '{"commit":"%s","ref":"/release/%s-%s","sha256":"%s"}\n' "$1" "${action#build:}" "$1" "$digest" ;;
-  snapshot:server) printf '{"value":{"apiImage":"old-api","webImage":"old-web","gateSshHost":"old-gate","workerPath":"old-worker"}}\n' ;;
+  snapshot:server) printf '{"value":{"apiImage":"old-api:tag","webImage":"old-web:tag","apiDigest":"%s","webDigest":"%s","apiImageId":"sha256:%s","webImageId":"sha256:%s","gateSshHost":"old-gate","workerPath":"old-worker"}}\n' "$digest" "$digest" "$digest" "$digest" ;;
   snapshot:gate) printf '{"value":{"workerPath":"old-worker"}}\n' ;;
   snapshot:engine) printf '{"value":{"engineVersion":"old-engine"}}\n' ;;
   snapshot:coding) printf '{"value":{"agentHostRelease":"old-agent"}}\n' ;;
@@ -61,7 +61,7 @@ case "$action" in
     if [[ "$FAKE_BUSY_REVIEW" == 1 ]]; then printf '{"idle":false}\n'; else printf '{"idle":true}\n'; fi ;;
   review_verify) printf '{"commit":"%s","planDigest":"plan-123","imageRef":"example/review@sha256:%s"}\n' "$1" "$digest" ;;
   rollback:server)
-    [[ "$2" == *'"apiImage":"old-api"'* && "$2" == *'"workerPath":"old-worker"'* ]]
+    [[ "$2" == *'"apiImage":"old-api:tag"'* && "$2" == *'"workerPath":"old-worker"'* ]]
     printf '{"restored":true}\n' ;;
   rollback:*) printf '{"restored":true}\n' ;;
   *) printf '{}\n' ;;
