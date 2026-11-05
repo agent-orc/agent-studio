@@ -11,6 +11,12 @@ All examples use placeholder names. Send `X-Client-Id` on every write.
 
 ## Operator
 
+The official client for these routes is `studio-op` (OP-8): see
+[studio-op setup](../../operations/setup/studio-op.md) for the commands, the
+token file and the exit codes. `studio-op continue <card> --prompt-file <file>`
+sends the round below and prints the returned `base` as "Run base"; exit 11
+is `batch-isolation-active`.
+
 ### Continue, steer or extend a card
 
 `POST /api/tasks/{id}/continue?watchPath=<project path>`

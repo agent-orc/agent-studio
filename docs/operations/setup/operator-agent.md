@@ -93,12 +93,12 @@ Host work happens through Studio, not through your keys.
    ```
 
 3. Let the agent read the token from that file when it calls Studio, never
-   from a repository, a prompt, or a chat message. For example:
-
-   ```sh
-   curl -fsS -H "Authorization: Bearer $(cat ~/.config/agent-studio/operator-session)" \
-     https://studio.example.test/api/tasks
-   ```
+   from a repository, a prompt, or a chat message. The operator CLI does this
+   for you: set `"credential": "operator-session"` in
+   `~/.config/agent-studio/studio-op.json` and check with
+   `studio-op auth status` ([studio-op setup](studio-op.md)). Do not expand the
+   token into a command line (`$(cat ...)`): other local users can read process
+   arguments.
 
 ## 4. Grant routine operations
 

@@ -17,7 +17,7 @@ export default async function globalSetup(): Promise<void> {
   }
   const response = await fetch(`${process.env.PW_BACKEND_URL}/healthz`);
   if (!response.ok) throw new Error(`Prebuilt backend health returned ${response.status}`);
-  if (process.env.PW_E2E_PROFILE === 'networked-monolith') {
+  if (process.env.PW_E2E_PROFILE === 'networked-monolith' || process.env.PW_E2E_PROFILE === 'operator-cli') {
     const auth = await fetch(`${process.env.PW_BASE_URL}/api/auth/status`);
     const status = await auth.json() as { profile?: string; bootstrapRequired?: boolean };
     if (!auth.ok || status.profile !== 'networked' || status.bootstrapRequired !== true)

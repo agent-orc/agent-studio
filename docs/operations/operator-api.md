@@ -9,6 +9,36 @@ Which token may call which route is in the
 routes are in the
 [operator-agent-level Dossier](../operator-agent-level/index.html) (AGT-3462).
 
+## studio-op
+
+The operator agent and the Owner call these routes through the official CLI
+`studio-op` (OP-8, decision OA-D1 option B) instead of hand-written scripts.
+It reads the token only from `~/.config/agent-studio/operator-token` (or
+`operator-session`), mode 600, and has no token option or variable. It
+redacts token-shaped values in every output, prints JSON with `--json`, and
+exits with stable codes. Installation, token setup, the command-to-route table
+and the exit codes are in [studio-op setup](setup/studio-op.md); the runbooks
+are in the [operator skill](../../.agents/skills/operator/SKILL.md).
+
+| Need | Command |
+|---|---|
+| Wake when a decision is needed; one watcher at a time | `studio-op watch` (watcher lease plus a local lock, decision stream with a saved cursor, exit code per event class) |
+| Batch gate state, pending pushes, eject | `studio-op triage`, `studio-op eject <card>` |
+| Continue round from the card's result ref | `studio-op continue <card> --prompt-file <file>` |
+| Lane moves and acceptance | `studio-op move <card> <lane>`, `studio-op accept <card>` (green evidence and no open decision, OA-D5) |
+| Create cards in Ready, repair titles | `studio-op create --ready`, `studio-op title` |
+| Review step models of all projects | `studio-op routing set-step ... --all` |
+| Quota and fallback | `studio-op capacity`, `studio-op routing` |
+| Check before restart or deploy, server-first plan | `studio-op preflight restart\|deploy`, `studio-op deploy plan` |
+| Write down why | `studio-op log append`, `studio-op log` |
+| Know what it may do | `studio-op auth status` |
+
+Card writes take the attention lease and send `If-Match` as described below.
+`studio-op move` refuses the accepted lanes; acceptance goes through
+`studio-op accept`, which reads the card and
+`GET /api/tasks/{id}/review-projection` first and refuses red, missing or
+disputed evidence, decision cards and open decisions with exit 7.
+
 ## Capacity
 
 `GET /api/operator/capacity` (OP-5) is a read-only view for the operator agent.
