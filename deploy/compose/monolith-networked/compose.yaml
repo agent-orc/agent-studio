@@ -69,6 +69,8 @@ services:
       # The key-encryption key of the secret store, kept outside the data directory.
       Secrets__KeyFile: /run/secrets/studio-secrets.kek
       Operations__Url: http://operations-server:5081
+      RemoteGate__SshHost: ${STUDIO_GATE_SSH_HOST:?Set the approved gate SSH host}
+      RemoteGate__WorkerPath: ${STUDIO_GATE_WORKER_PATH:?Set the release-pinned gate worker path}
       Operations__ServiceTokenFile: /run/operations/client/token
       Operations__Agents__local: container-agent
       HostCertificates__CaPrivateKeyFile: /run/host-ca/ca
