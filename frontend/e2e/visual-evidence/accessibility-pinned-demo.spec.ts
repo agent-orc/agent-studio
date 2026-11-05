@@ -5,14 +5,19 @@ import * as path from 'node:path';
 import { checkAccessibility } from '../helpers/accessibility';
 import { setTheme, type Theme } from '../helpers/theme';
 
-// The wrapper seeds a temporary ADR-0056 workspace. Refuse any other target.
-const demoRoot = process.env.TaskRepository;
-if (process.env.PW_A11Y_PINNED_DEMO !== '1'
-    || !demoRoot
-    || !fs.realpathSync(demoRoot).startsWith(path.join(os.tmpdir(), 'atp-worktree-test-'))
-    || !fs.existsSync(path.join(demoRoot, 'projects', 'demo-app'))
-    || !fs.existsSync(path.join(demoRoot, 'projects', 'demo-platform'))) {
-  throw new Error('Run through scripts/presentation-capture/run-accessibility.sh with pinned demo data.');
+// The wrapper seeds a temporary ADR-0056 workspace. Check after webServer
+// starts, before a page can navigate to the target.
+function assertPinnedDemo(): void {
+  const demoRoot = process.env.PW_E2E_WORKSPACE;
+  if (process.env.PW_A11Y_PINNED_DEMO !== '1'
+      || process.env.PW_PREBUILT !== '1'
+      || process.env.PW_E2E_PROFILE !== 'demo'
+      || !demoRoot
+      || !fs.realpathSync(demoRoot).startsWith(path.join(os.tmpdir(), 'studio-e2e-'))
+      || !fs.existsSync(path.join(demoRoot, 'projects', 'demo-app'))
+      || !fs.existsSync(path.join(demoRoot, 'projects', 'demo-platform'))) {
+    throw new Error('Run through scripts/presentation-capture/run-accessibility.sh with pinned demo data.');
+  }
 }
 
 const CARD = '[data-testid="task-card"], [data-testid="job-card"]';
@@ -21,6 +26,7 @@ const RESULTS = process.env.JOB_RESULTS_DIR;
 
 test.use({ reducedMotion: 'reduce', video: 'off', trace: 'off' });
 test.setTimeout(120_000);
+test.beforeEach(() => assertPinnedDemo());
 
 async function openBoard(page: Page): Promise<void> {
   await page.goto('/');
@@ -93,6 +99,17 @@ for (const theme of ['light', 'dark'] as const satisfies readonly Theme[]) {
     await openBoard(page);
     await setTheme(page, theme);
     await focusRail(page);
+    if (CAPTURE === 'before') {
+      // Reproduce the audited rail's pre-fix attributes. The visual markup and
+      // focus treatment are unchanged, so this is its original appearance.
+      await page.getByTestId('studio-activity-bar').evaluate((rail) => {
+        for (const button of rail.querySelectorAll('button')) button.removeAttribute('aria-current');
+        for (const button of rail.querySelectorAll('button[data-panel], [data-testid="studio-ab-workbenches"]')) {
+          button.removeAttribute('aria-label');
+        }
+        for (const icon of rail.querySelectorAll('app-studio-icon')) icon.removeAttribute('aria-hidden');
+      });
+    }
     if (!RESULTS) throw new Error('JOB_RESULTS_DIR is required for rail screenshots.');
     await page.getByTestId('studio-activity-bar').screenshot({
       path: path.join(RESULTS, `rail-focus-${CAPTURE}-${theme}.png`),

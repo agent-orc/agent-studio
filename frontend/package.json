@@ -53,6 +53,7 @@
   "packageManager": "npm@11.21.1",
   "dependencies": {
     "@angular/cdk": "^21.2.14",
+    "coding-agent-chat": "0.4.1",
     "@angular/common": "21.2.25",
     "@angular/compiler": "21.2.25",
     "@angular/core": "21.2.25",
@@ -64,7 +65,6 @@
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-image": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
-    "coding-agent-chat": "0.4.1",
     "diff2html": "^3.4.56",
     "dompurify": "^3.4.17",
     "highlight.js": "^11.11.1",

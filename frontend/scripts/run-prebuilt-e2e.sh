@@ -24,12 +24,21 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
   done
 fi
 PUBLISH_DIR="${REPO_ROOT}/backend/bin/e2e-publish"
+PUBLISH_CONFIGURATION="${PW_E2E_DOTNET_CONFIGURATION:-Release}"
+PUBLISH_BUILD_ARGS=()
+if [[ "${PW_E2E_PUBLISH_NO_BUILD:-0}" == "1" ]]; then
+  PUBLISH_BUILD_ARGS+=(--no-build)
+fi
 CHECKOUT_SHA="$(bash "${REPO_ROOT}/scripts/e2e-source-fingerprint.sh")"
 
-if [[ ! -f "${PUBLISH_DIR}/OrchestratorApi.dll" || "$(cat "${PUBLISH_DIR}/E2E-FINGERPRINT" 2>/dev/null || true)" != "${CHECKOUT_SHA}" ]]; then
-  dotnet publish "${REPO_ROOT}/backend/OrchestratorApi.csproj" --configuration Release --output "${PUBLISH_DIR}"
+if [[ ! -f "${PUBLISH_DIR}/OrchestratorApi.dll" \
+   || "$(cat "${PUBLISH_DIR}/E2E-FINGERPRINT" 2>/dev/null || true)" != "${CHECKOUT_SHA}" \
+   || "$(cat "${PUBLISH_DIR}/E2E-CONFIGURATION" 2>/dev/null || true)" != "${PUBLISH_CONFIGURATION}" ]]; then
+  dotnet publish "${REPO_ROOT}/backend/OrchestratorApi.csproj" --configuration "${PUBLISH_CONFIGURATION}" \
+    --output "${PUBLISH_DIR}" "${PUBLISH_BUILD_ARGS[@]}"
   git -C "${REPO_ROOT}" rev-parse HEAD > "${PUBLISH_DIR}/RELEASE-SHA"
   printf '%s\n' "${CHECKOUT_SHA}" > "${PUBLISH_DIR}/E2E-FINGERPRINT"
+  printf '%s\n' "${PUBLISH_CONFIGURATION}" > "${PUBLISH_DIR}/E2E-CONFIGURATION"
 fi
 if [[ "${PW_E2E_PROFILE}" == first-run ]]; then
   dotnet publish "${REPO_ROOT}/runner/AgentRunner.csproj" --configuration Release \
