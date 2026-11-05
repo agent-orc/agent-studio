@@ -56,7 +56,7 @@ public sealed class GateSlotUsageTracker
     public GateSlotUsage ReportedOrLocalSnapshot()
     {
         var remote = RemoteSnapshot(TimeSpan.FromMinutes(10));
-        return remote is null ? Snapshot() : remote with { Total = CurrentTotal };
+        return remote ?? Snapshot();
     }
 
     public int Dispatching { get { lock (_dispatchGate) return _dispatching.Count; } }

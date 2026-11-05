@@ -955,7 +955,10 @@ are supplied, `slots * processorsPerGate` must not exceed `hostCores` unless
 `source` is `configuration` until the first saved override, then `stored`.
 `use` counts busy and total slots on healthy pull hosts when present; otherwise
 it uses an SSH host report from the past ten minutes or this API process's
-local slot count.
+local slot count. A recent SSH report retains the host's reported total even
+when it differs from the saved capacity. This can happen while gates with an
+older grant finish after a capacity change. A report from a newly dispatched
+gate reflects its new grant.
 The response has `Cache-Control: no-store`. Each changed value is persisted as
 an installation-wide override and recorded in the operator audit stream as
 `gate-capacity.change`, with the actor and previous and current capacity.

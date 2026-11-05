@@ -46,7 +46,7 @@ export class ExecutionInfrastructureComponent {
       next: response => {
         this.infrastructure.update(current => current ? {
           ...current, gate: { ...current.gate, capacity: response.capacity,
-            capacitySource: 'stored', total: response.capacity.slots },
+            capacitySource: 'stored' },
         } : current);
         this.draft.set(response.capacity);
         this.saving.set(false);

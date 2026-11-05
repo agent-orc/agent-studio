@@ -608,7 +608,7 @@ test.describe('Execution Hosts settings section', () => {
     await stubGroupedHostApis(page);
     await page.route('**/api/system/execution-infrastructure', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({
-        gate: { host: 'kori-gate', transport: 'pull', busy: 2, total: 5,
+        gate: { host: 'kori-gate', transport: 'ssh', busy: 2, total: 5,
           reachability: 'reachable', lastReachedAt: null, lastFailureAt: null,
           capacity: { slots: 5, processorsPerGate: 6, hostCores: 30,
             allowOversubscription: false }, capacitySource: 'configuration', workers: [] },
@@ -625,10 +625,13 @@ test.describe('Execution Hosts settings section', () => {
     const panel = page.getByTestId('remote-hosts-panel');
     await panel.getByTestId('environment-installation-toggle').click();
     const form = page.getByTestId('gate-capacity-settings');
-    await expect(form).toContainText('2 of 5 slots in use');
+    await expect(form).toContainText('2 of 5 reported host slots in use');
     await form.locator('input[name="slots"]').fill('4');
+    await expect(form).toContainText('2 of 5 reported host slots in use');
     await form.getByRole('button', { name: 'Save gate capacity' }).click();
     await expect(form).toContainText('Saved');
+    await expect(form).toContainText('2 of 5 reported host slots in use');
+    await expect(page.getByTestId('remote-gate-host')).toContainText('2 / 5 slots');
     expect(saved).toMatchObject({ slots: 4, processorsPerGate: 6, hostCores: 30,
       allowOversubscription: false });
     const directory = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;

@@ -33,7 +33,7 @@
     @if (draft(); as capacity) {
       <form class="infrastructure__capacity" data-testid="gate-capacity-settings" (ngSubmit)="save()">
         <h4>Gate capacity</h4>
-        <p class="infrastructure__capacity-use">{{ infrastructure.gate.busy }} of {{ capacity.slots }} slots in use ·
+        <p class="infrastructure__capacity-use">{{ infrastructure.gate.busy }} of {{ infrastructure.gate.total }} reported host slots in use ·
           {{ infrastructure.gate.capacitySource === 'stored' ? 'saved setting' : 'configuration default' }}</p>
         <div class="infrastructure__capacity-fields">
           <label>Slots <input type="number" name="slots" min="1" max="64" required

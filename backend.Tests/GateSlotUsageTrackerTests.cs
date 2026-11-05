@@ -23,7 +23,8 @@ public sealed class GateSlotUsageTrackerTests
             tracker.Acquired("run-1", 4, 5);
             tracker.RemoteWaiting(1, 5);
             capacity.Set(new GateCapacity(4, 6, 24, false), "operator-1");
-            Assert.Equal(new GateSlotUsage(1, 4), tracker.ReportedOrLocalSnapshot());
+            Assert.Equal(new GateSlotUsage(1, 5), tracker.ReportedOrLocalSnapshot());
+            Assert.Equal(new GateSlotUsage(1, 4), tracker.Snapshot());
             var board = tracker.Board();
             Assert.Equal(4, board.Total);
             Assert.Equal("gate-1", board.Slots[4].GateId);
@@ -47,8 +48,8 @@ public sealed class GateSlotUsageTrackerTests
         var tracker = new GateSlotUsageTracker(config, clock);
         Assert.Equal(new GateSlotUsage(0, 3), tracker.ReportedOrLocalSnapshot());
 
-        tracker.RemoteWaiting(1, 3);
-        Assert.Equal(new GateSlotUsage(1, 3), tracker.ReportedOrLocalSnapshot());
+        tracker.RemoteWaiting(1, 5);
+        Assert.Equal(new GateSlotUsage(1, 5), tracker.ReportedOrLocalSnapshot());
 
         clock.Advance(TimeSpan.FromMinutes(11));
         Assert.Equal(new GateSlotUsage(0, 3), tracker.ReportedOrLocalSnapshot());

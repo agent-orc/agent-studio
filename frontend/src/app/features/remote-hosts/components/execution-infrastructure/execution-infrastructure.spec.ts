@@ -13,7 +13,7 @@ describe('ExecutionInfrastructureComponent', () => {
     fixture.detectChanges();
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/system/execution-infrastructure').flush({
-      gate: { host: 'gate-1', transport: 'pull', busy: 1, total: 5,
+      gate: { host: 'gate-1', transport: 'ssh', busy: 1, total: 5,
         reachability: 'reachable', lastReachedAt: null, lastFailureAt: null,
         capacity: { slots: 5, processorsPerGate: 6, hostCores: 30,
           allowOversubscription: false }, capacitySource: 'configuration', workers: [] },
@@ -23,11 +23,12 @@ describe('ExecutionInfrastructureComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     const form = fixture.nativeElement.querySelector('[data-testid="gate-capacity-settings"]') as HTMLElement;
-    expect(form.textContent).toContain('1 of 5 slots in use');
+    expect(form.textContent).toContain('1 of 5 reported host slots in use');
     const slots = form.querySelector('input[name="slots"]') as HTMLInputElement;
     slots.value = '4';
     slots.dispatchEvent(new Event('input', { bubbles: true }));
     await fixture.whenStable();
+    expect(form.textContent).toContain('1 of 5 reported host slots in use');
     form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     const request = http.expectOne('/api/system/gate-capacity');
     expect(request.request.method).toBe('PUT');
@@ -36,6 +37,7 @@ describe('ExecutionInfrastructureComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     expect(form.textContent).toContain('Saved');
+    expect(form.textContent).toContain('1 of 5 reported host slots in use');
     http.verify();
   });
 });
