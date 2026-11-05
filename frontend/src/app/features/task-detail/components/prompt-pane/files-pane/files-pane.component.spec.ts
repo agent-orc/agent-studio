@@ -19,6 +19,64 @@ import { FilesPaneComponent } from './files-pane.component';
  * stable across template tweaks.
  */
 describe('FilesPaneComponent (smoke)', () => {
+  it('reads a collapsed artifact only when opened and reuses its body', async () => {
+    await TestBed.configureTestingModule({
+      imports: [FilesPaneComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(FilesPaneComponent);
+    fixture.componentRef.setInput('jobId', 'demo-job');
+    fixture.componentRef.setInput('artifacts', [{ name: 'notes.txt', kind: 'other',
+      sizeBytes: 12, mtime: '2026-11-05T00:00:00Z' }]);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectNone(r => r.url.includes('/files/notes.txt'));
+    const root = fixture.nativeElement as HTMLElement;
+    root.querySelector<HTMLElement>('[data-testid="file-card-expand-notes.txt"]')!.click();
+    fixture.detectChanges();
+    http.expectOne(r => r.url.includes('/files/notes.txt')).flush(utf8Buffer('Notes ready'));
+    fixture.detectChanges();
+    root.querySelector<HTMLElement>('[data-testid="file-card-notes.txt"] .file-card__head')!.click();
+    fixture.detectChanges();
+    root.querySelector<HTMLElement>('[data-testid="file-card-expand-notes.txt"]')!.click();
+    fixture.detectChanges();
+    http.expectNone(r => r.url.includes('/files/notes.txt'));
+    http.verify();
+  });
+
+  it('reads a file on first activation, reuses it, and retries a failed read', async () => {
+    await TestBed.configureTestingModule({
+      imports: [FilesPaneComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(FilesPaneComponent);
+    fixture.componentRef.setInput('jobId', 'demo-job');
+    fixture.componentRef.setInput('active', false);
+    fixture.componentRef.setInput('artifacts', [{ name: 'review.md', kind: 'codeReview',
+      sizeBytes: 12, mtime: '2026-11-05T00:00:00Z' }]);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectNone(r => r.url.includes('/files/review.md'));
+
+    fixture.componentRef.setInput('active', true);
+    fixture.detectChanges();
+    http.expectOne(r => r.url.includes('/files/review.md'))
+      .flush(utf8Buffer('Unavailable'), { status: 503, statusText: 'Unavailable' });
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain('Could not load this file');
+    root.querySelector<HTMLElement>('[data-testid="file-card-retry-review.md"]')!.click();
+    http.expectOne(r => r.url.includes('/files/review.md')).flush(utf8Buffer('# Review loaded'));
+    fixture.componentRef.setInput('active', false);
+    fixture.detectChanges();
+    fixture.componentRef.setInput('active', true);
+    fixture.detectChanges();
+    http.expectNone(r => r.url.includes('/files/review.md'));
+    http.verify();
+  });
+
   it('compiles + instantiates without throwing', async () => {
     try {
       await TestBed.configureTestingModule({
@@ -331,13 +389,12 @@ describe('FilesPaneComponent (smoke)', () => {
 
     const http = TestBed.inject(HttpTestingController);
     const html = '<button id="switch">Switch</button><script>document.body.dataset.ran="true"</script>';
-    http.expectOne((r) => r.url.includes('/api/tasks/demo-job/files/interactive-report.html'))
-      .flush(utf8Buffer(html));
-    fixture.detectChanges();
-
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('[data-testid="file-card-html-frame"]')).toBeNull();
     root.querySelector<HTMLElement>('[data-testid="file-card-interactive-report.html"] .file-card__head')!.click();
+    fixture.detectChanges();
+    http.expectOne((r) => r.url.includes('/api/tasks/demo-job/files/interactive-report.html'))
+      .flush(utf8Buffer(html));
     fixture.detectChanges();
 
     const frame = root.querySelector<HTMLIFrameElement>('[data-testid="file-card-html-frame"]');
@@ -372,25 +429,25 @@ describe('FilesPaneComponent (smoke)', () => {
     fixture.detectChanges();
 
     const http = TestBed.inject(HttpTestingController);
+    const root = fixture.nativeElement as HTMLElement;
+    root.querySelector<HTMLElement>('[data-testid="file-card-interactive-report.html"] .file-card__head')!.click();
+    fixture.detectChanges();
     http.expectOne((r) => r.url.includes('/api/tasks/first-job/files/interactive-report.html'))
       .flush(utf8Buffer('<h1>First task</h1>'));
     fixture.detectChanges();
 
-    const root = fixture.nativeElement as HTMLElement;
-    root.querySelector<HTMLElement>('[data-testid="file-card-interactive-report.html"] .file-card__head')!.click();
-    fixture.detectChanges();
     expect(root.querySelector<HTMLIFrameElement>('[data-testid="file-card-html-frame"]')?.getAttribute('srcdoc'))
       .toContain('First task');
 
     fixture.componentRef.setInput('jobId', 'second-job');
     fixture.detectChanges();
     expect(root.querySelector('[data-testid="file-card-html-frame"]')).toBeNull();
+    root.querySelector<HTMLElement>('[data-testid="file-card-interactive-report.html"] .file-card__head')!.click();
+    fixture.detectChanges();
     http.expectOne((r) => r.url.includes('/api/tasks/second-job/files/interactive-report.html'))
       .flush(utf8Buffer('<h1>Second task</h1>'));
     fixture.detectChanges();
 
-    root.querySelector<HTMLElement>('[data-testid="file-card-interactive-report.html"] .file-card__head')!.click();
-    fixture.detectChanges();
     const secondFrame = root.querySelector<HTMLIFrameElement>('[data-testid="file-card-html-frame"]');
     expect(secondFrame?.getAttribute('srcdoc')).toContain('Second task');
     expect(secondFrame?.getAttribute('srcdoc')).not.toContain('First task');

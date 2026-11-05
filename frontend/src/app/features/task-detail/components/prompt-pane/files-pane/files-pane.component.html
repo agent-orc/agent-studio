@@ -120,7 +120,10 @@
                               [source]="doc.body"
                               [dense]="true" />
               } @else {
-                <div class="file-card__error">Could not load this file.</div>
+                <div class="file-card__error" role="alert">Could not load this file.
+                  <button type="button" [attr.data-testid]="'file-card-retry-' + file.name"
+                          (click)="retryFile(file.name)">Retry</button>
+                </div>
               }
             }
           </div>
@@ -146,7 +149,10 @@
                       [attr.data-testid]="'file-card-expand-' + file.name"
                       (click)="toggleExpanded(file.name)">Open document</button>
             } @else {
-              <div class="file-card__preview-empty">No preview available.</div>
+              <div class="file-card__preview-empty">Open to load this document.</div>
+              <button type="button" class="file-card__expand-link"
+                      [attr.data-testid]="'file-card-expand-' + file.name"
+                      (click)="toggleExpanded(file.name)">Open document</button>
             }
           </div>
         }
