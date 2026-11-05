@@ -299,6 +299,9 @@ export class App implements OnInit, OnDestroy {
   readonly codexSignInRequest = inject(CodexSignInDialogService).request;
   readonly claudeSignInRequest = inject(ClaudeSignInDialogService).request;
   readonly chatProjectRequest = signal<{ projectName: string } | null>(null);
+  onChatProjectRequestHandled(request: { projectName: string }): void {
+    if (this.chatProjectRequest() === request) this.chatProjectRequest.set(null);
+  }
   /** Records the lane the user was triaging in. When the open job's state
    *  diverges from this (e.g. an external client moved it) we treat that as
    *  an auto-advance and toast accordingly. */

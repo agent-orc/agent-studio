@@ -34,4 +34,5 @@ export class OrchestratorSideSheetHostComponent {
   readonly openJobDetail = output<{ jobId: string; watchPath: string }>();
   readonly navigateToContext = output<string>();
   readonly openSettings = output<void>();
+  readonly projectRequestHandled = output<{ projectName: string }>();
 }

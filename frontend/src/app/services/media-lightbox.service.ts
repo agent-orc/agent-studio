@@ -1,4 +1,4 @@
-import { Injectable, computed, signal } from '@angular/core';
+import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
 
 /**
  * App-wide image lightbox / enlarge view.
@@ -61,6 +61,22 @@ export type MediaLightboxState = MediaLightboxImage;
 export class MediaLightboxService {
   private readonly images = signal<MediaLightboxImage[]>([]);
   private readonly cursor = signal(0);
+
+  constructor() {
+    // The overlay component is deferred. Capture arrows as soon as the service
+    // opens so a key pressed before the component mounts cannot reach task paging.
+    if (typeof document === 'undefined') return;
+    const controller = new AbortController();
+    document.addEventListener('keydown', event => {
+      if (this.active() === null || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === 'ArrowRight') this.next();
+      else this.prev();
+    }, { capture: true, signal: controller.signal });
+    inject(DestroyRef).onDestroy(() => controller.abort());
+  }
 
   /** The image currently shown, or null when the lightbox is closed. */
   readonly active = computed<MediaLightboxState | null>(() => {

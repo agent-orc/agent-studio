@@ -38,6 +38,8 @@ describe('OrchestratorSideSheetComponent project entry', () => {
     fixture.componentRef.setInput('projects', ['Alpha', 'Beta']);
     fixture.componentRef.setInput('preferredProject', 'Alpha');
     fixture.componentRef.setInput('requestedProject', { projectName: 'Alpha' });
+    const handled: { projectName: string }[] = [];
+    fixture.componentInstance.projectRequestHandled.subscribe(request => handled.push(request));
     fixture.detectChanges();
 
     fixture.componentInstance.setActiveProject('Beta');
@@ -46,6 +48,7 @@ describe('OrchestratorSideSheetComponent project entry', () => {
     fixture.componentRef.setInput('requestedProject', { projectName: 'Alpha' });
     fixture.detectChanges();
     expect(fixture.componentInstance.contextKey()).toBe('project:Alpha');
+    expect(handled).toHaveLength(2);
   });
 
   it('opens only for the shell standard-entry event and uses its resolved project', () => {

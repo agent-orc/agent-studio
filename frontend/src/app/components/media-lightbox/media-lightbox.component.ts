@@ -2,7 +2,6 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
-  HostListener,
   effect,
   inject,
   signal,
@@ -22,9 +21,8 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
  *  - Close button closes.
  *  - Escape closes (via `ModalStackService` so a confirm dialog above the
  *    lightbox still wins).
- *  - Left/Right arrows page a gallery (Prev/Next). They are swallowed
- *    while the lightbox is open so they never reach the task-detail triage
- *    handler and switch the active task - see `onArrowKey`.
+ *  - Left/Right arrows are captured by MediaLightboxService, including
+ *    the brief interval before this deferred component mounts.
  *  - Large images are constrained to the viewport but allow zoom-to-actual
  *    via the click-on-image affordance (toggles `object-fit: contain`
  *    vs intrinsic size + scroll container).
@@ -82,36 +80,6 @@ export class MediaLightboxComponent {
         this.stackDispose = null;
       }
     });
-  }
-
-  /**
-   * Page the gallery with the arrow keys.
-   *
-   * `<app-media-lightbox>` is mounted at the app shell, ahead of
-   * `task-detail`, so this document-level listener fires before
-   * `TaskDetailComponent.onTriageKey`. Calling `preventDefault()` makes
-   * that handler bail (it returns early on `event.defaultPrevented`), so
-   * the arrows page images instead of switching tasks. We swallow them
-   * even for a single-image gallery (paging is a no-op there) so the keys
-   * can never leak through to task navigation while a preview is open.
-   *
-   * Modifier chords are left alone: `onTriageKey` itself ignores
-   * meta/ctrl/alt, so those never switch tasks and we don't need to eat
-   * them here.
-   */
-  @HostListener('document:keydown', ['$event'])
-  onArrowKey(event: KeyboardEvent): void {
-    if (this.lightbox.active() === null) return;
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.key === 'ArrowRight') {
-      event.preventDefault();
-      event.stopPropagation();
-      this.lightbox.next();
-    } else if (event.key === 'ArrowLeft') {
-      event.preventDefault();
-      event.stopPropagation();
-      this.lightbox.prev();
-    }
   }
 
   prev(): void {
