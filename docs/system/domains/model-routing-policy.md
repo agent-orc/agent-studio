@@ -37,6 +37,8 @@ JSON properties. Studio uses `tasks:write` to submit and read jobs. A runner
 uses its bound identity and the run or review claim/write scopes. Studio owns
 model selection and quota admission. A missing host returns `waiting` without
 creating a job, so Studio can retry after capability evidence changes.
+The public-demo profile denies job creation, claim, and completion with the
+typed `execution-disabled` response; reading an existing job remains read-only.
 
 | Method and route | Request | Response |
 |---|---|---|

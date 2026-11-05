@@ -86,7 +86,9 @@ public sealed class OneShotJobClientTests
                 Hostname = "localhost", BackendName = "test", WorkDir = directory,
                 BaseBranch = "develop", CodexCliBin = cli,
             }, null!, _ => { });
-            var request = new OneShotJobRequest("codex", "test-model", "describe", null, 20, 100);
+            // The child emits over-cap output without reading stdin. The prompt
+            // fills the input pipe unless output is drained concurrently.
+            var request = new OneShotJobRequest("codex", "test-model", new string('p', 200_000), null, 20, 100);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
             var elapsed = Stopwatch.StartNew();
 

@@ -126,15 +126,22 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Provider CLI did not start.");
         try
         {
-            var input = request.Cli == "claude" ? ClaudeImageEnvelope(request) : request.Prompt;
-            await process.StandardInput.WriteAsync(input.AsMemory(), ct);
-            process.StandardInput.Close();
+            var outputExceeded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var rawBudget = new RawOutputBudget(Math.Min(262_144, request.MaxOutputBytes * 4));
             var stdout = ReadBoundedAsync(process.StandardOutput.BaseStream,
-                rawBudget, process, ct);
+                rawBudget, process, outputExceeded, ct);
             var stderr = ReadBoundedAsync(process.StandardError.BaseStream,
-                rawBudget, process, ct, 8_192);
-            await Task.WhenAll(stdout, stderr, process.WaitForExitAsync(ct));
+                rawBudget, process, outputExceeded, ct, 8_192);
+            var input = request.Cli == "claude" ? ClaudeImageEnvelope(request) : request.Prompt;
+            var all = Task.WhenAll(WriteInputAsync(process.StandardInput, input, ct),
+                stdout, stderr, process.WaitForExitAsync(ct));
+            if (ReferenceEquals(await Task.WhenAny(all, outputExceeded.Task), outputExceeded.Task))
+                throw new InvalidDataException("one-shot raw output exceeds the byte cap");
+            try { await all; }
+            catch (Exception) when (outputExceeded.Task.IsCompleted)
+            {
+                throw new InvalidDataException("one-shot raw output exceeds the byte cap");
+            }
             return new ProcessResult(process.ExitCode, stdout.Result, stderr.Result);
         }
         catch
@@ -142,6 +149,12 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
             throw;
         }
+    }
+
+    private static async Task WriteInputAsync(StreamWriter writer, string input, CancellationToken ct)
+    {
+        await writer.WriteAsync(input.AsMemory(), ct);
+        writer.Close();
     }
 
     private static string ClaudeImageEnvelope(OneShotJobRequest request)
@@ -160,7 +173,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
     }
 
     private static async Task<string> ReadBoundedAsync(Stream stream, RawOutputBudget budget,
-        Process process, CancellationToken ct, int? streamCap = null)
+        Process process, TaskCompletionSource outputExceeded, CancellationToken ct, int? streamCap = null)
     {
         var buffer = new byte[4096];
         using var result = new MemoryStream();
@@ -170,6 +183,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             if (count == 0) break;
             if (!budget.TryAdd(count) || streamCap is { } cap && result.Length + count > cap)
             {
+                outputExceeded.TrySetResult();
                 try { process.Kill(entireProcessTree: true); }
                 catch (InvalidOperationException) { }
                 throw new InvalidDataException("one-shot raw output exceeds the byte cap");
