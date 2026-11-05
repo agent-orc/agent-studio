@@ -2249,7 +2249,11 @@ var taskScanner = app.Services.GetRequiredService<TaskScannerService>();
 taskScanner.SetIndexCache(jobIndexCache);
 taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
 taskScanner.SetOrchestrationStore(app.Services.GetRequiredService<MonolithOrchestrationStore>());
-watcher.OnJobChanged += _ => jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+watcher.OnJobChanged += path =>
+{
+    if (!jobIndexCache.IsCurrentTaskJson(path))
+        jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+};
 // AGT-3088: board reads serve the last published snapshot and refresh it in
 // the background; once that refresh catches up with an invalidation a board
 // read was served stale against, one debounced jobsBulkChanged tells every
