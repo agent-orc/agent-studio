@@ -420,7 +420,7 @@ public static class TaskCrudEndpoints
                     .Where(job => !job.Fixture)
                 : Enumerable.Empty<TaskInfo>();
             var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(
-                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
+                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority, gitProjection, projectSettings));
             var withRuntime = WithRuntime(pricing, detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {

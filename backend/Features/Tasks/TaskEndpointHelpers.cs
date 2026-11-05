@@ -409,7 +409,9 @@ internal static class TaskEndpointHelpers
         IEnumerable<TaskInfo> jobs,
         TaskScannerService scanner,
         IEnumerable<TaskInfo>? eligibleWaiters = null,
-        AttemptAuthorityService? attemptAuthority = null)
+        AttemptAuthorityService? attemptAuthority = null,
+        TaskListGitProjectionCache? gitProjection = null,
+        ProjectSettingsService? projectSettings = null)
     {
         var snapshot = jobs as IReadOnlyCollection<TaskInfo> ?? jobs.ToList();
         var withDeps = snapshot.Where(j => j.References?.DependsOn.Count > 0).ToList();
@@ -419,6 +421,7 @@ internal static class TaskEndpointHelpers
         // Dependency targets come from the read-after-write core graph. A
         // target publish must be visible even while the board scan is pending.
         var index = scanner.GetCoreReferenceIndex();
+        var integration = gitProjection?.ReadDependencyIntegration(index.DependencyTargets(withDeps));
         var eligibleKeys = (eligibleWaiters ?? snapshot)
             .Where(j => !string.IsNullOrWhiteSpace(j.Key))
             .Select(j => j.Key!)
@@ -427,7 +430,8 @@ internal static class TaskEndpointHelpers
         var waitsOn = new Dictionary<string, WaitsOnStatus>(StringComparer.Ordinal);
         foreach (var job in withDeps)
         {
-            var status = index.EvaluateWaitsOn(job);
+            var status = index.EvaluateWaitsOn(job, integration,
+                projectSettings?.Get(job.ProjectName).IntegrationBranch);
             if (reviewActivity is not null)
             {
                 status = status with
