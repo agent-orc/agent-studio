@@ -20,6 +20,7 @@ public static class TaskServerEndpoints
         api.MapGet("/protocol", (TaskServerStore store) => Results.Ok(store.Status().Protocol));
         api.MapPost("/one-shot-jobs", async (OneShotJobRequest request, TaskServerStore store,
             CancellationToken ct) => await InvokeAsync(() => store.CreateOneShotJobAsync(request, ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start)
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         api.MapGet("/one-shot-jobs/{jobId}", async (string jobId, TaskServerStore store,
             CancellationToken ct) => await InvokeAsync(() => store.GetOneShotJobAsync(jobId, ct)))
