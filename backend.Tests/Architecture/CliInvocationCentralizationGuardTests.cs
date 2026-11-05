@@ -164,6 +164,11 @@ public class CliInvocationCentralizationGuardTests
             + "AGT-2373 keeps the bounded provider-auth probe as a documented non-card exception. It "
             + "runs a status command through ProcessRunner and cannot execute a task prompt."),
 
+        new("runner/OneShotJobAdmission.cs",
+            DocumentedException
+            + "AGT-2373 bounds image-bearing non-card model calls claimed from the Task Server. "
+            + "The host runs a single read-only turn with no tools, a timeout and an output cap."),
+
         new("backend/Features/Cli/Execution/BuiltInCliBehaviors.cs",
             DocumentedException
             + "AGT-2373 keeps only Antigravity's bounded --version availability probe here; card runs "
@@ -171,10 +176,7 @@ public class CliInvocationCentralizationGuardTests
 
         new("backend/Features/Cli/Execution/HostCliSpawnGuard.cs",
             DocumentedException
-            + "AGT-2373 bounds non-card host launches; AGT-3303 centralizes them here. In the "
-            + "networked profile it permits only isolated, tool-free Claude calls and never starts a "
-            + "card run. AGT-3171 removes "
-            + "this host exception when Stage 2 moves provider launches into per-job isolation."),
+            + "AGT-2373 bounds local host launches; the networked profile refuses provider CLIs."),
 
         new("backend/Features/Cli/Execution/NpmShimHealer.cs",
             DocumentedException

@@ -932,6 +932,11 @@ builder.Services.AddSingleton<AgentStudio.Cli.ClaudeOneShot>();
 builder.Services.AddSingleton<AgentStudio.Cli.CodexOneShot>();
 builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
     new AgentStudio.Cli.PromptLoggingCliOneShot(
+        !SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
+        ? new AgentStudio.Cli.RemoteCliOneShot(CliTypes.Claude,
+            sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<IConfiguration>(),
+            sp.GetService<AdHocUsageRecorder>())
+        :
         new AgentStudio.Cli.LoadAwareCliOneShot(
             sp.GetRequiredService<AgentStudio.Cli.ClaudeOneShot>(),
             sp.GetRequiredService<AgentStudio.Runner.ILoadThrottleGate>(),
@@ -939,6 +944,11 @@ builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
         sp.GetRequiredService<AgentStudio.Cli.StepPromptLog>()));
 builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
     new AgentStudio.Cli.PromptLoggingCliOneShot(
+        !SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
+        ? new AgentStudio.Cli.RemoteCliOneShot(CliTypes.Codex,
+            sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<IConfiguration>(),
+            sp.GetService<AdHocUsageRecorder>())
+        :
         new AgentStudio.Cli.LoadAwareCliOneShot(
             sp.GetRequiredService<AgentStudio.Cli.CodexOneShot>(),
             sp.GetRequiredService<AgentStudio.Runner.ILoadThrottleGate>(),
