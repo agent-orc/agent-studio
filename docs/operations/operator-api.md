@@ -9,6 +9,24 @@ Which token may call which route is in the
 routes are in the
 [operator-agent-level Dossier](../operator-agent-level/index.html) (AGT-3462).
 
+## Capacity
+
+`GET /api/operator/capacity` (OP-5) is a read-only view for the operator agent.
+`quota[]` has one cached snapshot per CLI subscription, with `fresh`,
+`freshUntil`, and `exhausted` alongside the quota windows. `activeFallbacks[]`
+names the card, source CLI and model, target CLI and model, reason, and the
+central model selection `settingKey` and `settingHref`. `waitingCards[]` names
+the card, reset time, reason, and its effective wait policy (`enabled`,
+`thresholdMinutes`, `scope`). `modelRoutingPins[]` lists explicit project
+consumer and pipeline-step pins, including pin mode.
+
+The route accepts an operator or viewer token with `project.read`. Card
+fallbacks, waits, and pins are limited to projects it can read. A principal
+without installation-wide `workspace.operate` receives cached quota only,
+with raw CLI samples removed, exactly as on `GET /api/cli/quota`. An
+installation-wide reader gets the same background refresh behavior as that
+quota route. Reading capacity does not change routing.
+
 ## Operator log and card attention
 
 `POST /api/operator/log` appends an entry with `project`, `kind` (`observed`,

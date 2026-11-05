@@ -118,6 +118,7 @@
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
 /api/operator/batch-triage	free	-	-	-
+/api/operator/capacity	free	-	-	-
 /api/operator/decisions	free	-	-	-
 /api/operator/decisions/stream	free	-	-	-
 /api/operator/log	free	-	-	-
