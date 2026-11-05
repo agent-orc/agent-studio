@@ -109,6 +109,9 @@ public sealed class TaskRoutingMutationPerformanceTests : IDisposable
         });
         scanner.SetIndexCache(cache);
         Assert.Empty(scanner.ScanAllJobs());
+        var stats = new JobStatsMetadataCache(scanner, config, NullLogger<JobStatsMetadataCache>.Instance);
+        scanner.SetStatsMetadataCache(stats);
+        Assert.Empty(stats.AllJobs());
         var mutations = new TaskMutationService(scanner,
             new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
@@ -126,6 +129,106 @@ public sealed class TaskRoutingMutationPerformanceTests : IDisposable
             })));
         Assert.Equal(2, scanner.ScanAllJobs().Count);
         Assert.Equal(1, scans);
+        Assert.Equal(2, stats.AllJobs().Count);
+    }
+
+    [Fact]
+    public void DirectPublication_DoesNotHideAnEarlierMutationInvalidation()
+    {
+        var watchPath = Path.Combine(_root, "invalidation-project");
+        var firstFolder = Path.Combine(watchPath, TaskStates.Ready, "first");
+        Directory.CreateDirectory(firstFolder);
+        File.WriteAllText(Path.Combine(firstFolder, "task.json"),
+            """{"id":"first","title":"First","state":"2-ready","order":10}""");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["WatchPaths:0:Name"] = "invalidation-project",
+            ["WatchPaths:0:Path"] = watchPath,
+            ["WatchPaths:0:RootPath"] = watchPath,
+            ["TaskIndexCache:SafetyTtlSeconds"] = "3600",
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        using var refreshEntered = new ManualResetEventSlim();
+        using var releaseRefresh = new ManualResetEventSlim();
+        var holdRefresh = false;
+        var cache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config,
+            scanner.ScanAllJobsRaw,
+            beforeRefreshGenerationCapture: () =>
+            {
+                if (!holdRefresh) return;
+                refreshEntered.Set();
+                releaseRefresh.Wait(TimeSpan.FromSeconds(10));
+            });
+        scanner.SetIndexCache(cache);
+        Assert.Single(scanner.ScanAllJobs());
+
+        var secondFolder = Path.Combine(watchPath, TaskStates.Ready, "second");
+        Directory.CreateDirectory(secondFolder);
+        File.WriteAllText(Path.Combine(secondFolder, "task.json"),
+            """{"id":"second","title":"Second","state":"2-ready","order":20}""");
+        holdRefresh = true;
+        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        cache.TryAcquireBoardRead();
+        try
+        {
+            Assert.True(refreshEntered.Wait(TimeSpan.FromSeconds(10)));
+            var first = scanner.ScanJobFolder(firstFolder,
+                new WatchPathEntry { Name = "invalidation-project", Path = watchPath },
+                TaskStates.Ready, bypassMemo: true)!;
+            cache.PublishRoutingMutation(first);
+            var read = Task.Run(scanner.ScanAllJobs);
+            Assert.False(read.Wait(TimeSpan.FromMilliseconds(500)),
+                "The read must wait for the earlier invalidation's workspace reconciliation.");
+            releaseRefresh.Set();
+            Assert.Contains(read.GetAwaiter().GetResult(), task => task.Id == "second");
+        }
+        finally { releaseRefresh.Set(); }
+    }
+
+    [Fact]
+    public void WatcherMarkerDuringScan_DoesNotEraseTheNewCard()
+    {
+        var watchPath = Path.Combine(_root, "watcher-project");
+        var firstFolder = Path.Combine(watchPath, TaskStates.Ready, "first");
+        Directory.CreateDirectory(firstFolder);
+        File.WriteAllText(Path.Combine(firstFolder, "task.json"),
+            """{"id":"first","title":"First","state":"2-ready","order":10}""");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["WatchPaths:0:Name"] = "watcher-project",
+            ["WatchPaths:0:Path"] = watchPath,
+            ["WatchPaths:0:RootPath"] = watchPath,
+            ["TaskIndexCache:SafetyTtlSeconds"] = "3600",
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        TaskIndexCache? cache = null;
+        string? pendingPath = null;
+        cache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config, () =>
+        {
+            var fresh = scanner.ScanAllJobsRaw();
+            if (pendingPath is { } path)
+            {
+                pendingPath = null;
+                cache!.NotifyCoreFileChanged(path);
+            }
+            return fresh;
+        });
+        scanner.SetIndexCache(cache);
+        Assert.Single(scanner.ScanAllJobs());
+
+        var secondFolder = Path.Combine(watchPath, TaskStates.Ready, "second");
+        Directory.CreateDirectory(secondFolder);
+        var secondTaskPath = Path.Combine(secondFolder, "task.json");
+        File.WriteAllText(secondTaskPath,
+            """{"id":"second","title":"Second","state":"2-ready","order":20}""");
+        pendingPath = secondTaskPath;
+        Assert.Equal(2, cache.ForceRefresh());
+        Assert.Contains(scanner.ScanAllJobs(), task => task.Id == "second");
+        Task.Delay(300).GetAwaiter().GetResult();
     }
 
     public void Dispose()

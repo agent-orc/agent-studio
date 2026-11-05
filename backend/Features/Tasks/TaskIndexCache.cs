@@ -95,7 +95,8 @@ public sealed class TaskIndexCache
     private readonly Dictionary<string, int> _pendingCoreFolders = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     // Tombstones are retained so a scan started before a move cannot resurrect
-    // its old folder. Only direct publications advance these folder versions.
+    // its old folder. Direct publications and pending watcher reads advance
+    // these versions; _staleCoreFolders distinguishes the pending reads.
     private readonly Dictionary<string, long> _coreFolderVersions = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCoreSourceStamp> _coreTaskStamps = new(
@@ -155,6 +156,9 @@ public sealed class TaskIndexCache
     // while the published snapshot predates an API mutation.
     private long _requiredMutationGen;
     private long _publishedMutationGen;
+    // A direct one-card publication cannot satisfy an earlier mutation
+    // invalidation that requires a workspace reconciliation.
+    private long _requiredMutationScanGen;
     // The published generation (TaskIndexPublication.Generation) is the
     // monotonic id of the current snapshot. It is incremented once per
     // successful disk-walk publish (a mutation, a watcher event, or the safety
@@ -1227,7 +1231,7 @@ public sealed class TaskIndexCache
     /// Cold-start and mutation-freshness readers share one non-spinning wait
     /// because stale data is not valid for them.
     /// </summary>
-    private void EnsureFresh()
+    private void EnsureFresh(bool requireClean = false)
     {
         using var lookupTrace = TaskSwitchTrace.Span("index.lookup");
         // Freeze the read-after-write target at reader entry. Comparing every
@@ -1236,7 +1240,12 @@ public sealed class TaskIndexCache
         // workspace scan per later mutation even after their own prerequisite
         // generation has been published.
         long targetMutationGen;
-        lock (_lock) targetMutationGen = _requiredMutationGen;
+        long targetMutationScanGen;
+        lock (_lock)
+        {
+            targetMutationGen = _requiredMutationGen;
+            targetMutationScanGen = _requiredMutationScanGen;
+        }
 
         while (true)
         {
@@ -1247,6 +1256,7 @@ public sealed class TaskIndexCache
                 if (!_dirty
                     && Volatile.Read(ref _publishedMutationGen)
                     >= targetMutationGen
+                    && _publishedInvalidationGen >= targetMutationScanGen
                     && _time.GetUtcNow() - _snapshotAt < _safetyTtl)
                 {
                     Interlocked.Increment(ref Hits);
@@ -1255,9 +1265,10 @@ public sealed class TaskIndexCache
 
                 if (_refreshCompletion != null)
                 {
-                    if (_hasSnapshot
+                    if (!requireClean && _hasSnapshot
                         && Volatile.Read(ref _publishedMutationGen)
-                        >= targetMutationGen)
+                        >= targetMutationGen
+                        && _publishedInvalidationGen >= targetMutationScanGen)
                     {
                         Interlocked.Increment(ref Hits);
                         Interlocked.Increment(ref StaleHits);
@@ -1298,7 +1309,9 @@ public sealed class TaskIndexCache
                 // reader; do not chase it with another global scan here.
                 lock (_lock)
                 {
-                    if (_hasSnapshot && _publishedMutationGen >= targetMutationGen)
+                    if (_hasSnapshot && _publishedMutationGen >= targetMutationGen
+                        && _publishedInvalidationGen >= targetMutationScanGen
+                        && (!requireClean || !_dirty))
                     {
                         Interlocked.Increment(ref Hits);
                         if (_dirty) Interlocked.Increment(ref StaleHits);
@@ -1379,17 +1392,20 @@ public sealed class TaskIndexCache
                 Dictionary<string, TaskInfo> mergedFacts;
                 Dictionary<string, TaskCoreRecord> mergedRecords;
                 Dictionary<string, long> currentFolderVersions;
+                HashSet<string> staleCoreFolders;
                 lock (_lock)
                 {
                     mergedFacts = new Dictionary<string, TaskInfo>(_coreFactsByFolder, _coreFactsByFolder.Comparer);
                     mergedRecords = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
                     currentFolderVersions = new Dictionary<string, long>(_coreFolderVersions, _coreFolderVersions.Comparer);
+                    staleCoreFolders = new HashSet<string>(_staleCoreFolders, _staleCoreFolders.Comparer);
                 }
                 var adopted = new List<string>();
                 var removed = new List<string>();
                 foreach (var (folder, scanned) in factsByFolder)
                 {
-                    if (currentFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore) continue;
+                    if (currentFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore
+                        && !staleCoreFolders.Contains(folder)) continue;
                     mergedFacts[folder] = scanned;
                     mergedRecords[folder] = byFolder[folder];
                     adopted.Add(folder);
@@ -1397,7 +1413,8 @@ public sealed class TaskIndexCache
                 foreach (var folder in mergedFacts.Keys.ToArray())
                 {
                     if (factsByFolder.ContainsKey(folder)
-                        || currentFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore) continue;
+                        || (currentFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore
+                            && !staleCoreFolders.Contains(folder))) continue;
                     mergedFacts.Remove(folder);
                     mergedRecords.Remove(folder);
                     removed.Add(folder);
@@ -1410,7 +1427,11 @@ public sealed class TaskIndexCache
                 // as the core index, rather than briefly publishing the old
                 // scan result until the follow-up reconciliation finishes.
                 var changedDuringScan = currentFolderVersions
-                    .Where(pair => pair.Value > coreWriteGenBefore)
+                    // A watcher marks a folder before its delayed core read.
+                    // That pending marker is not a newer published fact and
+                    // must not erase the card that this scan just found.
+                    .Where(pair => pair.Value > coreWriteGenBefore
+                        && !staleCoreFolders.Contains(pair.Key))
                     .Select(pair => pair.Key).ToArray();
                 if (changedDuringScan.Length > 0)
                 {
@@ -1438,14 +1459,16 @@ public sealed class TaskIndexCache
                     {
                         _coreTaskStamps[folder] = stamps[folder];
                         if (_coreFolderVersions.GetValueOrDefault(folder)
-                            == currentFolderVersions.GetValueOrDefault(folder))
+                            == currentFolderVersions.GetValueOrDefault(folder)
+                            && currentFolderVersions.GetValueOrDefault(folder) <= coreWriteGenBefore)
                             _staleCoreFolders.Remove(folder);
                     }
                     foreach (var folder in removed)
                     {
                         _coreTaskStamps.Remove(folder);
                         if (_coreFolderVersions.GetValueOrDefault(folder)
-                            == currentFolderVersions.GetValueOrDefault(folder))
+                            == currentFolderVersions.GetValueOrDefault(folder)
+                            && currentFolderVersions.GetValueOrDefault(folder) <= coreWriteGenBefore)
                             _staleCoreFolders.Remove(folder);
                     }
                     // Tombstones for absent cards survive unrelated scans and
@@ -1538,10 +1561,10 @@ public sealed class TaskIndexCache
         lock (_lock)
         {
             if (source == InvalidationSource.Mutation)
-            {
-                Interlocked.Increment(ref _requiredMutationGen);
-            }
+                ++_requiredMutationGen;
             Interlocked.Increment(ref _invalidationGen);
+            if (source == InvalidationSource.Mutation)
+                _requiredMutationScanGen = _invalidationGen;
             _dirty = true;
         }
         if (source == InvalidationSource.Mutation)
@@ -1642,7 +1665,7 @@ public sealed class TaskIndexCache
         Invalidate(InvalidationSource.Mutation);
         // Deliberately not GetSnapshot: a board-read pin must not turn a
         // forced rescan into a read of the pinned generation.
-        EnsureFresh();
+        EnsureFresh(requireClean: true);
         lock (_lock) return _publication.Live.Count;
     }
 

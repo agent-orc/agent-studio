@@ -277,6 +277,10 @@ public class TaskScannerService : ITaskScanner
     /// <summary>Publish a newly created card into the resident board and core indexes.</summary>
     public void PublishCreatedFromFolder(string folder, string watchPath, string projectName, string state)
     {
+        // The stats index has its own archived-inclusive snapshot. The old
+        // InvalidateCache call dirtied it as well as the board index; keep that
+        // contract when publishing a new card directly into the board.
+        _statsMetadataCache?.Invalidate();
         if (_indexCache is null) return;
         var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
         var info = ScanJobFolder(folder, entry, state, bypassMemo: true);
