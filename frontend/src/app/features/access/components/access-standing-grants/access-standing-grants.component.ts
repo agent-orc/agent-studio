@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { formatAccessTime } from '../../models/access.model';
 import {
   GRANT_ENVIRONMENTS,
@@ -32,6 +33,7 @@ const TIERS: readonly OperatorTier[] = ['T0', 'T1', 'T2'];
 @Component({
   selector: 'app-access-standing-grants',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-standing-grants.component.html',
   styleUrl: './access-standing-grants.component.scss',

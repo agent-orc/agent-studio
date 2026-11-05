@@ -1,11 +1,13 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { formatAccessTime } from '../../models/access.model';
 import {
   formatDuration,
   killKindLabel,
   killTriggerLabel,
   propagationLabel,
+  propagationTone,
   type OperatorKillDrill,
   type OperatorKillRecord,
 } from '../../models/operator-agent.model';
@@ -24,6 +26,7 @@ export const RECENT_KILLS = 5;
 @Component({
   selector: 'app-access-operator-kill-switch',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-operator-kill-switch.component.html',
   styleUrl: './access-operator-kill-switch.component.scss',
@@ -43,6 +46,7 @@ export class AccessOperatorKillSwitchComponent implements OnInit {
   readonly kindLabel = killKindLabel;
   readonly triggerLabel = killTriggerLabel;
   readonly propagation = propagationLabel;
+  readonly propagationTone = propagationTone;
 
   ngOnInit(): void {
     void this.operators.loadKillSwitch();

@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, effect, inject, signal } from '@angular/core';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { formatAccessTime } from '../../models/access.model';
 import {
   approvalIdFromHash,
@@ -27,6 +28,7 @@ import type { GrantStepUp } from '../../services/standing-grants.service';
 @Component({
   selector: 'app-access-operator-approvals',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-operator-approvals.component.html',
   styleUrl: './access-operator-approvals.component.scss',

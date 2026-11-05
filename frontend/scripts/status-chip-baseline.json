@@ -24,6 +24,12 @@
         "ca1597ce10c1fa67"
       ]
     },
+    "src/app/features/access/components/access-operator-approvals/access-operator-approvals.component.html": {
+      "reason": "Instruction source of an approval request is a tag; the warn tint marks an untrusted origin, not a state of the request.",
+      "signatures": [
+        "77aacb5e1f80c9ed"
+      ]
+    },
     "src/app/features/board/components/filters-dropdown/filters-dropdown.component.html": {
       "reason": "Task type filter pills are interactive filters, not states.",
       "signatures": [

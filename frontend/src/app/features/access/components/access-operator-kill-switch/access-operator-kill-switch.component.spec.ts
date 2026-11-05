@@ -56,6 +56,7 @@ describe('AccessOperatorKillSwitchComponent', () => {
     expect(drill.dataset['state']).toBe('passed');
     expect(drill.getAttribute('role')).toBeNull();
     expect(byTestId('access-kill-drill-result')!.textContent).toContain('Drill passed in 413 ms');
+    expect(byTestId('access-kill-drill-result')!.dataset['tone']).toBe('success');
     expect(byTestId('access-kill-next-drill')!.textContent).toContain('Next scheduled drill');
     expect(byTestId('access-kill-kill_1')!.textContent).toContain('Unexpected restarts');
   });
@@ -82,6 +83,7 @@ describe('AccessOperatorKillSwitchComponent', () => {
     expect(byTestId('access-kill-last-operations')!.textContent).toContain('pending (http-503)');
     expect(byTestId('access-kill-drill')!.getAttribute('role')).toBe('alert');
     expect(byTestId('access-kill-drill-result')!.textContent).toContain('Drill failed: operations-server-unreachable');
+    expect(byTestId('access-kill-drill-result')!.dataset['tone']).toBe('danger');
     expect(byTestId('access-kill-pending')).not.toBeNull();
     expect(byTestId('access-kill-next-drill')!.textContent).toContain('Scheduled drills are off');
   });
