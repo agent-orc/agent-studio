@@ -79,6 +79,15 @@ function mount(host: RemoteHost, expanded = true, expandSections = true) {
 }
 
 describe('RemoteHostCardComponent', () => {
+  it('shows a closed claim gate beside occupied slots', () => {
+    const fixture = mount({ ...HOST, activeTaskCount: 7, roleMaxParallelism: 10,
+      claimLoadGate: { state: 'closed', loadPerCore: 5.51, threshold: 4,
+        sustainedSeconds: 702, since: '2026-07-10T11:48:00Z', activeSlots: 7 } }, false);
+    const slots = fixture.nativeElement.querySelector('[data-testid="remote-host-machine-slots"]');
+    expect(slots?.textContent).toContain('Not claiming: load 5.5 per core above 4.0 for 12 min');
+    expect(slots?.querySelector('[data-testid="remote-host-claim-load-gate"]')).toBeTruthy();
+  });
+
   it('keeps retired actions in the selected detail and emits delete', () => {
     const host = { ...HOST, status: 'retired' as const };
     const fixture = mount(host, true, false);

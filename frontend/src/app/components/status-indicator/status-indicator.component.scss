@@ -72,6 +72,13 @@
   text-overflow: ellipsis;
 }
 
+.status-indicator--wrap { white-space: normal; align-items: flex-start; }
+.status-indicator--wrap .status-indicator__label {
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
 /* Compact: icon plus text without the chip, for dense rows and tables. */
 .status-indicator--compact {
   min-height: 0;

@@ -381,7 +381,8 @@ internal static class RunnerCapabilityProbe
     public static HostTelemetrySnapshotDto? Telemetry(
         HostTelemetrySample? sample,
         ReviewPlaneBudgetDto? reviewPlane = null,
-        SalvageStoreDto? salvageStore = null)
+        SalvageStoreDto? salvageStore = null,
+        ClaimLoadGateDto? claimLoadGate = null)
         => sample is null
             ? null
             : new HostTelemetrySnapshotDto(
@@ -413,7 +414,8 @@ internal static class RunnerCapabilityProbe
                 BuildNodeSweep.Latest?.DotnetProcesses,
                 BuildNodeSweep.Latest?.StaleBuildNodes,
                 BuildNodeSweep.Latest is null ? null : BuildNodeSweep.TerminatedTotal,
-                BuildNodeSweep.Latest?.ObservedAt);
+                BuildNodeSweep.Latest?.ObservedAt,
+                ClaimLoadGate: claimLoadGate);
 
     /// <summary>A missing Docker daemon leaves the optional inventory absent for older hosts.</summary>
     public static async Task<IReadOnlyList<HostContainerSummaryDto>?> ContainersAsync(CancellationToken ct)
