@@ -123,7 +123,7 @@ public sealed partial class BatchGatePilotService
                     break;
             }
         }
-        var successor = kept.Count == 0 ? null : manifest with
+        var successor = kept.Count < options.MinimumSize ? null : manifest with
         {
             BatchId = Guid.NewGuid().ToString("N"),
             BaseSha = newBase,
@@ -135,7 +135,7 @@ public sealed partial class BatchGatePilotService
         };
         _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Abandoned, null, fence, _time.GetUtcNow(),
-            successor is null ? "base moved before replay; no compatible members"
+            successor is null ? "base moved before replay; compatible members below minimum size"
                 : $"base moved before replay; re-formed as {successor.BatchId} on {Short(newBase)}",
             BaseMoveToSha: newBase, BaseMoveOutcome: successor is null ? "abandoned" : "kept",
             SuccessorBatchId: successor?.BatchId, BaseMoveMemberReasons: rejected));
@@ -149,7 +149,7 @@ public sealed partial class BatchGatePilotService
             conflictKeys.Add(item.Subject.TaskKey);
         }
         if (successor is not null) _store.CloseManifest(successor);
-        foreach (var member in kept)
+        foreach (var member in successor?.Members ?? [])
         {
             var item = pending[member.TaskKey];
             var task = _scanner.FindJob(member.TaskKey, item.WatchPath);
