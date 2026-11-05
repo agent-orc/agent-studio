@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Diagnostics;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using AgentStudio.TaskServer.Contracts;
 
@@ -143,6 +144,8 @@ public sealed partial class BatchGateStore
         WriteIndented = true,
     };
     private readonly string _root;
+    private readonly object _failureRankingLock = new();
+    private readonly Dictionary<string, List<BatchTestFailure>> _failureRanking = new(StringComparer.Ordinal);
 
     public void RecordFirstCandidate(BatchFirstCandidateFact fact)
     {
@@ -441,7 +444,44 @@ public sealed partial class BatchGateStore
     {
         var folder = Path.Combine(_root, "executions");
         Directory.CreateDirectory(folder);
-        WriteOnce(Path.Combine(folder, Guid.NewGuid().ToString("N") + ".json"), fact);
+        var path = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".json");
+        WriteOnce(path, fact);
+        lock (_failureRankingLock)
+            if (_failureRanking.TryGetValue(fact.Project, out var failures))
+                failures.AddRange(BatchGateFailureRanking.ReadEvidence(WithMembers(fact)));
+    }
+
+    public BatchTestFailureReport FailedTestRanking(string project, DateTimeOffset now, int windowDays = 7)
+    {
+        if (windowDays is < 1 or > 90) throw new ArgumentOutOfRangeException(nameof(windowDays));
+        lock (_failureRankingLock)
+        {
+            if (!_failureRanking.TryGetValue(project, out var failures))
+            {
+                failures = ListExecutions(project)
+                    .Where(fact => fact.BatchId is not null)
+                    .SelectMany(fact => BatchGateFailureRanking.ReadEvidence(WithMembers(fact))).ToList();
+                _failureRanking[project] = failures;
+            }
+            failures.RemoveAll(failure => failure.AtUtc < now.AddDays(-90));
+            return new BatchTestFailureReport(project, windowDays,
+                BatchGateFailureRanking.Rank(failures, now, windowDays));
+        }
+    }
+
+    private BatchGateExecutionFact WithMembers(BatchGateExecutionFact fact)
+    {
+        if (fact.MemberKeys is { Count: > 0 } || fact.BatchId is null) return fact;
+        try
+        {
+            return fact with { MemberKeys = ReadManifest(fact.BatchId).Members
+                .Select(member => member.TaskKey).ToArray() };
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException)
+        {
+            SilentCatch.Note(exception, "Batch gate failure ranking could not read a historical manifest");
+            return fact;
+        }
     }
 
     public IReadOnlyList<BatchGateExecutionFact> ListExecutions(string project)

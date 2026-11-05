@@ -14,9 +14,10 @@ describe('BatchPanelComponent', () => {
     fixture.componentRef.setInput('project', 'Demo');
     fixture.componentRef.setInput('closed', vi.fn());
     await fixture.whenStable();
-    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[aria-label="Close batch panel"]'));
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('.batch-panel__body'));
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
     await Promise.resolve();
     fixture.detectChanges();
     await fixture.whenStable();
@@ -32,6 +33,9 @@ describe('BatchPanelComponent', () => {
       .toContain('2/3 busy');
     expect((fixture.nativeElement.querySelector('[data-testid="batch-gate-capacity"]').textContent as string).replace(/\s+/g, ' '))
       .toContain('3 slots · 6 processors per gate · 24 host cores');
+    const key = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+    fixture.nativeElement.querySelector('.batch-panel__body').dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(true);
     http.verify();
   });
 
@@ -43,6 +47,7 @@ describe('BatchPanelComponent', () => {
     await fixture.whenStable();
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
     await Promise.resolve();
     fixture.detectChanges();
     fixture.nativeElement.querySelector('[aria-label="Eject AGT-1"]').click();
@@ -70,6 +75,7 @@ describe('BatchPanelComponent', () => {
     await fixture.whenStable();
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
     await Promise.resolve();
     fixture.detectChanges();
     await fixture.whenStable();
@@ -85,5 +91,41 @@ describe('BatchPanelComponent', () => {
     fixture.destroy();
     dispose();
     http.verify();
+  });
+
+  it('ranks a flaky suspect and opens a prefilled bug card for operator confirmation', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [{
+      testName: 'Product.Tests.Unstable', batches: 3, runs: 4, distinctMemberSets: 3,
+      firstFailureUtc: '2026-11-01T12:00:00Z', lastFailureUtc: '2026-11-05T12:00:00Z',
+      latestErrorExcerpt: 'Error Message: timed out', flakyRerunPassed: true,
+      flakySuspect: true, batchIds: ['one', 'two', 'three'], failures: [{
+        testName: 'Product.Tests.Unstable', batchId: 'one', runId: 'one-run', members: ['AGT-1'],
+        atUtc: '2026-11-05T12:00:00Z', errorExcerpt: 'Error Message: timed out', flakyRerunPassed: true,
+      }],
+    }] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-failed-tests"]').textContent)
+      .toContain('3 batches · 4 runs · 3 member sets');
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-failed-tests"]').textContent)
+      .toContain('Flaky suspect');
+    fixture.nativeElement.querySelector('[aria-label="Create fix card for Product.Tests.Unstable"]').click();
+    http.expectOne('/api/watch-paths').flush([{ name: 'Demo', path: '/tmp/demo' }]);
+    const followUps = http.match(() => true);
+    expect(followUps.some(request => request.request.urlWithParams.includes('taskType=bug'))).toBe(true);
+    for (const request of followUps) request.flush({}, { status: 500, statusText: 'Fixture unavailable' });
+    await fixture.whenStable();
+    expect(fixture.componentInstance['createForm'].visible()).toBe(true);
+    expect(fixture.componentInstance['createForm'].newTaskType).toBe('bug');
+    expect(fixture.componentInstance['createForm'].newPrompt).toContain('Batches: one, two, three.');
+    expect(fixture.componentInstance['createForm'].newPrompt).toContain('run one-run');
   });
 });

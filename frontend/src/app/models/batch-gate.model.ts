@@ -157,6 +157,27 @@ export interface BatchGateReport {
   constructionEjectionRate: number | null;
 }
 
+export interface BatchTestFailureRank {
+  testName: string;
+  batches: number;
+  runs: number;
+  distinctMemberSets: number;
+  firstFailureUtc: string;
+  lastFailureUtc: string;
+  latestErrorExcerpt: string;
+  flakyRerunPassed: boolean;
+  flakySuspect: boolean;
+  batchIds: string[];
+  failures: { testName: string; batchId: string; runId: string; members: string[];
+    atUtc: string; errorExcerpt: string; flakyRerunPassed: boolean }[];
+}
+
+export interface BatchTestFailureReport {
+  project: string;
+  windowDays: number;
+  tests: BatchTestFailureRank[];
+}
+
 /** AGT-3219: cards parked by a machine gate queue overrun, from `/batch-gate/queue-stalls`. */
 export interface GateQueueStallReport {
   project: string;

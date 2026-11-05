@@ -35,7 +35,7 @@ public static class BatchGateStateSnapshotReader
         var manifests = store.ListManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(item => item.ClosedAtUtc)
-            .Take(Math.Clamp(history, 0, 100)).ToArray();
+            .Take(Math.Clamp(history, 0, 500)).ToArray();
         var moved = store.ListManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
             .Select(item => store.LatestState(item.BatchId))

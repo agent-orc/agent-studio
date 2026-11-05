@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-03
+Version: 2026-11-05
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -413,6 +413,20 @@ worktree. Non-linear members still use a detached worktree for their merge.
 Temporary worktree removal is retried, and cleanup leftovers do not discard
 a successful replay. Candidate refs use
 `refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
+
+The batch panel reads `GET /api/projects/{projectName}/batch-gate/failed-tests`
+to rank failed test names over a seven-day sliding window (`windowDays` may be
+1 through 90). The store reads historical execution evidence once per project
+and updates the in-memory projection when it records a new execution. Later
+requests rank the cached observations without rescanning evidence. The
+response counts batches, runs, distinct member sets, first and latest failure,
+the latest error excerpt, per-run failure facts, and whether a flaky rerun
+passed. A test is a flaky suspect only when it failed in three batches with
+pairwise disjoint member sets. The operator can open a prefilled bug card in the
+normal creation dialog. The dialog applies central model routing and requires
+submission to create it.
+Batch links request up to 500 historical manifests on demand; normal state
+polling stays at ten.
 
 Member replay routes (AGT-3104, chosen by the pure `BatchReplayPolicy`):
 

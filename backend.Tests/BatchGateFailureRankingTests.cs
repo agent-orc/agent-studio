@@ -1,0 +1,108 @@
+using AgentStudio.Pipeline;
+using Xunit;
+
+namespace AgentStudio.Tests;
+
+// clock-independent: ranking receives an explicit now and evidence dates are parsed without reading the wall clock.
+public sealed class BatchGateFailureRankingTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
+
+    private static BatchTestFailure Failure(string batch, string member, int daysAgo = 0,
+        string test = "Product.Tests.Unstable", bool rerunPassed = false) =>
+        new(test, batch, batch + "-run", [member], Now.AddDays(-daysAgo),
+            "Error Message: timed out", rerunPassed);
+
+    [Fact]
+    public void Three_disjoint_batches_are_suspects_and_a_shared_member_is_not()
+    {
+        var disjoint = BatchGateFailureRanking.Rank([
+            Failure("one", "AGT-1"), Failure("two", "AGT-2"), Failure("three", "AGT-3")], Now);
+        Assert.True(Assert.Single(disjoint).FlakySuspect);
+        Assert.Equal(3, disjoint[0].DistinctMemberSets);
+        Assert.Equal(3, disjoint[0].Failures.Count);
+
+        var shared = BatchGateFailureRanking.Rank([
+            Failure("one", "AGT-1"), Failure("two", "AGT-1"), Failure("three", "AGT-2")], Now);
+        Assert.False(Assert.Single(shared).FlakySuspect);
+    }
+
+    [Fact]
+    public void Window_drops_old_fault_and_rerun_pass_is_recorded()
+    {
+        var observations = new[] {
+            Failure("one", "AGT-1", 8), Failure("two", "AGT-2", 1, rerunPassed: true),
+            Failure("three", "AGT-3", 0),
+        };
+        var rank = Assert.Single(BatchGateFailureRanking.Rank(observations, Now));
+        Assert.Equal(2, rank.Batches);
+        Assert.True(rank.FlakyRerunPassed);
+        Assert.False(rank.FlakySuspect);
+        // After the member fault is fixed and no further reds occur, the window clears it.
+        Assert.Empty(BatchGateFailureRanking.Rank(observations, Now.AddDays(9)));
+    }
+
+    [Fact]
+    public void Member_fault_that_stops_after_a_fix_never_becomes_a_flaky_suspect()
+    {
+        var observations = new[] {
+            Failure("before-fix-1", "AGT-42", 6),
+            Failure("before-fix-2", "AGT-42", 5),
+            Failure("before-fix-3", "AGT-42", 4),
+        };
+        Assert.False(Assert.Single(BatchGateFailureRanking.Rank(observations, Now)).FlakySuspect);
+        Assert.Empty(BatchGateFailureRanking.Rank(observations, Now.AddDays(4)));
+    }
+
+    [Fact]
+    public void Repeated_runs_in_one_batch_count_once_as_a_batch()
+    {
+        var first = Failure("one", "AGT-1");
+        var rank = Assert.Single(BatchGateFailureRanking.Rank([
+            first, first with { RunId = "one-rerun" }, Failure("two", "AGT-2")], Now));
+        Assert.Equal(2, rank.Batches);
+        Assert.Equal(3, rank.Runs);
+    }
+
+    [Fact]
+    public void Evidence_reads_failure_and_flaky_classification()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            File.WriteAllText(path, """{"GateCompletedAtUtc":"2026-11-05T12:00:00Z","Output":"Product.Tests.Unstable\nError Message: timed out\nline two","RecordedFailedTests":["Product.Tests.Unstable"],"FlakyQuarantinedFailures":["Product.Tests.Unstable"]}""" + "\n");
+            var fact = new BatchGateExecutionFact("Project", "batch", "run", "sha", "pass", "host",
+                Now, Now, 0, 0, path, MemberKeys: ["AGT-1"]);
+            var failure = Assert.Single(BatchGateFailureRanking.ReadEvidence(fact));
+            Assert.Equal("Product.Tests.Unstable", failure.TestName);
+            Assert.True(failure.FlakyRerunPassed);
+            Assert.Contains("Error Message: timed out", failure.ErrorExcerpt);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Store_projection_adds_new_execution_after_first_read()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var evidence = Path.Combine(root, "gate-evidence.jsonl");
+        try
+        {
+            var store = new BatchGateStore(root);
+            File.WriteAllText(evidence, """{"GateCompletedAtUtc":"2026-11-05T11:00:00Z","RecordedFailedTests":["Product.Tests.Unstable"]}""" + "\n");
+            var first = new BatchGateExecutionFact("Project", "one", "one-run", "sha", "fail", "host",
+                Now.AddHours(-1), Now.AddHours(-1), 0, 0, evidence, MemberKeys: ["AGT-1"]);
+            store.RecordExecution(first);
+            Assert.Equal(1, Assert.Single(store.FailedTestRanking("Project", Now).Tests).Batches);
+
+            File.AppendAllText(evidence, """{"GateCompletedAtUtc":"2026-11-05T12:00:00Z","RecordedFailedTests":["Product.Tests.Unstable"]}""" + "\n");
+            store.RecordExecution(first with { BatchId = "two", BatchRunId = "two-run",
+                StartedAtUtc = Now, CompletedAtUtc = Now, MemberKeys = ["AGT-2"] });
+            var rank = Assert.Single(store.FailedTestRanking("Project", Now).Tests);
+            Assert.Equal(2, rank.Batches);
+            Assert.Equal(2, rank.Runs);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+}
