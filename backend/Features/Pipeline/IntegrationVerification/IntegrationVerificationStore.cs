@@ -93,6 +93,7 @@ public static class IntegrationVerificationStore
         {
             File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json));
             File.Move(temporary, path, overwrite: true);
+            AgentStudio.Tasks.SidecarFileGeneration.Changed(path);
         }
         finally
         {
