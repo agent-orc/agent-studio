@@ -12,7 +12,7 @@ public sealed partial class TaskServerStore
             CREATE TABLE IF NOT EXISTS one_shot_jobs(
                 id TEXT PRIMARY KEY, request_json TEXT NOT NULL, status TEXT NOT NULL,
                 capability TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
-                runner_id TEXT, claim_token TEXT, claim_expires_at TEXT,
+                runner_id TEXT, claim_instance_id TEXT, claim_token TEXT, claim_expires_at TEXT,
                 text TEXT, error TEXT, usage_json TEXT
             );
             CREATE INDEX IF NOT EXISTS ix_one_shot_jobs_pending
@@ -94,6 +94,7 @@ public sealed partial class TaskServerStore
     public async Task<OneShotJobWork?> ClaimOneShotJobAsync(OneShotJobClaimRequest request, CancellationToken ct)
     {
         RequireWritable();
+        if (string.IsNullOrWhiteSpace(request.InstanceId)) return null;
         OneShotJobWork? result = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
@@ -105,7 +106,7 @@ public sealed partial class TaskServerStore
                   AND (j.status = 'pending' OR j.claim_expires_at <= $now)
                   AND c.advertised_status = 'ready' AND c.health_state = 'healthy'
                   AND c.fresh_until > $now AND c.advertised_instance_id = r.instance_id
-                  AND ($instance IS NULL OR r.instance_id = $instance)
+                  AND r.instance_id = $instance
                 ORDER BY j.created_at LIMIT 1;
                 """, transaction, ("$runner", request.RunnerId), ("$now", Iso(UtcNow)),
                 ("$instance", request.InstanceId));
@@ -115,14 +116,29 @@ public sealed partial class TaskServerStore
             if (id is null || payload is null) return;
             var token = Guid.NewGuid().ToString("N");
             var jobRequest = JsonSerializer.Deserialize<OneShotJobRequest>(payload)!;
-            await ExecuteAsync(connection, """
-                UPDATE one_shot_jobs SET status = 'claimed', runner_id = $runner,
-                    claim_token = $token, claim_expires_at = $expires,
-                    expires_at = $job_expires WHERE id = $id;
-                """, ct, transaction, ("$runner", request.RunnerId), ("$token", token),
-                ("$expires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 20))),
-                ("$job_expires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 30))), ("$id", id));
-            result = new(id, token, jobRequest);
+            var claimed = await ExecuteAsync(connection, """
+                UPDATE one_shot_jobs AS j SET status = 'claimed', runner_id = $runner,
+                    claim_instance_id = $instance,
+                    claim_token = $token, claim_expires_at = $claimExpires,
+                    expires_at = $jobExpires
+                WHERE j.id = $id AND j.status IN ('pending', 'claimed')
+                  AND j.expires_at > $now
+                  AND (j.status = 'pending' OR j.claim_expires_at <= $now)
+                  AND EXISTS (
+                      SELECT 1 FROM runners r
+                      JOIN runner_capabilities c ON c.runner_id = r.id
+                       AND c.capability_key = j.capability
+                      WHERE r.id = $runner AND r.instance_id = $instance
+                        AND r.status = 'active' AND c.advertised_instance_id = r.instance_id
+                        AND c.advertised_status = 'ready' AND c.health_state = 'healthy'
+                        AND c.fresh_until > $now
+                  );
+                """, ct, transaction, ("$runner", request.RunnerId),
+                ("$instance", request.InstanceId), ("$token", token),
+                ("$claimExpires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 20))),
+                ("$jobExpires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 30))),
+                ("$now", Iso(UtcNow)), ("$id", id));
+            if (claimed == 1) result = new(id, token, jobRequest);
         }, ct);
         return result;
     }
@@ -130,29 +146,41 @@ public sealed partial class TaskServerStore
     public async Task<bool> CompleteOneShotJobAsync(OneShotJobCompletion completion, CancellationToken ct)
     {
         RequireWritable();
+        if (string.IsNullOrWhiteSpace(completion.InstanceId)) return false;
         var accepted = false;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var bytes = Encoding.UTF8.GetByteCount(completion.Text ?? string.Empty);
             var limit = Convert.ToInt32(await ScalarAsync(connection, """
-                SELECT json_extract(request_json, '$.MaxOutputBytes') FROM one_shot_jobs
-                 WHERE id = $id AND runner_id = $runner AND claim_token = $token
-                   AND status = 'claimed' AND claim_expires_at > $now AND expires_at > $now;
+                SELECT json_extract(j.request_json, '$.MaxOutputBytes') FROM one_shot_jobs j
+                JOIN runners r ON r.id = j.runner_id
+                 WHERE j.id = $id AND j.runner_id = $runner AND j.claim_instance_id = $instance
+                   AND r.instance_id = $instance AND r.status = 'active'
+                   AND j.claim_token = $token AND j.status = 'claimed'
+                   AND j.claim_expires_at > $now AND j.expires_at > $now;
                 """, ct, transaction, ("$id", completion.JobId), ("$runner", completion.RunnerId),
-                ("$token", completion.ClaimToken), ("$now", Iso(UtcNow))) ?? 0);
+                ("$instance", completion.InstanceId), ("$token", completion.ClaimToken),
+                ("$now", Iso(UtcNow))) ?? 0);
             if (limit == 0) return;
             var oversized = bytes > limit;
             var successful = completion.Success && !oversized && !string.IsNullOrWhiteSpace(completion.Text);
-            await ExecuteAsync(connection, """
-                UPDATE one_shot_jobs SET status = $status, text = $text, error = $error,
-                    usage_json = $usage WHERE id = $id;
+            accepted = await ExecuteAsync(connection, """
+                UPDATE one_shot_jobs AS j SET status = $status, text = $text, error = $error,
+                    usage_json = $usage WHERE j.id = $id AND j.runner_id = $runner
+                    AND j.claim_instance_id = $instance AND j.claim_token = $token
+                    AND j.status = 'claimed' AND j.claim_expires_at > $now
+                    AND j.expires_at > $now AND EXISTS (
+                        SELECT 1 FROM runners r WHERE r.id = $runner
+                          AND r.instance_id = $instance AND r.status = 'active'
+                    );
                 """, ct, transaction, ("$status", successful ? "completed" : "failed"),
                 ("$text", oversized ? null : completion.Text),
                 ("$error", oversized ? "one-shot output exceeds the byte cap"
                     : successful ? null : completion.Error ?? "one-shot response was empty"),
                 ("$usage", completion.Usage is null ? null : JsonSerializer.Serialize(completion.Usage)),
-                ("$id", completion.JobId));
-            accepted = true;
+                ("$id", completion.JobId), ("$runner", completion.RunnerId),
+                ("$instance", completion.InstanceId), ("$token", completion.ClaimToken),
+                ("$now", Iso(UtcNow))) == 1;
         }, ct);
         return accepted;
     }

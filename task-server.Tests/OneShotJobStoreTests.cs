@@ -26,20 +26,53 @@ public sealed class OneShotJobStoreTests
             route.CliType == "codex" && route.Model == "gpt-6-sol");
         var queued = await store.CreateOneShotJobAsync(Request(), default);
         Assert.Equal("pending", queued.Status);
+        Assert.Null(await store.ClaimOneShotJobAsync(new("runner-a", null!), default));
+        Assert.Null(await store.ClaimOneShotJobAsync(new("runner-a", ""), default));
         Assert.Null(await store.ClaimOneShotJobAsync(new("runner-a", "wrong-instance"), default));
         Assert.Equal("waiting", (await store.CreateOneShotJobAsync(Request("gpt-6-luna"), default)).Status);
         var claimed = await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default);
         Assert.NotNull(claimed);
         Assert.Equal("gpt-6-sol", claimed.Request.Model);
         Assert.False(await store.CompleteOneShotJobAsync(
-            new("runner-a", claimed.JobId, "wrong-token", true, "done", null, null), default));
+            new("runner-a", "instance-a", claimed.JobId, "wrong-token", true, "done", null, null), default));
         Assert.True(await store.CompleteOneShotJobAsync(
-            new("runner-a", claimed.JobId, claimed.ClaimToken, true, "done", null,
+            new("runner-a", "instance-a", claimed.JobId, claimed.ClaimToken, true, "done", null,
                 new(1, 2, 0, 0, "gpt-6-sol")), default));
         var finished = await store.GetOneShotJobAsync(queued.JobId, default);
         Assert.Equal("completed", finished?.Status);
         Assert.Equal("done", finished?.Text);
         Assert.Equal(2, finished?.Usage?.OutputTokens);
+    }
+
+    [Fact]
+    public async Task Old_instance_cannot_claim_or_complete_after_runner_restarts()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = await StoreAsync(temp.Path, clock);
+        await RegisterAsync(store, clock);
+        var first = await store.CreateOneShotJobAsync(Request(), default);
+        var oldClaim = (await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default))!;
+        var second = await store.CreateOneShotJobAsync(Request(), default);
+
+        await store.RegisterRunnerAsync("runner-a", new RegisterRunnerRequest("runner", "host-a",
+            "instance-b", "1.0.0", TaskServerProtocol.Current,
+            [ReviewCapabilities.CodingExecutor]), "test", default);
+        Assert.Null(await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default));
+        Assert.False(await store.CompleteOneShotJobAsync(new("runner-a", "instance-a",
+            oldClaim.JobId, oldClaim.ClaimToken, true, "stale", null, null), default));
+        Assert.False(await store.CompleteOneShotJobAsync(new("runner-a", "instance-b",
+            oldClaim.JobId, oldClaim.ClaimToken, true, "stolen", null, null), default));
+        Assert.Equal("claimed", (await store.GetOneShotJobAsync(first.JobId, default))?.Status);
+
+        Assert.Null(await store.ClaimOneShotJobAsync(new("runner-a", "instance-b"), default));
+        await AdvertiseAsync(store, clock, "instance-b");
+        Assert.Null(await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default));
+        var freshClaim = await store.ClaimOneShotJobAsync(new("runner-a", "instance-b"), default);
+        Assert.NotNull(freshClaim);
+        Assert.Equal(second.JobId, freshClaim.JobId);
+        Assert.True(await store.CompleteOneShotJobAsync(new("runner-a", "instance-b",
+            freshClaim.JobId, freshClaim.ClaimToken, true, "fresh", null, null), default));
     }
 
     [Fact]
@@ -51,7 +84,7 @@ public sealed class OneShotJobStoreTests
         await RegisterAsync(store, clock);
         var queued = await store.CreateOneShotJobAsync(Request(), default);
         var claimed = (await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default))!;
-        Assert.True(await store.CompleteOneShotJobAsync(new("runner-a", claimed.JobId,
+        Assert.True(await store.CompleteOneShotJobAsync(new("runner-a", "instance-a", claimed.JobId,
             claimed.ClaimToken, true, new string('x', 101), null, null), default));
         var failed = await store.GetOneShotJobAsync(queued.JobId, default);
         Assert.Equal("failed", failed?.Status);
@@ -67,7 +100,7 @@ public sealed class OneShotJobStoreTests
     }
 
     [Fact]
-    public async Task Late_claim_gets_a_full_execution_window()
+    public async Task Claim_resets_job_expiry_so_queue_time_does_not_cut_short_the_run()
     {
         using var temp = new TempDirectory();
         var clock = new ManualTimeProvider(Start);
@@ -76,13 +109,29 @@ public sealed class OneShotJobStoreTests
         var queued = await store.CreateOneShotJobAsync(Request(), default);
 
         clock.Advance(TimeSpan.FromSeconds(59));
-        var claimed = (await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default))!;
-        Assert.Equal(queued.JobId, claimed.JobId);
+        var claim = (await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default))!;
         clock.Advance(TimeSpan.FromSeconds(25));
 
-        Assert.True(await store.CompleteOneShotJobAsync(new("runner-a", claimed.JobId,
-            claimed.ClaimToken, true, "done", null, null), default));
+        Assert.True(await store.CompleteOneShotJobAsync(new("runner-a", "instance-a",
+            claim.JobId, claim.ClaimToken, true, "finished", null, null), default));
         Assert.Equal("completed", (await store.GetOneShotJobAsync(queued.JobId, default))?.Status);
+    }
+
+    [Fact]
+    public async Task Expired_claim_cannot_complete_after_its_fence_expires()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = await StoreAsync(temp.Path, clock);
+        await RegisterAsync(store, clock);
+        var queued = await store.CreateOneShotJobAsync(Request(), default);
+        var claim = (await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default))!;
+
+        clock.Advance(TimeSpan.FromSeconds(51));
+
+        Assert.False(await store.CompleteOneShotJobAsync(new("runner-a", "instance-a",
+            claim.JobId, claim.ClaimToken, true, "late", null, null), default));
+        Assert.Equal("claimed", (await store.GetOneShotJobAsync(queued.JobId, default))?.Status);
     }
 
     [Fact]
@@ -110,8 +159,14 @@ public sealed class OneShotJobStoreTests
         await store.RegisterRunnerAsync("runner-a", new RegisterRunnerRequest("runner", "host-a",
             "instance-a", "1.0.0", TaskServerProtocol.Current,
             [ReviewCapabilities.CodingExecutor]), "test", default);
+        return await AdvertiseAsync(store, clock, "instance-a");
+    }
+
+    private static async Task<RunnerCapabilitySnapshotDto> AdvertiseAsync(
+        TaskServerStore store, ManualTimeProvider clock, string instanceId)
+    {
         return await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
-            "runner-a", "instance-a", CapabilityProtocol.CurrentSchemaVersion,
+            "runner-a", instanceId, CapabilityProtocol.CurrentSchemaVersion,
             clock.GetUtcNow().UtcDateTime, 300, 1,
             [new AdvertisedCapabilityDto(CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol"),
                 "model-acceptance", "ready", CredentialGeneration: "login-1",
