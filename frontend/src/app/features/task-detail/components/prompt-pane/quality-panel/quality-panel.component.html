@@ -2,9 +2,8 @@
   <header class="quality-panel__header">
     <h3>Quality</h3>
     @if (view(); as quality) {
-      <span class="quality-panel__badge" [attr.data-state]="selectedState()" data-testid="quality-state">
-        {{ label(selectedState()) }}
-      </span>
+      <app-status-indicator data-testid="quality-state" [attr.data-state]="selectedState()"
+        [tone]="tone(selectedState())" [label]="label(selectedState())" testId="quality-state-status" />
       <span class="quality-panel__context">Code quality in Agent Studio review</span>
     } @else {
       <span class="quality-panel__context">Loading review range…</span>
