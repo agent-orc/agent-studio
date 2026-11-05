@@ -21,7 +21,8 @@ public static class TaskDetailResources
     {
         group.MapGet("/{jobId}/details/overview", (string jobId, string? project, long? generation,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
-            ITaskCoreRuntime runtime, TaskScannerService scanner,
+            ITaskCoreRuntime runtime, TaskScannerService scanner, TaskListGitProjectionCache snapshots,
+            ProjectSettingsService projectSettings,
             AgentStudio.Runner.AttemptAuthorityService attemptAuthority, CliRouter router, TaskRunnerService runners) =>
         {
             var lookup = Resolve(jobId, project, generation, context, projects, index);
@@ -36,7 +37,9 @@ public static class TaskDetailResources
                 task.OlderBriefDelivery, task.RelatedWikiPages, task.CreationSource,
                 task.CompletionClaim, task.ParkedBlocker, task.NeedsInput,
                 task.References, task.References.DependsOn.Count > 0
-                    ? facts.References.EvaluateWaitsOn(task) : null,
+                    ? facts.References.EvaluateWaitsOn(task,
+                        snapshots.ReadDependencyIntegration(facts.References.DependencyTargets([task])),
+                        projectSettings.Get(task.ProjectName).IntegrationBranch) : null,
                 // AGT-3096: the core-first detail needs the same acceptance
                 // lineage gap the legacy full-detail read projects.
                 AcceptanceAttemptLineagePolicy.ReadGap(task, attemptAuthority),

@@ -13,13 +13,14 @@ public static class RemoteDispatchEligibility
         ProjectSettings project,
         string runnerId,
         string? runnerName,
-        TaskReferenceIndex references)
+        TaskReferenceIndex references,
+        IReadOnlyDictionary<string, TaskIntegrationStatus>? integration = null)
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(references);
 
-        return IsAssignedAndRoutable(task, project, runnerId, runnerName, references)
+        return IsAssignedAndRoutable(task, project, runnerId, runnerName, references, integration)
                && BuildProfileGate.AllowsAutoPickup(project.BuildProfile);
     }
 
@@ -33,7 +34,8 @@ public static class RemoteDispatchEligibility
         ProjectSettings project,
         string runnerId,
         string? runnerName,
-        TaskReferenceIndex references)
+        TaskReferenceIndex references,
+        IReadOnlyDictionary<string, TaskIntegrationStatus>? integration = null)
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(project);
@@ -47,7 +49,7 @@ public static class RemoteDispatchEligibility
                && !TaskSlugs.IsHumanDecisionNeeded(task.Id)
                && (!project.IntakeEnabled.GetValueOrDefault()
                    || task.Phase == LifecyclePhases.IntakePassed)
-               && !references.EvaluateWaitsOn(task).Blocked;
+               && !references.EvaluateWaitsOn(task, integration, project.IntegrationBranch).Blocked;
     }
 
     public static bool IsClaimableReady(
@@ -56,8 +58,9 @@ public static class RemoteDispatchEligibility
         string runnerId,
         string? runnerName,
         bool runnerReadOnly,
-        TaskReferenceIndex references) =>
+        TaskReferenceIndex references,
+        IReadOnlyDictionary<string, TaskIntegrationStatus>? integration = null) =>
         task.State == TaskStates.Ready
-        && IsAssignedAndRunnable(task, project, runnerId, runnerName, references)
+        && IsAssignedAndRunnable(task, project, runnerId, runnerName, references, integration)
         && !runnerReadOnly;
 }

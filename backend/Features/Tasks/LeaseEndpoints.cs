@@ -471,6 +471,7 @@ public static class LeaseEndpoints
             IModelEquivalenceCatalog equivalenceCatalog,
             TaskMutationService mutations,
             ModelRoutingPolicyRegistry modelRouting,
+            TaskListGitProjectionCache dependencyGitProjection,
             OrchestratorDecisionStore decisionReceipts,
             CancellationToken ct) =>
         {
@@ -890,6 +891,8 @@ public static class LeaseEndpoints
                         admission.ReasonCode));
                 }
 
+                var dependencyTargets = waitsOn.DependencyTargets(liveSnapshot.Where(t => t.State == TaskStates.Ready));
+                var dependencyStatuses = dependencyGitProjection.ReadDependencyIntegration(dependencyTargets);
                 var eligible = liveSnapshot
                     .Where(t => !t.Fixture && t.State == TaskStates.Ready
                         && !t.WaitingForEngineDecision)
@@ -899,7 +902,7 @@ public static class LeaseEndpoints
                     {
                         var project = settings.Get(t.ProjectName);
                         return RemoteDispatchEligibility.IsAssignedAndRoutable(
-                            t, project, req.RunnerId, req.RunnerName, waitsOn);
+                            t, project, req.RunnerId, req.RunnerName, waitsOn, dependencyStatuses);
                     })
                     .OrderBy(t => t.Order)
                     .ThenBy(t => t.CreatedAt);

@@ -98,6 +98,8 @@ public class ProjectRunner
 
     private readonly ILogger _logger;
     private readonly TaskScannerService _scanner;
+    private readonly TaskIntegrationStatusService? _dependencyIntegration;
+    private readonly TaskListGitProjectionCache? _dependencyGitProjection;
     private readonly TaskStateMachine _states;
     private readonly TaskSessionLog _sessions;
     // ADR-0049: per-job timeline.jsonl ledger. Optional so existing test
@@ -495,12 +497,16 @@ public class ProjectRunner
         AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
         bool networked = false,
         ModelSelectionLedger? selectionLedger = null,
-        IModelSelectionService? modelSelection = null)
+        IModelSelectionService? modelSelection = null,
+        TaskIntegrationStatusService? dependencyIntegration = null,
+        TaskListGitProjectionCache? dependencyGitProjection = null)
     {
         ProjectName = projectName;
         Entry = entry;
         _logger = logger;
         _scanner = scanner;
+        _dependencyIntegration = dependencyIntegration;
+        _dependencyGitProjection = dependencyGitProjection;
         _states = states;
         _sessions = sessions;
         _router = router;
@@ -9099,7 +9105,8 @@ public class ProjectRunner
     /// <summary>
     /// AGT-2029 waits-on pickup gate. Returns true when <paramref name="job"/>
     /// must not be auto-picked because a dependency it waits on is unfulfilled
-    /// (its target has not reached 6-completed/7-archive, or the key is unknown
+    /// (its target has neither completed nor integrated its current delivery,
+    /// or the key is unknown
     /// / not yet created) or because its dependsOn edges form a cycle. A cycle
     /// is a configuration error that can never be satisfied: it is reported once
     /// per card (structured warning + the card's waits-on status drives an error
@@ -9112,7 +9119,12 @@ public class ProjectRunner
     {
         if (job.References == null || job.References.DependsOn.Count == 0) return false;
 
-        var status = waitsOnIndex.EvaluateWaitsOn(job);
+        var targets = waitsOnIndex.DependencyTargets([job]);
+        var integration = _dependencyGitProjection is not null
+            ? _dependencyGitProjection.ReadDependencyIntegration(targets)
+            : _dependencyIntegration?.BuildLookup(targets);
+        var status = waitsOnIndex.EvaluateWaitsOn(job, integration,
+            _projectSettings.Get(job.ProjectName).IntegrationBranch);
         var cardKey = job.Key ?? job.Id;
 
         if (status.CycleDetected)
@@ -9155,9 +9167,10 @@ public class ProjectRunner
 
         if (status.Blocked)
         {
-            var open = string.Join(", ", status.Items.Where(i => !i.Fulfilled).Select(i => i.Key));
+            var open = string.Join(", ", status.Items.Where(i => !i.Fulfilled)
+                .Select(i => $"{i.Key} ({i.FulfillmentRule})"));
             _logger.LogDebug(
-                "[taskboard] waits-on hold on {Job} ({Project}): waiting on {Open} to reach completed/archive before auto-pickup",
+                "[taskboard] waits-on hold on {Job} ({Project}): waiting on {Open} before auto-pickup",
                 cardKey, ProjectName, open);
             return true;
         }
@@ -10736,11 +10749,11 @@ public class ProjectRunner
         // for all runners; only the in-memory crash backoff is applied here.
         var orders = publishedOnly
             ? _scanner.ReadPublishedGeneration(
-                DisplayedReadyOrderProjection, _projectSettings.Version,
-                publication => BuildDisplayedReadyOrders(publication, _projectSettings))
+                DisplayedReadyOrderProjection, HashCode.Combine(_projectSettings.Version, _dependencyGitProjection?.Generation ?? 0),
+                publication => BuildDisplayedReadyOrders(publication, _projectSettings, _dependencyGitProjection))
             : _scanner.ReadPerGeneration(
-                DisplayedReadyOrderProjection, _projectSettings.Version,
-                publication => BuildDisplayedReadyOrders(publication, _projectSettings));
+                DisplayedReadyOrderProjection, HashCode.Combine(_projectSettings.Version, _dependencyGitProjection?.Generation ?? 0),
+                publication => BuildDisplayedReadyOrders(publication, _projectSettings, _dependencyGitProjection));
         if (!orders.TryGetValue(ProjectName, out var ordered)) return [];
         return ordered
             .Where(job => !IsInRapidCrashBackoff(job.Id))
@@ -10769,9 +10782,12 @@ public class ProjectRunner
     /// </summary>
     internal static IReadOnlyDictionary<string, IReadOnlyList<TaskInfo>> BuildDisplayedReadyOrders(
         TaskIndexPublication publication,
-        ProjectSettingsService projectSettings)
+        ProjectSettingsService projectSettings,
+        TaskListGitProjectionCache? dependencyGitProjection = null)
     {
         var orders = new Dictionary<string, IReadOnlyList<TaskInfo>>(StringComparer.Ordinal);
+        var targets = publication.AutomationReferences.DependencyTargets(publication.Live);
+        var integration = dependencyGitProjection?.ReadDependencyIntegration(targets);
         foreach (var project in publication.Live
                      .Where(job => !job.Fixture && job.State == TaskStates.Ready)
                      .GroupBy(job => job.ProjectName ?? "", StringComparer.Ordinal))
@@ -10779,7 +10795,8 @@ public class ProjectRunner
             var settings = projectSettings.Get(project.Key);
             var intakeEnabled = settings.IntakeEnabled == true;
             orders[project.Key] = LaneSortApplier.Sort(
-                    project.Where(job => IsSnapshotReadyCandidate(job, intakeEnabled, publication.AutomationReferences)),
+                    project.Where(job => IsSnapshotReadyCandidate(job, intakeEnabled, publication.AutomationReferences, integration,
+                        settings.IntegrationBranch)),
                     TaskStates.Ready,
                     _ => settings)
                 .ToList();
@@ -10792,7 +10809,8 @@ public class ProjectRunner
     /// gate except the in-memory crash backoff, without the pickup path's
     /// once-per-card warnings (those stay with pickup).
     /// </summary>
-    private static bool IsSnapshotReadyCandidate(TaskInfo job, bool intakeEnabled, TaskReferenceIndex waitsOnIndex)
+    private static bool IsSnapshotReadyCandidate(TaskInfo job, bool intakeEnabled, TaskReferenceIndex waitsOnIndex,
+        IReadOnlyDictionary<string, TaskIntegrationStatus>? integration, string? targetBranch)
         => AgentTypes.IsAutoPickupEligible(job.Agent)
            && !job.Fixture
            && !job.WaitingForEngineDecision
@@ -10800,12 +10818,14 @@ public class ProjectRunner
            && !RetiredContainerTask.IsRetired(job)
            && !TaskSlugs.IsHumanDecisionNeeded(job.Id)
            && IsPickupAllowed(job, intakeEnabled)
-           && !HoldsOnWaitsOn(job, waitsOnIndex);
+           && !HoldsOnWaitsOn(job, waitsOnIndex, integration, targetBranch);
 
-    private static bool HoldsOnWaitsOn(TaskInfo job, TaskReferenceIndex waitsOnIndex)
+    private static bool HoldsOnWaitsOn(TaskInfo job, TaskReferenceIndex waitsOnIndex,
+        IReadOnlyDictionary<string, TaskIntegrationStatus>? integration,
+        string? targetBranch)
     {
         if (job.References == null || job.References.DependsOn.Count == 0) return false;
-        var status = waitsOnIndex.EvaluateWaitsOn(job);
+        var status = waitsOnIndex.EvaluateWaitsOn(job, integration, targetBranch);
         return status.CycleDetected || status.UnsatisfiableGate || status.Blocked;
     }
 

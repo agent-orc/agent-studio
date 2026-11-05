@@ -180,6 +180,41 @@ public sealed class TaskListGitProjectionCacheTests
     }
 
     [Fact]
+    public void DependencyIntegration_HoldsChangedOrRefreshingDelivery()
+    {
+        var task = Job("predecessor", "watch-a") with { State = TaskStates.HumanReview };
+        var cache = new TaskListGitProjectionCache();
+        cache.SetSnapshot(task.WatchPath, TaskListGitProjection.Empty with
+        {
+            Integration = new Dictionary<string, TaskIntegrationStatus>
+            {
+                [task.TaskKey] = new()
+                {
+                    Status = IntegrationStatuses.Integrated,
+                    IntegrationBranch = "develop",
+                },
+            },
+            Signatures = new Dictionary<string, string>
+            {
+                [task.TaskKey] = TaskGitSignature.For(task),
+            },
+        }, SnapshotTime);
+
+        Assert.Equal(IntegrationStatuses.Integrated,
+            cache.ReadDependencyIntegration([task])[task.TaskKey].Status);
+
+        var newer = task with { Commits = [new TaskCommitInfo
+        {
+            Sha = "abcdef0123456789abcdef0123456789abcdef01",
+            FilesChanged = 1,
+        }] };
+        Assert.Empty(cache.ReadDependencyIntegration([newer]));
+
+        cache.MarkRefreshing(task.WatchPath);
+        Assert.Empty(cache.ReadDependencyIntegration([task]));
+    }
+
+    [Fact]
     public void ReadCacheOnly_AcrossMultipleRepositories_MergesEachRepositorysSnapshot()
     {
         var cache = new TaskListGitProjectionCache();
