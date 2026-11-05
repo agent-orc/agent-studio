@@ -264,6 +264,30 @@ public class TaskScannerService : ITaskScanner
         _indexCache.PublishCoreFromFolder(folder, () => ScanJobFolder(folder, entry, state, bypassMemo: true));
     }
 
+    /// <summary>Publish a routing edit to both resident projections after its durable write.</summary>
+    public void PublishRoutingFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        var info = ScanJobFolder(folder, entry, state, bypassMemo: true);
+        if (info is not null) _indexCache.PublishRoutingMutation(info);
+        else _indexCache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+    }
+
+    /// <summary>Publish a newly created card into the resident board and core indexes.</summary>
+    public void PublishCreatedFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        // The stats index has its own archived-inclusive snapshot. The old
+        // InvalidateCache call dirtied it as well as the board index; keep that
+        // contract when publishing a new card directly into the board.
+        _statsMetadataCache?.Invalidate();
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        var info = ScanJobFolder(folder, entry, state, bypassMemo: true);
+        if (info is not null) _indexCache.PublishCreatedMutation(info);
+        else _indexCache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+    }
+
     public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
 
     public void RemoveCoreByFolder(string folder) => _indexCache?.RemoveCoreByFolder(folder);

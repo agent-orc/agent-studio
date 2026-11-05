@@ -564,8 +564,9 @@ public sealed class PipelineExecutionLog
         if (!File.Exists(path)) return null;
         try
         {
-            var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<PipelineExecutionRecord>(json, ReadOpts);
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            return JsonSerializer.Deserialize<PipelineExecutionRecord>(stream, ReadOpts);
         }
         catch (Exception ex)
         {
@@ -583,17 +584,16 @@ public sealed class PipelineExecutionLog
                 Directory.CreateDirectory(jobFolderPath);
             }
             var path = Path.Combine(jobFolderPath, FileName);
-            var tmp = path + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(record, WriteOpts));
-            // Replace via move so a partial write never leaves a truncated
-            // pipeline-execution.json on disk for the next reader.
-            if (File.Exists(path))
+            var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
             {
-                File.Replace(tmp, path, destinationBackupFileName: null);
+                File.WriteAllText(tmp, JsonSerializer.Serialize(record, WriteOpts));
+                // One replace publishes a complete record to every reader.
+                File.Move(tmp, path, overwrite: true);
             }
-            else
+            finally
             {
-                File.Move(tmp, path);
+                if (File.Exists(tmp)) File.Delete(tmp);
             }
             _readCache.TryRemove(NormalizeKey(jobFolderPath), out _);
             return true;
