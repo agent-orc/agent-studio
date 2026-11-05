@@ -57,6 +57,7 @@ public sealed class DeployService
     private readonly Func<IReadOnlyList<TaskInfo>> _qualityTaskScan;
     private readonly DeliveryVerificationIndex _deliveryVerifications;
     private readonly Action<TimeSpan>? _deliveryLockHoldObserved;
+    private readonly Action? _deliveryVerificationCaptured;
 
     /// <summary>
     /// Ancestry answers between release commits. Commits are immutable, so a
@@ -81,7 +82,8 @@ public sealed class DeployService
         QualityReleaseRangeVerdictClient? rangeVerdicts = null,
         Func<IReadOnlyList<TaskInfo>>? qualityTaskScan = null,
         Func<string, IntegrationVerificationRecord?>? deliveryVerificationRead = null,
-        Action<TimeSpan>? deliveryLockHoldObserved = null)
+        Action<TimeSpan>? deliveryLockHoldObserved = null,
+        Action? deliveryVerificationCaptured = null)
     {
         _environments = environments;
         _store = store;
@@ -99,6 +101,7 @@ public sealed class DeployService
         _deliveryVerifications = new DeliveryVerificationIndex(clock,
             deliveryVerificationRead ?? IntegrationVerificationStore.Read);
         _deliveryLockHoldObserved = deliveryLockHoldObserved;
+        _deliveryVerificationCaptured = deliveryVerificationCaptured;
     }
 
     /// <summary>
@@ -649,18 +652,22 @@ public sealed class DeployService
     /// <summary>Read-only release placement; the cache changes with releases, deploy runs and integration evidence.</summary>
     public DeliveryLaneResponse? DeliveryLanes(string project)
     {
-        var verification = CaptureDeliveryVerifications(project);
-        lock (_gate)
+        while (true)
         {
-            var snapshot = SyncLocked(project);
-            if (snapshot is null) return null;
-            var runs = snapshot.Deployments(project);
-            var (signature, integrated) = DeliveryInputs(snapshot, runs, verification);
-            if (_deliveryLaneCache.TryGetValue(project, out var cached) && cached.Signature == signature)
-                return cached.Value;
-            var value = DeliveryLaneProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, integrated());
-            _deliveryLaneCache[project] = (signature, value);
-            return value;
+            var verification = CaptureDeliveryVerifications(project);
+            lock (_gate)
+            {
+                if (!_deliveryVerifications.IsCurrent(project, verification)) continue;
+                var snapshot = SyncLocked(project);
+                if (snapshot is null) return null;
+                var runs = snapshot.Deployments(project);
+                var (signature, integrated) = DeliveryInputs(snapshot, runs, verification);
+                if (_deliveryLaneCache.TryGetValue(project, out var cached) && cached.Signature == signature)
+                    return cached.Value;
+                var value = DeliveryLaneProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, integrated());
+                _deliveryLaneCache[project] = (signature, value);
+                return value;
+            }
         }
     }
 
@@ -672,31 +679,35 @@ public sealed class DeployService
     public DeliveryColumnsResponse? DeliveryColumns(string project,
         int releaseDepth = DeliveryColumnProjection.DefaultReleaseDepth)
     {
-        var verification = CaptureDeliveryVerifications(project);
-        lock (_gate)
+        while (true)
         {
-            var started = _deliveryLockHoldObserved is null ? 0L : Stopwatch.GetTimestamp();
-            try
+            var verification = CaptureDeliveryVerifications(project);
+            lock (_gate)
             {
-                var snapshot = ReadOnlySnapshot(project);
-                if (snapshot is null) return null;
-                var runs = snapshot.Deployments(project).Where(item => item.Tenant is null).ToArray();
-                var health = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
-                    StringComparer.Ordinal);
-                var (inputs, integrated) = DeliveryInputs(snapshot, runs, verification);
-                var signature = inputs + "|" + releaseDepth + "|" + string.Join('|', health.Select(item => item.Key + ':' + item.Value));
-                if (_deliveryColumnCache.TryGetValue(project, out var cached) && cached.Signature == signature)
-                    return cached.Value;
-                var value = DeliveryColumnProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, health,
-                    snapshot.Records.ToDictionary(item => item.Key, item => item.Value.Lifecycle, StringComparer.Ordinal),
-                    integrated().Keys, releaseDepth);
-                _deliveryColumnCache[project] = (signature, value);
-                return value;
-            }
-            finally
-            {
-                if (_deliveryLockHoldObserved is not null)
-                    _deliveryLockHoldObserved(Stopwatch.GetElapsedTime(started));
+                var started = _deliveryLockHoldObserved is null ? 0L : Stopwatch.GetTimestamp();
+                try
+                {
+                    if (!_deliveryVerifications.IsCurrent(project, verification)) continue;
+                    var snapshot = ReadOnlySnapshot(project);
+                    if (snapshot is null) return null;
+                    var runs = snapshot.Deployments(project).Where(item => item.Tenant is null).ToArray();
+                    var health = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
+                        StringComparer.Ordinal);
+                    var (inputs, integrated) = DeliveryInputs(snapshot, runs, verification);
+                    var signature = inputs + "|" + releaseDepth + "|" + string.Join('|', health.Select(item => item.Key + ':' + item.Value));
+                    if (_deliveryColumnCache.TryGetValue(project, out var cached) && cached.Signature == signature)
+                        return cached.Value;
+                    var value = DeliveryColumnProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, health,
+                        snapshot.Records.ToDictionary(item => item.Key, item => item.Value.Lifecycle, StringComparer.Ordinal),
+                        integrated().Keys, releaseDepth);
+                    _deliveryColumnCache[project] = (signature, value);
+                    return value;
+                }
+                finally
+                {
+                    if (_deliveryLockHoldObserved is not null)
+                        _deliveryLockHoldObserved(Stopwatch.GetElapsedTime(started));
+                }
             }
         }
     }
@@ -711,7 +722,9 @@ public sealed class DeployService
         var tasks = _scanner.ScanAllJobsWithArchive()
             .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase))
             .ToArray();
-        return _deliveryVerifications.Capture(project, tasks);
+        var snapshot = _deliveryVerifications.Capture(project, tasks);
+        _deliveryVerificationCaptured?.Invoke();
+        return snapshot;
     }
 
     private static (string Signature, Func<Dictionary<string, string>> Integrated) DeliveryInputs(

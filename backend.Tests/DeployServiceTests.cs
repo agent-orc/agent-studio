@@ -140,6 +140,48 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(["DEMO-2"], deploy.DeliveryColumns("demo")!.Columns[0].Landed.Select(card => card.Key));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Older_verification_snapshot_cannot_replace_newer_delivery_response(bool columns)
+    {
+        var (_, environments, store) = Build();
+        Card("DEMO-1", Head());
+        using var captured = new ManualResetEventSlim();
+        using var resume = new ManualResetEventSlim();
+        var pauseNext = 0;
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null,
+            deliveryVerificationCaptured: () =>
+            {
+                if (Interlocked.Exchange(ref pauseNext, 0) != 1) return;
+                captured.Set();
+                Assert.True(resume.Wait(TimeSpan.FromSeconds(10)));
+            });
+
+        string[] Keys() => columns
+            ? deploy.DeliveryColumns("demo")!.Columns[0].Landed.Select(card => card.Key).ToArray()
+            : deploy.DeliveryLanes("demo")!.Lanes.Single(lane => lane.EnvironmentId is null)
+                .Cards.Select(card => card.Key).ToArray();
+
+        Assert.Equal(["DEMO-1"], Keys());
+        Interlocked.Exchange(ref pauseNext, 1);
+        var older = Task.Run(Keys);
+        try
+        {
+            Assert.True(captured.Wait(TimeSpan.FromSeconds(10)));
+            var folder = Path.Combine(_watch, "6-completed", "demo-1");
+            IntegrationVerificationStore.Delete(folder);
+            Assert.Empty(Keys());
+        }
+        finally
+        {
+            resume.Set();
+        }
+        Assert.Empty(await older);
+        Assert.Empty(Keys());
+    }
+
     [Fact]
     [Trait("Category", "MachineBound")]
     public void Delivery_columns_three_thousand_card_fixture_measurement()

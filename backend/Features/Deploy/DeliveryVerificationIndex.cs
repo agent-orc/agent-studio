@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AgentStudio.Pipeline;
 using AgentStudio.Tasks;
 
@@ -12,7 +13,7 @@ internal sealed class DeliveryVerificationIndex(TimeProvider clock,
 {
     internal static readonly TimeSpan ReconciliationInterval = TimeSpan.FromMinutes(5);
     private readonly object _gate = new();
-    private readonly Dictionary<string, ProjectState> _projects = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ProjectState> _projects = new(StringComparer.OrdinalIgnoreCase);
 
     private sealed class ProjectState
     {
@@ -20,6 +21,7 @@ internal sealed class DeliveryVerificationIndex(TimeProvider clock,
         public long SeenGeneration;
         public long Version;
         public DateTimeOffset NextReconciliation;
+        public string? LatestSignature;
     }
 
     internal sealed record Snapshot(string Signature, Dictionary<string, string> Integrated);
@@ -76,7 +78,15 @@ internal sealed class DeliveryVerificationIndex(TimeProvider clock,
                     StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
             var taskSignature = string.Join('|', tasks.Select(task => task.Id + ':' + task.Title));
-            return new(state.Version + ":" + taskSignature, integrated);
+            var signature = state.Version + ":" + taskSignature;
+            Volatile.Write(ref state.LatestSignature, signature);
+            return new(signature, integrated);
         }
+    }
+
+    public bool IsCurrent(string project, Snapshot snapshot)
+    {
+        return _projects.TryGetValue(project, out var state)
+            && Volatile.Read(ref state.LatestSignature) == snapshot.Signature;
     }
 }
