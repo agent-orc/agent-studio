@@ -60,7 +60,10 @@
           <span class="cli-models__policy-detail">Comparable models from {{ version }}. Overrides take precedence.</span>
         </div>
       </header>
-      <div class="cli-models__table-wrap">
+      <div class="cli-models__table-wrap" tabindex="0"
+           data-testid="cli-models-table-scroll"
+           aria-label="Quota fallback routes table"
+           (keydown)="onTableScrollKeydown($event)">
         <table class="cli-models__fallback-table">
           <thead>
             <tr><th>Model</th><th>Fallback model</th><th>Source</th><th>Price per MTok</th></tr>

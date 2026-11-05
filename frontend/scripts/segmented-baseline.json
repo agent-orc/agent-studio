@@ -18,6 +18,12 @@
         "0a34beeaaa4fb4c8"
       ]
     },
+    "src/app/features/studio-shell/studio-shell.component.html": {
+      "reason": "Titlebar auto mode controls project execution and stays independently focusable beside the project picker.",
+      "signatures": [
+        "cb4d481850b1ee0f"
+      ]
+    },
     "src/app/components/cli-model-selector/cli-model-selector.component.html": {
       "reason": "Model catalogue uses a long wrapping radio list and roving keyboard contract.",
       "signatures": [

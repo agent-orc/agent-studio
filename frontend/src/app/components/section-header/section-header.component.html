@@ -1,26 +1,22 @@
 @if (collapsible()) {
-  <!-- Collapsible mode — the whole row is the collapse toggle.
-       `aria-expanded` + the caller's testid are the contract the
-       F27/F46 explorer-collapse specs assert on. -->
-  <button type="button"
-          class="section-header section-header--btn section-header--collapsible"
+  <div class="section-header section-header--collapsible"
           [class.section-header--collapsed]="collapsed()"
-          [class.section-header--divider]="divider()"
-          [attr.data-testid]="testid()"
-          [attr.aria-expanded]="!collapsed()"
-          (click)="onCollapseToggle($event)">
-    <app-disclosure-marker class="section-header__chev" [open]="!collapsed()" [size]="10" />
-    @if (icon(); as i) {
-      <span class="section-header__icon" aria-hidden="true">
-        <app-studio-icon [name]="i" [size]="12"></app-studio-icon>
-      </span>
-    }
-    <span class="section-header__title">{{ title() }}</span>
-    @if (count() !== null) {
-      <app-count-badge [value]="count()" />
-    }
-    <ng-content select="[actions]"></ng-content>
-  </button>
+          [class.section-header--divider]="divider()">
+    <button type="button" class="section-header__toggle section-header--btn section-header--collapsible"
+            [attr.data-testid]="testid()"
+            [attr.aria-expanded]="!collapsed()"
+            (click)="onCollapseToggle($event)">
+      <app-disclosure-marker class="section-header__chev" [open]="!collapsed()" [size]="10" />
+      @if (icon(); as i) {
+        <span class="section-header__icon" aria-hidden="true">
+          <app-studio-icon [name]="i" [size]="12"></app-studio-icon>
+        </span>
+      }
+      <span class="section-header__title">{{ title() }}</span>
+      @if (count() !== null) { <app-count-badge [value]="count()" /> }
+    </button>
+    <span class="section-header__actions"><ng-content select="[actions]"></ng-content></span>
+  </div>
 } @else {
   <div class="section-header section-header--static"
        [class.section-header--divider]="divider()"
@@ -34,6 +30,6 @@
     @if (count() !== null) {
       <app-count-badge [value]="count()" />
     }
-    <ng-content select="[actions]"></ng-content>
+    <span class="section-header__actions"><ng-content select="[actions]"></ng-content></span>
   </div>
 }
