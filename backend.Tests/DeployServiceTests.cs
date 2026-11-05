@@ -11,6 +11,7 @@ using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Security;
 using AgentStudio.TestSupport;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -88,6 +89,121 @@ public sealed class DeployServiceTests : IDisposable
         Assert.False(File.Exists(path));
         Assert.NotNull(deploy.DeliveryColumns("demo"));
         Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public async Task Delivery_columns_reuse_verification_map_and_reconcile_external_changes()
+    {
+        var (_, environments, store) = Build();
+        var sha = Head();
+        Card("DEMO-1", sha);
+        Card("DEMO-2", sha);
+        var reads = 0;
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null,
+            deliveryVerificationRead: folder =>
+            {
+                reads++;
+                return IntegrationVerificationStore.Read(folder);
+            });
+        Assert.Equal(2, deploy.DeliveryColumns("demo")!.Columns[0].Landed.Count);
+        reads = 0;
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(deploy);
+        await using var app = builder.Build();
+        app.MapDeployEndpoints();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+        for (var index = 0; index < 120; index++)
+        {
+            using var response = await client.GetAsync("/api/projects/demo/deploy/lanes");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        Assert.Equal(0, reads);
+
+        var folder = Path.Combine(_watch, "6-completed", "demo-1");
+        var verified = IntegrationVerificationStore.Read(folder)!;
+        IntegrationVerificationStore.Write(folder, verified with { State = IntegrationVerificationStates.Unverified });
+        Assert.Equal(["DEMO-2"], deploy.DeliveryColumns("demo")!.Columns[0].Landed.Select(card => card.Key));
+        IntegrationVerificationStore.Write(folder, verified);
+        Assert.Equal(2, deploy.DeliveryColumns("demo")!.Columns[0].Landed.Count);
+        IntegrationVerificationStore.Delete(folder);
+        Assert.Equal(["DEMO-2"], deploy.DeliveryColumns("demo")!.Columns[0].Landed.Select(card => card.Key));
+
+        File.WriteAllText(IntegrationVerificationStore.PathFor(folder), JsonSerializer.Serialize(verified));
+        Assert.Single(deploy.DeliveryColumns("demo")!.Columns[0].Landed);
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(2, deploy.DeliveryColumns("demo")!.Columns[0].Landed.Count);
+        File.Delete(IntegrationVerificationStore.PathFor(folder));
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(["DEMO-2"], deploy.DeliveryColumns("demo")!.Columns[0].Landed.Select(card => card.Key));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Delivery_columns_three_thousand_card_fixture_measurement()
+    {
+        var (_, environments, store) = Build();
+        var sha = Head();
+        for (var index = 0; index < 3000; index++) Card($"DEMO-{index:0000}", sha);
+        var lockHolds = new List<double>();
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null,
+            deliveryLockHoldObserved: elapsed => lockHolds.Add(elapsed.TotalMilliseconds));
+        Assert.NotNull(deploy.DeliveryColumns("demo"));
+        lockHolds.Clear();
+
+        var oldScanAndStamps = new List<double>();
+        var newRequests = new List<double>();
+        var newLockHolds = new List<double>();
+        for (var iteration = 0; iteration < 20; iteration++)
+        {
+            var watch = Stopwatch.StartNew();
+            foreach (var task in _scanner!.ScanAllJobsWithArchive().Where(task => task.ProjectName == "demo"))
+            {
+                var path = IntegrationVerificationStore.PathFor(task.FolderPath);
+                if (File.Exists(path)) _ = File.GetLastWriteTimeUtc(path).Ticks;
+            }
+            watch.Stop();
+            oldScanAndStamps.Add(watch.Elapsed.TotalMilliseconds);
+
+            watch.Restart();
+            Assert.NotNull(deploy.DeliveryColumns("demo"));
+            watch.Stop();
+            newRequests.Add(watch.Elapsed.TotalMilliseconds);
+            newLockHolds.Add(lockHolds[^1]);
+        }
+
+        static double Median(IEnumerable<double> values)
+        {
+            var ordered = values.Order().ToArray();
+            return (ordered[ordered.Length / 2 - 1] + ordered[ordered.Length / 2]) / 2;
+        }
+        var oldWork = Median(oldScanAndStamps);
+        var newRequest = Median(newRequests);
+        var newHold = Median(newLockHolds);
+        var report = $"""
+            # Delivery columns, 3,000-card generated fixture
+
+            20 warm reads in one test process. Milliseconds, median.
+
+            | Path | Request | Deploy lock hold |
+            | --- | ---: | ---: |
+            | Before, reconstructed | {oldWork + newHold:F2} | {oldWork + newHold:F2} |
+            | After, measured | {newRequest:F2} | {newHold:F2} |
+
+            The before row measures the previous archive scan and per-card Exists/mtime
+            work and adds the measured cached response lock hold. It estimates the old
+            assembly rather than running it. The after row measures the current service.
+            AGT-3512 independently measured 19.4 ms for 3,000 file stamps alone.
+            """;
+        var results = Environment.GetEnvironmentVariable("JOB_RESULTS_DIR");
+        if (!string.IsNullOrWhiteSpace(results))
+        {
+            Directory.CreateDirectory(results);
+            File.WriteAllText(Path.Combine(results, "delivery-columns-benchmark.md"), report);
+        }
     }
 
     [Fact]

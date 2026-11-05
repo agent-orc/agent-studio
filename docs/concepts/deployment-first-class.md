@@ -372,6 +372,11 @@ entry has `key`, `releaseId`, `releaseVersion` and `rolledBack`; a rollback
 moves the withdrawn release's cards back to `waiting` and marks them rolled
 back. Membership follows release creation order, as the status projection
 does, so the read runs no git. Card lane states never change.
+The integrated column uses a project-local verification map. Writes and
+deletions through `IntegrationVerificationStore` update the next response;
+changes made directly to verification files are reconciled on the first
+Delivery read after the five-minute interval elapses. Warm reads do not probe
+every verification file.
 
 The board renders it as the Delivery group after "Done & Decide" (AGT-3316,
 `<app-delivery-section>`): one column per read-model column, landed cards, a
