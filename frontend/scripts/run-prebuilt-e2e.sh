@@ -6,7 +6,7 @@ FRONTEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${FRONTEND_ROOT}/.." && pwd)"
 if [[ "${PW_E2E_SINGLE_RUN:-0}" != "1" && "$#" -eq 0 ]]; then
   result=0
-  for profile in standard recovery ref-drift demo first-run networked-monolith; do
+  for profile in standard recovery ref-drift demo first-run networked-monolith operator-cli; do
     PW_E2E_SINGLE_RUN=1 PW_E2E_PROFILE="${profile}" bash "$0" || result=1
   done
   exit "${result}"
@@ -18,6 +18,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *crash-recovery-prompt.spec.ts*|*first-run-checklist.spec.ts*) PW_E2E_PROFILE=recovery ;;
       *first-run-journey.spec.ts*) PW_E2E_PROFILE=first-run ;;
       *first-run-networked-monolith.spec.ts*) PW_E2E_PROFILE=networked-monolith ;;
+      *studio-op-operator-cli.spec.ts*) PW_E2E_PROFILE=operator-cli ;;
       *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
     esac
   done

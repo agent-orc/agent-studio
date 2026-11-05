@@ -31,6 +31,11 @@ need a reliable scripted path because:
 - You want to surface a finding as a new ticket the orchestrator will pick up.
 - You need to promote a hot bug to the top of the queue.
 
+To operate an installation (watch for decisions, accept with green evidence,
+batch gate triage, preflight and deploy plans), use the
+[operator skill](../operator/SKILL.md) and its `studio-op` CLI instead of
+hand-written scripts.
+
 ## Server contract
 
 ### Sync a developer checkout after integration

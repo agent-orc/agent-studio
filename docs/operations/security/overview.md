@@ -1246,6 +1246,30 @@ stream that API tokens may read. SignalR stays closed to tokens.
   hold no secret. Event reasons repeat the reason text of the underlying
   record.
 
+### Operator CLI studio-op (operator agent level OP-8)
+
+`studio-op` ([setup](../setup/studio-op.md)) is a client of the routes above
+and adds no route or permission. It enforces the client half of the
+Dossier's guardrails in code:
+
+- The bearer comes only from `~/.config/agent-studio/operator-token` or, when
+  `studio-op.json` selects it, `operator-session`. The file must be a regular
+  file of the user with no group or other access. There is no environment
+  variable, no command-line option and no fallback between files; the retired
+  `AGENT_STUDIO_API_TOKEN`, any token-shaped environment value and any
+  token-shaped argument are refused before a request leaves. A token travels
+  only over HTTPS or to a loopback address.
+- Every line it writes passes through redaction of the loaded token, every
+  Studio-issued token shape and bearer header values, so an answer that echoes
+  a credential is not printed. Prompt, title and log text holding a
+  token-shaped value is refused instead of sent.
+- `studio-op watch` keeps a local lock file (mode 600) next to the token file
+  in addition to the server's watcher lease, and releases both on exit.
+- `studio-op accept` refuses unless the latest review passed with proven build
+  and tests, nothing blocks and no decision is open (OA-D5); the lane move then
+  still passes the server's integration check.
+- It has no Git, SSH or host execution command.
+
 ## Audit and credential handling
 
 Remote claim, event, and completion records are appended under

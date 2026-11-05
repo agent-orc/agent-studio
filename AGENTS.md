@@ -56,6 +56,8 @@ apply only under `frontend/`.
   lacks the operation, queue a task instead of bypassing it.
 - For task creation, movement, reissue, archive, or triage, read the Task API
   skill first: [.agents/skills/task-api/SKILL.md](.agents/skills/task-api/SKILL.md).
+- To operate a Studio installation (watch, accept, batch gate, deploy), read the
+  operator skill first: [.agents/skills/operator/SKILL.md](.agents/skills/operator/SKILL.md).
 - Do not commit, push, amend, or mutate remotes unless this exact interactive
   task asks for it. Managed task runs leave git ownership to the platform; see
   [docs/operations/git/commit-push-doctrine.md](./docs/operations/git/commit-push-doctrine.md).

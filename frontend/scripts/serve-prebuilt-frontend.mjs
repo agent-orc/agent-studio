@@ -14,7 +14,7 @@ const proxyOptions = (backend, request) => ({
   hostname: backend.hostname.replace(/^\[|\]$/g, ''), port: backend.port || 80,
   path: request.url, method: request.method,
   headers: { ...request.headers, host: backend.host,
-    ...(process.env.PW_E2E_PROFILE === 'networked-monolith' ? { 'x-forwarded-proto': 'https' } : {}) },
+    ...(['networked-monolith', 'operator-cli'].includes(process.env.PW_E2E_PROFILE ?? '') ? { 'x-forwarded-proto': 'https' } : {}) },
 });
 
 async function createFrontendHandlers(directory, backendUrl) {

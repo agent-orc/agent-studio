@@ -43,7 +43,9 @@ export WatchPaths__0__RepositoryPath="${PW_E2E_CHECKOUT}"
 
 case "${PW_E2E_PROFILE:-standard}" in
   standard) ;;
-  networked-monolith)
+  # operator-cli: a fresh networked monolith of its own, so the studio-op spec
+  # bootstraps its Owner and API token without sharing first-run state.
+  networked-monolith|operator-cli)
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
