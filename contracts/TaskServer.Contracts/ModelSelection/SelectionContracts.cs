@@ -202,6 +202,7 @@ public sealed record SelectionFacts
 /// <summary>Ledger kinds of a selection event.</summary>
 public static class SelectionLedgerKinds
 {
+    public const string Selected = "selected";
     public const string Switched = "switched";
     public const string Waiting = "waiting";
     public const string Refused = "refused";

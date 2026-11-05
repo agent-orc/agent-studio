@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using AgentStudio.Cli;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -47,6 +48,57 @@ public class GitServiceRunLocationTests : IDisposable
             Directory.Delete(_tempDir, recursive: true);
         }
         catch { /* best-effort */ }
+    }
+
+    [Fact]
+    public async Task Networked_commit_message_review_uses_the_one_shot_dispatcher()
+    {
+        var (repoRoot, jobId, watchPath) = SetupRepoAndJob();
+        WriteFile(repoRoot, "README.md", "seed");
+        RunGit(repoRoot, "add", "-A");
+        RunGit(repoRoot, "commit", "-q", "-m", "seed");
+        WriteFile(repoRoot, "README.md", "changed");
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["WatchPaths:0:Name"] = "Demo",
+            ["WatchPaths:0:RootPath"] = repoRoot,
+            ["WatchPaths:0:RepositoryPath"] = repoRoot,
+            ["WatchPaths:0:Path"] = watchPath,
+            ["Security:Profile"] = "networked",
+        }).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var oneShot = new CommitMessageOneShot();
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config,
+            oneShotRegistry: new CliOneShotRegistry([oneShot]));
+
+        var result = await git.GenerateCommitMessageAsync(jobId, watchPath);
+
+        Assert.Equal("Describe the change", result.Message);
+        Assert.Null(result.Error);
+        Assert.NotNull(oneShot.Request);
+        Assert.Equal("commit-message", oneShot.Request.Source);
+        Assert.Equal("commit-message", oneShot.Request.StepId);
+        Assert.Equal(jobId, oneShot.Request.JobId);
+    }
+
+    private sealed class CommitMessageOneShot : ICliOneShot
+    {
+        public string CliType => CliTypes.Codex;
+        public CliOneShotRequest? Request { get; private set; }
+        public Task<CliOneShotResult> RunAsync(CliOneShotRequest request, CancellationToken ct = default)
+        {
+            Request = request;
+            return Task.FromResult(CliOneShotResult.SpawnFailure(string.Empty,
+                DateTime.UnixEpoch, DateTime.UnixEpoch) with
+            {
+                Ok = true,
+                ExitCode = 0,
+                ParsedText = "COMMIT_REVIEW: ALLOW\nDescribe the change",
+                Error = null,
+            });
+        }
     }
 
     [Fact]

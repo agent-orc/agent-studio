@@ -697,6 +697,7 @@ public partial class GitService
     private readonly IConfiguration _config;
     private readonly RuntimePromptService _prompts;
     private readonly AdHocUsageRecorder? _usage;
+    private readonly CliOneShotRegistry? _oneShotRegistry;
     private readonly ProjectRegistry _registry;
     private readonly CommitCandidateGate _commitGate;
     private readonly ProjectSettingsService? _projectSettings;
@@ -717,13 +718,15 @@ public partial class GitService
         ProjectRegistry? registry = null,
         IEnumerable<ICommitCandidateScanner>? commitCandidateScanners = null,
         ProjectSettingsService? projectSettings = null,
-        GitRefLockJanitor? lockJanitor = null)
+        GitRefLockJanitor? lockJanitor = null,
+        CliOneShotRegistry? oneShotRegistry = null)
     {
         _logger = logger;
         _scanner = scanner;
         _config = config;
         _prompts = prompts ?? new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         _usage = usage;
+        _oneShotRegistry = oneShotRegistry;
         _registry = registry ?? new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
         _commitGate = new CommitCandidateGate(logger, commitCandidateScanners);
         _projectSettings = projectSettings;
@@ -2940,10 +2943,6 @@ public partial class GitService
         if (diff.Length > 60_000) diff = diff[..60_000] + "\n[truncated]";
 
         var intent = ReadTaskIntent(jobId, watchPath);
-        if (!SecurityProfiles.IsLocal(_config))
-            return new GenerateMessageResult(null,
-                "Remote runner required: host Codex commit-message review is disabled in the networked profile.");
-        var codexPath = _config["CodexCli:Path"] ?? "codex";
         var model = ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
         var prompt = _prompts.Render(RuntimePromptService.CommitMessage,
             new Dictionary<string, string?>
@@ -2961,6 +2960,29 @@ public partial class GitService
                 ["last_user_continue"] = intent.LastUserContinue
             },
             new PromptCallContext(Step: "commit-message", Model: model));
+
+        if (!SecurityProfiles.IsLocal(_config))
+        {
+            var oneShot = _oneShotRegistry?.Get(CliTypes.Codex);
+            if (oneShot is null)
+                return new GenerateMessageResult(null, "Remote commit-message reviewer is unavailable.");
+            var result = await oneShot.RunAsync(new CliOneShotRequest(CliTypes.Codex, model, prompt)
+            {
+                Timeout = TimeSpan.FromSeconds(60),
+                Source = AdHocUsageSources.CommitMessage,
+                StepId = "commit-message",
+                JobId = jobId,
+            }, ct);
+            if (!result.Ok) return new GenerateMessageResult(null, result.Error);
+            var (message, concern) = ParseCommitReview(result.ParsedText);
+            if (!string.IsNullOrWhiteSpace(concern))
+                return new GenerateMessageResult(null,
+                    "Codex semantic reviewer reported a suspicious or unrelated candidate.", concern);
+            return string.IsNullOrWhiteSpace(message)
+                ? new GenerateMessageResult(null, "codex returned an empty message or omitted the required sentinel.")
+                : new GenerateMessageResult(message, null);
+        }
+        var codexPath = _config["CodexCli:Path"] ?? "codex";
 
         var psi = new ProcessStartInfo
         {

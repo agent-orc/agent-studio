@@ -125,7 +125,10 @@ public sealed class RemoteResultFinalizationService
             return ResultFinalizationPolicy.Plan(ResultSummaryDelivery.Generated, null);
         }
 
-        return Schedule(task, ResultSummaryDelivery.Degraded, outcome.Error, inline: null);
+        return Schedule(task,
+            outcome.Error?.StartsWith("waiting for a host with ", StringComparison.Ordinal) == true
+                ? ResultSummaryDelivery.Pending : ResultSummaryDelivery.Degraded,
+            outcome.Error, inline: null);
     }
 
     /// <summary>
@@ -176,6 +179,8 @@ public sealed class RemoteResultFinalizationService
             {
                 if (ResultFinalizationPolicy.IsInputRefusal(outcome.Error))
                     Drop(entry with { Reason = outcome.Error ?? entry.Reason }, "input-refused");
+                else if (outcome.Error?.StartsWith("waiting for a host with ", StringComparison.Ordinal) == true)
+                    Defer(entry, outcome.Error, asOfUtc);
                 else
                     Reschedule(entry, outcome.Error, asOfUtc);
                 continue;

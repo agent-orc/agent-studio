@@ -293,7 +293,7 @@ public sealed partial class TaskServerStore
                     telemetryAt = request.Telemetry?.ObservedAt,
                 }),
                 ct);
-            configuredRoutes = await ReadConfiguredModelRoutesAsync(connection, transaction, ct);
+            configuredRoutes = await ReadConfiguredModelRoutesAsync(connection, transaction, UtcNow, ct);
         }, ct);
         await EvaluateHostCliPolicyAsync(request.RunnerId, actorId, ct);
         return (await ListRunnerCapabilitySnapshotsAsync(ct))

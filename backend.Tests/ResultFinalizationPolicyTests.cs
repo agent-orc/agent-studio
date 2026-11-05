@@ -61,6 +61,16 @@ public sealed class ResultFinalizationPolicyTests
     }
 
     [Fact]
+    public void A_missing_model_host_reads_as_waiting_and_keeps_the_retry()
+    {
+        const string reason = "waiting for a host with model-acceptance:codex:gpt-6-sol";
+        var plan = ResultFinalizationPolicy.Plan(ResultSummaryDelivery.Pending, reason);
+        Assert.Equal("pending:" + reason, plan.ResultDocumentStatus);
+        Assert.Equal("Summary pending (" + reason + ")", plan.TimelineSummary);
+        Assert.True(plan.ScheduleRetry);
+    }
+
+    [Fact]
     public void A_summary_still_running_past_the_budget_is_pending_not_missing()
     {
         var plan = ResultFinalizationPolicy.Plan(ResultSummaryDelivery.Pending, null);
