@@ -100,6 +100,8 @@ public sealed class TaskIndexCache
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCoreSourceStamp> _coreTaskStamps = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCoreSourceStamp> _apiTaskStamps = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private long _coreWriteGeneration;
     private long _coreDependencyGeneration;
     private long _coreScanSequence;
@@ -734,6 +736,7 @@ public sealed class TaskIndexCache
                     {
                         _coreFolderVersions[old] = ++_coreWriteGeneration;
                         _coreTaskStamps.Remove(old);
+                        _apiTaskStamps.Remove(old);
                     }
                     ClearCoreTombstone(CoreKey(info.WatchPath, info.Id));
                     ClearCoreTombstone(CoreKey(info.WatchPath, info.TaskKey));
@@ -744,6 +747,136 @@ public sealed class TaskIndexCache
             }
         }
         finally { EndCorePublication(pendingKeys); }
+    }
+
+    /// <summary>
+    /// A routing edit changes one card but neither its identity nor its
+    /// reference edges. Replace that card in the published board generation
+    /// after publishing the core fact, without a workspace disk walk.
+    /// </summary>
+    public void PublishRoutingMutation(TaskInfo info)
+    {
+        lock (_corePublicationLock)
+        {
+            if (!TryPublishRoutingCore(info)) PublishCore(info);
+            lock (_lock)
+            {
+                if (!_hasSnapshot) return;
+                var prior = _publication;
+                var tasks = info.State == TaskStates.Archive ? prior.Archive : prior.Live;
+                var index = tasks.FindIndex(task =>
+                    string.Equals(task.FolderPath, info.FolderPath,
+                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+                if (index < 0)
+                {
+                    // A concurrent move or an incomplete startup publication
+                    // needs the ordinary reconciliation path.
+                    Invalidate(InvalidationSource.Mutation);
+                    return;
+                }
+                var updated = tasks.SetItem(index, info);
+                _publication = new TaskIndexPublication(
+                    info.State == TaskStates.Archive ? prior.Live : updated,
+                    info.State == TaskStates.Archive ? updated : prior.Archive,
+                    prior.References, prior.AutomationReferences,
+                    prior.Generation + 1);
+                var mutationGeneration = ++_requiredMutationGen;
+                _publishedMutationGen = mutationGeneration;
+                _apiTaskStamps[info.FolderPath] = SourceStamp(info);
+                // A scan already in flight may contain the old card. Its
+                // generation check keeps it dirty for one reconciliation pass.
+                if (_refreshCompletion is not null) ++_invalidationGen;
+            }
+        }
+    }
+
+    private bool TryPublishRoutingCore(TaskInfo info)
+    {
+        var pendingKeys = BeginCorePublication(info);
+        try
+        {
+            lock (_lock)
+            {
+                if (!_coreFactsByFolder.ContainsKey(info.FolderPath)) return false;
+                var record = TaskCoreRecord.Create(info,
+                    info.References.DependsOn.Count > 0 ? _coreReferences.EvaluateWaitsOn(info) : null,
+                    _coreByFolder.GetValueOrDefault(info.FolderPath));
+                var facts = new Dictionary<string, TaskInfo>(_coreFactsByFolder, _coreFactsByFolder.Comparer)
+                {
+                    [info.FolderPath] = info,
+                };
+                var records = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer)
+                {
+                    [info.FolderPath] = record,
+                };
+                var identities = new Dictionary<string, TaskInfo[]>(_coreFactsByIdentity,
+                    StringComparer.OrdinalIgnoreCase);
+                var aliases = new Dictionary<string, TaskCoreRecord>(_core, StringComparer.OrdinalIgnoreCase);
+                foreach (var identity in new[] { info.Id, info.TaskKey, info.Key,
+                             TaskCoreRecord.Limit(info.Id, 128) }
+                             .Where(value => !string.IsNullOrWhiteSpace(value))
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (identities.TryGetValue(identity!, out var matches))
+                    {
+                        var position = Array.FindIndex(matches, task =>
+                            facts.Comparer.Equals(task.FolderPath, info.FolderPath));
+                        if (position >= 0)
+                        {
+                            var copy = (TaskInfo[])matches.Clone();
+                            copy[position] = info;
+                            identities[identity!] = copy;
+                        }
+                    }
+                    var key = CoreKey(info.WatchPath, identity!);
+                    if (aliases.TryGetValue(key, out var old)
+                        && facts.Comparer.Equals(old.FolderPath, info.FolderPath))
+                        aliases[key] = record;
+                }
+                _coreFactsByFolder = facts;
+                _coreFactsByIdentity = identities;
+                _coreByFolder = records;
+                _core = aliases;
+                var revisionKey = CoreKey(info.WatchPath, info.Id);
+                _coreRevisionByKey[revisionKey] = _coreRevisionByKey.GetValueOrDefault(revisionKey) + 1;
+                _coreFolderVersions[info.FolderPath] = ++_coreWriteGeneration;
+                _coreRevisionVersions[revisionKey] = _coreWriteGeneration;
+                _coreTaskStamps[info.FolderPath] = SourceStamp(info);
+                _staleCoreFolders.Remove(info.FolderPath);
+                return true;
+            }
+        }
+        finally { EndCorePublication(pendingKeys); }
+    }
+
+    /// <summary>Add one newly created card to the published generation without a disk walk.</summary>
+    public void PublishCreatedMutation(TaskInfo info)
+    {
+        lock (_corePublicationLock)
+        {
+            PublishCore(info);
+            lock (_lock)
+            {
+                if (!_hasSnapshot) return;
+                var prior = _publication;
+                var liveIndex = prior.Live.FindIndex(task => task.FolderPath == info.FolderPath);
+                var archiveIndex = prior.Archive.FindIndex(task => task.FolderPath == info.FolderPath);
+                var live = info.State == TaskStates.Archive ? prior.Live
+                    : liveIndex >= 0 ? prior.Live.SetItem(liveIndex, info) : prior.Live.Add(info);
+                var archive = info.State == TaskStates.Archive
+                    ? archiveIndex >= 0 ? prior.Archive.SetItem(archiveIndex, info) : prior.Archive.Add(info)
+                    : prior.Archive;
+                var all = live.Concat(archive).ToArray();
+                _publication = new TaskIndexPublication(live, archive,
+                    TaskReferenceIndex.Build(all),
+                    TaskReferenceIndex.Build(all.Where(task => !task.Fixture)),
+                    prior.Generation + 1);
+                var mutationGeneration = ++_requiredMutationGen;
+                _publishedMutationGen = mutationGeneration;
+                _apiTaskStamps[info.FolderPath] = SourceStamp(info);
+                if (_refreshCompletion is not null) ++_invalidationGen;
+            }
+        }
     }
 
     /// <summary>Read and publish under one ordering lock, including watcher reads.</summary>
@@ -922,6 +1055,7 @@ public sealed class TaskIndexCache
             {
                 _coreFolderVersions[info.FolderPath] = ++_coreWriteGeneration;
                 _coreTaskStamps.Remove(info.FolderPath);
+                _apiTaskStamps.Remove(info.FolderPath);
                 _staleCoreFolders.Remove(info.FolderPath);
             }
         }
@@ -941,6 +1075,18 @@ public sealed class TaskIndexCache
     public TaskCoreRecord? GetCoreByFolder(string folder)
     {
         lock (_lock) return _coreByFolder.GetValueOrDefault(folder);
+    }
+
+    /// <summary>Whether a watcher event echoes a task.json version already published by an API writer.</summary>
+    public bool IsCurrentTaskJson(string path)
+    {
+        if (!string.Equals(Path.GetFileName(path), "task.json", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var folder = Path.GetDirectoryName(path);
+        if (folder is null) return false;
+        var stamp = TaskCoreSourceStamp.Read(path);
+        lock (_lock)
+            return _apiTaskStamps.TryGetValue(folder, out var published) && published == stamp;
     }
 
     /// <summary>Debounced sidecar refresh on the watcher thread, never on a core read.</summary>
@@ -1259,6 +1405,27 @@ public sealed class TaskIndexCache
                 var mergedReferences = TaskReferenceIndex.Build(mergedFacts.Values);
                 PublishCoreFacts(mergedFacts, mergedRecords, mergedReferences);
                 completedCoreFacts = mergedFacts.Values.ToArray();
+                // A direct API publication may have landed while this scan
+                // was reading disk. Keep its newer card in the board as well
+                // as the core index, rather than briefly publishing the old
+                // scan result until the follow-up reconciliation finishes.
+                var changedDuringScan = currentFolderVersions
+                    .Where(pair => pair.Value > coreWriteGenBefore)
+                    .Select(pair => pair.Key).ToArray();
+                if (changedDuringScan.Length > 0)
+                {
+                    foreach (var folder in changedDuringScan)
+                    {
+                        board.RemoveAll(task => mergedFacts.Comparer.Equals(task.FolderPath, folder));
+                        archive.RemoveAll(task => mergedFacts.Comparer.Equals(task.FolderPath, folder));
+                        if (!mergedFacts.TryGetValue(folder, out var latest)) continue;
+                        if (latest.State == TaskStates.Archive) archive.Add(latest);
+                        else board.Add(latest);
+                    }
+                    referenceIndex = TaskReferenceIndex.Build(board.Concat(archive));
+                    automationReferences = TaskReferenceIndex.Build(
+                        board.Concat(archive).Where(task => !task.Fixture));
+                }
                 var stamps = adopted.ToDictionary(folder => folder,
                     folder => SourceStamp(factsByFolder[folder]),
                     mergedFacts.Comparer);
