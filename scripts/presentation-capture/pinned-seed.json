@@ -34,6 +34,15 @@
     { "project": "demo-platform", "key": "PLAT-3", "state": "6-completed", "type": "feature", "title": "Cache catalog responses", "history": true },
     { "project": "demo-platform", "key": "PLAT-4", "state": "7-archive", "type": "bug", "title": "Stop double-counting retried tasks" }
   ],
+  "operatorScenes": [
+    { "id": "access", "surface": "Settings > Access", "heading": "Demo operator access", "lines": ["Operator agent · Demo App and Demo Platform", "Expires in 30 days · Last use: 09:20", "Revoke access"], "note": "Pinned scenario: the secret is never shown." },
+    { "id": "watch", "surface": "$ studio-op watch", "heading": "Decision needed · DEMO-9", "lines": ["escalation.opened · Demo App", "Reason: review loop budget exhausted", "Suggested: inspect the evidence and decide"], "note": "Pinned decision event beside the demo board." },
+    { "id": "triage", "surface": "$ studio-op triage", "heading": "Demo batch across projects", "lines": ["Demo App · DEMO-12 · red member", "Demo Platform · pending push", "Next safe action: inspect isolation"], "note": "Pinned batch scenario; project and card names are invented." },
+    { "id": "timeline", "surface": "DEMO-9 · card timeline", "heading": "Operator continue round", "lines": ["Actor: operator agent · Reason: review follow-up", "Run base: recorded result ref", "Result ref: demo/reports-export"], "note": "Pinned operator timeline scenario." },
+    { "id": "operator-log-chat", "surface": "In-app chat", "heading": "What did the operator do overnight?", "lines": ["The operator continued DEMO-9 after review.", "It recorded the run base and reason on the card.", "Context receipt: operator-log:Demo App"], "note": "Pinned chat and operator-log scenario." },
+    { "id": "deploy-preflight", "surface": "$ studio-op preflight deploy", "heading": "Pending push blocks the deploy", "lines": ["Blocker: Demo Platform has a pending push", "After resolution: Task Server → readiness", "Then: Engine → hosts in one bounded window"], "note": "Pinned preflight scenario; no deploy is executed." },
+    { "id": "attention-lease", "surface": "DEMO-9 · card header", "heading": "Operator holds the attention lease", "lines": ["Holder: demo operator agent", "Card writes require the current revision", "The Owner may take over the card"], "note": "Pinned attention-lease scenario." }
+  ],
   "decision": {
     "taskKey": "DEMO-9",
     "promptMarkdown": "# Approve the reports export release\n\nReview the delivered CSV export as a bounded release decision. Keep the accepted escaping and timezone behavior, inspect the attached visual proof and diff, and decide whether the remaining empty-state assertion must block release.\n\n## Acceptance\n\n- Exported values remain RFC 4180 compatible.\n- The review verdict and every evidence file stay attached to this task.\n- The operator chooses continue, accept as-is, or abort from the recorded decision surface.\n",

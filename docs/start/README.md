@@ -229,6 +229,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Workstation runner-host profile (Windows roots, tools, preview evidence, same Task Server authority) | [operations/setup/workstation-runner-host.md](../operations/setup/workstation-runner-host.md) |
 | Guided multi-machine setup (Control Plane, join token, Agent Hosts) | [operations/setup/multi-machine.md](../operations/setup/multi-machine.md) |
 | Website onboarding source copy (Demo, Single Machine, Multi Machine) | [operations/setup/website-onboarding-template.md](../operations/setup/website-onboarding-template.md) |
+| Coding-agent operator website page source and pinned demo captures (OP-10) | [website/operator-agent/index.html](../website/operator-agent/index.html) |
 | Runner-host resource governance (Linux cgroups, coding/review role defaults, AIMD capacity boundary) | [target architecture](../operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md) |
 | Execution hosts operator lifecycle | [operations/remote-hosts.md](../operations/remote-hosts.md) |
 | Review lane runbook: capabilities a Review Executor registers, the typed empty-claim reason (`unclaimable-plan-requirements`), and the `lane-drain-stalled` review-claim alarm (AGT-2987) | [operations/review-lane-runbook.md](../operations/review-lane-runbook.md) |
