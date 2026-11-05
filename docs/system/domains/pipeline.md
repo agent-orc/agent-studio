@@ -931,6 +931,38 @@ Without a stored override, the configuration values above remain the defaults.
 `RemoteGate:HostCores` and `RemoteGate:AllowOversubscription` supply the
 optional host-core and oversubscription defaults.
 
+### Gate capacity API contract
+
+`GET /api/system/gate-capacity` requires `workspace.operate` and returns the
+effective installation capacity, its source, and current slot use. `PUT` on the
+same route requires `workspace.administer` and the Studio Owner role. Send the
+complete JSON capacity object, for example:
+
+```json
+{"slots":4,"processorsPerGate":6,"hostCores":24,"allowOversubscription":false}
+```
+
+`slots` and `processorsPerGate` must each be integers from 1 through 64.
+`hostCores` is either `null` or an integer from 1 through 4096. When host cores
+are supplied, `slots * processorsPerGate` must not exceed `hostCores` unless
+`allowOversubscription` is `true`. Invalid capacity returns HTTP 400 with an
+`error` string. A successful read or write returns HTTP 200 in this shape:
+
+```json
+{"capacity":{"slots":4,"processorsPerGate":6,"hostCores":24,"allowOversubscription":false},"source":"stored","use":{"busy":2,"total":4}}
+```
+
+`source` is `configuration` until the first saved override, then `stored`.
+`use` counts busy and total slots on healthy pull hosts when present; otherwise
+it uses an SSH host report from the past ten minutes or this API process's
+local slot count.
+The response has `Cache-Control: no-store`. Each changed value is persisted as
+an installation-wide override and recorded in the operator audit stream as
+`gate-capacity.change`, with the actor and previous and current capacity.
+Repeating an identical stored value makes no new audit entry. New gates take
+the current value without an API restart. Running gates keep their grant, and
+reducing slots waits for those gates to finish.
+
 The temporary SSH fallback uses `RemoteGate:SshHost` and an absolute
 `RemoteGate:WorkerPath` pointing to a release-pinned `OrchestratorApi.dll` on
 the remote host. Environment variables use double underscores, for example

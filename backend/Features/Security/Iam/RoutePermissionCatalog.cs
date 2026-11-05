@@ -391,7 +391,7 @@ public static class RoutePermissionCatalog
             "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
             "/api/workspace/summary", "/api/workspaces/{}/quota/**",
             "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",
-            "/api/system/execution-infrastructure", "/api/system/gate-slots", "/api/system/readiness", "/api/agent-rules", "/api/adhoc-usage/**");
+            "/api/system/execution-infrastructure", "/api/system/gate-capacity", "/api/system/gate-slots", "/api/system/readiness", "/api/agent-rules", "/api/adhoc-usage/**");
         Add("POST", IamPermissions.WorkspaceOperate, "/api/system/readiness/refresh");
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/system/gate-capacity");
         Add("W", IamPermissions.WorkspaceOperate,
