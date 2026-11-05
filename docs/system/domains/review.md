@@ -269,6 +269,16 @@ and Remote Review. A blocking verdict uses the review-finding route while its
 lifetime budget remains available. A real,
 actionable `concerns` verdict gets one automatic coding round by default; the
 project setting `maxReviewConcernRounds` sets the bound and `0` disables it.
+Actionable means the reviewer names a file or symbol in the delivery and a
+missing or wrong behavior. Style, naming, duplication without a behavioral gap,
+and findings with no named location remain advisory. The same classification
+applies to a block downgraded for missing review-material citation. The fix
+round uses the reviewer summary and `missing` text as quoted data. It must also
+fit the card-round and lifetime delivered-review budgets. The batch gate state
+lists cards in Ready or Progress that wait for this fix, with the review attempt,
+aspect, and round limit. `GET /api/projects/{projectName}/review-concerns/daily?days=30`
+reports daily actionable and advisory verdict counts, plus counts whose settled
+delivery integration reached `develop`.
 Set these project controls with `PUT /api/projects/{projectName}/review-follow-up`.
 The JSON body uses `maxConcernRounds` (integer, default `1`, clamped to `0..10`),
 `scopedReviewAfterFinding` (boolean, default `true`), and

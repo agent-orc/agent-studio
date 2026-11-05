@@ -367,6 +367,11 @@ public sealed partial class BatchGatePilotService
     public object State(string project, int history = 10)
     {
         var options = _settings.Get(project).BatchGate;
+        var index = _services?.GetService<TaskIndexCache>();
+        var reviewFixWaits = index is null
+            ? ReviewFixWaits(_scanner.ScanAllJobs(), project)
+            : index.GetDerived("batch-review-fix:" + project, 1,
+                publication => ReviewFixWaits(publication.Live, project));
         var pending = _store.ListPending().Where(item =>
             string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase)).ToArray();
         // A read route starts no Git: risk and paths come from the planner tick's cache.
@@ -375,8 +380,18 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null,
             _gateSlots?.Snapshot(),
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
-            _time.GetUtcNow(), _services?.GetService<GateRunLedger>());
+            _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits);
     }
+
+    private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
+        => tasks
+            .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)
+                && task.State is TaskStates.Ready or TaskStates.Progress)
+            .Select(task => (Task: task, Round: ReviewConcernRoundStore.Read(task.FolderPath)))
+            .Where(item => item.Round is { StillOpen: true, RoundKind: RunTriggers.ReviewConcern })
+            .Select(item => new BatchGateReviewFixWait(item.Task.Key ?? item.Task.Id,
+                item.Round!.ReviewAttemptId, item.Round.Used, item.Round.Maximum,
+                item.Round.AspectIds)).ToArray();
 
     private bool CodeBatchEnabled(string project)
     {

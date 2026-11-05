@@ -11,6 +11,21 @@ namespace AgentStudio.Tests;
 public sealed class BatchGateStoreTests : IDisposable
 {
     [Fact]
+    public void State_names_review_fix_wait_before_batch_admission()
+    {
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true),
+            reviewFixWaits: [new BatchGateReviewFixWait("card-7", "review-7", 1, 1,
+                ["code-quality"])]), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        var wait = Assert.Single(state.GetProperty("reviewFixWaits").EnumerateArray());
+        Assert.Equal("card-7", wait.GetProperty("taskKey").GetString());
+        var member = state.GetProperty("members").GetProperty("card-7");
+        Assert.Equal("review-fix", member.GetProperty("status").GetString());
+        Assert.Contains("before batch admission", member.GetProperty("reasonDetail").GetString());
+    }
+
+    [Fact]
     public void Base_verdict_is_reused_by_exact_sha_and_profile()
     {
         var verdict = new BatchGateBaseVerdict("project", Base, "profile-a",

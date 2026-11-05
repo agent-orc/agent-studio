@@ -2,6 +2,9 @@ using AgentStudio.TaskServer.Contracts.BatchGate;
 
 namespace AgentStudio.Pipeline;
 
+public sealed record BatchGateReviewFixWait(string TaskKey, string ReviewAttemptId,
+    int Round, int Maximum, IReadOnlyList<string> Aspects);
+
 public static class BatchGateStateSnapshotReader
 {
     public static object Read(BatchGateStore store, string project,
@@ -11,7 +14,8 @@ public static class BatchGateStateSnapshotReader
         GateSlotUsage? gateSlots = null,
         IReadOnlyList<PendingIntegrationPushWait>? pushWaits = null,
         DateTimeOffset? now = null,
-        GateRunLedger? ledger = null)
+        GateRunLedger? ledger = null,
+        IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null)
     {
         var at = now ?? DateTimeOffset.UtcNow;
         var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
@@ -89,6 +93,12 @@ public static class BatchGateStateSnapshotReader
             .Distinct(StringComparer.Ordinal)
             .SelectMany(store.ListFallbackCauses).ToArray();
         var members = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (var wait in reviewFixWaits ?? [])
+            members[wait.TaskKey] = new { status = "review-fix", batchId = (string?)null,
+                phase = (string?)null, position = (int?)null, size = (int?)null,
+                reason = $"actionable concern in {string.Join(", ", wait.Aspects)}", reasonDetail =
+                    $"Review {wait.ReviewAttemptId} found a behavior gap in {string.Join(", ", wait.Aspects)}. "
+                    + $"Fix round {wait.Round} of {wait.Maximum} must finish before batch admission." };
         foreach (var check in preChecks.Where(check => check.Outcome == "red"))
             members.TryAdd(check.TaskKey, new { status = "pre-check-red", batchId = (string?)null,
                 phase = (string?)null, position = (int?)null, size = (int?)null,
@@ -181,6 +191,7 @@ public static class BatchGateStateSnapshotReader
             baseMoveTotals = new { kept = moved.Count(state => state.BaseMoveOutcome == "kept"),
                 abandoned = moved.Count(state => state.BaseMoveOutcome == "abandoned") },
             members,
+            reviewFixWaits = reviewFixWaits ?? [],
             isolationFindings = store.ListIsolationFindings(project),
             pushWait,
             pushWaits = pushWaits ?? (pushWait is null

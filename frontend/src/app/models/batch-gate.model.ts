@@ -1,5 +1,5 @@
 export type BatchDecision = 'wait' | 'close' | 'per-task' | 'idle' | 'disabled';
-export type BatchMemberStatus = 'pending' | 'in-batch' | 'published' | 'fallback' | 'pre-check-red';
+export type BatchMemberStatus = 'pending' | 'in-batch' | 'published' | 'fallback' | 'pre-check-red' | 'review-fix';
 
 export interface BatchGateSettings {
   enabled: boolean;
@@ -32,6 +32,7 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  reviewFixWaits?: { taskKey: string; reviewAttemptId: string; round: number; maximum: number; aspects: string[] }[];
   preChecksRun?: number;
   preChecksRed?: number;
   preCheckMinutesSaved?: number;

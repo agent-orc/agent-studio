@@ -40,6 +40,16 @@ describe('BatchDetailComponent', () => {
     expect(host.querySelector('[data-testid="task-batch-summary"]')!.textContent).toContain('pending');
   });
 
+  it('explains why a card waits for a concern fix before batch admission', async () => {
+    const wait = { status: 'review-fix' as const, reason: 'actionable review concern',
+      reasonDetail: 'Review review-7 found a behavior gap in code-quality. Fix round 1 of 1 must finish before batch admission.' };
+    const { host } = await mount({ ...redHalvingState,
+      members: { ...redHalvingState.members, 'CARD-7': wait },
+      reviewFixWaits: [{ taskKey: 'CARD-7', reviewAttemptId: 'review-7', round: 1, maximum: 1, aspects: ['code-quality'] }],
+    }, { key: 'CARD-7', id: 'CARD-7' });
+    expect(host.querySelector('[data-testid="task-batch-review-fix"]')?.textContent).toContain('before batch admission');
+  });
+
   it('shows the push wait of a member', async () => {
     const { fixture, state, host } = await mount(redHalvingState, { id: 'AGT-2' });
     state.set({ ...redHalvingState, pushWait: {

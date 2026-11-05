@@ -17,6 +17,9 @@
       @if (item.position && item.size) { · {{ item.position }} of {{ item.size }} }
       @if (item.phase) { · {{ item.phase }} }
     </p>
+    @if (item.status === 'review-fix') {
+      <p data-testid="task-batch-review-fix" role="status">{{ item.reasonDetail }}</p>
+    }
     @if (item.preCheck; as check) {
       <p data-testid="task-batch-pre-check">Pre-check: {{ check.outcome }} · base <code>{{ check.baseSha }}</code></p>
       @if (check.outcome === 'red') { <p>{{ check.reason }}</p> }

@@ -3076,6 +3076,42 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Batch_deferred_actionable_concern_waits_for_a_fix_before_admission()
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", ReviewRunnerId);
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-CONCERN", "docs/concern.md", settleReview: false);
+        await RegisterReviewExecutorAsync(http);
+        var claimed = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{ReviewRunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(ReviewRunnerId, ReviewInstance, 300, AvailableSlots: 1));
+        claimed.EnsureSuccessStatusCode();
+        var claim = (await claimed.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+        var report = PassingReport(claim, "batch-concern") with
+        {
+            Verdicts = [new Contract.ReviewVerdictDto("code-quality", "concerns", "RemoteAspectVerdict",
+                "docs/concern.md omits the required retry behavior.", "docs/concern.md",
+                "Describe how retry errors are handled.")],
+        };
+
+        var response = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt!.AttemptId}/report", report);
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>().ListPending());
+        AssertLane(member.Key, TaskStates.Ready);
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, member.Key);
+        var round = Assert.IsType<ReviewConcernRoundLedger>(ReviewConcernRoundStore.Read(folder));
+        Assert.Equal(1, round.Used);
+        Assert.True(round.StillOpen);
+        var followUp = await File.ReadAllTextAsync(Path.Combine(folder, "orchestrator-follow-up.md"));
+        Assert.Contains("docs/concern.md omits the required retry behavior.", followUp);
+        Assert.Contains("Describe how retry errors are handled.", followUp);
+    }
+
+    [Fact]
     public async Task Deferred_review_with_a_base_branch_defect_still_enters_the_batch()
     {
         using var factory = BuildFactory();

@@ -1233,6 +1233,14 @@ public static class V1ReviewPlaneEndpoints
             var cardAction = budgetDecision.CardAction;
             var shouldDegrade = budgetDecision.ShouldDegrade;
             reviewFollowUp = budgetDecision.FollowUp;
+            // A deferred build/test gate cannot admit this delivery to a batch
+            // while a concrete review concern still owns a coding fix round.
+            // The later concern path moves the card to Ready; its next review
+            // may enter the batch after that fix is checked.
+            var preAdmission = MonolithTransitionAdapter.ReviewPreAdmission(
+                batchDeferredAccepted, reviewFollowUp.Action);
+            var waitForConcernFix = preAdmission.WaitForFixRound;
+            var deferToBatch = preAdmission.DeferToBatch;
             if (shouldDegrade)
             {
                 request = MonolithTransitionAdapter.ReviewRoundBudgetPolicyApplyRemoteReport(request, roundBudget);
@@ -1297,7 +1305,7 @@ public static class V1ReviewPlaneEndpoints
             // publishes it, so no delivery record may tell recovery to integrate
             // or to settle it as a failed gate.
             if (!replay && continuation is null && outcome != ReviewTerminalOutcome.InfrastructureFailure
-                && !batchDeferredAccepted
+                && !deferToBatch && !waitForConcernFix
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
                 var sourceRun = authority.GetRun(currentReview.SourceRunAttemptId);
@@ -1488,7 +1496,7 @@ public static class V1ReviewPlaneEndpoints
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
             string? emergencyBatchState = task.State == TaskStates.AutoReview ? null : task.State;
-            if (batchDeferredAccepted && task.State == TaskStates.AutoReview)
+            if (deferToBatch && task.State == TaskStates.AutoReview)
             {
                 var batchSource = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
                 if (batchSource is null)
@@ -1655,7 +1663,7 @@ public static class V1ReviewPlaneEndpoints
                     EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
             }
 
-            if (batchDeferredAccepted)
+            if (deferToBatch)
             {
                 EnqueueEvidenceProjection();
                 return Results.Ok(new Contract.ReviewReportDto(

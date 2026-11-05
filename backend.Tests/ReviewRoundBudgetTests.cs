@@ -344,8 +344,8 @@ public sealed class ReviewRoundBudgetTests
         // to the linked follow-up card, and the delivery is accepted.
         var findings = new AgentStudio.TaskServer.Contracts.ReviewFollowUpFinding[]
         {
-            new("code-quality", "concerns", "Dead branch in backend/Feature.cs.",
-                "backend/Feature.cs", "Remove the dead branch."),
+            new("code-quality", "concerns", "Dead branch in backend/Feature.cs prevents retries.",
+                "backend/Feature.cs", "Remove the branch so retries work."),
         };
         var followUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(findings, 0, 1);
         Assert.Equal(AgentStudio.TaskServer.Contracts.ReviewFollowUpAction.ReviewConcernRound, followUp.Action);
@@ -359,11 +359,32 @@ public sealed class ReviewRoundBudgetTests
     }
 
     [Fact]
+    public void Final_delivered_round_cannot_open_another_concern_fix()
+    {
+        var decision = ReviewBudgetPolicy.Decide(new ReviewBudgetFacts(
+            ReviewOutcomeKinds.Pass,
+            [new ReviewFollowUpFinding("code-quality", "concerns",
+                "Ledger.cs fails when Append throws.", Finding: "Guard the write.")],
+            ConcernRoundsUsed: 0, MaximumConcernRounds: 1,
+            CardBudget: new CardRoundBudgetState(0, 4),
+            DeliveredRounds: new ReviewRoundBudgetLedger([
+                new DeliveredReviewRound("one", [], []),
+                new DeliveredReviewRound("two", [], []),
+                new DeliveredReviewRound("three", [], []),
+            ]), AttemptId: "four", MaximumDeliveredRounds: 4,
+            ConsecutiveBlockRounds: 2, PriorReissues: 0, MaximumReissues: 2));
+
+        Assert.True(decision.ShouldDegrade);
+        Assert.Equal("lifetime-review-round-budget", decision.RoundBudget.SpentBy);
+        Assert.Equal(ReviewFollowUpAction.Accept, decision.FollowUp.Action);
+    }
+
+    [Fact]
     public void UnspentBudget_KeepsTheOrdinaryConcernRound()
     {
         var followUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
-            [new("code-quality", "concerns", "Dead branch in backend/Feature.cs.",
-                "backend/Feature.cs", "Remove the dead branch.")], 0, 1);
+            [new("code-quality", "concerns", "Dead branch in backend/Feature.cs prevents retries.",
+                "backend/Feature.cs", "Remove the branch so retries work.")], 0, 1);
         var unspent = new ReviewRoundBudgetDecision(2, 4, [], null);
 
         Assert.Same(followUp, ReviewRoundBudgetPolicy.ApplyFollowUp(followUp, unspent));
