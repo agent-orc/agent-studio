@@ -205,6 +205,7 @@ export class GitPaneService implements OnDestroy {
 
   private currentJob: TaskInfo | null = null;
   private refreshTimer: VisibleIntervalHandle | null = null;
+  private resourcesPending = false;
 
   /** Start polling git status every `intervalMs` ms. No-op if already running. */
   startAutoRefresh(intervalMs = 5000): void {
@@ -240,11 +241,11 @@ export class GitPaneService implements OnDestroy {
    * untracked: a same-job refresh of a commit-less card writes a fresh empty
    * chain, which would otherwise re-run that effect forever (AGT-3096).
    */
-  setJob(info: TaskInfo | null | undefined): void {
-    untracked(() => this.applyJob(info));
+  setJob(info: TaskInfo | null | undefined, visible = true): void {
+    untracked(() => this.applyJob(info, visible));
   }
 
-  private applyJob(info: TaskInfo | null | undefined): void {
+  private applyJob(info: TaskInfo | null | undefined, visible: boolean): void {
     const sameJob =
       this.currentJob &&
       info &&
@@ -261,7 +262,13 @@ export class GitPaneService implements OnDestroy {
       // new commit lands on the chain (continue-mode follow-up, recovery
       // commit, operator-driven steer).
       const chainChanged = oldChainSignature !== commitChainSignature(chain);
-      if (chainChanged) {
+      if (chainChanged && !visible) this.resourcesPending = true;
+      if (visible && this.resourcesPending) {
+        this.resourcesPending = false;
+        this.applyCommitDefault(chain);
+        this.loadProvenance();
+        this.loadCodeReviews();
+      } else if (chainChanged && visible) {
         this.applyCommitDefault(chain);
         // A new commit (or a just-landed merge) can move the landed-state, so
         // re-pull the graph-derived provenance when the chain grows.
@@ -273,6 +280,7 @@ export class GitPaneService implements OnDestroy {
       return;
     }
     this.currentJob = info ?? null;
+    this.resourcesPending = !!info && !visible;
     this.status.set(null);
     this.commitDetail.set(null);
     this.aggregateFiles.set([]);
@@ -290,9 +298,11 @@ export class GitPaneService implements OnDestroy {
     this.resetPreview();
     const chain = info?.commits ?? (info?.commit ? [info.commit] : []);
     this.commitChain.set(chain);
-    this.applyCommitDefault(chain);
-    this.loadProvenance();
-    this.loadCodeReviews();
+    if (visible) {
+      this.applyCommitDefault(chain);
+      this.loadProvenance();
+      this.loadCodeReviews();
+    }
   }
 
   /**

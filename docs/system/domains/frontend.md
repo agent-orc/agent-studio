@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-11-02
+Version: 2026-11-05
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
@@ -533,8 +533,18 @@ occur. It is not a claim about tunnel transfer time.
   Ordinary task selection reads the bounded `/core` projection first and paints
   identity, lane, pins, execution, status, prompt, and recent events before
   independent detail resources begin. Two documents load after core paint;
-  usage follows the rich view, Git waits for its pane, and review evidence and
-  history wait for explicit tabs. The selection service keeps the pager and
+  usage follows the rich view, Git waits for its pane, and Activity loads its
+  plan and output on selection. Review evidence and history wait for explicit
+  tabs. Neighbor core lookahead starts after the first 1.6 seconds. The event
+  ledger starts when Timeline first
+  opens, the screenshot list when Evidence opens, and the document manifest
+  when Docs opens. Docs reads expanded documents on its first selection and
+  collapsed artifacts when opened, then keeps their bodies through tab switches.
+  Quality and Code Review panels stay mounted
+  for the current task after their first visit. Ready resource replies are
+  reused within the same core generation, including the evidence-bearing review
+  reply. Failed reads in Timeline, Evidence, Quality, Code Review, and Docs
+  files show a retry control in the tab. The selection service keeps the pager and
   public URL identity guards while resource replies carry their own freshness,
   retry state, and task, attempt, and core generation checks. A reference the
   project registry cannot place (a keyless task, a key prefix no project
