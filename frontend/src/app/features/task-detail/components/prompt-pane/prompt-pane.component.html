@@ -10,18 +10,26 @@
     <ng-container tabs>
       <app-pane-tabs variant="header"
                      ariaLabel="Prompt pane tabs"
+                     panelId="pane-prompt-panel"
                      [tabs]="promptTabs()"
                      [activeTabId]="activeTab()"
-                     (click)="focusTabSurface()"
                      (tabChange)="onPromptTabChange($event)" />
     </ng-container>
   </app-pane-header>
   <div class="pane__body"
+       id="pane-prompt-panel"
+       role="tabpanel"
+       [attr.aria-labelledby]="'pane-prompt-panel-tab-' + activeTab()"
        appDetailKeyboardSurface
        [detailKeyboardInitialFocus]="true"
        data-testid="pane-prompt-body"
        [attr.data-active-tab]="activeTab()"
        [attr.aria-label]="activeTab() + ' task detail tab'">
+    @if (evidenceTaskKey() === job()?.taskKey) {
+      <div class="evidence-view evidence-view--quality" [hidden]="activeTab() !== 'evidence'">
+        @if (job(); as j) { <app-quality-panel [job]="j" [evidence]="reviewEvidence()" /> }
+      </div>
+    }
     @switch (activeTab()) {
       @case ('overview') {
         @defer (on immediate) {
@@ -44,84 +52,23 @@
         }
       }
 
-      @case ('description') {
-        @if (job(); as info) {
-          <div class="desc-meta-bar" data-testid="desc-meta-bar">
-            <div class="desc-meta" data-testid="desc-meta">
-              <span class="desc-meta__id mono">#{{ info.order }}</span>
-              <span class="meta-row__sep" aria-hidden="true">·</span>
-              <span class="desc-meta__time">created {{ formatRelativeTime(info.createdAt) }}</span>
-              <span class="meta-row__sep" aria-hidden="true">·</span>
-              <span class="desc-meta__state"
-                    [attr.data-state]="info.state"
-                    [attr.data-lane-tone]="laneTone(info.state)">
-                <span class="desc-meta__state-dot" aria-hidden="true">●</span>
-                {{ laneLabel(info.state) }}
-              </span>
-            </div>
+      @case ('timeline') {
+        @if (tabProblem('history'); as reason) {
+          <div class="tab-load-error" role="alert" data-testid="timeline-history-error">
+            Task history could not load: {{ reason }}
+            <button type="button" (click)="retryResource.emit('history')">Retry</button>
           </div>
         }
-
-        @if (titleHistory().length > 0) {
-          <section class="title-history" data-testid="title-history">
-            <header class="title-history__head">
-              <span class="title-history__title">Title history</span>
-              <span class="title-history__hint">Renames recorded against this task. Current title is shown above.</span>
-            </header>
-            <ol class="title-history__list">
-              @for (entry of titleHistory(); track entry.at) {
-                <li class="title-history__entry" data-testid="title-history-entry">
-                  <time class="title-history__time">{{ formatTime(entry.at) }}</time>
-                  <span class="title-history__from">{{ entry.oldTitle || '(empty)' }}</span>
-                  <span class="title-history__arrow" aria-hidden="true">→</span>
-                  <span class="title-history__to">{{ entry.newTitle }}</span>
-                </li>
-              }
-            </ol>
-          </section>
-        }
-
-        <app-files-pane [artifacts]="artifacts()"
-                        [promptContent]="markdown()"
-                        [jobId]="jobId()"
-                        [archived]="archived()"
-                        [watchPath]="watchPath()"
-                        [isRunning]="isRunning()"
-                        [focusRequest]="docFocusRequest()"
-                        (documentRequested)="openDocument($event)"
-                        (save)="save.emit($event)" />
-
-        @if (history().length > 0) {
-          <section class="prompt-history" data-testid="prompt-history">
-            <header class="prompt-history__head">
-              <span class="prompt-history__title">Task extensions</span>
-              <span class="prompt-history__hint">Added via Extend mode in chat. Original task is above; entries below are read-only.</span>
-            </header>
-            @for (entry of history(); track entry.fileName) {
-              <article class="prompt-history__entry" [attr.data-testid]="'prompt-history-entry-' + entry.index">
-                <header class="prompt-history__entry-head">
-                  <span class="prompt-history__badge">{{ entry.fileName }}</span>
-                  <span class="prompt-history__time">{{ formatTime(entry.writtenAt) }}</span>
-                </header>
-                <cac-markdown class="prompt-history__body"
-                              [source]="entry.markdown"
-                              [dense]="true"
-                              [resolveImageSrc]="imageResolver()" />
-
-              </article>
-            }
-          </section>
-        }
-      }
-
-      @case ('timeline') {
-        <app-task-timeline-pane />
+        <app-task-timeline-pane [job]="job()" />
       }
 
       @case ('evidence') {
         <section class="evidence-view" data-testid="evidence-view">
-          @if (job(); as j) {
-            <app-quality-panel [job]="j" [evidence]="reviewEvidence()" />
+          @if (tabProblem('review'); as reason) {
+            <div class="tab-load-error" role="alert" data-testid="evidence-load-error">
+              Review evidence could not load: {{ reason }}
+              <button type="button" (click)="retryResource.emit('review')">Retry</button>
+            </div>
           }
           @if (screenshots().length > 0) {
             <div class="ev-section" data-testid="ev-section-visual">
@@ -164,8 +111,15 @@
         </section>
       }
 
-      @case ('code-review') {
-        <section class="code-review-view" data-testid="code-review-view">
+    }
+    @if (codeReviewTaskKey() === job()?.taskKey) {
+        <section class="code-review-view" data-testid="code-review-view" [hidden]="activeTab() !== 'code-review'">
+          @if (tabProblem('review'); as reason) {
+            <div class="tab-load-error" role="alert" data-testid="code-review-load-error">
+              Review information could not load: {{ reason }}
+              <button type="button" (click)="retryResource.emit('review')">Retry</button>
+            </div>
+          }
           @if (job(); as j) {
             <app-code-review-panel [job]="j" />
           } @else {
@@ -174,7 +128,78 @@
             </div>
           }
         </section>
-      }
+    }
+    @if (docsTaskKey() === job()?.taskKey) {
+      <div [hidden]="activeTab() !== 'description'">
+        @if (job(); as info) {
+          <div class="desc-meta-bar" data-testid="desc-meta-bar">
+            <div class="desc-meta" data-testid="desc-meta">
+              <span class="desc-meta__id mono">#{{ info.order }}</span>
+              <span class="meta-row__sep" aria-hidden="true">·</span>
+              <span class="desc-meta__time">created {{ formatRelativeTime(info.createdAt) }}</span>
+              <span class="meta-row__sep" aria-hidden="true">·</span>
+              <span class="desc-meta__state"
+                    [attr.data-state]="info.state"
+                    [attr.data-lane-tone]="laneTone(info.state)">
+                <span class="desc-meta__state-dot" aria-hidden="true">●</span>
+                {{ laneLabel(info.state) }}
+              </span>
+            </div>
+          </div>
+        }
+
+        @if (titleHistory().length > 0) {
+          <section class="title-history" data-testid="title-history">
+            <header class="title-history__head">
+              <span class="title-history__title">Title history</span>
+              <span class="title-history__hint">Renames recorded against this task. Current title is shown above.</span>
+            </header>
+            <ol class="title-history__list">
+              @for (entry of titleHistory(); track entry.at) {
+                <li class="title-history__entry" data-testid="title-history-entry">
+                  <time class="title-history__time">{{ formatTime(entry.at) }}</time>
+                  <span class="title-history__from">{{ entry.oldTitle || '(empty)' }}</span>
+                  <span class="title-history__arrow" aria-hidden="true">→</span>
+                  <span class="title-history__to">{{ entry.newTitle }}</span>
+                </li>
+              }
+            </ol>
+          </section>
+        }
+
+        <app-files-pane [artifacts]="artifacts()"
+                        [active]="activeTab() === 'description'"
+                        [promptContent]="markdown()"
+                        [jobId]="jobId()"
+                        [archived]="archived()"
+                        [watchPath]="watchPath()"
+                        [isRunning]="isRunning()"
+                        [focusRequest]="docFocusRequest()"
+                        (documentRequested)="openDocument($event)"
+                        (save)="save.emit($event)" />
+
+        @if (history().length > 0) {
+          <section class="prompt-history" data-testid="prompt-history">
+            <header class="prompt-history__head">
+              <span class="prompt-history__title">Task extensions</span>
+              <span class="prompt-history__hint">Added via Extend mode in chat. Original task is above; entries below are read-only.</span>
+            </header>
+            @for (entry of history(); track entry.fileName) {
+              <article class="prompt-history__entry" [attr.data-testid]="'prompt-history-entry-' + entry.index">
+                <header class="prompt-history__entry-head">
+                  <span class="prompt-history__badge">{{ entry.fileName }}</span>
+                  <span class="prompt-history__time">{{ formatTime(entry.writtenAt) }}</span>
+                </header>
+                <cac-markdown class="prompt-history__body"
+                              [source]="entry.markdown"
+                              [dense]="true"
+                              [resolveImageSrc]="imageResolver()" />
+
+              </article>
+            }
+          </section>
+        }
+      </div>
     }
   </div>
 </section>

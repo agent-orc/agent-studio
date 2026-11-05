@@ -23,6 +23,9 @@ export class QualityPanelComponent {
   readonly job = input.required<TaskInfo>();
   readonly evidence = input<ReviewEvidenceEntry[]>([]);
   readonly view = signal<QualityChangeView | null>(null);
+  readonly loadError = signal(false);
+  private loadedKey = '';
+  private readonly retrySerial = signal(0);
   readonly selectedAttempt = signal<string | null>(null);
   readonly qualityRows = computed(() => {
     const fingerprints = new Set(this.selected()?.document?.findings.map(finding => finding.fingerprint) ?? []);
@@ -62,17 +65,26 @@ export class QualityPanelComponent {
 
   private readonly load = effect(onCleanup => {
     const job = this.job();
+    const key = `${job.taskKey}:${this.retrySerial()}`;
+    if (key === this.loadedKey) return;
+    this.loadedKey = key;
     const params = new HttpParams().set('watchPath', job.watchPath);
     this.selectedAttempt.set(null);
     this.view.set(null);
+    this.loadError.set(false);
     const subscription = this.http.get<QualityChangeView>(
       '/api/tasks/' + encodeURIComponent(job.id) + '/quality-studio', { params }).subscribe({
       next: view => this.view.set(view),
-      error: () => this.view.set({ state: 'unavailable', repositoryId: null, currentHead: null,
-        rounds: [], landedSha: null, landedBaseSha: null, landedPatchEqualsReviewedPatch: null }),
+      error: () => {
+        this.loadError.set(true);
+        this.view.set({ state: 'unavailable', repositoryId: null, currentHead: null,
+          rounds: [], landedSha: null, landedBaseSha: null, landedPatchEqualsReviewedPatch: null });
+      },
     });
     onCleanup(() => subscription.unsubscribe());
   });
+
+  retry(): void { this.retrySerial.update(value => value + 1); }
 
   label(state: QualityChangeView['state']): string { return STATE_LABELS[state]; }
   short(sha: string): string { return sha.slice(0, 7); }

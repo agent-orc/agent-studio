@@ -131,7 +131,7 @@ public sealed partial class BatchGatePilotService
     /// only the formed snapshots whose members move into a larger snapshot.
     /// A flight already past Formed is never considered here.
     /// </summary>
-    private void RepackFormedBatches()
+    private async Task RepackFormedBatchesAsync(CancellationToken ct)
     {
         var formed = _store.ListRecoverableManifests()
             .Where(manifest => manifest.ParentBatchId is null
@@ -186,6 +186,10 @@ public sealed partial class BatchGatePilotService
             var clean = all.Select(item => item.Subject with { OwningBatchId = null }).ToArray();
             var close = BatchGatePolicy.Close(clean, scope, baseSha, options,
                 selected.Select(card => card.TaskKey).ToArray(), _time.GetUtcNow());
+            if (close.Manifest is null) continue;
+            close = await AdmitFormationAsync(close, all, options, ct,
+                moving.Select(manifest => manifest.BatchId).ToHashSet(StringComparer.Ordinal),
+                routeRejected: false).ConfigureAwait(false);
             if (close.Manifest is null) continue;
             var exclusions = close.Manifest.Exclusions.Select(exclusion =>
             {
