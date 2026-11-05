@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
 
 namespace AgentRunner;
 
@@ -12,6 +14,7 @@ internal static class VisualReviewScreenshotBundle
     private const int MaximumImages = 100;
     private const long MaximumImageBytes = 8L * 1024 * 1024;
     private const long MaximumTotalBytes = 100L * 1024 * 1024;
+    private const long MaximumImagePixels = 80_000_000;
 
     internal static async Task<string> CaptureAsync(TaskServerClient client, string runId,
         string attemptRoot, Action<string> log, CancellationToken ct)
@@ -74,6 +77,11 @@ internal static class VisualReviewScreenshotBundle
                     listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: integrity check failed");
                     continue;
                 }
+                if (!IsReadableImage(bytes, artifact.Name))
+                {
+                    listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: invalid image");
+                    continue;
+                }
                 var extension = Path.GetExtension(artifact.Name).ToLowerInvariant();
                 var stage = VisualReviewEvidence.IsAfterScreenshot(artifact.Name) ? "after" : "before";
                 var path = Path.Combine(directory, $"{stage}-image-{listed.Count + 1:D2}{extension}");
@@ -102,6 +110,31 @@ internal static class VisualReviewScreenshotBundle
         if (omittedByCount > 0)
             listed.Add($"- {omittedByCount} more screenshots omitted by the 100-image review limit.");
         return string.Join('\n', listed);
+    }
+
+    private static bool IsReadableImage(byte[] bytes, string name)
+    {
+        try
+        {
+            var identified = Image.Identify(bytes);
+            if (identified is null || identified.Width < 1 || identified.Height < 1
+                || (long)identified.Width * identified.Height > MaximumImagePixels)
+                return false;
+            var format = Image.DetectFormat(bytes);
+            using var image = Image.Load(new DecoderOptions { MaxFrames = 1 }, bytes);
+            var extension = Path.GetExtension(name).ToLowerInvariant();
+            return extension switch
+            {
+                ".png" => format.Name.Equals("PNG", StringComparison.OrdinalIgnoreCase),
+                ".jpg" or ".jpeg" => format.Name.Equals("JPEG", StringComparison.OrdinalIgnoreCase),
+                ".webp" => format.Name.Equals("WEBP", StringComparison.OrdinalIgnoreCase),
+                _ => false,
+            };
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return false;
+        }
     }
 
     internal static bool HasReadableAfterScreenshot(string attemptRoot)

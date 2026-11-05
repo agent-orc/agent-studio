@@ -203,6 +203,35 @@ public sealed class VisualReviewScreenshotTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public async Task Corrupt_images_do_not_use_the_limit_before_a_valid_after_screenshot()
+    {
+        var validBytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "visual-review", "clean-footer.png"));
+        var corruptBytes = validBytes[..(validBytes.Length / 2)];
+        var corrupt = Enumerable.Range(0, 100)
+            .Select(index => Artifact($"corrupt-{index}", $"bars/after-{index:D3}.png", corruptBytes));
+        var valid = Artifact("valid", "bars/after-999.png", validBytes);
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync(
+                [.. corrupt, valid],
+                (artifact, _) => Task.FromResult<ArtifactContentDto?>(new ArtifactContentDto(
+                    artifact.ArtifactId, artifact.RunId, artifact.Name, artifact.MediaType,
+                    artifact.Sha256,
+                    Convert.ToBase64String(artifact.ArtifactId == "valid" ? validBytes : corruptBytes),
+                    artifact.SizeBytes)), root, default);
+
+            Assert.Equal(100, evidence.Split("invalid image", StringSplitOptions.None).Length - 1);
+            Assert.Contains($"\"{valid.Name}\":", evidence);
+            Assert.DoesNotContain("omitted by the 100-image review limit", evidence);
+            Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
+            Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
     [Theory]
     [InlineData("bars/before-1920-light.png", false)]
     [InlineData("before.png", false)]

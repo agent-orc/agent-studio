@@ -449,10 +449,12 @@ delivery, preserves the screenshot names, and places read-only copies beside
 the exact-SHA review checkout. The visual prompt receives those paths, the
 authoritative diff, the hard visual rules, and the relevant admin design rules.
 After screenshots take priority over before screenshots at both the remote
-100-image cap and the local eight-image attachment cap. The remote cap counts
-successfully loaded images, so unavailable or invalid artifacts cannot crowd
-out a later valid after screenshot. Each artifact read and decode is isolated;
-a failed artifact is listed as unavailable while later images are still loaded.
+100-image cap and the local eight-image attachment cap. Both caps count only
+decoded images, so unavailable or invalid artifacts cannot crowd out a later
+valid after screenshot. Each artifact read and decode is isolated; a failed
+remote artifact is listed with its failure reason while later images are loaded.
+An artifact must decode as the image format named by its extension before it
+uses an image slot; matching size and digest alone do not prove readability.
 It opens each screenshot, compares matching before and after views, and checks
 layout, spacing, separation, alignment, clipping, and contrast across available
 themes and widths. A visual concern or block cites both the screenshot and the
