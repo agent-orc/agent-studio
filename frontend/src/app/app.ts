@@ -298,7 +298,8 @@ export class App implements OnInit, OnDestroy {
   readonly workspaceOverlaysOpen = inject(WorkspaceOverlaysService).anyOpen;
   readonly codexSignInRequest = inject(CodexSignInDialogService).request;
   readonly claudeSignInRequest = inject(ClaudeSignInDialogService).request;
-  readonly chatProjectRequest = signal<string | null>(null);
+  // Each page-chat click is an event, including repeated clicks for the same project.
+  readonly chatProjectRequest = signal<{ projectName: string } | null>(null);
   /** Records the lane the user was triaging in. When the open job's state
    *  diverges from this (e.g. an external client moved it) we treat that as
    *  an auto-advance and toast accordingly. */
@@ -775,7 +776,7 @@ export class App implements OnInit, OnDestroy {
       this.createJobForm.openPageTask(request, this.watchPaths());
     });
     this.pageContext.openChatRequests$.subscribe(context => {
-      this.chatProjectRequest.set(context.projectName);
+      this.chatProjectRequest.set({ projectName: context.projectName });
       this.orchestratorPanel.setOpen(true);
     });
 

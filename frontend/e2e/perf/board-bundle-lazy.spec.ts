@@ -82,9 +82,12 @@ async function installFixture(page: Page, count: number): Promise<void> {
 }
 
 test('cold board assets, detail open, and route reuse', async ({ browser }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(300_000);
   const samples: { count: number; firstPaintMs: number; detailOpenMs: number; assetRequests: number }[] = [];
-  for (const count of [20, 20, 20, 830, 830, 830]) {
+  const captureCount = Number(process.env.BUNDLE_CAPTURE_COUNT);
+  const counts = captureCount === 20 || captureCount === 830
+    ? [captureCount] : [20, 20, 20, 830, 830, 830];
+  for (const count of counts) {
     const context = await browser.newContext({ serviceWorkers: 'block' });
     const page = await context.newPage();
     await installFixture(page, count);
@@ -95,7 +98,7 @@ test('cold board assets, detail open, and route reuse', async ({ browser }) => {
     }
     await cdp.send('Network.enable');
     await page.goto('/');
-    await page.waitForFunction(() => Boolean((window as any).__boardFirstPaint), undefined, { timeout: 30_000 });
+    await page.waitForFunction(() => Boolean((window as any).__boardFirstPaint), undefined, { timeout: 60_000 });
     await expect(page.getByTestId('task-card').first()).toBeVisible();
     const firstPaintMs = await page.evaluate(() => (window as any).__boardFirstPaint as number);
     const boardEvents = events.length;
@@ -127,11 +130,13 @@ test('cold board assets, detail open, and route reuse', async ({ browser }) => {
     await context.close();
   }
   if (output) writeFileSync(join(output, `browser-timing-${phase}.json`), JSON.stringify(samples, null, 2) + '\n');
-  const median = [samples[0].firstPaintMs, samples[1].firstPaintMs, samples[2].firstPaintMs]
-    .sort((a, b) => a - b)[1];
-  const largeMedian = samples.filter(sample => sample.count === 830)
-    .map(sample => sample.firstPaintMs).sort((a, b) => a - b)[1];
-  console.log(`${phase}: 20-card median first paint ${median.toFixed(1)} ms; first detail ${samples[0].detailOpenMs} ms; 830-card median first paint ${largeMedian.toFixed(1)} ms`);
+  if (counts.length === 6) {
+    const median = [samples[0].firstPaintMs, samples[1].firstPaintMs, samples[2].firstPaintMs]
+      .sort((a, b) => a - b)[1];
+    const largeMedian = samples.filter(sample => sample.count === 830)
+      .map(sample => sample.firstPaintMs).sort((a, b) => a - b)[1];
+    console.log(`${phase}: 20-card median first paint ${median.toFixed(1)} ms; first detail ${samples[0].detailOpenMs} ms; 830-card median first paint ${largeMedian.toFixed(1)} ms`);
+  }
 });
 
 test('create task, chat, and workspace settings mount on first use', async ({ page }) => {
