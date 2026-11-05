@@ -11,7 +11,11 @@
               [attr.data-status]="s.status ?? 'none'"
               [cacTooltip]="thumbTitle(s)"
               (click)="openLightbox(i)">
-        <img class="strip__img" [src]="s.url" [alt]="s.caption" loading="lazy" />
+        @if ((s.sizeBytes ?? 0) > 2_000_000) {
+          <span class="strip__large" data-testid="screenshot-large-placeholder">Large image · {{ ((s.sizeBytes ?? 0) / 1_000_000).toFixed(1) }} MB</span>
+        } @else {
+          <img class="strip__img" [src]="s.url" [alt]="s.caption" [attr.width]="s.width ?? 360" [attr.height]="s.height ?? 225" loading="lazy" decoding="async" />
+        }
         @if (s.status === 'passed') {
           <span class="strip__badge strip__badge--ok" aria-label="Passed">✓</span>
         } @else if (s.status === 'failed') {

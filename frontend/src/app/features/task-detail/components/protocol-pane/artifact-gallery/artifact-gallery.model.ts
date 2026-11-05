@@ -22,7 +22,6 @@ export interface ConversationArtifact {
   readonly fileName: string;
   readonly label: string;
   readonly url: string;
-  readonly thumbnailUrl: string | null;
   readonly contentUrl: string | null;
 }
 
@@ -204,9 +203,9 @@ export function groupPresentedArtifacts(
       output[start + runIndex] = {
         ...candidate,
         // The library row is hidden by the host directive, but the browser can
-        // begin fetching it before that DOM pass. Bind only the thumbnail here;
+        // begin fetching it before that DOM pass. Bind only the original URL here;
         // the gallery metadata retains the full source for the lightbox.
-        url: artifact.kind === 'image' ? artifact.thumbnailUrl : null,
+        url: artifact.kind === 'image' ? artifact.url : null,
         artifactPresentation: artifact,
         artifactGroupId: groupId,
       } as PresentedArtifactEvent;
@@ -322,7 +321,6 @@ export function artifactFromPath(
     fileName,
     label: label.trim() || fileName,
     url,
-    thumbnailUrl: kind === 'image' ? artifactThumbnailUrl(normalized, jobId, watchPath) : null,
     contentUrl: kind === 'image' || kind === 'html'
       ? null
       : artifactContentUrl(normalized, jobId, watchPath),
@@ -350,7 +348,7 @@ function toPresentedArtifactEvent(
     sourcePath: artifact.path,
     durablePath: artifact.path.startsWith('results/') ? artifact.path : null,
     sourceTool: 'agent-message',
-    url: parsed.kind === 'image' ? artifact.thumbnailUrl : null,
+    url: parsed.kind === 'image' ? artifact.url : null,
     artifactPresentation: artifact,
     artifactGroupId: groupId,
   };
@@ -446,21 +444,6 @@ function artifactContentUrl(
     'scope=workspace',
   ].filter(Boolean).join('&');
   return `/api/tasks/${encodeURIComponent(jobId)}/files/${encodedPath}?${query}`;
-}
-
-function artifactThumbnailUrl(
-  path: string,
-  jobId: string,
-  watchPath: string | null | undefined,
-): string | null {
-  if (!path.startsWith('results/')) return null;
-  const relativePath = path.slice('results/'.length);
-  const query = [
-    `path=${encodeURIComponent(relativePath)}`,
-    watchPath ? `watchPath=${encodeURIComponent(watchPath)}` : '',
-    'width=360',
-  ].filter(Boolean).join('&');
-  return `/api/tasks/${encodeURIComponent(jobId)}/thumbnail?${query}`;
 }
 
 function trimBlankEdges(lines: readonly string[]): string[] {

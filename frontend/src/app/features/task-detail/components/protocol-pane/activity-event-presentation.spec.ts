@@ -49,11 +49,10 @@ describe('presentActivityEvents', () => {
     expect((result[0] as ToolBurstEvent).artifacts).toEqual(['results/archive.zip']);
     expect(result[1]).toMatchObject({
       kind: 'artifact.image', caption: 'results/playwright / dark.png',
-      url: '/api/tasks/AGT-2088/thumbnail?path=playwright%2Fdark.png&watchPath=watch&width=360',
+      url: '/api/tasks/AGT-2088/screenshot?path=playwright%2Fdark.png&watchPath=watch',
       artifactPresentation: {
         kind: 'image',
         url: '/api/tasks/AGT-2088/screenshot?path=playwright%2Fdark.png&watchPath=watch',
-        thumbnailUrl: '/api/tasks/AGT-2088/thumbnail?path=playwright%2Fdark.png&watchPath=watch&width=360',
       },
     });
     expect(result[2]).toMatchObject({

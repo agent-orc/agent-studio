@@ -307,6 +307,17 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
         projects: [project],
       }]),
     }));
+  await context.route('**/api/workspaces/workspace-fixture/quota/admission**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        workspaceId: 'workspace-fixture',
+        workspace: { projectId: null, project: null, status: 'ok', message: null,
+          overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+        projects: [],
+      }),
+    }));
   await context.route('**/api/cli/quota**', (route) =>
     route.fulfill({
       status: 200,
@@ -419,15 +430,22 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
       headers: { 'Content-Disposition': 'inline' },
       body: '<!doctype html><html><body><h1>Artifact opened</h1></body></html>',
     }));
-  await context.route(`**/api/tasks/${encodedId}/thumbnail?**`, (route) => {
-    const fileName = new URL(route.request().url()).searchParams.get('path') ?? 'artifact';
-    return route.fulfill({
+  await context.route(`**/api/tasks/${encodedId}/screenshots?**`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ screenshots: [
+      'gallery-dashboard-light.png', 'gallery-dashboard-dark.png', 'gallery-export-dialog.png',
+      'gallery-empty-state.png', 'gallery-filter-panel.png', 'gallery-mobile-table.png',
+      'gallery-review-light.png', 'gallery-review-dark.png',
+    ].map((fileName) => ({ relativePath: `results/${fileName}`, sizeBytes: fileName === 'gallery-review-dark.png' ? 2_500_000 : 94_000, width: 1440, height: 900 })) }),
+  }));
+  await context.route(`**/api/tasks/${encodedId}/screenshot?**`, (route) =>
+    route.fulfill({
       status: 200,
       contentType: 'image/svg+xml',
-      body: `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="450" viewBox="0 0 720 450"><rect width="720" height="450" fill="#18202d"/><rect x="24" y="24" width="672" height="48" rx="8" fill="#2d3a50"/><rect x="24" y="96" width="170" height="330" rx="8" fill="#243044"/><rect x="218" y="96" width="478" height="330" rx="8" fill="#243044"/><rect x="248" y="130" width="320" height="18" rx="5" fill="#76a8ff"/><text x="248" y="200" fill="#dce8ff" font-family="sans-serif" font-size="24">${fileName}</text></svg>`,
-    });
-  });
-  await context.route(`**/api/tasks/${encodedId}/screenshot?**`, (route) =>
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900"><rect width="1440" height="900" fill="#18202d"/><rect x="64" y="64" width="1312" height="772" rx="24" fill="#2d3a50"/></svg>',
+    }));
+  await context.route(`**/api/tasks/${encodedId}/results/*.png?**`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'image/svg+xml',
@@ -449,13 +467,47 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
 }
 
 for (const theme of ['light', 'dark'] as const) {
-test(`Activity renders structured tool payloads and runner events quietly in ${theme} theme`, async ({ page }) => {
-  const fullImageRequests: string[] = [];
-  page.on('request', (request) => {
-    if (request.url().includes(`/api/tasks/${encodeURIComponent(TARGET.id)}/screenshot?`)) {
-      fullImageRequests.push(request.url());
+test(`AGT-3543 gallery uses original images and large placeholders in ${theme}`, async ({ page }) => {
+  await page.addInitScript((selectedTheme) => {
+    localStorage.setItem('atp.flag.nextGenChat', '1');
+    localStorage.setItem('atp.studio.theme', selectedTheme);
+  }, theme);
+  await installRoutes(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`);
+  await page.getByTestId('inspector-tab-activity').click();
+  const gallery = page.getByTestId('activity-panel').getByTestId('conversation-artifact-gallery');
+  const tiles = gallery.getByTestId('artifact-gallery-thumbnail');
+  await expect(tiles).toHaveCount(8);
+  const image = tiles.first().locator('img');
+  await expect(image).toHaveAttribute('src', /\/results\/.*\.png/);
+  await expect(image).toHaveAttribute('loading', 'lazy');
+  await expect(image).toHaveAttribute('decoding', 'async');
+  await expect(image).toHaveAttribute('width', '1440');
+  await expect(image).toHaveAttribute('height', '900');
+  await expect(gallery.getByTestId('artifact-gallery-large-placeholder')).toHaveText(/2\.5 MB/);
+  await expect(tiles.last().locator('img')).toHaveCount(0);
+  const before = await tiles.first().boundingBox();
+  await image.evaluate((element: HTMLImageElement) => element.decode());
+  const after = await tiles.first().boundingBox();
+  expect(after?.height).toBe(before?.height);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await gallery.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--gallery-${theme}-${width}--after--mocked.png`) });
+    await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--card-detail-gallery-${theme}-${width}--after--mocked.png`) });
+    if (width === 390) {
+      await tiles.last().scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--card-detail-gallery-${theme}-390-large--after--mocked.png`) });
     }
-  });
+  }
+  await tiles.last().click();
+  await expect(page.getByTestId('media-lightbox-position')).toHaveText('Image 8 / 8');
+  await expect(page.getByTestId('media-lightbox-image')).toHaveAttribute('src', /\/results\/.*\.png/);
+});
+}
+
+for (const theme of ['light', 'dark'] as const) {
+test(`Activity renders structured tool payloads and runner events quietly in ${theme} theme`, async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem('atp.flag.nextGenChat', '1');
   });
@@ -491,15 +543,33 @@ test(`Activity renders structured tool payloads and runner events quietly in ${t
   const thumbnails = gallery.getByTestId('artifact-gallery-thumbnail');
   await expect(thumbnails).toHaveCount(8);
   await expect(thumbnails.first().locator('img')).toHaveAttribute('loading', 'lazy');
-  await expect(thumbnails.first().locator('img')).toHaveAttribute('src', /\/thumbnail\?/);
+  await expect(thumbnails.first().locator('img')).toHaveAttribute('decoding', 'async');
+  await expect(thumbnails.first().locator('img')).toHaveAttribute('src', /\/results\/.*\.png/);
+  await expect(thumbnails.first().locator('img')).toHaveAttribute('width', '1440');
+  await expect(gallery.getByTestId('artifact-gallery-large-placeholder')).toHaveCount(1);
+  await expect(thumbnails.last().locator('img')).toHaveCount(0);
+  const beforeBox = await thumbnails.first().boundingBox();
+  await expect(thumbnails.first().locator('img')).toBeVisible();
+  await thumbnails.first().locator('img').evaluate((image: HTMLImageElement) => image.decode());
+  const afterBox = await thumbnails.first().boundingBox();
+  expect(afterBox?.height).toBe(beforeBox?.height);
   await expect(gallery.getByTestId('artifact-document-diff')).toBeVisible();
   await expect(gallery.getByTestId('artifact-document-markdown')).toBeVisible();
   await expect(gallery.getByTestId('artifact-document-json')).toBeVisible();
   await expect(gallery.getByTestId('artifact-document-log')).toBeVisible();
   await gallery.screenshot({
-    path: path.join(SHOTS_DIR, `AGT-2558--artifact-gallery-${theme}--mocked.png`),
+    path: path.join(SHOTS_DIR, `AGT-3543--artifact-gallery-${theme}--mocked.png`),
   });
-  expect(fullImageRequests, 'the thumbnail grid must not fetch full-size images').toHaveLength(0);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await gallery.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--gallery-${theme}-${width}--after--mocked.png`) });
+    await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--card-detail-gallery-${theme}-${width}--after--mocked.png`) });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await thumbnails.last().click();
+  await expect(page.getByTestId('media-lightbox')).toBeVisible();
+  await expect(page.getByTestId('media-lightbox-position')).toHaveText('Image 8 / 8');
+  await page.keyboard.press('Escape');
 
   await thumbnails.first().click();
   const lightbox = page.getByTestId('media-lightbox');

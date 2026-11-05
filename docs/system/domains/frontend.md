@@ -567,8 +567,9 @@ occur. It is not a claim about tunnel transfer time.
   and remembers its state for the browser session. Activity and Result retain
   their existing live and settled-run defaults. Activity groups each
   contiguous run of task-result artifacts in an agent message into one mixed
-  block. Multiple PNG, JPEG, WebP, or GIF results use lazy WebP thumbnails from
-  `GET /api/tasks/{jobId}/thumbnail` and open their full sources in the shared
+  block. Multiple PNG, JPEG, WebP, or GIF results use lazy browser-scaled original images from
+  `GET /api/tasks/{jobId}/screenshot`; the screenshot listing provides dimensions and file size
+  from bounded header inspection. Images over 2 MB show a placeholder until opened in the shared
   keyboard-navigable lightbox; a single image keeps the established inline
   treatment. Diff, patch, Markdown, JSON, and log results have typed on-demand
   previews, while HTML delegates to the shared task artifact viewer route and

@@ -11,8 +11,6 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using AgentStudio.TestSupport;
 
 using Xunit;
@@ -100,35 +98,33 @@ public sealed class TaskFileHistoryEndpointsTests : TaskFileHistoryTestBase, ICl
     }
 
     [Fact]
-    public async Task ThumbnailRoute_ServesBoundedWebpWithoutChangingTheFullResult()
+    public async Task ScreenshotListing_ReturnsOriginalDimensionsAndBytes()
     {
         var job = WriteJob("ASS-THUMBNAIL");
         var results = Path.Combine(job, "results", "gallery");
         Directory.CreateDirectory(results);
         var source = Path.Combine(results, "evidence.png");
-        using (var image = new Image<Rgba32>(1200, 800, new Rgba32(32, 80, 140)))
-            image.SaveAsPng(source);
+        PngFixture.Write(source, 1200, 800);
 
         var factory = _host.Rescan();
         using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
-        using var response = await client.GetAsync(
-            $"/api/tasks/ASS-THUMBNAIL/thumbnail?path=gallery%2Fevidence.png&width=320&watchPath={watchPath}");
-
+        using var response = await client.GetAsync($"/api/tasks/ASS-THUMBNAIL/screenshots?watchPath={watchPath}");
         response.EnsureSuccessStatusCode();
-        Assert.Equal("image/webp", response.Content.Headers.ContentType?.MediaType);
-        Assert.True(response.Headers.CacheControl?.Private == true);
-        using var thumbnail = Image.Load(await response.Content.ReadAsByteArrayAsync());
-        Assert.True(thumbnail.Width <= 320);
-        Assert.True(thumbnail.Height <= 320);
+        using var listing = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var screenshot = listing.RootElement.GetProperty("screenshots")[0];
+        Assert.Equal(1200, screenshot.GetProperty("width").GetInt32());
+        Assert.Equal(800, screenshot.GetProperty("height").GetInt32());
+        Assert.Equal(new FileInfo(source).Length, screenshot.GetProperty("sizeBytes").GetInt64());
+        Assert.Contains("/screenshot?", screenshot.GetProperty("url").GetString());
 
         using var full = await client.GetAsync(
             $"/api/tasks/ASS-THUMBNAIL/results/gallery/evidence.png?watchPath={watchPath}");
         full.EnsureSuccessStatusCode();
         Assert.Equal("image/png", full.Content.Headers.ContentType?.MediaType);
-        using var fullImage = Image.Load(await full.Content.ReadAsByteArrayAsync());
-        Assert.Equal(1200, fullImage.Width);
-        Assert.Equal(800, fullImage.Height);
+        Assert.Equal(File.ReadAllBytes(source), await full.Content.ReadAsByteArrayAsync());
+        using var removed = await client.GetAsync($"/api/tasks/ASS-THUMBNAIL/thumbnail?path=gallery%2Fevidence.png&watchPath={watchPath}");
+        Assert.Equal(HttpStatusCode.NotFound, removed.StatusCode);
     }
 
     [Fact]

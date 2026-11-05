@@ -129,6 +129,6 @@ export class ArtifactGalleryMountController {
 
 function artifactSignature(artifacts: readonly ConversationArtifact[]): string {
   return artifacts
-    .map((artifact) => `${artifact.id}|${artifact.kind}|${artifact.path}|${artifact.url}|${artifact.thumbnailUrl ?? ''}`)
+    .map((artifact) => `${artifact.id}|${artifact.kind}|${artifact.path}|${artifact.url}`)
     .join('\n');
 }
