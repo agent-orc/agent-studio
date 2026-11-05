@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "hosts": [
+    {"id": "server", "role": "server", "target": "SET_LOCAL_SERVER_TARGET"},
+    {"id": "gate", "role": "gate", "target": "SET_LOCAL_GATE_TARGET"},
+    {"id": "coding", "role": "coding", "target": "SET_LOCAL_CODING_TARGET"},
+    {"id": "review", "role": "review", "target": "SET_LOCAL_REVIEW_TARGET"}
+  ],
+  "commands": {
+    "build": {
+      "api": ["/path/to/local-adapter", "build-api", "{commit}"],
+      "web": ["/path/to/local-adapter", "build-web", "{commit}"],
+      "engine": ["/path/to/local-adapter", "build-engine", "{commit}"],
+      "agent_host": ["/path/to/local-adapter", "build-agent-host", "{commit}"],
+      "gate_worker": ["/path/to/local-adapter", "build-gate-worker", "{commit}"]
+    },
+    "snapshot": {
+      "server": ["/path/to/local-adapter", "snapshot-server", "{host}"],
+      "gate": ["/path/to/local-adapter", "snapshot-gate", "{host}"],
+      "coding": ["/path/to/local-adapter", "snapshot-coding", "{host}"],
+      "review": ["/path/to/local-adapter", "snapshot-review", "{host}"]
+    },
+    "preflight": ["studio-op", "preflight", "deploy", "--json"],
+    "work_state": ["/path/to/local-adapter", "work-state"],
+    "plan": ["studio-op", "deploy", "plan", "--target-version", "{commit}", "--json"],
+    "drain": ["/path/to/local-adapter", "drain-admission", "{host}"],
+    "gate_publish": ["/path/to/local-adapter", "publish-gate", "{host}", "{gate_worker_ref}", "{gate_worker_sha256}"],
+    "gate_verify": ["/path/to/local-adapter", "verify-gate", "{host}", "{gate_worker_ref}"],
+    "server_switch": ["/path/to/local-adapter", "switch-server", "{host}", "{api_ref}", "{web_ref}", "{gate_worker_ref}"],
+    "server_health": ["/path/to/local-adapter", "health-server", "{host}", "{commit}"],
+    "engine_switch": ["/path/to/local-adapter", "switch-engine", "{host}", "{engine_ref}"],
+    "engine_health": ["/path/to/local-adapter", "health-engine", "{host}", "{commit}"],
+    "coding_install": ["/path/to/local-adapter", "install-coding", "{host}", "{agent_host_ref}", "{agent_host_sha256}"],
+    "coding_health": ["/path/to/local-adapter", "health-coding", "{host}", "{commit}"],
+    "model_probe": ["/path/to/local-adapter", "model-probe", "{host}"],
+    "review_copy": ["/path/to/local-adapter", "copy-review", "{host}", "{agent_host_ref}", "{agent_host_sha256}"],
+    "review_build": ["/path/to/local-adapter", "build-review", "{host}", "{commit}", "{agent_host_sha256}"],
+    "review_idle": ["/path/to/local-adapter", "review-idle", "{host}"],
+    "review_recreate": ["/path/to/local-adapter", "recreate-idle-review", "{host}", "{review_image_ref}", "{review_plan_digest}"],
+    "review_verify": ["/path/to/local-adapter", "verify-review", "{host}", "{commit}"],
+    "resume": ["/path/to/local-adapter", "resume-admission", "{host}"],
+    "rollback": {
+      "review": ["/path/to/local-adapter", "rollback-review", "{host}", "{previous}"],
+      "coding": ["/path/to/local-adapter", "rollback-coding", "{host}", "{previous}"],
+      "server": ["/path/to/local-adapter", "rollback-server", "{host}", "{previous}"],
+      "gate": ["/path/to/local-adapter", "rollback-gate", "{host}", "{previous}"]
+    }
+  }
+}
