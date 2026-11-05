@@ -64,7 +64,9 @@ export class PromptPaneComponent {
   readonly reviewEvidence = input<ReviewEvidenceEntry[]>([]);
   readonly otherReviewEvidence = computed(() => this.reviewEvidence().filter(entry => !entry.id.startsWith('quality-studio:')));
   readonly screenshots = input<TaskScreenshot[]>([]);
+  readonly screenshotsLoadError = input(false);
   readonly artifacts = input<TaskArtifact[]>([]);
+  readonly artifactsLoadError = input(false);
   readonly job = input<TaskInfo | null>(null);
   readonly maximized = input(false);
   readonly weight = input<number>(1);
@@ -87,7 +89,6 @@ export class PromptPaneComponent {
     jobId: this.jobId(),
     watchPath: this.watchPath(),
   }));
-
   readonly maximizeToggle = output<void>();
   readonly hide = output<void>();
   readonly save = output<string>();
@@ -105,9 +106,10 @@ export class PromptPaneComponent {
   readonly titleSaved = output<void>();
   readonly activeTabChange = output<PromptPaneTabId>();
   readonly retryResource = output<ResourceName>();
+  readonly retryScreenshots = output<void>();
+  readonly retryArtifacts = output<void>();
   readonly resourceStates = input<ResourceStates>(idleResources());
   readonly reviewAttemptRequested = output<string>();
-
   /**
    * overview | description | timeline | evidence | code-review.
    *

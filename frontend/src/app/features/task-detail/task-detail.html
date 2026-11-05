@@ -111,7 +111,9 @@
         [reviewEvidence]="detail().reviewEvidence || []"
         [resourceStates]="jobSelection.resourceStates()"
         [screenshots]="screenshots()"
+        [screenshotsLoadError]="screenshotsLoadError()"
         [artifacts]="artifacts()"
+        [artifactsLoadError]="artifactsLoadError()"
         [job]="detail().info"
         [maximized]="maximizedPane() === 'prompt'"
         [weight]="paneWeights().prompt"
@@ -135,6 +137,8 @@
         (titleSaved)="fileSaved.emit()"
         (activeTabChange)="detailTabChange.emit($event)"
         (retryResource)="jobSelection.retryResource($event)"
+        (retryScreenshots)="retryScreenshots()"
+        (retryArtifacts)="retryArtifacts()"
         (reviewAttemptRequested)="openReviewAttempt($event)" />
     }
 

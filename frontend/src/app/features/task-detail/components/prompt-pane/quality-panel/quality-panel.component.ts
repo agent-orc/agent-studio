@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { QualityChangeRound, QualityChangeView, ReviewEvidenceEntry, TaskInfo } from '../../../../../models/task.model';
 import { QualityStudioService } from '../../../../../services/quality-studio.service';
@@ -24,7 +24,13 @@ export class QualityPanelComponent {
   readonly evidence = input<ReviewEvidenceEntry[]>([]);
   readonly view = signal<QualityChangeView | null>(null);
   readonly loadError = signal(false);
-  private loadedKey = '';
+  // Depend on the resource identity, not every refreshed board snapshot. An
+  // effect cleanup cancels its HTTP read, so a same-task input update must not
+  // run cleanup unless it also starts a replacement read.
+  private readonly jobIdentity = computed(() => {
+    const job = this.job();
+    return `${job.taskKey}\u0000${job.id}\u0000${job.watchPath}`;
+  });
   private readonly retrySerial = signal(0);
   readonly selectedAttempt = signal<string | null>(null);
   readonly qualityRows = computed(() => {
@@ -64,10 +70,9 @@ export class QualityPanelComponent {
   });
 
   private readonly load = effect(onCleanup => {
-    const job = this.job();
-    const key = `${job.taskKey}:${this.retrySerial()}`;
-    if (key === this.loadedKey) return;
-    this.loadedKey = key;
+    this.jobIdentity();
+    this.retrySerial();
+    const job = untracked(this.job);
     const params = new HttpParams().set('watchPath', job.watchPath);
     this.selectedAttempt.set(null);
     this.view.set(null);

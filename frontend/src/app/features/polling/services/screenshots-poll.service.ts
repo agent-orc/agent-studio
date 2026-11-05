@@ -18,6 +18,7 @@ export class ScreenshotsPollService extends TaskBackgroundPoller<TaskScreenshots
   protected readonly intervalMs = 10_000;
 
   readonly screenshots = signal<TaskScreenshot[]>([]);
+  readonly loadError = signal(false);
 
   protected fetch(jobId: string, watchPath: string): Observable<TaskScreenshotsResponse | null> {
     return this.jobService.getJobScreenshots(jobId, watchPath);
@@ -25,9 +26,13 @@ export class ScreenshotsPollService extends TaskBackgroundPoller<TaskScreenshots
 
   protected applyResponse(res: TaskScreenshotsResponse | null): void {
     this.screenshots.set(res?.screenshots ?? []);
+    this.loadError.set(false);
   }
+
+  protected override onError(): void { this.loadError.set(true); }
 
   protected clearValue(): void {
     this.screenshots.set([]);
+    this.loadError.set(false);
   }
 }

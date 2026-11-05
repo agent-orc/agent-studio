@@ -71,6 +71,7 @@ export class TaskArtifactsService extends TaskBackgroundPoller<TaskArtifactsResp
   protected readonly intervalMs = 10_000;
 
   readonly artifacts = signal<TaskArtifact[]>([]);
+  readonly loadError = signal(false);
 
   protected fetch(jobId: string, watchPath: string): Observable<TaskArtifactsResponse | null> {
     return this.jobs.listJobArtifacts(jobId, watchPath);
@@ -78,9 +79,13 @@ export class TaskArtifactsService extends TaskBackgroundPoller<TaskArtifactsResp
 
   protected applyResponse(res: TaskArtifactsResponse | null): void {
     this.artifacts.set((res?.files ?? []).filter(isUserRelevantArtifact));
+    this.loadError.set(false);
   }
+
+  protected override onError(): void { this.loadError.set(true); }
 
   protected clearValue(): void {
     this.artifacts.set([]);
+    this.loadError.set(false);
   }
 }

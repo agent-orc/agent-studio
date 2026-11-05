@@ -210,6 +210,8 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
   let historyFailures = 1;
   let evidenceFailures = 1;
   let qualityFailures = 1;
+  let screenshotFailures = 1;
+  let artifactFailures = 1;
   let fileFailures = 1;
   let codeReviewFailures = 1;
   page.on('request', request => {
@@ -222,13 +224,15 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
     return json(route, resource('documents', { name, markdown: name === 'prompt' ? '# Task' : 'Ready' }));
   });
   await page.route(`**/api/tasks/${TASK_ID}/details/overview**`, route => json(route, resource('overview', {})));
-  await page.route(`**/api/tasks/${TASK_ID}/artifacts**`, route => json(route, {
+  await page.route(`**/api/tasks/${TASK_ID}/artifacts**`, route => artifactFailures-- > 0
+    ? json(route, { error: 'offline' }, 503) : json(route, {
     files: [
       { name: 'review.md', kind: 'codeReview', sizeBytes: 14, mtime: '2026-11-05T00:00:00Z' },
       { name: 'notes.txt', kind: 'other', sizeBytes: 11, mtime: '2026-11-05T00:00:00Z' },
     ],
   }));
-  await page.route(`**/api/tasks/${TASK_ID}/screenshots**`, route => json(route, { screenshots: [] }));
+  await page.route(`**/api/tasks/${TASK_ID}/screenshots**`, route =>
+    screenshotFailures-- > 0 ? json(route, { error: 'offline' }, 503) : json(route, { screenshots: [] }));
   await page.route(`**/api/tasks/${TASK_ID}/timeline**`, route =>
     timelineFailures-- > 0 ? json(route, { error: 'offline' }, 503) : json(route, []));
   await page.route(`**/api/tasks/${TASK_ID}/details/history**`, route =>
@@ -288,6 +292,7 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
   await page.getByTestId('prompt-tab-evidence').click();
   await expect.poll(() => seen.filter(url => url.includes('/screenshots')).length).toBe(1);
   await expect(page.getByTestId('evidence-load-error')).toBeVisible();
+  await expect(page.getByTestId('evidence-screenshots-error')).toBeVisible();
   await expect(page.getByTestId('quality-load-error')).toBeVisible();
   if (process.env.JOB_RESULTS_DIR) {
     await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'evidence-error-dark.png') });
@@ -296,8 +301,10 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
     await setTheme(page, 'dark');
   }
   await page.getByTestId('evidence-load-error').getByRole('button', { name: 'Retry' }).click();
+  await page.getByTestId('evidence-screenshots-error').getByRole('button', { name: 'Retry' }).click();
   await page.getByTestId('quality-retry').click();
   await expect(page.getByTestId('evidence-load-error')).toHaveCount(0);
+  await expect(page.getByTestId('evidence-screenshots-error')).toHaveCount(0);
   await expect(page.getByTestId('quality-load-error')).toHaveCount(0);
   const evidenceReads = seen.filter(url => url.includes('/details/review') && url.includes('evidence=true')).length;
   const qualityReads = seen.filter(url => url.includes('/quality-studio')).length;
@@ -305,7 +312,7 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
   await page.getByTestId('prompt-tab-evidence').click();
   expect(seen.filter(url => url.includes('/details/review') && url.includes('evidence=true')).length).toBe(evidenceReads);
   expect(seen.filter(url => url.includes('/quality-studio')).length).toBe(qualityReads);
-  expect(seen.filter(url => url.includes('/screenshots')).length).toBe(1);
+  expect(seen.filter(url => url.includes('/screenshots')).length).toBe(2);
 
   await selectPromptTab(page, 'prompt-tab-code-review', 'Code Review');
   await expect(page.getByTestId('code-review-error')).toBeVisible();
@@ -318,6 +325,15 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
 
   await selectPromptTab(page, 'prompt-tab-description', 'Docs');
   await expect.poll(() => seen.filter(url => url.includes('/artifacts')).length).toBe(1);
+  await expect(page.getByTestId('docs-artifacts-error')).toBeVisible();
+  if (process.env.JOB_RESULTS_DIR) {
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'docs-artifacts-error-dark.png') });
+    await setTheme(page, 'light');
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR, 'docs-artifacts-error-light.png') });
+    await setTheme(page, 'dark');
+  }
+  await page.getByTestId('docs-artifacts-error').getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByTestId('docs-artifacts-error')).toHaveCount(0);
   expect(seen.some(url => url.includes('/files/notes.txt'))).toBe(false);
   await expect(page.getByTestId('file-card-retry-review.md')).toBeVisible();
   await page.getByTestId('file-card-retry-review.md').click();
@@ -330,7 +346,7 @@ test('loads hidden tab data on selection, reuses it, and shows tab failures', as
   await selectPromptTab(page, 'prompt-tab-description', 'Docs');
   expect(seen.filter(url => url.includes('/files/review.md')).length).toBe(fileReads);
   expect(seen.filter(url => url.includes('/files/notes.txt')).length).toBe(notesReads);
-  expect(seen.filter(url => url.includes('/artifacts')).length).toBe(1);
+  expect(seen.filter(url => url.includes('/artifacts')).length).toBe(2);
   if (process.env.JOB_RESULTS_DIR) {
     mkdirSync(process.env.JOB_RESULTS_DIR, { recursive: true });
     writeFileSync(path.join(process.env.JOB_RESULTS_DIR, 'tab-loading-after-requests.json'),

@@ -730,12 +730,15 @@ export class TaskDetailComponent implements OnDestroy {
 
   private readonly screenshotsPoll = inject(ScreenshotsPollService);
   readonly screenshots = this.screenshotsPoll.screenshots;
+  readonly screenshotsLoadError = this.screenshotsPoll.loadError;
+  retryScreenshots(): void { this.screenshotsPoll.refresh(); }
   private readonly screenshotsEffect = effect(() => {
     if (this.routeDetailTab() === 'evidence') this.screenshotsPoll.syncTo(this.detail()?.info ?? null);
   });
-
   private readonly artifactsService = inject(TaskArtifactsService);
   readonly artifacts = this.artifactsService.artifacts;
+  readonly artifactsLoadError = this.artifactsService.loadError;
+  retryArtifacts(): void { this.artifactsService.refresh(); }
   private readonly artifactsEffect = effect(() => {
     if (this.routeDetailTab() === 'description') this.artifactsService.syncTo(this.detail()?.info ?? null);
   });

@@ -70,6 +70,12 @@
               <button type="button" (click)="retryResource.emit('review')">Retry</button>
             </div>
           }
+          @if (screenshotsLoadError()) {
+            <div class="tab-load-error" role="alert" data-testid="evidence-screenshots-error">
+              Visual evidence could not load.
+              <button type="button" (click)="retryScreenshots.emit()">Retry</button>
+            </div>
+          }
           @if (screenshots().length > 0) {
             <div class="ev-section" data-testid="ev-section-visual">
               <div class="ev-section-head">
@@ -131,6 +137,12 @@
     }
     @if (docsTaskKey() === job()?.taskKey) {
       <div [hidden]="activeTab() !== 'description'">
+        @if (artifactsLoadError()) {
+          <div class="tab-load-error" role="alert" data-testid="docs-artifacts-error">
+            Document list could not load.
+            <button type="button" (click)="retryArtifacts.emit()">Retry</button>
+          </div>
+        }
         @if (job(); as info) {
           <div class="desc-meta-bar" data-testid="desc-meta-bar">
             <div class="desc-meta" data-testid="desc-meta">
