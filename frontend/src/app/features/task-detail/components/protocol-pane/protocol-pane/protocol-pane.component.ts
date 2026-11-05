@@ -608,7 +608,6 @@ export class ProtocolPaneComponent implements OnDestroy {
   onInspectorTabChange(id: string): void {
     if (id === 'task' || id === 'activity' || id === 'protocol') {
       this.activeInspectorTab.set(id);
-      this.focusTabSurface();
     }
   }
 

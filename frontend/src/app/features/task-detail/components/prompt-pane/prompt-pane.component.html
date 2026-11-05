@@ -10,14 +10,16 @@
     <ng-container tabs>
       <app-pane-tabs variant="header"
                      ariaLabel="Prompt pane tabs"
+                     panelId="pane-prompt-panel"
                      [tabs]="promptTabs()"
                      [activeTabId]="activeTab()"
-                     (click)="focusTabSurface()"
                      (tabChange)="onPromptTabChange($event)" />
     </ng-container>
   </app-pane-header>
   <div class="pane__body"
-       role="region"
+       id="pane-prompt-panel"
+       role="tabpanel"
+       [attr.aria-labelledby]="'pane-prompt-panel-tab-' + activeTab()"
        appDetailKeyboardSurface
        [detailKeyboardInitialFocus]="true"
        data-testid="pane-prompt-body"

@@ -13,7 +13,7 @@
   // flex track — the editor visually disappeared behind the
   // orchestrator side sheet.
   grid-template-columns: minmax(0, 1fr);
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
   font-family: var(--font-ui);
   font-size: 13px;

@@ -6,7 +6,7 @@ FRONTEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${FRONTEND_ROOT}/.." && pwd)"
 if [[ "${PW_E2E_SINGLE_RUN:-0}" != "1" && "$#" -eq 0 ]]; then
   result=0
-  for profile in standard recovery ref-drift demo first-run networked-monolith operator-cli; do
+  for profile in standard recovery ref-drift demo public-demo first-run networked-monolith operator-cli; do
     PW_E2E_SINGLE_RUN=1 PW_E2E_PROFILE="${profile}" bash "$0" || result=1
   done
   exit "${result}"
@@ -20,11 +20,17 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *first-run-networked-monolith.spec.ts*) PW_E2E_PROFILE=networked-monolith ;;
       *studio-op-operator-cli.spec.ts*) PW_E2E_PROFILE=operator-cli ;;
       *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
+      *public-demo-shell.spec.ts*) PW_E2E_PROFILE=public-demo ;;
     esac
   done
 fi
 PUBLISH_DIR="${REPO_ROOT}/backend/bin/e2e-publish"
 PUBLISH_CONFIGURATION="${PW_E2E_DOTNET_CONFIGURATION:-Release}"
+if [[ "${PW_E2E_PROFILE}" == public-demo ]]; then
+  # Keep the browser-test Debug output separate from the Release publish.
+  PUBLISH_DIR="${REPO_ROOT}/backend/bin/e2e-publish-public-demo"
+  PUBLISH_CONFIGURATION=Debug
+fi
 PUBLISH_BUILD_ARGS=()
 if [[ "${PW_E2E_PUBLISH_NO_BUILD:-0}" == "1" ]]; then
   PUBLISH_BUILD_ARGS+=(--no-build)
@@ -61,7 +67,17 @@ PW_E2E_CHECKOUT="${PW_E2E_WORKSPACE}/checkout"
 cleanup() { rm -rf "${PW_E2E_WORKSPACE}"; }
 trap cleanup EXIT
 export PW_E2E_BACKEND_PORT PW_E2E_FRONTEND_PORT PW_E2E_WORKSPACE PW_E2E_CHECKOUT PW_E2E_PROFILE
-export PW_BASE_URL="http://127.0.0.1:${PW_E2E_FRONTEND_PORT}"
+if [[ "${PW_E2E_PROFILE}" == public-demo ]]; then
+  PW_E2E_TLS_CERT="${PW_E2E_WORKSPACE}/localhost.crt"
+  PW_E2E_TLS_KEY="${PW_E2E_WORKSPACE}/localhost.key"
+  openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+    -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' \
+    -keyout "${PW_E2E_TLS_KEY}" -out "${PW_E2E_TLS_CERT}" >/dev/null 2>&1
+  export PW_E2E_TLS_CERT PW_E2E_TLS_KEY
+  export PW_BASE_URL="https://localhost:${PW_E2E_FRONTEND_PORT}"
+else
+  export PW_BASE_URL="http://127.0.0.1:${PW_E2E_FRONTEND_PORT}"
+fi
 export PW_BACKEND_URL="http://127.0.0.1:${PW_E2E_BACKEND_PORT}"
 export DEV_PORT="${PW_E2E_BACKEND_PORT}"
 export PW_PREBUILT=1

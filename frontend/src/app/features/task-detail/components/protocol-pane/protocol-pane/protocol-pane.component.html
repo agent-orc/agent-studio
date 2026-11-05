@@ -20,9 +20,9 @@
     <ng-container tabs>
       <app-pane-tabs variant="header"
                      ariaLabel="Task / Activity / Result"
+                     panelId="pane-protocol-panel"
                      [tabs]="protocolTabs()"
                      [activeTabId]="activeInspectorTab()"
-                     (click)="focusTabSurface()"
                      (tabChange)="onInspectorTabChange($event)" />
     </ng-container>
     <ng-container trailing>
@@ -87,7 +87,9 @@
     </ng-container>
   </app-pane-header>
   <div class="pane__body"
-       role="region"
+       id="pane-protocol-panel"
+       role="tabpanel"
+       [attr.aria-labelledby]="'pane-protocol-panel-tab-' + activeInspectorTab()"
        appDetailKeyboardSurface
        [detailKeyboardInitialFocus]="true"
        detailKeyboardScrollTarget="[data-detail-tab-scroll-owner]"
