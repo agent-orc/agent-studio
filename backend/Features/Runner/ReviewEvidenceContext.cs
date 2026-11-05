@@ -1,4 +1,6 @@
 using System.Text;
+using System.Security.Cryptography;
+using AgentStudio.Security;
 using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
@@ -25,11 +27,108 @@ namespace AgentStudio.Runner;
 /// </summary>
 public static class ResultsInventory
 {
+    private const int ReviewMaximumFiles = 40;
+    private const int ReviewMaximumExcerpts = 12;
+    private const int ReviewMaximumExcerptChars = 4_000;
+    private const int ReviewMaximumTextChars = 24_000;
+
     /// <summary>Extensions we treat as small text artefacts worth excerpting inline.</summary>
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".md", ".txt", ".json", ".log", ".csv", ".yaml", ".yml", ".html", ".svg", ".xml", ".diff", ".patch",
     };
+
+    /// <summary>
+    /// Bounded evidence frozen into a remote review plan. The digest includes
+    /// every eligible file, including files whose names or contents exceed the
+    /// prompt budget. History and links are excluded from both views.
+    /// </summary>
+    public static string RenderForReview(string jobFolderPath)
+    {
+        if (string.IsNullOrWhiteSpace(jobFolderPath))
+            return "No results/ folder (job folder path unavailable).";
+        var root = Path.Combine(jobFolderPath, "results");
+        if (!Directory.Exists(root)) return "No results/ folder present for this task.";
+        try
+        {
+            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+                return "results/ folder is a link; evidence withheld.";
+            var files = SafeFiles(root).OrderBy(path => path, StringComparer.Ordinal).ToArray();
+            if (files.Length == 0) return "results/ folder present but empty.";
+
+            using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var lines = new StringBuilder();
+            lines.AppendLf($"results/ folder contains {files.Length} file(s):");
+            for (var i = 0; i < files.Length; i++)
+            {
+                var relative = Path.GetRelativePath(root, files[i]).Replace('\\', '/');
+                var size = new FileInfo(files[i]).Length;
+                using var stream = File.OpenRead(files[i]);
+                var fileHash = SHA256.HashData(stream);
+                digest.AppendData(Encoding.UTF8.GetBytes(relative + "\0" + size + "\0"));
+                digest.AppendData(fileHash);
+                if (i < ReviewMaximumFiles)
+                    lines.AppendLf($"- results/{CredentialRedactor.Redact(relative)} ({size} bytes)");
+            }
+            if (files.Length > ReviewMaximumFiles)
+                lines.AppendLf($"- ... and {files.Length - ReviewMaximumFiles} more file(s).");
+            lines.AppendLf($"results/ content SHA-256: {Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant()}");
+
+            var remaining = ReviewMaximumTextChars;
+            var excerpted = 0;
+            foreach (var file in files)
+            {
+                if (excerpted == ReviewMaximumExcerpts || remaining == 0) break;
+                var extension = Path.GetExtension(file);
+                if (!TextExtensions.Contains(extension) || extension.Equals(".svg", StringComparison.OrdinalIgnoreCase)
+                    || extension.Equals(".html", StringComparison.OrdinalIgnoreCase)) continue;
+                var limit = Math.Min(ReviewMaximumExcerptChars, remaining);
+                var raw = extension.Equals(".log", StringComparison.OrdinalIgnoreCase)
+                    ? BoundedFileRead.ReadTailText(file, (limit + 1) * 4, out _)
+                    : BoundedFileRead.ReadHeadText(file, (limit + 1) * 4);
+                var truncated = raw.Length > limit || new FileInfo(file).Length > (limit + 1) * 4;
+                var selected = raw.Length > limit
+                    ? extension.Equals(".log", StringComparison.OrdinalIgnoreCase) ? raw[^limit..] : raw[..limit]
+                    : raw;
+                if (string.IsNullOrWhiteSpace(selected)) continue;
+                var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+                lines.AppendLf();
+                lines.AppendLf($"{(extension.Equals(".log", StringComparison.OrdinalIgnoreCase) ? "Tail" : "Head")} of results/{CredentialRedactor.Redact(relative)}:");
+                lines.AppendLf(CredentialRedactor.Redact(selected.Trim()));
+                if (truncated) lines.AppendLf("... (truncated; inspect the named artifact for more)");
+                remaining -= selected.Length;
+                excerpted++;
+            }
+            if (excerpted == ReviewMaximumExcerpts || remaining == 0)
+                lines.AppendLf("Results text excerpt budget reached; other listed artifacts were not opened.");
+            return lines.ToString().TrimEnd();
+        }
+        catch (Exception)
+        {
+            return "results/ folder present but could not be read.";
+        }
+    }
+
+    private static IEnumerable<string> SafeFiles(string root)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) continue;
+                if (Directory.Exists(entry))
+                {
+                    if (directory == root && Path.GetFileName(entry).Equals("history", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    pending.Push(entry);
+                }
+                else if (File.Exists(entry)) yield return entry;
+            }
+        }
+    }
 
     /// <summary>
     /// Render the <c>results/</c> folder of a job into a compact inventory string

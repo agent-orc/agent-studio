@@ -1011,7 +1011,7 @@ public sealed class RemoteReviewPlanBuilder
             diff,
             status)
         {
-            ResultsInventory = ResultsInventory.Render(task.FolderPath),
+            ResultsInventory = ResultsInventory.RenderForReview(task.FolderPath),
             CardMode = ReviewCardMode.Describe(task.Mode),
             AcceptanceScope = RequirementAcceptanceScope.Describe(
                 task.AcceptanceScope,
