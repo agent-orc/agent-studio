@@ -59,7 +59,7 @@ app-pane-tabs.pane-tabs-host--header {
 
 .pane-tabs--header {
   display: flex;
-  width: 100%;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
 }
@@ -162,8 +162,9 @@ app-pane-tabs.pane-tabs-host--header {
   }
 }
 
-.pane-tabs--header .pane-tab--overflow {
+app-pane-tabs.pane-tabs-host--header > .pane-tab--overflow {
   flex: 0 0 auto;
+  align-self: stretch;
   justify-content: center;
   gap: var(--studio-spacing-1);
   min-width: var(--studio-spacing-5);

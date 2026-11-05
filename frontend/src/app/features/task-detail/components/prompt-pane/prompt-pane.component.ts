@@ -208,7 +208,6 @@ export class PromptPaneComponent {
   onPromptTabChange(id: string): void {
     if (id === 'overview' || id === 'description' || id === 'timeline' || id === 'evidence' || id === 'code-review') {
       this.setTab(id);
-      this.focusTabSurface();
     }
   }
 

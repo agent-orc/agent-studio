@@ -97,6 +97,8 @@ export class PaneTabsComponent implements AfterViewInit, OnDestroy {
   readonly listModifier = input<string | null>(null);
   /** `aria-label` for the tablist container. */
   readonly ariaLabel = input<string | null>(null);
+  /** ID of the content panel controlled by this strip. */
+  readonly panelId = input.required<string>();
   /** Minimum readable width reserved for each inline tab. */
   readonly minimumTabWidth = input<number>(72);
 
@@ -106,6 +108,7 @@ export class PaneTabsComponent implements AfterViewInit, OnDestroy {
   readonly availableWidth = signal<number | null>(null);
   readonly measuredTabWidths = signal<Readonly<Record<string, number>>>({});
   readonly measuredOverflowWidth = signal(0);
+  readonly focusedTabId = signal<string | null>(null);
 
   private readonly tabMeasurementEffect = effect(
     () => {
@@ -239,8 +242,38 @@ export class PaneTabsComponent implements AfterViewInit, OnDestroy {
 
   onClick(tab: PaneTabDef): void {
     if (tab.disabled) return;
+    this.focusedTabId.set(tab.id);
     if (tab.id === this.activeTabId()) return;
     this.tabChange.emit(tab.id);
+  }
+
+  tabId(tab: PaneTabDef): string {
+    return `${this.panelId()}-tab-${tab.id}`;
+  }
+
+  tabIndex(tab: PaneTabDef): number {
+    return tab.id === (this.focusedTabId() ?? this.activeTabId()) ? 0 : -1;
+  }
+
+  onTabKeydown(event: KeyboardEvent, tab: PaneTabDef): void {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      this.onClick(tab);
+      return;
+    }
+    const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+    if (!direction && event.key !== 'Home' && event.key !== 'End') return;
+    const enabled = this.inlineTabs().filter(candidate => !candidate.disabled);
+    if (!enabled.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const index = enabled.findIndex(candidate => candidate.id === tab.id);
+    const next = event.key === 'Home' ? enabled[0]
+      : event.key === 'End' ? enabled[enabled.length - 1]
+      : enabled[(index + direction + enabled.length) % enabled.length];
+    this.focusedTabId.set(next.id);
+    Array.from(this.host.nativeElement.querySelectorAll<HTMLElement>('[role="tab"]'))
+      .find(element => element.id === this.tabId(next))?.focus();
   }
 
   toggleOverflow(event: MouseEvent): void {

@@ -29,6 +29,7 @@ describe('PaneTabsComponent (smoke)', () => {
         { id: 'b', label: 'B', testid: 'tab-b' },
       ]);
       fixture.componentRef.setInput('activeTabId', 'a');
+      fixture.componentRef.setInput('panelId', 'test-panel');
       fixture.componentInstance.availableWidth.set(360);
       fixture.componentInstance.measuredTabWidths.set({ a: 92, b: 88 });
       fixture.componentInstance.measuredOverflowWidth.set(24);
@@ -61,6 +62,7 @@ describe('PaneTabsComponent (smoke)', () => {
       { id: 'evidence', label: 'Evidence', badge: 2, testid: 'tab-evidence' },
     ]);
     fixture.componentRef.setInput('activeTabId', 'evidence');
+    fixture.componentRef.setInput('panelId', 'test-panel');
     fixture.componentRef.setInput('variant', 'header');
     fixture.detectChanges();
 
@@ -93,6 +95,7 @@ describe('PaneTabsComponent (smoke)', () => {
       { id: 'docs', label: 'Docs', badge: 4 },
     ]);
     fixture.componentRef.setInput('activeTabId', 'code-review');
+    fixture.componentRef.setInput('panelId', 'test-panel');
     fixture.componentInstance.availableWidth.set(340);
     fixture.componentInstance.measuredTabWidths.set({
       overview: 80,
@@ -118,6 +121,9 @@ describe('PaneTabsComponent (smoke)', () => {
       expect.objectContaining({ id: 'docs', label: 'Docs', trailingBadge: '4' }),
     ]);
     expect(fixture.nativeElement.querySelectorAll('[data-testid="pane-tabs-overflow"]')).toHaveLength(1);
+    const tablist = fixture.nativeElement.querySelector('[role="tablist"]');
+    expect(tablist.querySelectorAll(':scope > [role="tab"]')).toHaveLength(3);
+    expect(tablist.querySelector('[data-testid="pane-tabs-overflow"]')).toBeNull();
 
     fixture.componentInstance.availableWidth.set(500);
     fixture.detectChanges();
@@ -151,6 +157,7 @@ describe('PaneTabsComponent (smoke)', () => {
       { id: 'docs', label: 'Docs', badge: '4' },
     ]);
     fixture.componentRef.setInput('activeTabId', 'code-review');
+    fixture.componentRef.setInput('panelId', 'test-panel');
     fixture.componentInstance.availableWidth.set(180);
     fixture.componentInstance.measuredTabWidths.set({
       overview: 70,
@@ -185,5 +192,36 @@ describe('PaneTabsComponent (smoke)', () => {
     fixture.componentInstance.overflowOpen.set(true);
     fixture.detectChanges();
     expect(document.body.querySelector('[data-testid="pane-tabs-overflow-item-timeline"]')?.textContent).toContain('13');
+  });
+
+  it('moves focus with arrows and activates only on Enter or Space', async () => {
+    await TestBed.configureTestingModule({
+      imports: [PaneTabsComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(PaneTabsComponent);
+    fixture.componentRef.setInput('tabs', [
+      { id: 'task', label: 'Task', testid: 'tab-task' },
+      { id: 'activity', label: 'Activity', testid: 'tab-activity' },
+      { id: 'result', label: 'Result', testid: 'tab-result', disabled: true },
+    ]);
+    fixture.componentRef.setInput('activeTabId', 'task');
+    fixture.componentRef.setInput('panelId', 'test-panel');
+    fixture.detectChanges();
+    const changes: string[] = [];
+    fixture.componentInstance.tabChange.subscribe(id => changes.push(id));
+    const task = fixture.nativeElement.querySelector('[data-testid="tab-task"]') as HTMLButtonElement;
+    const activity = fixture.nativeElement.querySelector('[data-testid="tab-activity"]') as HTMLButtonElement;
+    expect(task.getAttribute('aria-controls')).toBe('test-panel');
+    expect(task.getAttribute('aria-selected')).toBe('true');
+    task.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(activity);
+    expect(changes).toEqual([]);
+    activity.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(changes).toEqual(['activity']);
+    activity.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(task);
   });
 });
