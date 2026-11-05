@@ -1,9 +1,4 @@
 .public-demo-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 4000;
   display: flex;
   align-items: center;
   gap: var(--studio-spacing-3, 12px);
@@ -13,8 +8,6 @@
   color: var(--studio-text, inherit);
   background: var(--notify-info-tint);
   border-bottom: 2px solid var(--notify-info-border);
-  backdrop-filter: blur(4px);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
 }
 
 .public-demo-banner__text strong {
