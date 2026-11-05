@@ -135,6 +135,15 @@ describe('CliModelsPanelComponent', () => {
       tableScroll.dispatchEvent(event);
       expect(event.defaultPrevented).toBe(false);
     }
+    Object.defineProperties(tableScroll, {
+      scrollWidth: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 100 },
+    });
+    for (const key of ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      tableScroll.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
     expect(fixture.nativeElement.querySelector('[data-testid="effective-routes-claude"]')?.textContent)
       .toContain('review-grade: claude');
     expect(fixture.nativeElement.querySelector('[data-testid="quota-non-reroutable-callers"]')?.textContent)

@@ -183,6 +183,13 @@ for (const width of [1280, 390]) {
       await page.keyboard.press('Tab');
       await wrapper.focus();
       await expect(wrapper).toHaveCSS('outline-style', 'solid');
+      if (width === 1280) {
+        expect(await wrapper.evaluate((element: HTMLElement) => {
+          const event = new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true, cancelable: true });
+          element.dispatchEvent(event);
+          return event.defaultPrevented;
+        })).toBe(false);
+      }
       await page.keyboard.press('End');
       const end = await wrapper.evaluate((element: HTMLElement) => element.scrollLeft);
       if (width === 390) expect(end).toBeGreaterThan(0);

@@ -5,6 +5,8 @@ export function scrollCliModelsTable(event: KeyboardEvent): void {
   if (!keys.includes(event.key) || event.target !== event.currentTarget) return;
   const surface = event.currentTarget as HTMLElement;
   const vertical = surface.scrollHeight > surface.clientHeight;
+  const horizontal = surface.scrollWidth > surface.clientWidth;
+  if (!vertical && !horizontal) return;
   const current = vertical ? surface.scrollTop : surface.scrollLeft;
   const maximum = vertical
     ? surface.scrollHeight - surface.clientHeight
