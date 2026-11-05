@@ -118,10 +118,8 @@
                  [checked]="fallbackStates()[g.cliType]?.state === 'fallback-preferred'"
                  [disabled]="preferenceSaving() !== null"
                  (change)="setPreferFallback(g.cliType, $any($event.target).checked)" />
-          <app-status-indicator [tone]="fallbackStateTone(g.cliType)"
-                                [label]="fallbackStateLabel(g.cliType)"
-                                [compact]="true"
-                                [testId]="'cli-models-fallback-state-' + g.cliType" />
+          <app-status-indicator [tone]="fallbackStateTone(g.cliType)" [label]="fallbackStateLabel(g.cliType)"
+                                [compact]="true" [testId]="'cli-models-fallback-state-' + g.cliType" />
         </label>
         @if (effectiveFor(g.cliType).length) {
           <div class="cli-models__effective" [attr.data-testid]="'effective-routes-' + g.cliType">
