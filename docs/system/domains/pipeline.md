@@ -729,6 +729,14 @@ is `logs/batch-gate-ownership.json`. Native member records carry the gate
 identity and evidence; the integration-record endpoint only records integration
 bookkeeping.
 
+Each pilot tick retries formed manifests from the store. The oldest formed
+manifest takes the next available project gate slot, so later larger batches
+cannot indefinitely pass it. The state response includes every recoverable
+manifest even when it falls outside the requested history count. For a pending
+member past its planning deadline and absent from the last proposed member list,
+the plan names its current batch or fallback, or says that it awaits the next
+planner tick. Such a member never appears under an idle plan.
+
 The backend worker sends the full gate through `RemoteBuildTestGateRunner` to
 the configured remote gate host. A red candidate is compared on the server
 with a durable base verdict keyed by exact base SHA and gate profile. The
@@ -2242,6 +2250,10 @@ move-error dialog.
   post-processing deferral pass, integrating only what is not already on the
   branch and never creating a second review attempt. See
   [review-plane contract](../contracts/review-plane.md).
+  The integration coordinator marks a delivery replay finished before it
+  completes the waiting caller. A resume that discards a completed owner
+  refusal can then enqueue a fresh integration after ownership returns,
+  instead of receiving the stale refusal again.
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so
@@ -2791,6 +2803,16 @@ operator changes cause the step to fail before its writer runs.
   the first post-step in every catalogue pipeline. `SummaryGenerationService`
   runs it from Result finalization (and the Regenerate action). It writes
   `status.md` and `summary-assessment.json`. It cannot be disabled, and its
+  failure is nonterminal for a completed report run. Planning and research use
+  the agent's `results/status.md` or the latest final agent message as the
+  Result when the model step fails. The
+  failed summary row stays visible. The lightweight review then validates the
+  primary artifact and records its review and decision. If no agent status can
+  be recovered, the card moves to Escalated with the failed step and reason on
+  the timeline. Other post-processing failures also escalate with their reason
+  rather than leaving an undecided Auto Review card. An intentionally disabled
+  aspect pipeline keeps its operator-controlled hold.
+  The step's
   free-text prompt override is hidden, because it owns the Result document and
   renders `summary-protocol.md` with typed slots. CLI, model and thinking level
   resolve like any model-backed step: step override, then the project

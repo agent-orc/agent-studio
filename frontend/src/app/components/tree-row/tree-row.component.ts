@@ -58,6 +58,8 @@ export class TreeRowComponent {
   /** data-testid for the chevron control — lets callers assert on the disclosure twisty. */
   readonly chevronTestid = input<string | null>(null);
   readonly disabled = input(false);
+  /** Reserve an independent trailing action beside the row button. */
+  readonly hasActions = input(false);
 
   readonly chevronClick = output<Event>();
   readonly selectRequest = output<Event>();

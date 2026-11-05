@@ -37,6 +37,7 @@ import {
   type RemoteChatUsage,
 } from '../../models/remote-host.model';
 import { freshHostTelemetry, latestHostTelemetry } from '../../models/running-truth';
+import { claimLoadGateLabel } from '../../models/claim-load-gate';
 import type { StableReleaseIdentity } from '../../models/host-release-drift';
 import {
   claudeSignInTarget,
@@ -309,10 +310,13 @@ export class RemoteHostCardComponent {
   });
   readonly capacitySummary = computed(() => {
     const total = this.roleSlotCapacity();
-    return total === null
+    const slots = total === null
       ? `${this.totalActiveSlots()} active · capacity not reported`
       : `${this.totalActiveSlots()} / ${total} role slots active`;
+    const gate = this.host().claimLoadGate;
+    return gate ? `${slots} · ${claimLoadGateLabel(gate)}` : slots;
   });
+  readonly claimLoadGateLabel = claimLoadGateLabel;
   readonly projectAccessSummary = computed(() => {
     const failed = this.failedProjectPreflights().length;
     if (failed) return `${failed} ${failed === 1 ? 'project block' : 'project blocks'}`;

@@ -163,14 +163,13 @@ export class TaskSelectionService {
       this.lastEnsuredJobKey = taskKey;
     });
 
-    // Core prefetch: warm the bounded core of the next 1..PREFETCH_LOOKAHEAD
-    // entries in the current pager snapshot whenever it changes, and abort
-    // lookahead requests that fell out of the window. This is what makes the
-    // accept -> next-task navigation feel instant: by the time the user
-    // clicks Mark-as-Done, the next peer's core is already cached. Project
-    // handles resolve exactly as `openPagerEntry` does, so both share a key.
+    // Warm next-peer cores after the current detail's first response window.
+    // A pager change cancels lookahead for peers that are no longer next.
+    let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
+    this.destroyRef.onDestroy(() => { if (prefetchTimer) clearTimeout(prefetchTimer); });
     effect(() => {
       const snap = this.pager.snapshot();
+      if (prefetchTimer) clearTimeout(prefetchTimer);
       untracked(() => {
         const targets: TaskCoreTarget[] = [];
         for (let offset = 1; snap && offset <= TaskSelectionService.PREFETCH_LOOKAHEAD; offset++) {
@@ -180,7 +179,8 @@ export class TaskSelectionService {
           const project = live ? this.projectFor(live) : this.projectHandleForStorageReference(entry.watchPath);
           if (project) targets.push({ project, id: entry.id, taskKey: entry.taskKey });
         }
-        this.prefetch.prefetchCores(targets);
+        if (targets.length === 0) this.prefetch.prefetchCores([]);
+        else prefetchTimer = setTimeout(() => this.prefetch.prefetchCores(targets), 1600);
       });
     });
 
@@ -273,6 +273,7 @@ export class TaskSelectionService {
   private conflictReloads = 0;
   /** The in-flight review read, so an evidence request can supersede a plain one. */
   private reviewRequest: { subscription: Subscription; evidence: boolean } | null = null;
+  private reviewWithEvidence = false;
   /** The current document batch; a replacement batch supersedes and cancels the previous one. */
   private documentBatch = 0;
   private documentRequests: Subscription[] = [];
@@ -503,6 +504,7 @@ export class TaskSelectionService {
     this.activeAttempt = null;
     this.coreRead = { project, id: info.id, taskKey: info.taskKey };
     this.resourceStates.set(idleResources());
+    this.reviewWithEvidence = false;
     const accept = (core: TaskCore): boolean => {
       if (token !== this.openDetailToken || core.state === 'warming') return false;
       if (!sameReference(core.id, info.id) && !sameReference(core.key, info.id)
@@ -606,6 +608,7 @@ export class TaskSelectionService {
     if (!generationChanged) return;
     this.conflictReloads = 0;
     this.resourceStates.set(idleResources());
+    this.reviewWithEvidence = false;
     // Give the bounded core a paint opportunity before requesting documents.
     afterNextPaint(() => { if (this.isCurrent(token, core)) this.loadInitialDocuments(token); });
   }
@@ -774,6 +777,8 @@ export class TaskSelectionService {
     const core = this.selectedCore();
     const project = this.activeProject;
     if (!core || !project) return;
+    if (this.resourceStates()[name].phase === 'ready' &&
+      (name !== 'review' || !evidence || this.reviewWithEvidence)) return;
     if (this.resourceStates()[name].phase === 'loading') {
       // Evidence is a superset of the plain review read: replace that read
       // instead of dropping the evidence request behind it.
@@ -801,6 +806,7 @@ export class TaskSelectionService {
         }
         this.setResourceState(name, reply.state === 'ready' ? 'ready' : reply.state,
           reply.reason);
+        if (name === 'review' && reply.state === 'ready') this.reviewWithEvidence = evidence;
         const detail = this.selected();
         if (!detail) return;
         if (name === 'overview') {
