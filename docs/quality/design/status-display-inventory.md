@@ -32,17 +32,17 @@ Reading the columns:
 | Outcome | Rows |
 |---|---|
 | Done in AGT-3402 | 53 |
-| Done in AGT-3403 | 440 |
+| Done in AGT-3403 | 445 |
 | Kept own form, reason recorded in AGT-3403 | 30 |
-| Not a status | 470 |
+| Not a status | 473 |
 | Lane tone (R9) | 36 |
 | Header or footer (AGT-3356) | 27 |
 | Removed on develop (surface deleted) | 7 |
 | Stays, other reason | 432 |
-| **Total** | **1495** |
+| **Total** | **1503** |
 
 AGT-3403 recounted the outcomes from the final cells; the earlier split of
-the untouched categories differed by a few rows. Eight rows marked "added
+the untouched categories differed by a few rows. Thirteen rows marked "added
 after AGT-3402" cover displays built after the first inventory. Seven
 status-bar usage rows are marked removed: develop deleted the header quota
 hover and the per-CLI usage modal while this card was open.
@@ -69,7 +69,7 @@ hover and the per-CLI usage modal while this card was open.
 | Project hub | 517 |
 | Project overview | 1 |
 | Project settings | 1 |
-| Settings | 216 |
+| Settings | 223 |
 | Shared components | 72 |
 | Status bar | 8 |
 | Studio | 22 |
@@ -77,7 +77,7 @@ hover and the per-CLI usage modal while this card was open.
 | Studio shell | 34 |
 | Studio sidebar | 4 |
 | Tag manager dialog | 2 |
-| Task detail | 289 |
+| Task detail | 290 |
 | URL preview tab | 20 |
 | Verbose debug overlay | 10 |
 | Workbenches tab | 55 |
@@ -143,7 +143,7 @@ hover and the per-CLI usage modal while this card was open.
 | Board > Lane header > Status cluster | `.column__running-dot` (`--foreign`) | `frontend/src/app/features/board/components/task-column/task-column.html:85` | Running-run dot (tooltip names job, elapsed, model); hollow ring when another backend drives the run | running=running; foreign=running (hollow) | No: dense chart mark (text-free running dot in the lane header; job, elapsed and model live in the tooltip by design) (AGT-3403) |
 | Board > Lane header > Status cluster | `.column__status-pill--mode` (`--auto` / `--manual` / `--paused`) | `frontend/src/app/features/board/components/task-column/task-column.html:94` | Runner pickup mode AUTO / AUTO · 1 / MANUAL / PAUSED (click toggles auto) | auto=success; manual=warning (orange); paused=danger | No: interactive control |
 | Board > Search (exported, not mounted) | `.board-search-icon__chip` | `frontend/src/app/features/board/components/board-search-icon/board-search-icon.component.html:31` | Collapsed active search query chip "query" with clear × | n/a | No: not a status (filter) |
-| Board > Task card | `.batch-member[data-status]` (`batch-member-badge`) | `frontend/src/app/features/batch-gate/batch-member/batch-member.html:2` | Batch pending / Batch X · i of n / Batch published / Per-task fallback · ejection reason (untoned grey pill) | pending=neutral; in-batch=info; published=success; fallback=warning; pre-check-red=danger | Done (AGT-3403, compact) |
+| Board > Task card | `.batch-member[data-status]` (`batch-member-badge`) | `frontend/src/app/features/batch-gate/batch-member/batch-member.html:2` | Batch pending / Batch X · i of n / Batch published / Per-task fallback · ejection reason / Review fix before batch (untoned grey pill) | pending=neutral; in-batch=info; published=success; fallback=warning; pre-check-red=danger; review-fix=warning | Done (AGT-3403, compact) |
 | Board > Task card | `.task-card` (`task-card--<state>`, `--running`, `--stalled`, `--attention`; `data-running`, `data-stalled`) | `frontend/src/app/features/board/components/task-card/task-card.component.html:2` | Card container: lane colour stripe via `--state-color` per lane, plus running tint, stalled warn ring, escalated attention tint | n/a | No: lane tone (R9) |
 | Board > Task card | `.task-card__cooldown` | `frontend/src/app/features/board/components/task-card/task-card.component.html:209` | CooldownRetry banner "↻ infra-crashed · retrying k/3 · in Ns" (`role=status`) | cooldown-retry=warning (banner container kept, indicator inside, countdown kept) | Done (AGT-3403, compact) |
 | Board > Task card | `.task-card__publishable-chip` | `frontend/src/app/features/board/components/task-card/task-card.component.html:334` | "publishable: <channels>" on completed cards | n/a | No: not a status (publish targets label) |
@@ -820,6 +820,13 @@ hover and the per-CLI usage modal while this card was open.
 | Settings > Access > Operator activity | `app-status-indicator` (audit chain and forwarding, was `.activity__dot` + strong label) | frontend/src/app/features/access/components/access-operator-activity/access-operator-activity.component.html:6 | Chain verified / not verified / check failed; forwarded N of M or no sink | server alert=danger; verified or fully forwarded=success; otherwise neutral | Done (AGT-3403, compact; added after AGT-3402) |
 | Settings > Access > Operator activity | `app-status-indicator` (session state, agent Disabled, was `.access-badge`) | frontend/src/app/features/access/components/access-operator-activity/access-operator-activity.component.html:29 | Session Active / Expired / Revoked; agent Disabled | active=success; other states and disabled=neutral | Done (AGT-3403, compact; added after AGT-3402) |
 | Settings > Access > Operator agents | `app-status-indicator` (session state, agent Disabled, was `.access-badge`) | frontend/src/app/features/access/components/access-operator-agents/access-operator-agents.component.html:18 | Session Active / Expired / Revoked (revoked time as tooltip); agent Disabled | active=success; other states and disabled=neutral | Done (AGT-3403, compact; added after AGT-3402) |
+| Settings > Access > Operator approvals | `app-status-indicator` (request state, was `.access-badge[data-tone]`) | frontend/src/app/features/access/components/access-operator-approvals/access-operator-approvals.component.html:73 | Approval request state in the history table | used or approved=success; other states=neutral | Done (AGT-3403, compact; added after AGT-3402) |
+| Settings > Access > Operator approvals | `.access-badge[data-tier]` | frontend/src/app/features/access/components/access-operator-approvals/access-operator-approvals.component.html:15 | Grant tier of a pending request (T2) | n/a | No: not a status (tag) |
+| Settings > Access > Operator approvals | `.access-badge[data-tone=untrusted]` | frontend/src/app/features/access/components/access-operator-approvals/access-operator-approvals.component.html:32 | Instruction source of a request; untrusted origin tinted | n/a | No: not a status (tag); documented exception in `status-chip-baseline.json` |
+| Settings > Access > Kill switch | `app-status-indicator` (pending, last use and drill lines, was `.kill__dot` + strong label) | frontend/src/app/features/access/components/access-operator-kill-switch/access-operator-kill-switch.component.html:6 | Host command pending; Last used (Operations Server propagation); Never used; Drill passed / failed; No drill yet | pending host command or pending revocation=danger; revoked=success; drill passed=success, failed=danger; never used, no drill=neutral | Done (AGT-3403, compact; added after AGT-3402) |
+| Settings > Access > Kill switch | `app-status-indicator` (Operations Server column, was `.access-badge[data-tone]`) | frontend/src/app/features/access/components/access-operator-kill-switch/access-operator-kill-switch.component.html:65 | Operations Server propagation per past use | revoked=success; pending=danger; not configured or unchanged=neutral | Done (AGT-3403, compact; added after AGT-3402) |
+| Settings > Access > Standing grants | `app-status-indicator` (grant state, was `.access-badge[data-tone]`) | frontend/src/app/features/access/components/access-standing-grants/access-standing-grants.component.html:36 | Grant state; revoked time and person as tooltip | active=success; other states=neutral | Done (AGT-3403, compact; added after AGT-3402) |
+| Settings > Access > Standing grants | `.access-badge[data-tier]` | frontend/src/app/features/access/components/access-standing-grants/access-standing-grants.component.html:6 | Tier label of a catalogue group (T0 / T1 / T2) | n/a | No: not a status (tag) |
 | Settings > CLI Management | `.cli-admin__error` | `frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.html:21` | CLI admin load / save error | danger | No: alert banner |
 | Settings > CLI Management | `.cli-card__plan` | `frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.html:59` | subscription plan name per CLI | n/a | No: not a status (tag) |
 | Settings > CLI Management | `.cap-row__used--blocked` + `.cap-row__bar-fill--over` | `frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.html:67` | usage cap: used % turns red when used >= cap (dispatch blocked) | under cap → neutral; at/over cap → danger | No: dense chart mark (meter); used % text could take danger tone |
@@ -1388,6 +1395,7 @@ hover and the per-CLI usage modal while this card was open.
 | Task detail > Pane toggle bar | `.pane-toggle` (`--active`) | `frontend/src/app/features/task-detail/components/pane-toggle-bar/pane-toggle-bar.component.html:2` | Pane visibility toggles (Task / Protocol / Git / VS Code) | n/a | No: interactive control |
 | Task detail > Pane toggle bar | `.pane-toggle__badge` | `frontend/src/app/features/task-detail/components/pane-toggle-bar/pane-toggle-bar.component.html:22` | Git commit count on the Git toggle | n/a | No: not a status (count) |
 | Task detail > Parked blocker | `.park__badge` | `frontend/src/app/features/task-detail/components/parked-blocker/parked-blocker.component.html:13` | Blocker type label: Operator decision / Agent needs input / Needs human input / Human decision needed / Steer unanswered / Review subject unavailable / title-cased slug | parked blocker=warning; decision blocker=info | Done (AGT-3403) |
+| Task detail > Quality | `app-status-indicator` (was `.quality-panel__badge[data-state]`) | `frontend/src/app/features/task-detail/components/prompt-pane/quality-panel/quality-panel.component.html:5` | Quality verdict of the selected review round: Repository not registered / Waiting for review / Reviewing / Pass / Concerns / Block / Unavailable / Shadow / Outdated / Not reviewed | pass=success; concerns=warning; block=danger; reviewing=running; shadow=info; other states=neutral | Done (AGT-3403; added after AGT-3402) |
 | Task detail > Parked blocker | `.park__since` | `frontend/src/app/features/task-detail/components/parked-blocker/parked-blocker.component.html:14` | "Parked <age> ago · <date>" | n/a | No: not a status (age label) |
 | Task detail > Parked blocker | `.park__recall` (`data-tone`) | `frontend/src/app/features/task-detail/components/parked-blocker/parked-blocker.component.html:17` | Recall verdict: Precondition cleared / Still blocked / Nothing can check this / Never checked / raw recall status | recallable (Precondition cleared)=success; blocked (Still blocked)=warning; undeterminable=neutral; stale (Never checked)=neutral; unknown=neutral | Done (AGT-3403, compact) |
 | Task detail > Parked blocker | `.park` (`data-blocker-type`, `data-decision`) | `frontend/src/app/features/task-detail/components/parked-blocker/parked-blocker.component.html:3` | Park banner tint: parked on a blocker vs waiting on a decision card | parked=warning; decision=info | No: banner with actions (full-surface park tint stays; its header now carries the indicator) (AGT-3403) |
