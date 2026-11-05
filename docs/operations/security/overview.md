@@ -504,6 +504,11 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   `GET /api/quota/admission/{project}` stays a Task Server and Runner claim
   route that no session or token reads; operator tokens read quota through
   `/api/cli/quota` and `/api/cli/quota/model-routes`.
+  `GET /api/operator/capacity` combines cached per-CLI quota with active
+  fallback, quota-wait, and routing-pin records. It requires `project.read`,
+  filters card and pin records to readable projects, and removes raw CLI
+  samples for a caller without installation-wide `workspace.operate`. Such a
+  caller never starts a quota probe.
 - Secret routes (AGT-3222) declare `secrets.read` for metadata reads and
   `secrets.write` for put, rotate, revoke, and delete, at the workspace
   (`/api/secrets/workspace`, which needs a workspace binding), project

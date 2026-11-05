@@ -73,6 +73,7 @@ public static class EndpointMapping
         app.MapAcceptanceRailEndpoints();
         app.MapWatcherEndpoints();
         app.MapOperatorEndpoints();
+        app.MapOperatorCapacityEndpoints();
         app.MapOperatorLogEndpoints();
         app.MapDeployPreflightEndpoints();
         app.MapOrchestratorSessionEndpoints();
