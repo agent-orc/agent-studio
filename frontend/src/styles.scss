@@ -32,6 +32,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+app-root {
+  --resizing-cursor: col-resize;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
 :root {
   --studio-z-overlay-root: 2147483647;
   --studio-z-overlay-backdrop: 2147483000;

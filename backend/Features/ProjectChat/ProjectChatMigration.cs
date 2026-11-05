@@ -31,17 +31,22 @@ public sealed class ProjectChatMigration
         _logger = logger;
     }
 
-    public ProjectChatMigrationReport MigrateAll()
+    public ProjectChatMigrationReport MigrateAll(CancellationToken ct = default)
     {
         var report = new ProjectChatMigrationReport();
         foreach (var entry in _scanner.GetWatchPaths())
         {
+            ct.ThrowIfCancellationRequested();
             try
             {
-                var stats = MigrateOne(entry);
+                var stats = MigrateOne(entry, ct);
                 report.Projects[entry.Name] = stats;
                 if (stats.Written > 0)
                     _logger.LogInformation("Project chat migration: {Project} wrote {N} new turn files", entry.Name, stats.Written);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -51,9 +56,10 @@ public sealed class ProjectChatMigration
         return report;
     }
 
-    public ProjectChatMigrationStats MigrateOne(WatchPathEntry entry)
+    public ProjectChatMigrationStats MigrateOne(WatchPathEntry entry, CancellationToken ct = default)
     {
         var stats = new ProjectChatMigrationStats();
+        ct.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(entry.Path)) return stats;
 
         var legacy = Path.Combine(entry.RootPath, ".orchestrator", "orchestrator-chat.jsonl");
@@ -61,10 +67,15 @@ public sealed class ProjectChatMigration
 
         // Build the existing-id set so we can skip turns already migrated.
         var existing = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (_, turn) in _store.EnumerateAll(entry.Path)) existing.Add(turn.TurnId);
+        foreach (var (_, turn) in _store.EnumerateAll(entry.Path))
+        {
+            ct.ThrowIfCancellationRequested();
+            existing.Add(turn.TurnId);
+        }
 
         foreach (var line in File.ReadLines(legacy))
         {
+            ct.ThrowIfCancellationRequested();
             if (string.IsNullOrWhiteSpace(line)) continue;
             ProjectChatTurn? turn;
             try
@@ -91,7 +102,7 @@ public sealed class ProjectChatMigration
 
         if (stats.Written > 0)
         {
-            _index.EnsureFresh(entry.Path);
+            _index.EnsureFresh(entry.Path, ct);
         }
 
         return stats;
