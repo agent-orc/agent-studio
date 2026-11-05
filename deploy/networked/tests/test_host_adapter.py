@@ -140,6 +140,48 @@ class HostAdapterTests(unittest.TestCase):
             result = adapter.build({"artifactDirectory": folder}, "build-agent-host", commit)
             self.assertEqual(result, {"commit": commit, "ref": str(release), "sha256": checksum})
 
+    def test_interrupted_archive_build_can_retry(self):
+        commit = "a" * 40
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder) / commit
+            release = base / "agent_host.tar.gz"
+            checksum = base / "agent_host.sha256"
+
+            def publish(argv, **kwargs):
+                output = Path(argv[argv.index("-o") + 1])
+                output.mkdir()
+                (output / "agent-host").write_bytes(b"release contents")
+
+            original_add = tarfile.TarFile.add
+
+            def interrupted(stream, *args, **kwargs):
+                original_add(stream, *args, **kwargs)
+                raise OSError("interrupted archive build")
+
+            config = {"artifactDirectory": folder, "repository": "/unused"}
+            with patch.object(adapter, "exact_source"), patch.object(adapter, "run", side_effect=publish):
+                with patch.object(tarfile.TarFile, "add", interrupted):
+                    with self.assertRaisesRegex(OSError, "interrupted archive build"):
+                        adapter.build(config, "build-agent-host", commit)
+                self.assertFalse(release.exists())
+                self.assertFalse(checksum.exists())
+                self.assertEqual(list(base.iterdir()), [])
+
+                # Recover an unfinished archive left by the previous direct-write flow.
+                release.write_bytes(b"incomplete")
+                result = adapter.build(config, "build-agent-host", commit)
+                release.write_bytes(b"incomplete again")
+                checksum.write_text("partial")
+                result = adapter.build(config, "build-agent-host", commit)
+            self.assertEqual(result["sha256"], adapter.sha(release))
+            self.assertEqual(checksum.read_text().strip(), result["sha256"])
+            with tarfile.open(release) as stream:
+                self.assertEqual(stream.extractfile("agent-host").read(), b"release contents")
+
+            release.write_bytes(b"changed after completion")
+            with self.assertRaisesRegex(adapter.AdapterError, "no matching checksum"):
+                adapter.build(config, "build-agent-host", commit)
+
     def test_transfer_refuses_a_changed_release_archive(self):
         with tempfile.TemporaryDirectory() as folder:
             archive = Path(folder) / "release.tar.gz"

@@ -46,6 +46,8 @@ their Docker or Compose commands.
 An interrupted release extraction leaves no completed gate or review release;
 the next attempt rebuilds it. An incomplete coding incoming directory is
 cleared on retry after the transferred archive digest is checked.
+An interrupted agent-host or gate-worker archive build leaves no completed
+checksum. The next build replaces that incomplete archive from the same commit.
 
 Site-specific commands are **inline argument arrays**, not paths to operator
 scripts:
