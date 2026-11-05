@@ -113,6 +113,7 @@ public static class IntegrationVerificationStore
         {
             File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json));
             File.Move(temporary, path, overwrite: true);
+            AgentStudio.Tasks.SidecarFileGeneration.Changed(path);
             Publish(taskFolder, record.State == IntegrationVerificationStates.Verified);
         }
         finally
@@ -131,7 +132,9 @@ public static class IntegrationVerificationStore
     public static void Delete(string taskFolder)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(taskFolder);
-        File.Delete(PathFor(taskFolder));
+        var path = PathFor(taskFolder);
+        File.Delete(path);
+        AgentStudio.Tasks.SidecarFileGeneration.Changed(path);
         Publish(taskFolder, false);
     }
 

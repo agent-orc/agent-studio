@@ -1880,6 +1880,21 @@ their authoritative checks; display state never grants permission to mutate.
   than a fixed TTL after the last refresh queued a whole-board recompute -
   structurally proportional to request traffic rather than to actual repo
   change.
+- **Card sidecar generations (AGT-3541).** The review round ledger and
+  integration verification record have a remembered file generation per card.
+  Their writers and task watcher invalidate that card immediately. A ref-only
+  projection reuses the parsed review view and verification record, so it does
+  not probe every card's round file. Each index pass inspects at most 32
+  sidecars from a rotating queue to repair a missed watcher event. The 45 s
+  safety sweep checks up to 256 sidecars; a repaired
+  file changes the task input signature and queues a new board generation.
+  A second rotating pass re-reads at most 32 review views older than five
+  minutes to repair missed events for other review artifacts.
+  The first observation after a restart records file metadata and content hash
+  in the durable input signature, so a restored generation is confirmed only
+  against the current sidecars. The five synchronous projection lookups
+  execute on one outer pool worker instead of reserving five workers during
+  file and Git reads.
 - **Single-flight per repository, bounded concurrency across repositories.** A
   trigger that arrives while a repository's run is already in flight does not
   start a second one; it marks exactly one rerun for after the current run
