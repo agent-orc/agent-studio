@@ -58,8 +58,13 @@ for (const width of [390, 1280] as const) {
         });
         await page.setViewportSize({ width, height: 900 });
         await page.addInitScript(value => localStorage.setItem('atp.studio.theme', value), theme);
-        await page.goto(`/?job=${encodeURIComponent(job.id)}&watchPath=${encodeURIComponent(watchPath)}`);
-        await expect(page.getByTestId('prompt-tab-overview')).toBeVisible({ timeout: 15_000 });
+        const detailUrl = `/?job=${encodeURIComponent(job.id)}&watchPath=${encodeURIComponent(watchPath)}`;
+        // The index can briefly lag the core after fixture creation. Retry
+        // the deep link if the welcome view wins that first restore race.
+        await expect(async () => {
+          await page.goto(detailUrl);
+          await expect(page.getByTestId('prompt-tab-overview')).toBeVisible({ timeout: 8_000 });
+        }).toPass({ timeout: 45_000 });
 
         const tabs = [
           { name: 'overview', testid: 'prompt-tab-overview' },
@@ -110,6 +115,24 @@ for (const width of [390, 1280] as const) {
           await prompt.focus();
           await page.keyboard.press('ArrowRight');
           await expect(page.getByTestId('prompt-tab-timeline')).toBeFocused();
+
+          if (width === 1280) {
+            // The focused tab may move into the overflow menu when the pane
+            // narrows. An inline tab must still be reachable by Tab.
+            const timeline = page.getByTestId('prompt-tab-timeline');
+            await timeline.focus();
+            const promptTablist = page.getByTestId('pane-prompt-header').getByRole('tablist');
+            await promptTablist.locator('..').evaluate(element => {
+              (element as HTMLElement).style.flex = '0 0 96px';
+              (element as HTMLElement).style.maxWidth = '96px';
+            });
+            await expect(timeline).toHaveCount(0);
+            const tabStop = promptTablist.locator(':scope > [role="tab"][tabindex="0"]');
+            await expect(tabStop).toHaveCount(1);
+            await page.getByTestId('pane-prompt-header').getByTestId('pane-tabs-overflow').focus();
+            await page.keyboard.press('Shift+Tab');
+            await expect(tabStop).toBeFocused();
+          }
         }
 
         const axeScript = process.env['AGT_3531_AXE_SCRIPT'];

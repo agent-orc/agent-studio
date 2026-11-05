@@ -224,4 +224,34 @@ describe('PaneTabsComponent (smoke)', () => {
     fixture.detectChanges();
     expect(document.activeElement).toBe(task);
   });
+
+  it('keeps an inline tab in the Tab order when a resize hides the focused tab', async () => {
+    await TestBed.configureTestingModule({
+      imports: [PaneTabsComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(PaneTabsComponent);
+    fixture.componentRef.setInput('tabs', [
+      { id: 'overview', label: 'Overview', testid: 'tab-overview' },
+      { id: 'timeline', label: 'Timeline', testid: 'tab-timeline' },
+      { id: 'evidence', label: 'Evidence', testid: 'tab-evidence' },
+    ]);
+    fixture.componentRef.setInput('activeTabId', 'overview');
+    fixture.componentRef.setInput('panelId', 'test-panel');
+    fixture.componentInstance.availableWidth.set(300);
+    fixture.componentInstance.measuredTabWidths.set({ overview: 80, timeline: 80, evidence: 80 });
+    fixture.componentInstance.measuredOverflowWidth.set(24);
+    fixture.detectChanges();
+
+    const evidence = fixture.nativeElement.querySelector('[data-testid="tab-evidence"]') as HTMLButtonElement;
+    evidence.focus();
+    fixture.detectChanges();
+    expect(evidence.tabIndex).toBe(0);
+
+    fixture.componentInstance.availableWidth.set(120);
+    fixture.detectChanges();
+    const inlineTabs = Array.from(fixture.nativeElement.querySelectorAll('[role="tablist"] [role="tab"]')) as HTMLButtonElement[];
+    expect(inlineTabs.map(tab => tab.dataset['testid'])).toEqual(['tab-overview']);
+    expect(inlineTabs.map(tab => tab.tabIndex)).toEqual([0]);
+  });
 });

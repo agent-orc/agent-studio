@@ -252,7 +252,10 @@ export class PaneTabsComponent implements AfterViewInit, OnDestroy {
   }
 
   tabIndex(tab: PaneTabDef): number {
-    return tab.id === (this.focusedTabId() ?? this.activeTabId()) ? 0 : -1;
+    const enabled = this.inlineTabs().filter(candidate => !candidate.disabled);
+    const focused = enabled.find(candidate => candidate.id === this.focusedTabId());
+    const active = enabled.find(candidate => candidate.id === this.activeTabId());
+    return tab.id === (focused ?? active ?? enabled[0])?.id ? 0 : -1;
   }
 
   onTabKeydown(event: KeyboardEvent, tab: PaneTabDef): void {
