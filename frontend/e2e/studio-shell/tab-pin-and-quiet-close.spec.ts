@@ -48,6 +48,7 @@ async function boot(page: Page): Promise<void> {
 }
 
 const tab = (page: Page, key: string): Locator => page.getByTestId(`studio-tab-${key}`);
+const closeTab = (page: Page, key: string): Locator => page.getByTestId(`studio-tab-close-${key}`);
 
 async function tabOrder(page: Page): Promise<string[]> {
   return page.getByTestId('studio-tab-list').locator('[data-tab-key]')
@@ -56,17 +57,17 @@ async function tabOrder(page: Page): Promise<string[]> {
 
 test('every tab has an accessible close control, including the default board', async ({ page }) => {
   await boot(page);
-  await expect(tab(page, 'board:__all__').getByRole('button', { name: 'Close tab' })).toBeVisible();
-  await tab(page, 'board:__all__').getByRole('button', { name: 'Close tab' }).click();
+  await expect(closeTab(page, 'board:__all__')).toHaveAccessibleName(/^Close /);
+  await closeTab(page, 'board:__all__').click();
   await expect(tab(page, 'board:__all__')).toHaveCount(0);
-  await expect(tab(page, GAMMA).getByRole('button', { name: 'Close tab' })).toBeVisible();
+  await expect(closeTab(page, GAMMA)).toHaveAccessibleName(/^Close /);
 });
 
 test('middle click closes an inactive tab', async ({ page }) => {
   await boot(page);
   await tab(page, GAMMA).click({ button: 'middle' });
   await expect(tab(page, GAMMA)).toHaveCount(0);
-  await expect(tab(page, ACTIVE)).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, ACTIVE).getByRole('tab')).toHaveAttribute('aria-selected', 'true');
 });
 
 test('Close Others keeps only the selected tab and survives reload', async ({ page }) => {
