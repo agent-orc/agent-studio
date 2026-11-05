@@ -1,8 +1,8 @@
 @if (auth.studioAllowed()) {
     <app-offline-banner />
     <app-public-demo-banner />
-    <app-codex-sign-in-dialog />
-    <app-claude-sign-in-dialog />
+    @defer (when codexSignInRequest() !== null) { <app-codex-sign-in-dialog /> }
+    @defer (when claudeSignInRequest() !== null) { <app-claude-sign-in-dialog /> }
     @if (featureFlags.vsCodeLayout()) {
       <!--
         Agent Software Studio redesign — VS-Code-inspired shell.
@@ -41,11 +41,12 @@
              studio-shell in .app-shell and pushed the whole shell left
              when opened, leaving status/nav bars cut off short of the
              panel. -->
-        <app-orchestrator-side-sheet
+        <app-orchestrator-side-sheet-host
           studioOrchestratorRail
-          #orchSideSheet
+          [open]="orchestratorPanelOpen()"
           [projects]="projectNames()"
           [preferredProject]="orchSideSheetPreferredProject()"
+          [requestedProject]="chatProjectRequest()"
           [projectEntryRevision]="studioTabState.emptyProjectEntryRevision()"
           [watchPaths]="watchPaths()" [pageContext]="pageContext.activePage()"
           [activeJobId]="pageContext.activePage() ? null : (selectedJob()?.info?.id ?? null)" [activeJobTitle]="pageContext.activePage() ? null : (selectedJob()?.info?.title ?? null)"
@@ -112,10 +113,12 @@
           <app-workspace-banner [projects]="bannerProjects()" />
           @switch (studioTabState.activeTab()?.kind) {
             @case ('feed') {
+              @defer (on immediate) {
               <app-orchestrator-feed
                 [projectName]="'Workspace'"
                 [embedded]="true"
                 (openTask)="onOpenJobDetailFromSheet($event)" />
+              }
             }
             @case ('board') {
               @if (boardLoading() && jobService.jobs().length === 0) {
@@ -242,11 +245,13 @@
             @case ('workbenches') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'workbenches') {
+                  @defer (on immediate) {
                   <app-workbench-tab-host
                     mode="overview"
                     [projectName]="tab.projectName"
                     [projectId]="tab.projectName ? projectHubUrls.projectIdForName(tab.projectName) : null"
                     (openWorkbench)="onWorkbenchOverviewOpen($event)" />
+                  }
                 }
               }
             }
@@ -271,22 +276,26 @@
             @case ('url-preview') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'url-preview') {
+                  @defer (on immediate) {
                   <app-project-url-preview-tab
                     [projectName]="tab.projectName"
                     [urlId]="tab.urlId"
                     (openSettings)="onOpenUrlPreviewSettings($event)" />
+                  }
                 }
               }
             }
             @case ('workbench') { @if (studioTabState.activeTab(); as tab) { @if (tab.kind === 'workbench') {
+              @defer (on immediate) {
               <app-workbench-tab-host
                 mode="viewer"
                 [projectName]="tab.projectName"
                 [workbenchId]="tab.workbenchId"
                 (openWiki)="onOpenWorkbenchWiki(tab.projectName, $event)" />
+              }
             } } }
             @case ('workspace-settings') {
-              <app-workspace-overlays [inline]="true"
+              <app-workspace-overlays-host [inline]="true" [open]="workspaceOverlaysOpen()"
                                       [watchPaths]="watchPaths()"
                                       (openTask)="onOpenTaskFromReel($event)"
                                       (openProjectSettings)="onOpenProjectSettingsFromUsage($event)"
@@ -303,14 +312,18 @@
       <app-update-block-modal />
       <app-confirm-dialog />
       @if (workspaceManager.createOpen()) {
+        @defer (on immediate) {
         <app-workspace-create-dialog />
+        }
       }
       @if (workspaceManager.onboardProjectOpen()) {
+        @defer (on immediate) {
         <app-onboard-project-dialog />
+        }
       }
       <app-notification-stack />
-      <app-media-lightbox />
-      <app-cost-breakdown-dialog />
+      @defer (when mediaLightboxOpen() !== null) { <app-media-lightbox /> }
+      @defer (when costBreakdownOpen()) { <app-cost-breakdown-dialog /> }
       @if (errorDialog.activeError(); as error) {
         <app-error-dialog
           [error]="error"
@@ -321,6 +334,7 @@
           (openCliConfig)="openCliConfigFromError()" />
       }
       @if (showCreate()) {
+        @defer (on immediate) {
         <app-create-job-dialog
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
           [cliTypeDraft]="createJobForm.newCliType"
@@ -340,17 +354,22 @@
           (cliTypeChange)="onCreateCliTypeChange($event)"
           (modelSelectionTouched)="createJobForm.markModelSelectionExplicit()" (policySelectionRequest)="createJobForm.usePolicySelection()"
           (cancelRequest)="cancelCreate()"
-          (openChatRequest)="cancelCreate(); orchSideSheet.show()"
+          (openChatRequest)="cancelCreate(); openOrchestratorChat()"
           (submitRequest)="submitCreate()" />
+        }
       }
       @if (showE2ECleanup()) {
+        @defer (on immediate) {
         <app-e2e-cleanup-dialog
           (closed)="showE2ECleanup.set(false)"
           (didDelete)="onE2EDidDelete()" />
+        }
       }
       @if (showTagManager()) {
+        @defer (on immediate) {
         <app-tag-manager-dialog
           (closed)="onTagManagerClosed()" />
+        }
       }
       @defer (when projectOverlays.anyOpen()) {
       <app-project-overlays
@@ -627,11 +646,12 @@
         }
       </div>
 
-        <app-orchestrator-side-sheet
-          #orchSideSheet
-          class="app__sidesheet"
+        <app-orchestrator-side-sheet-host
+          [legacy]="true"
+          [open]="orchestratorPanelOpen()"
           [projects]="projectNames()"
           [preferredProject]="orchSideSheetPreferredProject()"
+          [requestedProject]="chatProjectRequest()"
           [watchPaths]="watchPaths()" [pageContext]="pageContext.activePage()"
           [activeJobId]="pageContext.activePage() ? null : (selectedJob()?.info?.id ?? null)" [activeJobTitle]="pageContext.activePage() ? null : (selectedJob()?.info?.title ?? null)"
           [activeWatchPath]="pageContext.activePage() ? null : (selectedJob()?.info?.watchPath ?? null)" [activeJobKey]="pageContext.activePage() ? null : (selectedJob()?.info?.displayKey ?? selectedJob()?.info?.taskKey ?? null)" [activeJobState]="pageContext.activePage() ? null : (selectedJob()?.info?.state ?? null)"
@@ -656,13 +676,14 @@
       }
 
 
-      <app-workspace-overlays [watchPaths]="watchPaths()"
+      <app-workspace-overlays-host [open]="workspaceOverlaysOpen()" [watchPaths]="watchPaths()"
                               (openTask)="onOpenTaskFromReel($event)"
                               (openProjectSettings)="onOpenProjectSettingsFromUsage($event)"
                               (openJobDetail)="onOpenTaskFromSession($event)" />
 
 
       @if (showCreate()) {
+        @defer (on immediate) {
         <app-create-job-dialog
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
           [cliTypeDraft]="createJobForm.newCliType"
@@ -682,19 +703,24 @@
           (cliTypeChange)="onCreateCliTypeChange($event)"
           (modelSelectionTouched)="createJobForm.markModelSelectionExplicit()" (policySelectionRequest)="createJobForm.usePolicySelection()"
           (cancelRequest)="cancelCreate()"
-          (openChatRequest)="cancelCreate(); orchSideSheet.show()"
+          (openChatRequest)="cancelCreate(); openOrchestratorChat()"
           (submitRequest)="submitCreate()" />
+        }
       }
 
       @if (showE2ECleanup()) {
+        @defer (on immediate) {
         <app-e2e-cleanup-dialog
           (closed)="showE2ECleanup.set(false)"
           (didDelete)="onE2EDidDelete()" />
+        }
       }
 
       @if (showTagManager()) {
+        @defer (on immediate) {
         <app-tag-manager-dialog
           (closed)="onTagManagerClosed()" />
+        }
       }
 
       @if (errorDialog.activeError(); as error) {
@@ -709,13 +735,17 @@
 
       <app-confirm-dialog />
       @if (workspaceManager.createOpen()) {
+        @defer (on immediate) {
         <app-workspace-create-dialog />
+        }
       }
       @if (workspaceManager.onboardProjectOpen()) {
+        @defer (on immediate) {
         <app-onboard-project-dialog />
+        }
       }
       <app-notification-stack />
-      <app-media-lightbox />
+      @defer (when mediaLightboxOpen() !== null) { <app-media-lightbox /> }
 
       @defer (when verboseDebugContext() !== null) {
         @if (verboseDebugContext(); as ctx) {

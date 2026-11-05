@@ -20,8 +20,8 @@ import { Injectable, computed, signal } from '@angular/core';
  * gallery so the single-image callers (TipTap description editor, etc.)
  * keep working unchanged.
  *
- * The lightbox component (`<app-media-lightbox>`) is mounted once at the
- * app shell. It binds `active()` to its template and calls `close()` on
+ * The lightbox component (`<app-media-lightbox>`) mounts in the app shell
+ * on first open. It binds `active()` to its template and calls `close()` on
  * dismiss. The service owns the modal-stack registration so any caller
  * gets correct Escape ordering for free.
  */

@@ -1,0 +1,196 @@
+import { test, expect, type Page } from '@playwright/test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const output = process.env.JOB_RESULTS_DIR;
+const phase = process.env.BUNDLE_PHASE ?? 'after';
+const project = 'Bundle Demo';
+const watchPath = '/fixtures/bundle-demo';
+const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+
+function task(index: number) {
+  const id = `BND-${index + 1}`;
+  return {
+    id, taskKey: `${watchPath}::${id}`, title: `Bundle demo card ${index + 1}`,
+    state: '2-ready', order: index + 1, agent: 'codex', cliType: 'codex',
+    createdAt: '2026-11-05T09:00:00Z', watchPath, projectName: project,
+    folderPath: `${watchPath}/.orchestrator/tasks/2-ready/${id}`,
+    lastActivity: '2026-11-05T09:00:00Z', sessionName: null, model: 'gpt-5.5',
+    useOwnSession: null, lastUsage: null, execution: null, commit: null,
+    commits: [], ownerClientId: 'local-default', tags: [],
+  };
+}
+
+async function installFixture(page: Page, count: number): Promise<void> {
+  const tasks = Array.from({ length: count }, (_, i) => task(i));
+  const grouped = {
+    backlog: [], preparation: [], orchestratorPrep: [], ready: tasks,
+    progress: [], failedPickup: [], codeNotComplete: [], review: [],
+    autoReview: [], humanReview: [], completed: [], archive: [],
+  };
+  await page.addInitScript(() => {
+    localStorage.setItem('activeProjects', '[]');
+    localStorage.setItem('atp.studio.panelState.v1', JSON.stringify({ active: 'explorer', visible: true }));
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('[data-testid="task-card"]') && !(window as any).__boardFirstPaint) {
+        requestAnimationFrame(() => { (window as any).__boardFirstPaint ??= performance.now(); });
+      }
+      if (document.querySelector('[data-testid="studio-task"]') && (window as any).__detailClickAt && !(window as any).__detailFirstPaint) {
+        requestAnimationFrame(() => { (window as any).__detailFirstPaint ??= performance.now(); });
+      }
+    });
+    observer.observe(document, { subtree: true, childList: true });
+    document.addEventListener('pointerdown', event => {
+      if ((event.target as Element).closest('[data-testid="task-card"]')) {
+        (window as any).__detailClickAt = performance.now();
+      }
+    }, { capture: true });
+  });
+  await page.route('**/api/**', route => route.fulfill(json([])).catch(() => undefined));
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  })));
+  await page.route('**/api/v1/studio/board**', route => route.fulfill(json(grouped)));
+  await page.route('**/api/v1/studio/runner/status**', route => route.fulfill(json({ projects: {} })));
+  await page.route('**/api/v1/management/credential-inventory**', route => route.fulfill(json({
+    generatedAt: '2026-11-05T09:00:00Z', items: [],
+  })));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill(json({
+    snapshotVersion: 1, workspaceId: 'ws-bnd', timeZone: 'UTC', weekStart: 1,
+    generatedAt: '2026-11-05T09:00:00Z', calendar: {}, clis: [], cost: null,
+    runs: [], slots: [], sources: {},
+  })));
+  await page.route('**/api/tasks/grouped**', route => route.fulfill(json(grouped)));
+  await page.route('**/api/workspaces/*/quota/admission**', route => route.fulfill(json({
+    workspace: { status: 'ok', codingAllowed: true, hostingAllowed: true, limited: false,
+      message: null, overrideActive: false }, projects: [],
+  })));
+  await page.route('**/api/tasks', route => route.fulfill(json(tasks)));
+  await page.route('**/api/watch-paths', route => route.fulfill(json([{ name: project, path: watchPath, rootPath: watchPath }])));
+  await page.route(/\/api\/tasks\/(?!grouped)[^/?]+(\?|$)/, route => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop() ?? '');
+    const found = tasks.find(t => t.id === id);
+    return route.fulfill(found ? json({ info: found, promptMarkdown: '# Bundle demo', statusMarkdown: '', log: [],
+      promptHistory: [], titleHistory: [], reviewEvidence: [], summaryState: { status: 'none' } })
+      : { status: 404, body: '{}' });
+  });
+  await page.route('**/api/v1/projects**', route => route.fulfill(json([{ id: project, displayName: project,
+    shortCode: 'BND', workspaceId: 'ws-bnd', storageLocation: watchPath, sortOrder: 0, archived: false }])));
+  await page.route('**/api/v1/workspaces**', route => route.fulfill(json([{ id: 'ws-bnd', displayName: 'Demo Workspace',
+    sortOrder: 0, isDefault: true, projects: [{ id: project, displayName: project, shortCode: 'BND',
+      workspaceId: 'ws-bnd', storageLocation: watchPath, sortOrder: 0, archived: false }] }])));
+}
+
+test('cold board assets, detail open, and route reuse', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const samples: { count: number; firstPaintMs: number; detailOpenMs: number; assetRequests: number }[] = [];
+  for (const count of [20, 20, 20, 830, 830, 830]) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    await installFixture(page, count);
+    const cdp = await context.newCDPSession(page);
+    const events: { event: string; data: unknown }[] = [];
+    for (const event of ['Network.requestWillBeSent', 'Network.responseReceived', 'Network.loadingFinished'] as const) {
+      cdp.on(event, data => events.push({ event, data }));
+    }
+    await cdp.send('Network.enable');
+    await page.goto('/');
+    await page.waitForFunction(() => Boolean((window as any).__boardFirstPaint), undefined, { timeout: 30_000 });
+    await expect(page.getByTestId('task-card').first()).toBeVisible();
+    const firstPaintMs = await page.evaluate(() => (window as any).__boardFirstPaint as number);
+    const boardEvents = events.length;
+    await page.getByTestId('task-card').first().click();
+    await expect(page.getByTestId('studio-task')).toBeVisible({ timeout: 15_000 });
+    await page.waitForFunction(() => Boolean((window as any).__detailFirstPaint));
+    const detailOpenMs = await page.evaluate(() => (window as any).__detailFirstPaint - (window as any).__detailClickAt);
+    await page.waitForTimeout(500);
+    const detailEvents = events.length;
+    if (count === 20 && samples.length === 0) {
+      // Switching tabs may reuse parsed modules; it must not download an asset twice.
+      await page.getByTestId('studio-tab-board:__all__').click();
+      await page.getByTestId('task-card').first().click();
+      await expect(page.getByTestId('studio-task')).toBeVisible();
+      await page.waitForTimeout(300);
+    }
+    const requests = events.filter(item => item.event === 'Network.requestWillBeSent')
+      .map(item => (item.data as { request: { url: string } }).request.url)
+      .filter(url => /\.(js|css)(\?|$)/.test(url));
+    const duplicateAssets = requests.filter((url, index) => requests.indexOf(url) !== index);
+    expect(duplicateAssets, `duplicate JS/CSS fetches after route switches: ${duplicateAssets.join(', ')}`).toEqual([]);
+    samples.push({ count, firstPaintMs, detailOpenMs, assetRequests: requests.length });
+    if (output && (samples.length === 1 || (count === 830 && samples.filter(sample => sample.count === 830).length === 1))) {
+      mkdirSync(output, { recursive: true });
+      const label = count === 830 ? '830' : '20';
+      writeFileSync(join(output, `chrome-network-${phase}-${label}-cold.json`), JSON.stringify(events.slice(0, boardEvents)));
+      writeFileSync(join(output, `chrome-network-${phase}-${label}-detail.json`), JSON.stringify(events.slice(boardEvents, detailEvents)));
+    }
+    await context.close();
+  }
+  if (output) writeFileSync(join(output, `browser-timing-${phase}.json`), JSON.stringify(samples, null, 2) + '\n');
+  const median = [samples[0].firstPaintMs, samples[1].firstPaintMs, samples[2].firstPaintMs]
+    .sort((a, b) => a - b)[1];
+  const largeMedian = samples.filter(sample => sample.count === 830)
+    .map(sample => sample.firstPaintMs).sort((a, b) => a - b)[1];
+  console.log(`${phase}: 20-card median first paint ${median.toFixed(1)} ms; first detail ${samples[0].detailOpenMs} ms; 830-card median first paint ${largeMedian.toFixed(1)} ms`);
+});
+
+test('create task, chat, and workspace settings mount on first use', async ({ page }) => {
+  const assetRequests: string[] = [];
+  page.on('request', request => {
+    if (/\.(js|css)(\?|$)/.test(request.url())) assetRequests.push(request.url());
+  });
+  await installFixture(page, 20);
+  await page.goto('/');
+  await expect(page.getByTestId('task-card').first()).toBeVisible();
+  await expect(page.locator('app-orchestrator-side-sheet')).toHaveCount(0);
+  if (output && phase === 'after') await page.screenshot({ path: join(output, 'board-first-paint.png') });
+  await page.getByTestId('studio-board-add-task').click();
+  await expect(page.getByTestId('create-title')).toBeVisible();
+  if (output && phase === 'after') await page.screenshot({ path: join(output, 'create-task-first-open.png') });
+  await page.getByTestId('create-cancel').click();
+  await page.getByTestId('studio-titlebar-chat').click();
+  await expect(page.locator('app-orchestrator-side-sheet')).toBeVisible();
+  if (output && phase === 'after') await page.screenshot({ path: join(output, 'chat-first-open.png') });
+  await page.getByTestId('studio-titlebar-chat').click();
+  await expect(page.locator('app-orchestrator-side-sheet')).not.toBeVisible();
+  await page.getByTestId('studio-titlebar-settings').click();
+  await expect(page.getByTestId('workspace-settings-inline')).toBeVisible();
+  if (output && phase === 'after') await page.screenshot({ path: join(output, 'settings-first-open.png') });
+  await page.getByTestId('studio-tab-board:__all__').click();
+  await page.getByTestId('studio-titlebar-settings').click();
+  await expect(page.getByTestId('workspace-settings-inline')).toBeVisible();
+  expect(assetRequests.filter((url, index) => assetRequests.indexOf(url) !== index)).toEqual([]);
+});
+
+test('interleaved baseline and candidate board timing', async ({ browser }) => {
+  const baselineUrl = process.env.BUNDLE_BASELINE_URL;
+  test.skip(!baselineUrl, 'Requires a saved baseline build on a second static port.');
+  test.setTimeout(240_000);
+  const samples: { phase: 'before' | 'after'; count: number; firstPaintMs: number; detailOpenMs: number }[] = [];
+  for (const count of [20, 830]) {
+    for (let run = 0; run < 3; run++) {
+      const order = run % 2 === 0 ? ['before', 'after'] as const : ['after', 'before'] as const;
+      for (const current of order) {
+        const context = await browser.newContext({ serviceWorkers: 'block' });
+        const page = await context.newPage();
+        await installFixture(page, count);
+        await page.goto(current === 'before' ? baselineUrl! : '/');
+        await page.waitForFunction(() => Boolean((window as any).__boardFirstPaint));
+        const firstPaintMs = await page.evaluate(() => (window as any).__boardFirstPaint as number);
+        await page.getByTestId('task-card').first().click();
+        await page.waitForFunction(() => Boolean((window as any).__detailFirstPaint));
+        const detailOpenMs = await page.evaluate(() => (window as any).__detailFirstPaint - (window as any).__detailClickAt);
+        samples.push({ phase: current, count, firstPaintMs, detailOpenMs });
+        await context.close();
+      }
+    }
+  }
+  if (output) writeFileSync(join(output, 'browser-timing-interleaved.json'), JSON.stringify(samples, null, 2) + '\n');
+  const median = (values: number[]) => values.sort((a, b) => a - b)[1];
+  for (const count of [20, 830]) {
+    for (const current of ['before', 'after'] as const) {
+      const values = samples.filter(sample => sample.count === count && sample.phase === current);
+      console.log(`interleaved ${current} ${count}: paint ${median(values.map(value => value.firstPaintMs)).toFixed(1)} ms, detail ${median(values.map(value => value.detailOpenMs)).toFixed(1)} ms`);
+    }
+  }
+});

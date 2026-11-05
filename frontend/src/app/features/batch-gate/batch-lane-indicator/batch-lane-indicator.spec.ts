@@ -11,9 +11,9 @@ describe('BatchLaneIndicatorComponent', () => {
   it('counts unfinished runs and hides disabled or unavailable projects', async () => {
     const state = signal<BatchGateState | null>(redHalvingState);
     const watch = vi.fn(() => vi.fn());
-    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
+    await TestBed.configureTestingModule({ imports: [BatchLaneIndicatorComponent], providers: [provideZonelessChangeDetection(), {
       provide: BatchGateService, useValue: { state: () => state.asReadonly(), watch },
-    }] });
+    }] }).compileComponents();
     const fixture = TestBed.createComponent(BatchLaneIndicatorComponent);
     fixture.componentRef.setInput('laneState', '4-auto-review');
     fixture.componentRef.setInput('jobs', [{ projectName: 'Demo' }] as TaskInfo[]);

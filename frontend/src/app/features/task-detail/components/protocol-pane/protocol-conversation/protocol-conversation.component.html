@@ -1,0 +1,10 @@
+<cac-conversation-view [events]="events()"
+                       [appActivityEventPresentation]="events()"
+                       [isRunning]="isRunning()"
+                       [queuedFollowUp]="queuedFollowUp()"
+                       [showHeader]="false"
+                       [virtualised]="false"
+                       variant="embedded"
+                       (openTrace)="openTrace.emit($event)"
+                       (openFollowUp)="openFollowUp.emit($event)"
+                       (openVerboseDebug)="openVerboseDebug.emit()" />

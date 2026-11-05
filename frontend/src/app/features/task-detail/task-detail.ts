@@ -74,6 +74,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { OlderBriefOfferComponent } from './components/older-brief-offer/older-brief-offer.component';
 import { BatchDetailComponent } from '../batch-gate/batch-detail/batch-detail';
 import { CardEnvironmentBadgesComponent } from '../deployments/components/card-environment-badges/card-environment-badges';
+import { TASK_REFERENCE_CHAT_PROVIDER } from '../../services/task-reference-chat.provider';
 @Component({
   selector: 'app-task-detail, app-job-detail',
   standalone: true,
@@ -99,6 +100,7 @@ import { CardEnvironmentBadgesComponent } from '../deployments/components/card-e
     BatchDetailComponent, CardEnvironmentBadgesComponent,
   ],
   providers: [
+    TASK_REFERENCE_CHAT_PROVIDER,
     LayoutPanesService,
     ClaudeSessionPollService,
     SessionEventsPollService,

@@ -112,16 +112,22 @@
           }
         }
         @case ('first-run') {
+          @defer (on immediate) {
           <app-first-run-checklist (openProjectSettings)="openProjectSettings.emit($event)" />
+          }
         }
         @case ('updates') {
           <app-updates-settings />
         }
         @case ('workspaces') {
+          @defer (on immediate) {
           <app-workspace-management />
+          }
         }
         @case ('task-server') {
+          @defer (on immediate) {
           <app-task-server-panel />
+          }
         }
         @case ('credentials') {
           <app-credential-inventory />
@@ -137,7 +143,9 @@
           }
         }
         @case ('remote-hosts') {
+          @defer (on immediate) {
           <app-remote-hosts-panel [workspaces]="watchPaths()" (openTask)="openJobDetail.emit($event)" />
+          }
         }
         @case ('orchestrator') {
           <section class="ws-settings__section" data-testid="workspace-orchestrator">
@@ -152,29 +160,41 @@
                 on each project's Settings → Workspace defaults instead.
               </p>
             </header>
-            <app-orchestrator-logic-panel />
-            <app-transition-rollout-panel />
-            <app-decision-rules-panel />
+            @defer (on immediate) {
+              <app-orchestrator-logic-panel />
+              <app-transition-rollout-panel />
+              <app-decision-rules-panel />
+            }
           </section>
         }
         @case ('caps') {
+          @defer (on immediate) {
           <app-cli-admin-panel />
+          }
         }
         @case ('prompts') {
+          @defer (on immediate) {
           <app-prompt-admin-panel />
+          }
         }
         @case ('retention') {
+          @defer (on immediate) {
           <app-retention-admin />
+          }
         }
         @case ('tokens') {
+          @defer (on immediate) {
           <app-token-usage-section
             [page]="overlays.tokenUsagePage()"
             [ledgerScope]="overlays.tokenLedgerScope()"
             (pageChange)="overlays.selectTokenUsagePage($event)"
             (openProjectSettings)="openProjectSettings.emit($event)" />
+          }
         }
         @case ('screenshots') {
+          @defer (on immediate) {
           <app-workspace-screenshots (openTask)="openTask.emit($event)" />
+          }
         }
       }
     </main>

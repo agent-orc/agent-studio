@@ -47,8 +47,8 @@ describe('MediaLightboxComponent (smoke)', () => {
 });
 
 /**
- * Arrow-key paging. The lightbox is mounted ahead of task-detail, so its
- * document:keydown handler must run first and `preventDefault()` the
+ * Arrow-key paging. Once opened, the lightbox's document:keydown handler
+ * must run first and `preventDefault()` the
  * Left/Right arrows; that is what makes task-detail's `onTriageKey` bail
  * (it returns early on `event.defaultPrevented`) instead of switching the
  * active task. We assert on `defaultPrevented` because that is the exact

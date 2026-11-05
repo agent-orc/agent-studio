@@ -16,6 +16,7 @@ import { CredentialAlertsComponent } from '../../../credentials/credential-alert
 import { BoardFiltersService } from '../../../../features/board';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { TaskService } from '../../../../services/task.service';
+import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
 import { WatcherDecisionPanelComponent } from '../../../../features/watcher';
 import type { OrchestratorLogEntry } from '../../models/orchestrator.model';
 import { GlobalOrchestratorCardComponent } from '../global-orchestrator-card/global-orchestrator-card';
@@ -35,6 +36,7 @@ export const WATCHER_DECISION_TOPIC = 'watcher-decision-required';
   standalone: true,
   imports: [SegmentedControlComponent, FormsModule, CredentialAlertsComponent, GlobalOrchestratorCardComponent, LoadDistributionComponent, OrchestratorFeedEntryComponent, TooltipDirective, WatcherDecisionPanelComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [TASK_REFERENCE_CHAT_PROVIDER],
   templateUrl: './orchestrator-feed.html',
   styleUrl: './orchestrator-feed.scss'
 })

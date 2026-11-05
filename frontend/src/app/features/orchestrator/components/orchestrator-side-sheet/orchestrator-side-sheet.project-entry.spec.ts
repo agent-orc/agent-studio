@@ -22,6 +22,17 @@ describe('OrchestratorSideSheetComponent project entry', () => {
     });
   });
 
+  it('applies a page chat project request when the deferred sheet mounts', () => {
+    const fixture = TestBed.createComponent(OrchestratorSideSheetComponent);
+    fixture.componentRef.setInput('projects', ['Alpha', 'Beta']);
+    fixture.componentRef.setInput('preferredProject', 'Alpha');
+    fixture.componentRef.setInput('requestedProject', 'Beta');
+    fixture.componentRef.setInput('composerContext', { project: 'Alpha', surface: 'Board' });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.activeProject()).toBe('Beta');
+  });
+
   it('opens only for the shell standard-entry event and uses its resolved project', () => {
     const fixture = TestBed.createComponent(OrchestratorSideSheetComponent);
     fixture.componentRef.setInput('projects', ['Persisted project', 'Resolved project']);

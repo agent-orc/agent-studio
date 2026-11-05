@@ -1,0 +1,21 @@
+@defer (when open() || projectEntryRevision() > 0) {
+  <app-orchestrator-side-sheet
+    [class.app__sidesheet]="legacy()"
+    [projects]="projects()"
+    [preferredProject]="preferredProject()"
+    [requestedProject]="requestedProject()"
+    [projectEntryRevision]="projectEntryRevision()"
+    [watchPaths]="watchPaths()"
+    [pageContext]="pageContext()"
+    [activeJobId]="activeJobId()"
+    [activeJobTitle]="activeJobTitle()"
+    [activeWatchPath]="activeWatchPath()"
+    [activeJobKey]="activeJobKey()"
+    [activeJobState]="activeJobState()"
+    [activeRun]="activeRun()"
+    [composerContext]="composerContext()"
+    (openVerboseDebug)="openVerboseDebug.emit($event)"
+    (openJobDetail)="openJobDetail.emit($event)"
+    (navigateToContext)="navigateToContext.emit($event)"
+    (openSettings)="openSettings.emit()" />
+}

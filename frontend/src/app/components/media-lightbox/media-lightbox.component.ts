@@ -13,7 +13,7 @@ import { OverlayPortalDirective } from '../../directives/overlay-portal.directiv
 import { TooltipDirective } from 'coding-agent-chat/shared';
 
 /**
- * Single-instance image lightbox. Mounted once at the app shell so every
+ * Single-instance image lightbox. Mounted on first use at the app shell so every
  * markdown surface (task description, activity-log, chat, info-button,
  * results) opens the same overlay through `MediaLightboxService`.
  *
