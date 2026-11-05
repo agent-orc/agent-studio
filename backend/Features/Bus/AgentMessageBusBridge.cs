@@ -114,7 +114,10 @@ public sealed class AgentMessageBusBridge
         };
         foreach (var p in participants)
         {
-            try { await _store.RegisterParticipantAsync(ws!, p, ct).ConfigureAwait(false); }
+            ct.ThrowIfCancellationRequested();
+            // A cancelled async write can truncate the participant JSON. Finish the
+            // current small file, then stop before starting another participant.
+            try { await _store.RegisterParticipantAsync(ws!, p, CancellationToken.None).ConfigureAwait(false); }
             catch (Exception ex) { _logger.LogDebug(ex, "Bus participant seed skipped for {Id}", p.Id); }
         }
     }
