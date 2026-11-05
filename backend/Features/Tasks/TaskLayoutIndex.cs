@@ -148,7 +148,7 @@ internal static class TaskLayoutIndex
 
     private static void WriteAtomic(string path, string content, ILogger logger)
     {
-        var tmp = path + ".tmp";
+        var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             File.WriteAllText(tmp, content);
@@ -160,8 +160,11 @@ internal static class TaskLayoutIndex
         catch (Exception ex)
         {
             logger.LogError(ex, "task-index: failed to write {Path}", path);
-            try { if (File.Exists(tmp)) File.Delete(tmp); } catch (Exception __ex) { SilentCatch.Note(__ex, "TaskLayoutIndex: best-effort cleanup"); /* best-effort cleanup */ }
             throw;
+        }
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch (Exception __ex) { SilentCatch.Note(__ex, "TaskLayoutIndex: best-effort cleanup"); /* best-effort cleanup */ }
         }
     }
 
@@ -174,7 +177,9 @@ internal static class TaskLayoutIndex
     private static Dictionary<string, T> ReadMap<T>(string path)
     {
         if (!File.Exists(path)) return new Dictionary<string, T>(StringComparer.Ordinal);
-        return JsonSerializer.Deserialize<Dictionary<string, T>>(File.ReadAllText(path), ReadOpts)
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        return JsonSerializer.Deserialize<Dictionary<string, T>>(stream, ReadOpts)
                ?? new Dictionary<string, T>(StringComparer.Ordinal);
     }
 
