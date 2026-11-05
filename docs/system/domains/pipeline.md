@@ -2226,6 +2226,10 @@ move-error dialog.
   post-processing deferral pass, integrating only what is not already on the
   branch and never creating a second review attempt. See
   [review-plane contract](../contracts/review-plane.md).
+  The integration coordinator marks a delivery replay finished before it
+  completes the waiting caller. A resume that discards a completed owner
+  refusal can then enqueue a fresh integration after ownership returns,
+  instead of receiving the stale refusal again.
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so
