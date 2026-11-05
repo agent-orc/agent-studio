@@ -14,6 +14,7 @@
       "target": "SET_LOCAL_SERVER_SSH_TARGET",
       "envFile": "SET_SERVER_ENV_FILE",
       "composeDir": "SET_SERVER_COMPOSE_DIR",
+      "composeProject": "SET_RUNNING_SERVER_COMPOSE_PROJECT",
       "healthUrl": "SET_SERVER_LOOPBACK_HEALTH_URL",
       "admissionDrainCommand": [
         "SET_TYPED_DRAIN_COMMAND"
@@ -33,6 +34,7 @@
     {
       "engineEnvFile": "SET_ENGINE_ENV_FILE",
       "engineComposeDir": "SET_ENGINE_COMPOSE_DIR",
+      "engineComposeProject": "SET_RUNNING_ENGINE_COMPOSE_PROJECT",
       "id": "engine",
       "role": "engine",
       "target": "SET_LOCAL_ENGINE_SSH_TARGET"

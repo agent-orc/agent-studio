@@ -19,12 +19,12 @@
 
 .pickup-hold[data-tone='blocked'] {
   border-color: color-mix(in srgb, var(--studio-warn) 45%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-bg-elevated));
+  background: var(--studio-hold-blocked-bg);
 }
 
 .pickup-hold[data-tone='stalled'] {
   border-color: color-mix(in srgb, var(--studio-warn) 34%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-warn) 7%, var(--studio-bg-elevated));
+  background: var(--studio-hold-stalled-bg);
 }
 
 .pickup-hold--detail {
@@ -48,7 +48,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--studio-accent-4);
+  background: var(--studio-accent-4-strong);
 }
 
 .pickup-hold[data-tone='blocked'] .pickup-hold__dot {
@@ -67,7 +67,7 @@
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- A 1px optical inset on a 9px pill; the smallest spacing token is 4px and doubles the chip height. */
   padding: 1px var(--studio-spacing-2);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--studio-fg-dim) 18%, transparent);
+  background: var(--studio-hold-mechanism-bg);
   color: var(--studio-fg-dim);
   font-size: 9px;
   font-weight: 800;
@@ -79,7 +79,7 @@
 .pickup-hold__age {
   flex: 0 0 auto;
   margin-inline-start: auto;
-  color: var(--studio-fg-muted);
+  color: var(--studio-hold-muted-fg);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -88,7 +88,7 @@
 .pickup-hold__reason {
   margin: 0;
   min-width: 0;
-  color: var(--studio-fg-muted);
+  color: var(--studio-hold-muted-fg);
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -105,7 +105,7 @@
 }
 
 .pickup-hold__ways-out-label {
-  color: var(--studio-fg-muted);
+  color: var(--studio-hold-muted-fg);
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.09em;
@@ -126,7 +126,7 @@
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--studio-fg-dim) 6%, transparent);
+  background: color-mix(in srgb, var(--studio-fg-dim) 3%, var(--studio-bg-elevated));
 }
 
 .pickup-hold__item-label {
@@ -160,12 +160,12 @@
 
 .pickup-hold__notice {
   margin: 0;
-  color: var(--studio-fg-muted);
+  color: var(--studio-hold-muted-fg);
   font-size: 11px;
 }
 
 .pickup-hold__item-detail {
-  color: var(--studio-fg-muted);
+  color: var(--studio-hold-muted-fg);
   font-size: 11px;
   line-height: 1.4;
 }
