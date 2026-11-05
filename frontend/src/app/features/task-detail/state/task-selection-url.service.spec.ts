@@ -560,6 +560,36 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   describe('expanded tab resources', () => {
+    it('reuses ready tab resources and upgrades review facts to evidence once', async () => {
+      selection.openDetail(readyInfo);
+      http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+        .flush(coreFor(readyInfo, 'Agent Studio'));
+      await paintRich(readyInfo);
+
+      selection.loadResourcesForTab('timeline');
+      http.expectOne(req => req.url.endsWith('/details/history')).flush(historyReply(readyInfo));
+      selection.loadResourcesForTab('overview');
+      selection.loadResourcesForTab('timeline');
+      http.expectNone(req => req.url.endsWith('/details/history'));
+
+      selection.loadResourcesForTab('code-review');
+      const plain = http.expectOne(req => req.url.endsWith('/details/review'));
+      plain.flush({ id: readyInfo.id, taskKey: readyInfo.taskKey, projectId: 'Agent Studio',
+        attemptId: null, coreVersion: '1', resource: 'review', version: 'r1', computedAt: null,
+        state: 'ready', reason: null, data: { reviewProjection: null, evidence: null } });
+      selection.loadResourcesForTab('code-review');
+      http.expectNone(req => req.url.endsWith('/details/review'));
+      selection.loadResourcesForTab('evidence');
+      const evidence = http.expectOne(req => req.url.endsWith('/details/review'));
+      expect(evidence.request.params.get('evidence')).toBe('true');
+      evidence.flush({ id: readyInfo.id, taskKey: readyInfo.taskKey, projectId: 'Agent Studio',
+        attemptId: null, coreVersion: '1', resource: 'review', version: 'r2', computedAt: null,
+        state: 'ready', reason: null, data: { reviewProjection: null, evidence: [] } });
+      selection.loadResourcesForTab('code-review');
+      selection.loadResourcesForTab('evidence');
+      http.expectNone(req => req.url.endsWith('/details/review'));
+    });
+
     it('keeps a pending review projection retryable without clearing the task', async () => {
       selection.openDetail(readyInfo);
       http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
@@ -930,10 +960,10 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('lets an evidence request supersede a plain review read in flight', async () => {
-    selection.openDetail(info);
+    selection.openDetail(readyInfo);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
-      .flush(coreFor(info, 'Agent Studio'));
-    await paintRich(info);
+      .flush(coreFor(readyInfo, 'Agent Studio'));
+    await paintRich(readyInfo);
 
     selection.loadResourcesForTab('code-review');
     const plain = http.expectOne(req => req.url.endsWith('/details/review'));

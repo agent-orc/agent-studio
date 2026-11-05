@@ -110,7 +110,8 @@ public sealed class ProjectUrlDiagnosticsTests : IDisposable
     [Fact]
     public async Task TestAsync_LiveProcessWhosePortNeverOpensIsBoundedAndStopped()
     {
-        var port = ReserveUnusedPort();
+        using var closed = new ClosedLoopbackPort();
+        var port = closed.Port;
         var command = OperatingSystem.IsWindows() ? "ping 127.0.0.1 -n 5 >nul" : "sleep 4";
         var candidate = UrlAt(port) with
         {
@@ -136,7 +137,8 @@ public sealed class ProjectUrlDiagnosticsTests : IDisposable
         // the console is active the wait continues (still "starting").
         var service = Service();
         var project = Project();
-        var port = ReserveUnusedPort();
+        using var closed = new ClosedLoopbackPort();
+        var port = closed.Port;
         var command = OperatingSystem.IsWindows()
             ? "for /l %i in (1,1,6) do @(echo working %i & ping -n 2 127.0.0.1 >nul)"
             : "for i in 1 2 3 4 5 6; do echo working $i; sleep 0.8; done";
@@ -168,7 +170,8 @@ public sealed class ProjectUrlDiagnosticsTests : IDisposable
         // idle window elapses — well before the 5-minute hard cap.
         var service = Service();
         var project = Project();
-        var port = ReserveUnusedPort();
+        using var closed = new ClosedLoopbackPort();
+        var port = closed.Port;
         var command = OperatingSystem.IsWindows() ? "ping 127.0.0.1 -n 8 >nul" : "sleep 7";
         var candidate = UrlAt(port) with
         {
@@ -229,7 +232,8 @@ public sealed class ProjectUrlDiagnosticsTests : IDisposable
     [Fact]
     public async Task StartAsync_ActiveConsoleFailsOnlyAtConfiguredStartupLimit()
     {
-        var port = ReserveUnusedPort();
+        using var closed = new ClosedLoopbackPort();
+        var port = closed.Port;
         var command = OperatingSystem.IsWindows()
             ? "for /l %i in (1,1,12) do @(echo building %i & ping -n 2 127.0.0.1 >nul)"
             : "while true; do echo building; sleep 0.25; done";
@@ -258,7 +262,8 @@ public sealed class ProjectUrlDiagnosticsTests : IDisposable
     {
         var service = Service();
         var project = Project();
-        var port = ReserveUnusedPort();
+        using var closed = new ClosedLoopbackPort();
+        var port = closed.Port;
         var command = OperatingSystem.IsWindows() ? "ping 127.0.0.1 -n 5 >nul" : "sleep 4";
         var candidate = UrlAt(port) with
         {
@@ -358,12 +363,13 @@ public sealed class ProjectUrlDiagnosticsTests : IDisposable
         Assert.False(result.ContentReady);
     }
 
-    // MachineBound 22.07.: reserviert einen Port und macht einen echten TCP-Connect gegen einen freien Port.
+    // A bound socket that never listens keeps the refused port reserved during the probe.
     [Trait("Category", "MachineBound")]
     [Fact]
     public async Task ProbeAsync_NoListenerIsNotStarted()
     {
-        var port = ReserveUnusedPort();
+        using var closed = new ClosedLoopbackPort();
+        var port = closed.Port;
         var result = await Service().ProbeAsync(Project(), UrlAt(port), CancellationToken.None);
 
         Assert.Equal(ProjectUrlDiagnosisClasses.NotStarted, result.Classification);
@@ -439,12 +445,6 @@ public sealed class ProjectUrlDiagnosticsTests : IDisposable
         listener.Start();
         port = ((IPEndPoint)listener.LocalEndpoint).Port;
         return listener;
-    }
-
-    private static int ReserveUnusedPort()
-    {
-        using var listener = ListeningPort(out var port);
-        return port;
     }
 
     private static HttpResponseMessage HtmlResponse(HttpStatusCode status, string body) => new(status)

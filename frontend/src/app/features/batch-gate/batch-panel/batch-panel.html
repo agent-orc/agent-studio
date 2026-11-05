@@ -1,5 +1,5 @@
 <div class="batch-panel-backdrop" (click)="close()" aria-hidden="true"></div>
-<aside class="batch-panel" role="dialog" aria-modal="true" aria-labelledby="batch-panel-title" data-testid="batch-panel">
+<section class="batch-panel" role="dialog" aria-modal="true" aria-labelledby="batch-panel-title" data-testid="batch-panel">
   <header class="batch-panel__header">
     <div><h2 id="batch-panel-title">Batch verification</h2><p>{{ project() }}</p></div>
     <button #closeButton type="button" aria-label="Close batch panel" (click)="close()">Close</button>
@@ -112,4 +112,4 @@
       <button type="button" [disabled]="busy()" (click)="confirm.set(null)">Cancel</button>
     </div>
   }
-</aside>
+</section>

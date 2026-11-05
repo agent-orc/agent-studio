@@ -203,11 +203,11 @@
       ]
     },
     "src/app/features/studio-shell/components/studio-activity-bar/studio-activity-bar.component.html": {
-      "reason": "Activity bar buttons navigate among product areas.",
+      "reason": "Activity bar buttons navigate among product areas and expose the current destination with aria-current.",
       "signatures": [
-        "e82237c2c5933d34",
-        "ec598792edfe75da",
-        "ed423528dd6bb629"
+        "67b57554ace84438",
+        "6a28a9c33477328f",
+        "eea1e36dcb44b8d1"
       ]
     },
     "src/app/features/studio-shell/components/studio-tab-actions/studio-tab-actions.component.html": {

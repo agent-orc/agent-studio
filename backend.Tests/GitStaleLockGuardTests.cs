@@ -213,6 +213,51 @@ public sealed class GitStaleLockGuardTests : IDisposable
     }
 
     [Fact]
+    public void Killed_command_lock_written_again_by_its_live_owner_clears_after_exit()
+    {
+        var repo = SeedRepo("killed-lock-written-again");
+        var lockPath = Path.Combine(repo, ".git", "index.lock");
+        PlantLock(lockPath, TimeSpan.Zero);
+        var written = File.GetLastWriteTimeUtc(lockPath);
+
+        var whileOwned = Guard(new FixedProbe(GitLockOwnership.Owned))
+            .ReleaseKilledCommandLocks(repo, written.AddSeconds(-1), written.AddSeconds(1));
+        Assert.Equal(GitLockVerdict.KeepOwned, Assert.Single(whileOwned.Remaining).Verdict);
+
+        // Git may write its index to the same lock after the killed command's
+        // cleanup observed it. Its metadata changes before that writer exits.
+        File.AppendAllText(lockPath, "index bytes");
+        var afterExit = Guard(new FixedProbe(GitLockOwnership.None)).Sweep(repo);
+
+        Assert.Contains(afterExit.Cleared, finding => finding.Path == lockPath);
+        Assert.False(File.Exists(lockPath));
+    }
+
+    [Fact]
+    public void Replacement_of_a_killed_command_lock_keeps_the_new_young_file()
+    {
+        var replacement = Path.Combine(_root, "replacement.lock");
+        File.WriteAllText(replacement, "another writer");
+        var repo = SeedRepo("killed-lock-replaced");
+        var lockPath = Path.Combine(repo, ".git", "index.lock");
+        PlantLock(lockPath, TimeSpan.Zero);
+        var written = File.GetLastWriteTimeUtc(lockPath);
+
+        var whileOwned = Guard(new FixedProbe(GitLockOwnership.Owned))
+            .ReleaseKilledCommandLocks(repo, written.AddSeconds(-1), written.AddSeconds(1));
+        Assert.Equal(GitLockVerdict.KeepOwned, Assert.Single(whileOwned.Remaining).Verdict);
+
+        File.Delete(lockPath);
+        File.Move(replacement, lockPath);
+        File.SetLastWriteTimeUtc(lockPath, written);
+        var next = Guard(new FixedProbe(GitLockOwnership.None)).Sweep(repo);
+
+        Assert.Empty(next.Cleared);
+        Assert.Equal(GitLockVerdict.KeepYoung, Assert.Single(next.Remaining).Verdict);
+        Assert.Equal("another writer", File.ReadAllText(lockPath));
+    }
+
+    [Fact]
     public void Unchanged_stale_lock_is_removed_after_ownership_probe()
     {
         var repo = SeedRepo("unchanged");

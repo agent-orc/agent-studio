@@ -1,4 +1,10 @@
 <div class="tl" data-testid="timeline-tab">
+  @if (loadState() === 'error') {
+    <div class="tl-load-error" role="alert" data-testid="timeline-load-error">
+      Timeline could not load.
+      <button type="button" data-testid="timeline-retry" (click)="retry()">Retry</button>
+    </div>
+  }
   @if (hasLoop()) {
     @let loop = completionLoop();
     <!-- Prominent final-verdict banner: the at-a-glance answer to

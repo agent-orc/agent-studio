@@ -12,7 +12,7 @@ import { QualityPanelComponent } from './quality-panel/quality-panel.component';
 import { CodeReviewPanelComponent } from '../protocol-pane/code-review-panel/code-review-panel.component';
 import { resolveProtocolImageSrc } from '../protocol-pane/protocol-image-resolver';
 import { PaneHeaderComponent } from '../../../../components/pane-header/pane-header.component';
-import { PaneTabsComponent, PaneTabDef } from '../../../../components/pane-tabs/pane-tabs.component';
+import { PaneTabsComponent, type PaneTabDef } from '../../../../components/pane-tabs/pane-tabs.component';
 import { FilesPaneComponent } from './files-pane/files-pane.component';
 import { OverviewPaneComponent } from './overview-pane/overview-pane.component';
 import { TaskTimelinePaneComponent } from '../../../task-timeline/components/task-timeline-pane/task-timeline-pane.component';
@@ -20,6 +20,11 @@ import type { ProtocolVerdict } from '../protocol-pane/protocol-verdict';
 import { TaskArtifactLinksDirective } from '../task-artifact-links/task-artifact-links.directive';
 import { TestEvidenceStatusComponent, visibleTestEvidence } from '../../../test-evidence';
 import { DetailKeyboardSurfaceDirective } from '../detail-keyboard-surface/detail-keyboard-surface.directive';
+import { buildPromptTabs, nextPromptPaneTabForJobSwitch, type PromptPaneTabId } from './prompt-tabs.model';
+export { buildPromptTabs, nextPromptPaneTabForJobSwitch } from './prompt-tabs.model';
+export type { PromptPaneTabId } from './prompt-tabs.model';
+import type { ResourceName } from '../../../../models/task-core.model';
+import { idleResources, resourceReasonLabel, type ResourceStates } from '../../state/task-resource-states';
 
 /** Display-grouping for the Evidence tab, modeled after the reference layout. */
 interface EvidenceSection {
@@ -28,55 +33,6 @@ interface EvidenceSection {
   /** Optional brand-accent token; falls back to `--studio-accent`. */
   accent: 'var(--accent-2)' | 'var(--accent-3)' | 'var(--accent-4)' | 'var(--studio-accent)' | 'var(--accent-warn)';
   entries: ReviewEvidenceEntry[];
-}
-
-export type PromptPaneTabId = 'overview' | 'description' | 'timeline' | 'evidence' | 'code-review';
-
-export function nextPromptPaneTabForJobSwitch(
-  activeTab: PromptPaneTabId,
-  previousJobKey: string | null,
-  nextJobKey: string | null,
-): PromptPaneTabId {
-  return previousJobKey !== null && nextJobKey !== null && nextJobKey !== previousJobKey
-    ? 'overview'
-    : activeTab;
-}
-
-export function buildPromptTabs(filesCount: number, visualEvidenceCount: number): readonly PaneTabDef[] {
-  return [
-    {
-      id: 'overview',
-      label: 'Overview',
-      icon: 'layout',
-      testid: 'prompt-tab-overview',
-    },
-    {
-      id: 'timeline',
-      label: 'Timeline',
-      icon: 'activity',
-      testid: 'prompt-tab-timeline',
-    },
-    {
-      id: 'evidence',
-      label: 'Evidence',
-      icon: 'check',
-      testid: 'prompt-tab-evidence',
-      badge: visualEvidenceCount > 0 ? visualEvidenceCount : null,
-    },
-    {
-      id: 'code-review',
-      label: 'Code Review',
-      icon: 'diff',
-      testid: 'prompt-tab-code-review',
-    },
-    {
-      id: 'description',
-      label: 'Docs',
-      icon: 'folder',
-      testid: 'prompt-tab-description',
-      badge: filesCount > 1 ? filesCount : null,
-    },
-  ];
 }
 
 /**
@@ -148,6 +104,8 @@ export class PromptPaneComponent {
    *  drop. */
   readonly titleSaved = output<void>();
   readonly activeTabChange = output<PromptPaneTabId>();
+  readonly retryResource = output<ResourceName>();
+  readonly resourceStates = input<ResourceStates>(idleResources());
   readonly reviewAttemptRequested = output<string>();
 
   /**
@@ -159,6 +117,9 @@ export class PromptPaneComponent {
    */
   readonly activeTab = signal<PromptPaneTabId>('overview');
   readonly docFocusRequest = signal<{ kind?: TaskArtifactKind; fileName?: string; requestId: number } | null>(null);
+  readonly docsTaskKey = signal<string | null>(null);
+  readonly codeReviewTaskKey = signal<string | null>(null);
+  readonly evidenceTaskKey = signal<string | null>(null);
   private documentRequestId = 0;
 
   /** Resets the active tab to Overview whenever the underlying task changes,
@@ -180,6 +141,19 @@ export class PromptPaneComponent {
       this.activeTab.set(routeTab);
     }
   });
+
+  private rememberVisitedTabs = effect(() => {
+    const key = this.job()?.taskKey;
+    if (this.activeTab() === 'description' && key) this.docsTaskKey.set(key);
+    if (this.activeTab() === 'code-review' && key) this.codeReviewTaskKey.set(key);
+    if (this.activeTab() === 'evidence' && key) this.evidenceTaskKey.set(key);
+  });
+
+  tabProblem(name: ResourceName): string | null {
+    const state = this.resourceStates()[name];
+    return ['error', 'stale', 'unavailable'].includes(state.phase)
+      ? resourceReasonLabel(state.reason) : null;
+  }
 
   setTab(tab: PromptPaneTabId): void {
     this.activeTab.set(tab);
@@ -208,7 +182,6 @@ export class PromptPaneComponent {
   onPromptTabChange(id: string): void {
     if (id === 'overview' || id === 'description' || id === 'timeline' || id === 'evidence' || id === 'code-review') {
       this.setTab(id);
-      this.focusTabSurface();
     }
   }
 

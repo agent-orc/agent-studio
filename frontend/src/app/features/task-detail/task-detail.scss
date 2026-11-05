@@ -1194,10 +1194,12 @@
     @media (max-width: 720px) {
       .detail {
         padding: 18px;
+        overflow-y: auto;
       }
       .detail__panes {
         flex-direction: column;
-        overflow-y: auto;
+        flex: 0 0 auto;
+        overflow: visible;
       }
       .detail__panes .pane {
         flex: 0 0 min(44vh, 352px);

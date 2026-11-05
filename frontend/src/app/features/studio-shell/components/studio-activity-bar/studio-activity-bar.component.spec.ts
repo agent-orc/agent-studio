@@ -100,6 +100,19 @@ describe('StudioActivityBarComponent destinations', () => {
       }
     }
   });
+
+  it('names each icon button and exposes the current destination', () => {
+    const fixture = mount('filters');
+    const host = fixture.nativeElement as HTMLElement;
+    for (const item of ITEMS) {
+      const button = host.querySelector<HTMLElement>(`[data-testid="studio-ab-${item.key}"]`)!;
+      expect(button.getAttribute('aria-label')).toBe(item.label);
+      expect(button.getAttribute('aria-current')).toBe(item.key === 'filters' ? 'page' : null);
+      expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    }
+    expect(host.querySelector('[data-testid="studio-ab-workbenches"]')?.getAttribute('aria-label'))
+      .toBe('Dossiers');
+  });
 });
 
 /**

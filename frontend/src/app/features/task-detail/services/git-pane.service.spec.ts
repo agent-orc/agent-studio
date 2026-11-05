@@ -7,6 +7,26 @@ import { effect, provideZonelessChangeDetection, signal } from '@angular/core';
 import { GitPaneService } from './git-pane.service';
 import type { TaskInfo } from '../../../models/task.model';
 
+describe('GitPaneService hidden pane loading', () => {
+  it('waits for the pane to open and reuses the same task snapshot', async () => {
+    await TestBed.configureTestingModule({ providers: [GitPaneService,
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+      provideRouter([])] }).compileComponents();
+    const service = TestBed.inject(GitPaneService);
+    const http = TestBed.inject(HttpTestingController);
+    const job = { id: 'job-x', watchPath: '/wp' } as TaskInfo;
+    service.setJob(job, false);
+    http.expectNone(() => true);
+    service.setJob(job, true);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-x/provenance')).flush(null);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-x/code-review/list')).flush({ entries: [] });
+    service.setJob(job, false);
+    service.setJob(job, true);
+    http.expectNone(() => true);
+    http.verify();
+  });
+});
+
 /**
  * Regression: clicking a file in the git tree must always end up showing
  * THAT file's diff. Diff fetches are async, so a slow response for an

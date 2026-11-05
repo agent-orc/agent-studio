@@ -480,6 +480,55 @@ describe('TaskColumnComponent (smoke)', () => {
 
     expect(deleted).toEqual([job]);
   });
+
+  it('keeps the full count while mounting only the scroll window of a large lane', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskColumnComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskColumnComponent);
+    const jobs = Array.from({ length: 830 }, (_, index) => makeJob({
+      id: `task-${index}`, taskKey: `test::task-${index}`, order: index,
+    }));
+    fixture.componentRef.setInput('title', 'Ready');
+    fixture.componentRef.setInput('state', '2-ready');
+    fixture.componentRef.setInput('jobs', jobs);
+    fixture.detectChanges();
+
+    const column = fixture.componentInstance;
+    expect(column.headerCount()).toBe(830);
+    expect(column.cardWindow().rows.length).toBeLessThan(40);
+    expect((fixture.nativeElement as HTMLElement).querySelectorAll('app-job-card').length).toBeLessThan(40);
+
+    const body = (fixture.nativeElement as HTMLElement).querySelector('[data-board-lane-scroll]') as HTMLElement;
+    body.scrollTop = 150_000;
+    column.cardWindowState.onScroll({ currentTarget: body } as unknown as Event);
+    fixture.detectChanges();
+    expect(column.cardWindow().start).toBeGreaterThan(400);
+    expect(column.cardWindow().rows[0].index).toBe(column.cardWindow().start);
+
+    const group = document.createElement('div');
+    group.className = 'lane-group__lanes';
+    body.style.overflowY = 'visible';
+    fixture.nativeElement.parentElement?.appendChild(group);
+    group.appendChild(fixture.nativeElement);
+    Object.defineProperty(group, 'clientHeight', { value: 600 });
+    group.getBoundingClientRect = () => ({ top: 0, bottom: 600 } as DOMRect);
+    body.getBoundingClientRect = () => ({ top: -group.scrollTop, bottom: 200_000 - group.scrollTop } as DOMRect);
+    body.scrollTop = 0;
+    group.scrollTop = 150_000;
+    column.cardWindowState.onScroll({ currentTarget: body } as unknown as Event);
+    fixture.detectChanges();
+    expect(column.cardWindow().start).toBeGreaterThan(500);
+    body.getBoundingClientRect = () => ({ top: 700, bottom: 200_000 } as DOMRect);
+    column.cardWindowState.onScroll({ currentTarget: body } as unknown as Event);
+    fixture.detectChanges();
+    expect(column.cardWindow().rows).toHaveLength(0);
+    body.getBoundingClientRect = () => ({ top: 100, bottom: 200_000 } as DOMRect);
+    column.cardWindowState.onScroll({ currentTarget: body } as unknown as Event);
+    fixture.detectChanges();
+    expect(column.cardWindow().rows.length).toBeGreaterThan(0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
