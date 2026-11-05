@@ -403,7 +403,7 @@
                            library's fixed-height window cannot preserve a stable
                            anchor for that mix, so the pane renders real rows and
                            leaves scrolling plus Follow to the shared directive. -->
-                      <cac-conversation-view [events]="nextGenChatEvents()"
+                      <cac-conversation-view appConversationScrollFocus [events]="nextGenChatEvents()"
                                              [appActivityEventPresentation]="nextGenChatEvents()"
                                              [isRunning]="isRunning() || isActiveJob()"
                                              [queuedFollowUp]="queuedFollowUp()"

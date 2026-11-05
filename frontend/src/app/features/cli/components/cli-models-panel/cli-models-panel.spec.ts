@@ -116,6 +116,25 @@ describe('CliModelsPanelComponent', () => {
     expect(fallbackTable?.textContent).toContain('claude-opus-5 medium');
     expect(fallbackTable?.textContent).toContain('gpt-5.6-sol high');
     expect(fallbackTable?.textContent).toContain('TokenEconomy 0.3.4');
+    const tableScroll = fixture.nativeElement.querySelector('[data-testid="cli-models-table-scroll"]') as HTMLElement;
+    expect(tableScroll.tabIndex).toBe(0);
+    Object.defineProperties(tableScroll, {
+      scrollWidth: { configurable: true, value: 600 },
+      clientWidth: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 100 },
+      clientHeight: { configurable: true, value: 100 },
+    });
+    for (const [key, position] of [['End', 400], ['Home', 0], ['PageDown', 200], ['ArrowDown', 248]] as const) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      tableScroll.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(tableScroll.scrollLeft).toBe(position);
+    }
+    for (const key of ['Tab', 'Escape']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      tableScroll.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
     expect(fixture.nativeElement.querySelector('[data-testid="effective-routes-claude"]')?.textContent)
       .toContain('review-grade: claude');
     expect(fixture.nativeElement.querySelector('[data-testid="quota-non-reroutable-callers"]')?.textContent)
