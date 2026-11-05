@@ -43,15 +43,16 @@ app-status-bar {
   scrollbar-width: none;
 }
 .statusbar__group--left::-webkit-scrollbar { display: none; }
-.statusbar__usage { display: flex; align-items: center; flex: 0 0 auto; order: -1; gap: var(--studio-spacing-1); }
-.statusbar__usage-entry, .statusbar__host-problem {
-  display: inline-flex; align-items: center; gap: var(--studio-spacing-1);
-  min-height: var(--statusbar-item-height); padding-inline: var(--studio-spacing-2);
-  border: 0; border-radius: var(--studio-action-radius-sm); background: transparent;
-  color: inherit; font: inherit; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer;
+.statusbar__group--right {
+  flex: 0 1 auto;
+  max-width: 65%;
+  margin-inline-start: auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+  gap: var(--studio-spacing-2);
 }
-.statusbar__usage-entry:hover, .statusbar__host-problem:hover { background: var(--studio-bg-hover); color: var(--studio-text-primary); }
-.statusbar__usage-entry:focus-visible, .statusbar__host-problem:focus-visible { outline: 2px solid var(--studio-accent-strong); outline-offset: -2px; }
+.statusbar__group--right::-webkit-scrollbar { display: none; }
+.statusbar__usage-entry, .statusbar__host-problem { flex: 0 0 auto; }
 .statusbar__usage-entry strong { color: var(--studio-text-primary); font-weight: 600; }
 .statusbar__usage-entry span + span::before { content: '·'; margin-inline-end: var(--studio-spacing-1); color: var(--studio-text-muted); }
 .statusbar__age { color: var(--studio-text-muted); }
@@ -77,6 +78,8 @@ app-status-bar {
   min-width: 0;
 }
 .statusbar__item--ro { color: var(--studio-fg-muted); }
+.statusbar__item.statusbar__usage-entry,
+.statusbar__item.statusbar__host-problem { border: 1px solid var(--studio-border); }
 .statusbar__item--btn {
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
@@ -84,6 +87,10 @@ app-status-bar {
 .statusbar__item--btn:hover {
   background: var(--studio-bg-hover);
   color: var(--studio-text-primary);
+}
+.statusbar__item--btn:focus-visible {
+  outline: 2px solid var(--studio-accent-strong);
+  outline-offset: -2px;
 }
 .statusbar__item--btn:disabled {
   opacity: 0.5;
@@ -175,7 +182,9 @@ app-status-bar {
 @container statusbar (width <= 560px) {
   .statusbar { padding-inline: var(--studio-spacing-1); }
   .statusbar__group--left .statusbar__review,
-  .statusbar__group--left .statusbar__sep { display: none; }
+  .statusbar__sep { display: none; }
+  .statusbar__group--left { flex: 0 0 auto; max-width: 40%; }
+  .statusbar__group--right { flex: 1 1 auto; max-width: none; }
 }
 @container statusbar (width <= 460px) {
   .statusbar__group--left .statusbar__automation { display: none; }
