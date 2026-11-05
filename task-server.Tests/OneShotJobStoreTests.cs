@@ -65,6 +65,7 @@ public sealed class OneShotJobStoreTests
             oldClaim.JobId, oldClaim.ClaimToken, true, "stolen", null, null), default));
         Assert.Equal("claimed", (await store.GetOneShotJobAsync(first.JobId, default))?.Status);
 
+        Assert.Null(await store.ClaimOneShotJobAsync(new("runner-a", "instance-b"), default));
         await AdvertiseAsync(store, clock, "instance-b");
         Assert.Null(await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default));
         var freshClaim = await store.ClaimOneShotJobAsync(new("runner-a", "instance-b"), default);

@@ -10,6 +10,31 @@ namespace AgentRunner.Tests;
 public sealed class OneShotJobClientTests
 {
     [Fact]
+    public void Text_turn_counts_utf8_bytes_newlines_and_both_streams()
+    {
+        var newlineBytes = Encoding.UTF8.GetByteCount(Environment.NewLine);
+        var multibyte = new BoundedTurnOutput(4 + newlineBytes * 2 - 1);
+        Assert.True(multibyte.TryAppend("stdout", "é"));
+        Assert.False(multibyte.TryAppend("stdout", "é"));
+        Assert.Equal("é" + Environment.NewLine, multibyte.Stdout);
+
+        var output = new BoundedTurnOutput(4 + newlineBytes * 2);
+
+        Assert.True(output.TryAppend("stdout", "éé"));
+        Assert.False(output.TryAppend("stderr", "x"));
+        Assert.True(output.Exceeded);
+        Assert.Equal("éé" + Environment.NewLine, output.Stdout);
+        Assert.Empty(output.Stderr);
+
+        var combined = new BoundedTurnOutput(2 + newlineBytes * 2);
+        Assert.True(combined.TryAppend("stdout", "a"));
+        Assert.True(combined.TryAppend("stderr", "b"));
+        Assert.False(combined.TryAppend("stdout", ""));
+        Assert.Equal("a" + Environment.NewLine, combined.Stdout);
+        Assert.Equal("b" + Environment.NewLine, combined.Stderr);
+    }
+
+    [Fact]
     public async Task Image_turn_rejects_oversize_output_before_the_deadline()
     {
         if (!OperatingSystem.IsLinux()) return;

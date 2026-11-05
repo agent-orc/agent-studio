@@ -116,14 +116,27 @@ public sealed partial class TaskServerStore
             if (id is null || payload is null) return;
             var token = Guid.NewGuid().ToString("N");
             var jobRequest = JsonSerializer.Deserialize<OneShotJobRequest>(payload)!;
-            await ExecuteAsync(connection, """
-                UPDATE one_shot_jobs SET status = 'claimed', runner_id = $runner,
+            var claimed = await ExecuteAsync(connection, """
+                UPDATE one_shot_jobs AS j SET status = 'claimed', runner_id = $runner,
                     claim_instance_id = $instance,
-                    claim_token = $token, claim_expires_at = $expires WHERE id = $id;
+                    claim_token = $token, claim_expires_at = $expires
+                WHERE j.id = $id AND j.status IN ('pending', 'claimed')
+                  AND j.expires_at > $now
+                  AND (j.status = 'pending' OR j.claim_expires_at <= $now)
+                  AND EXISTS (
+                      SELECT 1 FROM runners r
+                      JOIN runner_capabilities c ON c.runner_id = r.id
+                       AND c.capability_key = j.capability
+                      WHERE r.id = $runner AND r.instance_id = $instance
+                        AND r.status = 'active' AND c.advertised_instance_id = r.instance_id
+                        AND c.advertised_status = 'ready' AND c.health_state = 'healthy'
+                        AND c.fresh_until > $now
+                  );
                 """, ct, transaction, ("$runner", request.RunnerId),
                 ("$instance", request.InstanceId), ("$token", token),
-                ("$expires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 20))), ("$id", id));
-            result = new(id, token, jobRequest);
+                ("$expires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 20))),
+                ("$now", Iso(UtcNow)), ("$id", id));
+            if (claimed == 1) result = new(id, token, jobRequest);
         }, ct);
         return result;
     }
