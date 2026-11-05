@@ -72,6 +72,20 @@ node scripts/presentation-capture/export-pinned-seed.mjs \
 
 ## Deterministic stills with Playwright
 
+The focused accessibility check uses the same isolated, pinned demo seed and
+captures the activity rail with keyboard focus in both themes. In a managed
+task, its screenshots and axe reports go to `$JOB_RESULTS_DIR`:
+
+```sh
+bash scripts/presentation-capture/run-accessibility.sh after
+```
+
+The spec checks the board and the Task, Activity, and Result tabs at 1280 and
+390 CSS pixels in light and dark themes. It reports all axe violations and
+asserts zero affected nodes for `button-name`, `aria-prohibited-attr`,
+`aria-hidden-focus`, and `label`. The `before` argument captures baseline rail
+screenshots without running assertions.
+
 From the repository root, one command resets a temporary demo store, starts an
 isolated dynamic-port backend and frontend, captures every still in both
 themes, and tears the stack down:
