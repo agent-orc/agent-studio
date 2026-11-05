@@ -7,6 +7,23 @@ Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
 
+## Modal keyboard contract
+
+`ModalStackService` owns Escape ordering and the focus scope of registered true
+modals. A dialog registers its dialog element and the subtree that contains its
+backdrop. While it is open, Tab and Shift+Tab wrap within the dialog, outside
+focus is redirected inside, and the rest of the page is inert. A higher
+nonmodal entry handles Escape first but does not release the modal focus scope.
+A portaled child can register its interactive root with the stack so it stays
+focusable while the page remains inert. Tab traverses that root's controls and
+returns to the first dialog control at its edge; Shift+Tab returns to the last.
+This also contains menus whose rows use `tabindex="-1"`. The caller moves
+initial focus into the dialog after render and returns focus to its opener after
+closing. The batch gate panel, global search palette, and modal workspace
+settings view (including CLI Management) use this contract. Menus and popovers
+remain stack entries for Escape ordering without a modal focus scope; portaled
+menus also register their interactive root.
+
 ## Initial bundle ratchet
 
 The production `initial` budget in `frontend/angular.json` is a delivery

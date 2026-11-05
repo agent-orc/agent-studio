@@ -102,4 +102,148 @@ describe('ModalStackService', () => {
     // Subsequent Escape will retry on the same top entry — the service does
     // not auto-pop, the owning component must.
   });
+
+  it('makes the background inert only while a modal is registered', () => {
+    const page = document.createElement('main');
+    page.inert = false;
+    const host = document.createElement('div');
+    const dialog = document.createElement('section');
+    host.append(dialog);
+    document.body.append(page, host);
+    try {
+      const dispose = service.push('modal', () => undefined, {
+        dialog: () => dialog,
+        backgroundRoot: () => host,
+      });
+      expect(page.inert).toBe(true);
+      dispose();
+      expect(page.inert).toBe(false);
+    } finally {
+      page.remove();
+      host.remove();
+    }
+  });
+
+  it('keeps a lower modal active when a nonmodal overlay is on top', () => {
+    const page = document.createElement('main');
+    page.inert = false;
+    const pageButton = document.createElement('button');
+    page.append(pageButton);
+    const host = document.createElement('div');
+    const dialog = document.createElement('section');
+    const dialogButton = document.createElement('button');
+    dialog.append(dialogButton);
+    Object.defineProperty(dialogButton, 'getClientRects', { value: () => [new DOMRect(0, 0, 1, 1)] });
+    host.append(dialog);
+    document.body.append(page, host);
+    try {
+      service.push('modal', () => undefined, { dialog: () => dialog, backgroundRoot: () => host });
+      expect(page.inert).toBe(true);
+      const disposeOverlay = service.push('higher-overlay', () => undefined);
+      expect(page.inert).toBe(true);
+      pageButton.focus();
+      expect(document.activeElement).toBe(dialogButton);
+      disposeOverlay();
+      expect(page.inert).toBe(true);
+    } finally {
+      service.clearForTest();
+      page.remove();
+      host.remove();
+    }
+  });
+
+  it('keeps a portaled child interactive while the rest of the page stays inert', () => {
+    const page = document.createElement('main');
+    const host = document.createElement('div');
+    const dialog = document.createElement('section');
+    const portal = document.createElement('div');
+    const menu = document.createElement('div');
+    const otherOverlay = document.createElement('div');
+    const menuButton = document.createElement('button');
+    menu.append(menuButton);
+    portal.append(menu, otherOverlay);
+    host.append(dialog);
+    document.body.append(page, host, portal);
+    try {
+      service.push('modal', () => undefined, { dialog: () => dialog, backgroundRoot: () => host });
+      service.push('menu', () => undefined, { interactiveRoot: () => menu });
+      expect(page.inert).toBe(true);
+      expect(menu.inert).not.toBe(true);
+      expect(portal.inert).not.toBe(true);
+      expect(otherOverlay.inert).toBe(true);
+      menuButton.focus();
+      expect(document.activeElement).toBe(menuButton);
+    } finally {
+      service.clearForTest();
+      page.remove();
+      host.remove();
+      portal.remove();
+    }
+  });
+
+  it('returns Tab from a portaled menu to the open modal in both directions', () => {
+    const page = document.createElement('main');
+    const host = document.createElement('div');
+    const dialog = document.createElement('section');
+    const first = document.createElement('button');
+    const last = document.createElement('button');
+    dialog.append(first, last);
+    host.append(dialog);
+    const portal = document.createElement('div');
+    const menu = document.createElement('div');
+    const menuRow = document.createElement('button');
+    menuRow.tabIndex = -1;
+    menu.append(menuRow);
+    portal.append(menu);
+    document.body.append(page, host, portal);
+    for (const button of [first, last, menuRow]) {
+      Object.defineProperty(button, 'getClientRects', { value: () => [new DOMRect(0, 0, 1, 1)] });
+    }
+    try {
+      service.push('modal', () => undefined, { dialog: () => dialog, backgroundRoot: () => host });
+      service.push('menu', () => undefined, { interactiveRoot: () => menu });
+      menuRow.focus();
+      const forward = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      menuRow.dispatchEvent(forward);
+      expect(forward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(first);
+      expect(page.inert).toBe(true);
+
+      menuRow.focus();
+      const backward = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+      menuRow.dispatchEvent(backward);
+      expect(backward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(last);
+    } finally {
+      service.clearForTest();
+      page.remove();
+      host.remove();
+      portal.remove();
+    }
+  });
+
+  it('wraps Tab and Shift+Tab at the modal boundaries', () => {
+    const dialog = document.createElement('section');
+    const first = document.createElement('button');
+    const last = document.createElement('button');
+    dialog.append(first, last);
+    document.body.append(dialog);
+    for (const button of [first, last]) {
+      Object.defineProperty(button, 'getClientRects', { value: () => [new DOMRect(0, 0, 1, 1)] });
+    }
+    try {
+      service.push('modal', () => undefined, { dialog: () => dialog, backgroundRoot: () => dialog });
+      last.focus();
+      const forward = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      last.dispatchEvent(forward);
+      expect(forward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(first);
+      const backward = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+      first.dispatchEvent(backward);
+      expect(backward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(last);
+    } finally {
+      dialog.remove();
+    }
+  });
 });
