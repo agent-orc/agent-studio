@@ -90,6 +90,26 @@ The filenames include their order, theme, and `--pinned` source claim. A failed
 dimension check fails the Playwright run instead of leaving a soft screenshot
 in the output set.
 
+The operator website page adds seven paired scenes, numbered 09 through 15.
+Their authored scenario copy lives in `pinned-seed.json` under
+`operatorScenes`. The Playwright capture opens the isolated pinned installation
+and places clearly labeled scenario panels beside its demo board, card and chat.
+These panels illustrate operator records without making a token or a live host
+part of the public demo. The page source is
+[Operate Studio from your coding agent](../../website/operator-agent/index.html).
+The website owner (MKT/AOW) integrates and publishes the page.
+
+The operator capture is also runnable by itself after the demo stack is up:
+
+```sh
+cd frontend
+PW_VISUAL_CAPTURE=marketing npx playwright test \
+  e2e/visual-evidence/operator-page-capture.spec.ts --project=visual-evidence
+```
+
+For the delivery proof, run the focused capture twice from a fresh demo reset,
+save the ordered SHA-256 lists under `$JOB_RESULTS_DIR`, and compare them.
+
 The two landing-page pairs render at most three Playwright-owned annotation
 labels. They are enabled by default and are part of the browser DOM at capture
 time, not a later image edit. Disable them for a clean product-only variant:

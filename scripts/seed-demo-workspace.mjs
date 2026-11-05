@@ -1104,6 +1104,17 @@ function writePresentationStory(root) {
     { id: 'demo-chat-02', ts: iso(211), role: 'orchestrator', text: 'Start with the cross-lane board, open DEMO-5 to connect execution with review evidence, then finish in project knowledge and token usage.' },
     { id: 'demo-chat-03', ts: iso(212), role: 'user', text: 'Keep the demo safe and repeatable.' },
     { id: 'demo-chat-04', ts: iso(213), role: 'orchestrator', text: 'Confirmed. This workspace contains seeded demo data only and can be reset before every capture.' },
+    { id: 'demo-chat-05', ts: iso(215), role: 'user', text: 'What did the operator do overnight?' },
+    { id: 'demo-chat-06', ts: iso(216), role: 'orchestrator', text: 'The demo operator continued DEMO-9 after review and recorded the reason and run base on the card.',
+      contextReceipt: { scope: 'project', contextKey: 'project:Demo App', taskKey: null,
+        includedBlocks: ['operator-log:Demo App'], capturedAt: iso(216),
+        sources: [{ sourceId: 'operator-log:Demo App', kind: 'operator-log', revision: '1', sha256: null,
+          freshness: iso(214), includedCharacters: 93, estimatedTokens: 24, status: 'included' }] } },
+  ]);
+  writeJsonl(join(root, '.operator', 'operator-log.jsonl'), [
+    { Cursor: 1, Actor: 'operator-agent:demo/session:pinned', TimeUtc: iso(214), Project: 'Demo App',
+      Kind: 'did', Text: 'Continued DEMO-9 after review; recorded the reason and run base on the card.',
+      CardKeys: ['DEMO-9'], AuditIds: [] },
   ]);
 }
 
@@ -1111,7 +1122,7 @@ function writePresentationStory(root) {
 
 function reset(root) {
   // Remove only the paths this seed owns; leave an operator-added .git etc.
-  for (const managed of ['projects', '.metadata', 'logs', 'adhoc-usage.jsonl', 'project-settings.json', 'tags.json', 'README.md']) {
+  for (const managed of ['projects', '.metadata', '.operator', 'logs', 'adhoc-usage.jsonl', 'project-settings.json', 'tags.json', 'README.md']) {
     rmSync(join(root, managed), { recursive: true, force: true });
   }
 }

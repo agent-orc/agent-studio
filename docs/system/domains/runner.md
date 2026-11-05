@@ -2067,6 +2067,11 @@ unreported claim expires with its lease and is queued again.
   the exact result to
   `refs/heads/agent-studio/results/<run-attempt-id>/<result-sha>`. Cleanup then requires
   the Task Server acknowledgement for the matching canonical envelope digest.
+  Transient Git server push faults (5xx, internal server error, commit_refs failure,
+  or connection reset) retry each salvage or result ref after 30 seconds, 2 minutes,
+  5 minutes, and 15 minutes while the worktree and lease remain active. Each retry
+  is recorded on the card. Exhaustion names the retries in the failure reason;
+  authorization, permission, push protection, and non-fast-forward failures do not retry.
   A process restart replays the original outbox before new claims and never
   starts the coding CLI. Transfer failure stays `transfer-recovery`, retains the
   worktree, and consumes no coding or completion budget.

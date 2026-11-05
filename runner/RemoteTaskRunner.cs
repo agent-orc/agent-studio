@@ -492,6 +492,7 @@ public sealed class RemoteTaskRunner
             _log,
             outbox,
             authority);
+        workspace.PushRetryRecorded = line => shipper.Add("system", line);
         var shipperTask = shipper.RunAsync(TimeSpan.FromSeconds(5), stopRun.Token);
         var artifactLimits = await _client.GetArtifactTransferLimitsAsync(taskKey, stopRun.Token);
         _log(
@@ -2442,7 +2443,10 @@ public sealed class RemoteTaskRunner
             BuildEnvelopeCompletionFields(teardown, baseSha, artifactManifestDigest);
         return new RemoteRunCompletionRequest(
             taskKey, lease.LeaseId, lease.FencingToken, options.RunnerId,
-            outcome.Kind.ToString(), outcome.Reason, options.RunnerName,
+            outcome.Kind.ToString(), teardown.ResultRefFailure is null
+                ? outcome.Reason
+                : $"{outcome.Reason} [runner-result-ref-push-failed: {teardown.ResultRefFailure}]",
+            options.RunnerName,
             SalvageBranch: teardown.Branch,
             SalvageCommitSha: teardown.CommitSha,
             SalvageBranchUrl: teardown.BranchUrl,
@@ -2723,7 +2727,8 @@ public sealed class RemoteTaskRunner
 
     internal static string BuildUnsecuredWorktreeReason(WorktreeSalvageException ex)
         => ex.PushProtection?.Summary
-           ?? $"Remote runner retained unsecured worktree at {ex.WorktreePath}; intended branch {ex.Branch}.";
+           ?? $"Remote runner retained unsecured worktree at {ex.WorktreePath}; intended branch {ex.Branch}. " +
+              $"Push failure: {OneLine(ex.InnerException?.Message ?? ex.Message)}";
 
     private async Task<bool> ReleaseAsync(
         RunLeaseInfoDto lease,
