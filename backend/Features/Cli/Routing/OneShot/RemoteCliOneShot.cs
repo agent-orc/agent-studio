@@ -9,7 +9,8 @@ namespace AgentStudio.Cli;
 
 /// <summary>Networked one-shot transport. Provider credentials remain on runner hosts.</summary>
 public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
-    IConfiguration configuration, AdHocUsageRecorder? usageRecorder = null) : ICliOneShot
+    IConfiguration configuration, AdHocUsageRecorder? usageRecorder = null,
+    TimeProvider? timeProvider = null, TimeSpan? pollInterval = null) : ICliOneShot
 {
     public string CliType => cliType;
 
@@ -41,12 +42,16 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
             var job = await submitted.Content.ReadFromJsonAsync<OneShotJobDto>(cancellationToken: ct);
             if (job is null) return Failed("Task Server returned no one-shot job.");
             if (job.Status == "waiting") return Failed(job.Error ?? $"waiting for a host with {job.Capability}");
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            deadline.CancelAfter(TimeSpan.FromSeconds(timeout + 30));
+            // The Task Server owns queue expiry and extends job expiry at claim.
+            // Start the caller's run budget only after a poll observes that claim.
+            using var runBudget = new CancellationTokenSource(Timeout.InfiniteTimeSpan,
+                timeProvider ?? TimeProvider.System);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, runBudget.Token);
             var running = false;
             while (true)
             {
-                await Task.Delay(TimeSpan.FromSeconds(2), deadline.Token);
+                await Task.Delay(pollInterval ?? TimeSpan.FromSeconds(2),
+                    timeProvider ?? TimeProvider.System, deadline.Token);
                 using var response = await client.GetAsync($"/api/v1/one-shot-jobs/{job.JobId}", deadline.Token);
                 response.EnsureSuccessStatusCode();
                 var current = await response.Content.ReadFromJsonAsync<OneShotJobDto>(cancellationToken: deadline.Token);
@@ -55,7 +60,7 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
                 {
                     // Queue time belongs to admission. The provider gets its full
                     // requested run budget after the host claims the job.
-                    deadline.CancelAfter(TimeSpan.FromSeconds(timeout + 30));
+                    runBudget.CancelAfter(TimeSpan.FromSeconds(timeout + 30));
                     running = true;
                 }
                 if (current.Status is "pending" or "claimed") continue;

@@ -28,7 +28,10 @@ selection. When no host advertises the route, Result finalization reports
 `waiting for a host with <capability>` and schedules a retry without consuming
 the summary retry budget. The task server publishes the model as a short-lived
 probe demand in capability advertisement responses, so a host can discover and
-advertise a newly requested route. Jobs already claimed expire after their timeout.
+advertise a newly requested route. Pending jobs expire after their timeout plus
+30 seconds. A claim starts a fresh timeout plus 30 seconds; the API follows the
+Task Server's queue expiry and starts its own run timer when it observes the
+claim.
 
 ### Task Server one-shot job API
 
