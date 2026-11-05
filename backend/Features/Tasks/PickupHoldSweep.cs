@@ -29,6 +29,7 @@ public sealed class PickupHoldSweep
     private readonly TaskRunnerService? _runners;
     private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
     private readonly IConfiguration? _configuration;
+    private readonly TaskListGitProjectionCache? _dependencyGitProjection;
 
     public PickupHoldSweep(
         TaskScannerService scanner,
@@ -38,7 +39,8 @@ public sealed class PickupHoldSweep
         AttemptAuthorityService? attemptAuthority = null,
         TaskRunnerService? runners = null,
         ILocalCodingAdmissionPolicy? localCodingAdmission = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        TaskListGitProjectionCache? dependencyGitProjection = null)
     {
         _scanner = scanner;
         _projectSettings = projectSettings;
@@ -48,6 +50,7 @@ public sealed class PickupHoldSweep
         _runners = runners;
         _localCodingAdmission = localCodingAdmission;
         _configuration = configuration;
+        _dependencyGitProjection = dependencyGitProjection;
     }
 
     /// <summary>
@@ -66,14 +69,19 @@ public sealed class PickupHoldSweep
         // route is also served live on request, so it must not rebuild an O(N)
         // graph per call.
         var index = _scanner.GetReferenceIndex();
+        var ready = _scanner.ScanAllAutomationJobs()
+            .Where(task => PickupHoldPolicy.IsPickupLane(task.State)).ToList();
+        var integration = _dependencyGitProjection?.ReadCacheOnly(index.DependencyTargets(ready)).Integration;
         var held = new List<HeldPickupCard>();
 
-        foreach (var task in _scanner.ScanAllAutomationJobs())
+        foreach (var task in ready)
         {
             ct.ThrowIfCancellationRequested();
             if (!PickupHoldPolicy.IsPickupLane(task.State)) continue;
 
-            var waitsOn = task.References?.DependsOn.Count > 0 ? index.EvaluateWaitsOn(task) : null;
+            var waitsOn = task.References?.DependsOn.Count > 0
+                ? index.EvaluateWaitsOn(task, integration, _projectSettings.Get(task.ProjectName).IntegrationBranch)
+                : null;
             if (waitsOn is not null && _attemptAuthority is not null)
             {
                 waitsOn = waitsOn with

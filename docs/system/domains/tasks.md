@@ -1705,8 +1705,11 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   An edge may use `{ "key": "AGT-2050", "releaseGate": true }` to require an
   explicit target-card release after terminal completion. Operators and
   dedicated release steps set that independent flag through
-  `PUT /api/tasks/{id}/release`; ordinary string edges keep their existing
-  terminal-state-only semantics.
+  `PUT /api/tasks/{id}/release`. Ordinary string edges open when the predecessor
+  completes or its current delivery is contained in the successor's target
+  branch. A newer pending delivery closes the edge again. Use
+  `{ "key": "AGT-2050", "requiresCompletion": true }` to retain the completion
+  rule on one edge. Concept and research predecessors use that rule by default.
 - The release flag has an operator affordance on both ends of a gated edge
   (AGT-2709), because nothing in the lifecycle sets it and a card would
   otherwise wait for a release screen that did not exist. The detail-view

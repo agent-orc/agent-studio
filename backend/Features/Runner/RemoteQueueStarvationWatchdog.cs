@@ -48,7 +48,8 @@ public static class RemoteQueueStarvationPolicy
         TaskReferenceIndex references,
         IEnumerable<ClientIdentity> runners,
         bool allowsLocalCoding = false,
-        bool denyAllLocalRuns = false)
+        bool denyAllLocalRuns = false,
+        IReadOnlyDictionary<string, TaskIntegrationStatus>? integration = null)
     {
         var liveRunners = runners
             .Where(runner => string.Equals(
@@ -83,7 +84,7 @@ public static class RemoteQueueStarvationPolicy
                        && !TaskSlugs.IsHumanDecisionNeeded(task.Id)
                        && (!settings.IntakeEnabled.GetValueOrDefault()
                            || task.Phase == LifecyclePhases.IntakePassed)
-                       && !references.EvaluateWaitsOn(task).Blocked;
+                       && !references.EvaluateWaitsOn(task, integration, settings.IntegrationBranch).Blocked;
             })
             .ToList();
         var oldestEligibleAt = routedReadyTasks
@@ -214,6 +215,7 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly ILogger<RemoteQueueStarvationWatchdog> _logger;
     private readonly TaskRunnerService? _runner;
+    private readonly TaskListGitProjectionCache? _dependencyGitProjection;
     private readonly object _gate = new();
     private RemoteQueueStarvationSnapshot _current = new() { ObservedAt = DateTime.UtcNow };
     private string? _warningSignature;
@@ -225,7 +227,8 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
         ClientIdentityStore clients,
         IConfiguration configuration,
         ILogger<RemoteQueueStarvationWatchdog> logger,
-        TaskRunnerService? runner = null)
+        TaskRunnerService? runner = null,
+        TaskListGitProjectionCache? dependencyGitProjection = null)
     {
         _scanner = scanner;
         _settings = settings;
@@ -233,6 +236,7 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
         _configuration = configuration;
         _logger = logger;
         _runner = runner;
+        _dependencyGitProjection = dependencyGitProjection;
     }
 
     public RemoteQueueStarvationSnapshot Current
@@ -249,6 +253,8 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
             1,
             24 * 60);
         var snapshot = _scanner.GetLiveSnapshotWithReferenceIndex();
+        var targets = snapshot.References.DependencyTargets(snapshot.Live.Where(task => task.State == TaskStates.Ready));
+        var integration = _dependencyGitProjection?.ReadCacheOnly(targets).Integration;
         var next = RemoteQueueStarvationPolicy.Evaluate(
             now,
             TimeSpan.FromMinutes(thresholdMinutes),
@@ -257,7 +263,8 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
             snapshot.References,
             _clients.ListAll(),
             _runner?.AllowsLocalCoding == true,
-            SecurityProfiles.IsNetworked(_configuration));
+            SecurityProfiles.IsNetworked(_configuration),
+            integration);
 
         lock (_gate)
         {

@@ -43,6 +43,95 @@ public class WaitsOnEvaluatorTests
     }
 
     [Fact]
+    public void IntegratedCurrentDelivery_ReleasesReadySuccessor()
+    {
+        var predecessor = Task("lib", "LIB-1", TaskStates.HumanReview);
+        var successor = Task("app", "APP-1", TaskStates.Ready, deps: ["LIB-1"]);
+        var index = TaskReferenceIndex.Build([successor, predecessor]);
+        var integrated = new Dictionary<string, TaskIntegrationStatus>
+        {
+            [predecessor.TaskKey] = new() { Status = IntegrationStatuses.Integrated, IntegrationBranch = "develop" },
+        };
+
+        var status = index.EvaluateWaitsOn(successor, integrated);
+
+        Assert.False(status.Blocked);
+        Assert.Equal("integrated-delivery", Assert.Single(status.Items).FulfillmentRule);
+    }
+
+    [Fact]
+    public void IntegrationOnAnotherBranch_DoesNotReleaseSuccessor()
+    {
+        var predecessor = Task("lib", "LIB-1", TaskStates.HumanReview);
+        var successor = Task("app", "APP-1", TaskStates.Ready, deps: ["LIB-1"]);
+        var integrated = new Dictionary<string, TaskIntegrationStatus>
+        {
+            [predecessor.TaskKey] = new() { Status = IntegrationStatuses.Integrated, IntegrationBranch = "main" },
+        };
+
+        var status = TaskReferenceIndex.Build([successor, predecessor])
+            .EvaluateWaitsOn(successor, integrated, targetBranch: "develop");
+
+        Assert.True(status.Blocked);
+    }
+
+    [Fact]
+    public void NewerPendingDelivery_HoldsSuccessorAgain()
+    {
+        var predecessor = Task("lib", "LIB-1", TaskStates.HumanReview);
+        var successor = Task("app", "APP-1", TaskStates.Ready, deps: ["LIB-1"]);
+        var index = TaskReferenceIndex.Build([successor, predecessor]);
+        var current = new Dictionary<string, TaskIntegrationStatus>
+        {
+            [predecessor.TaskKey] = new() { Status = IntegrationStatuses.Integrated },
+        };
+        Assert.False(index.EvaluateWaitsOn(successor, current).Blocked);
+
+        current[predecessor.TaskKey] = new() { Status = IntegrationStatuses.Pending };
+        var status = index.EvaluateWaitsOn(successor, current);
+
+        Assert.True(status.Blocked);
+        Assert.Equal("delivery-integration", Assert.Single(status.Items).FulfillmentRule);
+    }
+
+    [Theory]
+    [InlineData(TaskModes.Concept)]
+    [InlineData(TaskModes.Research)]
+    public void ConceptAndResearchPredecessors_RequireCompletion(string mode)
+    {
+        var predecessor = Task("lib", "LIB-1", TaskStates.HumanReview) with { Mode = mode };
+        var successor = Task("app", "APP-1", TaskStates.Ready, deps: ["LIB-1"]);
+        var integrated = new Dictionary<string, TaskIntegrationStatus>
+        {
+            [predecessor.TaskKey] = new() { Status = IntegrationStatuses.Integrated },
+        };
+
+        var status = TaskReferenceIndex.Build([successor, predecessor]).EvaluateWaitsOn(successor, integrated);
+
+        Assert.True(status.Blocked);
+        Assert.True(Assert.Single(status.Items).RequiresCompletion);
+    }
+
+    [Fact]
+    public void EdgeCanExplicitlyRequireCompletion()
+    {
+        var predecessor = Task("lib", "LIB-1", TaskStates.HumanReview);
+        var successor = Task("app", "APP-1", TaskStates.Ready) with
+        {
+            References = new() { DependsOn = [new("LIB-1", requiresCompletion: true)] },
+        };
+        var integrated = new Dictionary<string, TaskIntegrationStatus>
+        {
+            [predecessor.TaskKey] = new() { Status = IntegrationStatuses.Integrated },
+        };
+
+        var status = TaskReferenceIndex.Build([successor, predecessor]).EvaluateWaitsOn(successor, integrated);
+
+        Assert.True(status.Blocked);
+        Assert.Equal("completion", Assert.Single(status.Items).FulfillmentRule);
+    }
+
+    [Fact]
     public void ArchivedTarget_CountsAsFulfilled()
     {
         // Fulfilled = 6-completed OR 7-archive; a dependency that has already
