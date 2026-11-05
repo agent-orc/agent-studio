@@ -120,6 +120,10 @@ public static class IamEndpoints
             })).RequirePermission(IamPermissions.AccessManage);
 
         iam.MapOperatorAgentEndpoints();
+        iam.MapOperatorKillSwitchEndpoints();
+        iam.MapStandingGrantEndpoints();
+        iam.MapOperatorApprovalEndpoints();
+        iam.MapBreakGlassWindowEndpoints();
     }
 
     private static void RevokeUsers(AccessSecurityStore store, AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes)
@@ -140,7 +144,7 @@ public static class IamEndpoints
         IamRoles.All.Select(role => new IamRoleResponse(
             role.Id, role.DisplayName, role.Description,
             role.Permissions.Order(StringComparer.Ordinal).ToList(),
-            role.BindableScopes.Order().ToList(), role.ServiceAccountBindable)).ToList(),
+            role.BindableScopes.Order().ToList(), role.ServiceAccountBindable, role.UserBindable)).ToList(),
         IamPermissions.All.Where(permission => !IamPermissions.IsUnbound(permission.Name)
                 && permission.Name != IamPermissions.RunnerService)
             .Select(permission => new IamPermissionResponse(permission.Name, permission.Level, permission.Description)).ToList(),

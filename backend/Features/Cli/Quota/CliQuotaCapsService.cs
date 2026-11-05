@@ -19,22 +19,25 @@ namespace AgentStudio.Cli;
 /// same LocalAppData fallback. Caps are global (not per-project) because the
 /// underlying quota is per-CLI-subscription, not per-project.
 /// </summary>
-public sealed class CliQuotaCapsService
+public sealed class CliQuotaCapsService : IQuotaCapTable
 {
-    public const int DefaultCapPct = 95;
+    public const int DefaultCapPct = QuotaCapDefaults.CapPct;
     private const string FileName = "cli-quota-caps.json";
 
     private readonly ILogger<CliQuotaCapsService> _logger;
     private readonly IConfiguration _config;
+    private readonly ModelSelectionPolicyStore? _policy;
     private readonly object _lock = new();
     private Dictionary<string, Dictionary<string, int>> _cache =
         new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
 
-    public CliQuotaCapsService(ILogger<CliQuotaCapsService> logger, IConfiguration config)
+    public CliQuotaCapsService(ILogger<CliQuotaCapsService> logger, IConfiguration config,
+        ModelSelectionPolicyStore? policy = null)
     {
         _logger = logger;
         _config = config;
+        _policy = policy;
     }
 
     public Dictionary<string, Dictionary<string, int>> GetAll()
@@ -88,53 +91,7 @@ public sealed class CliQuotaCapsService
     /// exceeds any configured cap for its CLI. Returns the most-overshooting
     /// window so the runner can produce a useful "blocked because…" message.
     /// </summary>
-    public CapEvaluation Evaluate(QuotaSnapshot? snapshot)
-    {
-        if (snapshot == null || string.IsNullOrWhiteSpace(snapshot.CliType))
-            return CapEvaluation.NotBlocked;
-
-        // Conservative admission for unconfirmed snapshots (AGT-2064). A snapshot
-        // flagged suspicious - a downward glitch a confirmation probe has not yet
-        // agreed with, or one a live usage-limit error contradicted - is treated
-        // as over-cap regardless of how green its numbers look: we would rather
-        // hold a launch than fire onto a CLI that may really be at its limit. The
-        // hold clears the moment a re-probe produces a trusted snapshot.
-        if (snapshot.Suspicious)
-        {
-            var worstSuspect = snapshot.Windows?
-                .Where(w => w.UsedPct is not null)
-                .OrderByDescending(w => w.UsedPct)
-                .FirstOrDefault();
-            return new CapEvaluation(
-                Blocked: true,
-                CliType: snapshot.CliType,
-                WindowLabel: worstSuspect?.Label ?? "quota",
-                CapPct: worstSuspect?.Label is { } wl ? GetCap(snapshot.CliType, wl) : DefaultCapPct,
-                UsedPct: worstSuspect?.UsedPct ?? 100d,
-                Suspicious: true,
-                SuspiciousReason: snapshot.SuspiciousReason);
-        }
-
-        if (snapshot.Windows == null || snapshot.Windows.Count == 0)
-            return CapEvaluation.NotBlocked;
-
-        CapEvaluation? worst = null;
-        foreach (var w in snapshot.Windows)
-        {
-            if (string.IsNullOrWhiteSpace(w.Label) || w.UsedPct is null) continue;
-            var cap = GetCap(snapshot.CliType, w.Label);
-            if (w.UsedPct.Value < cap) continue;
-            var ev = new CapEvaluation(
-                Blocked: true,
-                CliType: snapshot.CliType,
-                WindowLabel: w.Label,
-                CapPct: cap,
-                UsedPct: w.UsedPct.Value);
-            if (worst is null || ev.UsedPct - ev.CapPct > worst.UsedPct - worst.CapPct)
-                worst = ev;
-        }
-        return worst ?? CapEvaluation.NotBlocked;
-    }
+    public CapEvaluation Evaluate(QuotaSnapshot? snapshot) => SelectionQuotaMath.EvaluateCap(snapshot, this);
 
     private void EnsureLoaded()
     {
@@ -142,6 +99,13 @@ public sealed class CliQuotaCapsService
         {
             if (_loaded) return;
             _loaded = true;
+            if (_policy is not null)
+            {
+                _cache = _policy.Get().Caps.ToDictionary(pair => pair.Key,
+                    pair => new Dictionary<string, int>(pair.Value, StringComparer.OrdinalIgnoreCase),
+                    StringComparer.OrdinalIgnoreCase);
+                return;
+            }
             var path = ResolveStorePath();
             if (path == null || !File.Exists(path)) return;
             try
@@ -169,6 +133,12 @@ public sealed class CliQuotaCapsService
 
     private void Persist()
     {
+        if (_policy is not null)
+        {
+            foreach (var (cli, windows) in _cache)
+            foreach (var (window, cap) in windows) _policy.SetCap(cli, window, cap);
+            return;
+        }
         var path = ResolveStorePath();
         if (path == null) return;
         try
@@ -194,36 +164,4 @@ public sealed class CliQuotaCapsService
     }
 }
 
-/// <summary>
-/// Result of evaluating a quota snapshot against the configured caps. When
-/// <see cref="Blocked"/> is false, the other fields are not meaningful and
-/// callers should not log a "blocked" reason.
-/// </summary>
-public sealed record CapEvaluation(
-    bool Blocked,
-    string? CliType = null,
-    string? WindowLabel = null,
-    int CapPct = 0,
-    double UsedPct = 0d,
-    bool Suspicious = false,
-    string? SuspiciousReason = null,
-    // AGT-2055: set when the block is a forward-looking projection ("this
-    // window will cross the cap before it resets") rather than an already-
-    // breached cap. Callers use this to pre-empt the wall instead of reacting
-    // to it. <see cref="ResetAt"/> carries the offending window's reset time
-    // so a "next reset HH:mm" hint can be surfaced at the waiting slot.
-    bool Projected = false,
-    DateTime? ResetAt = null)
-{
-    public static readonly CapEvaluation NotBlocked = new(false);
-
-    public string DescribeReason()
-    {
-        if (!Blocked) return "ok";
-        if (Suspicious)
-            return $"{CliType} quota snapshot unconfirmed ({SuspiciousReason ?? "suspicious glitch"}); holding launch until a re-probe confirms";
-        return Projected
-            ? $"{CliType} {WindowLabel} projected to reach the {CapPct}% cap before reset (now {UsedPct:0.#}%)"
-            : $"{CliType} {WindowLabel} at {UsedPct:0.#}% (cap {CapPct}%)";
-    }
-}
+// CapEvaluation lives in the contracts package (ModelSelection/QuotaDecisionContracts.cs).

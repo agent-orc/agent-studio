@@ -177,7 +177,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (!response.IsSuccessStatusCode)
             throw new TaskServerException((int)response.StatusCode, $"Task Server protocol negotiation failed: {Trim(detail)}");
         var compatibility = JsonSerializer.Deserialize<Contract.ProtocolCompatibilityResponse>(detail, Json);
-        if (compatibility?.Supported != true)
+        if (compatibility?.Supported != true || compatibility.Server.Current < RunnerOptions.ProtocolVersion)
             throw new TaskServerException(426, compatibility?.Reason ?? "Task Server protocol is not compatible.");
         var serverCapabilities = compatibility.Server.Capabilities ?? [];
         _supportsCredentialObservationV2 = serverCapabilities.Contains("credential-observation-v2", StringComparer.Ordinal);
@@ -817,13 +817,11 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             claim.Run.RunId);
         _v1Leases[claim.Task.TaskKey] = (claim.Run.RunId, legacyLease, RunnerInstanceId);
         if (!string.IsNullOrWhiteSpace(claim.Task.Body)) _v1TaskBodies[claim.Task.TaskKey] = claim.Task.Body;
-        var selectedIntent = claim.ContinuationIntent is { Receipt.ExplicitSelection: true } intent
-            ? intent : null;
-        var selectedFields = selectedIntent?.Selection;
-        // Provider fallback is a whole route from a previous refusal. Once an
-        // operator selects any continuation field, filling the other fields
-        // from that route can cross provider boundaries.
-        var providerFallback = selectedIntent is null ? claim.ModelFallback : null;
+        // The route rule (mechanical route, then an explicit operator
+        // selection, then a provider-refusal fallback) is the shared
+        // model-selection planner's (MS-5).
+        var route = ModelSelectionPlanner.ClaimRoute(
+            claim.MechanicalFreshRoute, claim.ContinuationIntent, claim.ModelFallback);
         return new RunnerClaimResponse(
             RunnerClaimStatus.Claimed,
             claim.Task.TaskKey,
@@ -844,26 +842,15 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             ReconciliationActions: FromContract(claim.ReconciliationActions),
             // A required mechanical route wins. Otherwise operator fields
             // resolve with normal host settings as one route.
-            RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
-                ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
-                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
+            RunSpec: !route.HasRoute && claim.MechanicalFreshRoute is null && claim.FollowUp is null
+                ? new RunSpecDto(BriefVersion: claim.Run.BriefVersion)
+                : new RunSpecDto(
+                    route.CliType,
+                    route.Model,
+                    route.ThinkingLevel,
+                    ContextMode: route.CleanContext ? CodingAgentRunner.Model.CliContextModes.Clean : null,
                     FollowUp: claim.FollowUp,
-                    BriefVersion: claim.Run.BriefVersion)
-                : selectedIntent is null && providerFallback is null && claim.FollowUp is null
-                    ? new RunSpecDto(BriefVersion: claim.Run.BriefVersion)
-                    : new RunSpecDto(
-                        selectedIntent is not null && (selectedFields is null || selectedFields.CliType
-                            || selectedFields.Model || selectedFields.ThinkingLevel)
-                            ? selectedIntent.CliType : providerFallback?.CliType,
-                        selectedIntent is not null && (selectedFields is null || selectedFields.Model)
-                            ? selectedIntent.Model : providerFallback?.To,
-                        selectedIntent is not null && (selectedFields is null || selectedFields.ThinkingLevel)
-                            ? selectedIntent.ThinkingLevel : providerFallback?.ThinkingLevel,
-                        ContextMode: providerFallback is null
-                            ? null
-                            : CodingAgentRunner.Model.CliContextModes.Clean,
-                        FollowUp: claim.FollowUp,
-                        BriefVersion: claim.Run.BriefVersion),
+                    BriefVersion: claim.Run.BriefVersion),
             ContinuationBaseRef: claim.ContinuationBaseRef,
             ContinuationBaseSha: claim.ContinuationBaseSha,
             ContinuationBaseReason: claim.ContinuationBaseReason,

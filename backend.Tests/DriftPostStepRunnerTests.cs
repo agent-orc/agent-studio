@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -16,6 +19,18 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class DriftPostStepRunnerTests : IDisposable
 {
+    [Fact]
+    public void Production_service_provider_injects_model_selection()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
+        var runner = factory.Services.GetRequiredService<DriftPostStepRunner>();
+        var field = typeof(DriftPostStepRunner).GetField("_modelSelection",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.Same(factory.Services.GetRequiredService<AgentStudio.Cli.IModelSelectionService>(),
+            field?.GetValue(runner));
+    }
+
     private readonly string _workspace;
     private readonly string _promptDir;
     private readonly string _jobFolder;
@@ -64,7 +79,9 @@ public sealed class DriftPostStepRunnerTests : IDisposable
             })
             .Build();
 
-    private DriftPostStepRunner BuildRunner(DriftReportStore driftStore, PipelineExecutionLog pipelineLog) =>
+    private DriftPostStepRunner BuildRunner(DriftReportStore driftStore, PipelineExecutionLog pipelineLog,
+        CliQuotaFallbackService? quotaFallback = null, CliQuotaCapsService? quotaCaps = null,
+        QuotaService? quotaService = null) =>
         new(
             prompts: new RuntimePromptService(BuildConfig(), NullLogger<RuntimePromptService>.Instance),
             driftStore: driftStore,
@@ -76,7 +93,8 @@ public sealed class DriftPostStepRunnerTests : IDisposable
             codePattern: new CodePatternDriftAnalysisService(NullLogger<CodePatternDriftAnalysisService>.Instance),
             pipelineLog: pipelineLog,
             config: BuildConfig(),
-            logger: NullLogger<DriftPostStepRunner>.Instance);
+            logger: NullLogger<DriftPostStepRunner>.Instance,
+            quotaFallback: quotaFallback, quotaCaps: quotaCaps, quotaService: quotaService);
 
     private static ProjectSettings SettingsEnabling(string stepId, string? model, string? cliType = null)
     {
@@ -169,6 +187,52 @@ public sealed class DriftPostStepRunnerTests : IDisposable
         Assert.Equal(1234, step.InputTokens);
         Assert.Equal(567, step.OutputTokens);
         Assert.Equal(89, step.CacheReadTokens);
+    }
+
+    [Fact]
+    public async Task Direct_drift_seam_uses_the_supplied_quota_fallback()
+    {
+        var config = BuildConfig();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero));
+        var now = clock.GetUtcNow().UtcDateTime;
+        var fallback = new CliQuotaFallbackService(config, NullLogger<CliQuotaFallbackService>.Instance);
+        fallback.Set(new CliModelRouteProfile
+        {
+            CliType = CliTypes.Codex,
+            PrimaryModel = ModelIds.Gpt55,
+            FallbackCliType = CliTypes.Claude,
+            FallbackModel = ModelIds.ClaudeOpus5,
+        });
+        var cache = new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance);
+        cache.Write([new QuotaSnapshot
+        {
+            CliType = CliTypes.Codex,
+            FetchedAt = now,
+            Windows = [new QuotaWindow
+            {
+                Label = "Weekly", UsedPct = 100, ResetAt = now.AddHours(1),
+            }],
+        }]);
+        var quota = new QuotaService(NullLogger<QuotaService>.Instance, [], config, cache,
+            clock: clock);
+        var caps = new CliQuotaCapsService(NullLogger<CliQuotaCapsService>.Instance, config);
+        var runner = BuildRunner(new DriftReportStore(),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
+            fallback, caps, quota);
+        string? selectedCli = null;
+        string? selectedModel = null;
+        runner.CliRunner = (cli, model, _, _, _, _, _) =>
+        {
+            selectedCli = cli;
+            selectedModel = model;
+            return Task.FromResult(new DriftCliResult(true, "No material drift observed.", null));
+        };
+
+        await runner.RunAsync(Project, "job-fallback", _jobFolder,
+            SettingsEnabling(PipelineCatalogue.DriftAdrCodeStepId, ModelIds.Gpt55, CliTypes.Codex));
+
+        Assert.Equal(CliTypes.Claude, selectedCli);
+        Assert.Equal(ModelIds.ClaudeOpus5, selectedModel);
     }
 
     // ------------------------------------------------------------------

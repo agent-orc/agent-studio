@@ -14,6 +14,7 @@ const roles = [
   { id: 'owner', displayName: 'Owner', description: 'Break-glass role of the installation. Holds every permission.', permissions: [], bindableScopes: ['workspace'], serviceAccountBindable: false },
   { id: 'admin', displayName: 'Admin', description: 'Runs the workspace or a project: settings, operation, production deploys, secrets.', permissions: [], bindableScopes: ['workspace', 'project'], serviceAccountBindable: true },
   { id: 'developer', displayName: 'Developer', description: 'Works on cards, runs, chats, and documents; deploys outside production.', permissions: [], bindableScopes: ['workspace', 'project', 'environment'], serviceAccountBindable: true },
+  { id: 'operator-agent', displayName: 'Operator agent', description: 'Operates the board for a coding agent: reads, lane moves, runs, batch gate, review step models, and stage deploys; no secrets, production approval, access, or installation settings.', permissions: [], bindableScopes: ['workspace', 'project'], serviceAccountBindable: true, userBindable: false },
   { id: 'contributor', displayName: 'Product', description: 'Product role: writes and accepts cards in assigned projects.', permissions: [], bindableScopes: ['project'], serviceAccountBindable: false },
   { id: 'viewer', displayName: 'Viewer', description: 'Reads everything in its scope, secret values excluded.', permissions: [], bindableScopes: ['workspace', 'project', 'environment'], serviceAccountBindable: true },
   { id: 'approver', displayName: 'Approver', description: 'Approves or rejects production releases in its scope.', permissions: [], bindableScopes: ['workspace', 'project', 'environment'], serviceAccountBindable: false },
@@ -41,6 +42,7 @@ function accessState() {
       { id: 'rb_approver', principalKind: 'user', principalId: 'usr_product', role: 'approver', scope: { kind: 'environment', project: 'PROJ-001', environment: 'production' }, source: 'migration', createdAt: created },
       { id: 'rb_group', principalKind: 'group', principalId: 'grp_web', role: 'viewer', scope: { kind: 'project', project: 'PROJ-002' }, source: 'manual', createdAt: created },
       { id: 'rb_bot', principalKind: 'service-account', principalId: 'sa_deploy', role: 'developer', scope: { kind: 'environment', project: 'PROJ-001', environment: 'stage' }, source: 'manual', createdAt: created },
+      { id: 'rb_build', principalKind: 'service-account', principalId: 'sa_tok_build', role: 'operator-agent', scope: { kind: 'workspace' }, source: 'migration', createdAt: created },
     ],
     invitations: [] as Array<{ id: string; userId: string; expiresAt: string; used: boolean }>,
   };
@@ -69,8 +71,9 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
     ])
     : route.continue());
   await page.route('**/api/auth/iam', route => json(route, state));
-  // Operator agents have their own spec (operator-agents.spec.ts); this server answers without them.
-  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents') || url.pathname.startsWith('/api/auth/audit/'),
+  // Operator agents and standing grants have their own spec (operator-agents.spec.ts); this server answers without them.
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents') || url.pathname.startsWith('/api/auth/audit/')
+    || url.pathname === '/api/auth/iam/operator-catalogue' || url.pathname.startsWith('/api/auth/iam/standing-grants'),
     route => json(route, { message: 'Not found' }, 404));
   await page.route('**/api/auth/runner-enrollments', route => route.request().method() === 'POST'
     ? json(route, { enrollmentCode, name: 'build-host', scopes: [], expiresAt: '2026-10-20T09:15:00Z' })
@@ -108,7 +111,7 @@ test('owner sees users, groups, service accounts with API tokens, runners, and r
   await stubNetworkedOwner(page);
   const access = await openAccess(page);
 
-  await expect(access.getByTestId('access-summary')).toContainText('5 role bindings');
+  await expect(access.getByTestId('access-summary')).toContainText('6 role bindings');
   await expect(access.getByTestId('access-user-product.lead')).toContainText('Product · Website');
   await expect(access.getByTestId('access-user-product.lead')).toContainText('Viewer · Mobile App (group)');
   await expect(access.getByTestId('access-scope-workspace')).toContainText('Owner');
@@ -125,6 +128,26 @@ test('owner sees users, groups, service accounts with API tokens, runners, and r
     await page.screenshot({ path: join(resultDir, `access-area-1440-${theme}.png`) });
     await access.getByTestId('access-bindings').scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(resultDir, `access-area-1440-${theme}-bindings.png`) });
+  }
+});
+
+test('an operator API token shows its operator-agent role in both themes', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stubNetworkedOwner(page);
+  const access = await openAccess(page);
+
+  const token = access.getByTestId('access-service-account-sa_tok_build');
+  await expect(token).toContainText('API token');
+  await expect(access.getByTestId('access-api-token-role-sa_tok_build')).toContainText('Role: Operator agent');
+  await expect(token).toContainText('Operator agent · Workspace');
+  await expect(token).not.toContainText('Admin');
+
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await token.scrollIntoViewIfNeeded();
+    await token.screenshot({ path: join(resultDir, `access-operator-token-role-${theme}.png`) });
+    await page.screenshot({ path: join(resultDir, `access-operator-token-role-1440-${theme}.png`) });
   }
 });
 

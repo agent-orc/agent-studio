@@ -1727,7 +1727,8 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
   if (open.length > 0) {
     const primary = open[0];
     const extra = (waitsOn.openCount ?? open.length) - 1;
-    const waitReason = primary.waitingForRelease ? 'release' : 'completion';
+    const waitReason = primary.waitingForRelease ? 'release'
+      : primary.fulfillmentRule === 'delivery-integration' ? 'delivery integration' : 'completion';
     return {
       glyph: '⏳',
       label: `waits for ${waitReason}: ${primary.key}${extra > 0 ? ` +${extra}` : ''}`,
@@ -1741,9 +1742,12 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
 
   const primary = items[0];
   const extra = count - 1;
+  const releasedBy = primary.fulfillmentRule === 'integrated-delivery' ? 'delivery integrated: '
+    : primary.fulfillmentRule === 'completion' ? 'completed: '
+    : primary.fulfillmentRule === 'explicit-release' ? 'released: ' : '';
   return {
     glyph: '✓',
-    label: `${primary.key}${extra > 0 ? ` +${extra}` : ''}`,
+    label: `${releasedBy}${primary.key}${extra > 0 ? ` +${extra}` : ''}`,
     tone: 'ready',
     tooltip,
     targetKey: primary.key,
@@ -1797,13 +1801,13 @@ function dependencyTooltip(
   const lines = items.map((i) => {
     const mark = i.fulfilled ? '✓' : i.unsatisfiable ? '⚠' : '◦';
     const state = i.fulfilled
-      ? 'done'
+      ? i.fulfillmentRule === 'integrated-delivery' ? 'current delivery integrated' : 'completed'
       : i.unsatisfiable
         ? 'archived, never released - this gate can never open'
         : i.waitingForRelease
           ? 'completed, release pending'
           : i.resolved !== false
-            ? 'completion pending'
+            ? i.requiresCompletion ? 'completion required' : 'current delivery integration or completion pending'
             : 'not created yet';
     const title = i.targetTitle ? ` — ${i.targetTitle.slice(0, 40)}` : '';
     return `${mark} ${i.key} (${state})${title}`;
@@ -1813,8 +1817,8 @@ function dependencyTooltip(
     : items.some((i) => i.unsatisfiable)
       ? 'This gate can never open by itself. Release the target, or drop the releaseGate edge and re-plan this card.'
       : items.every((i) => i.fulfilled)
-        ? 'All dependencies complete — this task is workable.'
-        : 'Waiting for dependency completion or explicit release before pickup:';
+        ? 'All dependency rules are fulfilled; this task is workable.'
+        : 'Waiting for each dependency rule before pickup:';
   return `${head}\n${lines.join('\n')}`;
 }
 

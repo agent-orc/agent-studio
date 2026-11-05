@@ -29,6 +29,28 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+### Gate run ledger (AGT-3500)
+
+The instance-local gate run ledger lives under `gate-run-ledger` beside the
+batch gate store, outside the workspace repository. Each execution writes one
+create-only JSON record, retained for 90 days. `GET
+/api/projects/{projectName}/batch-gate/ledger?day=YYYY-MM-DD&type=batch-gate&page=1&pageSize=50`
+returns newest-first rows and a total count. The `type` filter accepts the
+stored run types: `batch-gate`, `batch-base`, `batch-pre-check`,
+`per-task-fallback`, `per-task-gate`, and `clean-diagnostic-rerun`.
+
+Rows carry request, slot, lease, command start and finish times, process and
+shard evidence (including class names and measured class durations), rerun cost,
+host load, and trigger. A base run names the red
+candidate or fallback that requested it. A cache hit executes no host gate and
+does not add a row. The batch gate state includes a UTC `dailySummary` with
+minutes by type, batch and fallback published cards per hour (the UTC day's
+24-hour rate), and
+median and nearest-rank p90 batch gate minutes. Its reconciliation percentage
+compares ledger durations with existing execution facts for the same day; a
+missing host total is Unknown. Historical days before the ledger was enabled
+cannot be reconstructed from card receipts.
+
 Each gate-economics row also carries the grouping figures of its window
 (AGT-3399): `batchesClosed` (distinct batches whose gate ran), `meanBatchSize`
 (largest membership per batch, averaged), and `soloGatedMerges` (merges
@@ -46,6 +68,18 @@ selection when develop moved over a path changed by the reviewed delivery,
 or when review and merge evidence cannot prove a disjoint merge. Merge and
 publication locks are keyed by project and integration branch; the aggregate
 merge-busy flag still drains stable deployment.
+The threshold batch planner selects a per-task gate when one eligible card
+reaches its deadline without a batch partner, or an operator closes below the
+minimum batch size. The plan state names that trigger. This path does not use
+title urgency, risk, or changed-path overlap. Its fallback gate does not own
+the project batch reservation. A later direct integration must hold the
+reservation through its merge gate and possible rollback. It acquires the
+reservation after the per-project merge lock, so a queued per-task integration
+does not block a formed batch. Its machine queue
+wait is capped at two minutes and its gate run at 25 minutes. The batch
+gate state reports the combined 27-minute reservation gate cap.
+When the gate host has more than one slot, per-task fallback gates leave the
+first slot available for a batch.
 The post-merge worker reads its window size and age from the project's
 look-ahead settings through the runner state endpoint.
 
@@ -282,7 +316,10 @@ owning process is gone. Recovery is scoped to
 the installation id and recorded host/root; the primary and every configured
 SSH shard host are swept. A startup sweep failure is logged and does not stop
 the periodic sweep. A different Studio installation sharing a gate host
-is left alone. The record is removed after the remote run
+is left alone. A run with `response.json` is already finished: recovery
+removes its remote directory once without sending another cancel marker and
+retires its record even if that cleanup fails. An unfinished run's record is
+removed after the remote run
 directory is removed under the worker lock and confirmed gone. A run that never
 started is removed by the same recovery path.
 
@@ -498,6 +535,18 @@ review test level, gate timeout, and the optional LLM advisor. Legacy threshold
 fields remain accepted on input. The default scope is `documentation`.
 `GET` returns the settings and hard maximum of eight. `GET .../state` returns
 the latest plan decision, pending members, recent batches and member status.
+For the threshold planner, while a project gate holds the lease, newly eligible
+cards can join a formed batch that has not started. The pilot closes a
+replacement snapshot with the largest compatible membership up to
+`maximumSize` and retires the earlier
+formed snapshot. A lone card past its deadline waits for a partner while the
+project gate is busy. If a formed batch cannot accept it because of size or
+file overlap, it takes the per-task fallback. When the lease frees, the pilot
+starts the largest formed batch.
+With `overlap: separate`, cards touching a selected member's file wait for a
+different batch. The state response includes each batch's `exclusions` with
+the rule and conflicting file paths, and `formationReason` explains why a
+new batch stayed separate from one already waiting.
 `POST .../close-now` and `POST .../members/{taskKey}/eject` request operator
 intervention. Mutations require `X-Client-Id`.
 
@@ -643,6 +692,14 @@ pending. It is reconstructed only after the base SHA moves; a red run never
 validates the build profile. An operator eject reconstructs a held batch and
 sends only the requested member to per-card fallback. Code integrations also
 keep batches waiting from the local merge until its approved SHA reaches origin.
+For a per-task code integration, the project reservation and ref mutation lease
+span merge, gate, remote base check, and push. The card receives its verified
+merge record only after origin accepts the exact gated commit. If origin moves
+before publication, the rejected lane tip is saved under
+`refs/agent-studio/integration-backup/` and the lane returns to the fetched
+origin tip. A move in files outside the delivery can replay the merge with the
+prior green verdict; an overlapping move returns the review to the batch queue.
+The queue also receives a replay that cannot publish on its second attempt.
 The persisted pending-push marker is also the restart recovery job: the integration
 push backstop processes it even while its card is in Auto Review and regardless of
 the project's automatic artifact-push strategy. A terminal push failure is recorded
@@ -692,7 +749,23 @@ If both candidate and base report failing test names with no overlap, the
 candidate enters member isolation. A confirmed deterministic candidate red
 also enters isolation when another test was quarantined as flaky. Per-task
 fallback gates admit at most one fewer concurrent request than configured gate
-slots, leaving a slot for a batch. The pilot reconciles a current passed review
+slots, leaving a slot for a batch.
+
+For look-ahead planning, `batchGate.calibration` selects `legacy` or
+`empirical`. `legacy` restores the previous risk limit and size rule. The
+empirical rule starts at target size 4 and the configured risk limit (0.35,
+0.55, or 0.75). It records each original batch's first candidate verdict,
+membership size, changed top-level areas, shared-path group, and maximum
+relative card score. A deterministic red also records the count and host
+minutes of diagnostic child suites. Infrastructure and pre-existing-base
+red verdicts do not train candidate failure rates. After at least 12 usable
+outcomes, the rule may move the target by one member and the admission limit
+by 0.05 per UTC day. It uses only previous days' outcomes and requires enough
+observations in a matching area and overlap group before using that group.
+These recorded red frequencies are batch-level outcomes; the relative card
+score is never interpreted as a red probability in empirical mode.
+
+The pilot reconciles a current passed review
 in Auto Review with a missing pending record back into the batch queue.
 Admission accepts a passed per-card model review whose required agent aspects
 were carried from a passed equivalent-delivery review. A plan with no agent
@@ -847,6 +920,51 @@ The server's `RemoteGate:HostCapacity:{runnerId}:Slots` and
 worker is selected by convention; SSH remains as the transition fallback
 until the pull path passes a soak, then a follow-up removes SSH.
 No transport-selection setting is required.
+
+Installation gate capacity can be changed in Workspace Settings, Environment,
+without restarting the API. The stored override supplies slots and processors
+per gate to new pull claims and SSH dispatches. Existing claims retain their
+grant; reducing slots waits for occupied slots to finish. Optional gate host
+cores bound slots times processors per gate unless the operator explicitly
+allows oversubscription. Each change enters the control plane audit trail.
+Without a stored override, the configuration values above remain the defaults.
+`RemoteGate:HostCores` and `RemoteGate:AllowOversubscription` supply the
+optional host-core and oversubscription defaults.
+
+### Gate capacity API contract
+
+`GET /api/system/gate-capacity` requires `workspace.operate` and returns the
+effective installation capacity, its source, and current slot use. `PUT` on the
+same route requires `workspace.administer` and the Studio Owner role. Send the
+complete JSON capacity object, for example:
+
+```json
+{"slots":4,"processorsPerGate":6,"hostCores":24,"allowOversubscription":false}
+```
+
+`slots` and `processorsPerGate` must each be integers from 1 through 64.
+`hostCores` is either `null` or an integer from 1 through 4096. When host cores
+are supplied, `slots * processorsPerGate` must not exceed `hostCores` unless
+`allowOversubscription` is `true`. Invalid capacity returns HTTP 400 with an
+`error` string. A successful read or write returns HTTP 200 in this shape:
+
+```json
+{"capacity":{"slots":4,"processorsPerGate":6,"hostCores":24,"allowOversubscription":false},"source":"stored","use":{"busy":2,"total":4}}
+```
+
+`source` is `configuration` until the first saved override, then `stored`.
+`use` counts busy and total slots on healthy pull hosts when present; otherwise
+it uses an SSH host report from the past ten minutes or this API process's
+local slot count. A recent SSH report retains the host's reported total even
+when it differs from the saved capacity. This can happen while gates with an
+older grant finish after a capacity change. A report from a newly dispatched
+gate reflects its new grant.
+The response has `Cache-Control: no-store`. Each changed value is persisted as
+an installation-wide override and recorded in the operator audit stream as
+`gate-capacity.change`, with the actor and previous and current capacity.
+Repeating an identical stored value makes no new audit entry. New gates take
+the current value without an API restart. Running gates keep their grant, and
+reducing slots waits for those gates to finish.
 
 The temporary SSH fallback uses `RemoteGate:SshHost` and an absolute
 `RemoteGate:WorkerPath` pointing to a release-pinned `OrchestratorApi.dll` on
@@ -1456,7 +1574,12 @@ comparison before Quality Studio's verdict contract can decide a review.
   Human acceptance is a quality and sight-review decision only. For a coding
   delivery, `TaskTransitionService` validates that `review-subject.json` still
   names the current Attempt and that Git already projects the delivery as
-  `integrated`. It then performs only the lane move. Acceptance never fetches,
+  `integrated`. A passed gate on the delivery's recorded verification tree
+  remains valid after the branch advances when that tree is on the published
+  first-parent line and every later publication has its own passed per-task or
+  batch gate. A rewritten tree or a later publication without gate evidence
+  refuses acceptance. The completion claim names the gate that verified the
+  delivery. Acceptance then performs only the lane move. It never fetches,
   merges, gates, resets the merge row, or enqueues `AcceptedIntegrationQueue`.
   An unintegrated delivery returns the typed `IntegrationFailed` move outcome
   (HTTP 409 for the single-card API) and remains in Human Review with its
@@ -1963,6 +2086,12 @@ move-error dialog.
   restore never wrote to (NETSDK1064, TE-52). The folder is released when the
   gate finishes or the run's slot is freed; an unreleased folder is reclaimed by
   age after 24 hours.
+- Dependency input discovery excludes the entire product cache when that cache
+  sits inside the repository workspace. Each writer owns its staging folder;
+  a complete entry becomes readable only after an atomic rename to its
+  published path. Readers inspect and copy that path under the entry's key
+  lock. A writer that finds an existing entry keeps its private run copy and
+  uses the published path for the shared cache binding.
 - Empty preparation blocks remain misses and are never published. Lookup and
   publication share one validity rule for non-empty entries: manifest and
   content exist, identity matches, recorded size equals content size, and NuGet
@@ -2892,6 +3021,15 @@ whose `task.integration` said `integrated`. Two defects met.
   one card and a lookup of the whole board agree by construction. This does not
   weaken AGT-2817: the proof is still Git ancestry of the delivery against the
   integration branch, never a lane state or a pipeline record.
+- **Verified ancestor acceptance.** Acceptance retains a delivery's passed
+  gate after later publications only when its recorded verification tree is on
+  the published branch's first-parent line. One bounded first-parent range from
+  that tree to the current tip identifies the later publication commits. Each
+  must be covered by its own passed per-task gate or by a passed batch gate
+  spanning those commits. Batch evidence cannot substitute for the original
+  tree's first-parent ancestry. A branch rewrite or an uncovered later
+  publication is refused; acceptance evidence names the gate that verified
+  the delivery.
 - **One refusal per state change.** A refused rail action is a decision, not a
   symptom to retry. `AcceptanceRailAttemptPolicy`
   (`backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs`) is a

@@ -146,6 +146,7 @@ public class TitleGenerationService
             {
                 Timeout = TimeSpan.FromSeconds(HaikuTimeoutSeconds),
                 Source = AdHocUsageSources.TitleGeneration,
+                SelectionConsumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.OneShot("title"),
             }, ct).ConfigureAwait(false);
             if (!r.Ok) return (false, null, r.Error);
             var compatible = CliOneShotCompatibility.ToClaudeResultEnvelope(r, model);

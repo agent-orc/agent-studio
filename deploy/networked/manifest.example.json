@@ -1,0 +1,389 @@
+{
+  "schema": 1,
+  "repository": "SET_LOCAL_OPERATOR_CHECKOUT",
+  "artifactDirectory": "SET_LOCAL_PRIVATE_ARTIFACT_DIRECTORY",
+  "images": {
+    "api": "SET_API_IMAGE_REPOSITORY",
+    "web": "SET_WEB_IMAGE_REPOSITORY",
+    "engine": "SET_ENGINE_IMAGE_REPOSITORY"
+  },
+  "hosts": [
+    {
+      "id": "server",
+      "role": "server",
+      "target": "SET_LOCAL_SERVER_SSH_TARGET",
+      "envFile": "SET_SERVER_ENV_FILE",
+      "composeDir": "SET_SERVER_COMPOSE_DIR",
+      "composeProject": "SET_RUNNING_SERVER_COMPOSE_PROJECT",
+      "healthUrl": "SET_SERVER_LOOPBACK_HEALTH_URL",
+      "admissionDrainCommand": [
+        "SET_TYPED_DRAIN_COMMAND"
+      ],
+      "admissionResumeCommand": [
+        "SET_TYPED_RESUME_COMMAND"
+      ],
+      "gateSshHost": "SET_SERVER_APPROVED_GATE_SSH_HOST"
+    },
+    {
+      "id": "gate",
+      "role": "gate",
+      "target": "SET_LOCAL_GATE_SSH_TARGET",
+      "gateReleaseRoot": "SET_GATE_RELEASE_DIRECTORY",
+      "gateCurrent": "SET_GATE_CURRENT_LINK"
+    },
+    {
+      "engineEnvFile": "SET_ENGINE_ENV_FILE",
+      "engineComposeDir": "SET_ENGINE_COMPOSE_DIR",
+      "engineComposeProject": "SET_RUNNING_ENGINE_COMPOSE_PROJECT",
+      "id": "engine",
+      "role": "engine",
+      "target": "SET_LOCAL_ENGINE_SSH_TARGET"
+    },
+    {
+      "id": "coding",
+      "role": "coding",
+      "target": "SET_LOCAL_CODING_SSH_TARGET",
+      "runnerReleaseRoot": "SET_CODING_RELEASE_DIRECTORY",
+      "runnerCurrent": "SET_CODING_CURRENT_LINK",
+      "runnerIncoming": "SET_CODING_INCOMING_DIRECTORY",
+      "modelProbes": [
+        {
+          "argv": [
+            "codex",
+            "exec",
+            "-m",
+            "SET_CODEX_MODEL",
+            "Reply with ACCEPTED"
+          ],
+          "contains": "ACCEPTED"
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "role": "review",
+      "target": "SET_LOCAL_REVIEW_SSH_TARGET",
+      "runnerReleaseRoot": "SET_REVIEW_RELEASE_DIRECTORY",
+      "runnerCurrent": "SET_REVIEW_CURRENT_LINK",
+      "reviewBaseImage": "SET_PINNED_REVIEW_BASE_IMAGE",
+      "reviewImageRepository": "SET_REVIEW_IMAGE_REPOSITORY",
+      "reviewEnvFile": "SET_REVIEW_ENV_FILE",
+      "reviewComposeDir": "SET_REVIEW_COMPOSE_DIR",
+      "reviewServices": [
+        "SET_REVIEW_COMPOSE_SERVICE"
+      ],
+      "reviewDrainCommand": [
+        "SET_REVIEW_DRAIN_COMMAND"
+      ],
+      "reviewIdleCommand": [
+        "SET_REVIEW_IDLE_JSON_COMMAND"
+      ]
+    }
+  ],
+  "commands": {
+    "build": {
+      "api": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "build-api",
+        "{commit}"
+      ],
+      "web": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "build-web",
+        "{commit}"
+      ],
+      "engine": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "build-engine",
+        "{commit}"
+      ],
+      "agent_host": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "build-agent-host",
+        "{commit}"
+      ],
+      "gate_worker": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "build-gate-worker",
+        "{commit}"
+      ]
+    },
+    "snapshot": {
+      "server": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "snapshot",
+        "{host_id}"
+      ],
+      "gate": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "snapshot",
+        "{host_id}"
+      ],
+      "coding": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "snapshot",
+        "{host_id}"
+      ],
+      "review": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "snapshot",
+        "{host_id}"
+      ],
+      "engine": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "snapshot",
+        "{host_id}"
+      ]
+    },
+    "preflight": [
+      "studio-op",
+      "preflight",
+      "deploy",
+      "--json"
+    ],
+    "work_state": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "work-state"
+    ],
+    "plan": [
+      "studio-op",
+      "deploy",
+      "plan",
+      "--target-version",
+      "{commit}",
+      "--json"
+    ],
+    "drain": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "drain",
+      "{host_id}"
+    ],
+    "gate_publish": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "gate-publish",
+      "{host_id}",
+      "{gate_worker_ref}",
+      "{gate_worker_sha256}",
+      "{commit}"
+    ],
+    "gate_verify": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "gate-verify",
+      "{host_id}",
+      "{gate_worker_sha256}",
+      "{commit}"
+    ],
+    "server_switch": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "server-switch",
+      "{host_id}",
+      "{api_ref}",
+      "{web_ref}",
+      "{gate_worker_path}"
+    ],
+    "server_health": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "server-health",
+      "{host_id}",
+      "{commit}"
+    ],
+    "engine_switch": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "engine-switch",
+      "{host_id}",
+      "{engine_ref}"
+    ],
+    "engine_health": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "engine-health",
+      "{host_id}",
+      "{commit}"
+    ],
+    "coding_install": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "coding-install",
+      "{host_id}",
+      "{agent_host_ref}",
+      "{agent_host_sha256}",
+      "{commit}"
+    ],
+    "coding_health": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "coding-health",
+      "{host_id}",
+      "{commit}"
+    ],
+    "model_probe": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "model-probe",
+      "{host_id}"
+    ],
+    "review_copy": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "review-copy",
+      "{host_id}",
+      "{agent_host_ref}",
+      "{agent_host_sha256}",
+      "{commit}"
+    ],
+    "review_build": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "review-build",
+      "{host_id}",
+      "{commit}",
+      "{agent_host_sha256}"
+    ],
+    "review_idle": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "review-idle",
+      "{host_id}"
+    ],
+    "review_recreate": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "review-recreate",
+      "{host_id}",
+      "{review_image_ref}",
+      "{review_plan_digest}",
+      "{agent_host_sha256}"
+    ],
+    "review_verify": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "review-verify",
+      "{host_id}",
+      "{commit}"
+    ],
+    "resume": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "resume",
+      "{host_id}"
+    ],
+    "rollback": {
+      "server": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "rollback-server",
+        "{host_id}",
+        "{previous}"
+      ],
+      "gate": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "rollback-gate",
+        "{host_id}",
+        "{previous}"
+      ],
+      "coding": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "rollback-coding",
+        "{host_id}",
+        "{previous}"
+      ],
+      "review": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "rollback-review",
+        "{host_id}",
+        "{previous}"
+      ],
+      "engine": [
+        "python3",
+        "{adapter}",
+        "--config",
+        "{manifest}",
+        "rollback-engine",
+        "{host_id}",
+        "{previous}"
+      ]
+    }
+  }
+}

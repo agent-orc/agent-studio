@@ -17,6 +17,17 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class RoutePermissionInventoryTests : IDisposable
 {
+    [Fact]
+    public void ModelSelectionIngestionIsRunnerScoped()
+    {
+        Assert.Equal(IamPermissions.RunnerService,
+            RoutePermissionCatalog.Resolve("POST", "/api/model-selection/events")?.Permission);
+        Assert.Equal(IamPermissions.WorkspaceOperate,
+            RoutePermissionCatalog.Resolve("GET", "/api/model-selection/events")?.Permission);
+        Assert.Equal(IamPermissions.WorkspaceOperate,
+            RoutePermissionCatalog.Resolve("GET", "/api/model-selection/active")?.Permission);
+    }
+
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "route-permissions-" + Guid.NewGuid().ToString("N"));
 
     public static TheoryData<string, string?> Profiles => new()
@@ -183,6 +194,8 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("GET", "/api/workspaces/{workspaceId}/projects/{projectId}/quota", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/auto-review/status", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/system/execution-infrastructure", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/system/gate-capacity", IamPermissions.WorkspaceOperate)]
+    [InlineData("PUT", "/api/system/gate-capacity", IamPermissions.WorkspaceAdminister)]
     [InlineData("GET", "/api/agent-rules", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/adhoc-usage", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/admin/config/orchestrator", IamPermissions.WorkspaceOperate)]

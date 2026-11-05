@@ -390,7 +390,14 @@
           <td>four finished deliveries<br><span class="small">refused-salvage-push-retained (fix <code>AGT-3406</code>)</span></td>
           <td>No CLI crashed. A coding and a review role on one host shared a state folder. About a second after the coding role wrote its GitHub App write tokens, the review role replaced them with read tokens, so every salvage push got 403. Terminal at discovery: Blocked with a <code>worktree-blocked</code> gate ("Remote runner retained unsecured worktree"), cards escalated although the work was complete.</td>
           <td>Both roles wrote <code>&lt;state&gt;/github-app/git-credentials</code>. A refused push escalated at once, nothing picked the retained worktree up again, and the project preflight kept its cached write-probe failure for five minutes after the credentials were repaired.</td>
-          <td>The observed terminal was Escalated. Each role now keeps its tokens in its own folder, and a second process for the same role on one state folder refuses to start. A push refused for authorization refreshes the tokens and retries on a fixed schedule (5, 15, 30, 60 seconds) before the gate is raised. The card's next round on the same host continues from the retained worktree in place. A failed preflight is probed again as soon as the host reports a new credential generation.</td>
+          <td>The observed terminal was Escalated. Each role now keeps its tokens in its own folder, and a second process for the same role on one state folder refuses to start. The card's next round on the same host continues from the retained worktree in place. A failed preflight is probed again as soon as the host reports a new credential generation. Authorization failures now fail immediately at the push boundary; only transient server failures use the retry ladder.</td>
+        </tr>
+        <tr id="case-github-transient-push-failures">
+          <td>2026-11-04</td>
+          <td><code>AGT-3497</code>, <code>AGT-3495</code>, <code>AGT-3500</code>, <code>AGT-3476</code>, <code>AGT-3474</code>, <code>AGT-3501</code><br><span class="small">transient-github-push-failures (fix <code>AGT-3504</code>)</span></td>
+          <td>No CLI crashed. During the GitHub Git incident, some salvage pushes failed with <code>Internal Server Error</code> or <code>fatal error in commit_refs</code> while other pushes succeeded. Salvage failures escalated as unsecured worktrees; failed result refs produced incomplete envelopes. Each card needed an operator round, and one needed a manual server push. Terminal at discovery: Escalated or delivery-failed.</td>
+          <td>The push boundary retried authorization refusals but treated remote server faults as final. The result ref was attempted only once after salvage.</td>
+          <td>Transient 5xx, internal server, commit_refs, and connection reset failures now retry the same salvage or result ref after 30 seconds, 2 minutes, 5 minutes, and 15 minutes under the active lease. Retry events reach the card log. An exhausted retry budget names its count; authorization, permission, push protection, and non-fast-forward failures fail immediately. A successful later push completes with the verified immutable result ref.</td>
         </tr>
         <tr>
           <td>2026-11-02</td>
@@ -3134,6 +3141,13 @@
           <td>Three Codex turns failed with "Selected model is at capacity" and <code>turn.failed</code>. The runner classified them as <code>QuotaExceeded</code>, held <code>provider-auth:codex</code> limited, and stopped claiming Codex cards. The cards ended Unknown or escalated; an operator restarted the runner and salvaged the work.</td>
           <td>The shared provider-access classifier listed "at capacity" among rate-limit signals. The typed outcome therefore selected <code>WaitForCapabilityRecovery</code>, and the provider-auth probe applied a host-wide hold. The completion planes had no distinct transient capacity terminal.</td>
           <td>The observed terminal was Unknown or Escalated. Model capacity now has its own typed outcome and three bounded same-session retries at 30 seconds, 2 minutes, and 5 minutes. Exhaustion returns the card to Ready with its salvage as the next starting point. The provider login stays available; explicit usage limits and HTTP 429 reset refusals retain their existing hold.</td>
+        </tr>
+        <tr id="case-networked-api-one-shot-login-gap">
+          <td>2026-11-01</td>
+          <td><code>AGT-3505</code><br><span class="small">networked-api-one-shot-login-gap</span></td>
+          <td>After the Linux server move, Result summaries, post-summary assessments, and tag calls launched a provider CLI in the API container. The CLI exited 1 with "Not logged in". Summary finalization tried three times and cards displayed <code>Summary pending (degraded: exitCode=1)</code>.</td>
+          <td>The control plane had no provider login by design. Its short completion paths still used local process execution instead of the accepted coding or review host.</td>
+          <td>The observed terminal was a degraded Result summary; other short completions failed. Networked one-shots now travel as bounded Task Server jobs. A host claims only with fresh <code>model-acceptance:&lt;cli&gt;:&lt;model&gt;</code> evidence. With no host, the Result reports <code>waiting for a host with &lt;capability&gt;</code> and defers without spending the summary retry budget. A later accepted host lets the retry complete.</td>
         </tr>
       </tbody>
     </table>

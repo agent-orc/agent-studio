@@ -92,6 +92,7 @@ public sealed class TagGoldenSetClassifier(CliOneShotRegistry oneShots, RuntimeP
                 Project = project,
                 Source = "tag-classification-evaluation",
                 StepId = "tag-classification-golden-evaluation",
+                SelectionConsumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.OneShot("tags"),
                 ExtraArgs = ["--tools", "", "--max-budget-usd", "1.00"],
             }, ct);
             if (!result.Ok) throw new InvalidOperationException(result.Error ?? "Tag classification evaluation failed.");

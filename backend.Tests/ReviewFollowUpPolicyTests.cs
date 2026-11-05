@@ -1,7 +1,10 @@
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Review;
 using Xunit;
 
 namespace AgentStudio.Tests;
+
+// clock-independent: the fixed date only groups explicit metric rows and is never compared with now.
 
 public class ReviewFollowUpPolicyTests
 {
@@ -54,6 +57,82 @@ public class ReviewFollowUpPolicyTests
         Assert.Equal(
             ReviewFollowUpAction.Accept,
             ReviewFollowUpPolicy.Decide([finding], concernRoundsUsed: 1, maxConcernRounds: 1).Action);
+    }
+
+    [Theory]
+    [InlineData("The format-3 replay compares the bounded hash with the full hash in ReplayReceipt.cs, causing a false conflict on retry.", "Use the same digest for retry comparison.")]
+    [InlineData("ReplayReceipt.cs compares the bounded report hash with the full hash.", "Use the same digest for retry comparison.")]
+    [InlineData("`GateRunLedger.Append` is unguarded in the gate path.", "A ledger write error must not fail the gate.")]
+    [InlineData("`RecordFirstCandidate` is unguarded.", "A validation error must not break the batch verdict.")]
+    [InlineData("The plain Dictionary in CandidateTracker.cs is used across threads without its lock.", "Synchronize the shared access.")]
+    [InlineData("ReleaseIndex.cs runs a full job scan and Git processes under the deploy lock on every request.", "Move the scan outside the lock.")]
+    [InlineData("BoardLoader.cs reads every round file per card.", "Avoid the unbounded board scan.")]
+    [InlineData("RecordFirstCandidate is unguarded in validation.", "A validation error breaks the batch verdict.")]
+    [InlineData("The required status.md deliverable is absent.", "Add the missing report.")]
+    [InlineData("Foo.cs fails formatting and throws on retry.", "Handle the timeout error.")]
+    public void Concrete_behavioral_concern_opens_one_bounded_fix_round(string summary, string missing)
+    {
+        var finding = new ReviewFollowUpFinding("code-quality", "concerns", summary,
+            EvidenceChecked: "reviewed result", Finding: missing,
+            Classification: ReviewVerdictCitationPolicy.BlockWithoutCitation);
+
+        Assert.True(ReviewFollowUpPolicy.IsActionableConcern(finding));
+        Assert.Equal(ReviewConcernActionability.Actionable, ReviewFollowUpPolicy.Classify(finding));
+        Assert.Equal(ReviewFollowUpAction.ReviewConcernRound,
+            ReviewFollowUpPolicy.Decide([finding], 0, 1).Action);
+        Assert.Equal(ReviewFollowUpAction.Accept,
+            ReviewFollowUpPolicy.Decide([finding], 1, 1).Action);
+    }
+
+    [Theory]
+    [InlineData("Foo.cs has a style concern.", "Use a shorter name.")]
+    [InlineData("Foo.cs fails the naming convention.", "Use the approved name.")]
+    [InlineData("Foo.cs duplicates a helper without a behavior change.", "Remove the duplicate helper.")]
+    [InlineData("Foo.cs repeats the same formatting on every line.", "Tidy the formatting.")]
+    [InlineData("`CalculateTotal` duplicates a helper.", "Refactor the duplication.")]
+    [InlineData("The retry path fails on a ledger error.", "Handle the exception.")]
+    [InlineData("Naming could be cleaner.", "none")]
+    public void Advisory_concern_stays_on_acceptance_path(string summary, string missing)
+    {
+        var finding = new ReviewFollowUpFinding("code-quality", "concerns", summary,
+            EvidenceChecked: "Foo.cs", Finding: missing);
+
+        Assert.False(ReviewFollowUpPolicy.IsActionableConcern(finding));
+        Assert.Equal(ReviewConcernActionability.Advisory, ReviewFollowUpPolicy.Classify(finding));
+        Assert.Equal(ReviewFollowUpAction.Accept,
+            ReviewFollowUpPolicy.Decide([finding], 0, 1).Action);
+    }
+
+    [Fact]
+    public void Deferred_batch_admission_waits_for_actionable_concern_fix()
+    {
+        var actionable = ReviewFollowUpPolicy.Decide([
+            new ReviewFollowUpFinding("code-quality", "concerns",
+                "Ledger.cs fails when Append throws.", Finding: "Guard the ledger write.")], 0, 1);
+        var advisory = ReviewFollowUpPolicy.Decide([
+            new ReviewFollowUpFinding("code-quality", "concerns",
+                "Ledger.cs could use a shorter name.")], 0, 1);
+
+        Assert.Equal(new ReviewPreAdmissionDecision(true, false),
+            ReviewPreAdmissionPolicy.Decide(true, actionable.Action));
+        Assert.Equal(new ReviewPreAdmissionDecision(false, true),
+            ReviewPreAdmissionPolicy.Decide(true, advisory.Action));
+        Assert.Equal(new ReviewPreAdmissionDecision(false, true),
+            ReviewPreAdmissionPolicy.Decide(true,
+                ReviewFollowUpPolicy.Decide(actionable.Findings, 1, 1).Action));
+    }
+
+    [Fact]
+    public void Daily_counts_keep_actionable_and_advisory_develop_totals_separate()
+    {
+        var day = new DateOnly(2026, 11, 4);
+        var daily = ReviewConcernMetrics.Summarize([
+            new(day, "CARD-1", "review-1", "code-quality", true, true),
+            new(day, "CARD-2", "review-2", "code-quality", true, false),
+            new(day, "CARD-3", "review-3", "documentation-impact", false, true),
+        ]);
+
+        Assert.Equal(new ReviewConcernDailyCount(day, 2, 1, 1, 1), Assert.Single(daily));
     }
 
     [Fact]

@@ -753,7 +753,7 @@
 }
 
 
-.studio-button {
+.studio .studio-button {
   margin: 4px 12px;
   padding: 6px 12px;
   border-radius: 4px;
@@ -1529,8 +1529,11 @@
     overflow-y: hidden;
     flex: 1;
     min-width: 0;
-    scrollbar-width: thin;
+    // Keep horizontal tab scrolling, but do not add a second visual row.
+    scrollbar-width: none;
     overscroll-behavior-x: contain;
+
+    &::-webkit-scrollbar { display: none; }
   }
 
   &__actions {

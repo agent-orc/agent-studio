@@ -14,6 +14,10 @@
   <div class="task-card__header">
     <app-copyable-task-key variant="card" [key]="job().key" [label]="issueLabel()" testId="task-card-key" />
     <span class="task-card__header-signals">
+      @if ((job().state === '4-review' || job().state === '5-human-review') && job().qualityStudioVerdict === 'block') {
+        <span class="task-card__quality-block-dot" data-testid="task-card-quality-block"
+              role="img" aria-label="Quality review block" [cacTooltip]="'Quality Studio: Block'"></span>
+      }
       @if (codeReviewGradeBadge(); as grade) {
         <app-status-indicator data-testid="task-card-grade"
                               [attr.data-grade]="grade.grade"

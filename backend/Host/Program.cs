@@ -26,6 +26,25 @@ if (args is ["--pull-build-test-gate-worker", var serverUrl])
     return;
 }
 
+// Security model SM-2: the out-of-band kill switch on the control plane host.
+if (args is [AgentStudio.Security.OperatorKillSwitchCommand.Flag, .. var killSwitchArgs])
+{
+    Environment.ExitCode = await AgentStudio.Security.OperatorKillSwitchCommand.RunAsync(killSwitchArgs, Console.Out);
+    return;
+}
+
+if (args is [AgentStudio.Security.BreakGlassWindowCommand.Flag, .. var breakGlassArgs])
+{
+    Environment.ExitCode = await AgentStudio.Security.BreakGlassWindowCommand.RunAsync(breakGlassArgs, Console.In, Console.Out);
+    return;
+}
+
+if (args is [AgentStudio.Security.BreakGlassWindowCommand.RecordFlag, .. var breakGlassRecordArgs])
+{
+    Environment.ExitCode = await AgentStudio.Security.BreakGlassWindowCommand.RecordAsync(breakGlassRecordArgs, Console.In, Console.Out);
+    return;
+}
+
 if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
 {
     Environment.ExitCode = await DurableLocalCliProcess.RunWorkerAsync(durableLocalCliSpec);
@@ -398,6 +417,8 @@ if (!underTestHost)
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
 builder.Services.AddControlPlaneAudit();
+builder.Services.AddOperatorKillSwitch();
+builder.Services.AddBreakGlassWindows();
 builder.Services.AddHostedService<AgentStudio.Diagnostics.LastSeenPersistenceService>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
 builder.Services.AddHttpClient("secret-external", client => client.Timeout = TimeSpan.FromSeconds(10))
@@ -540,11 +561,18 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.OperatorCandidateAuditRepair>
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.OperatorCandidateAuditRepair>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateCapacitySettings(
+    sp.GetRequiredService<IConfiguration>(),
+    Path.Combine(AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "settings"),
+        "gate-capacity.json"),
+    sp.GetRequiredService<AgentStudio.Security.ControlPlaneAuditLog>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateDurationHistory>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.PullGateStore(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "pull-gates"),
-    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IConfiguration>()));
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IConfiguration>(),
+    sp.GetRequiredService<AgentStudio.Pipeline.GateCapacitySettings>()));
 builder.Services.AddSingleton<ProjectCycleTimeService>();
 builder.Services.AddSingleton<ProjectVisualEvidenceService>();
 builder.Services.AddSingleton<ProjectGraphDiscoveryService>();
@@ -633,6 +661,7 @@ if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") &&
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityReleaseRangeVerdictClient>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
@@ -910,6 +939,11 @@ builder.Services.AddSingleton<AgentStudio.Cli.ClaudeOneShot>();
 builder.Services.AddSingleton<AgentStudio.Cli.CodexOneShot>();
 builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
     new AgentStudio.Cli.PromptLoggingCliOneShot(
+        !SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
+        ? new AgentStudio.Cli.RemoteCliOneShot(CliTypes.Claude,
+            sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<IConfiguration>(),
+            sp.GetService<AdHocUsageRecorder>())
+        :
         new AgentStudio.Cli.LoadAwareCliOneShot(
             sp.GetRequiredService<AgentStudio.Cli.ClaudeOneShot>(),
             sp.GetRequiredService<AgentStudio.Runner.ILoadThrottleGate>(),
@@ -917,6 +951,11 @@ builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
         sp.GetRequiredService<AgentStudio.Cli.StepPromptLog>()));
 builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
     new AgentStudio.Cli.PromptLoggingCliOneShot(
+        !SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
+        ? new AgentStudio.Cli.RemoteCliOneShot(CliTypes.Codex,
+            sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<IConfiguration>(),
+            sp.GetService<AdHocUsageRecorder>())
+        :
         new AgentStudio.Cli.LoadAwareCliOneShot(
             sp.GetRequiredService<AgentStudio.Cli.CodexOneShot>(),
             sp.GetRequiredService<AgentStudio.Runner.ILoadThrottleGate>(),
@@ -940,7 +979,9 @@ builder.Services.AddSingleton<AgentStudio.Drift.DocsMarketingDriftAnalysisServic
 builder.Services.AddSingleton<AgentStudio.Drift.SpecTaskDriftAnalysisService>();
 builder.Services.AddSingleton<AgentStudio.Drift.SoftwareArchitectureDriftAnalysisService>();
 builder.Services.AddSingleton<AgentStudio.Drift.ArchitectureElementStateStore>();
-builder.Services.AddSingleton<AgentStudio.Drift.DriftPostStepRunner>();
+builder.Services.AddSingleton<AgentStudio.Drift.DriftPostStepRunner>(sp =>
+    ActivatorUtilities.CreateInstance<AgentStudio.Drift.DriftPostStepRunner>(sp,
+        sp.GetRequiredService<AgentStudio.Cli.IModelSelectionService>()));
 builder.Services.AddSingleton<AgentStudio.Tags.TagRegistryService>();
 builder.Services.AddSingleton<AgentStudio.Tags.ITagMaintenanceWorkspace, AgentStudio.Tags.TagMaintenanceWorkspace>();
 builder.Services.AddSingleton<AgentStudio.Tags.ITagMaintenanceSynthesis, AgentStudio.Tags.TagMaintenanceSynthesis>();
@@ -1010,6 +1051,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.MergeIntoDevelopRunner>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateStore(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gates")));
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchIsolationGuard>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateLeaseService(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gate-leases")));
@@ -1045,13 +1087,20 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
+// SM-4: the operator policy step reads gate evidence to classify stage deploys and promotions (D2).
+builder.Services.AddSingleton<AgentStudio.Security.IOperatorGateEvidence, AgentStudio.Security.PostMergeGateEvidence>();
+// SM-5: approval requests of T2 operator requests notify the Owner through the operator feed and an optional push link.
+builder.Services.AddOperatorApprovals();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeIncidentService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeModeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
+builder.Services.AddSingleton<AgentStudio.Operator.BatchTriageReader>();
+builder.Services.AddSingleton<AgentStudio.Operator.DeployPreflightService>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationReservationService(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"],
         "batch-push-reservations"),
+    timeProvider: sp.GetRequiredService<TimeProvider>(),
     alertAfter: TimeSpan.FromMinutes(Math.Clamp(
         builder.Configuration.GetValue<int?>("BatchGate:PendingPushAlertMinutes") ?? 3,
         1, 24 * 60))));
@@ -1093,8 +1142,17 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateTransportSelector>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport>(services =>
     services.GetRequiredService<AgentStudio.Pipeline.GateTransportSelector>());
-builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
-    AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateRunLedger(
+    AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "gate-run-ledger"),
+    logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.GateRunLedger>>()));
+builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner>(sp =>
+    new AgentStudio.Pipeline.LedgeredBuildTestGateRunner(
+        sp.GetRequiredService<AgentStudio.Pipeline.RemoteBuildTestGateRunner>(),
+        sp.GetRequiredService<AgentStudio.Pipeline.GateRunLedger>(),
+        sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>(),
+        sp.GetRequiredService<ILogger<AgentStudio.Pipeline.LedgeredBuildTestGateRunner>>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineStepProbeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreDevelopBuildGate>();
@@ -1196,6 +1254,8 @@ builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityStudioConnectionS
 builder.Services.AddHttpClient("quality-studio-integration", client => client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityStudioRevokeOutbox>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.QualityStudio.QualityStudioRevokeOutbox>());
+builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityChangeReviewOutbox>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.QualityStudio.QualityChangeReviewOutbox>());
 builder.Services.AddSingleton<ProjectRepositoryVisibility>();
 builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
@@ -1326,6 +1386,41 @@ builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStud
 builder.Services.AddSingleton<AgentStudio.Watcher.WatcherHostedService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Watcher.WatcherHostedService>());
+// Operator agent level OP-2: the decision stream publishes facts the
+// sources below already hold as typed events, and keeps the installation's
+// one watcher lease. It moves no card; transition rules stay in
+// orchestration-decisions.
+builder.Services.AddSingleton(sp => OperatorDecisionOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton<OperatorCoordinationStore>();
+builder.Services.AddSingleton(sp => new OperatorDecisionLog(
+    OperatorDecisionOptions.Folder(sp.GetRequiredService<IConfiguration>()),
+    sp.GetRequiredService<OperatorDecisionOptions>().Retention, sp.GetRequiredService<TimeProvider>(),
+    sp.GetService<ILogger<OperatorDecisionLog>>()));
+builder.Services.AddSingleton(sp => new WatcherLeaseService(
+    OperatorDecisionOptions.Folder(sp.GetRequiredService<IConfiguration>()),
+    sp.GetRequiredService<OperatorDecisionOptions>(), sp.GetRequiredService<OperatorDecisionLog>(),
+    sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<TimeProvider>(),
+    sp.GetService<ILogger<WatcherLeaseService>>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorTaskFactSource(
+    () => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live,
+    task => sp.GetRequiredService<TaskRunnerService>().GetQuotaFallbackForJob(task.Id, task.ProjectName)
+        ?? task.QuotaFallback));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorWatcherCaseFactSource(
+    sp.GetRequiredService<AgentStudio.Watcher.WatcherCaseStore>(), sp.GetRequiredService<IConfiguration>()["TaskRepository"]));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBatchGateFactSource(
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPendingPushFactSource(
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchIntegrationReservationService>(),
+    // The card key comes from the published board, like the task facts
+    // above, so a sweep never refreshes the task index.
+    jobId => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
+        && TaskScannerService.FindMatches(live, jobId, null) is [var task, ..]
+        ? OperatorDecisionFacts.CardKey(task) : null));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
+    sp.GetRequiredService<ProviderLimitRegistry>()));
+builder.Services.AddSingleton<OperatorDecisionPublisher>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());
 // AGT-3207: the AI Operator acts on the stall events (A0/A1), proposes A2
 // actions and never takes A3 ones; receipts, follow-up checks, rate limits.
 builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionStore>();
@@ -1334,6 +1429,7 @@ builder.Services.AddSingleton<AgentStudio.Watcher.IHostAdmissionControl, AgentSt
 builder.Services.AddHttpClient(AgentStudio.Watcher.OperationsServerRestartControl.HttpClientName,
     client => client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddSingleton<AgentStudio.Watcher.IServiceRestartControl, AgentStudio.Watcher.OperationsServerRestartControl>();
+builder.Services.AddSingleton<AgentStudio.Security.HostCertificateAuthority>();
 builder.Services.AddSingleton<AgentStudio.Watcher.IServiceWorkload, AgentStudio.Watcher.ServiceWorkloadReader>();
 builder.Services.AddSingleton<AgentStudio.Watcher.IProviderRouteControl, AgentStudio.Watcher.ReviewProviderRouteControl>();
 builder.Services.AddSingleton<AgentStudio.Watcher.IBatchGateControl, AgentStudio.Watcher.BatchGateInterventionControl>();
@@ -1440,6 +1536,7 @@ builder.Services.AddSingleton<IQuotaProbe, CodexQuotaProbe>();
 builder.Services.AddSingleton<IQuotaProbe, AntigravityQuotaProbe>();
 builder.Services.AddSingleton<QuotaCacheStore>();
 builder.Services.AddSingleton<QuotaHistoryStore>();
+builder.Services.AddSingleton<ModelSelectionLedger>();
 builder.Services.AddSingleton<CliVersionTracker>();
 builder.Services.AddSingleton<NpmGlobalInstaller>();
 builder.Services.AddSingleton<LocalCliRepairService>();
@@ -1469,7 +1566,19 @@ builder.Services.AddSingleton<CliFallbackPreferenceService>();
 builder.Services.AddSingleton<ModelSelectionEffectiveService>();
 builder.Services.AddSingleton<AgentStudio.Cli.IModelEquivalenceCatalog, AgentStudio.Cli.ModelEquivalenceCatalog>();
 builder.Services.AddSingleton<CliQuotaFallbackService>();
-builder.Services.AddSingleton<AgentStudio.Cli.QuotaAdmissionService>();
+builder.Services.AddSingleton<ModelSelectionPolicyStore>();
+// MS-5: one selection service decides CLI, model and thinking level for every
+// launch path; QuotaAdmissionService is its legacy adapter until MS-6.
+builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionLedger>(sp =>
+    new AgentStudio.Cli.LoggingModelSelectionLedger(
+        sp.GetRequiredService<ILogger<AgentStudio.Cli.LoggingModelSelectionLedger>>(),
+        sp.GetRequiredService<IConfiguration>(),
+        ledger: sp.GetRequiredService<AgentStudio.Cli.ModelSelectionLedger>()));
+builder.Services.AddSingleton<AgentStudio.Cli.ModelSelectionService>();
+builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionService>(sp =>
+    sp.GetRequiredService<AgentStudio.Cli.ModelSelectionService>());
+builder.Services.AddSingleton(sp =>
+    new AgentStudio.Cli.QuotaAdmissionService(sp.GetRequiredService<AgentStudio.Cli.IModelSelectionService>()));
 builder.Services.AddSingleton<AgentStudio.Cli.QuotaAdmissionRecorder>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<TaskWatcherService>());
 if (!publicDemoExecutionProfile)
@@ -1607,6 +1716,20 @@ if (underTestHost)
 }
 
 var networkedSecurityProfile = SecurityProfiles.IsNetworked(app.Configuration);
+// Load the access state now, so a pending IAM migration (for example the
+// operator token rebinding of OP-1) and its audit entries run at start
+// rather than on the first request. An unreadable state does not stop the
+// host: the load retries on every request, and the exception handler answers
+// each of them with a 500 until the file is repaired.
+if (networkedSecurityProfile)
+{
+    try { _ = app.Services.GetRequiredService<AccessSecurityStore>().BootstrapRequired; }
+    catch (InvalidOperationException exception)
+    {
+        app.Services.GetRequiredService<ILogger<Program>>().LogError(exception,
+            "The access state could not be loaded at start; a pending IAM migration runs on the first request that reads it.");
+    }
+}
 var projectScopedSignalRProfile = networkedSecurityProfile || publicDemoExecutionProfile;
 var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");
@@ -2308,6 +2431,11 @@ transitionsForRunner.OnJobMoved += (projectName, jobId, fromState, toState) =>
 // PUB-2 automation ladder. Package targets are clamped to suggest; only the
 // website auto rung subscribes to acceptance and waits for the asynchronous
 // integration merge before dispatching the existing deploy workflow.
+// OP-2: a lane move starts the next decision sweep at once, so an escalation
+// or a human review reaches the stream before the sweep interval ends.
+var operatorDecisionsForTransitions = app.Services.GetRequiredService<OperatorDecisionPublisher>();
+transitionsForRunner.OnJobMoved += (_, _, _, _) => operatorDecisionsForTransitions.Wake();
+
 var publishActionsForTransitions = app.Services.GetRequiredService<PublishActionService>();
 transitionsForRunner.OnJobMoved += (projectName, jobId, _, toState) =>
 {

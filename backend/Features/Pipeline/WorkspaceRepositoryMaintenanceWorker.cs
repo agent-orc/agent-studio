@@ -27,6 +27,7 @@ public sealed class WorkspaceRepositoryMaintenanceWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         UntrackSecurityStoreSafely(stoppingToken);
+        UntrackOversizedJournalsSafely(stoppingToken);
         await RunSafelyAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(Math.Clamp(
             _configuration.GetValue<int?>("WorkspaceRepository:MaintenanceIntervalMinutes") ?? 60,
@@ -34,6 +35,20 @@ public sealed class WorkspaceRepositoryMaintenanceWorker : BackgroundService
             24 * 60)));
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
             await RunSafelyAsync(stoppingToken).ConfigureAwait(false);
+    }
+
+    private void UntrackOversizedJournalsSafely(CancellationToken ct)
+    {
+        try
+        {
+            var result = _maintenance.UntrackOversizedReviewJournals(ct);
+            if (!result.Success)
+                _logger.LogWarning("workspace-review-journal-untrack-failed phase={Phase} error={Error}", result.Phase, result.Error);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "workspace-review-journal-untrack-failed phase=exception");
+        }
     }
 
     private void UntrackSecurityStoreSafely(CancellationToken ct)
@@ -79,6 +94,7 @@ public sealed class WorkspaceRepositoryMaintenanceService
         "*.bak",
         AgentStudio.Git.SecurityStorePathPolicy.IgnorePattern,
     };
+    internal const long LegacyFallbackUntrackBytes = 1024 * 1024;
 
     private readonly IConfiguration _configuration;
     private readonly WorkspaceArtifactCommitService _commits;
@@ -117,6 +133,9 @@ public sealed class WorkspaceRepositoryMaintenanceService
             var configured = ConfigureRepository(gitRoot, ct);
             if (!configured.Success) return configured;
         }
+
+        var journals = UntrackOversizedReviewJournals(ct);
+        if (!journals.Success) return journals;
 
         var sweep = _commits.TryCommitTrackedSweep(gitRoot);
         if (!sweep.Success)
@@ -175,6 +194,41 @@ public sealed class WorkspaceRepositoryMaintenanceService
         }
     }
 
+    /// <summary>Stage index-only removal of large legacy journals. The normal tracked
+    /// sweep records the deletion in a platform-owned commit; files remain readable
+    /// on disk until their cards are archived or migrated.</summary>
+    public WorkspaceRepositoryMaintenanceResult UntrackOversizedReviewJournals(CancellationToken ct = default)
+    {
+        var gitRoot = _commits.ResolveWorkspaceGitRoot(_configuration["TaskRepository"]);
+        if (gitRoot == null) return WorkspaceRepositoryMaintenanceResult.Ok("workspace-missing");
+        lock (WorkspaceArtifactCommitService.RepositoryGate(gitRoot))
+        {
+            var tracked = RunGit(gitRoot,
+                ["ls-files", "-z", "--", ":(glob)projects/**/logs/remote-review-settlement-*.json"], ct);
+            if (!tracked.Success)
+                return WorkspaceRepositoryMaintenanceResult.Failed("journal-inventory", tracked.Error);
+            var oversized = tracked.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+                .Where(path => WorkspaceArtifactCommitService.IsSettlementJournal(path))
+                .Select(path => (Path: path, Full: Path.GetFullPath(Path.Combine(gitRoot, path))))
+                .Where(item => File.Exists(item.Full) && new FileInfo(item.Full).Length > 5L * 1024 * 1024)
+                .ToArray();
+            if (oversized.Length == 0) return WorkspaceRepositoryMaintenanceResult.Ok("journals-bounded");
+            var bytes = oversized.Sum(item => new FileInfo(item.Full).Length);
+            foreach (var batch in oversized.Chunk(64))
+            {
+                var args = new List<string> { "rm", "-q", "--cached", "--" };
+                args.AddRange(batch.Select(item => $":(top,literal){item.Path}"));
+                var removed = RunGit(gitRoot, args, ct);
+                if (!removed.Success)
+                    return WorkspaceRepositoryMaintenanceResult.Failed("journal-untrack", removed.Error);
+            }
+            _logger.LogWarning("workspace-review-journals-untracked repo={Repo} files={Files} bytes={Bytes} "
+                + "historyBytesStillReachable={Bytes} repackReclaimableBytes=0; tracked sweep will commit index removals",
+                gitRoot, oversized.Length, bytes, bytes);
+            return WorkspaceRepositoryMaintenanceResult.Ok("journals-untracked");
+        }
+    }
+
     private WorkspaceRepositoryMaintenanceResult BootstrapPackWhenNeeded(string gitRoot, CancellationToken ct)
     {
         var inventory = RunGit(gitRoot, ["count-objects", "-v"], ct);
@@ -222,9 +276,34 @@ public sealed class WorkspaceRepositoryMaintenanceService
 
         var untrack = RunGit(gitRoot,
             ["rm", "-r", "--cached", "--ignore-unmatch", "--", "logs/bus", ".metadata/attempt-authority*"], ct);
-        return untrack.Success
-            ? WorkspaceRepositoryMaintenanceResult.Ok("configured")
-            : WorkspaceRepositoryMaintenanceResult.Failed("runtime-untrack", untrack.Error);
+        if (!untrack.Success)
+            return WorkspaceRepositoryMaintenanceResult.Failed("runtime-untrack", untrack.Error);
+
+        // Remove only legacy large records. New compact evidence stays tracked.
+        // The following tracked sweep makes the index removal a normal workspace commit.
+        var trackedFallbacks = RunGit(gitRoot,
+            ["ls-files", "-z", "--", "projects/**/logs/batch-fallback-*.json*"], ct);
+        if (!trackedFallbacks.Success)
+            return WorkspaceRepositoryMaintenanceResult.Failed("fallback-inventory", trackedFallbacks.Error);
+        var oldFiles = trackedFallbacks.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Where(path => File.Exists(Path.Combine(gitRoot, path))
+                && new FileInfo(Path.Combine(gitRoot, path)).Length > LegacyFallbackUntrackBytes)
+            .ToArray();
+        if (oldFiles.Length > 0)
+        {
+            var ignored = EnsureExcluded(gitRoot,
+                oldFiles.Select(path => "/" + path.Replace('\\', '/')).ToArray(), ct);
+            if (!ignored.Success) return ignored;
+            var args = new List<string> { "rm", "-q", "--cached", "--ignore-unmatch", "--" };
+            args.AddRange(oldFiles.Select(path => $":(top,literal){path}"));
+            var removed = RunGit(gitRoot, args, ct);
+            if (!removed.Success)
+                return WorkspaceRepositoryMaintenanceResult.Failed("fallback-untrack", removed.Error);
+            _logger.LogInformation("workspace-fallback-large-untracked repo={Repo} files={Count} bytes={Bytes}",
+                gitRoot, oldFiles.Length,
+                oldFiles.Sum(path => new FileInfo(Path.Combine(gitRoot, path)).Length));
+        }
+        return WorkspaceRepositoryMaintenanceResult.Ok("configured");
     }
 
     private WorkspaceRepositoryMaintenanceResult EnsureExcluded(

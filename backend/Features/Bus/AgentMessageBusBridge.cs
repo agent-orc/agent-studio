@@ -749,6 +749,24 @@ public sealed class AgentMessageBusBridge
         return EmitAsync(msg, ct);
     }
 
+    public Task EmitQualityChangeReviewDeliveryExpiredAsync(string cardKey, string repositoryId,
+        string key, CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "error",
+            severity: "Warn",
+            project: null,
+            jobId: cardKey,
+            topic: "quality-change-review-delivery-expired",
+            summary: TruncateSummary($"Quality Studio verdict delivery expired for {cardKey}."),
+            body: $"Repository: {repositoryId}\nVerdict key: {key}\nThe seven-day retry window ended.",
+            payload: new { cardKey, repositoryId, key },
+            tags: ["quality-studio", "change-review-delivery-expired"]);
+        return EmitAsync(msg, ct);
+    }
+
     /// <summary>Signals a blocked acceptance lane once per observed lane incident.</summary>
     public Task EmitAcceptanceLaneBlockedAsync(string project, string branch, string? repository,
         string deliverySha, string containment, CancellationToken ct = default)
@@ -815,6 +833,50 @@ public sealed class AgentMessageBusBridge
             summary: TruncateSummary($"Audit trail: {message}"),
             payload: new { code, message, sequence },
             tags: new[] { "control-plane-audit", $"alert:{code}" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
+    /// Tells the Owner about one use of the operator kill switch (security
+    /// model SM-2): all operator access ended, one session ended, or a drill
+    /// that passed or failed. One use is one event. Returns whether the event
+    /// was appended, so the caller can send it again later.
+    /// </summary>
+    public Task<bool> EmitOperatorKillSwitchAsync(string kind, string trigger, string summary, bool acute, object payload,
+        CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "observation",
+            severity: acute ? "High" : "Info",
+            project: null,
+            jobId: null,
+            topic: "operator_kill_switch",
+            summary: TruncateSummary(summary),
+            payload: payload,
+            tags: new[] { "operator-kill-switch", $"kind:{kind}", $"trigger:{trigger}" });
+        return TryEmitAsync(msg, ct);
+    }
+
+    /// <summary>
+    /// Emits one operator-feed notice for a new approval request of an operator
+    /// session (security model SM-5). It links to the request in Settings &gt;
+    /// Access; the decision itself needs the Owner's session and a step-up.
+    /// </summary>
+    public Task EmitOperatorApprovalRequestedAsync(string approvalId, string operation, string message, string link, CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "action",
+            severity: "High",
+            project: null,
+            topic: "operator_approval_requested",
+            summary: TruncateSummary(message),
+            payload: new { approvalId, operation, link },
+            artifacts: [new AgentArtifactRef { Kind = "link", Uri = link, Label = "Open approval request" }],
+            tags: new[] { "operator-approval", $"operation:{operation}" });
         return EmitAsync(msg, ct);
     }
 

@@ -10,7 +10,10 @@ public sealed record BatchGateState(
     string BatchId, string MembershipDigest, BatchPhase Phase,
     string? CandidateSha, long CoordinatorFence, DateTimeOffset RecordedAtUtc,
     string? Reason = null, string? BatchRunId = null,
-    long? RefMutationFence = null);
+    long? RefMutationFence = null,
+    string? BaseMoveToSha = null, string? BaseMoveOutcome = null,
+    string? SuccessorBatchId = null,
+    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null);
 
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,
@@ -118,6 +121,16 @@ public sealed record BatchGateIsolationFinding(
     string ResultSha, string BaseSha, string Status, string EvidencePath,
     DateTimeOffset RecordedAtUtc);
 
+/// <summary>Immutable first candidate outcome for an original batch manifest.</summary>
+public sealed record BatchFirstCandidateFact(
+    string BatchId, string Project, DateTimeOffset AtUtc, int Size,
+    double MaxRisk, IReadOnlyList<string> Areas, string OverlapGroup,
+    bool Red, string Classification);
+
+/// <summary>Cost of suites used to isolate a red candidate; one fact per parent.</summary>
+public sealed record BatchIsolationCostFact(
+    string BatchId, int SuiteRuns, double HostMinutes, DateTimeOffset AtUtc);
+
 /// <summary>
 /// Durable batch authority. A closed manifest is written once before assembly;
 /// all later facts are append-only files carrying its digest. CreateNew and
@@ -130,6 +143,47 @@ public sealed partial class BatchGateStore
         WriteIndented = true,
     };
     private readonly string _root;
+
+    public void RecordFirstCandidate(BatchFirstCandidateFact fact)
+    {
+        var manifest = ReadManifest(fact.BatchId);
+        if (manifest.ParentBatchId is not null || manifest.Diagnostic
+            || manifest.Scope.Project != fact.Project || fact.Size != manifest.Members.Count
+            || fact.Size < 1 || fact.MaxRisk is < 0 or > 1)
+            throw new InvalidDataException("First candidate fact does not match its batch.");
+        var folder = Path.Combine(_root, "first-candidates");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, SafeName(fact.BatchId) + ".json");
+        if (!File.Exists(path)) WriteOnce(path, fact);
+    }
+
+    public void RecordIsolationCost(BatchIsolationCostFact fact)
+    {
+        if (fact.SuiteRuns < 0 || fact.HostMinutes < 0)
+            throw new ArgumentOutOfRangeException(nameof(fact));
+        var folder = Path.Combine(_root, "isolation-costs");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, SafeName(fact.BatchId) + ".json");
+        if (!File.Exists(path)) WriteOnce(path, fact);
+    }
+
+    public IReadOnlyList<BatchPlanObservation> ListPlanObservations(string project)
+    {
+        var folder = Path.Combine(_root, "first-candidates");
+        if (!Directory.Exists(folder)) return [];
+        return Directory.EnumerateFiles(folder, "*.json")
+            .Select(Read<BatchFirstCandidateFact>)
+            .Where(fact => string.Equals(fact.Project, project, StringComparison.Ordinal))
+            .Select(fact =>
+            {
+                var path = Path.Combine(_root, "isolation-costs", SafeName(fact.BatchId) + ".json");
+                var cost = File.Exists(path) ? Read<BatchIsolationCostFact>(path) : null;
+                return new BatchPlanObservation(fact.BatchId, fact.AtUtc, fact.Size,
+                    fact.MaxRisk, fact.Areas, fact.OverlapGroup, fact.Red,
+                    cost?.SuiteRuns ?? 0, cost?.HostMinutes ?? 0,
+                    fact.Classification);
+            }).OrderBy(fact => fact.AtUtc).ToArray();
+    }
 
     public void RecordIsolationFinding(BatchGateIsolationFinding finding)
     {
@@ -334,6 +388,18 @@ public sealed partial class BatchGateStore
                 .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
                 .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
                 .ToArray();
+
+    /// <summary>
+    /// Folders that hold a closed manifest. A manifest is written once, so a
+    /// caller that polls can read each folder's manifest once and cache it.
+    /// </summary>
+    public IReadOnlyList<string> ListManifestFolders()
+        => !Directory.Exists(_root) ? []
+            : Directory.EnumerateDirectories(_root)
+                .Where(dir => File.Exists(Path.Combine(dir, "manifest.json"))).ToArray();
+
+    public BatchGateManifest ReadManifestIn(string folder)
+        => Read<BatchGateManifest>(Path.Combine(folder, "manifest.json"));
 
     public IReadOnlyList<BatchGateRunRecord> ListRuns(string batchId)
     {

@@ -64,6 +64,10 @@ internal static class RemoteReviewReportEvidence
         if (!string.IsNullOrWhiteSpace(request.FailureClassification))
             text.AppendLine($"failureClassification: {Yaml(request.FailureClassification)}");
         text.AppendLine($"expectedResultSha: {Yaml(request.Workspace.ExpectedResultSha)}");
+        if (!string.IsNullOrWhiteSpace(request.Workspace.MergeBaseSha))
+            text.AppendLine($"mergeBaseSha: {Yaml(request.Workspace.MergeBaseSha)}");
+        if (!string.IsNullOrWhiteSpace(request.QualityStudioCodeQualityMode))
+            text.AppendLine($"qualityStudioCodeQualityMode: {Yaml(request.QualityStudioCodeQualityMode)}");
         text.AppendLine($"actualHead: {Yaml(request.Workspace.ActualHead)}");
         text.AppendLine($"reportSha256: {Yaml(reportSha256)}");
         if (!string.IsNullOrWhiteSpace(request.BriefSha256))

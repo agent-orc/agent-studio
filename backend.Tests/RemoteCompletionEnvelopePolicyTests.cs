@@ -95,4 +95,21 @@ public sealed class RemoteCompletionEnvelopePolicyTests
         Assert.Equal("delivery-failed", decision.AuthorityOutcome);
         Assert.Contains("BaseSha", decision.MissingFacts!);
     }
+
+    [Fact]
+    public void Missing_result_ref_keeps_the_exhausted_push_retry_count_in_the_delivery_reason()
+    {
+        var decision = RemoteCompletionEnvelopePolicy.Decide(
+            requiresEnvelope: true,
+            reportedOutcome: "done",
+            runAttemptKnown: true,
+            hasResultSha: true,
+            hasBaseSha: false,
+            hasImmutableResultRef: false,
+            hasArtifactManifestDigest: false,
+            reportedReason: "Completed [runner-result-ref-push-failed: transient push retries exhausted after 4 retries]");
+
+        Assert.Equal(RemoteCompletionEnvelopeDisposition.FailDelivery, decision.Disposition);
+        Assert.Contains("transient push retries exhausted after 4 retries", decision.Reason);
+    }
 }

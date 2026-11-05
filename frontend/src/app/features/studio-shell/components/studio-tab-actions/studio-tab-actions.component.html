@@ -46,6 +46,10 @@
   @if (executionLocation(); as execution) {
     <app-execution-location-badge data-testid="studio-execution-location" [execution]="execution" /><span class="studio-tab-actions-sep" aria-hidden="true"></span>
   }
+  @if (detail.info.attentionHolder; as holder) {
+    <span class="studio-tab-action" data-testid="studio-attention-holder">Attention: {{ holder }}</span>
+    <span class="studio-tab-actions-sep" aria-hidden="true"></span>
+  }
   <div class="studio-tab-action__pane-toggles"
        data-testid="studio-pane-toggles"
        role="group"

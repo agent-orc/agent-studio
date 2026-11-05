@@ -3,11 +3,20 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { oneTimeOperatorSession, operatorActivity, operatorAgents, operatorSession } from '../testing/operator-fixtures';
+import {
+  oneTimeOperatorSession,
+  operatorActivity,
+  operatorAgents,
+  operatorDrill,
+  operatorKill,
+  operatorKillSwitch,
+  operatorSession,
+} from '../testing/operator-fixtures';
 import { OPERATOR_ACTIVITY_LIMIT, OperatorAgentsService } from './operator-agents.service';
 
 const OPERATORS = '/api/auth/iam/operator-agents';
 const ACTIVITY = '/api/auth/audit/operator-activity';
+const KILL_SWITCH = '/api/auth/iam/operator-kill-switch';
 
 describe('OperatorAgentsService', () => {
   let service: OperatorAgentsService;
@@ -107,7 +116,7 @@ describe('OperatorAgentsService', () => {
     expect(service.busy()).toBe(false);
   });
 
-  it('starts, renews, and revokes sessions on the agent routes and refreshes an open activity view', async () => {
+  it('starts and renews sessions on the agent routes and refreshes an open activity view', async () => {
     const opening = service.loadActivity();
     http.expectOne(request => request.url === ACTIVITY).flush(operatorActivity());
     await opening;
@@ -131,15 +140,46 @@ describe('OperatorAgentsService', () => {
     http.expectOne(OPERATORS).flush(operatorAgents());
     http.expectOne(request => request.url === ACTIVITY).flush(operatorActivity());
     await renewing;
+  });
 
-    const revoking = service.revokeSession('opa_ops', 'ses_live');
-    const revoke = http.expectOne(`${OPERATORS}/opa_ops/sessions/ses_live`);
-    expect(revoke.request.method).toBe('DELETE');
-    revoke.flush(null, { status: 204, statusText: 'No Content' });
+  it('ends all access, kills one session, and runs a drill, reloading the agents and the switch each time', async () => {
+    const ending = service.endAllAccess('Loop on restarts');
+    const end = http.expectOne(`${KILL_SWITCH}/end-all`);
+    expect(end.request.method).toBe('POST');
+    expect(end.request.body).toEqual({ reason: 'Loop on restarts' });
+    expect(service.killing()).toBe(true);
+    end.flush(operatorKill());
     await settle();
     http.expectOne(OPERATORS).flush(operatorAgents());
-    http.expectOne(request => request.url === ACTIVITY).flush(operatorActivity());
-    await revoking;
+    http.expectOne(KILL_SWITCH).flush(operatorKillSwitch());
+    expect((await ending)?.id).toBe('kill_1');
+    expect(service.killing()).toBe(false);
+    expect(service.killSwitch()?.drills).toHaveLength(1);
+
+    const killing = service.killSession('opa_ops', 'ses_live');
+    const kill = http.expectOne(`${OPERATORS}/opa_ops/sessions/ses_live/kill`);
+    expect(kill.request.method).toBe('POST');
+    kill.flush(operatorKill({ kind: 'session', sessionIds: ['ses_live'] }));
+    await settle();
+    http.expectOne(OPERATORS).flush(operatorAgents());
+    http.expectOne(KILL_SWITCH).flush(operatorKillSwitch());
+    expect((await killing)?.kind).toBe('session');
+
+    const drilling = service.runDrill();
+    http.expectOne(`${KILL_SWITCH}/drills`).flush(operatorDrill());
+    await settle();
+    http.expectOne(OPERATORS).flush(operatorAgents());
+    http.expectOne(KILL_SWITCH).flush(operatorKillSwitch());
+    expect((await drilling)?.passed).toBe(true);
+  });
+
+  it('keeps the server message when the kill switch refuses a call', async () => {
+    const ending = service.endAllAccess('');
+    const end = http.expectOne(`${KILL_SWITCH}/end-all`);
+    expect(end.request.body).toEqual({});
+    end.flush({ message: 'Only the Owner manages operator agents and their sessions.' }, { status: 409, statusText: 'Conflict' });
+    expect(await ending).toBeNull();
+    expect(service.killSwitchError()).toBe('Only the Owner manages operator agents and their sessions.');
   });
 
   it('disables an agent and keeps the server message when a mutation fails', async () => {

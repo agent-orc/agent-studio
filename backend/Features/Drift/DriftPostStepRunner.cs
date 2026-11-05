@@ -52,6 +52,10 @@ public sealed class DriftPostStepRunner
     private readonly IConfiguration _config;
     private readonly ILogger<DriftPostStepRunner> _logger;
     private readonly CliOneShotRegistry? _oneShotRegistry;
+    private readonly IModelSelectionService? _modelSelection;
+    private readonly CliQuotaFallbackService? _quotaFallback;
+    private readonly CliQuotaCapsService? _quotaCaps;
+    private readonly QuotaService? _quotaService;
     private readonly FileGenerationIndex _fileGenerationIndex;
 
     /// <summary>
@@ -80,7 +84,8 @@ public sealed class DriftPostStepRunner
         FileGenerationIndex? fileGenerationIndex = null,
         CliQuotaFallbackService? quotaFallback = null,
         CliQuotaCapsService? quotaCaps = null,
-        QuotaService? quotaService = null)
+        QuotaService? quotaService = null,
+        IModelSelectionService? modelSelection = null)
     {
         _prompts = prompts;
         _driftStore = driftStore;
@@ -94,14 +99,15 @@ public sealed class DriftPostStepRunner
         _config = config;
         _logger = logger;
         _oneShotRegistry = oneShotRegistry;
+        _modelSelection = modelSelection;
         _fileGenerationIndex = fileGenerationIndex ?? new FileGenerationIndex(
             Microsoft.Extensions.Logging.Abstractions.NullLogger<FileGenerationIndex>.Instance,
             pipelineLog);
-        // Retain the optional parameters for test/source compatibility. The
-        // shared one-shot dispatcher now owns the single quota decision.
-        _ = quotaFallback;
-        _ = quotaCaps;
-        _ = quotaService;
+        // The shared dispatcher owns production admission. The direct test
+        // seam still applies the same fallback facts when no registry exists.
+        _quotaFallback = quotaFallback;
+        _quotaCaps = quotaCaps;
+        _quotaService = quotaService;
 
         if (_oneShotRegistry != null)
         {
@@ -262,8 +268,32 @@ public sealed class DriftPostStepRunner
             RecordStep(jobFolderPath, step.Id, model, PipelineStepStatus.Failed, null, "unknown-drift-step");
             return;
         }
+        var directSelection = _thinkingAwareCliRunner is null
+            ? _modelSelection?.Select(new ModelSelectionCall(
+                new AgentStudio.TaskServer.Contracts.SelectionRequest
+                {
+                    Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.OneShot("drift"),
+                    Project = project,
+                    TaskKey = jobId,
+                    StepId = step.Id,
+                    Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(cliType, model, thinkingLevel),
+                }, "drift-post-step"))
+            : null;
+        var directRoute = directSelection is null && _thinkingAwareCliRunner is null
+            && _quotaFallback is not null && _quotaCaps is not null
+                ? _quotaFallback.Resolve(cliType, model, thinkingLevel,
+                    candidate => _quotaCaps.Evaluate(_quotaService?.GetCachedFor(candidate ?? "")))
+                : null;
+        if (directSelection is { Admission.ShouldLaunch: false })
+        {
+            RecordStep(jobFolderPath, step.Id, model, PipelineStepStatus.Failed,
+                null, directSelection.Admission.Reason);
+            return;
+        }
         var cli = _thinkingAwareCliRunner is null
-            ? await CliRunner(cliType, model, prompt, project, jobId, PerDimensionTimeout, ct).ConfigureAwait(false)
+            ? await CliRunner(directSelection?.Admission.CliType ?? directRoute?.CliType ?? cliType,
+                directSelection?.Admission.Model ?? directRoute?.Model ?? model,
+                prompt, project, jobId, PerDimensionTimeout, ct).ConfigureAwait(false)
             : await _thinkingAwareCliRunner(
                 cliType,
                 model,

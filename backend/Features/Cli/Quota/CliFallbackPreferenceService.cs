@@ -3,12 +3,6 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
-public sealed record CliFallbackPreference(
-    string CliType,
-    bool Active,
-    DateTime? EnabledAt,
-    DateTime? ExpiresAt);
-
 /// <summary>
 /// Runtime operator preference to conserve one provider before its hard cap.
 /// The preference is persisted and lazily expires at the selected quota reset.

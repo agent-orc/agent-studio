@@ -1,11 +1,47 @@
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentRunner.Tests;
 
 public sealed class RunnerModelAcceptanceProbeTests
 {
+    [Fact]
+    public async Task Capacity_marks_only_the_selected_model_until_its_retry_window()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 15, 37, 0, TimeSpan.Zero));
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((_, _, _) => Task.FromResult(new ProcessResult(0, "OK", "")),
+            _ => "host-a-login", clock.GetUtcNow);
+        await probe.RefreshAsync([("codex", "gpt-5.6-sol")], CancellationToken.None);
+
+        probe.RecordCapacity("codex", "gpt-6-sol");
+        Assert.Equal("unavailable", Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"])).Status);
+        Assert.Equal("ready", Assert.Single(probe.Snapshot("codex", ["gpt-5.6-sol"])).Status);
+        clock.Advance(RunnerModelAcceptanceProbe.CapacityTtl.Add(TimeSpan.FromSeconds(1)));
+        Assert.Equal("unknown", Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"])).Status);
+        await probe.RefreshAsync([("codex", "gpt-6-sol")], CancellationToken.None);
+        Assert.Equal("ready", Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"])).Status);
+    }
+
+    [Fact]
+    public void Model_unavailable_clears_on_catalogue_refresh_but_capacity_keeps_its_timer()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 15, 37, 0, TimeSpan.Zero));
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((_, _, _) => Task.FromResult(new ProcessResult(0, "OK", "")),
+            _ => "login-a", clock.GetUtcNow);
+        probe.NoteCatalogueRefresh("codex", "catalogue-1");
+        probe.RecordRejection("codex", "gpt-6-luna");
+        probe.RecordCapacity("codex", "gpt-6-sol");
+        probe.NoteCatalogueRefresh("codex", "catalogue-2");
+
+        Assert.Equal("unknown", Assert.Single(probe.Snapshot("codex", ["gpt-6-luna"])).Status);
+        Assert.Equal("unavailable", Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"])).Status);
+    }
+
+
     [Fact]
     public async Task Both_gpt61_models_are_probed_once_and_advertised_ready_for_a_login()
     {

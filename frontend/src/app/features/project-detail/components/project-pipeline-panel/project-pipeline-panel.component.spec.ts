@@ -63,7 +63,7 @@ describe('ProjectPipelinePanelComponent (render)', () => {
       {
         id: 'aspect-code-quality', displayName: 'Code quality', kind: 'aspect', phase: 'aspect',
         runMode: 'parallel', dependsOn: ['core-run'], idempotent: true, stub: false,
-        resolvedModel: 'claude-sonnet-4.5', modelSource: 'project',
+        resolvedModel: 'claude-sonnet-4.5', modelSource: 'project', overridesWorkspace: true,
         usesModel: true, usesPrompt: true, supportsMode: true, cliType: 'claude',
         framework: 'Angular', promptTemplate: 'aspect-code-quality',
         canDisable: true, defaultEnabled: true, supportsCondition: true,
@@ -175,6 +175,8 @@ describe('ProjectPipelinePanelComponent (render)', () => {
     expect(aspectToggle?.closest('summary')).toBeTruthy();
     expect(host.querySelector('[data-testid="pipeline-step-framework-aspect-code-quality"]')?.textContent)
       .toContain('Angular');
+    expect(host.querySelector('[data-testid="pipeline-step-workspace-override-aspect-code-quality"]')?.textContent)
+      .toContain('overrides workspace');
 
     // Prompt binding cell: registry template reference + legacy inline override + Clear.
     const promptCell = host.querySelector('[data-testid="pipeline-step-prompt-aspect-requirement-fit"]');

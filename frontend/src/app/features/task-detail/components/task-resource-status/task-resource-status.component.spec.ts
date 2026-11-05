@@ -37,6 +37,7 @@ describe('TaskResourceStatusComponent', () => {
     const fixture = TestBed.createComponent(TaskResourceStatusComponent);
     fixture.detectChanges();
     TestBed.tick();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-resource-status"]')).toBeNull();
     expect(load).not.toHaveBeenCalled();
 
     layout.panesVisible.set({ prompt: true, protocol: true, git: true });

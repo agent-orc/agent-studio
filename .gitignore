@@ -18,6 +18,9 @@ tools/*
 !tools/remote-test-suite/**
 !tools/project-deployment-import/
 !tools/project-deployment-import/**
+# Whitelisted: the studio-op operator CLI (operator-agent-level OP-8).
+!tools/studio-op/
+!tools/studio-op/**
 # Whitelisted: idempotent self-heal script that start.sh runs as a hard
 # pre-flight before the backend boots. Tracked so stable picks it up via
 # update-stable.sh; everything else under tools/ stays local.

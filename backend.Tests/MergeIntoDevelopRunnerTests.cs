@@ -2992,6 +2992,40 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(TimeSpan.FromSeconds(900), gateRunner.Timeout);
     }
 
+    [Fact]
+    public async Task Code_integration_gate_caps_its_project_batch_reservation()
+    {
+        var repo = SeedRepo("develop-gate-reservation-cap");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/72cap");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        settings.SetBuildTestGateTimeoutSeconds("Fixture", 3600);
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 20, "", "verify gate passed", true, false));
+        var reservations = new BatchIntegrationReservationService();
+        var jobFolder = BeginRun(log, repo, jobId: "72cap");
+        var runner = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner),
+            batchReservations: reservations);
+
+        await runner.RunAsync("Fixture", "72cap", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(1, gateRunner.Invocations);
+        Assert.Equal(BatchIntegrationReservationService.IntegrationGateRunCap, gateRunner.Timeout);
+        Assert.Equal(BatchIntegrationReservationService.IntegrationGateQueueCap,
+            gateRunner.Request!.QueueWaitTimeout);
+        Assert.Contains("batch-reservation-cap", gateRunner.Request.TimeoutBudgetSource);
+        using var nextBatch = reservations.TryAcquire("Fixture");
+        Assert.NotNull(nextBatch);
+    }
+
     /// <summary>
     /// End-to-end against the real <see cref="BuildTestGateRunner"/>: with no
     /// explicit timeout, a resolved budget from a tight project override, and a

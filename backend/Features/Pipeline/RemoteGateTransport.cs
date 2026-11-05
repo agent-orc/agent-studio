@@ -42,6 +42,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     private readonly Action<string> _deleteDirectory;
     private readonly GateSlotUsageTracker _slotUsage;
     private readonly PullGateStore? _pullGates;
+    private readonly GateCapacitySettings? _capacity;
     private readonly GateDurationHistory _durations;
     private static readonly ConcurrentDictionary<string, byte> LiveRuns = new(StringComparer.Ordinal);
     private readonly Func<RemoteGateRunRecord, bool> _ownerIsAlive;
@@ -54,12 +55,14 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     public RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
         TimeProvider? timeProvider = null, GateSlotUsageTracker? slotUsage = null,
         OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null,
-        PullGateStore? pullGates = null, GateDurationHistory? durations = null)
+        PullGateStore? pullGates = null, GateDurationHistory? durations = null,
+        GateCapacitySettings? capacity = null)
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
             WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage,
             runRegistry: CreateDefaultRegistrySafe(timeProvider ?? TimeProvider.System, configuration, logger),
-            activity: activity, scanner: scanner, pullGates: pullGates, durations: durations)
+            activity: activity, scanner: scanner, pullGates: pullGates, durations: durations,
+            capacity: capacity)
     {
     }
 
@@ -71,12 +74,12 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     internal RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
         string section, GateSlotUsageTracker slotUsage, TimeProvider? timeProvider = null,
         OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null,
-        GateDurationHistory? durations = null)
+        GateDurationHistory? durations = null, GateCapacitySettings? capacity = null)
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
             WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage,
             runRegistry: CreateDefaultRegistrySafe(timeProvider ?? TimeProvider.System, configuration, logger),
-            activity: activity, scanner: scanner, durations: durations)
+            activity: activity, scanner: scanner, durations: durations, capacity: capacity)
     {
         _section = section;
     }
@@ -89,7 +92,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         Func<RemoteGateRunRecord, bool>? ownerIsAlive = null,
         OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null,
         string section = RemoteGateOptions.PrimarySection,
-        PullGateStore? pullGates = null, GateDurationHistory? durations = null)
+        PullGateStore? pullGates = null, GateDurationHistory? durations = null,
+        GateCapacitySettings? capacity = null)
     {
         _section = section;
         _configuration = configuration;
@@ -102,6 +106,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         _deleteDirectory = deleteDirectory;
         _slotUsage = slotUsage ?? new GateSlotUsageTracker(clock: timeProvider);
         _pullGates = pullGates;
+        _capacity = capacity;
         _durations = durations ?? GateDurationHistory.InMemory();
         _runProcess = runProcess ?? RemoteGateProcess.RunAsync;
         _ownerIsAlive = ownerIsAlive ?? IsOwnerProcessAlive;
@@ -113,7 +118,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         IReadOnlyList<string>? changedFiles, BuildProfile? profile,
         PostStepMode mode, TimeSpan timeout, CancellationToken ct)
     {
-        var options = RemoteGateOptions.Read(_configuration, _section);
+        var options = CurrentOptions();
         _slotUsage.Configure(options.GateSlots);
         var runId = Guid.NewGuid().ToString("N");
         using var dispatch = _slotUsage.TryBeginDispatch(runId)
@@ -335,6 +340,9 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         }
     }
 
+    private RemoteGateOptions CurrentOptions()
+        => RemoteGateOptions.Read(_configuration, _section, _capacity);
+
     internal void TrackLiveRun(string runId) => LiveRuns.TryAdd(_runs.ProcessInstance + ":" + runId, 0);
 
     private async Task RefreshHeartbeatAsync(RemoteGateOptions options, string cwd, string remote,
@@ -363,12 +371,36 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         {
             ct.ThrowIfCancellationRequested();
             var age = _time.GetUtcNow() - record.StartedAtUtc;
-            var options = RemoteGateOptions.Read(_configuration, _section);
+            var options = CurrentOptions();
             if (!string.Equals(options.Host, record.Host, StringComparison.Ordinal)
                 || !string.Equals(options.Root, record.Root, StringComparison.Ordinal)) continue;
             var remote = record.Root + "/" + record.RunId;
             try
             {
+                // A response is the worker's terminal fact. The caller that owned
+                // it is gone, so there is no verdict to deliver; remove this
+                // finished run without asking the worker to cancel again.
+                var finished = false;
+                await Ssh(options, Path.GetTempPath(), "if [ -f " + Quote(remote + "/response.json")
+                    + " ]; then echo REMOTE_GATE_FINISHED; fi", TimeSpan.FromSeconds(10), ct,
+                    line => finished |= line == "REMOTE_GATE_FINISHED");
+                if (finished)
+                {
+                    try
+                    {
+                        await Ssh(options, Path.GetTempPath(), "rm -rf -- " + Quote(remote),
+                            TimeSpan.FromSeconds(10), ct);
+                    }
+                    catch (Exception exception) when (exception is IOException or TimeoutException)
+                    {
+                        _logger.LogWarning(exception,
+                            "remote_gate_finished_orphan_cleanup_failed run_id={RunId} host={Host}",
+                            record.RunId, record.Host);
+                    }
+                    _runs.Remove(record.RunId);
+                    _slotUsage.Released(record.RunId);
+                    continue;
+                }
                 var cleanup = CleanupCommand(remote);
                 await Ssh(options, Path.GetTempPath(), cleanup, TimeSpan.FromSeconds(50), ct);
                 await Ssh(options, Path.GetTempPath(), "test ! -e " + Quote(remote), TimeSpan.FromSeconds(10), ct);
@@ -686,7 +718,8 @@ internal sealed record RemoteGateOptions(string Host, string WorkerPath, string 
     /// (<c>RemoteGate:ShardHosts:N</c>) names its own <c>SshHost</c> and takes
     /// every other unset value from <c>RemoteGate</c>.
     /// </summary>
-    internal static RemoteGateOptions Read(IConfiguration configuration, string section = PrimarySection)
+    internal static RemoteGateOptions Read(IConfiguration configuration, string section = PrimarySection,
+        GateCapacitySettings? capacity = null)
     {
         string? Value(string key) => configuration[$"{section}:{key}"] ?? configuration[$"{PrimarySection}:{key}"];
         // An unparsable count is out of range, so it fails closed below.
@@ -698,6 +731,12 @@ internal sealed record RemoteGateOptions(string Host, string WorkerPath, string 
         var root = (Value("Root") ?? "/var/tmp/agentstudio-remote-gates").TrimEnd('/');
         var processors = Count("ProcessorCount", 2);
         var slots = Count("GateSlots", 1);
+        if (capacity is { HasOverride: true })
+        {
+            var current = capacity.Current();
+            processors = current.ProcessorsPerGate;
+            slots = current.Slots;
+        }
         if (host is null || !Regex.IsMatch(host, "^[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,254}$")
             || host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
             || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)

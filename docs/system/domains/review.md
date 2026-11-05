@@ -15,6 +15,31 @@ retain their existing prompt layout and scheduling. The frozen prompt bytes
 version this layout for review-plan digests. Each grade report shows cache
 creation and read tokens by aspect and as a review total.
 
+If the first aspect reports neither cache creation nor cache read tokens, the
+runner logs `review-aspect-cache-unconfirmed` and runs the remaining aspects
+serially (parallelism 1) instead of in parallel, so they do not issue
+simultaneous cold cache writes.
+
+To measure the effect, open the grade report `remote-review-grade-<attempt>.md`
+in the card's job folder (also linked from the review timeline) for at least
+five Claude-aspect reviews that ran after the deploy. Its "Aspect cache usage"
+table lists `Cache creation tokens` and `Cache read tokens` per aspect and a
+`Review total` row. Compare per review:
+
+- the first aspect (`requirement-fit` in the stock order) against the three
+  later aspects, and
+- the review totals against the baseline from the review settlements of
+  2 November 2026: about 60,000 cache creation tokens per aspect run, about
+  240,000 per review, with cache reads near zero.
+
+The shared prefix works when the first aspect carries most of the review's
+cache creation tokens and each later aspect shows cache read tokens of about
+the first aspect's creation size with only a small creation count of its own
+(its aspect instructions), so the review total of creation tokens drops to
+roughly one prefix plus four small suffixes. A later aspect that again creates
+about the full prefix, or a runner log line `review-aspect-cache-unconfirmed`,
+means the cache was not shared for that review.
+
 ## Review report transport budget
 
 The review host caps embedded evidence at 8 MiB per artifact and the serialized
@@ -244,6 +269,16 @@ and Remote Review. A blocking verdict uses the review-finding route while its
 lifetime budget remains available. A real,
 actionable `concerns` verdict gets one automatic coding round by default; the
 project setting `maxReviewConcernRounds` sets the bound and `0` disables it.
+Actionable means the reviewer names a file or symbol in the delivery and a
+missing or wrong behavior. Style, naming, duplication without a behavioral gap,
+and findings with no named location remain advisory. The same classification
+applies to a block downgraded for missing review-material citation. The fix
+round uses the reviewer summary and `missing` text as quoted data. It must also
+fit the card-round and lifetime delivered-review budgets. The batch gate state
+lists cards in Ready or Progress that wait for this fix, with the review attempt,
+aspect, and round limit. `GET /api/projects/{projectName}/review-concerns/daily?days=30`
+reports daily actionable and advisory verdict counts, plus counts whose settled
+delivery integration reached `develop`.
 Set these project controls with `PUT /api/projects/{projectName}/review-follow-up`.
 The JSON body uses `maxConcernRounds` (integer, default `1`, clamped to `0..10`),
 `scopedReviewAfterFinding` (boolean, default `true`), and
@@ -1553,3 +1588,23 @@ an automatic later-review miss applies only to an earlier approval of the same
 aspect and delivered SHA. The previous finding remains in the full-review prompt.
 This affects review depth only, not the task's
 acceptance or transition decision.
+
+## Quality Studio change ranges on cards
+
+The Review Plane workspace proof supplies the reviewed merge base and immutable
+Result SHA. The task keeps one `results/quality-studio/review-<attempt>.json`
+artifact per review attempt with that range, delivery generation, run attempt,
+commit count excluding superseded commits, mode, and an optional
+`change-review-verdict.v1` document. The Remote Review grade file also records
+the merge base. This preserves an older round when the integration ref moves.
+
+`GET /api/tasks/{id}/quality-studio` projects those artifacts for the Evidence
+tab. It compares the reviewed patch with a no-ff merge's first-parent range
+using `git patch-id --stable`. A missing object leaves patch equality unknown.
+The panel and its signed hand-off range link make only read requests. The
+Review Plane supplies the document as a digest-checked report artifact named
+`change-review-verdict.v1.json`; its producer controls the off, shadow and decide
+mode. An absent artifact does not become a pass. The durable outbox sends a
+present document to Quality Studio's versioned `PUT .../change-reviews` route,
+replays the same key across restarts, and emits an operator-feed event after
+seven days without delivery.

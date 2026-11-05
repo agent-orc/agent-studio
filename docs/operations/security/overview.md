@@ -205,7 +205,10 @@ that is already allowed to edit that project's checkout.
   manage role bindings, groups, and service accounts; create and revoke named
   API tokens; create, list, and revoke runner enrollment codes; and revoke
   enrolled runners. API tokens use the operator or viewer role and an
-  explicit project list (`*` grants all projects). The creation response shows
+  explicit project list (`*` grants all projects). An operator token binds the
+  narrow `operator-agent` role (OP-1, below); Settings > Access shows that role
+  name on the token. Without `expiresAt` a token expires after 30 days; the
+  maximum stays 365 days. The creation response shows
   the secret once; subsequent lists expose metadata only: creator, expiry,
   last use, and revocation. The existing `.security/access-state.json` holds
   their hashes alongside the other access credentials. A disabled creator
@@ -215,13 +218,60 @@ that is already allowed to edit that project's checkout.
   Studio sign-in remains the frontend's auth path.
 - Scripts send an API token as `Authorization: Bearer` in the networked
   profile. The task-api reference scripts accept `TASKBOARD_URL` for the HTTPS
-  origin and `AGENT_STUDIO_API_TOKEN` for the secret. `X-Client-Id` remains
-  attribution only. API tokens cannot call access administration, versioned
+  origin and read the secret only from `~/.config/agent-studio/operator-token`
+  with owner-only permissions. They refuse a file that group or others can
+  access (`token-file-permissions`), the retired `AGENT_STUDIO_API_TOKEN`
+  variable (`token-environment-refused`, no fallback), and a token on the
+  command line (`token-argument-refused`), and redact the token from their
+  output. `X-Client-Id` remains attribution only. API tokens cannot call access administration, versioned
   Task Server, Runner service, or SignalR routes. A viewer token cannot mutate.
   API tokens are service accounts and pass the same named-permission check.
   Routes without a project address, including workspace timelines,
   expensive-jobs lists, and screenshots, require the `*` project grant. A
   `?project=` query cannot turn a workspace route into a project route.
+- `GET /api/operator/batch-triage` (operator-agent-level OP-4) is a
+  `project.read` route without a project address. Unlike the other such
+  routes it does not need the `*` grant: the middleware defers the project
+  check to the handler, as for `/api/tasks`. Operator and viewer tokens,
+  operator sessions and signed-in users may read it. The handler lists only the
+  projects the principal may read, so a project-scoped token sees its own
+  batch gate flights, members, pending pushes and queue stalls and nothing of
+  other projects. It reads only; the per-project batch gate writes keep their
+  own `project.runs.operate` check. See the
+  [operator API reference](../operator-api.md#batch-triage).
+
+The [operator log and attention routes](../operator-api.md#operator-log-and-card-attention)
+use `project.read` for log reads and `project.cards.write` for log and lease
+writes, with project scope checked by the handler. Only an Owner may append an
+installation-wide (`*`) entry. Operator API-token card writes
+require an active 10-minute attention lease and `If-Match` card revision; a
+stale revision is refused with 412. Owner card actions end the operator lease
+and record a handoff. Token-shaped text is redacted before the Task Server
+persists it. Operator sessions use T1 `operator-log.append` and
+`card.attention` grants for the two write routes. Their card writes continue
+through the SM-4 standing-grant and SM-5 Owner-approval policy.
+In the standalone profile, Studio forwards log reads and appends to the Task
+Server's `/api/v1/studio/operator-log` route with `tasks:read` and
+`tasks:write` scopes respectively.
+
+### Deploy and restart preflight (OP-6)
+
+The [operator preflight routes](../operator-api.md#deploy-and-restart-preflight)
+check all configured projects for pending integration pushes, publishing
+flights, and cards with a running commit step. A blocker returns HTTP 409 with
+a stable code. The deploy plan rechecks these facts and gives the Task Server,
+readiness, Engine, and hosts an ordered, expiring update window after drain.
+Only an installation-wide reader may see or use the result. An override is a
+T2 operation: SM-5 opens an exact-request approval for an operator session,
+the Owner decides it in Studio after step-up, and the session may redeem it
+once. Read and plan routes do not accept an override flag. No route here
+executes host updates over SSH.
+
+The Task Server rejects an Engine or Agent Host whose protocol exceeds its
+current protocol before registration or claim, and records
+`protocol.startup-refused` in the operator feed with the client and server
+versions. The Engine and Agent Host also inspect the returned server version
+and refuse startup if an older Task Server incorrectly says it is compatible.
 - A Runner never receives a human password or session cookie.
 
 #### Operator chat readiness read
@@ -247,6 +297,7 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 | Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
 | Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
 | Developer | workspace, project, environment | cards, runs, chats, documents, non-production deploys |
+| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys |
 | Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
 | Viewer | workspace, project, environment | reads, secret metadata included |
 | Approver | workspace, project, environment | `environment.production.deploy.approve` and reads |
@@ -429,10 +480,35 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   transition. Runners and the engine keep their enrollment credentials and
   Runner scopes.
 - API tokens (AGT-3186) are service accounts with one `api.` token, created
-  under `/api/auth/api-tokens` with Admin (`operator`) or Viewer bindings for
-  the requested projects. They keep the API-token limits: no
+  under `/api/auth/api-tokens` with Operator agent (`operator`) or Viewer
+  bindings for the requested projects. They keep the API-token limits: no
   installation-wide writes even with `*`, and no use once the creating user is
   disabled.
+- The `operator-agent` role (Dossier operator-agent-level, OP-1, decision
+  OA-D4 B) holds exactly the operator surface: `workspace.read`,
+  `project.read`, `project.cards.write` (create, title, lane moves and
+  acceptance), `project.runs.operate` (continue and steer rounds, batch gate
+  eject and close-now), `project.pipeline.write` (`PUT
+  /api/projects/{project}/pipeline-step`, review step models),
+  `workspace.operate` for reads such as `/api/watcher/*`, and
+  `environment.deploy` (stage releases of gate-verified commits). It holds no
+  `secrets.read`, `secrets.write`, or `secrets.resolve`, no production deploy
+  or approval, no access permission, no `workspace.settings.write` or
+  `workspace.administer`, and no `project.settings.write`. Only service
+  accounts take it. A principal whose strongest granting role is
+  `operator-agent` cannot make an installation-wide (unaddressed) write, so
+  `workspace.operate` stays read-only for it. It does not hold operator
+  authority: an operator override completion and the operator decider of a
+  decision card stay with Admin and Owner. `POST /api/runner/secrets/resolve`
+  answers 403 `secret-resolve-denied` to any service-account bearer.
+  `GET /api/quota/admission/{project}` stays a Task Server and Runner claim
+  route that no session or token reads; operator tokens read quota through
+  `/api/cli/quota` and `/api/cli/quota/model-routes`.
+  `GET /api/operator/capacity` combines cached per-CLI quota with active
+  fallback, quota-wait, and routing-pin records. It requires `project.read`,
+  filters card and pin records to readable projects, and removes raw CLI
+  samples for a caller without installation-wide `workspace.operate`. Such a
+  caller never starts a quota probe.
 - Secret routes (AGT-3222) declare `secrets.read` for metadata reads and
   `secrets.write` for put, rotate, revoke, and delete, at the workspace
   (`/api/secrets/workspace`, which needs a workspace binding), project
@@ -455,7 +531,17 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   keep their token id and secret hash, so existing `api.` secrets keep
   working. Sessions, runners, enrollments, and invitations are unchanged. A
   single-user installation migrates its owner and needs no setup; a fresh
-  bootstrap binds the first owner directly.
+  bootstrap binds the first owner directly. Version 3 (OP-1) rebinds every
+  Admin binding of an API-token service account to `operator-agent` in the
+  same scope and writes one `api-token.role-migration` entry per token to
+  `.security/iam-audit.jsonl` (token id, from and to role, bindings). Legacy
+  operator tokens from version 0 or 1 bind `operator-agent` directly and get
+  the same entry. Service accounts created in the Access area keep their
+  bindings. A networked server loads the state at start, so the migration
+  and its audit entries run before the first request; an unreadable state
+  file is logged and does not stop the start, and every request that reads it
+  answers 500 until the file is repaired. An older binary does not know the role and grants such a token
+  nothing until it is upgraded again.
 - Each user record keeps `role`, `projects`, and `productionApprovalProjects`
   as a downgrade-safe summary: only Admin is summarized as `operator` (with
   the Admin projects), Product as `contributor`, everything else as `viewer`,
@@ -465,7 +551,7 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   restore the migration backup to return to the old state. A later upgrade
   migrates again from that summary, so bindings, groups, and service accounts
   made under the rights model would be lost. Before a downgrade, copy the
-  current `.security/access-state.json` (version 2) aside; before upgrading
+  current `.security/access-state.json` (version 3) aside; before upgrading
   again, restore that copy.
 - The legacy user endpoint keeps working: `PUT /api/auth/users/{id}` renames
   or disables without touching bindings when `role`, `projects`, and
@@ -509,7 +595,7 @@ D1, D4, and D11).
   actor the handler named is kept as `reportedActor`. Queued batch moves keep
   the scope. The Owner never appears as the actor of a session's action.
 - A session token is refused (403) on every `/api/auth/*` route (access
-  administration, role bindings, which are today's grants, and the audit view
+  administration, role bindings, standing grants, and the audit view
   and verification), on the versioned Task Server plane `/api/v1/*`, and on any
   route that needs `access.*`, `workspace.administer`, or `secrets.resolve`,
   whatever its bindings say. The standalone Task Server has no operator
@@ -517,6 +603,179 @@ D1, D4, and D11).
 - The operator agent runs on the Owner's machine under its own OS user,
   without the Owner's SSH agent, keys, or credential files (D11). See the
   [operator agent setup guide](../setup/operator-agent.md).
+
+### Operator operation catalogue, tiers, and standing grants (SM-4)
+
+Every operator session request passes the policy step in
+`AccessSecurityMiddleware` (security model SM-4, decisions SM-D2 option A,
+SM-D3 option A, and SM-D7 option A). A request outside the catalogue is
+refused before any role binding is read.
+
+- The operation catalogue (`OperatorOperationCatalog`) gives each operation an
+  id, exactly one tier, and a scope kind (workspace, project, environment, or
+  host). Every read (GET, HEAD, OPTIONS, and the read-only reference-status
+  POST) is `observe` (T0). A write is catalogued only by a narrow route rule;
+  any other write is refused with `operation-not-catalogued`. The typed host
+  operations of the Operations Server are catalogued too: `host.inspect` is T0
+  and `service.restart` is T1.
+- T1 routine: `card.requeue` (a move into Backlog, Preparation, orchestrator
+  prep, or Ready, and the failed-pickup restore), `card.steer` (continue),
+  `service.restart`, `host.drain` and `host.resume`, `gate.rerun` (integration
+  retry and a pipeline step run), `stage.deploy`, and `production.promote`.
+  A stage deploy or promotion is T1 only when the commit has full gate
+  evidence: a green post-merge run on exactly that commit in which every
+  command passed (D2). Without it the same request is `gate.bypass`.
+- T2 high risk: `secrets.change`, `exposure.change`, `data.delete` (every
+  catalogued delete), `history.rewrite`, `gate.bypass` (merge, external
+  completion, a move into Human review or Completed), `keys.rotate`,
+  `host.enrollment`, `access.change`, `grant.change`, and `catalogue.change`.
+  A T2 request runs only under the Owner's approval of exactly that request
+  (SM-5, next section); without one it is refused with `approval-required`.
+  A T2 request on access administration or the Task Server plane
+  (`/api/auth/*`, `/api/v1/*`) is refused there and never becomes an approval
+  request, because no operator session may call those routes. Changing the
+  catalogue is a code change through a card, so it is T2 by construction.
+- The operator agent has no operation that pushes a protected branch (D3). A
+  change reaches `develop` or `main` as a card through the gate.
+- A T1 request is admitted only under a live standing grant of the operator
+  agent that names the operation, covers the request's scope (a workspace
+  grant covers everything, a project grant its project and environments, an
+  environment grant one project environment, a host grant one host), is inside
+  its optional daily UTC window, and has hourly rate left. Otherwise it is
+  refused with `grant-required`, `grant-outside-window`, or
+  `grant-rate-exceeded`. A refusal answers 403 with `error`, `operation`, and
+  `tier`. The role bindings still apply after the policy step.
+- A standing grant (`/api/auth/iam/standing-grants`) records the principal,
+  tier T1, operation set, scope, rate per hour, optional window, issuer, issue
+  time, expiry (default 7 days, at most 30), renewal, revocation, and reason.
+  Only an active Owner issues, renews, or revokes one in Settings → Access →
+  Standing grants. Issuing and renewing consume a fresh step-up (five minutes,
+  single use); revoking needs none. Disabling the operator agent revokes its
+  grants. The policy step reads the grant records under the store lock on
+  every request, so a grant stops admitting at its expiry and on the first
+  request after its revocation, well inside 60 seconds. The rate counts
+  admitted requests of the last hour and is persisted with the grant, so a
+  restart does not reset it.
+- The catalogue and grant routes sit under `/api/auth/iam`, so an API token,
+  a service account token, or an operator session gets 403 on all of them.
+  Request and response bodies are camelCase JSON; tiers are `"T0"`, `"T1"`,
+  and `"T2"`.
+
+  | Method and route | Permission | Body and answer |
+  |---|---|---|
+  | `GET /api/auth/iam/operator-catalogue` | `access.read` | Answers `operations` (`id`, `tier`, `scopeKind`, `title`), `defaultGrantDays` (7), `maxGrantDays` (30), `defaultRatePerHour` (10), and `maxRatePerHour` (120). |
+  | `GET /api/auth/iam/standing-grants?principalId=<opa id>` | `access.read` | Answers every grant, newest first; `principalId` is optional and narrows the list to one operator agent. |
+  | `POST /api/auth/iam/standing-grants` | `access.manage`, active Owner, fresh step-up | Takes `principalId`, `operations` (catalogued T1 ids), `scope` (`kind` of `workspace`, `project`, `environment`, or `host`, with `project`, `environment` (`stage` or `production`), or `host` as the kind needs), `ratePerHour` (1 to 120, default 10), optional `window` (`startUtc`, `endUtc` as `HH:mm`), `expiresInDays` (1 to 30, default 7), and `reason` (at most 500 characters). Answers the grant. |
+  | `POST /api/auth/iam/standing-grants/{id}/renew` | `access.manage`, active Owner, fresh step-up | Takes optional `expiresInDays` and sets the expiry that many days from now. A revoked or expired grant answers 409 `standing-grant-ended`. |
+  | `POST /api/auth/iam/standing-grants/{id}/revoke` | `access.manage`, active Owner | Takes optional `reason`. Revoking a revoked grant answers it unchanged. |
+
+  A grant answer carries `id` (`sgr_*`), `principalId`, `principalName`,
+  `tier`, `operations`, `scope`, `ratePerHour`, `window`, `issuedBy`,
+  `issuedAt`, `expiresAt`, `renewedAt`, `renewedBy`, `revokedAt`,
+  `revokedBy`, `reason`, `revokeReason`, `state` (`active`, `expired`, or
+  `revoked`), and `usesLastHour`. The step-up comes from
+  `POST /api/auth/step-up` within the five minutes before the change and is
+  used up by it. Refusals answer `error` and a message: 400
+  `grant-operation-required`, `grant-operation-invalid` (not catalogued or not
+  T1), `invalid-scope`, `grant-scope-mismatch` (for example a host operation
+  in a project scope), `invalid-rate`, `invalid-window`, `invalid-lifetime`,
+  `reason-required`, or `invalid-reason`; 403 `owner-required` or
+  `step-up-required`; 404 `operator-agent-not-found` (unknown or disabled
+  agent) or `standing-grant-not-found`.
+- Grant changes are written to the IAM audit (`standing-grant.create`,
+  `.renew`, `.revoke`). Each operator request's audit entry names the
+  operation, its tier, the admitting grant id, or the policy refusal.
+  `OperatorOperationCatalogInventoryTests` fails for a route matched by two
+  rules, a rule that matches no mapped route, or a typed operation without a
+  catalogue entry.
+
+### Operator kill switch (security model SM-2)
+
+The Owner ends operator access in one step
+([security model Dossier](../../security-model/index.html), decision D1
+option O4 with O3 as the transition path, and decision D7 option A, both as
+recommended). The kill acts on the operator's Studio identity and on its typed
+Operations Server principals; host certificates (O3) join it with SM-6. A
+session lasts at most 8 hours, and every refusal lands within 60 seconds. The
+switch only removes authority, so it asks for no step-up; resuming means
+creating a new operator agent and starting a session, which only the Owner can
+do.
+
+- **End all operator access** in Settings → Access → Kill switch
+  (`POST /api/auth/iam/operator-kill-switch/end-all`, Owner only) disables
+  every operator agent and revokes every session in one save of the access
+  state. The next request of any session is refused (`401`), and no new
+  session can be started for a disabled principal. The same step then revokes
+  the operator's Operations Server principals and cancels their queued
+  operations (running ones are asked to stop). The same save revokes every
+  live standing grant (SM-4) of those agents (`RevokedBy` is the Owner, or
+  `system:control-plane-host` for the out-of-band command, reason `operator
+  kill switch`), each with a `standing-grant.revoke` IAM audit entry, and the
+  kill record lists them in `standingGrantIds`. No future grant can be issued
+  or renewed, because a grant needs an enabled operator agent. A per-session
+  kill keeps the agent's grants. The same save also cancels every open
+  (pending or approved) approval request (SM-5) of those agents (reason
+  `operator kill switch`), each with an `operator-approval.cancel` IAM audit
+  entry, and the kill record lists them in `approvalIds`; a cancelled approval
+  never runs (`approval-cancelled`). Host certificates (SM-6) join this step
+  when that slice exists.
+- **End session** on one session row
+  (`POST /api/auth/iam/operator-agents/{id}/sessions/{sid}/kill`) refuses that
+  session at once while the agent and its other sessions keep working. It
+  cancels the open approval requests of that session only.
+- Every use writes one entry in the control plane audit chain with stream
+  `kill-switch` and its own event type: `operator-kill.all`,
+  `operator-kill.session`, or `operator-kill.drill`. The Operations Server
+  revocation that follows a kill writes `operator-kill.operations-server`
+  (`ok`, or `failed` for its first failure). Each use also posts an
+  `operator_kill_switch` event to the operator feed for the Owner; ending all
+  access is an acute event, a passed drill a quiet one.
+- **Operations Server.** A principal in the Operations Server principal file
+  belongs to an operator agent when it names it in `operatorAgentId`. Studio
+  calls `POST /api/operations/v1/principals/revoke-operators` with its own
+  control plane principal, which needs the scope `principals.revoke`; an
+  operator principal can never call it. The Operations Server adds the
+  principals and their operator agent ids to its revocation list
+  (`Operations:RevocationsFile`, default `operator-revocations.json` in its
+  data directory), replaced atomically and read on every request like the
+  principal file, which stays read-only. A principal added later for a revoked
+  operator agent is refused too. A failed call stays pending and is retried with backoff from 2 to
+  30 seconds until it succeeds; the Settings view shows it as pending.
+
+  | Setting | Meaning |
+  | --- | --- |
+  | `Security:OperatorKillSwitch:OperationsServer:Url` | Base URL of the Operations Server; HTTPS only, no redirects. |
+  | `Security:OperatorKillSwitch:OperationsServer:CredentialFile` | File with the control plane principal's bearer; read per call. |
+  | `Security:OperatorKillSwitch:DrillIntervalHours` | Scheduled drill interval (default 720, one drill per 30 days; `0` turns it off). |
+  | `Security:OperatorKillSwitch:PollSeconds` | How often the API checks the out-of-band latch and retries (default 2). |
+
+- **Out of band.** When the UI is unreachable, the command on the control
+  plane host `dotnet OrchestratorApi.dll --end-operator-access [--reason TEXT]`
+  first writes the latch `.security/operator-kill-switch.request.json`; while
+  it exists every operator session is refused. With the API stopped (the
+  command takes the API's exclusive `.security/control-plane.lock`) the
+  command applies the kill itself through the same coordinator, so the audit
+  gets the same `operator-kill.all` entry with trigger `out-of-band` and actor
+  `system:control-plane-host`; the Owner notice and any pending Operations
+  Server revocation follow when the API starts, and the API re-enforces the
+  kill on the state it loaded before removing the latch. With the API running
+  the API applies the latch within one poll interval and the command waits for
+  that. When the Operations Server is not reachable, `operations-server
+  revoke-operators <principals-file> <data-directory> [operator agent ids]` on
+  its host does the same revocation and cancellation locally.
+- **Drill.** A drill creates a test principal with one session (hidden from
+  the operator list), checks that the session is admitted, runs the same kill
+  for that principal alone, and measures the time until Studio refuses the
+  session and the Operations Server revocation returns. It passes when both
+  happen within 60 seconds and every real operator session is still live. The
+  scheduled drill runs one interval after the schedule starts and then every
+  interval; **Run drill now** runs one on request. Each result (duration,
+  Studio and Operations Server times, pass or the named failure) is kept in
+  `.security/operator-kill-switch.json` and in the `operator-kill.drill` audit
+  entry; a failed drill is an acute operator feed event. A drill does not run
+  while an out-of-band latch is pending (`operator-kill-pending`), and a drill
+  that stops before its kill step still disables its test principal, so no
+  drill session outlives a kill.
 
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,
 `runner.events`, `runner.artifacts`, and `runner.completion`. Reading the prompt
@@ -540,6 +799,211 @@ reports, `runner.events` for the Git setup reports. An empty queue answers
 1 minute. It logs the status and refusal code once for each distinct failure,
 logs the repeat count when the failure changes or the poll recovers, and goes
 back to 2 seconds after an answer.
+
+### Owner approval with step-up (SM-5)
+
+A T2 operator request becomes an approval request instead of an effect
+(security model SM-5, decision SM-D8 option A: the Owner decides in Studio
+with step-up; an optional push notification only links there).
+
+- **When it opens.** The policy step defers a T2 request until the route
+  floors and the session's role bindings admit it, so the Owner is asked only
+  about requests that could run. Without an `X-Operator-Approval` header the
+  store opens an approval request and the answer is 403
+  `approval-required` with `approvalId`, `operation`, and `tier`. A retry of
+  the same request from the same session while the request is pending
+  answers the same `approvalId`. One session holds at most 20 open (pending
+  or approved) requests; the next answers 429 `approval-queue-full`. A body
+  too large to digest in full (over 16 MB) answers 403 `approval-unbindable`.
+- **What the Owner sees.** The operation and its tier, the request line
+  (method, path, query), the parameters (the JSON body indented, with the
+  values of secret-like fields such as `value`, `token`, `password`, `key`,
+  or `credential` masked, other bodies through the credential redactor), the
+  parameter digest, the target (project and task), the session actor
+  `operator-agent:<id>/session:<sid>`, the instruction source, and the
+  agent's stated reason. The agent states the source in
+  `X-Operator-Instruction-Source` (`owner-chat`, `card`, `repository-file`,
+  `web-page`, or `log`; anything else is recorded as `unstated`) and the
+  reason in `X-Operator-Reason` (percent-encoded UTF-8, at most 500
+  characters). Every source except `owner-chat` is shown as untrusted
+  content that can propose but never authorize. The masked view is for
+  review only; the digest binds the exact bytes.
+- **Deciding.** Only an active Owner approves or rejects, in Settings →
+  Access → Approval requests. Each decision consumes a fresh step-up
+  (`POST /api/auth/step-up` within the five minutes before, single use);
+  without one the decision is refused with 403 `step-up-required`. The
+  deciding actor is the user of the authenticated Studio session. No header
+  (`X-Client-Id` included) and no body field names it; a bearer principal
+  (service account, API token, or operator session) is refused on these
+  routes even if it sends the Owner's id. The Owner has 15 minutes from the
+  request to decide; afterwards the request is `expired` and a decision
+  answers 409 `approval-expired`. A decision is final (409
+  `approval-decided`).
+- **Running it.** The agent repeats the exact request with
+  `X-Operator-Approval: <id>`. It runs only when the approval belongs to the
+  same operator agent and session, names the same operation, matches the
+  parameter digest (method, path, query, and body), is approved, unused, and
+  within 15 minutes of the decision. The store marks it used under its lock
+  before the handler runs, so a replay or a concurrent copy finds it used.
+  The role bindings still apply. Refusals answer 403 with
+  `approval-not-found` (unknown, or another session's), `approval-pending`,
+  `approval-rejected`, `approval-used`, `approval-expired`,
+  `approval-cancelled`, or `approval-digest-mismatch` (a changed card, query,
+  or body); the approval check answers before the target is resolved, so a
+  replay after the target was deleted still answers `approval-used`. The
+  response status of the admitted request is recorded against the approval
+  (`resultStatus`).
+- **Cancelling.** Revoking the session or disabling the operator agent
+  cancels its open approvals.
+- **Audit.** The IAM stream records `operator-approval.request` (session
+  actor), `.approve` and `.reject` (`human:<owner id>`), `.execute` (with the
+  answer status), and `.cancel`. Every operator request entry that concerned
+  an approval carries `approvalId` next to `policyReason` and the parameter
+  digest.
+- **Notification.** A new request emits one operator-feed event
+  (`operator_approval_requested`) with a link to
+  `#/workspace/settings/access?approval=<id>`. When
+  `OperatorApprovals:Push:Url` is set (HTTPS, or HTTP on loopback), the
+  notifier also posts `approvalId`, `title`, `message`, and `url` as JSON to
+  that endpoint, with the bearer from `OperatorApprovals:Push:TokenFile` if
+  set; `OperatorApprovals:StudioUrl` gives the link its address. The
+  notification carries no token, digest, or decision route, so receiving it
+  approves nothing. Delivery runs off the request path from a bounded queue;
+  a failed delivery is logged and the request stays in Studio.
+
+  | Method and route | Permission | Body and answer |
+  |---|---|---|
+  | `GET /api/auth/iam/operator-approvals?principalId=<opa id>` | `access.read` | Answers every approval, newest first: `id` (`apr_*`), `principalId`, `principalName`, `sessionId`, `actor`, `delegatedBy`, `operation`, `operationTitle`, `tier`, `method`, `path`, `query`, `parameters`, `parameterDigest`, `target`, `instructionSource`, `reason`, `requestedAt`, `expiresAt`, `state` (`pending`, `approved`, `rejected`, `used`, `expired`, or `cancelled`), `decidedBy`, `decidedAt`, `decisionNote`, `approvalExpiresAt`, `usedAt`, `resultStatus`, `cancelledAt`, and `cancelReason`. |
+  | `POST /api/auth/iam/operator-approvals/{id}/approve` | `access.manage`, active Owner, fresh step-up | Takes optional `note` (at most 500 characters). Answers the approval. Refusals: 403 `owner-required`, `step-up-required`, or `human-session-required`; 404 `approval-not-found`; 409 `approval-expired`, `approval-decided`, `approval-cancelled`, or `approval-used`; 400 `invalid-note`. |
+  | `POST /api/auth/iam/operator-approvals/{id}/reject` | `access.manage`, active Owner, fresh step-up | As approve. |
+
+  Settled approvals stay in the identity store for 30 days.
+  `OperatorApprovalFlowTests` cover the end-to-end flow, replay, a changed
+  parameter, another session, expiry, a forged actor header, and the push
+  link; `OperatorApprovalTests` cover the lifecycle matrix, step-up,
+  cancellation, the queue limit, and masking.
+
+### Break-glass windows (SM-7)
+
+Decision SM-D9 option A uses a sealed offline credential and a fresh second
+factor. In Settings > Access > Break-glass windows, the Owner issues a random
+credential after step-up, stores the one-time value offline, then opens a
+window by presenting it with another fresh step-up. Opening consumes that
+credential. The Owner names one to twenty live operator session IDs, a review
+project ID or short code, and a duration of one or two hours. The window is
+refused until an off-host append-only sink is configured. It is
+bounded to those sessions and expires at its recorded end even when the API
+has not yet run its close sweep. Revoking a session or using the kill switch
+still ends that session immediately. The window skips the T1 grant and T2
+approval gates for its named sessions while retaining the operation catalogue,
+the session's role bindings, and the hard denial of access administration,
+audit writes, and Task Server routes.
+Host certificates issued under a window expire no later than that window;
+new issuance stops when it ends.
+
+The control plane records `break-glass.open`, each named session's requests,
+and `break-glass.close` in the distinct `break-glass` audit stream. It also
+appends the exact hashed lines to `.security/break-glass-journal.jsonl` with
+owner-only permissions; the SM-1 forwarder sends them to the configured
+write-once sink. Opening raises an acute operator-feed alert. When the API
+is stopped, `--open-break-glass` accepts the offline credential and a current
+TOTP code from hidden terminal input, writes the opening event to the host
+journal and forwards it to the configured sink. A configured sink is required
+for that host command. `--record-break-glass` requires another current TOTP
+code to record an offline host action in both places while the window is live.
+After recovery, the sweep alerts on any offline opening,
+closes elapsed windows, and creates one deterministic review card in the named
+project's Human review lane. The card lists the window's audit entries and
+asks the reviewer to reconcile the chain with the host journal and sink. A
+retry finds the same card after a crash between card creation and saving its
+ID.
+
+`GET /api/auth/iam/break-glass/windows` lists windows. `POST .../credential`
+issues the one-time credential after step-up. `POST .../windows` opens a window
+with `credential`, `sessionIds`, `project`, and `lifetimeHours`, after another
+step-up. `POST .../windows/{id}/close` closes early and reconciles its review
+card. All routes require an active Owner; bearer principals cannot use them.
+The host command and custody steps are in the
+[operator setup guide](../setup/operator-agent.md#break-glass-custody-and-host-recovery).
+
+### Host operations and certificates (security model SM-6)
+
+SM-D1 uses option O4 for routine work and option O3 for a bounded transition.
+The supported networked Compose stack starts the Operations Server and an
+outbound local Operations Agent on the private website network. The Operations
+Server has separate service and agent principals, no browser credentials, and
+a loopback-only host port for private tunnels to other enrolled hosts. An
+existing installation needs the Operations image digests, a Studio host CA
+outside the data directory, and a certificate receipt directory before the
+new Compose stack starts; follow the
+[website update procedure](../setup/studio-website.md#first-update-that-adds-operations-server).
+The public Docker firewall covers their addresses in the full website subnet;
+the website systemd unit verifies that the subnet rule is first in
+`DOCKER-USER` before Compose starts the public edge. Studio's
+service credential is readable only by the API's dedicated Operations group
+inside its mounted secret volume; the agent credential has a separate volume.
+Studio's `POST /api/hosts/{id}/{inspect|restart|drain|resume|logs|configuration}`
+routes accept an operator session only after the SM-4 policy step. The route
+selects a typed catalogue entry and a host standing grant where T1 applies;
+the handler submits the command with the session actor to the Operations
+Server. The local agent advertises only operations whose host-owned allowlist
+is present. Requests supply names and digests, never executable paths or
+shell text.
+
+The operations are `host.inspect` (T0), `service.restart` (T1), `host.drain`
+and `host.resume` (T1), `host.logs.collect` (T0), and
+`host.configuration.apply` (T1). Drain and resume call the fixed
+`agent-host host-agent` role commands with a configured host-agent file. Log
+collection reads the last 8192 bytes of an allowlisted file. Configuration
+apply copies at most 1 MiB from a host-owned reviewed source after its SHA-256
+matches both the allowlist and the command, then atomically replaces one
+allowlisted target. Studio appends a hash-chained control plane audit entry
+before submitting each operator host command, including the actor, host,
+operation, input digest and idempotency key. The server validates each input
+and output shape. It
+stores every attempt transition in a SQLite table with update and delete
+triggers that refuse mutation. Before executing, the agent appends an
+owner-only host journal line and sends it to the server. The server accepts
+the receipt only when the dispatched central history matches the actor,
+agent, operation, and digest; a mismatch emits
+`host-journal-without-central-audit`. The result follows the existing durable
+spool and replay path.
+
+For a command outside this catalogue, an operator session with a covering
+host grant may request a user certificate at
+`POST /api/hosts/{id}/certificates`. Studio's CA private key is mounted from a
+host secret outside the API data directory. It signs only `agent-operations`
+certificates with a fixed forced command, no extensions, and a validity
+interval ending 59 minutes after issue. The forced command accepts only the
+exact commands listed in `deploy/agent-host/agent-operations-command`.
+`POST /api/hosts/{id}/certificates/{certificateId}/revoke` builds an OpenSSH
+KRL and publishes it to the Operations Server; agents that have a
+`revokedKeysFile` configured download and atomically install the newest KRL
+on each poll. Hosts configure `RevokedKeys` and `TrustedUserCAKeys`, disable
+password and standing authorized-key login for this account, and keep the
+operations account unprivileged. The [operator setup guide](../setup/operator-agent.md)
+has the migration sequence.
+
+### Operator guardrails on card rounds (AGT-3483)
+
+Two guardrails of the
+[operator-agent-level Dossier](../../operator-agent-level/index.html) are
+enforced by the server, for human sessions, API tokens and operator-agent
+sessions alike. No route was added; the existing routes changed as follows.
+
+- `POST /api/tasks/{id}/continue` starts a queued round from the card's latest
+  recorded result ref and returns it as `base`. The optional `baseRef` must be
+  one of the card's own result refs: any other value is refused with
+  `400 base-ref-not-on-card` before the card is written, so a caller cannot
+  point a run at an arbitrary branch of the repository.
+- Continue (every mode), preview feedback, the orchestrator-log steer override
+  and an operator requeue (`move`, `state`, `batch-move` into a run lane) of a
+  member of a batch under isolation answer `409 batch-isolation-active` with
+  the flight id. Batch gate eject stays allowed. The refusal is the same for
+  every principal: it protects the delivery under test, not an access level.
+
+The operator-facing description is in the
+[operator API reference](../../system/contracts/operator-api.md).
 
 ### Runner credential binding (SM-9)
 
@@ -747,6 +1211,65 @@ diagnostic endpoints are not mapped in the networked profile. Error details are
 disabled. The health response is only `ok` and exposes no version, dependency,
 workspace, or identity information.
 
+### Operator decision stream and watcher lease (operator agent level OP-2)
+
+The [operator agent level Dossier](../../operator-agent-level/index.html)
+(decision OA-D2 option B) replaces board polling with a typed decision
+stream that API tokens may read. SignalR stays closed to tokens.
+
+- `GET /api/operator/decisions?after=<cursor>&limit=<n>` returns a snapshot
+  and `GET /api/operator/decisions/stream` the same events as Server-Sent
+  Events (`id` is the cursor, `event` the type). Both declare
+  `project.read`, resolve as handler-filtered routes, and are open to human
+  sessions, API tokens, and operator agent sessions. Each reader receives only
+  events of the projects it may read. Installation-wide events (no project,
+  for example a provider limit) need an Owner, an all-projects grant, or the
+  local profile. `watcher.heartbeat` names no project data and every reader
+  receives it, because the lease is per installation.
+- `GET /api/operator/watcher/lease` reads the lease. `POST` takes it, `POST
+  .../lease/{leaseId}/heartbeat` renews it, and `DELETE .../lease/{leaseId}`
+  releases it. The writes declare `project.runs.operate` with project
+  bindings sufficing, so a viewer token or a viewer session gets 403. While
+  a lease is active, a second `POST` gets `409 watcher-active` naming the
+  holder actor, its session label, and its last heartbeat. A take-over needs
+  `takeOver: true` in the body and is written to the control plane audit
+  (`operator` stream, operation `watcher.lease.take-over`, the previous
+  holder as target, its lease id and last heartbeat, and the given reason)
+  before the lease changes; when that audit write fails, the take-over does
+  not happen. Grants and releases are audited the same way.
+- The publisher reads facts other features already decided and moves no
+  card: lanes, open decision cards, quota waits and fallbacks from the card
+  records, open watcher stall cases, red and isolating batches, the batch
+  gate's pending-push age alert, and runner provider limits. Events, the
+  published fact keys, and the lease live in `<TaskRepository>/.operator/`
+  (`decision-events.jsonl`, `decision-facts.json`, `watcher-lease.json`) and
+  hold no secret. Event reasons repeat the reason text of the underlying
+  record.
+
+### Operator CLI studio-op (operator agent level OP-8)
+
+`studio-op` ([setup](../setup/studio-op.md)) is a client of the routes above
+and adds no route or permission. It enforces the client half of the
+Dossier's guardrails in code:
+
+- The bearer comes only from `~/.config/agent-studio/operator-token` or, when
+  `studio-op.json` selects it, `operator-session`. The file must be a regular
+  file of the user with no group or other access. There is no environment
+  variable, no command-line option and no fallback between files; the retired
+  `AGENT_STUDIO_API_TOKEN`, any token-shaped environment value and any
+  token-shaped argument are refused before a request leaves. A token travels
+  only over HTTPS or to a loopback address.
+- Every line it writes passes through redaction of the loaded token, every
+  Studio-issued token shape and bearer header values, so an answer that echoes
+  a credential is not printed. Prompt, title and log text holding a
+  token-shaped value is refused instead of sent.
+- `studio-op watch` keeps a local lock file (mode 600) next to the token file
+  in addition to the server's watcher lease, and releases both on exit.
+- `studio-op accept` refuses unless the latest review passed with proven build
+  and tests, nothing blocks and no decision is open (OA-D5); the lane move then
+  still passes the server's integration check.
+- It has no Git, SSH or host execution command.
+
 ## Audit and credential handling
 
 Remote claim, event, and completion records are appended under
@@ -767,7 +1290,7 @@ and query strings are omitted from that audit. IAM changes go to
 One writer records the control plane audit trail in
 `<TaskRepository>/.security/control-plane-audit.jsonl` (D4 option A2). Each
 line carries `sequence`, `at`, `stream` (`iam`, `service-account`,
-`api-token`, `operator-agent`, `secret`, `run`), `actor`, `session`,
+`api-token`, `operator-agent`, `secret`, `run`, `kill-switch`, `operator`, `break-glass`), `actor`, `session`,
 `delegatedBy`, `operation` (route or operation), `target`, `parameterDigest`
 (`sha256:` over method, path, query, and body for bearer requests; over the
 change details for IAM changes), `outcome`, the producer's full legacy record
@@ -777,6 +1300,9 @@ reordered line breaks the chain. The writer never edits or removes a line.
 The IAM, service-account, API-token, secret, and run audits are routed
 through it; their per-stream files above stay as read projections for the
 existing readers.
+The `operator` stream holds the watcher lease records of the operator
+decision stream (`watcher.lease.grant`, `watcher.lease.take-over`,
+`watcher.lease.release`); it has no per-stream file.
 
 Forwarding: `AuditSinkForwarder` copies every entry, unchanged and in order,
 to the configured off-host append-only sink and records the acknowledged

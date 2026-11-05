@@ -1,5 +1,8 @@
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
+using AgentStudio.Runner;
+using System.Text.Json;
+using Contract = AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -334,12 +337,55 @@ public sealed class PipelineBaselineMetricsTests : IDisposable
 
     private void Journal(string attemptId, DateTimeOffset receivedAt, params string[] commands)
     {
-        var logs = Directory.CreateDirectory(Path.Combine(_root, "logs")).FullName;
-        var path = Path.Combine(logs, $"remote-review-settlement-{attemptId}.json");
-        File.WriteAllText(path,
-            $"{{\"version\":1,\"attemptId\":\"{attemptId}\",\"receivedAtUtc\":\"{receivedAt:O}\"," +
-            $"\"report\":{{\"commands\":[{string.Join(",", commands)}]}}}}");
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var evidence = commands.Select(command =>
+        {
+            var parsed = JsonSerializer.Deserialize<Contract.ReviewCommandEvidenceDto>(command, options)!;
+            return parsed with
+            {
+                Aspect = parsed.Aspect ?? "build-tests",
+                FileName = parsed.FileName ?? "dotnet",
+                Arguments = parsed.Arguments ?? [],
+                ExpectedResultSha = parsed.ExpectedResultSha ?? "expected",
+                HeadBefore = parsed.HeadBefore ?? "head",
+                TreeBefore = parsed.TreeBefore ?? "tree",
+                ExitCode = parsed.ExitCode ?? 0,
+                StdoutSha256 = parsed.StdoutSha256 ?? new string('a', 64),
+                StderrSha256 = parsed.StderrSha256 ?? new string('b', 64),
+            };
+        }).ToArray();
+        var report = new Contract.ReviewReportRequest("executor", "instance", "lease", 1, "key", "Pass", null, null,
+            new Contract.ReviewWorkspaceProofDto("repo", "expected", "actual", "tree", false, false,
+                "workspace", "namespace"),
+            new Contract.ReviewEnvironmentDto("host", "executor", "instance", "os", "arch", "runtime",
+                new Dictionary<string, string>(), new Dictionary<string, string>()),
+            evidence, [], []);
+        RemoteReviewSettlementJournal.Write(_root, new RemoteReviewSettlementEntry
+        {
+            AttemptId = attemptId,
+            TaskKey = "fixture",
+            IdempotencyKey = report.IdempotencyKey,
+            Report = report,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            ReceivedAtUtc = receivedAt.UtcDateTime,
+        });
+        var path = RemoteReviewSettlementJournal.PathFor(_root, attemptId);
         File.SetLastWriteTimeUtc(path, receivedAt.UtcDateTime);
+    }
+
+    [Fact]
+    public void Review_baseline_reader_skips_a_corrupt_settlement()
+    {
+        Journal("attempt-corrupt", Now.AddMinutes(-5), Command("verify-1", Now.AddMinutes(-10), 1));
+        var path = RemoteReviewSettlementJournal.PathFor(_root, "attempt-corrupt");
+        var changed = File.ReadAllText(path).Replace("\"outcome\": \"Pass\"",
+            "\"outcome\": \"ProductFailure\"", StringComparison.Ordinal);
+        Assert.NotEqual(File.ReadAllText(path), changed);
+        File.WriteAllText(path, changed);
+
+        Assert.Equal(RemoteReviewSettlementReadStatus.Repair,
+            RemoteReviewSettlementJournal.Read(_root, "attempt-corrupt").Status);
+        Assert.Empty(PipelineBaselineMetrics.ReadReviews(_root, Now.AddDays(-1)));
     }
 
     private static string Command(string step, DateTimeOffset started, int minutes,

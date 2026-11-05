@@ -43,7 +43,7 @@ services:
 
   api:
     image: ghcr.io/agent-orc/agent-studio-api@sha256:${STUDIO_API_DIGEST:?Set the release API image digest}
-    user: '10001:10001'
+    user: '10001:1654'
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -68,12 +68,24 @@ services:
       QUALITY_DOMAIN: ${QUALITY_DOMAIN:-quality-${STUDIO_DOMAIN}}
       # The key-encryption key of the secret store, kept outside the data directory.
       Secrets__KeyFile: /run/secrets/studio-secrets.kek
+      Operations__Url: http://operations-server:5081
+      RemoteGate__SshHost: ${STUDIO_GATE_SSH_HOST:-}
+      RemoteGate__WorkerPath: ${STUDIO_GATE_WORKER_PATH:-}
+      Operations__ServiceTokenFile: /run/operations/client/token
+      Operations__Agents__local: container-agent
+      HostCertificates__CaPrivateKeyFile: /run/host-ca/ca
+      HostCertificates__StateDirectory: /data/host-certificates
     volumes:
       - ${STUDIO_SECRETS_KEY_FILE:?Run setup.sh or set STUDIO_SECRETS_KEY_FILE}:/run/secrets/studio-secrets.kek:ro
       - ${STUDIO_DATA_DIR:?Run setup.sh}/workspace:/data/workspace
       - ${STUDIO_DATA_DIR}/projects:/data/projects
       - ${STUDIO_DATA_DIR}/home:/data/home
       - ${STUDIO_DATA_DIR}/api-tmp:/tmp
+      - operations-client-secret:/run/operations/client:ro
+      - ${STUDIO_HOST_CA_DIR:?Run setup.sh or set STUDIO_HOST_CA_DIR}:/run/host-ca:ro
+      - ${STUDIO_DATA_DIR}/host-certificates:/data/host-certificates
+    depends_on:
+      operations-bootstrap: {condition: service_completed_successfully}
     networks:
       website:
         ipv4_address: 172.30.83.4
@@ -104,6 +116,64 @@ services:
     networks:
       website:
         ipv4_address: 172.30.83.3
+
+  operations-bootstrap:
+    image: ghcr.io/agent-orc/agent-operations-server@sha256:${STUDIO_OPERATIONS_SERVER_DIGEST:?Set the operations server image digest}
+    command: [bootstrap, /run/operations/principals, /run/operations/agent, /run/operations/client]
+    network_mode: none
+    read_only: true
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - operations-principals:/run/operations/principals
+      - operations-agent-secret:/run/operations/agent
+      - operations-client-secret:/run/operations/client
+
+  operations-server:
+    image: ghcr.io/agent-orc/agent-operations-server@sha256:${STUDIO_OPERATIONS_SERVER_DIGEST:?Set the operations server image digest}
+    read_only: true
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    # Host agents reach this through a private, authenticated tunnel only.
+    ports: ['127.0.0.1:5081:5081']
+    environment:
+      Operations__DataDirectory: /var/lib/operations
+      Operations__PrincipalsFile: /run/operations/principals/principals.json
+      Operations__AllowPrivateHttp: 'true'
+    volumes:
+      - operations-data:/var/lib/operations
+      - operations-principals:/run/operations/principals:ro
+    depends_on:
+      operations-bootstrap: {condition: service_completed_successfully}
+    networks:
+      website:
+        ipv4_address: 172.30.83.6
+
+  operations-agent:
+    image: ghcr.io/agent-orc/agent-operations-agent@sha256:${STUDIO_OPERATIONS_AGENT_DIGEST:?Set the operations agent image digest}
+    read_only: true
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    environment:
+      OPERATIONS_URL: http://operations-server:5081
+      OPERATIONS_ALLOW_PRIVATE_HTTP: 'true'
+      OPERATIONS_TOKEN_FILE: /run/operations/agent/token
+      OPERATIONS_AGENT_ID: container-agent
+      OPERATIONS_SPOOL_DIRECTORY: /var/lib/operations-agent/spool
+    volumes:
+      - operations-agent-data:/var/lib/operations-agent
+      - operations-agent-secret:/run/operations/agent:ro
+    depends_on:
+      operations-bootstrap: {condition: service_completed_successfully}
+      operations-server: {condition: service_started}
+    networks:
+      website:
+        ipv4_address: 172.30.83.7
 
   edge:
     image: caddy@sha256:${STUDIO_EDGE_DIGEST:?Set the edge image digest}
@@ -150,3 +220,10 @@ networks:
     ipam:
       config:
         - subnet: 172.30.83.0/24
+
+volumes:
+  operations-principals:
+  operations-agent-secret:
+  operations-client-secret:
+  operations-data:
+  operations-agent-data:

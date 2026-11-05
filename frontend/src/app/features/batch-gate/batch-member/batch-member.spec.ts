@@ -11,6 +11,22 @@ describe('BatchMemberComponent', () => {
       .toEqual(['neutral', 'info', 'success', 'warning', 'danger', 'neutral']);
   });
 
+  it('shows a review fix wait on the card', async () => {
+    const state = signal({ ...redHalvingState, members: { ...redHalvingState.members,
+      'CARD-7': { status: 'review-fix' as const, reason: 'actionable review concern',
+        reasonDetail: 'Fix round 1 of 1 must finish before batch admission.' },
+    } });
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService, useValue: { state: () => state.asReadonly(), watch: () => vi.fn() },
+    }] });
+    const fixture = TestBed.createComponent(BatchMemberComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('taskKey', 'CARD-7');
+    await fixture.whenStable();
+    const badge = fixture.nativeElement.querySelector('[data-testid="batch-member-badge"]') as HTMLElement;
+    expect(badge.textContent).toContain('Review fix before batch');
+    expect(badge.title).toContain('before batch admission');
+  });
   it('shows a fallback badge from state membership without reading the board card', async () => {
     const state = signal(redHalvingState);
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {

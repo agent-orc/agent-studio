@@ -2,7 +2,9 @@ using AgentStudio.Cli;
 using AgentStudio.Projects;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -14,6 +16,31 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "quota-one-shot-" + Guid.NewGuid().ToString("N"));
     private readonly DateTime _now = new(2026, 9, 8, 7, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public async Task Ordinary_primary_one_shot_is_written_to_selection_ledger()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build();
+        var quota = new QuotaService(NullLogger<QuotaService>.Instance, [], configuration,
+            new QuotaCacheStore(configuration, NullLogger<QuotaCacheStore>.Instance));
+        var ledger = new RecordingSelectionLedger();
+        var selection = new ModelSelectionService(quota,
+            new CliQuotaCapsService(NullLogger<CliQuotaCapsService>.Instance, configuration),
+            new CliQuotaFallbackService(configuration, NullLogger<CliQuotaFallbackService>.Instance),
+            new CliQuotaWaitPolicyService(NullLogger<CliQuotaWaitPolicyService>.Instance, configuration),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration),
+            new FixedTimeProvider(_now), ledger: ledger);
+        var registry = new CliOneShotRegistry([new RecordingOneShot(CliTypes.Claude)],
+            modelSelection: selection);
+        var result = await registry.Require(CliTypes.Claude).RunAsync(
+            new(CliTypes.Claude, ModelIds.ClaudeOpus5, "bounded prompt")
+            { Source = "result-summary" });
+        Assert.True(result.Ok);
+        var entry = Assert.Single(ledger.Entries);
+        Assert.Equal(SelectionLedgerKinds.Selected, entry.Kind);
+        Assert.Equal(SelectionConsumers.OneShot("result-summary"), entry.Consumer);
+    }
 
     [Theory]
     [InlineData("pre-orchestrator-prep")]
@@ -36,7 +63,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
     {
         var claude = new RecordingOneShot(CliTypes.Claude);
         var codex = new RecordingOneShot(CliTypes.Codex);
-        var registry = BuildRegistry(claude, codex);
+        var registry = BuildRegistryWithRecorder(claude, codex);
         var configured = new CliOneShotRequest(
             CliTypes.Claude,
             ModelIds.ClaudeOpus5,
@@ -64,6 +91,11 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         Assert.Equal("high", dispatched.ThinkingLevel);
         Assert.Equal(CliTypes.Claude, configured.CliType);
         Assert.Equal(ModelIds.ClaudeOpus5, configured.Model);
+        var ledger = new ModelSelectionLedger(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build());
+        var selection = Assert.Single(ledger.Query(provider: CliTypes.Codex, project: "quota-test",
+            consumer: source, rule: "quota-cap", from: ModelIds.ClaudeOpus5, to: ModelIds.Gpt56Sol).Events);
+        Assert.Equal(CliTypes.Claude, selection.From?.CliType);
     }
 
     [Fact]
@@ -93,6 +125,105 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         var dispatched = Assert.Single(codex.Requests);
         Assert.Equal(ModelIds.Gpt56Sol, dispatched.Model);
         Assert.Equal("max", dispatched.ThinkingLevel);
+    }
+
+    [Fact]
+    public async Task Capped_one_shot_waits_when_equivalent_cli_has_no_implementation()
+    {
+        var claude = new RecordingOneShot(CliTypes.Claude);
+        var registry = BuildRegistry(claude);
+
+        var result = await registry.Require(CliTypes.Claude).RunAsync(new CliOneShotRequest(
+            CliTypes.Claude, ModelIds.ClaudeOpus5, "bounded prompt")
+        {
+            Project = "quota-test",
+            Source = "title-generation",
+        });
+
+        Assert.True(result.QuotaDeferred);
+        Assert.NotNull(result.QuotaAdmission);
+        Assert.False(result.QuotaAdmission.ShouldLaunch);
+        Assert.Empty(claude.Requests);
+        Assert.DoesNotContain("no one-shot implementation", result.Error ?? "", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Gemini_aspect_under_operator_switch_is_admitted_and_logged()
+    {
+        Directory.CreateDirectory(_root);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })
+            .Build();
+        var clock = new FixedTimeProvider(_now);
+        var preference = new CliFallbackPreferenceService(configuration, clock);
+        preference.Set(CliTypes.Gemini, active: true, resetAt: _now.AddHours(1));
+        var cache = new QuotaCacheStore(configuration, NullLogger<QuotaCacheStore>.Instance);
+        var quota = new QuotaService(NullLogger<QuotaService>.Instance, [], configuration, cache);
+        var caps = new CliQuotaCapsService(NullLogger<CliQuotaCapsService>.Instance, configuration);
+        var fallback = new CliQuotaFallbackService(configuration, NullLogger<CliQuotaFallbackService>.Instance);
+        var wait = new CliQuotaWaitPolicyService(NullLogger<CliQuotaWaitPolicyService>.Instance, configuration);
+        var projects = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration);
+        var ledger = new RecordingSelectionLedger();
+        var selection = new ModelSelectionService(quota, caps, fallback, wait, projects,
+            clock, preference: preference, ledger: ledger);
+        var registry = new CliOneShotRegistry([], modelSelection: selection);
+        var prompts = new RuntimePromptService(configuration, NullLogger<RuntimePromptService>.Instance);
+        var aspect = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance,
+            oneShotRegistry: registry, configuration: configuration)
+        {
+            VerdictRetryBackoff = _ => TimeSpan.Zero,
+        };
+        aspect.CliRunner = (_, _, _, _, _, _) =>
+            throw new InvalidOperationException("operator switch should defer before direct CLI dispatch");
+
+        var jobFolder = Path.Combine(_root, "aspect-job");
+        Directory.CreateDirectory(jobFolder);
+        var deferredEnvelope = await aspect.RunViaOneShotAsync(
+            "requirement-fit", CliTypes.Gemini, "gemini-review-model", "review this change",
+            null, TimeSpan.FromSeconds(2), jobFolder, "quota-test", "aspect-job",
+            CancellationToken.None);
+        using (var deferred = JsonDocument.Parse(deferredEnvelope))
+        {
+            Assert.True(deferred.RootElement.GetProperty("quotaDeferred").GetBoolean());
+            Assert.Contains("[quota-deferred]",
+                deferred.RootElement.GetProperty("error").GetString());
+        }
+        var report = await aspect.RunAsync(new AspectRunInputs(
+                Project: "quota-test", JobId: "aspect-job", JobTitle: "Review a change",
+                JobFolderPath: jobFolder, TaskBody: "Review this change.", RecentLog: "",
+                DiffSummary: "One file changed.", StatusSummary: "Done."),
+            ["requirement-fit"], CliTypes.Gemini, "gemini-review-model",
+            TimeSpan.FromSeconds(2), CancellationToken.None);
+        Assert.True(report.HasQuotaDeferred);
+        Assert.False(report.HasInfraFailure);
+
+        var decision = registry.SelectDirect(new CliOneShotRequest(
+            CliTypes.Gemini, "gemini-review-model", "review this change")
+        {
+            StepId = "aspect-requirement-fit",
+            Project = "quota-test",
+        });
+
+        Assert.NotNull(decision);
+        Assert.False(decision.Admission.ShouldLaunch);
+        Assert.Equal(SelectionRules.OperatorSwitch, decision.Result.Rule);
+        Assert.Contains(ledger.Entries, entry =>
+            entry.Consumer == SelectionConsumers.ReviewAspect
+            && entry.Kind == SelectionLedgerKinds.Waiting
+            && entry.Project == "quota-test"
+            && entry.TaskKey == "aspect-job");
+
+        preference.Set(CliTypes.Gemini, active: false, resetAt: null);
+        aspect.CliRunner = (_, _, _, _, _, _) =>
+            Task.FromResult("[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]");
+        var resumed = await aspect.RunAsync(new AspectRunInputs(
+                Project: "quota-test", JobId: "aspect-job", JobTitle: "Review a change",
+                JobFolderPath: jobFolder, TaskBody: "Review this change.", RecentLog: "",
+                DiffSummary: "One file changed.", StatusSummary: "Done."),
+            ["requirement-fit"], CliTypes.Gemini, "gemini-review-model",
+            TimeSpan.FromSeconds(2), CancellationToken.None);
+        Assert.False(resumed.HasQuotaDeferred);
+        Assert.Equal(AspectStatus.Pass, Assert.Single(resumed.Verdicts).Status);
     }
 
     [Fact]
@@ -206,7 +337,8 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
                 new TimelineLog(NullLogger<TimelineLog>.Instance),
                 new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance),
                 new OrchestratorLog(NullLogger<OrchestratorLog>.Instance),
-                NullLogger<QuotaAdmissionRecorder>.Instance);
+                NullLogger<QuotaAdmissionRecorder>.Instance,
+                new ModelSelectionLedger(configuration));
         }
         return new CliOneShotRegistry(implementations, admission, recorder);
     }
@@ -232,9 +364,68 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         catch { }
     }
 
+    // MS-5: the registry dispatch asks the selection service once per call.
+    [Theory]
+    [InlineData("aspect-requirement-fit", "review-aspect", true)]
+    [InlineData("post-code-review-grade", "review-grade", true)]
+    [InlineData("title-generation", "one-shot:title-generation", false)]
+    public async Task One_shot_dispatch_asks_the_model_selection_service(
+        string source, string consumer, bool sameClassOnly)
+    {
+        var spy = new SpyModelSelectionService();
+        var claude = new RecordingOneShot(CliTypes.Claude);
+        var registry = new CliOneShotRegistry([claude], modelSelection: spy);
+        var request = new CliOneShotRequest(CliTypes.Claude, ModelIds.ClaudeOpus5, "bounded prompt")
+        {
+            ThinkingLevel = "high",
+            Project = "quota-test",
+            StepId = source,
+        };
+
+        var result = await registry.Require(CliTypes.Claude).RunAsync(request);
+
+        Assert.True(result.Ok);
+        var call = Assert.Single(spy.Calls);
+        Assert.Equal(source, call.ExecutionPath);
+        Assert.True(call.RecordEveryCall);
+        Assert.Equal(consumer, call.Request.Consumer);
+        Assert.Equal(sameClassOnly, call.Request.Required.SameClassOnly);
+        Assert.Equal("quota-test", call.Request.Project);
+        Assert.Equal(source, call.Request.StepId);
+        Assert.Equal(
+            new AgentStudio.TaskServer.Contracts.SelectionPins(CliTypes.Claude, ModelIds.ClaudeOpus5, "high"),
+            call.Request.Pins);
+        Assert.Single(claude.Requests);
+    }
+
+    [Theory]
+    [InlineData("title-generation", "title")]
+    [InlineData("periodic-tag-maintenance", "tags")]
+    public async Task One_shot_uses_consumer_class_even_with_a_specific_step_id(string step, string kind)
+    {
+        var spy = new SpyModelSelectionService();
+        var registry = new CliOneShotRegistry([new RecordingOneShot(CliTypes.Claude)], modelSelection: spy);
+
+        var result = await registry.Require(CliTypes.Claude).RunAsync(new CliOneShotRequest(
+            CliTypes.Claude, ModelIds.ClaudeOpus5, "bounded prompt")
+        {
+            StepId = step,
+            SelectionConsumer = SelectionConsumers.OneShot(kind),
+        });
+
+        Assert.True(result.Ok);
+        Assert.Equal(SelectionConsumers.OneShot(kind), Assert.Single(spy.Calls).Request.Consumer);
+    }
+
     private sealed class FixedTimeProvider(DateTime utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => new(utcNow);
+    }
+
+    private sealed class RecordingSelectionLedger : IModelSelectionLedger
+    {
+        public List<SelectionLedgerEntry> Entries { get; } = [];
+        public void Record(SelectionLedgerEntry entry) => Entries.Add(entry);
     }
 
     private sealed class RecordingOneShot(string cliType) : ICliOneShot

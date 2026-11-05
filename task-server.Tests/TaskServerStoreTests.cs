@@ -13,6 +13,96 @@ namespace TaskServer.Tests;
 public sealed partial class TaskServerStoreTests
 {
     [Fact]
+    public async Task Capacity_on_one_host_switches_to_sibling_then_cross_provider_equivalent()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 2, 15, 37, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await ModelAcceptanceTestSupport.AcceptRoutedModelsAsync(store, clock.GetUtcNow().UtcDateTime);
+
+        async Task CompleteCapacityAsync(ClaimResponse claim, string model, int round)
+        {
+            var decision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+                claim.Run!.RunId, ExecutionAttemptKind.Coding,
+                StdErr: "Selected model is at capacity.\nRetry failed: too many requests (HTTP 429).",
+                ExitCode: 1, SessionState: ExecutionSessionState.Resumable,
+                SessionId: $"thread-{round}", EffectiveCliType: "codex", EffectiveModel: model,
+                EffectiveThinkingLevel: "medium",
+                ModelCapacityRetryAttempts: ExecutionOutcomeAdapter.MaxModelCapacityRetryAttempts));
+            Assert.Equal(ExecutionOutcomeKind.TransientModelCapacity, decision.Outcome);
+            await store.CompleteRunAsync(claim.Run.RunId, new CompleteRunRequest(
+                "runner-a", "instance-a", claim.Lease!.LeaseId, claim.Lease.Fence,
+                decision.Outcome.ToString(),
+                IdempotencyKey: $"capacity-{round}", Sequence: 1, OutcomeDecision: decision,
+                SalvageBranch: $"refs/heads/agent-studio/salvage/capacity-{round}",
+                SalvageCommitSha: new string((char)('a' + round), 40)), "test", default);
+        }
+
+        var first = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", first.Status);
+        await CompleteCapacityAsync(first, "gpt-6-sol", 0);
+        var sibling = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", sibling.Status);
+        Assert.Equal("gpt-5.6-sol", sibling.ModelFallback?.To);
+        await CompleteCapacityAsync(sibling, "gpt-5.6-sol", 1);
+        var equivalent = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", equivalent.Status);
+        Assert.Equal("claude", equivalent.ModelFallback?.CliType);
+        Assert.Equal("claude-sonnet-5", equivalent.ModelFallback?.To);
+    }
+
+    [Fact]
+    public async Task Unauthorized_provider_switches_only_claims_on_that_host()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 2, 16, 0, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, firstTask) = await SeedReadyTaskAsync(store);
+        var secondTask = await store.CreateTaskAsync(project.ProjectId,
+            new CreateTaskRequest("Second task", "Do the work", "2-ready"), "test", default);
+        foreach (var task in new[] { firstTask, secondTask })
+        {
+            await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+                new SetTaskCliTypeRequest("codex", 0), "operator", default);
+            await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+                new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
+        }
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await store.RegisterRunnerAsync("runner-b", Runner("instance-b") with { HostId = "host-b" },
+            "test", default);
+        await ModelAcceptanceTestSupport.AcceptRoutedModelsAsync(store, clock.GetUtcNow().UtcDateTime);
+        await ModelAcceptanceTestSupport.AcceptRoutedModelsAsync(store, clock.GetUtcNow().UtcDateTime,
+            "runner-b", "instance-b");
+        var providerKey = CapabilityProtocol.ProviderAuthentication("codex");
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 900, 2,
+            [new AdvertisedCapabilityDto(providerKey, "provider-auth", "ready", Signal: "ok")]),
+            "runner-a", default);
+        await store.ReportCapabilityFailureAsync(new CapabilityFailureRequest(
+            "runner-a", "instance-a", providerKey, "ProviderUnauthorized",
+            "Codex returned 401", clock.GetUtcNow().UtcDateTime, "unauthorized-a"),
+            "runner-a", default);
+
+        var healthyHost = await store.ClaimAsync(new ClaimRequest("runner-b", "instance-b"),
+            "test", default);
+        Assert.Equal("claimed", healthyHost.Status);
+        Assert.Null(healthyHost.ModelFallback);
+        var affectedHost = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"),
+            "test", default);
+        Assert.Equal("claimed", affectedHost.Status);
+        Assert.Equal("claude", affectedHost.ModelFallback?.CliType);
+        Assert.Equal("claude-sonnet-5", affectedHost.ModelFallback?.To);
+    }
+
+    [Fact]
     public async Task Exhausted_model_capacity_requeues_from_salvage_without_a_capability_hold()
     {
         using var temp = new TempDirectory();
@@ -2930,7 +3020,7 @@ public sealed partial class TaskServerStoreTests
         await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
             new SetTaskModelRequest("gpt-6-astra", 1), "operator", default);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
-        await store.RegisterRunnerAsync("runner-b", Runner("instance-b"), "test", default);
+        await store.RegisterRunnerAsync("runner-b", Runner("instance-b") with { HostId = "host-b" }, "test", default);
         await AdvertiseModelsAsync(store, clock, 1, 1,
             ("codex", "gpt-6-astra", "ready"), ("codex", "gpt-5.6-sol", "ready"));
         await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(

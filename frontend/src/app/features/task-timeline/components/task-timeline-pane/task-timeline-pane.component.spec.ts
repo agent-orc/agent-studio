@@ -64,6 +64,14 @@ async function build(events: TaskTimelineEvent[] = [], runs: RunRecord[] = []) {
 }
 
 describe('TaskTimelinePaneComponent', () => {
+  it('links a selection receipt to the card and event filters', async () => {
+    const fixture = await build([{ ts: '2026-11-05T10:00:00Z', kind: TIMELINE_KIND.quotaFallbackActivated,
+      actor: 'system', summary: 'Fallback selected', details: { selectionEventId: 'selection-1', taskKey: 'DEMO-1' } }]);
+    const link = (fixture.nativeElement as HTMLElement).querySelector<HTMLAnchorElement>('[data-testid="timeline-selection-link"]');
+    expect(link?.href).toContain('msCard=DEMO-1');
+    expect(link?.href).toContain('msEvent=selection-1');
+    expect(link?.href).toContain('#/workspace/settings/caps');
+  });
   it('renders the empty state with no events', async () => {
     const fixture = await build([]);
     const c = fixture.componentInstance;

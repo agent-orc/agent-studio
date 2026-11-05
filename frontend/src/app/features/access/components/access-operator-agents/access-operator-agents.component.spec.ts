@@ -58,7 +58,7 @@ describe('AccessOperatorAgentsComponent', () => {
     expect(retired).toContain('Disabled');
     expect(retired).toContain('Revoked');
     expect(byTestId('access-operator-session-start-opa_off')).toBeNull();
-    expect(byTestId('access-operator-session-revoke-ses_gone')).toBeNull();
+    expect(byTestId('access-operator-session-kill-ses_gone')).toBeNull();
   });
 
   it('starts a session with the chosen name and lifetime and shows its token once', async () => {
@@ -90,13 +90,17 @@ describe('AccessOperatorAgentsComponent', () => {
     expect(element.textContent).not.toContain(operators.issuedToken);
   });
 
-  it('renews with the agent lifetime and revokes an active session', async () => {
+  it('renews with the agent lifetime and ends an active session only after confirmation', async () => {
     byTestId<HTMLButtonElement>('access-operator-session-renew-ses_live')!.click();
     await settle();
     expect(operators.renewSession).toHaveBeenCalledWith('opa_ops', 'ses_live', 8);
-    byTestId<HTMLButtonElement>('access-operator-session-revoke-ses_live')!.click();
+    confirm.confirm.mockResolvedValueOnce(false);
+    byTestId<HTMLButtonElement>('access-operator-session-kill-ses_live')!.click();
     await settle();
-    expect(operators.revokeSession).toHaveBeenCalledWith('opa_ops', 'ses_live');
+    expect(operators.killSession).not.toHaveBeenCalled();
+    byTestId<HTMLButtonElement>('access-operator-session-kill-ses_live')!.click();
+    await settle();
+    expect(operators.killSession).toHaveBeenCalledWith('opa_ops', 'ses_live');
   });
 
   it('disables an agent only after confirmation', async () => {

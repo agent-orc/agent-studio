@@ -5,6 +5,9 @@ import type {
   OneTimeOperatorSession,
   OperatorActivity,
   OperatorAgent,
+  OperatorKillDrill,
+  OperatorKillRecord,
+  OperatorKillSwitchStatus,
   OperatorSession,
 } from '../models/operator-agent.model';
 
@@ -89,8 +92,36 @@ export function oneTimeOperatorSession(): OneTimeOperatorSession {
   };
 }
 
+export function operatorKill(overrides: Partial<OperatorKillRecord> = {}): OperatorKillRecord {
+  return {
+    id: 'kill_1', kind: 'all', trigger: 'studio', actor: 'human:usr_owner', reason: 'Unexpected restarts', at: '2026-11-02T09:10:00Z',
+    operatorAgentIds: ['opa_ops', 'opa_off'], sessionIds: ['ses_live'], standingGrantIds: [], approvalIds: [], allOperators: true,
+    operationsServer: { state: 'revoked', attempts: 1, lastAttemptAt: '2026-11-02T09:10:01Z', lastError: null,
+      revokedPrincipalIds: ['operator-console'], cancelledOperations: 1, completedAt: '2026-11-02T09:10:01Z' },
+    notifiedAt: '2026-11-02T09:10:01Z',
+    ...overrides,
+  };
+}
+
+export function operatorDrill(overrides: Partial<OperatorKillDrill> = {}): OperatorKillDrill {
+  return {
+    id: 'drill_1', trigger: 'scheduled-drill', startedAt: '2026-11-01T03:00:00Z', durationMs: 412.6, studioRefusedMs: 3.2,
+    operationsServerState: 'revoked', operationsServerMs: 410.1, otherSessionsKept: true, passed: true, failure: null,
+    ...overrides,
+  };
+}
+
+export function operatorKillSwitch(overrides: Partial<OperatorKillSwitchStatus> = {}): OperatorKillSwitchStatus {
+  return {
+    kills: [operatorKill()], drills: [operatorDrill()], nextDrillAt: '2026-12-01T03:00:00Z', drillIntervalHours: 720,
+    operationsServerConfigured: true, outOfBandRequestPending: false,
+    ...overrides,
+  };
+}
+
 /** A signal-backed stand-in for OperatorAgentsService with spy mutations. */
-export function fakeOperatorAgentsService(agents: OperatorAgent[] = operatorAgents(), activity: OperatorActivity | null = operatorActivity()) {
+export function fakeOperatorAgentsService(agents: OperatorAgent[] = operatorAgents(), activity: OperatorActivity | null = operatorActivity(),
+  killSwitch: OperatorKillSwitchStatus = operatorKillSwitch()) {
   const issued = oneTimeOperatorSession();
   const sessionFilter = signal<string | null>(null);
   return {
@@ -116,6 +147,12 @@ export function fakeOperatorAgentsService(agents: OperatorAgent[] = operatorAgen
     disable: vi.fn(() => Promise.resolve({})),
     startSession: vi.fn(() => Promise.resolve(issued)),
     renewSession: vi.fn(() => Promise.resolve({})),
-    revokeSession: vi.fn(() => Promise.resolve({})),
+    killSwitch: signal<OperatorKillSwitchStatus | null>(killSwitch),
+    killSwitchError: signal<string | null>(null),
+    killing: signal(false),
+    loadKillSwitch: vi.fn(() => Promise.resolve()),
+    endAllAccess: vi.fn(() => Promise.resolve(killSwitch.kills[0])),
+    killSession: vi.fn(() => Promise.resolve(killSwitch.kills[0])),
+    runDrill: vi.fn(() => Promise.resolve(killSwitch.drills[0])),
   };
 }

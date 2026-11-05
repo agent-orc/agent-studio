@@ -882,6 +882,47 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Formed_batch_starts_while_a_per_task_fallback_gate_is_running()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        var slots = factory.Services.GetRequiredService<GateSlotUsageTracker>();
+        slots.Acquired("capacity-probe", 3);
+        slots.Released("capacity-probe");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = false;
+        var releaseFallback = new TaskCompletionSource<BuildTestGateResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.FallbackAsync = (request, _) => releaseFallback.Task;
+        _gate.Batch = request => Green(request.ExpectedSha);
+        _gate.Merge = request => Green(request.ExpectedSha);
+
+        SeedMember(factory, "CODE-SOLO", "backend/solo.cs");
+        _clock = _clock.AddMinutes(16);
+        await pilot.TickAsync(CancellationToken.None);
+        await _gate.FirstFallbackStarted;
+        Assert.True(_gate.Requests.First(request => request.Executor == "batch-fallback")
+            .ReserveBatchSlot);
+
+        SeedMember(factory, "CODE-BATCH-A", "backend/batch-a.cs");
+        SeedMember(factory, "CODE-BATCH-B", "backend/batch-b.cs");
+        try
+        {
+            await pilot.TickAsync(CancellationToken.None);
+            await _gate.FirstBatchStarted;
+            Assert.Equal(1, _gate.BatchRuns);
+            Assert.False(releaseFallback.Task.IsCompleted);
+        }
+        finally
+        {
+            releaseFallback.TrySetResult(Green(_gate.Requests.First(request =>
+                request.Executor == "batch-fallback").ExpectedSha));
+            await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task Paused_member_published_under_another_sha_leaves_as_integrated_without_a_gate()
     {
         using var factory = BuildFactory();
@@ -3035,6 +3076,42 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Batch_deferred_actionable_concern_waits_for_a_fix_before_admission()
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", ReviewRunnerId);
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-CONCERN", "docs/concern.md", settleReview: false);
+        await RegisterReviewExecutorAsync(http);
+        var claimed = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{ReviewRunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(ReviewRunnerId, ReviewInstance, 300, AvailableSlots: 1));
+        claimed.EnsureSuccessStatusCode();
+        var claim = (await claimed.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+        var report = PassingReport(claim, "batch-concern") with
+        {
+            Verdicts = [new Contract.ReviewVerdictDto("code-quality", "concerns", "RemoteAspectVerdict",
+                "docs/concern.md omits the required retry behavior.", "docs/concern.md",
+                "Describe how retry errors are handled.")],
+        };
+
+        var response = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt!.AttemptId}/report", report);
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>().ListPending());
+        AssertLane(member.Key, TaskStates.Ready);
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, member.Key);
+        var round = Assert.IsType<ReviewConcernRoundLedger>(ReviewConcernRoundStore.Read(folder));
+        Assert.Equal(1, round.Used);
+        Assert.True(round.StillOpen);
+        var followUp = await File.ReadAllTextAsync(Path.Combine(folder, "orchestrator-follow-up.md"));
+        Assert.Contains("docs/concern.md omits the required retry behavior.", followUp);
+        Assert.Contains("Describe how retry errors are handled.", followUp);
+    }
+
+    [Fact]
     public async Task Deferred_review_with_a_base_branch_defect_still_enters_the_batch()
     {
         using var factory = BuildFactory();
@@ -3745,13 +3822,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                 // Keep only the queue consumer needed by report requests; the
                 // periodic host loops can otherwise resume a seeded review or
                 // move its lane between the tick and the assertion.
-                for (var index = services.Count - 1; index >= 0; index--)
-                {
-                    var descriptor = services[index];
-                    if (descriptor.ServiceType == typeof(IHostedService)
-                        && descriptor.ImplementationType?.Namespace?.StartsWith("AgentStudio.", StringComparison.Ordinal) == true)
-                        services.RemoveAt(index);
-                }
+                services.RemoveAll<IHostedService>();
                 services.AddHostedService<RemoteReviewEvidenceProjectionWorker>();
                 services.AddSingleton<MonolithOrchestrationRecoveryService>();
             });

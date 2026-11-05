@@ -1072,6 +1072,24 @@ unreported claim expires with its lease and is queued again.
   integration ends in the existing AGT-2909 dead-end exit
   (`AgentRoundRequired`, `delivery-attribution-ambiguous`). The prompt states
   the base in one sentence and names no SHA.
+- Operator continue, steer and extend rounds carry the result ref (AGT-3483,
+  [operator-agent-level Dossier](../../operator-agent-level/index.html) OP-3).
+  A round queued for a runner claim on a card with a recorded result ref saves
+  the card's latest one (settled run envelopes, review subjects and
+  `review-subject.json`) as `continuation-base.json` with reason
+  `continue-round-result`, writes one `continuation_base_recorded` timeline row
+  with the actor, mode and base SHA, and returns the base on the response as
+  `base { ref, sha, source, resultAttemptId }`. `ContinueJobRequest.BaseRef`
+  names another of the card's refs (full or short form); a ref the card does
+  not own is refused with `400 base-ref-not-on-card` before any write. A fix
+  round keeps its reviewed delivery unless `BaseRef` names another ref, and a
+  base another round already saved (salvage, older-brief starting point) is
+  kept and reported as `existing`. A round that starts locally, or that joins
+  a run still live on the card, keeps today's checkout and names no base; an
+  explicit `BaseRef` there is refused with `409 base-ref-not-applicable`. The
+  runner treats the base like a salvage base: required, with the integration
+  branch merged on top. Pure rule: `ContinueRoundBasePolicy`
+  (`backend/Features/Runner/ContinueRoundBase.cs`).
 - If a fenced remote run finishes after the operator has returned its card to
   Ready and queued another continuation, completion settles the old attempt
   and records its timeline evidence, then leaves the card and pending prompt in
@@ -1628,10 +1646,14 @@ unreported claim expires with its lease and is queued again.
   metadata is available, and Ready-card wait reasons. One shared classifier
   accepts only explicit provider-login signatures as authentication failures.
   Tool failures and indeterminate non-zero exits retain last-good; rate limits
-  use the limited state. Two consecutive explicit failures are required before
-  sign-in is blocked, and a later positive probe clears that provider circuit
-  without a runner restart. Provider-limit evidence is suppressed only by an
-  independently recorded termination fact. The legacy process boundary records
+  use the limited state. Two consecutive explicit login-probe failures are
+  required before sign-in is blocked, and a later positive probe clears that
+  provider circuit without a runner restart. Provider-limit evidence is
+  suppressed only by an independently recorded termination fact. A run classified
+  `ProviderUnauthorized` drains only that provider's capability on the
+  reporting host immediately; `GET /api/v1/management/remote-hosts` shows
+  `healthState: draining` until a positive provider-auth probe clears it.
+  Other providers and hosts remain claimable. The legacy process boundary records
   Bash's child wait status before it returns a conventional high exit code;
   CAR does not infer a signal from an exit number. A voluntary exit 137 remains
   eligible evidence, while recorded SIGTERM, SIGKILL, operator stop, and host
@@ -1864,11 +1886,15 @@ unreported claim expires with its lease and is queued again.
   escalation, and lane movement.
 - Waits-on gate (AGT-2029): the ready-lane pickup gate
   (`ProjectRunner.IsReadyPickupCandidate`) skips a `2-ready` card whose
-  `references.dependsOn` targets have not all reached `6-completed`/`7-archive`.
+  `references.dependsOn` targets have neither reached `6-completed`/`7-archive`
+  nor had their current delivery integrated into the successor's target branch.
+  A newer pending predecessor delivery closes the edge until it is integrated.
+  `requiresCompletion: true` retains the terminal-lane rule per edge, and
+  concept and research predecessors use it by default.
   A dependency object with `releaseGate: true` additionally requires the
   terminal target card to carry its explicit `released: true` flag. Completion
   does not infer release, and legacy string dependencies retain the existing
-  terminal-state-only behavior.
+  completion or current-delivery integration behavior.
   Fulfillment is resolved cross-project and archive-inclusive
   (`TaskReferenceIndex` built from `ScanAllJobsWithArchive()`, shared with the
   read-time card overlay via `WaitsOnEvaluator`). A skipped card falls out of the
@@ -2045,6 +2071,11 @@ unreported claim expires with its lease and is queued again.
   the exact result to
   `refs/heads/agent-studio/results/<run-attempt-id>/<result-sha>`. Cleanup then requires
   the Task Server acknowledgement for the matching canonical envelope digest.
+  Transient Git server push faults (5xx, internal server error, commit_refs failure,
+  or connection reset) retry each salvage or result ref after 30 seconds, 2 minutes,
+  5 minutes, and 15 minutes while the worktree and lease remain active. Each retry
+  is recorded on the card. Exhaustion names the retries in the failure reason;
+  authorization, permission, push protection, and non-fast-forward failures do not retry.
   A process restart replays the original outbox before new claims and never
   starts the coding CLI. Transfer failure stays `transfer-recovery`, retains the
   worktree, and consumes no coding or completion budget.

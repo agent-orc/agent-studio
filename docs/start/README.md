@@ -53,6 +53,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Product installer for Windows and Linux | [operations/setup/install.md](../operations/setup/install.md) |
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
+| Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Studio website encrypted off-host backups, secret store key copy, restore into an empty stack, and the restore drill (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
@@ -85,8 +86,12 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Global search palette and API | [domains/frontend.md#global-search](../system/domains/frontend.md#global-search) |
 | Global search is slow because one repository has a long history | [common-problems/global-search-slow-repository/](../system/common-problems/global-search-slow-repository/) |
 | Frontend navigation style guide | [frontend/style-guide/navigation.md](../quality/frontend/style-guide/navigation.md) |
+| Studio app and task header style guide | [frontend/style-guide/header.md](../quality/frontend/style-guide/header.md) |
+| Selectable Studio header prompt guide | [header-zones.md](../quality/header-zones.md) |
 | CLI | [domains/cli.md](../system/domains/cli.md) |
 | Model routing policy (model, thinking level, risk floors, benchmark evidence) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
+| Central model selection and fallback Dossier (MS-1 to MS-8, AGT-3473 to AGT-3480) | [decision Dossier](../model-selection-and-fallback/index.html) |
+| Model selection ledger API (events, active fallbacks, effective routes, runner ingestion) | [contracts/model-selection-api.md](../system/contracts/model-selection-api.md) |
 | Model routing by assessed complexity: analysis and implementation plan as pipeline steps, Token Economy as the measuring authority for the (complexity class, model, level) pair table, reported-versus-achieved feedback (AGT-2815) | [decision dossier](../model-routing-by-complexity/index.html) |
 | Task switch performance: measured baseline, bounded core, progressive detail and Git snapshots (AGT-W64; source AGT-2910) | [decision Dossier](../task-switch-performance/index.html) |
 | Tokens | [domains/tokens.md](../system/domains/tokens.md) |
@@ -94,6 +99,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Proposed tagging golden set: 60 cards, 20 Dossiers, item rationales and area glossaries (AGT-2804) | [quality/tagging-golden-set/index.html](../quality/tagging-golden-set/index.html) |
 | Operator decision on the proposed tagging golden set and glossaries (AGT-2804) | [operations/tagging-golden-set-approval/index.html](../operations/tagging-golden-set-approval/index.html) |
 | Remote execution outcome and recovery | [contracts/run-outcome.md](../system/contracts/run-outcome.md#remote-execution-outcome-adapter) |
+| Operator API reference: continue with the card's result ref (`baseRef`, resolved `base`), the `batch-isolation-active` guard on continue, steer and requeue, and eject (AGT-3483) | [contracts/operator-api.md](../system/contracts/operator-api.md) |
 | Review Plane claim/report/replay contract (two-phase report hand-off, idempotent replay, stale-lease claim requeue; AGT-2762) | [contracts/review-plane.md](../system/contracts/review-plane.md) |
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
 | Deployment regression scenario (one seeded fixture, three targets, the gate every deployment card and release proves itself against; AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
@@ -128,6 +134,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Deck icon alternatives for a multi-faceted project console (AGT-2355, Round 2) | [interactive Dossier](../operations/deck-icon-exploration/index.html) · [standalone SVG proof](../operations/deck-icon-exploration/results/deck-icon-options-round-2.svg) |
 | Guided installer story for an all-Docker install on a fresh Linux or Windows machine, with per-step failure modes and a test protocol template (AGT-2503) | [interactive Dossier](../operations/installer-story/index.html) |
 | Open gap: why the Connector (D4b) cannot be the root compose's LAN-reachable Studio backend as built, and the options for the next Docker-deployable card (AGT-2736) | [gap note](../operations/setup/docker-compose-connector-gap.md) |
+| Networked server-first deploy: manifest, host adapter, snapshot, switch, health and rollback procedure (AGT-3513) | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Global Orchestrator Watcher decision dossier: triggers, recovery authority, Activity visibility, model economy, and observe-first slices (AGT-2557) | [decision dossier](../operations/orchestrator-waechter/index.html) |
 | Organization-wide telemetry layer: current signals, shared event model, local-first hybrid bus, orchestrator action rules, Agent Studio operations-hub boundary, and rollout slices (AGT-2661) | [decision dossier](../operations/telemetry-layer/index.html) |
 | Observation theme Dossier: the four-layer observation stack (file, cluster, case, projection), merging the Global Orchestrator Watcher, the organization-wide telemetry layer and the project feed, with ten open decisions (AGT-2800) | [decision dossier](../operations/observation/index.html) |
@@ -208,6 +215,9 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Docker one-box install and operations | [operations/setup/docker.md](../operations/setup/docker.md) |
 | Identity and project bootstrap: first owner, recovery, host enrolment, project registration and repository probe (standalone Task Server, I05) | [operations/setup/identity-and-project-bootstrap.md](../operations/setup/identity-and-project-bootstrap.md) |
 | Operator agent: own Studio identity and sessions, own OS user without the Owner's SSH keys, off-host audit sink (security model SM-1) | [operations/setup/operator-agent.md](../operations/setup/operator-agent.md) |
+| Operator agent level Dossier (OP-1 to OP-9 delivered, AGT-3481 to AGT-3489; OP-10 website page in progress) | [decision Dossier](../operator-agent-level/index.html) |
+| Operator API reference: routes for the operator agent, cross-project batch triage and next safe member operation (AGT-3462 OP-4) | [operations/operator-api.md](../operations/operator-api.md) |
+| studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
@@ -223,6 +233,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Workstation runner-host profile (Windows roots, tools, preview evidence, same Task Server authority) | [operations/setup/workstation-runner-host.md](../operations/setup/workstation-runner-host.md) |
 | Guided multi-machine setup (Control Plane, join token, Agent Hosts) | [operations/setup/multi-machine.md](../operations/setup/multi-machine.md) |
 | Website onboarding source copy (Demo, Single Machine, Multi Machine) | [operations/setup/website-onboarding-template.md](../operations/setup/website-onboarding-template.md) |
+| Coding-agent operator website page source and pinned demo captures (OP-10) | [website/operator-agent/index.html](../website/operator-agent/index.html) |
 | Runner-host resource governance (Linux cgroups, coding/review role defaults, AIMD capacity boundary) | [target architecture](../operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md) |
 | Execution hosts operator lifecycle | [operations/remote-hosts.md](../operations/remote-hosts.md) |
 | Review lane runbook: capabilities a Review Executor registers, the typed empty-claim reason (`unclaimable-plan-requirements`), and the `lane-drain-stalled` review-claim alarm (AGT-2987) | [operations/review-lane-runbook.md](../operations/review-lane-runbook.md) |

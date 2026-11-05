@@ -239,7 +239,8 @@ public sealed class IamMigrationTests : IDisposable
         Assert.Equal("service-account:sa_" + apiTokens[0].Id, deploy!.ActorId);
         var account = snapshot.ServiceAccounts.Single(candidate => candidate.Id == deploy.AccountId);
         Assert.Equal(apiTokens[0].SecretHash, Assert.Single(account.Tokens).SecretHash);
-        Assert.Equal(["admin@project:alpha"], Grants(snapshot, deploy.AccountId));
+        // A legacy operator token binds the operator agent role (OP-1).
+        Assert.Equal(["operator-agent@project:alpha"], Grants(snapshot, deploy.AccountId));
         Assert.Equal(["viewer@workspace"], Grants(snapshot, "sa_" + apiTokens[1].Id));
         Assert.NotNull(store.AuthenticateServiceAccount(viewerSecret));
         Assert.Equal(["deploy bot", "reader"], store.ListApiTokens().Select(token => token.Name));

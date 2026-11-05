@@ -8,7 +8,6 @@ import { ConceptDossierNoticeComponent } from '../../../concept-dossier-notice/c
 import { PlanningSpawnPanelComponent } from '../../../planning-spawn-panel/planning-spawn-panel.component';
 import { DeliveryClaimPanelComponent } from '../../../delivery-claim-panel/delivery-claim-panel.component';
 import { CopyableTaskKeyComponent } from '../../../../../../components/copyable-task-key/copyable-task-key.component';
-import { ExecutionLocationBadgeComponent } from '../../../../../../components/execution-location-badge/execution-location-badge.component';
 import { TaskPromptPopoverComponent } from '../../task-prompt-popover/task-prompt-popover.component';
 import { laneTone } from '../../../../../../models/lane-presentation';
 import { copyTextToClipboard } from '../../../../../../services/clipboard.util';
@@ -31,7 +30,7 @@ function makeAttachmentId(): string {
 
 /**
  * The Overview tab's hero block: the inline-editable title, the identity
- * sub-line (key, lane, phase, project, execution location, prompt popover), and
+ * sub-line (key, lane, phase, project, prompt popover), and
  * the promote-to-coding affordance for a finished planning task.
  *
  * Split out of `overview-pane.component.ts` in AGT-2819. It owns one coherent
@@ -48,7 +47,6 @@ function makeAttachmentId(): string {
     PlanningSpawnPanelComponent,
     DeliveryClaimPanelComponent,
     CopyableTaskKeyComponent,
-    ExecutionLocationBadgeComponent,
     TaskPromptPopoverComponent,
     StatusIndicatorComponent,
   ],

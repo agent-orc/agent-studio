@@ -149,7 +149,16 @@ The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
 `/releases`, and `/deployments` when configured. Its Pipeline view reads the
 parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
 The release view loads
-`/releases/{releaseId}/notes` from the included cards. The board and task detail
+`/releases/{releaseId}/notes` from the included cards.
+The release response also projects current Quality verdicts from the included
+cards' stored Review Plane artifacts. The visible card rows reconcile with the
+pass, concerns, block, and not reviewed counts; the worst card verdict labels
+the rollup. Studio labels the release range Not reviewed; the Quality Studio
+change view resolves a stored verdict when opened. For releases after
+the first, its Quality Studio jump uses the merge-base of the previous and
+current release commits as base and the current commit as head. The first
+release has no range jump until an operator confirms the repository root range.
+The board and task detail
 share environment badges from `/api/deploy/cards`; the board can filter cards
 that are in Staging only, in Production, not yet in Production, or rolled back.
 Projects without deployment declarations show an empty environment state.
@@ -905,8 +914,16 @@ occur. It is not a claim about tunnel transfer time.
   the existing `POST /api/auth/invitations` with one initial binding, resets
   passwords, disables users with a `{ disabled }` PUT that leaves bindings
   alone, shows a service-account token or enrollment code once, and reloads
-  after every change. Expiry math reads the injectable `ACCESS_CLOCK`. The
-  rights model is described in
+  after every change. Expiry math reads the injectable `ACCESS_CLOCK`. Its
+  Standing grants panel reads `GET /api/auth/iam/operator-catalogue` and
+  `GET /api/auth/iam/standing-grants`, and issues, renews, and revokes through
+  `POST /api/auth/iam/standing-grants`, `.../{id}/renew`, and
+  `.../{id}/revoke` (security model SM-4), stepping up before an issue or
+  renewal. Its Approval requests panel reads
+  `GET /api/auth/iam/operator-approvals` and decides through
+  `.../{id}/approve` and `.../{id}/reject` (security model SM-5), stepping up
+  before each decision; a `?approval=<id>` query, the target of the push link,
+  puts that request in focus. The rights model is described in
   [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run

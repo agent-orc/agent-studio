@@ -185,6 +185,19 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   The `queued.reason` field is a string reason code, including
   `project-busy`, `lane-not-runnable`, `remote-execution`, and
   `delivery-under-review`; clients must not assume only `project-busy`.
+  A queued round also returns `base` when it starts from a result ref
+  (AGT-3483); `BaseRef` on the request selects another ref of the same card,
+  see the [runner domain](runner.md) for the rule and its error codes.
+- Continue (every mode), preview feedback, the orchestrator-log steer override,
+  and an operator requeue (a move or batch move into Backlog, Preparation,
+  Ready or In Progress) refuse a card that is a member of a batch under
+  isolation with `409 batch-isolation-active`, naming the flight
+  (`{ error, message, flight, project, taskKey }`; a batch move item reports
+  `rejected` with the same code). A member is under isolation while its
+  ownership names a batch whose latest phase is `Red`, its pending record is
+  active and no isolation finding released it. Eject
+  (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
+  allowed (AGT-3483, `BatchIsolationGuard`).
 
 ## Entry Points
 
@@ -1692,8 +1705,11 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   An edge may use `{ "key": "AGT-2050", "releaseGate": true }` to require an
   explicit target-card release after terminal completion. Operators and
   dedicated release steps set that independent flag through
-  `PUT /api/tasks/{id}/release`; ordinary string edges keep their existing
-  terminal-state-only semantics.
+  `PUT /api/tasks/{id}/release`. Ordinary string edges open when the predecessor
+  completes or its current delivery is contained in the successor's target
+  branch. A newer pending delivery closes the edge again. Use
+  `{ "key": "AGT-2050", "requiresCompletion": true }` to retain the completion
+  rule on one edge. Concept and research predecessors use that rule by default.
 - The release flag has an operator affordance on both ends of a gated edge
   (AGT-2709), because nothing in the lifecycle sets it and a card would
   otherwise wait for a release screen that did not exist. The detail-view
@@ -2249,8 +2265,10 @@ disk for runner state.
   limits from the snapshot's `TaskInfo.QuotaWait` and the displayed queue from
   one Ready-candidate order per generation and `ProjectSettingsService.Version`,
   shared by all runners. That order resolves waits-on against the published
-  fixture-free reference graph. Only the in-memory rapid-crash backoff is
-  applied per read. Pickup itself keeps its fresh read.
+  fixture-free reference graph and the same confirmed Git projection used by
+  pickup and remote claim. A changed predecessor delivery or a repository
+  refresh withholds the older integrated result. Only the in-memory rapid-crash
+  backoff is applied per read.
 - **Board-read trace.** `TaskOperationTimingFilter` traces board reads on
   `X-Task-Switch-Trace: 1` and otherwise one read in
   `BoardReadTrace:SampleEvery` (default every read, `0` disables). Each traced

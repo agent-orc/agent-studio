@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
+using AgentStudio.Pipeline;
 
 namespace AgentStudio.Git;
 
@@ -696,6 +697,7 @@ public partial class GitService
     private readonly IConfiguration _config;
     private readonly RuntimePromptService _prompts;
     private readonly AdHocUsageRecorder? _usage;
+    private readonly CliOneShotRegistry? _oneShotRegistry;
     private readonly ProjectRegistry _registry;
     private readonly CommitCandidateGate _commitGate;
     private readonly ProjectSettingsService? _projectSettings;
@@ -716,13 +718,15 @@ public partial class GitService
         ProjectRegistry? registry = null,
         IEnumerable<ICommitCandidateScanner>? commitCandidateScanners = null,
         ProjectSettingsService? projectSettings = null,
-        GitRefLockJanitor? lockJanitor = null)
+        GitRefLockJanitor? lockJanitor = null,
+        CliOneShotRegistry? oneShotRegistry = null)
     {
         _logger = logger;
         _scanner = scanner;
         _config = config;
         _prompts = prompts ?? new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         _usage = usage;
+        _oneShotRegistry = oneShotRegistry;
         _registry = registry ?? new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
         _commitGate = new CommitCandidateGate(logger, commitCandidateScanners);
         _projectSettings = projectSettings;
@@ -2939,10 +2943,6 @@ public partial class GitService
         if (diff.Length > 60_000) diff = diff[..60_000] + "\n[truncated]";
 
         var intent = ReadTaskIntent(jobId, watchPath);
-        if (!SecurityProfiles.IsLocal(_config))
-            return new GenerateMessageResult(null,
-                "Remote runner required: host Codex commit-message review is disabled in the networked profile.");
-        var codexPath = _config["CodexCli:Path"] ?? "codex";
         var model = ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
         var prompt = _prompts.Render(RuntimePromptService.CommitMessage,
             new Dictionary<string, string?>
@@ -2960,6 +2960,29 @@ public partial class GitService
                 ["last_user_continue"] = intent.LastUserContinue
             },
             new PromptCallContext(Step: "commit-message", Model: model));
+
+        if (!SecurityProfiles.IsLocal(_config))
+        {
+            var oneShot = _oneShotRegistry?.Get(CliTypes.Codex);
+            if (oneShot is null)
+                return new GenerateMessageResult(null, "Remote commit-message reviewer is unavailable.");
+            var result = await oneShot.RunAsync(new CliOneShotRequest(CliTypes.Codex, model, prompt)
+            {
+                Timeout = TimeSpan.FromSeconds(60),
+                Source = AdHocUsageSources.CommitMessage,
+                StepId = "commit-message",
+                JobId = jobId,
+            }, ct);
+            if (!result.Ok) return new GenerateMessageResult(null, result.Error);
+            var (message, concern) = ParseCommitReview(result.ParsedText);
+            if (!string.IsNullOrWhiteSpace(concern))
+                return new GenerateMessageResult(null,
+                    "Codex semantic reviewer reported a suspicious or unrelated candidate.", concern);
+            return string.IsNullOrWhiteSpace(message)
+                ? new GenerateMessageResult(null, "codex returned an empty message or omitted the required sentinel.")
+                : new GenerateMessageResult(message, null);
+        }
+        var codexPath = _config["CodexCli:Path"] ?? "codex";
 
         var psi = new ProcessStartInfo
         {
@@ -4640,6 +4663,17 @@ public partial class GitService
         return string.IsNullOrWhiteSpace(sha) ? null : sha;
     }
 
+    /// <summary>The sole root reachable from a commit, when its repository history has one.</summary>
+    public string? GetRootCommit(string repoRoot, string commitSha)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !AgentStudio.Pipeline.ReviewSubjectStore.IsValidResultSha(commitSha)) return null;
+        var (output, _, code) = RunGitArgs(repoRoot, "rev-list", "--max-parents=0", commitSha);
+        if (code != 0) return null;
+        var roots = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        return roots.Length == 1 && AgentStudio.Pipeline.ReviewSubjectStore.IsValidResultSha(roots[0]) ? roots[0] : null;
+    }
+
     /// <summary>
     /// Tip SHA of a local or remote-tracking ref (<c>rev-parse --verify</c>), or
     /// null when the ref does not exist. ASS-1724 reads the <c>task/&lt;id&gt;</c>
@@ -4693,6 +4727,28 @@ public partial class GitService
         if (code != 0) return null;
         var sha = output.Trim();
         return ReviewSubjectStore.IsValidResultSha(sha) ? sha : null;
+    }
+
+    /// <summary>One bounded first-parent range for acceptance publication checks, newest first.</summary>
+    public IReadOnlyList<IntegrationPublicationGatePolicy.FirstParentCommit>? GetFirstParentRange(
+        string repoRoot, string verifiedSha, string tipSha)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !ReviewSubjectStore.IsValidResultSha(verifiedSha)
+            || !ReviewSubjectStore.IsValidResultSha(tipSha)) return null;
+        var (output, _, code) = RunGitArgs(repoRoot, "rev-list", "--first-parent", "--parents",
+            $"--max-count={IntegrationPublicationGatePolicy.MaxFirstParentSteps + 1}",
+            $"{verifiedSha}..{tipSha}");
+        if (code != 0) return null;
+        var commits = new List<IntegrationPublicationGatePolicy.FirstParentCommit>();
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length < 2 || !ReviewSubjectStore.IsValidResultSha(fields[0])
+                || !ReviewSubjectStore.IsValidResultSha(fields[1])) return null;
+            commits.Add(new(fields[0], fields[1]));
+        }
+        return commits;
     }
 
     /// <summary>

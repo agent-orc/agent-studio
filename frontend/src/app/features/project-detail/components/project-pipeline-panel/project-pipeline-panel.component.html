@@ -83,6 +83,7 @@
                           [cacTooltip]="'Effective model: ' + modelSummary(step) + ' (' + modelSourceLabel(step.effectiveModelSource) + ')'">
                       {{ modelSummary(step) }}
                     </span>
+                    @if (step.overridesWorkspace) { <span class="pp__chip pp__chip--muted" [attr.data-testid]="'pipeline-step-workspace-override-' + step.id">overrides workspace</span> }
                     <app-model-migration-badge [model]="step.effectiveModel" [pending]="!!stepBusy[step.id]" testId="pipeline-step-model-migration" (apply)="onStepAgentCommit(step.id, { cliType: asCliType(step.effectiveCliType) ?? 'claude', model: $event, thinkingLevel: step.effectiveThinkingLevel || null })" />
                   }
                   @if (step.usesPrompt) {
@@ -173,6 +174,10 @@
                         [pickerTestidPrefix]="'pipeline-step-agent-picker-' + step.id"
                         (commit)="onStepAgentCommit(step.id, $event)" />
                       @if (step.model || step.thinkingLevel || step.cliType) {
+                        <select [value]="step.pinMode ?? 'preference'" [attr.aria-label]="'Pin mode for ' + step.displayName" [attr.data-testid]="'pipeline-step-pin-mode-' + step.id"
+                                [disabled]="!step.enabled || !!stepBusy[step.id]" (change)="onStepPinModeChange(step.id, $any($event.target).value)">
+                          <option value="preference">Preference</option><option value="hard">Hard pin</option>
+                        </select>
                         <button type="button" class="pp__link"
                                 [attr.data-testid]="'pipeline-step-agent-reset-' + step.id"
                                 [disabled]="!step.enabled || stepBusy[step.id]"

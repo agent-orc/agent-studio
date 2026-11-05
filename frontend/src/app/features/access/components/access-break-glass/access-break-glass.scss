@@ -1,0 +1,11 @@
+@use '../../access-controls' as access;
+
+.break-glass {
+  @include access.controls;
+  @include access.table;
+  display: grid;
+  gap: var(--studio-spacing-3);
+}
+
+.break-glass .access-row label { min-width: 11rem; flex: 1; }
+.break-glass table { overflow-wrap: anywhere; }

@@ -1307,7 +1307,7 @@ export class TaskService {
   editTaskWaitsOn(
     jobId: string,
     edit: {
-      add?: (string | { key: string; releaseGate?: boolean })[];
+      add?: (string | { key: string; releaseGate?: boolean; requiresCompletion?: boolean })[];
       remove?: string[];
       reason: string;
       requireCycleEdge?: boolean;
@@ -1315,7 +1315,7 @@ export class TaskService {
     watchPath?: string,
   ) {
     return this.http.put<{
-      waitsOn: (string | { key: string; releaseGate?: boolean })[];
+      waitsOn: (string | { key: string; releaseGate?: boolean; requiresCompletion?: boolean })[];
       changed: boolean;
       cycleResolved: boolean;
       message: string;
@@ -2496,6 +2496,7 @@ export class TaskService {
       cliType?: string | null;
       model?: string | null;
       thinkingLevel?: string | null;
+      pinMode?: 'preference' | 'hard';
       prompt?: string | null;
       condition?: PipelineStepCondition | null;
     },

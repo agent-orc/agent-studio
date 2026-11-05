@@ -191,6 +191,11 @@ export function isBatchGateState(value: unknown): value is BatchGateState {
   if (!value['batches'].every(batch => record(batch) && typeof batch['batchId'] === 'string' &&
       typeof batch['phase'] === 'string' && typeof batch['baseSha'] === 'string' &&
       optionalString(batch['parentBatchId']) && optionalString(batch['phaseReason']) &&
+      optionalString(batch['formationReason']) &&
+      (batch['exclusions'] == null || Array.isArray(batch['exclusions']) &&
+        batch['exclusions'].every((item: unknown) => record(item) &&
+          typeof item['taskKey'] === 'string' && typeof item['reason'] === 'string' &&
+          optionalString(item['detail']))) &&
       optionalString(batch['candidateSha']) && Array.isArray(batch['members']) && Array.isArray(batch['runs']) &&
       batch['members'].every((member: unknown) => record(member) && typeof member['taskKey'] === 'string' &&
         replay(member['replay']) && typeof member['released'] === 'boolean') &&
@@ -200,7 +205,7 @@ export function isBatchGateState(value: unknown): value is BatchGateState {
         optionalString(run['finishedAtUtc'])) &&
       (batch['publication'] == null || record(batch['publication'])))) return false;
   return Object.values(value['members']).every(member => record(member) &&
-    ['pending', 'in-batch', 'published', 'fallback', 'pre-check-red'].includes(String(member['status'])) &&
+    ['pending', 'in-batch', 'published', 'fallback', 'pre-check-red', 'review-fix'].includes(String(member['status'])) &&
     optionalString(member['batchId']) && optionalString(member['phase']) &&
     optionalNumber(member['position']) && optionalNumber(member['size']) &&
     optionalString(member['reason']) && optionalString(member['reasonDetail']));

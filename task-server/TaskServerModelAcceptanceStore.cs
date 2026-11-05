@@ -13,6 +13,112 @@ namespace AgentStudio.TaskServer;
 public sealed partial class TaskServerStore
 {
     private const string ModelRefusedDetail = "The provider refused this model for the host login.";
+    private static readonly TimeSpan ModelCapacityHold = TimeSpan.FromMinutes(15);
+
+    private static async Task<DateTime> RecordModelCapacityAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string runnerId,
+        string capabilityKey, DateTime now, DateTime? retryAt, CancellationToken ct)
+    {
+        var hostId = Convert.ToString(await ScalarAsync(connection,
+            "SELECT host_id FROM runners WHERE id = $runner;", ct, transaction,
+            ("$runner", runnerId)), CultureInfo.InvariantCulture) ?? runnerId;
+        var expiresAt = retryAt is { } hint && hint > now ? hint : now.Add(ModelCapacityHold);
+        await ExecuteAsync(connection, """
+            INSERT INTO host_model_capacity(host_id, capability_key, expires_at)
+            VALUES ($host, $key, $expires)
+            ON CONFLICT(host_id, capability_key) DO UPDATE SET expires_at = excluded.expires_at;
+            """, ct, transaction, ("$host", hostId), ("$key", capabilityKey),
+            ("$expires", Iso(expiresAt)));
+        return expiresAt;
+    }
+
+    private static async Task<bool> ModelCapacityActiveAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string runnerId,
+        string provider, string model, DateTime now, CancellationToken ct)
+    {
+        var deadline = Convert.ToString(await ScalarAsync(connection, """
+            SELECT capacity.expires_at FROM host_model_capacity capacity
+              JOIN runners runner ON runner.host_id = capacity.host_id
+             WHERE runner.id = $runner AND capacity.capability_key = $key;
+            """, ct, transaction, ("$runner", runnerId),
+            ("$key", CapabilityProtocol.ModelAcceptance(provider, model))), CultureInfo.InvariantCulture);
+        return !string.IsNullOrWhiteSpace(deadline) && Parse(deadline) > now;
+    }
+
+    private static async Task<IReadOnlyList<string>> ClearExpiredModelCapacityAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string runnerId,
+        DateTime now, CancellationToken ct)
+    {
+        var keys = new List<string>();
+        await using (var command = Command(connection, """
+            SELECT capacity.capability_key FROM host_model_capacity capacity
+              JOIN runners runner ON runner.host_id = capacity.host_id
+             WHERE runner.id = $runner AND capacity.expires_at <= $now;
+            """, transaction, ("$runner", runnerId), ("$now", Iso(now))))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) keys.Add(reader.GetString(0));
+        if (keys.Count > 0)
+            await ExecuteAsync(connection, """
+                DELETE FROM host_model_capacity
+                 WHERE host_id = (SELECT host_id FROM runners WHERE id = $runner)
+                   AND expires_at <= $now;
+                """, ct, transaction, ("$runner", runnerId), ("$now", Iso(now)));
+        return keys;
+    }
+
+    private async Task<bool> CandidateModelAcceptedAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string runnerId,
+        string provider, string model, bool requireProof, CancellationToken ct)
+    {
+        if (await ModelCapacityActiveAsync(connection, transaction, runnerId,
+                provider, model, UtcNow, ct)) return false;
+        var key = CapabilityProtocol.ModelAcceptance(provider, model);
+        var rejected = Convert.ToInt64(await ScalarAsync(connection, """
+            SELECT count(*) FROM runner_model_rejections rejection
+              JOIN runners marked ON marked.id = rejection.runner_id
+              JOIN runners target ON target.host_id = marked.host_id
+             WHERE target.id = $runner AND rejection.capability_key = $key;
+            """, ct, transaction, ("$runner", runnerId), ("$key", key)),
+            CultureInfo.InvariantCulture) > 0;
+        if (rejected) return false;
+        var protocol = Convert.ToInt64(await ScalarAsync(connection, """
+            SELECT count(*) FROM runner_capabilities capability JOIN runners runner
+              ON runner.id = capability.runner_id
+             WHERE runner.id = $runner
+               AND capability.advertised_instance_id = runner.instance_id
+               AND capability.capability_key LIKE 'model-acceptance:%';
+            """, ct, transaction, ("$runner", runnerId)), CultureInfo.InvariantCulture) > 0;
+        if (!protocol) return !requireProof;
+        var status = Convert.ToString(await ScalarAsync(connection, """
+            SELECT capability.advertised_status FROM runner_capabilities capability JOIN runners runner
+              ON runner.id = capability.runner_id
+             WHERE runner.id = $runner
+               AND capability.advertised_instance_id = runner.instance_id
+               AND capability.capability_key = $key
+               AND capability.fresh_until > $now;
+            """, ct, transaction, ("$runner", runnerId), ("$key", key),
+            ("$now", Iso(UtcNow))), CultureInfo.InvariantCulture);
+        return string.Equals(status, "ready", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<bool> ProviderUnauthorizedOnHostAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string runnerId,
+        string provider, CancellationToken ct)
+    {
+        var count = Convert.ToInt64(await ScalarAsync(connection, """
+            SELECT count(*) FROM runner_capabilities capability
+              JOIN runners failed ON failed.id = capability.runner_id
+              JOIN runners target ON target.host_id = failed.host_id
+             WHERE target.id = $runner
+               AND capability.capability_key = $key
+               AND capability.health_state = 'draining'
+               AND capability.reason LIKE 'ProviderUnauthorized:%'
+               AND capability.cooldown_until > $now;
+            """, ct, transaction, ("$runner", runnerId),
+            ("$key", CapabilityProtocol.ProviderAuthentication(provider)),
+            ("$now", Iso(UtcNow))), CultureInfo.InvariantCulture);
+        return count > 0;
+    }
 
     private static async Task RecordModelRejectionAsync(
         SqliteConnection connection,
@@ -108,7 +214,7 @@ public sealed partial class TaskServerStore
         CancellationToken ct)
     {
         var (provider, model, isPrimary) = await ReadEffectiveModelRouteAsync(
-            connection, transaction, taskId, ct);
+            connection, transaction, taskId, runnerId, ct);
         if (string.IsNullOrWhiteSpace(model)) return null;
         if (provider == "codex" && model is CodexCliRelease.Gpt61Sol or CodexCliRelease.Gpt61Terra)
         {
@@ -126,6 +232,9 @@ public sealed partial class TaskServerStore
         }
         var key = CapabilityProtocol.ModelAcceptance(provider, model);
         var now = UtcNow;
+        if (await ModelCapacityActiveAsync(connection, transaction, runnerId,
+                provider, model, now, ct))
+            return $"Model {model} is at capacity on this host until its retry window ends.";
         var protocolAdvertised = Convert.ToInt64(await ScalarAsync(connection, """
             SELECT count(*) FROM runner_capabilities capability JOIN runners runner
               ON runner.id = capability.runner_id
@@ -156,8 +265,10 @@ public sealed partial class TaskServerStore
             }
         }
         var rejected = Convert.ToInt64(await ScalarAsync(connection, """
-            SELECT count(*) FROM runner_model_rejections
-             WHERE runner_id = $runner AND capability_key = $key;
+            SELECT count(*) FROM runner_model_rejections rejection
+              JOIN runners marked ON marked.id = rejection.runner_id
+              JOIN runners target ON target.host_id = marked.host_id
+             WHERE target.id = $runner AND rejection.capability_key = $key;
             """, ct, transaction, ("$runner", runnerId), ("$key", key)), CultureInfo.InvariantCulture) > 0;
         var decision = ModelAcceptanceAdmissionPolicy.Evaluate(model, protocolAdvertised,
             status, freshUntil, rejected, startedAt, now);
@@ -176,6 +287,7 @@ public sealed partial class TaskServerStore
         SqliteConnection connection,
         SqliteTransaction transaction,
         string taskId,
+        string runnerId,
         CancellationToken ct)
     {
         string primaryCli;
@@ -221,7 +333,7 @@ public sealed partial class TaskServerStore
             return Route(string.IsNullOrWhiteSpace(cli) ? primaryCli : cli.Trim().ToLowerInvariant(), model);
         }
 
-        if (await ReadProviderFallbackForClaimAsync(connection, transaction, taskId, ct) is { } continuation)
+        if (await ReadProviderFallbackForClaimAsync(connection, transaction, taskId, runnerId, ct) is { } continuation)
             return Route(continuation.Fallback.CliType, continuation.Fallback.To);
         return Route(primaryCli, primaryModel);
     }
@@ -233,6 +345,7 @@ public sealed partial class TaskServerStore
     private static async Task<IReadOnlyList<ConfiguredModelRouteDto>> ReadConfiguredModelRoutesAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
+        DateTime now,
         CancellationToken ct)
     {
         var routes = new List<ConfiguredModelRouteDto>();
@@ -248,6 +361,13 @@ public sealed partial class TaskServerStore
             while (await reader.ReadAsync(ct))
                 routes.Add(new ConfiguredModelRouteDto(reader.GetString(0), reader.GetString(1)));
         }
+        await using (var demand = Command(connection, """
+            SELECT cli, model FROM one_shot_model_demands
+             WHERE observed_at > $cutoff ORDER BY observed_at DESC LIMIT 32;
+            """, transaction, ("$cutoff", Iso(now.AddDays(-1)))))
+        await using (var reader = await demand.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct))
+                routes.Add(new ConfiguredModelRouteDto(reader.GetString(0), reader.GetString(1)));
         var routesJson = Convert.ToString(await ScalarAsync(connection,
             "SELECT quota_model_routes_json FROM studio_cli_settings WHERE id = 1;", ct, transaction),
             CultureInfo.InvariantCulture);

@@ -1233,6 +1233,14 @@ public static class V1ReviewPlaneEndpoints
             var cardAction = budgetDecision.CardAction;
             var shouldDegrade = budgetDecision.ShouldDegrade;
             reviewFollowUp = budgetDecision.FollowUp;
+            // A deferred build/test gate cannot admit this delivery to a batch
+            // while a concrete review concern still owns a coding fix round.
+            // The later concern path moves the card to Ready; its next review
+            // may enter the batch after that fix is checked.
+            var preAdmission = MonolithTransitionAdapter.ReviewPreAdmission(
+                batchDeferredAccepted, reviewFollowUp.Action);
+            var waitForConcernFix = preAdmission.WaitForFixRound;
+            var deferToBatch = preAdmission.DeferToBatch;
             if (shouldDegrade)
             {
                 request = MonolithTransitionAdapter.ReviewRoundBudgetPolicyApplyRemoteReport(request, roundBudget);
@@ -1268,7 +1276,11 @@ public static class V1ReviewPlaneEndpoints
                         fixRoundBase);
                 }
             }
-            var preparedHash = RemoteReviewSettlementJournal.Hash(request);
+            // A format-3 replay restores the bounded stored report above. Its
+            // accepted hash still identifies the full report that was settled.
+            var preparedHash = acceptedReplay && priorReport is { Version: >= RemoteReviewSettlementJournal.CurrentVersion }
+                ? RemoteReviewSettlementJournal.ReportHash(priorReport)
+                : RemoteReviewSettlementJournal.Hash(request);
             // Only an accepted report owns a journal; a replayed rejected key is
             // answered by the authority like any other unaccepted report.
             var replay = currentReview.Reports.Any(report => report.AuthorityStatus == AttemptWriteStatus.Accepted
@@ -1283,7 +1295,8 @@ public static class V1ReviewPlaneEndpoints
                     return Results.Json(new Contract.ApiError("review-settlement-repair-required",
                         replayJournal.Reason ?? "The settled report has no recoverable journal or evidence."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
-                if (replayJournal.Entry is { } prior && RemoteReviewSettlementJournal.ReportHash(prior) != preparedHash)
+                if (replayJournal.Entry is { } prior
+                    && RemoteReviewSettlementJournal.ReportHash(prior) != preparedHash)
                     return Results.Conflict(new Contract.ApiError("idempotency-conflict",
                         "The review report key is bound to a different payload."));
             }
@@ -1292,7 +1305,7 @@ public static class V1ReviewPlaneEndpoints
             // publishes it, so no delivery record may tell recovery to integrate
             // or to settle it as a failed gate.
             if (!replay && continuation is null && outcome != ReviewTerminalOutcome.InfrastructureFailure
-                && !batchDeferredAccepted
+                && !deferToBatch && !waitForConcernFix
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
                 var sourceRun = authority.GetRun(currentReview.SourceRunAttemptId);
@@ -1483,7 +1496,7 @@ public static class V1ReviewPlaneEndpoints
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
             string? emergencyBatchState = task.State == TaskStates.AutoReview ? null : task.State;
-            if (batchDeferredAccepted && task.State == TaskStates.AutoReview)
+            if (deferToBatch && task.State == TaskStates.AutoReview)
             {
                 var batchSource = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
                 if (batchSource is null)
@@ -1537,7 +1550,9 @@ public static class V1ReviewPlaneEndpoints
                     batchPilot.ClearAdmissionFailure(task, settled.ReviewAttempt);
                 }
             }
-            var reportHash = preparedHash;
+            var reportHash = replay && priorReport is not null
+                ? RemoteReviewSettlementJournal.ReportHash(priorReport)
+                : preparedHash;
 
             // The authority already settled this delivery. Requeue unfinished
             // journaled evidence, then return without repeating integration.
@@ -1648,7 +1663,7 @@ public static class V1ReviewPlaneEndpoints
                     EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
             }
 
-            if (batchDeferredAccepted)
+            if (deferToBatch)
             {
                 EnqueueEvidenceProjection();
                 return Results.Ok(new Contract.ReviewReportDto(
@@ -2717,9 +2732,11 @@ public static class V1ReviewPlaneEndpoints
         deferredReason = deferred;
         hostCapabilityDeferredCode = capabilityDeferred;
         if (deferredPlan is { Outcome: not QuotaAdmissionOutcome.HostCapabilityMissing })
-            recorder.EmitAdmissionDecision(task, deferredPlan, source: "review-claim", decisionIdentity: decisionIdentity);
+            recorder.EmitAdmissionDecision(task, deferredPlan, source: "review-claim", decisionIdentity: decisionIdentity,
+                host: claimingHost, attemptId: decisionIdentity);
         else if (launchedPlan is not null)
-            recorder.EmitAdmissionDecision(task, launchedPlan, source: "review-claim", decisionIdentity: decisionIdentity);
+            recorder.EmitAdmissionDecision(task, launchedPlan, source: "review-claim", decisionIdentity: decisionIdentity,
+                host: claimingHost, attemptId: decisionIdentity);
 
         if (!string.IsNullOrWhiteSpace(deferredReason))
         {
@@ -4027,7 +4044,7 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             {
                 if (!capability.Key.StartsWith("model-acceptance:", StringComparison.Ordinal))
                     return capability;
-                var rejectedKey = $"{runnerId}|{capability.Key}";
+                var rejectedKey = $"{registration.HostId}|{capability.Key}";
                 if (!_rejectedModels.TryGetValue(rejectedKey, out var rejection))
                     return capability;
                 var sequence = request.Capabilities.LastOrDefault(item => string.Equals(
@@ -4186,12 +4203,15 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
 
             var wholeHost = WholeHostCapabilities.Contains(capabilityKey);
             var consecutive = (previous?.ConsecutiveFailures ?? 0) + 1;
-            var state = previous?.HealthState == Contract.CapabilityHealthStates.Draining
+            var unauthorizedProvider = capabilityKey.StartsWith("provider-auth:", StringComparison.Ordinal)
+                && string.Equals(request.Classification, "ProviderUnauthorized", StringComparison.Ordinal);
+            var state = unauthorizedProvider || previous?.HealthState == Contract.CapabilityHealthStates.Draining
                         || wholeHost
                         || consecutive >= CapabilityFailureThreshold
                 ? Contract.CapabilityHealthStates.Draining
                 : Contract.CapabilityHealthStates.Suspect;
-            DateTime? cooldownUntil = state == Contract.CapabilityHealthStates.Draining
+            DateTime? cooldownUntil = unauthorizedProvider ? DateTime.MaxValue
+                : state == Contract.CapabilityHealthStates.Draining
                 ? now.AddSeconds(
                     CapabilityBaseCooldownSeconds * (1 << Math.Min(Math.Max(0, consecutive - 2), 4)))
                 : null;
@@ -4238,7 +4258,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             if (_capabilityFailures.TryGetValue(runnerId, out var failures))
             {
                 var drained = failures.Values
-                    .Where(state => state.CooldownUntil > now)
+                    .Where(state => state.CooldownUntil > now
+                        && !state.Key.StartsWith("provider-auth:", StringComparison.Ordinal))
                     .OrderByDescending(state => state.CooldownUntil)
                     .FirstOrDefault();
                 if (drained is not null)
@@ -4683,13 +4704,16 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 || !_registrations.TryGetValue(runnerId, out var registration)
                 || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal))
                 return Contract.ModelAcceptanceAdmission.Refused;
+            if (_capacityModels.TryGetValue($"{registration.HostId}|{key}", out var capacityUntil)
+                && capacityUntil > _time.GetUtcNow().UtcDateTime)
+                return Contract.ModelAcceptanceAdmission.Unavailable;
             _capabilityStates.TryGetValue(runnerId, out var state);
             var capabilities = state?.InstanceId == instanceId ? state.Capabilities : [];
             var entry = capabilities.FirstOrDefault(item => item.Key == key);
             return Contract.ModelAcceptanceAdmissionPolicy.Evaluate(model,
                 state is not null && state.InstanceId == instanceId && state.ModelAcceptanceAdvertised,
                 entry?.AdvertisedStatus, entry?.FreshUntil,
-                _rejectedModels.ContainsKey($"{runnerId}|{key}"),
+                _rejectedModels.ContainsKey($"{registration.HostId}|{key}"),
                 registration.InstanceStartedAt ?? registration.RegisteredAt,
                 _time.GetUtcNow().UtcDateTime);
         }
@@ -4705,7 +4729,10 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
         lock (_gate)
         {
-            if (_rejectedModels.ContainsKey($"{runnerId}|{key}")) return "unavailable";
+            if (_capacityModels.TryGetValue($"{HostIdOf(runnerId)}|{key}", out var capacityUntil)
+                && capacityUntil > _time.GetUtcNow().UtcDateTime)
+                return "unavailable";
+            if (_rejectedModels.ContainsKey($"{HostIdOf(runnerId)}|{key}")) return "unavailable";
             if (string.IsNullOrWhiteSpace(instanceId)
                 || !_registrations.TryGetValue(runnerId, out var registration)
                 || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
@@ -4743,13 +4770,53 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
     }
 
     private readonly Dictionary<string, Contract.ModelRejectionAcknowledgement> _rejectedModels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTime> _capacityModels = new(StringComparer.Ordinal);
+
+    public void MarkModelCapacity(string runnerId, string cliType, string model, DateTime? retryAt = null)
+    {
+        var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
+        lock (_gate)
+        {
+            if (!_registrations.TryGetValue(runnerId, out var registration)) return;
+            var now = _time.GetUtcNow().UtcDateTime;
+            var until = retryAt is { } hint && hint > now ? hint : now.AddMinutes(15);
+            _capacityModels[$"{registration.HostId}|{key}"] = until;
+        }
+    }
+
+    public bool HasModelCapacity(string runnerId, string cliType, string model)
+    {
+        var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
+        lock (_gate)
+        {
+            if (_capacityModels.TryGetValue($"{HostIdOf(runnerId)}|{key}", out var until))
+                return until > _time.GetUtcNow().UtcDateTime;
+            if (!_capabilityStates.TryGetValue(runnerId, out var state)) return false;
+            return state.Capabilities.Any(capability => capability.Key == key
+                && capability.FreshUntil > _time.GetUtcNow().UtcDateTime
+                && capability.AdvertisedStatus == "unavailable"
+                && capability.Detail?.Contains("at capacity until", StringComparison.OrdinalIgnoreCase) == true);
+        }
+    }
+
+    public bool TakeExpiredModelCapacity(string runnerId, string cliType, string model)
+    {
+        var key = $"{HostIdOf(runnerId)}|{Contract.CapabilityProtocol.ModelAcceptance(cliType, model)}";
+        lock (_gate)
+        {
+            if (!_capacityModels.TryGetValue(key, out var until)
+                || until > _time.GetUtcNow().UtcDateTime) return false;
+            _capacityModels.Remove(key);
+            return true;
+        }
+    }
 
     public void MarkModelRejected(string runnerId, string cliType, string model)
     {
         var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
         lock (_gate)
         {
-            _rejectedModels[$"{runnerId}|{key}"] = Contract.ModelRejectionAcknowledgement.None;
+            _rejectedModels[$"{HostIdOf(runnerId)}|{key}"] = Contract.ModelRejectionAcknowledgement.None;
             if (!_capabilityStates.TryGetValue(runnerId, out var state)) return;
             _capabilityStates[runnerId] = state with
             {
@@ -4790,6 +4857,26 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
     private bool HasActiveCapabilityCooldownLocked(string runnerId, DateTime now)
         => _capabilityFailures.TryGetValue(runnerId, out var failures)
            && failures.Values.Any(state => state.CooldownUntil > now);
+
+    public bool IsProviderUnauthorized(string runnerId, string provider)
+    {
+        var key = Contract.CapabilityProtocol.ProviderAuthentication(provider);
+        lock (_gate)
+        {
+            if (!_registrations.TryGetValue(runnerId, out var runner)) return false;
+            return _registrations.Any(entry => entry.Value.HostId == runner.HostId
+                && _capabilityFailures.TryGetValue(entry.Key, out var failures)
+                && failures.TryGetValue(key, out var state)
+                && state.Classification == "ProviderUnauthorized"
+                && state.CooldownUntil > _time.GetUtcNow().UtcDateTime)
+                || _registrations.Any(entry => entry.Value.HostId == runner.HostId
+                    && _capabilityStates.TryGetValue(entry.Key, out var snapshot)
+                    && snapshot.Capabilities.Any(capability => capability.Key == key
+                        && capability.FreshUntil > _time.GetUtcNow().UtcDateTime
+                        && (capability.HealthOutcome == "credential_invalid"
+                            || capability.Signal == "signed-out")));
+        }
+    }
 
     /// <summary>Caller must hold <see cref="_gate"/>.</summary>
     private ReviewRestartStatus? RecentReviewRestartLocked(string runnerId, DateTime now)

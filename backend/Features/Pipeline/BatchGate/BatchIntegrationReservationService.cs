@@ -15,6 +15,17 @@ public sealed record PendingIntegrationPushWait(string Reason, string JobId,
 /// <summary>Serializes code integration and batch execution per project.</summary>
 public sealed class BatchIntegrationReservationService
 {
+    // Direct integration mutates the branch before its gate verdict and must
+    // retain this reservation through rollback. Bound that gate so formed
+    // batches cannot wait behind one card for the project gate's full budget.
+    public static readonly TimeSpan IntegrationGateLeaseCap = TimeSpan.FromMinutes(27);
+    public static readonly TimeSpan IntegrationGateQueueCap = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan IntegrationGateRunCap = IntegrationGateLeaseCap - IntegrationGateQueueCap;
+
+    public static TimeSpan GateBudget(TimeSpan requested, bool reservationHeld)
+        => reservationHeld ? TimeSpan.FromTicks(Math.Min(requested.Ticks,
+            IntegrationGateRunCap.Ticks)) : requested;
+
     private readonly string? _root;
     private readonly TimeProvider _time;
     private readonly TimeSpan _alertAfter;
@@ -185,6 +196,9 @@ public sealed class BatchIntegrationReservationService
 
     public PendingIntegrationPushWait? GetWait(string project)
         => GetWaits(project).FirstOrDefault();
+
+    /// <summary>The age at which a pending push raises its age alert (<c>BatchGate:PendingPushAlertMinutes</c>).</summary>
+    public TimeSpan AlertAfter => _alertAfter;
 
     public IReadOnlyList<PendingIntegrationPushWait> GetWaits(string project)
     {

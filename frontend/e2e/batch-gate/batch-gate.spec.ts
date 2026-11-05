@@ -24,6 +24,8 @@ const state = {
     members: [{ taskKey: 'AGT-2', replay: 'applied', released: false }],
     runs: [{ batchRunId: 'run-7', host: 'agent-runner-01', outcome: 'failed', classification: 'test-failure', startedAtUtc: '2026-10-11T13:00:00Z', finishedAtUtc: '2026-10-11T13:05:00Z' }] },
   { batchId: 'batch-8', parentBatchId: 'batch-7', phase: 'running', baseSha: 'b'.repeat(40), candidateSha: 'd'.repeat(40),
+    formationReason: 'new batch: overlap separate from waiting batch batch-7, files src/shared.cs',
+    exclusions: [{ taskKey: 'AGT-3', reason: 'overlapSeparate', detail: 'overlap separate: src/shared.cs' }],
     members: [{ taskKey: 'AGT-2', replay: 'applied', released: false }],
     runs: [{ batchRunId: 'run-8', host: 'agent-runner-02', startedAtUtc: '2026-10-11T13:06:00Z' }] }],
   members: { 'AGT-2': { status: 'in-batch', batchId: 'batch-8', phase: 'running', position: 1, size: 1 } },
@@ -42,12 +44,13 @@ async function captureThemes(page: import('@playwright/test').Page, evidence: st
   }
 }
 
-async function routeBoard(page: import('@playwright/test').Page, batchState: unknown, onSave: () => void = () => undefined): Promise<void> {
+async function routeBoard(page: import('@playwright/test').Page, batchState: unknown,
+  onSave: () => void = () => undefined, board: unknown = grouped): Promise<void> {
   await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({ v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__' })));
   await page.route('**/api/**', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/v1/management/credential-inventory', route => json(route, { items: [] }));
-  await page.route('**/api/v1/studio/board**', route => json(route, grouped));
+  await page.route('**/api/v1/studio/board**', route => json(route, board));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0 }));
   await page.route('**/api/watch-paths**', route => json(route, [{ name: project, path, rootPath: path, repositoryPath: path }]));
   await page.route('**/api/v1/workspaces**', route => json(route, [{ id: 'workspace-1', displayName: 'Fixture', projects: [{
@@ -121,6 +124,8 @@ test('board badge, batch panel and project settings save use batch contract', as
   await expect(page.getByTestId('batch-panel')).toContainText('pre-check green');
   await expect(page.getByTestId('batch-panel')).toContainText('from batch-7');
   await expect(page.getByTestId('batch-panel')).toContainText('test-failure');
+  await expect(page.getByTestId('batch-panel')).toContainText('AGT-3 · overlap separate: src/shared.cs');
+  await expect(page.getByTestId('batch-panel')).toContainText('new batch: overlap separate from waiting batch batch-7, files src/shared.cs');
   await captureThemes(page, evidence, 'batch-panel');
   await page.locator('.batch-panel__body').evaluate(element => { element.scrollTop = element.scrollHeight; });
   await captureThemes(page, evidence, 'batch-panel-history');
@@ -161,4 +166,30 @@ test('ejected batch member badge names why it went to the per-task gate', async 
     await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
     await card.screenshot({ path: nodePath.join(evidence, `batch-member-ejected-${theme}.png`) });
   }
+});
+
+test('review concern fix wait is visible on the card and batch gate', async ({ page }) => {
+  const evidence = process.env.JOB_RESULTS_DIR;
+  if (evidence) fs.mkdirSync(evidence, { recursive: true });
+  await routeBoard(page, {
+    ...state,
+    pending: [],
+    reviewFixWaits: [{ taskKey: 'AGT-2', reviewAttemptId: 'review-7', round: 1,
+      maximum: 1, aspects: ['code-quality'] }],
+    members: { 'AGT-2': { status: 'review-fix', reason: 'actionable review concern',
+      reasonDetail: 'Review review-7 found a behavior gap in code-quality. Fix round 1 of 1 must finish before batch admission.' } },
+  }, () => undefined, { ...grouped, ready: [{ ...task, state: '2-ready' }], autoReview: [] });
+  await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
+  await expect(card.getByTestId('batch-member-badge')).toContainText('Review fix before batch');
+  if (evidence) {
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      await card.screenshot({ path: nodePath.join(evidence, `batch-review-fix-card-${theme}.png`) });
+    }
+  }
+  await page.getByTestId('batch-lane-indicator').first().click();
+  await expect(page.getByTestId('batch-review-fix-waits')).toContainText('AGT-2 · concern fix round 1 of 1 · code-quality');
+  await captureThemes(page, evidence, 'batch-review-fix-wait');
 });

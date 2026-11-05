@@ -13,6 +13,7 @@ export const BATCH_MEMBER_TONES: Readonly<Record<BatchMemberStatus, StatusTone>>
   published: 'success',
   fallback: 'warning',
   'pre-check-red': 'danger',
+  'review-fix': 'warning',
 };
 
 export function batchMemberTone(status: string | null | undefined): StatusTone {
@@ -28,6 +29,7 @@ export function batchMemberLabel(item: BatchMemberState, ejection: string | null
     case 'published': label = 'Batch published'; break;
     case 'fallback': label = ejection ? `Per-task fallback · ${ejection}` : 'Per-task fallback'; break;
     case 'pre-check-red': label = 'Pre-check red'; break;
+    case 'review-fix': label = item.reason ? `Review fix before batch · ${item.reason}` : 'Review fix before batch'; break;
     default: label = 'Batch';
   }
   if (item.preCheck && item.status !== 'pre-check-red') label += ` · pre-check ${item.preCheck.outcome}`;

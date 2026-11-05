@@ -17,6 +17,26 @@ namespace AgentStudio.Tests;
 public sealed partial class BatchGatePilotServiceTests
 {
     [Fact]
+    public async Task Close_now_below_minimum_keeps_the_policy_reason_in_the_plan()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4, scope: "code");
+        var member = SeedMember(factory, "CODE-CLOSE-REASON", "src/close-reason.cs");
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.RequestCloseNow(ProjectName);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var plan = factory.Services.GetRequiredService<BatchGateStore>()
+            .LatestPlanDecision(ProjectName)!;
+        Assert.Equal("per-task", plan.Decision);
+        Assert.Equal("close requested below minimum batch size", plan.Reason);
+        Assert.Equal([member.Key], plan.ProposedMembers);
+    }
+
+    [Fact]
     public async Task Restart_with_a_formed_batch_keeps_its_members_out_of_per_task_gates()
     {
         var seededAt = _clock;
@@ -78,13 +98,6 @@ public sealed partial class BatchGatePilotServiceTests
         };
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var busy = ClosePendingBatch(factory);
-        var started = _clock;
-        _clock = started.AddMinutes(1);
-        var lone = SeedMember(factory, "CODE-LEASE-A", "src/lease-a.cs");
-        _clock = started.AddMinutes(6);
-        var partner = SeedMember(factory, "CODE-LEASE-B", "src/lease-b.cs");
-        _clock = started.AddMinutes(11);
-        var late = SeedMember(factory, "CODE-LEASE-C", "src/lease-c.cs");
         // The incident host: every slot busy, so no pre-check can run.
         OccupyGateSlots(factory, 3);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -96,11 +109,21 @@ public sealed partial class BatchGatePilotServiceTests
         _gate.Fallback = request => Red(request.ExpectedSha);
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         pilot.WaitForFlightsInTick = false;
-        // A is past its 20 minute deadline; B and C wait for their pre-check.
-        _clock = started.AddMinutes(22);
-
         await pilot.TickAsync(CancellationToken.None);
         await _gate.FirstBatchStarted;
+
+        // The busy batch has entered its gate. Seed older reviews without
+        // advancing the fake lease clock past its two-minute TTL.
+        var started = _clock;
+        _clock = started.AddMinutes(-21);
+        var lone = SeedMember(factory, "CODE-LEASE-A", "src/lease-a.cs");
+        _clock = started.AddMinutes(-16);
+        var partner = SeedMember(factory, "CODE-LEASE-B", "src/lease-b.cs");
+        _clock = started.AddMinutes(-11);
+        var late = SeedMember(factory, "CODE-LEASE-C", "src/lease-c.cs");
+        // A is past its 20 minute deadline; B and C wait for their pre-check.
+        _clock = started.AddSeconds(1);
+        await pilot.TickAsync(CancellationToken.None);
         await pilot.TickAsync(CancellationToken.None);
 
         var plan = store.LatestPlanDecision(ProjectName)!;
@@ -121,7 +144,7 @@ public sealed partial class BatchGatePilotServiceTests
         _gate.BatchAsync = null;
         _gate.Batch = request => Green(request.ExpectedSha);
         pilot.WaitForFlightsInTick = true;
-        _clock = started.AddMinutes(27);
+        _clock = started.AddMinutes(5);
         await pilot.TickAsync(CancellationToken.None);
 
         var next = Assert.Single(store.ListManifests(), manifest => manifest.BatchId != busy.BatchId);

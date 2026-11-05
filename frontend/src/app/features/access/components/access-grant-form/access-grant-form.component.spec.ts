@@ -61,6 +61,6 @@ describe('AccessGrantFormComponent', () => {
     const { fixture, element } = create('service-account');
     choose(element, 'access-grant-scope', 'workspace');
     fixture.detectChanges();
-    expect(roleOptions(element)).toEqual(['Admin', 'Developer', 'Viewer']);
+    expect(roleOptions(element)).toEqual(['Admin', 'Developer', 'Operator agent', 'Viewer']);
   });
 });

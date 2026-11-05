@@ -25,9 +25,13 @@ describe('BatchPanelComponent', () => {
     expect(text).toContain('from batch-7');
     expect(text).toContain('red');
     expect(text).toContain('test-failure');
+    expect(text).toContain('AGT-3 · overlap separate: src/shared.cs');
+    expect(text).toContain('new batch: overlap separate from waiting batch batch-7, files src/shared.cs');
     expect(text).toContain('agent-runner-01');
     expect(fixture.nativeElement.querySelector('[data-testid="batch-gate-slot-usage"]').textContent)
       .toContain('2/3 busy');
+    expect((fixture.nativeElement.querySelector('[data-testid="batch-gate-capacity"]').textContent as string).replace(/\s+/g, ' '))
+      .toContain('3 slots · 6 processors per gate · 24 host cores');
     http.verify();
   });
 

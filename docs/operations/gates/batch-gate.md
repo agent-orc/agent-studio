@@ -55,12 +55,12 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   behind three busy slots.
 - AGT-3466: on 3 November 2026 a restart dissolved formed batch 944a1c38 and
   13 gates ran on a host with five slots. Three rules now prevent this:
-  - A formed batch whose base moved before replay closes again with the same
-    members on the new base. The abandoned state reads `base moved before
-    replay; re-formed as <id>`. Before AGT-3466 the members went back to
-    planning with their old review times, already past every deadline, and
-    the cards the planner did not batch at once took per-task gates. Members
-    still return to the queue when one of them is no longer eligible.
+  - A formed batch whose base moved before replay closes again on the new
+    base. The abandoned state reads `base moved before replay; re-formed as
+    <id>`. Before AGT-3466 the members went back to planning with their old
+    review times, already past every deadline, and the cards the planner did
+    not batch at once took per-task gates. AGT-3498 adds per-member checks so
+    one ineligible member does not dissolve the compatible group.
   - A card waiting for its pre-check counts as a batch partner. Pre-checks
     run only on spare slots. While per-task gates filled the slots, each
     unchecked card became eligible alone at its deadline and took its own
@@ -82,6 +82,16 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   `reasonDetail`. The first cause of a review generation is kept until the
   review returns to the batch queue. A member of an abandoned batch that is
   queued again shows `pending` with reason `requeued`, not `fallback`.
+- AGT-3498: when a formed batch's base moves before replay, the worker checks
+  each member's current review and immutable delivery against the new base.
+  Compatible members close together in one successor linked by
+  `reformedFromBatchId`; they run a new exact-candidate gate with no inherited
+  run or verdict. A conflicting member starts its merge-conflict round, and a
+  superseded review resolves from the queue. The retired batch state records
+  typed `baseMoveMemberReasons` and the successor ID. The state response
+  reports `baseMoves` by new base SHA and `baseMoveTotals`, each counting formed
+  batches kept and abandoned. A replay probe infrastructure failure pauses
+  the batch rather than classifying a member as conflicting.
 - Each card's paths and changed lines come from its result SHA, measured
   from the merge base with `refs/remotes/origin/<branch>`, the ref the
   planning tick fetches. A card whose diff cannot be computed scores at the
@@ -153,8 +163,20 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   first on the same base. Restart reconstruction uses these findings and the
   closed child verdicts. The state route and report expose the findings as
   `proven-red`, `proven-green`, and `superseded`.
+- While a red batch isolates (latest phase `Red`), continue, steer and requeue
+  of a member that the isolation still holds are refused with
+  `409 batch-isolation-active` naming the flight (AGT-3483). Eject stays the
+  member action. The guard reads the existing ownership, pending record,
+  batch state and isolation findings and does not change isolation itself; see
+  [tasks](../../system/domains/tasks.md).
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
   and member state. The existing report includes observed batch green rate.
+- `GET /api/operator/batch-triage` (OP-4, AGT-3462) reads the same state for
+  every project the caller may read. It lists open flights, open members with
+  red and isolating markers, pending pushes with age and the
+  `BatchGate:PendingPushAlertMinutes` threshold (`overdue`), queue stalls, and
+  the next safe member operation (`eject`, `wait` or `close-now`). The rules
+  are in the [operator API reference](../operator-api.md#batch-triage).
 - AGT-3055 (D16 option A): the batch suite is claimable gate work by default.
   The backend pushes the candidate to its fenced candidate ref and creates a
   batch `GateSubject` that binds the membership digest. A runner host with the

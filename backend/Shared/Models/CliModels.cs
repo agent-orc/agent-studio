@@ -39,6 +39,14 @@ public record ContinueJobRequest
     /// with the card's actual mode) does not bypass the guard.
     /// </summary>
     public string? ModeOverride { get; init; }
+
+    /// <summary>
+    /// Optional explicit run base (AGT-3483): one of the card's own result refs,
+    /// full (<c>refs/heads/...</c>) or short. Without it a round on a card with a
+    /// recorded result ref starts from the latest one. A ref the card does not
+    /// own is refused with 400 <c>base-ref-not-on-card</c>.
+    /// </summary>
+    public string? BaseRef { get; init; }
 }
 
 /// <summary>
@@ -58,7 +66,21 @@ public record ContinueJobResponse
     public string Status { get; init; } = "started";
     public CliExecution? Execution { get; init; }
     public ContinueJobQueuedInfo? Queued { get; init; }
+    /// <summary>
+    /// The base the round starts from when a runner claims it (AGT-3483), or
+    /// null when the round keeps today's checkout.
+    /// </summary>
+    public ContinueRoundBaseInfo? Base { get; init; }
 }
+
+/// <param name="Ref">Full <c>refs/heads/...</c> name the runner fetches.</param>
+/// <param name="Sha">The commit the run starts from.</param>
+/// <param name="Source">
+/// <c>latest-result</c>, <c>explicit</c>, <c>review-fix-round</c> or
+/// <c>existing</c> (a base another round already saved on the card).
+/// </param>
+/// <param name="ResultAttemptId">The run or review attempt that recorded the ref.</param>
+public sealed record ContinueRoundBaseInfo(string Ref, string Sha, string Source, string? ResultAttemptId);
 
 public record ContinueJobQueuedInfo
 {
@@ -112,15 +134,7 @@ public record PendingIntent
     public ModelFallbackInfo? ModelFallback { get; init; }
 }
 
-public sealed record ModelFallbackInfo(
-    [property: JsonPropertyName("from")] string From,
-    [property: JsonPropertyName("to")] string To,
-    [property: JsonPropertyName("reason")] string Reason,
-    [property: JsonPropertyName("cliType")] string? CliType = null,
-    [property: JsonPropertyName("thinkingLevel")] string? ThinkingLevel = null,
-    [property: JsonPropertyName("window")] string? Window = null,
-    [property: JsonPropertyName("usedPct")] double? UsedPct = null,
-    [property: JsonPropertyName("catalogueVersion")] string? CatalogueVersion = null);
+// ModelFallbackInfo lives in the contracts package (ModelSelection/QuotaSnapshotContracts.cs).
 
 /// <summary>
 /// String values accepted on <see cref="ContinueJobRequest.Mode"/>. Kept as

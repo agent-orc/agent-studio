@@ -15,6 +15,22 @@ public sealed class ProjectStyleGuideServiceTests : IDisposable
         Path.GetTempPath(), "style-guide-tests-outside-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void BuildCatalogue_HeaderGuideMatchesAngularProjectAndSpecificArea()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "frontend"));
+        Directory.CreateDirectory(Path.Combine(_root, "docs", "quality"));
+        File.WriteAllText(Path.Combine(_root, "frontend", "angular.json"), "{}");
+        WriteGuide("header-zones.md", "header-zones", "Header zones",
+            "{\"projects\":[\"*\"],\"technologies\":[\"angular\"],\"taskAreas\":[\"header\"]}");
+
+        var catalogue = ProjectStyleGuideService.BuildCatalogue("PROJ-002", "Studio", _root);
+        var guide = Assert.Single(catalogue.Guides);
+        Assert.Equal("header-zones", guide.Id);
+        Assert.Equal(["header"], guide.AppliesTo.TaskAreas);
+        Assert.Contains(guide.Match.Technologies, technology => technology.Key == "angular");
+    }
+
+    [Fact]
     public void BuildCatalogue_UsesStableProjectAndTechnologyContractsWithMatchReasons()
     {
         Directory.CreateDirectory(Path.Combine(_root, "frontend"));

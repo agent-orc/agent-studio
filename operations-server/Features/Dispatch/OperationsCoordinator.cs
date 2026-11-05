@@ -137,6 +137,27 @@ public sealed class OperationsCoordinator(OperationsStore store, IOperationPermi
             return Task.FromResult(attempt);
         });
 
+    /// <summary>
+    /// The kill switch (security model SM-2): queued operations of the revoked
+    /// principals are cancelled and running ones are asked to stop, the same
+    /// transitions a caller's own cancel makes. Returns how many changed.
+    /// </summary>
+    public Task<int> CancelForPrincipalsAsync(IReadOnlyCollection<string> principalIds) =>
+        store.TransactionAsync(state =>
+        {
+            Expire(state);
+            var cancelled = 0;
+            foreach (var attempt in state.Attempts.Values.ToArray())
+            {
+                if (!principalIds.Contains(attempt.PrincipalId, StringComparer.Ordinal) || attempt.State is not ("queued" or "running"))
+                    continue;
+                state.Attempts[attempt.Id] = Event(attempt with { State = attempt.State == "queued" ? "cancelled" : "cancelling" },
+                    "principal-revoked", attempt.Command.InputDigest);
+                cancelled++;
+            }
+            return Task.FromResult(cancelled);
+        });
+
     /// <summary>Finds an accepted command after its submitting Studio lost the response.</summary>
     public Task<OperationAttempt> ReadByKeyAsync(OperationsPrincipal principal, string key) =>
         store.TransactionAsync(state =>

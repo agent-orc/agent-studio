@@ -151,6 +151,10 @@ public sealed partial class BatchGatePilotService
             {
                 Project = manifest.Scope.Project,
                 GateId = "batch-base",
+                LedgerBatchId = manifest.BatchId,
+                LedgerCards = manifest.Members.Select(member => member.TaskKey).ToArray(),
+                LedgerTriggerEvent = "red-candidate:" + run.BatchRunId,
+                LedgerProfile = run.GateProfileDigest,
                 SubjectRef = manifest.BaseSha,
                 IntegrationRef = manifest.BaseSha,
                 RequiredTestLevel = TestExecutionLevels.Full,
@@ -213,7 +217,7 @@ public sealed partial class BatchGatePilotService
     /// </summary>
     private async Task<BatchGateBaseVerdict> BaseVerdictAsync(string project, string baseSha,
         string gateProfileDigest, string repo, string evidencePath, string? batchId,
-        CancellationToken ct)
+        string taskKey, string triggerRunId, CancellationToken ct)
     {
         var baseline = _store.ReadBaseVerdict(project, baseSha, gateProfileDigest);
         if (baseline is { Provisional: false }
@@ -251,7 +255,11 @@ public sealed partial class BatchGatePilotService
                     repo, baseSha, "batch-base")
                 {
                     Project = project,
+                    JobId = taskKey,
                     GateId = "batch-base",
+                    LedgerBatchId = batchId,
+                    LedgerTriggerEvent = "red-candidate:" + triggerRunId,
+                    LedgerProfile = gateProfileDigest,
                     SubjectRef = baseSha,
                     IntegrationRef = baseSha,
                     RequiredTestLevel = TestExecutionLevels.Full,
@@ -267,7 +275,7 @@ public sealed partial class BatchGatePilotService
                 throw new IOException("The base verification did not produce an exact-SHA verdict.");
             Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
             var attemptEvidence = attempt == 0 ? evidencePath : evidencePath + ".retry";
-            File.WriteAllText(attemptEvidence, JsonSerializer.Serialize(result));
+            FallbackGateEvidence.Write(attemptEvidence, result);
             baseline = new BatchGateBaseVerdict(project, baseSha, gateProfileDigest,
                 result.Verdict == BuildTestGateVerdict.Ok ? "pass" : "fail",
                 result.Verdict == BuildTestGateVerdict.Fail
@@ -280,7 +288,8 @@ public sealed partial class BatchGatePilotService
             _store.RecordExecution(new BatchGateExecutionFact(
                 project, batchId, null, baseSha,
                 result.Verdict.ToString(), Environment.MachineName,
-                started, _time.GetUtcNow(), result.GateQueueWaitMs, 0, attemptEvidence));
+                started, _time.GetUtcNow(), result.GateQueueWaitMs, 0, attemptEvidence,
+                result.DurationMs));
             if (!baseline.Provisional) break;
         }
         return baseline;

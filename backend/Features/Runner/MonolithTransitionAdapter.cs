@@ -26,6 +26,11 @@ public static class MonolithTransitionAdapter
     public static IReadOnlyList<ReviewVerdictDto> MergeReviewVerdicts(
         IEnumerable<ReviewVerdictDto> verdicts)
         => ReviewFindingMergePolicy.MergeVerdicts(verdicts);
+    public static ReviewConcernActionability ClassifyReviewFinding(ReviewFollowUpFinding finding)
+        => ReviewFollowUpPolicy.Classify(finding);
+    public static ReviewPreAdmissionDecision ReviewPreAdmission(bool batchDeferredAccepted,
+        ReviewFollowUpAction followUp)
+        => ReviewPreAdmissionPolicy.Decide(batchDeferredAccepted, followUp);
     public static IReadOnlyList<string> BlockingReviewFindingKeys(
         IEnumerable<ReviewFollowUpFinding> findings)
         => ReviewFindingMergePolicy.BlockingFingerprints(findings);

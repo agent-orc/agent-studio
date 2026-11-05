@@ -103,8 +103,8 @@ The file-backed endpoint has these durable and asynchronous parts:
 
 1. **Prepare and settle (synchronous, durable).** The monolith validates and
    normalizes the report, then atomically writes
-   `logs/remote-review-settlement-{attemptId}.json` with the canonical payload,
-   its hash, the submitted payload hash for normalized report replay, and any
+   `logs/remote-review-settlement-{attemptId}.json` with a bounded report,
+   its hash, the accepted full-report hash, the submitted payload hash for normalized report replay, and any
    delivery gate decision with its own digest before calling
    `AttemptAuthorityService.SettleReview`. The ReviewAttempt remains the sole
    verdict authority. A prepared journal without an accepted authority report
@@ -130,13 +130,24 @@ The file-backed endpoint has these durable and asynchronous parts:
    (AGT-3430 `outputTail`) could no longer recompute them from the typed record
    and every earlier entry read as repair. The reader therefore verifies every
    hash against the JSON members as stored, with the rules of the entry's
-   format: format 1 compact, format 2 canonical (members holding null, false
-   or zero omitted, so an added optional member keeps every hash). The writer
-   writes format 2 and upgrades a rewritten format 1 entry; the legacy
-   submitted hash of such an entry is dropped, so its replay is compared by the
-   canonical report hash. A changed stored member still reads as repair, with
+   format: format 1 compact, formats 2 and 3 canonical (members holding null, false
+   or zero omitted, so an added optional member keeps every hash). Format 3
+   keeps embedded artifacts only while each is at most 16 KiB and their total
+   at most 128 KiB, keeps at most 64 KiB of output tails
+   per failed step, and caps the complete journal at 512 KiB. It binds the accepted
+   full-report hash into `ReportSha256`, which hashes the bounded stored report;
+   replay uses the accepted hash. A rewritten earlier entry upgrades to format
+   3; the legacy submitted hash is dropped because the submitted payload is
+   unavailable. Large output is discarded after admission and is not retained
+   in the workspace journal or grade projection. A changed stored member still reads as repair, with
    the first failing check in the reason (for example
    `corrupt-review-settlement-journal:report-sha256-mismatch`).
+   At startup the workspace maintenance service stages index-only removal of
+   tracked journals larger than 5 MiB. Its normal tracked sweep commits those
+   removals; the files remain on disk for existing readers. The workspace
+   commit service refuses new journal files above 5 MiB. This normal commit
+   keeps old blobs reachable in Git history, so a repack alone does not reclaim
+   their historical size.
 2. **Project evidence (asynchronous, durable pending work).** The endpoint
    enqueues a `RemoteReviewEvidenceProjectionRequest` onto
    `IRemoteReviewEvidenceProjectionQueue` (`backend/Features/Runner/RemoteReviewEvidenceProjectionQueue.cs`).

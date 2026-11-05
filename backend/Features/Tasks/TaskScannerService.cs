@@ -888,6 +888,11 @@ public class TaskScannerService : ITaskScanner
                 // legacy and is conservatively treated as an explicit pin.
                 ModelExplicit = !raw.TryGetProperty("modelExplicit", out var modelExplicit)
                     || modelExplicit.ValueKind != JsonValueKind.False,
+                PinMode = raw.TryGetProperty("pinMode", out var pinMode) ? pinMode.GetString() ?? "preference" : "preference",
+                PreferenceModel = raw.TryGetProperty("preferenceModel", out var preferenceModel) ? preferenceModel.GetString() : null,
+                PreferenceThinkingLevel = raw.TryGetProperty("preferenceThinkingLevel", out var preferenceThinking) ? preferenceThinking.GetString() : null,
+                PreferenceExpiresAt = raw.TryGetProperty("preferenceExpiresAt", out var preferenceExpiry)
+                    && preferenceExpiry.TryGetDateTime(out var expiry) ? expiry : null,
                 ThinkingLevel = raw.TryGetProperty("thinkingLevel", out var tl) ? tl.GetString() : null,
                 ThinkingLevelExplicit = !raw.TryGetProperty("thinkingLevelExplicit", out var thinkingExplicit)
                     || thinkingExplicit.ValueKind != JsonValueKind.False,
@@ -916,6 +921,8 @@ public class TaskScannerService : ITaskScanner
                     : null,
                 Commit = legacyCommit,
                 Commits = commitChain,
+                QualityStudioVerdict = resolvedState is TaskStates.AutoReview or TaskStates.HumanReview
+                    ? AgentStudio.QualityStudio.QualityChangeReviewStore.LatestVerdict(jobDir) : null,
                 IntegrationRecords = ReadIntegrationRecords(raw),
                 CompletionClaim = ReadCompletionClaim(raw),
                 IntegrationBranch = raw.TryGetProperty("integrationBranch", out var integrationBranch)

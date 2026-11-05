@@ -8,6 +8,7 @@ import type { CliModelInfo } from '../../../cli';
 import type { TaskScreenshot } from '../../../screenshots/models/screenshots.model';
 import { ScreenshotStripComponent } from '../../../screenshots/components/screenshot-strip/screenshot-strip.component';
 import { ReviewEvidencePanelComponent } from '../protocol-pane/review-evidence-panel/review-evidence-panel.component';
+import { QualityPanelComponent } from './quality-panel/quality-panel.component';
 import { CodeReviewPanelComponent } from '../protocol-pane/code-review-panel/code-review-panel.component';
 import { resolveProtocolImageSrc } from '../protocol-pane/protocol-image-resolver';
 import { PaneHeaderComponent } from '../../../../components/pane-header/pane-header.component';
@@ -93,7 +94,7 @@ export function buildPromptTabs(filesCount: number, visualEvidenceCount: number)
   selector: 'app-prompt-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FilesPaneComponent, MarkdownViewComponent, OverviewPaneComponent, TaskTimelinePaneComponent, PaneHeaderComponent, PaneTabsComponent, ScreenshotStripComponent, ReviewEvidencePanelComponent, CodeReviewPanelComponent, TestEvidenceStatusComponent, TaskArtifactLinksDirective, DetailKeyboardSurfaceDirective],
+  imports: [FilesPaneComponent, MarkdownViewComponent, OverviewPaneComponent, TaskTimelinePaneComponent, PaneHeaderComponent, PaneTabsComponent, ScreenshotStripComponent, ReviewEvidencePanelComponent, QualityPanelComponent, CodeReviewPanelComponent, TestEvidenceStatusComponent, TaskArtifactLinksDirective, DetailKeyboardSurfaceDirective],
   templateUrl: './prompt-pane.component.html',
   styleUrls: ['./prompt-pane.component.scss']
 })
@@ -105,6 +106,7 @@ export class PromptPaneComponent {
   readonly history = input<TaskPromptHistoryEntry[]>([]);
   readonly titleHistory = input<TaskTitleHistoryEntry[]>([]);
   readonly reviewEvidence = input<ReviewEvidenceEntry[]>([]);
+  readonly otherReviewEvidence = computed(() => this.reviewEvidence().filter(entry => !entry.id.startsWith('quality-studio:')));
   readonly screenshots = input<TaskScreenshot[]>([]);
   readonly artifacts = input<TaskArtifact[]>([]);
   readonly job = input<TaskInfo | null>(null);

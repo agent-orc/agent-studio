@@ -1,6 +1,20 @@
 using System.Text.RegularExpressions;
 namespace AgentStudio.OrchestrationDecisions;
 
+public enum ReviewConcernActionability { Actionable, Advisory }
+
+public sealed record ReviewPreAdmissionDecision(bool WaitForFixRound, bool DeferToBatch);
+
+public static class ReviewPreAdmissionPolicy
+{
+    public static ReviewPreAdmissionDecision Decide(bool batchDeferredAccepted,
+        AgentStudio.TaskServer.Contracts.ReviewFollowUpAction followUp)
+    {
+        var wait = followUp == AgentStudio.TaskServer.Contracts.ReviewFollowUpAction.ReviewConcernRound;
+        return new(wait, batchDeferredAccepted && !wait);
+    }
+}
+
 /// <summary>
 /// One review follow-up policy shared by local aspect review and Remote Review.
 /// Session mechanics, lane writes, and prompt persistence remain application
@@ -10,6 +24,15 @@ public static partial class ReviewFollowUpPolicy
 {
     [GeneratedRegex(@"(?:^|[\s`'(])(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+|\b[A-Za-z0-9_-]+\.(?:cs|ts|tsx|js|scss|css|html|md|json|ya?ml|xml|sh)\b", RegexOptions.IgnoreCase)]
     private static partial Regex FileReferenceRegex();
+
+    [GeneratedRegex(@"`(?:[A-Z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?|[a-z][a-z0-9]*(?:[A-Z][a-z0-9]+)+)(?:\([^`]*\))?`|\b[A-Z][A-Za-z0-9_]*\.[A-Z][A-Za-z0-9_]*\b|\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+\b")]
+    private static partial Regex SymbolReferenceRegex();
+
+    [GeneratedRegex(@"\b(miss(?:ing|es)?|absent|omit(?:s|ted)?|lack(?:s|ing)?|wrong|incorrect|fails?|breaks?|throws?|prevent(?:s|ed)?|unguarded|unlocked|without\s+(?:(?:its|a|the|any)\s+)?(?:lock|guard|error handling|synchronization|retry|validation|null check)|race|concurren(?:t|cy)|idempoten(?:t|cy)|conflict|mismatch|compar(?:e|es|ed|ing)|scan(?:s|ning)?|reads?\s+every|unbounded|doesn.t|cannot|no.op|dead assertion|contract mismatch)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex BehaviourGapRegex();
+
+    [GeneratedRegex(@"\b(?:miss(?:ing|es)?|lack(?:s|ing)?|wrong|incorrect|fails?|breaks?|without)\s+(?:(?:the|a|proper|consistent)\s+)?(?:style|naming|formatting|cosmetic|lint)(?:\s+(?:convention|checks?))?\b", RegexOptions.IgnoreCase)]
+    private static partial Regex StyleOnlyBehaviorRegex();
 
     public static ReviewFollowUpDecision Decide(
         IEnumerable<ReviewFollowUpFinding> findings,
@@ -61,12 +84,27 @@ public static partial class ReviewFollowUpPolicy
 
     public static bool IsActionableConcern(ReviewFollowUpFinding item)
     {
-        if (!ReviewGradingPolicy.IsConcernToken(item.Status) || IsAspectInfrastructureResult(item))
-            return false;
-        if (Meaningful(item.Finding) || Meaningful(ExtractFindingSection(item.ReportBody))) return true;
-        // The evidence lists what the aspect read, not what is wrong. A concern that
-        // names no gap gives a fix round nothing to do.
-        return Meaningful(item.Summary) && FileReferenceRegex().IsMatch(item.Summary!);
+        return ReviewGradingPolicy.IsConcernToken(item.Status)
+               && Classify(item) == ReviewConcernActionability.Actionable;
+    }
+
+    public static ReviewConcernActionability Classify(ReviewFollowUpFinding item)
+    {
+        if (!ReviewGradingPolicy.IsConcernToken(item.Status)
+            && !ReviewGradingPolicy.IsBlockingToken(item.Status)
+            || IsAspectInfrastructureResult(item))
+            return ReviewConcernActionability.Advisory;
+        // EvidenceChecked lists what the reviewer read, not the defective
+        // location. Require a location and a behavior gap in the finding or
+        // summary. A bare "missing" field or a style request is advisory.
+        var description = string.Join(" ", new[] { item.Summary, item.Finding,
+                ExtractFindingSection(item.ReportBody) }.Where(Meaningful));
+        if (description.Length == 0) return ReviewConcernActionability.Advisory;
+        var hasLocation = FileReferenceRegex().IsMatch(description)
+                          || SymbolReferenceRegex().IsMatch(description);
+        if (!hasLocation) return ReviewConcernActionability.Advisory;
+        var hasBehavior = BehaviourGapRegex().IsMatch(StyleOnlyBehaviorRegex().Replace(description, ""));
+        return hasBehavior ? ReviewConcernActionability.Actionable : ReviewConcernActionability.Advisory;
     }
 
     public static string? ExtractFindingSection(string? reportBody)

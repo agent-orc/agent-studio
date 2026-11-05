@@ -12,8 +12,11 @@ public static class OperationsServerHost
             ?? throw new InvalidOperationException("Operations:PrincipalsFile is required.");
         var directory = configuration["Operations:DataDirectory"]
             ?? throw new InvalidOperationException("Operations:DataDirectory is required.");
-        services.AddSingleton(new OperationsAccess(principals));
+        // The kill switch's revocation list lives with the server's data, so the principal file can stay read-only.
+        var revocations = configuration["Operations:RevocationsFile"] ?? Path.Combine(directory, OperationsAccess.RevocationsFileName);
+        services.AddSingleton(new OperationsAccess(principals, revocations));
         services.AddSingleton(new OperationsStore(directory));
+        services.AddSingleton(new HostRevocationStore(directory));
         services.AddSingleton<TimeProvider>(TimeProvider.System);
         services.AddHttpClient<IOperationPermitAuthority, OperationPermitAuthority>(client =>
         {
@@ -68,10 +71,54 @@ public static class OperationsServerHost
             var denial = OperationsAccessPolicy.Denial(Principal(context), "service", "operations.read");
             return denial is null ? Results.Ok(OperationCatalogue.All) : Results.Json(new OperationError(denial), statusCode: 403);
         });
+        app.MapPost("/" + OperatorPrincipalRevocation.Path, async (OperatorPrincipalRevocationRequest request, HttpContext context,
+            OperationsAccess access, OperationsCoordinator operations) =>
+        {
+            var denial = OperationsAccessPolicy.RevocationDenial(Principal(context));
+            if (denial is not null) return Results.Json(new OperationError(denial), statusCode: 403);
+            if (request.OperatorAgentIds is null || request.OperatorAgentIds.Length > 1000
+                || (!request.AllOperators && request.OperatorAgentIds.Length == 0)
+                || request.OperatorAgentIds.Any(string.IsNullOrWhiteSpace))
+                return Results.Json(new OperationError("invalid-revocation"), statusCode: 400);
+            var revoked = access.RevokeOperators(request.OperatorAgentIds, request.AllOperators);
+            var cancelled = await operations.CancelForPrincipalsAsync(revoked);
+            return Results.Ok(new OperatorPrincipalRevocationResponse(revoked, cancelled));
+        });
         app.MapPost("/api/operations/v1/agents/register", (AgentCapability capability, HttpContext context, OperationsCoordinator operations) =>
             operations.RegisterAsync(Principal(context), capability));
         app.MapPost("/api/operations/v1/agents/{agentId}/poll", (string agentId, AgentPollRequest request, HttpContext context, OperationsCoordinator operations, CancellationToken ct) =>
             operations.PollAsync(Principal(context), agentId, request.BootId, ct));
+        app.MapPost("/api/operations/v1/agents/{agentId}/journal", (string agentId, HostJournalEntry entry,
+            HttpContext context, OperationsStore store, ILogger<OperationsStore> logger) =>
+        {
+            var denial = OperationsAccessPolicy.Denial(Principal(context), "agent", "agents.connect", agentId);
+            if (denial is not null) throw new OperationRejected(denial, 403);
+            if (entry.AgentId != agentId || entry.Outcome is not ("execution-started" or "succeeded" or "failed" or "cancelled")
+                || !Guid.TryParseExact(entry.AttemptId, "N", out _))
+                throw new OperationRejected("invalid-host-journal", 400);
+            try { store.ReceiveJournal(entry); }
+            catch (OperationRejected rejected) when (rejected.Code == "host-journal-without-central-audit")
+            {
+                logger.LogError("host-journal-without-central-audit attempt={AttemptId} agent={AgentId}", entry.AttemptId, agentId);
+                throw;
+            }
+            return Results.NoContent();
+        });
+        app.MapGet("/api/operations/v1/agents/{agentId}/revocations", (string agentId, HttpContext context,
+            HostRevocationStore store) =>
+        {
+            var denial = OperationsAccessPolicy.Denial(Principal(context), "agent", "agents.connect", agentId);
+            if (denial is not null) throw new OperationRejected(denial, 403);
+            return store.Read() is { } list ? Results.Ok(list) : Results.NoContent();
+        });
+        app.MapPut("/api/operations/v1/certificates/revocations", (HostRevocationList list, HttpContext context,
+            HostRevocationStore store) =>
+        {
+            var denial = OperationsAccessPolicy.Denial(Principal(context), "service", "certificates.revoke");
+            if (denial is not null) throw new OperationRejected(denial, 403);
+            store.Publish(list);
+            return Results.NoContent();
+        });
         app.MapPost("/api/operations/v1/commands", (OperationCommand command, HttpContext context, OperationsCoordinator operations, CancellationToken ct) =>
             operations.SubmitAsync(Principal(context), command, ct));
         app.MapGet("/api/operations/v1/attempts/{id}", (string id, HttpContext context, OperationsCoordinator operations) =>

@@ -329,9 +329,10 @@ export interface NeedsInputStatus {
 export interface TaskDependencyReference {
   key: string;
   releaseGate?: boolean;
+  requiresCompletion?: boolean;
 }
 
-/** Legacy edges stay strings; only release-gated edges need the object shape. */
+/** Plain edges stay strings; completion and release gates use the object shape. */
 export type TaskDependency = string | TaskDependencyReference;
 
 export function taskDependencyKey(dependency: TaskDependency): string {
@@ -409,6 +410,8 @@ export interface WaitsOnItem {
   resolved: boolean;
   fulfilled: boolean;
   releaseGate?: boolean;
+  requiresCompletion?: boolean;
+  fulfillmentRule?: 'completion' | 'explicit-release' | 'integrated-delivery' | 'delivery-integration';
   targetReleased?: boolean;
   waitingForRelease?: boolean;
   /**
@@ -584,6 +587,8 @@ export interface BetterCandidateNote {
 }
 
 export interface TaskInfo {
+  attentionHolder?: string | null;
+  qualityStudioVerdict?: 'pass' | 'concerns' | 'block' | string | null;
   id: string;
   taskKey: string;
   preview?: TaskPreview | null;
@@ -1454,6 +1459,45 @@ export interface TaskDetail {
    * `docs/system/contracts/filesystem.md` "results/review-evidence.jsonl".
    */
   reviewEvidence: ReviewEvidenceEntry[];
+}
+
+export interface QualityChangeFinding {
+  fingerprint: string;
+  ruleId: string;
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+  path: string;
+  line: number;
+  message: string;
+}
+
+export interface QualityChangeDocument {
+  verdict: 'pass' | 'concerns' | 'block' | 'provider-unavailable' | 'timeout' | 'auth-failure' | 'unparseable';
+  ruleSetHash: string;
+  findings: QualityChangeFinding[];
+}
+
+export interface QualityChangeRound {
+  round: number;
+  attemptId: string;
+  runAttemptId: string;
+  repositoryId: string | null;
+  baseSha: string;
+  headSha: string;
+  commitCount: number;
+  mode: 'off' | 'shadow' | 'decide';
+  reviewedAtUtc: string;
+  document: QualityChangeDocument | null;
+  unavailableReason: string | null;
+}
+
+export interface QualityChangeView {
+  state: 'not-registered' | 'waiting' | 'reviewing' | 'pass' | 'concerns' | 'block' | 'unavailable' | 'shadow' | 'outdated' | 'not-reviewed';
+  repositoryId: string | null;
+  currentHead: string | null;
+  rounds: QualityChangeRound[];
+  landedSha: string | null;
+  landedBaseSha: string | null;
+  landedPatchEqualsReviewedPatch: boolean | null;
 }
 
 export interface ResultHistoryEntry {
