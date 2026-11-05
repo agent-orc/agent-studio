@@ -78,6 +78,7 @@ public static class AiOperatorEffects
     public const string ParkAndContinue = "park-and-continue";
     public const string PromoteToHumanReview = "promote-to-human-review";
     public const string ReturnToAutoReview = "return-to-auto-review";
+    public const string QueueMergeRound = "queue-merge-round";
     public const string CloseBreaker = "close-breaker";
     public const string AcceptDelivery = "accept-delivery";
     public const string RequeueRebase = "requeue-rebase";
@@ -258,6 +259,8 @@ public static class AiOperatorDecisionPolicy
                 AiOperatorEffects.PromoteToHumanReview, verdict.ReasonCode, verdict.Detail),
             DeliveryChainAction.ReturnToAutoReview => Effect(payload, AutonomyClass.A1,
                 AiOperatorEffects.ReturnToAutoReview, verdict.ReasonCode, verdict.Detail),
+            DeliveryChainAction.QueueMergeRound => Effect(payload, AutonomyClass.A1,
+                AiOperatorEffects.QueueMergeRound, verdict.ReasonCode, verdict.Detail),
             DeliveryChainAction.Escalate => Ask(payload, verdict.ReasonCode, verdict.Detail),
             _ => Hold(payload, verdict.ReasonCode, verdict.Detail),
         };

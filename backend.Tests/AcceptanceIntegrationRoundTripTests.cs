@@ -632,6 +632,36 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 == LaneChangeCauses.AcceptanceIntegrationFailed);
     }
 
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Stale_delivery_verdict_requests_a_fresh_review_and_records_the_handoff()
+    {
+        var deliverySha = PublishDelivery("stale-handoff.txt", "new delivery\n");
+        var deps = Build(deliverySha, guarded: true);
+        var previous = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
+        Assert.NotNull(previous);
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var stranding = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, null!, null!, deps.Settings, deps.Pipeline, null!,
+            deps.Transitions, null!, null!, null!, null!, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration,
+            deps.Transitions, deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance,
+            stranding: stranding, timeline: deps.Timeline);
+
+        Assert.Equal(1, await reconciler.RunOnceAsync());
+
+        var returned = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, returned.State);
+        var requested = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
+        Assert.NotNull(requested);
+        Assert.NotEqual(previous.AttemptId, requested.AttemptId);
+        Assert.Equal(AttemptLifecycleState.Pending, requested.State);
+        Assert.Contains(deps.Timeline.ReadAll(returned.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+    }
+
     /// <summary>
     /// AGT-3098 - AGT-2882: accepted with an override against its delivery
     /// evidence (run attempt lost, delivery integrated), but the merge step

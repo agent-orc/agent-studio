@@ -152,7 +152,7 @@ public sealed class MonolithDecisionBoundaryTests
         [
             "RunLivenessPolicy", "StaleProgressPolicy", "SteerTimeoutPolicy",
             "RunTimeoutSalvageContinuationPolicy", "GateEnvironmentRetryPolicy",
-            "DeliveryChainPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy",
+            "DeliveryChainPolicy", "AutoReviewStrandingPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy",
             "AcceptanceRailDecisionPolicy", "GateCancellationPolicy", "StallInterventionPolicy",
         ];
         var violations = sources.SelectMany(file => movedRules

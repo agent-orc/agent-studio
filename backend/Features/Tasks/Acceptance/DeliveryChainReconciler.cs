@@ -18,12 +18,18 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
     private readonly GateFailureRouter? _gateFailures;
     private readonly AiOperatorDecisionGateway _decisions;
     private readonly AgentStudio.Pipeline.TaskGateCancellationRegistry? _gateCancellation;
+    private readonly TaskIntegrationRecoveryService? _recovery;
+    private readonly AgentStudio.Runner.AutoReviewStrandingWatchdog? _stranding;
+    private readonly TimelineLog? _timeline;
 
     public DeliveryChainReconciler(TaskScannerService scanner,
         TaskIntegrationStatusService statuses, TaskTransitionService transitions,
         IConfiguration configuration, ILogger<DeliveryChainReconciler> logger,
         GateFailureRouter? gateFailures = null, AiOperatorDecisionGateway? decisions = null,
-        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null)
+        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null,
+        TaskIntegrationRecoveryService? recovery = null,
+        AgentStudio.Runner.AutoReviewStrandingWatchdog? stranding = null,
+        TimelineLog? timeline = null)
     {
         _scanner = scanner;
         _statuses = statuses;
@@ -33,6 +39,9 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
         _gateFailures = gateFailures;
         _decisions = decisions ?? AiOperatorDecisionGateway.ForTestHost(configuration);
         _gateCancellation = gateCancellation;
+        _recovery = recovery;
+        _stranding = stranding;
+        _timeline = timeline;
     }
 
     public string Decider => AiOperatorDeciders.DeliveryChain;
@@ -125,7 +134,9 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             status?.Status == IntegrationStatuses.Integrated,
             DeliveryLanePolicy.RequiresEscalation(status),
             card.State == TaskStates.Completed && DeliveryLanePolicy.IsAcceptedDeliveryStale(card, status),
-            completedReopenLimitReached);
+            completedReopenLimitReached,
+            status?.Failure?.Code == AcceptedIntegrationFailureCodes.MergeConflict
+                || status?.Failure?.ConflictReport is not null);
 
     private static string SubjectKey(TaskInfo card, DeliveryChainOperatorFacts facts)
         => AiOperatorDecisionGateway.FactsSubjectKey("delivery", card.Id, facts);
@@ -133,6 +144,24 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
     private async Task<Applied> ApplyDecisionAsync(TaskInfo card, TaskIntegrationStatus? status,
         AiOperatorDecision decision, CancellationToken ct)
     {
+        if (decision.Effect == AiOperatorEffects.QueueMergeRound)
+        {
+            var round = _recovery is not null && status is not null
+                ? _recovery.Queue(card, status, DeliveryChainReasons.MergeRoundQueued,
+                    TaskIntegrationRecoveryService.AcceptanceRailSource)
+                : new TaskIntegrationRecoveryResult(false,
+                    "The integration recovery service or current delivery status is unavailable.");
+            if (round.Queued) return Applied.Moved;
+            _logger.LogWarning("delivery-chain-merge-round-failed task={TaskKey} reason={Reason}",
+                card.TaskKey, round.Error);
+            var parked = await _transitions.MoveAsync(card.Id, TaskStates.Escalated,
+                card.WatchPath, ct, cause: TimelineActors.System,
+                reason: "The delivery conflicts with develop, but a merge round could not be queued: " + round.Error,
+                expectedSourceState: card.State,
+                transitionCause: LaneChangeCauses.Escalated,
+                transitionDetail: DeliveryChainReasons.MergeRoundQueued);
+            return parked.Status == MoveJobStatus.Success ? Applied.Moved : Applied.Failed;
+        }
         string? target = decision.Effect switch
         {
             AiOperatorEffects.PromoteToHumanReview => TaskStates.HumanReview,
@@ -189,10 +218,42 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             if (target == TaskStates.AutoReview
                 && _scanner.FindJob(card.Id, card.WatchPath) is { } returned)
             {
-                TaskJsonFile.UpdateField(returned.FolderPath, "phase",
-                    LifecyclePhases.Integrating, _logger);
-                _scanner.InvalidateCache();
-                _scanner.PublishCoreFromKnownFolder(returned.FolderPath);
+                if (decision.ReasonCode is DeliveryChainReasons.VerdictStale
+                    or DeliveryChainReasons.AcceptedDeliveryStale)
+                {
+                    if (_stranding is null)
+                    {
+                        TaskJsonFile.UpdateField(returned.FolderPath, "phase",
+                            LifecyclePhases.Integrating, _logger);
+                        _scanner.InvalidateCache();
+                        _scanner.PublishCoreFromKnownFolder(returned.FolderPath);
+                    }
+                    else if (!_stranding.RequestFreshReview(returned))
+                    {
+                        var parked = await _transitions.MoveAsync(returned.Id, TaskStates.Escalated,
+                            returned.WatchPath, ct, cause: TimelineActors.System,
+                            reason: "The delivery verdict became stale, but a fresh review could not be requested.",
+                            expectedSourceState: TaskStates.AutoReview,
+                            transitionCause: LaneChangeCauses.Escalated,
+                            transitionDetail: DeliveryChainReasons.VerdictStale);
+                        return parked.Status == MoveJobStatus.Success ? Applied.Moved : Applied.Failed;
+                    }
+                    else
+                        _timeline?.Append(returned.FolderPath,
+                            TimelineEventKinds.DeliveryReviewRequested, TimelineActors.System,
+                            "The delivery verdict became stale; a fresh review was requested.",
+                            details: new Dictionary<string, string>
+                            {
+                                ["reason"] = decision.ReasonCode,
+                            });
+                }
+                else
+                {
+                    TaskJsonFile.UpdateField(returned.FolderPath, "phase",
+                        LifecyclePhases.Integrating, _logger);
+                    _scanner.InvalidateCache();
+                    _scanner.PublishCoreFromKnownFolder(returned.FolderPath);
+                }
             }
             return Applied.Moved;
         }

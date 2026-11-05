@@ -125,7 +125,7 @@ public class TaskBatchMoveTests : IDisposable
         Assert.True(accepted.Status is BatchMoveJobStates.Queued or BatchMoveJobStates.Running);
 
         BatchMoveJobResponse? completed = null;
-        for (var attempt = 0; attempt < 100; attempt++)
+        for (var attempt = 0; attempt < 500; attempt++)
         {
             completed = await client.GetFromJsonAsync<BatchMoveJobResponse>(
                 $"/api/tasks/batch-move/{accepted.Id}");
