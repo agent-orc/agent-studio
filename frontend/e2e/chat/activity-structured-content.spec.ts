@@ -5,6 +5,7 @@ import * as fs from 'fs';
 const SHOTS_DIR = process.env['JOB_RESULTS_DIR']
   ?? path.resolve(__dirname, '../../results/AGT-2437');
 const EVIDENCE_VARIANT = process.env['EVIDENCE_VARIANT'] === 'before' ? 'before' : 'after';
+const LAYOUT_STAGE = process.env['AGT_3545_STAGE'] === 'before' ? 'before' : 'after';
 const TARGET = {
   id: 'activity-structured-content-fixture',
   watchPath: 'C:/fixtures/activity-structured-content',
@@ -456,98 +457,107 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer(), sta
   });
 }
 
-for (const { width, height } of [
-  { width: 390, height: 900 },
-  { width: 375, height: 667 },
-  { width: 430, height: 932 },
-  { width: 1280, height: 900 },
-]) {
-  for (const theme of ['light', 'dark'] as const) {
-    test(`task detail mobile layout ${width}x${height} ${theme}`, async ({ page }) => {
-      await page.addInitScript((selectedTheme) => {
-        localStorage.setItem('atp.studio.theme', selectedTheme);
-        localStorage.setItem('atp.flag.nextGenChat', '1');
-      }, theme);
-      await installRoutes(page, outputBuffer(), '2-ready');
-      await page.setViewportSize({ width, height });
-      await page.goto(`/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`);
+test.describe('task detail mobile layout', () => {
+  test.use({ hasTouch: true });
+  for (const { width, height } of [
+    { width: 390, height: 900 },
+    { width: 375, height: 667 },
+    { width: 430, height: 932 },
+    { width: 1280, height: 900 },
+  ]) {
+    for (const theme of ['light', 'dark'] as const) {
+      test(`task detail mobile layout ${width}x${height} ${theme}`, async ({ page }) => {
+        await page.addInitScript((selectedTheme) => {
+          localStorage.setItem('atp.studio.theme', selectedTheme);
+          localStorage.setItem('atp.flag.nextGenChat', '1');
+        }, theme);
+        await installRoutes(page, outputBuffer(), '2-ready');
+        await page.setViewportSize({ width, height });
+        await page.goto(`/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`);
 
-      const pane = page.getByTestId('pane-protocol');
-      await expect(pane).toBeVisible();
-      await page.getByTestId('prompt-tab-overview').click();
-      await expect(page.getByTestId('prompt-tab-overview')).toHaveAttribute('aria-selected', 'true');
-      for (const [id, testid] of [
-        ['task', 'inspector-tab-task'],
-        ['protocol', 'inspector-tab-protocol'],
-        ['activity', 'inspector-tab-activity'],
-      ] as const) {
-        const tab = page.getByTestId(testid);
-        if (await tab.isVisible().catch(() => false)) {
-          await tab.click();
-          await expect(tab).toHaveAttribute('aria-selected', 'true');
-        } else {
-          await pane.getByTestId('pane-tabs-overflow').click();
-          await page.getByTestId(`pane-tabs-overflow-item-${id}`).click();
-          await expect(pane.getByRole('tabpanel')).toHaveAttribute('data-active-tab', id);
+        const pane = page.getByTestId('pane-protocol');
+        await expect(pane).toBeVisible();
+        await page.getByTestId('prompt-tab-overview').tap();
+        await expect(page.getByTestId('prompt-tab-overview')).toHaveAttribute('aria-selected', 'true');
+        for (const [id, testid] of [
+          ['task', 'inspector-tab-task'],
+          ['protocol', 'inspector-tab-protocol'],
+          ['activity', 'inspector-tab-activity'],
+        ] as const) {
+          const tab = page.getByTestId(testid);
+          if (await tab.isVisible().catch(() => false)) {
+            await tab.tap();
+            await expect(tab).toHaveAttribute('aria-selected', 'true');
+          } else {
+            await pane.getByTestId('pane-tabs-overflow').tap();
+            await page.getByTestId(`pane-tabs-overflow-item-${id}`).tap();
+            await expect(pane.getByRole('tabpanel')).toHaveAttribute('data-active-tab', id);
+          }
         }
-      }
-      await expect(page.getByTestId('activity-chat-compose')).toBeVisible();
-      await page.getByTestId('pane-protocol-body').evaluate(el => { el.scrollTop = el.scrollHeight; });
-      const geometry = await page.evaluate(() => {
-        const rect = (testid: string) => {
-          const r = document.querySelector(`[data-testid="${testid}"]`)?.getBoundingClientRect();
-          if (!r) return { left: 0, right: 0, top: 0, bottom: 0 };
-          return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-        };
-        return {
-          pane: rect('pane-protocol'),
-          statusbar: rect('studio-statusbar'),
-          composer: rect('activity-chat-compose'),
-          body: rect('pane-protocol-body'),
-          gallery: rect('conversation-artifact-gallery'),
-          toolbar: rect('studio-triage-panel'),
-          runNow: rect('studio-triage-action-run-now'),
-          actionStrip: rect('studio-tab-actions'),
-          actionStripOverflow: (() => {
-            const strip = document.querySelector('[data-testid="studio-tab-actions"]');
-            return strip ? strip.scrollWidth - strip.clientWidth : 0;
-          })(),
-          detail: rect('detail-panes'),
-          viewport: { width: innerWidth, height: innerHeight },
-        };
-      });
-      fs.mkdirSync(SHOTS_DIR, { recursive: true });
-      fs.writeFileSync(path.join(SHOTS_DIR, `AGT-3545-after-${width}x${height}-${theme}.json`), JSON.stringify(geometry, null, 2));
-      await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3545-after-${width}x${height}-${theme}.png`) });
+        await expect(page.getByTestId('activity-chat-compose')).toBeVisible();
+        await page.getByTestId('pane-protocol-body').evaluate(el => { el.scrollTop = el.scrollHeight; });
+        const geometry = await page.evaluate(() => {
+          const rect = (testid: string) => {
+            const r = document.querySelector(`[data-testid="${testid}"]`)?.getBoundingClientRect();
+            if (!r) return { left: 0, right: 0, top: 0, bottom: 0 };
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+          };
+          return {
+            pane: rect('pane-protocol'),
+            statusbar: rect('studio-statusbar'),
+            composer: rect('activity-chat-compose'),
+            body: rect('pane-protocol-body'),
+            gallery: rect('conversation-artifact-gallery'),
+            lastContent: rect('conversation-view'),
+            toolbar: rect('studio-triage-panel'),
+            runNow: rect('studio-triage-action-run-now'),
+            actionStrip: rect('studio-tab-actions'),
+            actionStripOverflow: (() => {
+              const strip = document.querySelector('[data-testid="studio-tab-actions"]');
+              return strip ? strip.scrollWidth - strip.clientWidth : 0;
+            })(),
+            detail: rect('detail-panes'),
+            viewport: { width: innerWidth, height: innerHeight },
+          };
+        });
+        fs.mkdirSync(SHOTS_DIR, { recursive: true });
+        fs.writeFileSync(path.join(SHOTS_DIR, `AGT-3545-${LAYOUT_STAGE}-${width}x${height}-${theme}.json`), JSON.stringify(geometry, null, 2));
+        await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3545-${LAYOUT_STAGE}-${width}x${height}-${theme}.png`) });
 
-      if (width < 720) expect(Math.abs(geometry.pane.bottom - geometry.statusbar.top)).toBeLessThanOrEqual(2);
-      else expect(geometry.pane.bottom).toBeGreaterThanOrEqual(geometry.statusbar.top - 16);
-      expect(geometry.toolbar.right).toBeLessThanOrEqual(Math.min(width, geometry.pane.right) + 1);
-      expect(geometry.toolbar.left).toBeGreaterThanOrEqual(0);
-      expect(geometry.runNow.right).toBeLessThanOrEqual(width + 1);
-      expect(geometry.runNow.left).toBeGreaterThanOrEqual(0);
-      expect(geometry.actionStrip.right).toBeLessThanOrEqual(width + 1);
-      expect(geometry.actionStripOverflow).toBeLessThanOrEqual(1);
-      expect(geometry.body.bottom).toBeLessThanOrEqual(geometry.composer.top + 1);
-      expect(geometry.gallery.bottom).toBeLessThanOrEqual(geometry.composer.top + 1);
-      expect(geometry.composer.bottom).toBeLessThanOrEqual(geometry.pane.bottom + 1);
-      expect(geometry.composer.top).toBeGreaterThan(geometry.pane.top);
-      expect(geometry.composer.bottom).toBeGreaterThan(geometry.pane.bottom - 180);
-      await page.getByTestId('pane-protocol-body').evaluate(el => {
-        el.scrollTop = 0;
-        el.dispatchEvent(new Event('scroll', { bubbles: true }));
+        if (LAYOUT_STAGE === 'before') return;
+
+        if (width < 720) expect(Math.abs(geometry.pane.bottom - geometry.statusbar.top)).toBeLessThanOrEqual(2);
+        else expect(geometry.pane.bottom).toBeGreaterThanOrEqual(geometry.statusbar.top - 16);
+        expect(geometry.toolbar.right).toBeLessThanOrEqual(Math.min(width, geometry.pane.right) + 1);
+        expect(geometry.toolbar.left).toBeGreaterThanOrEqual(0);
+        expect(geometry.runNow.right).toBeLessThanOrEqual(width + 1);
+        expect(geometry.runNow.left).toBeGreaterThanOrEqual(0);
+        expect(geometry.actionStrip.right).toBeLessThanOrEqual(width + 1);
+        expect(geometry.actionStripOverflow).toBeLessThanOrEqual(1);
+        expect(geometry.body.bottom).toBeLessThanOrEqual(geometry.composer.top + 1);
+        // The conversation holds the final outcome row. At scroll bottom its
+        // trailing edge must be visible immediately above the docked composer.
+        expect(geometry.lastContent.bottom).toBeGreaterThan(geometry.body.bottom - 32);
+        expect(geometry.lastContent.bottom).toBeLessThanOrEqual(geometry.composer.top + 1);
+        expect(geometry.composer.bottom).toBeLessThanOrEqual(geometry.pane.bottom + 1);
+        expect(geometry.composer.top).toBeGreaterThan(geometry.pane.top);
+        expect(geometry.composer.bottom).toBeGreaterThan(geometry.pane.bottom - 180);
+        await page.getByTestId('pane-protocol-body').evaluate(el => {
+          el.scrollTop = 0;
+          el.dispatchEvent(new Event('scroll', { bubbles: true }));
+        });
+        const jump = page.getByTestId('conversation-jump-latest');
+        await expect(jump).toBeVisible();
+        const jumpBox = await jump.boundingBox();
+        const paneBox = await pane.boundingBox();
+        expect(jumpBox!.x).toBeGreaterThanOrEqual(paneBox!.x);
+        expect(jumpBox!.x + jumpBox!.width).toBeLessThanOrEqual(paneBox!.x + paneBox!.width + 1);
+        expect(jumpBox!.y).toBeGreaterThanOrEqual(paneBox!.y);
+        expect(jumpBox!.y + jumpBox!.height).toBeLessThanOrEqual(paneBox!.y + paneBox!.height + 1);
       });
-      const jump = page.getByTestId('conversation-jump-latest');
-      await expect(jump).toBeVisible();
-      const jumpBox = await jump.boundingBox();
-      const paneBox = await pane.boundingBox();
-      expect(jumpBox!.x).toBeGreaterThanOrEqual(paneBox!.x);
-      expect(jumpBox!.x + jumpBox!.width).toBeLessThanOrEqual(paneBox!.x + paneBox!.width + 1);
-      expect(jumpBox!.y).toBeGreaterThanOrEqual(paneBox!.y);
-      expect(jumpBox!.y + jumpBox!.height).toBeLessThanOrEqual(paneBox!.y + paneBox!.height + 1);
-    });
+    }
   }
-}
+});
 
 for (const theme of ['light', 'dark'] as const) {
 test(`Activity renders structured tool payloads and runner events quietly in ${theme} theme`, async ({ page }) => {
