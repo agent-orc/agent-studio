@@ -126,12 +126,16 @@ public sealed partial class BatchGatePilotService
     }
 
     private int ConfiguredGateSlots()
-        => new[]
+    {
+        var capacity = _services?.GetService<GateCapacitySettings>();
+        return new[]
         {
             _gateSlots?.Snapshot().Total ?? 0,
-            _configuration?.GetValue("RemoteGate:GateSlots", 0) ?? 0,
+            capacity is { HasOverride: true } ? capacity.Current().Slots
+                : _configuration?.GetValue("RemoteGate:GateSlots", 0) ?? 0,
             _configuration?.GetValue("LocalGate:GateSlots", 0) ?? 0,
         }.Max();
+    }
 
     /// <summary>
     /// Re-reads the generation after a per-task gate returned. A result of any

@@ -30,6 +30,8 @@ describe('BatchPanelComponent', () => {
     expect(text).toContain('agent-runner-01');
     expect(fixture.nativeElement.querySelector('[data-testid="batch-gate-slot-usage"]').textContent)
       .toContain('2/3 busy');
+    expect((fixture.nativeElement.querySelector('[data-testid="batch-gate-capacity"]').textContent as string).replace(/\s+/g, ' '))
+      .toContain('3 slots · 6 processors per gate · 24 host cores');
     http.verify();
   });
 

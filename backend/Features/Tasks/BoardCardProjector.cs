@@ -36,7 +36,7 @@ public sealed class BoardCardProjector(
         var tokenLookup = cachedTokens ?? BuildTokenLookup(raw, tokens);
         var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
         var dependencyLookups = BuildDependencyGraphLookups(raw, scanner, eligibleWaiters,
-            attemptAuthority: attemptAuthority);
+            attemptAuthority: attemptAuthority, gitProjection: gitProjection, projectSettings: projectSettings);
         var gitLookup = gitProjection.ReadCacheOnly(raw);
         var liveLookup = liveStatus.BuildLookup(raw);
         var reviewQueue = attemptAuthority.ReadReviewQueue();

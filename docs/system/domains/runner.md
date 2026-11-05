@@ -1886,11 +1886,15 @@ unreported claim expires with its lease and is queued again.
   escalation, and lane movement.
 - Waits-on gate (AGT-2029): the ready-lane pickup gate
   (`ProjectRunner.IsReadyPickupCandidate`) skips a `2-ready` card whose
-  `references.dependsOn` targets have not all reached `6-completed`/`7-archive`.
+  `references.dependsOn` targets have neither reached `6-completed`/`7-archive`
+  nor had their current delivery integrated into the successor's target branch.
+  A newer pending predecessor delivery closes the edge until it is integrated.
+  `requiresCompletion: true` retains the terminal-lane rule per edge, and
+  concept and research predecessors use it by default.
   A dependency object with `releaseGate: true` additionally requires the
   terminal target card to carry its explicit `released: true` flag. Completion
   does not infer release, and legacy string dependencies retain the existing
-  terminal-state-only behavior.
+  completion or current-delivery integration behavior.
   Fulfillment is resolved cross-project and archive-inclusive
   (`TaskReferenceIndex` built from `ScanAllJobsWithArchive()`, shared with the
   read-time card overlay via `WaitsOnEvaluator`). A skipped card falls out of the

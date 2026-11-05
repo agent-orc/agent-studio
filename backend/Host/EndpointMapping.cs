@@ -32,6 +32,7 @@ public static class EndpointMapping
         app.MapQualityStudioEndpoints();
         app.MapSecretEndpoints();
         app.MapPullGateEndpoints();
+        app.MapGateCapacityEndpoints();
         var tasks = app.MapGroup("/api/tasks")
             .AddEndpointFilter<TaskOperationTimingFilter>()
             .AddEndpointFilter<OperatorAttentionFilter>();

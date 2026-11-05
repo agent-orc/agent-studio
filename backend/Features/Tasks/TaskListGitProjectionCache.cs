@@ -135,6 +135,24 @@ public sealed class TaskListGitProjectionCache
             testRuns, reviewProjection, commits, signatures, subjectVersions);
     }
 
+    /// <summary>
+    /// Claim and Ready dependency reads share only confirmed Git facts for the
+    /// current task signature. A repository being refreshed cannot release an
+    /// edge using the previous delivery's integrated result.
+    /// </summary>
+    public IReadOnlyDictionary<string, TaskIntegrationStatus> ReadDependencyIntegration(
+        IReadOnlyCollection<TaskInfo> targets)
+    {
+        if (targets.Count == 0) return new Dictionary<string, TaskIntegrationStatus>();
+        var current = ReadCacheOnly(targets).Integration;
+        var freshKeys = targets
+            .Where(target => ReadTask(target).State == "ready")
+            .Select(target => target.TaskKey)
+            .ToHashSet(StringComparer.Ordinal);
+        return current.Where(pair => freshKeys.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+    }
+
     private TaskListGitProjection FilterForTasks(
         TaskListGitProjection projection, IReadOnlyCollection<TaskInfo> tasks)
     {
