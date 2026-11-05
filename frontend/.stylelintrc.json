@@ -390,6 +390,17 @@
       "rules": {
         "color-no-hex": true
       }
+    },
+    {
+      "comment": "New Studio mobile tab-bar rules use theme and spacing tokens.",
+      "files": ["src/app/features/studio-shell/_studio-shell-mobile-tabbar.scss"],
+      "rules": {
+        "color-no-hex": true,
+        "scale-unlimited/declaration-strict-value": [
+          ["padding", "padding-block", "padding-inline", "margin", "gap", "row-gap", "column-gap"],
+          { "ignoreValues": ["0", "auto"], "ignoreFunctions": false, "disableFix": true, "severity": "error" }
+        ]
+      }
     }
   ],
 

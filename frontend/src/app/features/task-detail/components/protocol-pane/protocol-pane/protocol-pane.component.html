@@ -486,6 +486,13 @@
                   </div>
                 }
               }
+            </section>
+          </div>
+        }
+      </div>
+    </section>
+  </div>
+  @if (activeInspectorTab() === 'activity') {
               <div class="chat-compose" data-testid="activity-chat-compose">
                 @defer (when !!detail().info.preview) { <app-task-preview [preview]="detail().info.preview" variant="chat" /> }
                 <div class="chat-compose__row">
@@ -535,12 +542,7 @@
                   </p>
                 }
               </div>
-            </section>
-          </div>
-        }
-      </div>
-    </section>
-  </div>
+  }
 </section>
 
 <app-source-viewer
