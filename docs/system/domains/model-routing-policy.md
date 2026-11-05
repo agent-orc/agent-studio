@@ -17,7 +17,9 @@ output cap of 65,536 bytes. Up to four inline images may travel with the job,
 with a combined base64 limit of 5.6 million characters. A coding or review host
 claims it only while its current instance has fresh, ready
 `model-acceptance:<cli>:<model>`
-evidence. Claims are fenced by a token. The host runs the provider from an
+evidence. Claims and completions bind the runner's current instance and the
+claim token. A restarted runner cannot complete a prior instance's claim.
+The host runs the provider from an
 isolated temporary directory with read-only model execution and reports bounded
 text and usage. The API container does not need a provider login.
 
@@ -26,7 +28,10 @@ selection. When no host advertises the route, Result finalization reports
 `waiting for a host with <capability>` and schedules a retry without consuming
 the summary retry budget. The task server publishes the model as a short-lived
 probe demand in capability advertisement responses, so a host can discover and
-advertise a newly requested route. Jobs already claimed expire after their timeout.
+advertise a newly requested route. Pending jobs expire after their timeout plus
+30 seconds. A claim starts a fresh timeout plus 30 seconds; the API follows the
+Task Server's queue expiry and starts its own run timer when it observes the
+claim.
 
 ### Task Server one-shot job API
 
@@ -43,15 +48,18 @@ typed `execution-disabled` response; reading an existing job remains read-only.
 | `POST /one-shot-jobs` | `cli` (`claude` or `codex`), `model`, `prompt`, optional `thinkingLevel`, `timeoutSeconds`, `maxOutputBytes`, and optional `images` entries with `base64` and `mediaType`. | `jobId`, `status` (`pending` or `waiting`), `capability`, and optional `error`. Waiting has an empty `jobId` and `error: "waiting for a host with <capability>"`. |
 | `GET /one-shot-jobs/{jobId}` | No body. | `jobId`, `status` (`pending`, `claimed`, `completed`, or `failed`), `capability`, optional `text`, `error`, and `usage`. An unknown id returns JSON `null`; an expired job reads as `failed` with a timeout error. |
 | `POST /one-shot-jobs/claim` | `runnerId`, `instanceId`. | `jobId`, `claimToken`, and the original `request`, or JSON `null` when no eligible job exists. Claim requires a fresh ready `model-acceptance:<cli>:<model>` capability for the runner's current instance. |
-| `POST /one-shot-jobs/complete` | `runnerId`, `jobId`, `claimToken`, `success`, optional `text`, `error`, and `usage` (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheCreationTokens`, `model`). | JSON `true` when the active fenced claim is settled, otherwise `false`. Text over the requested byte cap becomes a failed job with an output-cap error. |
+| `POST /one-shot-jobs/complete` | `runnerId`, `instanceId`, `jobId`, `claimToken`, `success`, optional `text`, `error`, and `usage` (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheCreationTokens`, `model`). | JSON `true` when the active fenced claim from the runner's current instance is settled, otherwise `false`. Text over the requested byte cap becomes a failed job with an output-cap error. |
 
 The server rejects an empty or over-220,000-byte UTF-8 prompt, a timeout outside
 1-300 seconds, an output cap outside 1-65,536 bytes, more than four images,
 unsupported image media types, or over 5.6 million combined base64 characters
 with HTTP 400. A runner identity mismatch or insufficient scope returns HTTP
-403. Jobs expire 30 seconds after their requested timeout, and a claim token
-expires 20 seconds after that timeout. The runner reports timeout and output
-cap failures through `failed`.
+403. Pending jobs expire 30 seconds after their requested timeout. Claiming a
+job starts a fresh run deadline: the job expires after its requested timeout
+plus 30 seconds, and its claim token expires after the timeout plus 20 seconds.
+Studio resets its polling deadline when it first observes the claim. The runner
+counts raw stdout and stderr bytes before decoding either stream and reports
+timeout and output cap failures through `failed`.
 
 ## Consumer policy and project overrides (AGT-3479)
 
