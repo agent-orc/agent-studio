@@ -107,13 +107,22 @@ def install_archive(archive, expected, release_root, commit):
         fail("transferred release digest mismatch")
     destination = Path(release_root) / expected
     if destination.exists():
-        if (destination / "COMMIT").read_text().strip() != commit:
+        marker = destination / "COMMIT"
+        if not marker.is_file():
+            # Earlier versions extracted directly into the final directory.
+            # A failed extraction left that directory behind without a marker.
+            shutil.rmtree(destination)
+        elif marker.read_text().strip() != commit:
             fail("release digest has a different commit")
-    else:
-        destination.mkdir(parents=True)
-        with tarfile.open(source) as stream:
-            stream.extractall(destination, filter="data")
-        (destination / "COMMIT").write_text(commit + "\n")
+    if not destination.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".networked-release-", dir=destination.parent) as temporary:
+            staged = Path(temporary)
+            with tarfile.open(source) as stream:
+                stream.extractall(staged, filter="data")
+            (staged / "COMMIT").write_text(commit + "\n")
+            os.chmod(staged, destination.parent.stat().st_mode & 0o777)
+            os.replace(staged, destination)
     return destination
 
 
@@ -143,8 +152,17 @@ def running_image(container, repository):
     if re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", original):
         pinned = original
     else:
+        # A container from the prior Compose file may use a tag. Resolve the
+        # tag's repository digest while checking that the tag still names the
+        # image used by the running container.
+        lookup = original
+        try:
+            if run(["docker", "image", "inspect", "--format", "{{.Id}}", original]) != image_id:
+                lookup = image_id
+        except RuntimeError:
+            lookup = image_id
         refs = json.loads(run(["docker", "image", "inspect", "--format",
-                               "{{json .RepoDigests}}", image_id]))
+                               "{{json .RepoDigests}}", lookup]))
         if not isinstance(refs, list):
             fail("running image has no repository digests")
         matches = [ref for ref in refs if isinstance(ref, str) and
@@ -259,14 +277,28 @@ def main(request):
     if action == "coding_install":
         archive, original, expected, commit = fields
         incoming = Path(host["runnerIncoming"])
-        if any(incoming.iterdir()):
-            fail("runner incoming directory is not empty")
-        if digest(archive) != expected:
+        if not re.fullmatch(r"[0-9a-f]{64}", expected) or digest(archive) != expected:
             fail("transferred coding release digest mismatch")
-        with tarfile.open(archive) as stream:
-            stream.extractall(incoming, filter="data")
-        (incoming / "COMMIT").write_text(commit + "\n")
-        (incoming / "release-id").write_text(f"{commit[:12]}-{expected[:12]}\n")
+        release_id = f"{commit[:12]}-{expected[:12]}"
+        if incoming.exists() and any(incoming.iterdir()):
+            marker = incoming / "COMMIT"
+            identity = incoming / "release-id"
+            if marker.is_file() and identity.is_file():
+                if marker.read_text().strip() != commit or identity.read_text().strip() != release_id:
+                    fail("runner incoming directory contains another release")
+            else:
+                # Recover an extraction interrupted by the previous direct-write flow.
+                for entry in incoming.iterdir():
+                    if entry.is_dir() and not entry.is_symlink():
+                        shutil.rmtree(entry)
+                    else:
+                        entry.unlink()
+        if not incoming.exists() or not any(incoming.iterdir()):
+            incoming.mkdir(exist_ok=True)
+            with tarfile.open(archive) as stream:
+                stream.extractall(incoming, filter="data")
+            (incoming / "COMMIT").write_text(commit + "\n")
+            (incoming / "release-id").write_text(release_id + "\n")
         run(["sudo", "/usr/local/sbin/agent-runner-deploy", "--restart-review-drain"])
         return {"installed": True}
     if action == "coding_health":

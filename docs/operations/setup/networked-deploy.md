@@ -15,9 +15,10 @@ to a private, owner-only path outside the checkout. Fill in the operator
 checkout, artifact directory, image repositories, host SSH targets, paths,
 Compose project names and service names, and the site-specific command arrays. Use
 the names from the running containers' `com.docker.compose.project` labels for
-`composeProject` and `engineComposeProject`. The snapshot queries Docker by those
-labels, so it can capture a stack started with the previous Compose configuration
-before the new gate variables are written. No host names,
+`composeProject` and `engineComposeProject`. Do not copy a guessed project name
+from a Compose directory name. The snapshot queries Docker by those labels, so
+it can capture a stack started with the previous Compose configuration before
+the new gate variables are written. No host names,
 addresses, accounts, credentials, or private paths belong in the repository.
 The engine has its own manifest role and SSH target; it may share a physical
 host with a coding runner while remaining a separate release step.
@@ -42,6 +43,9 @@ The coding SSH account must own the helper's incoming directory and have its
 documented sudo grant for `agent-runner-deploy`; other SSH accounts need write
 access to the configured environment and release paths and permission to run
 their Docker or Compose commands.
+An interrupted release extraction leaves no completed gate or review release;
+the next attempt rebuilds it. An incomplete coding incoming directory is
+cleared on retry after the transferred archive digest is checked.
 
 Site-specific commands are **inline argument arrays**, not paths to operator
 scripts:
@@ -103,8 +107,9 @@ hosts whose release-changing step was reached, in review, coding, engine,
 server, gate order. It restores the captured API/web image digests, engine image ref,
 gate SSH host, worker path, and agent-host release. Review replacement again requires an idle
 observation. The host adapter verifies the resulting health before reporting a
-restore. For a server container started from a tag, the snapshot resolves that
-running image's repository digest and image ID before any switch. Rollback
+restore. For a server container started from a tag, the snapshot resolves the
+tag's repository digest only while it still names the running image, then
+falls back to the running image ID. It records the image ID before any switch. Rollback
 pulls the captured digest and checks that the restored container has the same
 image ID. If Docker cannot resolve a unique repository digest, the deploy
 stops at snapshot. If the release changed on-disk formats, use the installation's backup
