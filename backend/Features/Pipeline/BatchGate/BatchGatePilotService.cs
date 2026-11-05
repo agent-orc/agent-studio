@@ -2236,7 +2236,8 @@ public sealed partial class BatchGatePilotService
             run.BatchId, run.BatchRunId, result.TestedSha ?? run.CandidateSha,
             result.Verdict.ToString(), Environment.MachineName, started,
             _time.GetUtcNow(), result.GateQueueWaitMs, overloadMinutes,
-            run.EvidencePath, result.DurationMs, gated?.Select(member => member.Subject.TaskKey).ToArray()));
+            run.EvidencePath, result.DurationMs, gated?.Select(member => member.Subject.TaskKey).ToArray(),
+            EvidenceGateRunId: result.GateRunId));
         foreach (var member in gated ?? [])
             Lane(member, "gate-finished", level: level,
                 durationMs: result.DurationMs, queueWaitMs: result.GateQueueWaitMs,

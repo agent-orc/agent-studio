@@ -75,7 +75,7 @@ public sealed record BatchGateExecutionFact(
     DateTimeOffset StartedAtUtc, DateTimeOffset CompletedAtUtc,
     long QueueWaitMs, double OverloadMinutes, string EvidencePath,
     long? DurationMs = null, IReadOnlyList<string>? MemberKeys = null,
-    string? NarrowCheck = null);
+    string? NarrowCheck = null, string? EvidenceGateRunId = null);
 
 /// <summary>
 /// Review-side verification of one batch-deferred review: the builds and

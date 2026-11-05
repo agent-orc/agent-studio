@@ -434,7 +434,10 @@ the latest error excerpt, per-run failure facts, and whether a flaky rerun
 passed. Missing, malformed, or incomplete evidence is queued for retry without
 interrupting execution recording; the response counts pending evidence runs so
 the panel marks its ranking incomplete until a complete failure inventory is
-readable. A test is a flaky suspect
+readable. New execution facts bind to the gate run ID in their evidence file;
+an unrelated completed record does not satisfy them. Older facts accept their
+batch run ID, or a timestamp match within 30 seconds when the evidence has no
+gate run ID. A test is a flaky suspect
 only when it failed in three batches with pairwise disjoint member sets. The
 operator can open a prefilled bug card in the normal creation dialog. The dialog
 applies central model routing and requires submission to create it.

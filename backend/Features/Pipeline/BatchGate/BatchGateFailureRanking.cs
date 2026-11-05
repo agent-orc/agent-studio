@@ -61,8 +61,8 @@ public static class BatchGateFailureRanking
         var lines = File.ReadLines(fact.EvidencePath).ToArray();
         var selected = lines.Select((line, index) => (line, index, distance: Distance(line, fact)))
             .OrderBy(item => item.distance).ThenByDescending(item => item.index).FirstOrDefault();
-        if (selected.line is null)
-            throw new InvalidDataException("Batch gate failure ranking evidence has no completed record.");
+        if (selected.line is null || selected.distance == double.MaxValue)
+            throw new InvalidDataException("Batch gate failure ranking evidence has no matching completed record.");
         foreach (var line in new[] { selected.line })
         {
             try
@@ -168,9 +168,22 @@ public static class BatchGateFailureRanking
         {
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
-            if (String(root, "gateRunId") == fact.BatchRunId) return -1;
+            if (String(root, "testedSha") is { Length: > 0 } sha
+                && !string.Equals(sha, fact.TestedSha, StringComparison.OrdinalIgnoreCase))
+                return double.MaxValue;
+            var gateRunId = String(root, "gateRunId");
+            if (fact.EvidenceGateRunId is { Length: > 0 } expected)
+                return gateRunId == expected ? -1 : double.MaxValue;
+            if (gateRunId is { Length: > 0 })
+                return gateRunId == fact.BatchRunId ? -1 : double.MaxValue;
+            // Historical evidence without a gate ID can only be paired by its
+            // completion time. Keep the interval tight and never use a record
+            // from after the execution fact was written.
             if (DateTimeOffset.TryParse(String(root, "gateCompletedAtUtc"), out var completed))
-                return Math.Abs((completed - fact.CompletedAtUtc).TotalSeconds);
+            {
+                var age = (fact.CompletedAtUtc - completed).TotalSeconds;
+                if (age is >= -2 and <= 30) return Math.Abs(age);
+            }
         }
         catch (JsonException exception)
         {

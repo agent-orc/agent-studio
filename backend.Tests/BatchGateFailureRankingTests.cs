@@ -229,6 +229,67 @@ public sealed class BatchGateFailureRankingTests
     }
 
     [Fact]
+    public void Completed_record_for_another_gate_keeps_execution_pending_until_its_own_record_arrives()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var evidence = Path.Combine(root, "gate-evidence.jsonl");
+        try
+        {
+            File.WriteAllText(evidence,
+                """{"GateRunId":"other-gate","TestedSha":"sha","RecordedFailedTests":[]}""" + "\n");
+            var store = new BatchGateStore(root);
+            store.RecordExecution(new BatchGateExecutionFact("Project", "one", "batch-run", "sha", "fail", "host",
+                Now, Now, 0, 0, evidence, MemberKeys: ["AGT-1"], EvidenceGateRunId: "own-gate"));
+
+            var pending = store.FailedTestRanking("Project", Now);
+            Assert.Empty(pending.Tests);
+            Assert.Equal(1, pending.PendingEvidenceRuns);
+
+            File.AppendAllText(evidence,
+                """{"GateRunId":"own-gate","TestedSha":"other-sha","RecordedFailedTests":["Wrong.Test"]}""" + "\n");
+            Assert.Equal(1, store.FailedTestRanking("Project", Now).PendingEvidenceRuns);
+
+            File.AppendAllText(evidence,
+                """{"GateRunId":"own-gate","TestedSha":"sha","RecordedFailedTests":["Product.Tests.Unstable"]}""" + "\n");
+            var recovered = store.FailedTestRanking("Project", Now);
+            Assert.Equal(0, recovered.PendingEvidenceRuns);
+            var failure = Assert.Single(Assert.Single(recovered.Tests).Failures);
+            Assert.Equal("batch-run", failure.RunId);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Legacy_execution_does_not_accept_a_different_identified_gate_or_unrelated_timestamp()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var evidence = Path.Combine(root, "gate-evidence.jsonl");
+        try
+        {
+            var store = new BatchGateStore(root);
+            var fact = new BatchGateExecutionFact("Project", "one", "one-run", "sha", "fail", "host",
+                Now, Now, 0, 0, evidence, MemberKeys: ["AGT-1"]);
+            File.WriteAllText(evidence,
+                """{"GateRunId":"other-run","GateCompletedAtUtc":"2026-11-05T12:00:00Z","RecordedFailedTests":["Wrong.Test"]}""" + "\n");
+            store.RecordExecution(fact);
+            Assert.Equal(1, store.FailedTestRanking("Project", Now).PendingEvidenceRuns);
+
+            File.AppendAllText(evidence,
+                """{"GateCompletedAtUtc":"2026-11-05T11:00:00Z","RecordedFailedTests":["Stale.Test"]}""" + "\n");
+            Assert.Equal(1, store.FailedTestRanking("Project", Now).PendingEvidenceRuns);
+
+            File.AppendAllText(evidence,
+                """{"GateRunId":"one-run","RecordedFailedTests":["Right.Test"]}""" + "\n");
+            var recovered = store.FailedTestRanking("Project", Now);
+            Assert.Equal(0, recovered.PendingEvidenceRuns);
+            Assert.Equal("Right.Test", Assert.Single(recovered.Tests).TestName);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public void Complete_evidence_with_no_failures_is_not_left_pending()
     {
         var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
