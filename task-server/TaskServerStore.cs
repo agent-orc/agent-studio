@@ -64,7 +64,8 @@ public sealed partial class TaskServerStore
     // 43 adds runner host, role and project binding after the independent
     // schema 42 changes were integrated.
     // 44 adds bounded, capability-gated one-shot model jobs.
-    public const int CurrentSchemaVersion = 44;
+    // 45 binds those jobs to the runner instance that claimed them.
+    public const int CurrentSchemaVersion = 45;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4845,6 +4846,7 @@ public sealed partial class TaskServerStore
             """, ct, ("$version", CurrentSchemaVersion), ("$now", Iso(UtcNow)));
         await ApplyReviewMigrationAsync(connection, ct);
         await ApplyOneShotJobMigrationAsync(connection, ct);
+        await EnsureColumnAsync(connection, "one_shot_jobs", "claim_instance_id", "TEXT", ct);
         await ApplyReviewPackageMigrationAsync(connection, ct);
         await ApplyGateMigrationAsync(connection, ct);
         await ApplyPostWorkMigrationAsync(connection, ct);
