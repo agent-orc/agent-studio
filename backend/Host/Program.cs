@@ -2269,7 +2269,8 @@ taskScanner.SetOrchestrationStore(app.Services.GetRequiredService<MonolithOrches
 watcher.OnJobChanged += path =>
 {
     if (!jobIndexCache.IsCurrentTaskJson(path))
-        jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+        jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External,
+            changedPath: path);
 };
 // AGT-3088: board reads serve the last published snapshot and refresh it in
 // the background; once that refresh catches up with an invalidation a board

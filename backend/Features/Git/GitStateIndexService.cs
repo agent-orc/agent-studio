@@ -521,9 +521,9 @@ public sealed class GitStateIndexService : BackgroundService
     private async Task SweepAsync(CancellationToken stoppingToken)
     {
         DiscoverRepositories();
-        // The safety sweep observes every repository, but the task tree only
-        // needs one disk scan for the whole pass.
-        var allTasks = _scanner.ScanAllJobsRaw();
+        // Task facts come from the published folder index. The Git sweep must
+        // never force a workspace-wide raw scan on its 45-second cadence.
+        var allTasks = _scanner.ScanAllJobsWithArchive();
         foreach (var state in _repos.Values)
         {
             await _repoSlots.WaitAsync(stoppingToken).ConfigureAwait(false);
@@ -1049,7 +1049,9 @@ public sealed class GitStateIndexService : BackgroundService
     }
 
     private TaskInfo[] ReadTasks(RepoState state)
-        => _scanner.ScanWatchPathRaw(state.WatchPath).ToArray();
+        => _scanner.ScanAllJobsWithArchive()
+            .Where(task => WatchPathComparison.PathsEqual(task.WatchPath, state.WatchPath))
+            .ToArray();
 
     private RepoInput CaptureInput(RepoState state, TaskInfo[] tasks, string configSignature)
     {

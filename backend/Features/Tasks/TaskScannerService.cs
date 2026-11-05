@@ -766,6 +766,20 @@ public class TaskScannerService : ITaskScanner
         bool bypassMemo = false)
         => ScanJobFolder(jobDir, entry, state, bypassMemo, rereadIfMoved: true);
 
+    /// <summary>The scanner's own file and directory stamp, without parsing a card.</summary>
+    internal object? CaptureFolderStamp(string folder)
+    {
+        var taskJson = new FileInfo(Path.Combine(folder, "task.json"));
+        return taskJson.Exists ? ComputeLiveFingerprint(folder, taskJson) : null;
+    }
+
+    internal bool FolderStampIsSettled(string folder)
+    {
+        var taskJson = new FileInfo(Path.Combine(folder, "task.json"));
+        return taskJson.Exists && TaskFolderMemoPolicy.IsMemoizable(
+            taskJson.LastWriteTimeUtc, DateTime.UtcNow, TaskFolderMemoPolicy.DefaultTimestampGranularity);
+    }
+
     private TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
         bool bypassMemo, bool rereadIfMoved)
     {
