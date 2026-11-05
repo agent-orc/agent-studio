@@ -89,6 +89,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Selectable Studio header prompt guide | [header-zones.md](../quality/header-zones.md) |
 | CLI | [domains/cli.md](../system/domains/cli.md) |
 | Model routing policy (model, thinking level, risk floors, benchmark evidence) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
+| Central model selection and fallback Dossier (MS-1 to MS-8, AGT-3473 to AGT-3480) | [decision Dossier](../model-selection-and-fallback/index.html) |
 | Model selection ledger API (events, active fallbacks, effective routes, runner ingestion) | [contracts/model-selection-api.md](../system/contracts/model-selection-api.md) |
 | Model routing by assessed complexity: analysis and implementation plan as pipeline steps, Token Economy as the measuring authority for the (complexity class, model, level) pair table, reported-versus-achieved feedback (AGT-2815) | [decision dossier](../model-routing-by-complexity/index.html) |
 | Task switch performance: measured baseline, bounded core, progressive detail and Git snapshots (AGT-W64; source AGT-2910) | [decision Dossier](../task-switch-performance/index.html) |
@@ -212,6 +213,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Docker one-box install and operations | [operations/setup/docker.md](../operations/setup/docker.md) |
 | Identity and project bootstrap: first owner, recovery, host enrolment, project registration and repository probe (standalone Task Server, I05) | [operations/setup/identity-and-project-bootstrap.md](../operations/setup/identity-and-project-bootstrap.md) |
 | Operator agent: own Studio identity and sessions, own OS user without the Owner's SSH keys, off-host audit sink (security model SM-1) | [operations/setup/operator-agent.md](../operations/setup/operator-agent.md) |
+| Operator agent level Dossier (OP-1 to OP-9 delivered, AGT-3481 to AGT-3489; OP-10 website page in progress) | [decision Dossier](../operator-agent-level/index.html) |
 | Operator API reference: routes for the operator agent, cross-project batch triage and next safe member operation (AGT-3462 OP-4) | [operations/operator-api.md](../operations/operator-api.md) |
 | studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
