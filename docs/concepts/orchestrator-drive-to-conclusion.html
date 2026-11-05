@@ -3135,6 +3135,13 @@
           <td>The shared provider-access classifier listed "at capacity" among rate-limit signals. The typed outcome therefore selected <code>WaitForCapabilityRecovery</code>, and the provider-auth probe applied a host-wide hold. The completion planes had no distinct transient capacity terminal.</td>
           <td>The observed terminal was Unknown or Escalated. Model capacity now has its own typed outcome and three bounded same-session retries at 30 seconds, 2 minutes, and 5 minutes. Exhaustion returns the card to Ready with its salvage as the next starting point. The provider login stays available; explicit usage limits and HTTP 429 reset refusals retain their existing hold.</td>
         </tr>
+        <tr id="case-networked-api-one-shot-login-gap">
+          <td>2026-11-01</td>
+          <td><code>AGT-3505</code><br><span class="small">networked-api-one-shot-login-gap</span></td>
+          <td>After the Linux server move, Result summaries, post-summary assessments, and tag calls launched a provider CLI in the API container. The CLI exited 1 with "Not logged in". Summary finalization tried three times and cards displayed <code>Summary pending (degraded: exitCode=1)</code>.</td>
+          <td>The control plane had no provider login by design. Its short completion paths still used local process execution instead of the accepted coding or review host.</td>
+          <td>The observed terminal was a degraded Result summary; other short completions failed. Networked one-shots now travel as bounded Task Server jobs. A host claims only with fresh <code>model-acceptance:&lt;cli&gt;:&lt;model&gt;</code> evidence. With no host, the Result reports <code>waiting for a host with &lt;capability&gt;</code> and defers without spending the summary retry budget. A later accepted host lets the retry complete.</td>
+        </tr>
       </tbody>
     </table>
 

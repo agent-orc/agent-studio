@@ -6,6 +6,28 @@ Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical 
 
 Owner: Pipeline and CLI domains
 
+## Networked one-shot custody
+
+In a networked installation, the API selects and admits each short model call,
+then submits a bounded one-shot job to the standalone Task Server. This covers
+Result summaries, post-summary assessment, tagging and maintenance, commit
+message review, and other calls through `CliOneShotRegistry`. The job carries a
+prompt of at most 220,000 UTF-8 bytes, a timeout of at most 300 seconds, and an
+output cap of 65,536 bytes. Up to four inline images may travel with the job,
+with a combined base64 limit of 5.6 million characters. A coding or review host
+claims it only while its current instance has fresh, ready
+`model-acceptance:<cli>:<model>`
+evidence. Claims are fenced by a token. The host runs the provider from an
+isolated temporary directory with read-only model execution and reports bounded
+text and usage. The API container does not need a provider login.
+
+The selection ledger records each one-shot route, including an ordinary primary
+selection. When no host advertises the route, Result finalization reports
+`waiting for a host with <capability>` and schedules a retry without consuming
+the summary retry budget. The task server publishes the model as a short-lived
+probe demand in capability advertisement responses, so a host can discover and
+advertise a newly requested route. Jobs already claimed expire after their timeout.
+
 ## Consumer policy and project overrides (AGT-3479)
 
 The workspace policy is `model-selection-policy.json` under `TaskRepository`.

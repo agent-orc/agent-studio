@@ -63,7 +63,8 @@ public sealed partial class TaskServerStore
     // attempt credential exchange and redacted teardown receipts (both additive).
     // 43 adds runner host, role and project binding after the independent
     // schema 42 changes were integrated.
-    public const int CurrentSchemaVersion = 43;
+    // 44 adds bounded, capability-gated one-shot model jobs.
+    public const int CurrentSchemaVersion = 44;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4843,6 +4844,7 @@ public sealed partial class TaskServerStore
             ON CONFLICT(version) DO NOTHING;
             """, ct, ("$version", CurrentSchemaVersion), ("$now", Iso(UtcNow)));
         await ApplyReviewMigrationAsync(connection, ct);
+        await ApplyOneShotJobMigrationAsync(connection, ct);
         await ApplyReviewPackageMigrationAsync(connection, ct);
         await ApplyGateMigrationAsync(connection, ct);
         await ApplyPostWorkMigrationAsync(connection, ct);
