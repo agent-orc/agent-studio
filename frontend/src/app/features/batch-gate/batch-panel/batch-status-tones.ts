@@ -8,6 +8,7 @@ const MEMBER_STATUS_TONES: Readonly<Record<BatchMemberStatus, StatusTone>> = {
   published: 'success',
   fallback: 'warning',
   'pre-check-red': 'danger',
+  'review-fix': 'warning',
 };
 
 /** Batch plan decision to status tone (AGT-3403). */
