@@ -100,10 +100,7 @@ import { ConversationScrollFocusDirective } from '../../../../directives/convers
   providers: [TASK_REFERENCE_CHAT_PROVIDER, OrchestratorContextDigestService, OrchestratorTaskPlanStore],
   host: {
     '[class.is-open]': 'open()',
-    // When open, drive the host width from the persisted user choice so
-    // the resize handle can grow / shrink the panel live. When closed the
-    // binding evaluates to null and the static `:host { width: 0 }` rule
-    // from the .scss wins, so the close transition still works.
+    // Use the saved width while open; the host style sets the closed width.
     '[style.width.px]': 'open() ? panelWidth() : null'
   }
 })
@@ -112,7 +109,6 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   readonly composerModel = inject(OrchestratorComposerModelService);
   readonly projects = input<string[]>([]);
   readonly preferredProject = input<string | null>(null);
-  /** Explicit project requested by a page chat affordance before this lazy sheet mounts. */
   readonly requestedProject = input<{ projectName: string } | null>(null);
   readonly projectRequestHandled = output<{ projectName: string }>();
   /** One-shot shell event for an explicit project entry from an empty editor. */
