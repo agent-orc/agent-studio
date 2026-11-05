@@ -6,9 +6,14 @@
     <button type="button"
             [ngClass]="tabClass(tab)"
             role="tab"
+            [id]="tabId(tab)"
+            [attr.aria-controls]="panelId()"
             [disabled]="tab.disabled === true"
             [attr.aria-selected]="tab.id === activeTabId()"
+            [tabIndex]="tabIndex(tab)"
             [attr.data-testid]="tab.testid ?? null"
+            (focus)="focusedTabId.set(tab.id)"
+            (keydown)="onTabKeydown($event, tab)"
             (click)="onClick(tab)">
       @if (tab.icon) {
         <app-studio-icon class="pane-tab__icon" [name]="tab.icon" [size]="12"></app-studio-icon>
@@ -30,18 +35,18 @@
       }
     </button>
   }
-  @if (overflowTabs().length > 0) {
-    <button type="button"
-            class="pane-tab pane-tab--overflow"
-            data-testid="pane-tabs-overflow"
-            [attr.aria-label]="overflowAriaLabel()"
-            aria-haspopup="menu"
-            [attr.aria-expanded]="overflowOpen()"
-            (click)="toggleOverflow($event)">
-      <span aria-hidden="true">⋯</span>
-    </button>
-  }
 </div>
+@if (overflowTabs().length > 0) {
+  <button type="button"
+          class="pane-tab pane-tab--overflow"
+          data-testid="pane-tabs-overflow"
+          [attr.aria-label]="overflowAriaLabel()"
+          aria-haspopup="menu"
+          [attr.aria-expanded]="overflowOpen()"
+          (click)="toggleOverflow($event)">
+    <span aria-hidden="true">⋯</span>
+  </button>
+}
 <div class="pane-tabs pane-tabs--header pane-tabs__measurement"
      aria-hidden="true"
      [style.--pane-tab-min-width.px]="minimumTabWidth()">

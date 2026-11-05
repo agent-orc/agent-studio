@@ -189,7 +189,7 @@ export class TaskDetailComponent implements OnDestroy {
   readonly inspectorTabChange = output<'task' | 'activity' | 'protocol'>();
   /** Lane-pager snapshot state for the header (read-only facades). */
   private readonly lanePager = inject(LanePagerService);
-  private readonly jobSelection = inject(TaskSelectionService);
+  readonly jobSelection = inject(TaskSelectionService);
   /**
    * True while the selection is fetching the next/previous task without a
    * warmed prefetch to paint instantly. Drives the header's small loading
@@ -377,6 +377,7 @@ export class TaskDetailComponent implements OnDestroy {
   private userTouchedInspectorTab = false;
   private lastCliConfigRequest = 0;
   private currentJobKey: string | null = null;
+  private outputLoadedFor: string | null = null;
   // Tracks which failed execution we've already surfaced as a modal so that
   // re-opening the detail view (or the 2s board refresh re-emitting the same
   // failed snapshot) does not re-pop the dialog. Keyed by `${taskKey}|${startedAt}`.
@@ -480,9 +481,12 @@ export class TaskDetailComponent implements OnDestroy {
     this.currentJobKey = d.info.taskKey;
     // Keep GitPaneService in sync with the open job; resets internal
     // state on actual job changes, no-ops on same-job refreshes.
-    this.git.setJob(d.info);
+    this.git.setJob(d.info, this.panesVisible().git);
 
     if (isJobSwitch) {
+      this.outputLoadedFor = null;
+      this.screenshotsPoll.prepareTask(d.info.taskKey);
+      this.artifactsService.prepareTask(d.info.taskKey);
       this.reviewAttemptFocus.set(null);
       this.errorMsg.set(null);
       this.modelDraft.set(d.info.model || (this.availableModels().find((m) => m.isDefault)?.id ?? ''));
@@ -565,13 +569,17 @@ export class TaskDetailComponent implements OnDestroy {
     if (d.info.execution?.status === 'running' && !this.cliPoll.isPolling()) {
       this.cliPoll.startPolling();
     }
-    this.jobService.getJobOutput(d.info.id, d.info.watchPath).subscribe({
-      next: (output) => this.cliPoll.hydrateOutput(output, d.info.execution?.startedAt ?? null),
-      error: (err) => {
-        if (err.status !== 0) return; // silent for 404 etc
-        this.showError(err);
-      },
-    });
+    if ((this.activeInspectorTab() === 'activity' || !d.statusMarkdown)
+      && this.outputLoadedFor !== d.info.taskKey) {
+      this.outputLoadedFor = d.info.taskKey;
+      this.jobService.getJobOutput(d.info.id, d.info.watchPath).subscribe({
+        next: (output) => this.cliPoll.hydrateOutput(output, d.info.execution?.startedAt ?? null),
+        error: (err) => {
+          this.outputLoadedFor = null;
+          if (err.status === 0) this.showError(err);
+        },
+      });
+    }
   });
 
   private routeInspectorEffect = effect(() => {
@@ -663,44 +671,35 @@ export class TaskDetailComponent implements OnDestroy {
     if (clearFlag) this.regeneratingSummary.set(false);
   }
 
-  // Bridge detail() changes to the ClaudeSessionPollService. The service
-  // ignores no-op syncs and re-arms its 5 s timer only when the polled
-  // job actually changes.
   private readonly claudeSessionEffect = effect(() => {
     this.claudePoll.syncTo(this.detail()?.info ?? null);
   });
 
-  // Same bridge for the session-event poller (10 s cadence).
   private readonly sessionEventsEffect = effect(() => {
     this.sessionEventsPoll.syncTo(this.detail()?.info ?? null);
   });
 
-  // ...and for the run-timeline poller (5 s cadence).
   private readonly runTimelineEffect = effect(() => {
     this.runTimelinePoll.syncTo(this.detail()?.info ?? null);
   });
 
-  // ...and for the per-task event-ledger poller (10 s cadence, ADR-0049 /
-  // ASS-566). Drives the Overview attempt-cycle indicator + the Timeline
-  // tab; the panes inject the service directly for its signals.
+  // Clear the previous task's event ledger on navigation. The Timeline tab
+  // starts its own first read when selected and reuses the polled snapshot.
   private readonly taskTimelinePoll = inject(TaskTimelinePollService);
-  private readonly taskTimelineEffect = effect(() => {
-    this.taskTimelinePoll.syncTo(this.detail()?.info ?? null);
-  });
+  private readonly taskTimelineEffect = effect(() =>
+    this.taskTimelinePoll.prepareTask(this.detail()?.info.taskKey ?? null));
 
-  // ...and for the agent-work-summary poller (10 s cadence). Drives
-  // the Overview tab's Agent Work block.
   private readonly agentWorkSummaryPoll = inject(AgentWorkSummaryPollService);
   private readonly agentWorkSummaryEffect = effect(() => {
     this.agentWorkSummaryPoll.syncTo(this.detail()?.info ?? null);
   });
 
-  // ...and for the per-job plan poller (5 s cadence). Drives the plan
-  // strip above the activity log; the protocol pane injects the service
-  // directly for its signal.
+  // Activity owns the plan's first read; return visits reuse its snapshot.
   private readonly planPoll = inject(PlanPollService);
   private readonly planEffect = effect(() => {
-    this.planPoll.syncTo(this.detail()?.info ?? null);
+    const info = this.detail()?.info ?? null;
+    this.planPoll.prepareTask(info?.taskKey ?? null);
+    if (this.activeInspectorTab() === 'activity') this.planPoll.syncTo(info);
   });
 
   private readonly taskPipelinePoll = inject(TaskPipelinePollService);
@@ -734,13 +733,13 @@ export class TaskDetailComponent implements OnDestroy {
   private readonly screenshotsPoll = inject(ScreenshotsPollService);
   readonly screenshots = this.screenshotsPoll.screenshots;
   private readonly screenshotsEffect = effect(() => {
-    this.screenshotsPoll.syncTo(this.detail()?.info ?? null);
+    if (this.routeDetailTab() === 'evidence') this.screenshotsPoll.syncTo(this.detail()?.info ?? null);
   });
 
   private readonly artifactsService = inject(TaskArtifactsService);
   readonly artifacts = this.artifactsService.artifacts;
   private readonly artifactsEffect = effect(() => {
-    this.artifactsService.syncTo(this.detail()?.info ?? null);
+    if (this.routeDetailTab() === 'description') this.artifactsService.syncTo(this.detail()?.info ?? null);
   });
 
   canStartJob(): boolean {

@@ -52,6 +52,43 @@ public sealed class TaskFileHistoryEndpointsTests : TaskFileHistoryTestBase, ICl
     }
 
     [Fact]
+    public async Task ConcurrentDetailAndTimelineReads_RebuildOneGeneratedFileIndex()
+    {
+        var job = WriteJob("ASS-INDEX-RACE");
+        var factory = _host.Rescan();
+        var pipeline = factory.Services.GetRequiredService<PipelineExecutionLog>();
+        pipeline.EnsureRun(job, PipelineCatalogue.Standard, "demo", "ASS-INDEX-RACE");
+        pipeline.RecordStep(job, new PipelineStepExecution
+        {
+            StepId = "aspect-requirement-fit",
+            Kind = StepKind.Aspect,
+            Status = PipelineStepStatus.Passed,
+        });
+        using var client = CreateClient(factory);
+        var query = "?watchPath=" + Uri.EscapeDataString(_workspaceProjectRoot);
+        var prefix = "/api/tasks/ASS-INDEX-RACE";
+
+        for (var wave = 0; wave < 3; wave++)
+        {
+            if (wave > 0)
+                File.Delete(Path.Combine(job, FileGenerationIndex.RelativePath));
+            using var gate = new ManualResetEventSlim();
+            var reads = Enumerable.Range(0, 48).Select(async i =>
+            {
+                await Task.Run(() => gate.Wait());
+                using var response = await client.GetAsync(prefix + (i % 2 == 0 ? query : "/timeline" + query));
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            }).ToArray();
+            gate.Set();
+            await Task.WhenAll(reads);
+            var entries = factory.Services.GetRequiredService<FileGenerationIndex>()
+                .ReadForJob(job, cacheLegacy: false);
+            Assert.Contains("aspect-requirement-fit.md", entries.Keys);
+            Assert.Empty(Directory.GetFiles(Path.Combine(job, ".metadata"), "files.json*.tmp"));
+        }
+    }
+
+    [Fact]
     public async Task ResultArtifactRoute_ServesNestedHtmlInlineToStudioFrames_AndKeepsUnknownFilesAsDownloads()
     {
         var job = WriteJob("ASS-RESULT-HTML");

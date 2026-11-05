@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-03
+Version: 2026-11-05
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -392,6 +392,16 @@ the batch. Infrastructure failures are retried while time remains and do not
 become code-red verdicts. The project option `preCheckEnabled` defaults on for
 Agent Studio and off elsewhere when unset.
 
+Before closing a batch manifest, the planner refreshes each proposed member's
+pending review, ownership, and pre-check verdict, checks integration
+containment, and probes replay in the proposed order. Conflicts start an agent
+merge round; unattributable replays take the per-task route. It closes only if
+at least `minimumSize` members remain. A fresh integration tip check prevents
+closing on a base that moved during planning and triggers one immediate replan.
+The plan decision records why a proposed close was deferred or which members
+were removed. Assembly repeats replay under its lease because a later change
+can still invalidate the preview.
+
 The state route exposes each verdict on pending members and cards, plus
 `preChecksRun`, `preChecksRed`, and `preCheckMinutesSaved`. Saved minutes are an
 estimate for red pre-checks: the median of the last 20 batch gate executions
@@ -680,8 +690,8 @@ interrupted starts the card escalates as `GateInfra`. Across all review
 generations of the process, at most one gate slot fewer than the gate host has
 runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
 slot before they choose their merged candidate, so the batch slot stays free. A
-formed batch whose base moved before replay closes again with the same members
-on the new base, and its members do not reach a per-task gate. A batch that pauses (a second
+formed batch whose base moved before replay closes again with compatible members
+on the new base only when at least `minimumSize` remain. A batch that pauses (a second
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
 unexpected fault) keeps `Paused` in its state history; on the next tick the
 worker returns every member it still owns to that per-card gate and records the
@@ -2781,6 +2791,16 @@ operator changes cause the step to fail before its writer runs.
   the first post-step in every catalogue pipeline. `SummaryGenerationService`
   runs it from Result finalization (and the Regenerate action). It writes
   `status.md` and `summary-assessment.json`. It cannot be disabled, and its
+  failure is nonterminal for a completed report run. Planning and research use
+  the agent's `results/status.md` or the latest final agent message as the
+  Result when the model step fails. The
+  failed summary row stays visible. The lightweight review then validates the
+  primary artifact and records its review and decision. If no agent status can
+  be recovered, the card moves to Escalated with the failed step and reason on
+  the timeline. Other post-processing failures also escalate with their reason
+  rather than leaving an undecided Auto Review card. An intentionally disabled
+  aspect pipeline keeps its operator-controlled hold.
+  The step's
   free-text prompt override is hidden, because it owns the Result document and
   renders `summary-protocol.md` with typed slots. CLI, model and thinking level
   resolve like any model-backed step: step override, then the project

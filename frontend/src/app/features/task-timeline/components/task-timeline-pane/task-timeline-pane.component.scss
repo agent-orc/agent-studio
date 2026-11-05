@@ -318,3 +318,9 @@
   color: var(--studio-fg-dim);
   padding: 12px 0;
 }
+.tl-load-error {
+  padding: var(--studio-spacing-3);
+  background: var(--studio-bg-hover);
+  color: var(--studio-fg);
+  border-radius: var(--studio-radius-sm);
+}

@@ -136,6 +136,29 @@ public class TaskLayoutTransitionTests : IDisposable
         Assert.Equal(TaskStates.Progress, Field(JobJson("TST-11"), "state"));
     }
 
+    [Fact]
+    public async Task ConcurrentRebuilds_PublishCompleteDerivedIndexes()
+    {
+        SeedLaneTask(TaskStates.Ready, "a", "TST-10");
+        SeedLaneTask(TaskStates.Progress, "b", "TST-11");
+        TaskLayoutIndex.Rebuild(_root, NullLogger.Instance);
+
+        using var gate = new ManualResetEventSlim();
+        var rebuilds = Enumerable.Range(0, 48).Select(_ => Task.Run(() =>
+        {
+            gate.Wait();
+            TaskLayoutIndex.Rebuild(_root, NullLogger.Instance);
+            Assert.Equal("000/TST-10", TaskLayoutIndex.ReadByKey(_root)["TST-10"]);
+            Assert.Equal("000/TST-11", TaskLayoutIndex.ReadByKey(_root)["TST-11"]);
+        })).ToArray();
+        gate.Set();
+        await Task.WhenAll(rebuilds);
+
+        Assert.Equal(new[] { "000/TST-10" }, TaskLayoutIndex.ReadByState(_root)[TaskStates.Ready]);
+        Assert.Equal(new[] { "000/TST-11" }, TaskLayoutIndex.ReadByState(_root)[TaskStates.Progress]);
+        Assert.Empty(Directory.GetFiles(TaskStorageLayout.IndexRoot(_root), "*.tmp"));
+    }
+
     // ---- helpers -----------------------------------------------------------
 
     // The fixtures seed the flat layout directly (tasks/<bucket>/<key>/),

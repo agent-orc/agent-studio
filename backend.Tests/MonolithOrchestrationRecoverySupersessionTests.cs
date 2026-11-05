@@ -244,7 +244,8 @@ public sealed class MonolithOrchestrationRecoverySupersessionTests : IDisposable
 
     public void Dispose()
     {
-        TestTempRoot.TryDelete(_workspace);
+        Assert.True(TestTempRoot.TryDelete(_workspace),
+            $"Recovery workspace was recreated during teardown: {_workspace}");
     }
 
     private sealed class CountingApplier : IMonolithOrchestrationApplier

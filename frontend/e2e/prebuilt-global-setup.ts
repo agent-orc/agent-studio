@@ -1,11 +1,13 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { request } from '@playwright/test';
 
 export default async function globalSetup(): Promise<void> {
   const root = resolve(__dirname, '..', '..');
   const sha = execFileSync('bash', ['scripts/e2e-source-fingerprint.sh'], { cwd: root, encoding: 'utf8' }).trim();
-  const published = resolve(root, 'backend/bin/e2e-publish');
+  const published = resolve(root, process.env.PW_E2E_PROFILE === 'public-demo'
+    ? 'backend/bin/e2e-publish-public-demo' : 'backend/bin/e2e-publish');
   const browser = resolve(root, 'frontend/dist/frontend/browser');
   for (const [file, label] of [
     [resolve(published, 'E2E-FINGERPRINT'), 'backend'],
@@ -23,12 +25,28 @@ export default async function globalSetup(): Promise<void> {
     if (!auth.ok || status.profile !== 'networked' || status.bootstrapRequired !== true)
       throw new Error('Prebuilt backend is not a fresh networked monolith.');
   } else {
-    const pathsResponse = await fetch(`${process.env.PW_BACKEND_URL}/api/watch-paths`);
-    if (!pathsResponse.ok) throw new Error(`Prebuilt backend watch paths returned ${pathsResponse.status}`);
-    const paths = await pathsResponse.json() as { path?: string }[];
-    const expected = resolve(process.env.PW_E2E_WORKSPACE!, 'projects', process.env.PW_E2E_PROFILE === 'demo' ? 'demo-app' : 'agent-studio-worktree');
+    const demoRequest = process.env.PW_E2E_PROFILE === 'public-demo'
+      ? await request.newContext({ ignoreHTTPSErrors: true }) : null;
+    let paths: { path?: string }[];
+    if (demoRequest) {
+      const response = await demoRequest.get(`${process.env.PW_BASE_URL}/api/watch-paths`);
+      if (!response.ok()) throw new Error(`Prebuilt backend watch paths returned ${response.status()}`);
+      paths = await response.json() as { path?: string }[];
+    } else {
+      const response = await fetch(`${process.env.PW_BACKEND_URL}/api/watch-paths`);
+      if (!response.ok) throw new Error(`Prebuilt backend watch paths returned ${response.status}`);
+      paths = await response.json() as { path?: string }[];
+    }
+    const expected = resolve(process.env.PW_E2E_WORKSPACE!, 'projects', ['demo', 'public-demo'].includes(process.env.PW_E2E_PROFILE ?? '') ? 'demo-app' : 'agent-studio-worktree');
     if (!paths.some(item => item.path === expected)) {
       throw new Error('Prebuilt backend is not using the isolated Playwright workspace.');
+    }
+    if (demoRequest) {
+      const auth = await demoRequest.get(`${process.env.PW_BASE_URL}/api/auth/status`);
+      const status = await auth.json() as { profile?: string };
+      await demoRequest.dispose();
+      if (!auth.ok() || status.profile !== 'public-demo-readonly')
+        throw new Error('Prebuilt backend is not running the public-demo-readonly profile.');
     }
   }
   if (process.env.PW_E2E_TIMING_FILE && process.env.PW_E2E_TEST_START_MS) {
