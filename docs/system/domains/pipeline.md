@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-03
+Version: 2026-11-05
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -2781,6 +2781,16 @@ operator changes cause the step to fail before its writer runs.
   the first post-step in every catalogue pipeline. `SummaryGenerationService`
   runs it from Result finalization (and the Regenerate action). It writes
   `status.md` and `summary-assessment.json`. It cannot be disabled, and its
+  failure is nonterminal for a completed report run. Planning and research use
+  the agent's `results/status.md` or the latest final agent message as the
+  Result when the model step fails. The
+  failed summary row stays visible. The lightweight review then validates the
+  primary artifact and records its review and decision. If no agent status can
+  be recovered, the card moves to Escalated with the failed step and reason on
+  the timeline. Other post-processing failures also escalate with their reason
+  rather than leaving an undecided Auto Review card. An intentionally disabled
+  aspect pipeline keeps its operator-controlled hold.
+  The step's
   free-text prompt override is hidden, because it owns the Result document and
   renders `summary-protocol.md` with typed slots. CLI, model and thinking level
   resolve like any model-backed step: step override, then the project
