@@ -43,6 +43,7 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
             if (job.Status == "waiting") return Failed(job.Error ?? $"waiting for a host with {job.Capability}");
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(TimeSpan.FromSeconds(timeout + 30));
+            var running = false;
             while (true)
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), deadline.Token);
@@ -50,6 +51,13 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
                 response.EnsureSuccessStatusCode();
                 var current = await response.Content.ReadFromJsonAsync<OneShotJobDto>(cancellationToken: deadline.Token);
                 if (current is null) return Failed("Task Server lost the one-shot job.");
+                if (current.Status == "claimed" && !running)
+                {
+                    // Queue time belongs to admission. The provider gets its full
+                    // requested run budget after the host claims the job.
+                    deadline.CancelAfter(TimeSpan.FromSeconds(timeout + 30));
+                    running = true;
+                }
                 if (current.Status is "pending" or "claimed") continue;
                 if (current.Status != "completed") return Failed(current.Error ?? "Remote one-shot job failed.");
                 var end = DateTime.UtcNow;

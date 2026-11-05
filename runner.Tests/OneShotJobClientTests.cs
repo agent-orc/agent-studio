@@ -35,6 +35,7 @@ public sealed class OneShotJobClientTests
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task Image_turn_rejects_oversize_output_before_the_deadline()
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -58,10 +59,42 @@ public sealed class OneShotJobClientTests
             var elapsed = Stopwatch.StartNew();
 
             var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
-                runner.RunImageTurnAsync(request, directory, deadline.Token));
+                runner.RunBoundedTurnAsync(request, directory, deadline.Token));
 
             Assert.Contains("byte cap", error.Message);
             Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(5), $"Exceeded cap after {elapsed.Elapsed}.");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Text_turn_rejects_raw_output_even_when_it_has_no_reply()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var directory = Path.Combine(Path.GetTempPath(), "one-shot-text-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var cli = Path.Combine(directory, "fake-cli.sh");
+            await File.WriteAllTextAsync(cli, "#!/bin/sh\ncat ./payload\nsleep 20\n");
+            File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            await File.WriteAllTextAsync(Path.Combine(directory, "payload"), new string('x', 1000));
+            var runner = new OneShotJobAdmission(new RunnerOptions
+            {
+                ServerUrl = "http://localhost/", RunnerId = "test-runner", RunnerName = "test-runner",
+                Hostname = "localhost", BackendName = "test", WorkDir = directory,
+                BaseBranch = "develop", CodexCliBin = cli,
+            }, null!, _ => { });
+            var request = new OneShotJobRequest("codex", "test-model", "describe", null, 20, 100);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            var elapsed = Stopwatch.StartNew();
+
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                runner.RunBoundedTurnAsync(request, directory, deadline.Token));
+
+            Assert.Contains("raw output exceeds the byte cap", error.Message);
+            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(5), $"Exceeded cap after {elapsed}.");
         }
         finally { Directory.Delete(directory, recursive: true); }
     }

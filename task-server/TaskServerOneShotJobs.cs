@@ -119,7 +119,8 @@ public sealed partial class TaskServerStore
             var claimed = await ExecuteAsync(connection, """
                 UPDATE one_shot_jobs AS j SET status = 'claimed', runner_id = $runner,
                     claim_instance_id = $instance,
-                    claim_token = $token, claim_expires_at = $expires
+                    claim_token = $token, claim_expires_at = $claimExpires,
+                    expires_at = $jobExpires
                 WHERE j.id = $id AND j.status IN ('pending', 'claimed')
                   AND j.expires_at > $now
                   AND (j.status = 'pending' OR j.claim_expires_at <= $now)
@@ -134,7 +135,8 @@ public sealed partial class TaskServerStore
                   );
                 """, ct, transaction, ("$runner", request.RunnerId),
                 ("$instance", request.InstanceId), ("$token", token),
-                ("$expires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 20))),
+                ("$claimExpires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 20))),
+                ("$jobExpires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 30))),
                 ("$now", Iso(UtcNow)), ("$id", id));
             if (claimed == 1) result = new(id, token, jobRequest);
         }, ct);
@@ -163,16 +165,22 @@ public sealed partial class TaskServerStore
             var oversized = bytes > limit;
             var successful = completion.Success && !oversized && !string.IsNullOrWhiteSpace(completion.Text);
             accepted = await ExecuteAsync(connection, """
-                UPDATE one_shot_jobs SET status = $status, text = $text, error = $error,
-                    usage_json = $usage WHERE id = $id AND runner_id = $runner
-                    AND claim_instance_id = $instance AND claim_token = $token AND status = 'claimed';
+                UPDATE one_shot_jobs AS j SET status = $status, text = $text, error = $error,
+                    usage_json = $usage WHERE j.id = $id AND j.runner_id = $runner
+                    AND j.claim_instance_id = $instance AND j.claim_token = $token
+                    AND j.status = 'claimed' AND j.claim_expires_at > $now
+                    AND j.expires_at > $now AND EXISTS (
+                        SELECT 1 FROM runners r WHERE r.id = $runner
+                          AND r.instance_id = $instance AND r.status = 'active'
+                    );
                 """, ct, transaction, ("$status", successful ? "completed" : "failed"),
                 ("$text", oversized ? null : completion.Text),
                 ("$error", oversized ? "one-shot output exceeds the byte cap"
                     : successful ? null : completion.Error ?? "one-shot response was empty"),
                 ("$usage", completion.Usage is null ? null : JsonSerializer.Serialize(completion.Usage)),
                 ("$id", completion.JobId), ("$runner", completion.RunnerId),
-                ("$instance", completion.InstanceId), ("$token", completion.ClaimToken)) == 1;
+                ("$instance", completion.InstanceId), ("$token", completion.ClaimToken),
+                ("$now", Iso(UtcNow))) == 1;
         }, ct);
         return accepted;
     }

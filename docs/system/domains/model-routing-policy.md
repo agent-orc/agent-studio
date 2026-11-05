@@ -49,9 +49,12 @@ The server rejects an empty or over-220,000-byte UTF-8 prompt, a timeout outside
 1-300 seconds, an output cap outside 1-65,536 bytes, more than four images,
 unsupported image media types, or over 5.6 million combined base64 characters
 with HTTP 400. A runner identity mismatch or insufficient scope returns HTTP
-403. Jobs expire 30 seconds after their requested timeout, and a claim token
-expires 20 seconds after that timeout. The runner reports timeout and output
-cap failures through `failed`.
+403. Pending jobs expire 30 seconds after their requested timeout. Claiming a
+job starts a fresh run deadline: the job expires after its requested timeout
+plus 30 seconds, and its claim token expires after the timeout plus 20 seconds.
+Studio resets its polling deadline when it first observes the claim. The runner
+counts raw stdout and stderr bytes before decoding either stream and reports
+timeout and output cap failures through `failed`.
 
 ## Consumer policy and project overrides (AGT-3479)
 

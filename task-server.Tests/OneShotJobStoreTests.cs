@@ -100,6 +100,41 @@ public sealed class OneShotJobStoreTests
     }
 
     [Fact]
+    public async Task Claim_resets_job_expiry_so_queue_time_does_not_cut_short_the_run()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = await StoreAsync(temp.Path, clock);
+        await RegisterAsync(store, clock);
+        var queued = await store.CreateOneShotJobAsync(Request(), default);
+
+        clock.Advance(TimeSpan.FromSeconds(40));
+        var claim = (await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default))!;
+        clock.Advance(TimeSpan.FromSeconds(25));
+
+        Assert.True(await store.CompleteOneShotJobAsync(new("runner-a", "instance-a",
+            claim.JobId, claim.ClaimToken, true, "finished", null, null), default));
+        Assert.Equal("completed", (await store.GetOneShotJobAsync(queued.JobId, default))?.Status);
+    }
+
+    [Fact]
+    public async Task Expired_claim_cannot_complete_after_its_fence_expires()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = await StoreAsync(temp.Path, clock);
+        await RegisterAsync(store, clock);
+        var queued = await store.CreateOneShotJobAsync(Request(), default);
+        var claim = (await store.ClaimOneShotJobAsync(new("runner-a", "instance-a"), default))!;
+
+        clock.Advance(TimeSpan.FromSeconds(51));
+
+        Assert.False(await store.CompleteOneShotJobAsync(new("runner-a", "instance-a",
+            claim.JobId, claim.ClaimToken, true, "late", null, null), default));
+        Assert.Equal("claimed", (await store.GetOneShotJobAsync(queued.JobId, default))?.Status);
+    }
+
+    [Fact]
     public async Task Refuses_unbounded_request_before_a_job_is_created()
     {
         using var temp = new TempDirectory();

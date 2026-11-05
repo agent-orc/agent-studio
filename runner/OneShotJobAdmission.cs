@@ -47,12 +47,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
                 throw new InvalidDataException("one-shot job exceeds its bounded request envelope");
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
             timeout.CancelAfter(TimeSpan.FromSeconds(request.TimeoutSeconds));
-            var process = request.Images is { Count: > 0 }
-                ? await RunImageTurnAsync(request, directory, timeout.Token)
-                : await ReadOnlyCarTurn.RunAsync(options, work.JobId, request.Cli,
-                    request.Prompt, directory, request.Model, request.ThinkingLevel,
-                    "agent-one-shot-log", "one-shot", null, log, timeout.Token, shutdown,
-                    maxRawOutputBytes: Math.Min(262_144, request.MaxOutputBytes * 4));
+            var process = await RunBoundedTurnAsync(request, directory, timeout.Token);
             var parsed = request.Cli == "claude"
                 ? RemoteProjectChatRunner.ParseClaude(process, request.Model)
                 : RemoteProjectChatRunner.ParseCodex(process, request.Model);
@@ -85,7 +80,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             log($"one-shot-job-completion-rejected job={work.JobId}");
     }
 
-    internal async Task<ProcessResult> RunImageTurnAsync(OneShotJobRequest request, string directory,
+    internal async Task<ProcessResult> RunBoundedTurnAsync(OneShotJobRequest request, string directory,
         CancellationToken ct)
     {
         var start = new ProcessStartInfo
@@ -98,6 +93,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        WorkerEdgeCredentialBoundary.RemoveFrom(start.Environment);
         if (request.Cli == "claude")
         {
             foreach (var arg in new[] { "-p", "--output-format", "stream-json", "--input-format",
@@ -133,13 +129,12 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             var input = request.Cli == "claude" ? ClaudeImageEnvelope(request) : request.Prompt;
             await process.StandardInput.WriteAsync(input.AsMemory(), ct);
             process.StandardInput.Close();
-            var stdout = ReadBoundedAsync(process.StandardOutput, 262_144, process, ct);
-            var stderr = ReadBoundedAsync(process.StandardError, 8_192, process, ct);
-            await process.WaitForExitAsync(ct);
-            // Observe both readers before reporting a process error. Either reader
-            // kills the child as soon as its cap is reached, so a chatty provider
-            // cannot block a full pipe until the job deadline.
-            await Task.WhenAll(stdout, stderr);
+            var rawBudget = new RawOutputBudget(Math.Min(262_144, request.MaxOutputBytes * 4));
+            var stdout = ReadBoundedAsync(process.StandardOutput.BaseStream,
+                rawBudget, process, ct);
+            var stderr = ReadBoundedAsync(process.StandardError.BaseStream,
+                rawBudget, process, ct, 8_192);
+            await Task.WhenAll(stdout, stderr, process.WaitForExitAsync(ct));
             return new ProcessResult(process.ExitCode, stdout.Result, stderr.Result);
         }
         catch
@@ -158,25 +153,29 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
         return JsonSerializer.Serialize(new { type = "user", message = new { role = "user", content } }) + "\n";
     }
 
-    private static async Task<string> ReadBoundedAsync(StreamReader reader, int maxBytes,
-        Process process, CancellationToken ct)
+    private sealed class RawOutputBudget(int maxBytes)
     {
-        var buffer = new char[4096];
-        var result = new StringBuilder();
-        var bytes = 0;
+        private long _bytes;
+        public bool TryAdd(int count) => Interlocked.Add(ref _bytes, count) <= maxBytes;
+    }
+
+    private static async Task<string> ReadBoundedAsync(Stream stream, RawOutputBudget budget,
+        Process process, CancellationToken ct, int? streamCap = null)
+    {
+        var buffer = new byte[4096];
+        using var result = new MemoryStream();
         while (true)
         {
-            var count = await reader.ReadAsync(buffer.AsMemory(), ct);
+            var count = await stream.ReadAsync(buffer.AsMemory(), ct);
             if (count == 0) break;
-            bytes += Encoding.UTF8.GetByteCount(buffer, 0, count);
-            if (bytes > maxBytes)
+            if (!budget.TryAdd(count) || streamCap is { } cap && result.Length + count > cap)
             {
                 try { process.Kill(entireProcessTree: true); }
                 catch (InvalidOperationException) { }
                 throw new InvalidDataException("one-shot raw output exceeds the byte cap");
             }
-            result.Append(buffer, 0, count);
+            result.Write(buffer, 0, count);
         }
-        return result.ToString();
+        return Encoding.UTF8.GetString(result.GetBuffer(), 0, (int)result.Length);
     }
 }
