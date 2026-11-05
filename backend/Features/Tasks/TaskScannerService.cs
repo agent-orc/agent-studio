@@ -24,6 +24,8 @@ namespace AgentStudio.Tasks;
 public class TaskScannerService : ITaskScanner
 {
     private readonly object _fullScanGate = new();
+    private long _rawScanCalls;
+    internal long RawScanCalls => Interlocked.Read(ref _rawScanCalls);
     private const int ScanParallelism = 4;
     private readonly IConfiguration _config;
     private readonly ILogger<TaskScannerService> _logger;
@@ -628,6 +630,7 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public List<TaskInfo> ScanAllJobsRaw()
     {
+        Interlocked.Increment(ref _rawScanCalls);
         // A full walk is expensive on a busy shared filesystem. Serialize it so
         // concurrent cache refreshes and background sweeps cannot each occupy
         // their own group of worker threads.

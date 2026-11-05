@@ -818,6 +818,9 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   `POST /api/tasks/{address}/integration-records?watchPath=...`. The address may
   be a stable task key or the task folder name within the selected project. A
   duplicated legacy `id` returns `409` rather than selecting an arbitrary card.
+  Address resolution reads the published archive-inclusive identity facts;
+  after selecting an unambiguous card, the write reads only that card folder
+  again for current state and persisted records.
   The request uses the historical classes owned by
   `HistoricalIntegrationVerificationSweep` or `curated-mapping`, a stable caller-supplied record id,
   and explicit evidence. The server owns
