@@ -6,6 +6,46 @@ namespace AgentStudio.Tests;
 
 public sealed class SummaryGenerationFinalizationTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Read_only_failed_summary_uses_agent_status_or_final_message(bool hasStatusFile)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "report-summary-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "logs"));
+        Directory.CreateDirectory(Path.Combine(root, "results"));
+        await File.WriteAllTextAsync(Path.Combine(root, "logs", "cli-output.log"),
+            "[assistant/final] Agent completed the research report. [[TASK_DONE]]\n");
+        if (hasStatusFile)
+            await File.WriteAllTextAsync(Path.Combine(root, "results", "status.md"),
+                "# Research status\n\nThe agent wrote this result.\n");
+        try
+        {
+            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["PromptTemplates:RuntimePath"] = Path.Combine(Directory.GetCurrentDirectory(), "prompts", "runtime"),
+                ["SummaryGeneration:FinalizationMaxAttempts"] = "1",
+            }).Build();
+            var service = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance,
+                config, new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance),
+                oneShotRegistry: new CliOneShotRegistry([new WaitingOneShot()]));
+            var task = new TaskInfo
+            {
+                Id = "report-summary", TaskKey = "REPORT-1", Mode = TaskModes.Research,
+                Title = "Report summary fallback", TaskType = "research", State = TaskStates.AutoReview,
+                FolderPath = root, WatchPath = root, ProjectName = "local",
+            };
+
+            var result = await service.FinalizeAsync(task);
+
+            Assert.True(result.Generated);
+            Assert.Equal(1, result.Attempt);
+            var status = await File.ReadAllTextAsync(Path.Combine(root, "status.md"));
+            Assert.Contains(hasStatusFile ? "The agent wrote this result." : "Agent completed the research report.", status);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public async Task Missing_model_host_stops_inline_attempts_and_preserves_waiting_reason()
     {

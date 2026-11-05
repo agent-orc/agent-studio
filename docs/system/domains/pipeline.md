@@ -431,10 +431,12 @@ and updates the in-memory projection when it records a new execution. Later
 requests rank the cached observations without rescanning evidence. The
 response counts batches, runs, distinct member sets, first and latest failure,
 the latest error excerpt, per-run failure facts, and whether a flaky rerun
-passed. A test is a flaky suspect only when it failed in three batches with
-pairwise disjoint member sets. The operator can open a prefilled bug card in the
-normal creation dialog. The dialog applies central model routing and requires
-submission to create it.
+passed. Missing evidence is queued for retry without interrupting execution
+recording; the response counts pending evidence runs so the panel marks its
+ranking incomplete until those files become readable. A test is a flaky suspect
+only when it failed in three batches with pairwise disjoint member sets. The
+operator can open a prefilled bug card in the normal creation dialog. The dialog
+applies central model routing and requires submission to create it.
 Batch links request up to 500 historical manifests on demand; normal state
 polling stays at ten.
 
@@ -2805,6 +2807,16 @@ operator changes cause the step to fail before its writer runs.
   the first post-step in every catalogue pipeline. `SummaryGenerationService`
   runs it from Result finalization (and the Regenerate action). It writes
   `status.md` and `summary-assessment.json`. It cannot be disabled, and its
+  failure is nonterminal for a completed report run. Planning and research use
+  the agent's `results/status.md` or the latest final agent message as the
+  Result when the model step fails. The
+  failed summary row stays visible. The lightweight review then validates the
+  primary artifact and records its review and decision. If no agent status can
+  be recovered, the card moves to Escalated with the failed step and reason on
+  the timeline. Other post-processing failures also escalate with their reason
+  rather than leaving an undecided Auto Review card. An intentionally disabled
+  aspect pipeline keeps its operator-controlled hold.
+  The step's
   free-text prompt override is hidden, because it owns the Result document and
   renders `summary-protocol.md` with typed slots. CLI, model and thinking level
   resolve like any model-backed step: step override, then the project

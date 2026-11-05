@@ -1,8 +1,8 @@
 <div class="batch-panel-backdrop" (click)="close()" aria-hidden="true"></div>
-<aside class="batch-panel" role="dialog" aria-modal="true" aria-labelledby="batch-panel-title" data-testid="batch-panel">
+<section class="batch-panel" role="dialog" aria-modal="true" aria-labelledby="batch-panel-title" data-testid="batch-panel">
   <header class="batch-panel__header">
     <div><h2 id="batch-panel-title">Batch verification</h2><p>{{ project() }}</p></div>
-    <button type="button" aria-label="Close batch panel" (click)="close()">Close</button>
+    <button #closeButton type="button" aria-label="Close batch panel" (click)="close()">Close</button>
   </header>
   <div #body class="batch-panel__body" tabindex="0" (keydown)="onBodyKeydown($event)">
     @if (error(); as message) { <p class="batch-panel__error" role="alert">{{ message }} <button type="button" (click)="gate.refresh(project())">Retry</button></p> }
@@ -28,6 +28,9 @@
         @if (actionError() && !confirm()) { <p class="batch-panel__error" role="alert">{{ actionError() }}</p> }
         @if (failures(); as report) {
           <p>Ranked over the last {{ report.windowDays }} days.</p>
+          @if (report.pendingEvidenceRuns) {
+            <p role="status" data-testid="batch-failure-evidence-pending">Ranking is incomplete: evidence for {{ report.pendingEvidenceRuns }} batch {{ report.pendingEvidenceRuns === 1 ? 'run is' : 'runs are' }} temporarily unavailable. Reopen this panel to retry.</p>
+          }
           @if (report.tests.length) {
             <ol class="batch-panel__failures">@for (test of report.tests; track test.testName) {
               <li>
@@ -51,7 +54,7 @@
                 }
               </li>
             }</ol>
-          } @else { <p>No failed tests in this window.</p> }
+          } @else if (!report.pendingEvidenceRuns) { <p>No failed tests in this window.</p> }
         } @else if (failureError()) { <p role="status">Failed-test history is unavailable.</p> }
         @else { <p>Loading failed-test history…</p> }
       </section>
@@ -144,4 +147,4 @@
       <button type="button" [disabled]="busy()" (click)="confirm.set(null)">Cancel</button>
     </div>
   }
-</aside>
+</section>

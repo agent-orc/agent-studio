@@ -12,7 +12,7 @@ public sealed record BatchTestFailureRank(string TestName, int Batches, int Runs
     IReadOnlyList<string> BatchIds, IReadOnlyList<BatchTestFailure> Failures);
 
 public sealed record BatchTestFailureReport(string Project, int WindowDays,
-    IReadOnlyList<BatchTestFailureRank> Tests);
+    IReadOnlyList<BatchTestFailureRank> Tests, int PendingEvidenceRuns);
 
 /// <summary>Pure window and attribution policy. A common member can explain repeated reds.</summary>
 public static class BatchGateFailureRanking
@@ -54,7 +54,9 @@ public static class BatchGateFailureRanking
 
     public static IReadOnlyList<BatchTestFailure> ReadEvidence(BatchGateExecutionFact fact)
     {
-        if (fact.BatchId is null || fact.BatchRunId is null || !File.Exists(fact.EvidencePath)) return [];
+        if (fact.BatchId is null || fact.BatchRunId is null) return [];
+        if (!File.Exists(fact.EvidencePath))
+            throw new FileNotFoundException("Batch gate failure ranking evidence is unavailable.", fact.EvidencePath);
         var found = new List<BatchTestFailure>();
         var lines = File.ReadLines(fact.EvidencePath).ToArray();
         var selected = lines.Select((line, index) => (line, index, distance: Distance(line, fact)))

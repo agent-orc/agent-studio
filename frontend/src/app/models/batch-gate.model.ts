@@ -176,6 +176,7 @@ export interface BatchTestFailureReport {
   project: string;
   windowDays: number;
   tests: BatchTestFailureRank[];
+  pendingEvidenceRuns: number;
 }
 
 /** AGT-3219: cards parked by a machine gate queue overrun, from `/batch-gate/queue-stalls`. */

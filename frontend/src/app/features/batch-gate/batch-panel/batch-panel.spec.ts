@@ -14,7 +14,7 @@ describe('BatchPanelComponent', () => {
     fixture.componentRef.setInput('project', 'Demo');
     fixture.componentRef.setInput('closed', vi.fn());
     await fixture.whenStable();
-    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('.batch-panel__body'));
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[aria-label="Close batch panel"]'));
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
     http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
@@ -127,5 +127,26 @@ describe('BatchPanelComponent', () => {
     expect(fixture.componentInstance['createForm'].newTaskType).toBe('bug');
     expect(fixture.componentInstance['createForm'].newPrompt).toContain('Batches: one, two, three.');
     expect(fixture.componentInstance['createForm'].newPrompt).toContain('run one-run');
+  });
+
+  it('shows missing evidence as an incomplete ranking instead of an empty history', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({
+      project: 'Demo', windowDays: 7, pendingEvidenceRuns: 1, tests: [],
+    });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-failure-evidence-pending"]').textContent)
+      .toContain('evidence for 1 batch run is temporarily unavailable');
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-failed-tests"]').textContent)
+      .not.toContain('No failed tests in this window.');
+    http.verify();
   });
 });

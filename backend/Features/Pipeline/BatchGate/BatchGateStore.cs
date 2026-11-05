@@ -484,7 +484,9 @@ public sealed partial class BatchGateStore
             }
             projection.Failures.RemoveAll(failure => failure.AtUtc < now.AddDays(-90));
             return new BatchTestFailureReport(project, windowDays,
-                BatchGateFailureRanking.Rank(projection.Failures, now, windowDays));
+                BatchGateFailureRanking.Rank(projection.Failures, now, windowDays),
+                projection.UnreadableFacts.Count(fact => fact.CompletedAtUtc >= now.AddDays(-windowDays)
+                    && fact.CompletedAtUtc <= now));
         }
     }
 

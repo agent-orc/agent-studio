@@ -160,9 +160,40 @@ public sealed class BatchGateFailureRankingTests
             store.RecordExecution(new BatchGateExecutionFact("Project", "one", "one-run", "sha", "fail", "host",
                 Now, Now, 0, 0, "evidence", MemberKeys: ["AGT-1"]));
 
-            Assert.Empty(store.FailedTestRanking("Project", Now).Tests);
-            Assert.Single(store.FailedTestRanking("Project", Now).Tests);
+            var pending = store.FailedTestRanking("Project", Now);
+            Assert.Empty(pending.Tests);
+            Assert.Equal(1, pending.PendingEvidenceRuns);
+            var recovered = store.FailedTestRanking("Project", Now);
+            Assert.Single(recovered.Tests);
+            Assert.Equal(0, recovered.PendingEvidenceRuns);
             Assert.Equal(2, attempts);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Missing_evidence_remains_visible_until_it_arrives_without_rescanning_other_facts()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var evidence = Path.Combine(root, "gate-evidence.jsonl");
+        try
+        {
+            var store = new BatchGateStore(root);
+            var fact = new BatchGateExecutionFact("Project", "one", "one-run", "sha", "fail", "host",
+                Now, Now, 0, 0, evidence, MemberKeys: ["AGT-1"]);
+            store.RecordExecution(fact);
+            var missing = store.FailedTestRanking("Project", Now);
+            Assert.Empty(missing.Tests);
+            Assert.Equal(1, missing.PendingEvidenceRuns);
+            Assert.Equal(1, store.FailedTestRanking("Project", Now).PendingEvidenceRuns);
+
+            File.WriteAllText(evidence,
+                """{"GateRunId":"one-run","RecordedFailedTests":["Product.Tests.Unstable"]}""" + "\n");
+            var recovered = store.FailedTestRanking("Project", Now);
+            Assert.Equal(0, recovered.PendingEvidenceRuns);
+            Assert.Equal(1, Assert.Single(recovered.Tests).Batches);
+            Assert.Equal(0, store.FailedTestRanking("Project", Now.AddDays(8)).PendingEvidenceRuns);
         }
         finally { Directory.Delete(root, recursive: true); }
     }

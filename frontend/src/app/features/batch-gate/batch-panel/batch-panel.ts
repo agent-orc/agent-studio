@@ -40,6 +40,7 @@ export class BatchPanelComponent implements OnDestroy {
   readonly publishedSha = batchPublishedSha;
   readonly phases = ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing', 'published', 'red', 'paused', 'abandoned'];
   private readonly body = viewChild<ElementRef<HTMLDivElement>>('body');
+  private readonly closeButton = viewChild<ElementRef<HTMLButtonElement>>('closeButton');
   private readonly confirmButton = viewChild<ElementRef<HTMLButtonElement>>('confirmButton');
   private readonly host = inject(ElementRef<HTMLElement>);
   private readonly injector = inject(Injector);
@@ -49,10 +50,15 @@ export class BatchPanelComponent implements OnDestroy {
   private readonly previousFocus = document.activeElement as HTMLElement | null;
 
   constructor() {
-    inject(ModalStackService).pushUntilDestroyed('batch-panel', () => this.close(), this.destroyRef);
+    const stack = inject(ModalStackService);
+    stack.pushUntilDestroyed('batch-panel', () => this.close(), this.destroyRef, {
+      dialog: () => (this.host.nativeElement as HTMLElement).querySelector<HTMLElement>('[role="dialog"]'),
+      backgroundRoot: () => this.host.nativeElement,
+    });
     afterNextRender(() => {
       document.body.appendChild(this.host.nativeElement);
-      this.body()?.nativeElement.focus();
+      this.closeButton()?.nativeElement.focus();
+      stack.refreshModalScope();
     }, { injector: this.injector });
     effect(onCleanup => {
       const project = this.project();
