@@ -102,9 +102,11 @@ describe('GlobalSearchComponent', () => {
     expect(chips[0].querySelector('a')).toBeNull();
   });
 
-  it('opens with Ctrl+K and closes with Escape', () => {
+  it('opens with Ctrl+K and closes with Escape', async () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }));
     expect(component.open()).toBe(true);
+    fixture.detectChanges();
+    await fixture.whenStable();
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(component.open()).toBe(false);
   });

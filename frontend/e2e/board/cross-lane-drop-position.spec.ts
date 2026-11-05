@@ -52,7 +52,7 @@ async function readColumnTitles(page: Page, heading: string): Promise<string[]> 
     if (!target) return [];
     const column = target.closest('.column');
     if (!column) return [];
-    const cards = Array.from(column.querySelectorAll('app-job-card .job-card__title')) as HTMLElement[];
+    const cards = Array.from(column.querySelectorAll('app-job-card .task-card__title-text')) as HTMLElement[];
     return cards.map(el => el.textContent?.trim() ?? '');
   }, heading);
 }
@@ -92,7 +92,7 @@ async function dispatchCrossLaneDropBefore(
     if (!sourceCol) throw new Error('Source column root missing');
 
     const sourceCards = Array.from(sourceCol.querySelectorAll('app-job-card')) as HTMLElement[];
-    const sourceTitles = sourceCards.map(c => c.querySelector('.job-card__title')?.textContent?.trim() ?? '');
+    const sourceTitles = sourceCards.map(c => c.querySelector('.task-card__title-text')?.textContent?.trim() ?? '');
     const sourceIdx = sourceTitles.indexOf(sourceCardTitle);
     if (sourceIdx < 0) throw new Error(`Card "${sourceCardTitle}" not found in source column`);
     const card = sourceCards[sourceIdx];
@@ -120,7 +120,7 @@ async function dispatchCrossLaneDropBefore(
       // sibling immediately before it.
       const targetCard = children.find(el =>
         el.tagName.toLowerCase() === 'app-job-card' &&
-        el.querySelector('.job-card__title')?.textContent?.trim() === beforeCardTitle
+        el.querySelector('.task-card__title-text')?.textContent?.trim() === beforeCardTitle
       );
       if (!targetCard) throw new Error(`Card "${beforeCardTitle}" not found in target column`);
       const prev = targetCard.previousElementSibling;

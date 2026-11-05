@@ -11,6 +11,13 @@
     }
   </header>
 
+  @if (loadError()) {
+    <p class="quality-panel__context" role="alert" data-testid="quality-load-error">
+      Quality information could not load.
+      <button type="button" data-testid="quality-retry" (click)="retry()">Retry</button>
+    </p>
+  }
+
   @if (view(); as quality) {
     @if (selected(); as round) {
       <div class="quality-panel__range" data-testid="quality-range">

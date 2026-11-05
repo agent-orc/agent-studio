@@ -8,6 +8,14 @@
  */
 :host { display: contents; }
 
+.tab-load-error {
+  margin: var(--studio-spacing-3);
+  padding: var(--studio-spacing-3);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-bg-hover);
+  color: var(--studio-fg);
+}
+
 /*
  * Tab strip styles moved to `<app-pane-tabs>` (Wave: F38). The prompt
  * pane projects `<app-pane-tabs variant="header">` into the
@@ -116,6 +124,9 @@
     max-width: 480px;
   }
 }
+
+.evidence-view[hidden], .code-review-view[hidden] { display: none; }
+.evidence-view--quality { flex: 0 0 auto; padding-bottom: 0; }
 
 .ev-section {
   display: flex;
