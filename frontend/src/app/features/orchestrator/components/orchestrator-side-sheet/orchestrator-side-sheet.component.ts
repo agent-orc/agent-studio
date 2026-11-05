@@ -111,7 +111,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   readonly projects = input<string[]>([]);
   readonly preferredProject = input<string | null>(null);
   /** Explicit project requested by a page chat affordance before this lazy sheet mounts. */
-  readonly requestedProject = input<string | null>(null);
+  readonly requestedProject = input<{ projectName: string } | null>(null);
   /** One-shot shell event for an explicit project entry from an empty editor. */
   readonly projectEntryRevision = input(0);
   readonly watchPaths = input<WatchPathEntry[]>([]);
@@ -553,8 +553,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
       });
     });
     effect(() => {
-      const project = this.requestedProject();
-      if (project) untracked(() => this.setActiveProject(project));
+      const request = this.requestedProject();
+      if (request) untracked(() => this.setActiveProject(request.projectName));
     });
 
     // S5's standard entry is a one-shot shell event, not a derivation from the

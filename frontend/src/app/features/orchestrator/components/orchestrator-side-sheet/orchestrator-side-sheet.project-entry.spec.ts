@@ -26,11 +26,26 @@ describe('OrchestratorSideSheetComponent project entry', () => {
     const fixture = TestBed.createComponent(OrchestratorSideSheetComponent);
     fixture.componentRef.setInput('projects', ['Alpha', 'Beta']);
     fixture.componentRef.setInput('preferredProject', 'Alpha');
-    fixture.componentRef.setInput('requestedProject', 'Beta');
+    fixture.componentRef.setInput('requestedProject', { projectName: 'Beta' });
     fixture.componentRef.setInput('composerContext', { project: 'Alpha', surface: 'Board' });
     fixture.detectChanges();
 
     expect(fixture.componentInstance.activeProject()).toBe('Beta');
+  });
+
+  it('applies a repeated page chat request after the sheet changes project', () => {
+    const fixture = TestBed.createComponent(OrchestratorSideSheetComponent);
+    fixture.componentRef.setInput('projects', ['Alpha', 'Beta']);
+    fixture.componentRef.setInput('preferredProject', 'Alpha');
+    fixture.componentRef.setInput('requestedProject', { projectName: 'Alpha' });
+    fixture.detectChanges();
+
+    fixture.componentInstance.setActiveProject('Beta');
+    expect(fixture.componentInstance.contextKey()).toBe('project:Beta');
+
+    fixture.componentRef.setInput('requestedProject', { projectName: 'Alpha' });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.contextKey()).toBe('project:Alpha');
   });
 
   it('opens only for the shell standard-entry event and uses its resolved project', () => {

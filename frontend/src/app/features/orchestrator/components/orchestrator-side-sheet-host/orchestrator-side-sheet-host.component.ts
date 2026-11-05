@@ -18,7 +18,7 @@ export class OrchestratorSideSheetHostComponent {
   readonly legacy = input(false);
   readonly projects = input<string[]>([]);
   readonly preferredProject = input<string | null>(null);
-  readonly requestedProject = input<string | null>(null);
+  readonly requestedProject = input<{ projectName: string } | null>(null);
   readonly projectEntryRevision = input(0);
   readonly watchPaths = input<WatchPathEntry[]>([]);
   readonly pageContext = input<PageContext | null>(null);

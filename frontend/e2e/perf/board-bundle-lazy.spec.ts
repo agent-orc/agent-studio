@@ -33,7 +33,9 @@ async function installFixture(page: Page, count: number): Promise<void> {
     localStorage.setItem('atp.studio.panelState.v1', JSON.stringify({ active: 'explorer', visible: true }));
     const observer = new MutationObserver(() => {
       if (document.querySelector('[data-testid="task-card"]') && !(window as any).__boardFirstPaint) {
-        requestAnimationFrame(() => { (window as any).__boardFirstPaint ??= performance.now(); });
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          (window as any).__boardFirstPaint ??= performance.now();
+        }));
       }
       if (document.querySelector('[data-testid="studio-task"]') && (window as any).__detailClickAt && !(window as any).__detailFirstPaint) {
         requestAnimationFrame(() => { (window as any).__detailFirstPaint ??= performance.now(); });

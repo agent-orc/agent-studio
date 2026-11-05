@@ -298,7 +298,7 @@ export class App implements OnInit, OnDestroy {
   readonly workspaceOverlaysOpen = inject(WorkspaceOverlaysService).anyOpen;
   readonly codexSignInRequest = inject(CodexSignInDialogService).request;
   readonly claudeSignInRequest = inject(ClaudeSignInDialogService).request;
-  readonly chatProjectRequest = signal<string | null>(null);
+  readonly chatProjectRequest = signal<{ projectName: string } | null>(null);
   /** Records the lane the user was triaging in. When the open job's state
    *  diverges from this (e.g. an external client moved it) we treat that as
    *  an auto-advance and toast accordingly. */
@@ -775,7 +775,9 @@ export class App implements OnInit, OnDestroy {
       this.createJobForm.openPageTask(request, this.watchPaths());
     });
     this.pageContext.openChatRequests$.subscribe(context => {
-      this.chatProjectRequest.set(context.projectName);
+      // Each click is a new command, including a second click for the same
+      // project after the operator has changed the chat scope in the sheet.
+      this.chatProjectRequest.set({ projectName: context.projectName });
       this.orchestratorPanel.setOpen(true);
     });
 
