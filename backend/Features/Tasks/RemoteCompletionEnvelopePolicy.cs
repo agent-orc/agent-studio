@@ -37,7 +37,8 @@ public static class RemoteCompletionEnvelopePolicy
         bool hasResultSha,
         bool hasBaseSha,
         bool hasImmutableResultRef,
-        bool hasArtifactManifestDigest)
+        bool hasArtifactManifestDigest,
+        string? reportedReason = null)
     {
         var outcome = reportedOutcome?.Trim().ToLowerInvariant() ?? string.Empty;
         if (!requiresEnvelope || outcome is "environmentfailure" or "mechanicalfallback" or "transientfailure")
@@ -60,11 +61,16 @@ public static class RemoteCompletionEnvelopePolicy
                 outcome);
         }
 
+        var pushFailure = reportedReason?.IndexOf("[runner-result-ref-push-failed:", StringComparison.Ordinal);
+        var pushFailureDetail = pushFailure is >= 0
+            ? " " + reportedReason![pushFailure.Value..Math.Min(reportedReason.Length, pushFailure.Value + 500)]
+            : string.Empty;
         return new RemoteCompletionEnvelopeDecision(
             RemoteCompletionEnvelopeDisposition.FailDelivery,
             RemoteDeliveryFailurePolicy.DeliveryFailed,
             "Remote coding completion did not carry a complete immutable result envelope "
-            + $"(missing: {string.Join(", ", missing)}). The delivery failed and no ReviewSubject was created.",
+            + $"(missing: {string.Join(", ", missing)}). The delivery failed and no ReviewSubject was created."
+            + pushFailureDetail,
             missing);
     }
 }

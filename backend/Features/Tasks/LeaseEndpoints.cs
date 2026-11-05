@@ -1811,7 +1811,8 @@ public static class LeaseEndpoints
                 hasResultSha: ReviewSubjectStore.IsValidResultSha(req.ResultSha),
                 hasBaseSha: ReviewSubjectStore.IsValidResultSha(req.BaseSha),
                 hasImmutableResultRef: !string.IsNullOrWhiteSpace(req.ImmutableResultRef),
-                hasArtifactManifestDigest: IsSha256(req.ArtifactManifestDigest));
+                hasArtifactManifestDigest: IsSha256(req.ArtifactManifestDigest),
+                reportedReason: req.Reason);
             var responseOutcome = reportedOutcome;
             string? unverifiedDelivery = null;
             if (envelopeDecision.ShouldPersist)
