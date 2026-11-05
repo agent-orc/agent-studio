@@ -15,11 +15,12 @@ readonly launcher_socket_unit="agent-work-launcher.socket"
 
 usage() {
   printf '%s\n' \
-    "Usage: harden-agent-runner-host.sh --apply" \
+    "Usage: harden-agent-runner-host.sh --apply [--shared-studio-host [weight options]]" \
     "" \
     "Installs the versioned deploy/config helper and sudoers whitelist, removes" \
     "privileged service-account memberships, and verifies the result." \
-    "Run from a root-owned operator session, not from an Agent CLI."
+    "Run from a root-owned operator session, not from an Agent CLI." \
+    "Weight options: --agent-cpu-weight, --studio-cpu-weight, --agent-io-weight, --studio-io-weight."
 }
 
 die() {
@@ -27,10 +28,26 @@ die() {
   exit 2
 }
 
-[[ "${1:-}" == "--apply" && "$#" -eq 1 ]] || { usage >&2; exit 2; }
+[[ "${1:-}" == "--apply" ]] || { usage >&2; exit 2; }
+shift
+shared_studio_host=0
+containment_args=()
+while (($#)); do
+  case "$1" in
+    --shared-studio-host) shared_studio_host=1; shift ;;
+    --agent-cpu-weight|--studio-cpu-weight|--agent-io-weight|--studio-io-weight)
+      (($# >= 2)) || { usage >&2; exit 2; }
+      containment_args+=("$1" "$2"); shift 2 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+((shared_studio_host == 1 || ${#containment_args[@]} == 0)) || die "weight options require --shared-studio-host"
 [[ "$EUID" -eq 0 ]] || die "must run as root from an operator session"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ((shared_studio_host)); then
+  "$repo_root/deploy/runner-host/apply-containment.sh" --render-slices "${containment_args[@]}" >/dev/null
+fi
 sudoers_source="$repo_root/deploy/agent-host/sudoers.d/agent-runner"
 helper_source="$repo_root/deploy/agent-host/agent-runner-deploy"
 policy_source="$repo_root/deploy/agent-host/agent-runner-config-policy"
@@ -175,6 +192,10 @@ grep -Fq 'config review RUNNER_MAX_PARALLELISM 6' <<<"$sudo_list" \
 ! grep -Fq 'agent-runner-deploy --force' <<<"$sudo_list" \
   || die "the service account can bypass the Review restart guard"
 
+if ((shared_studio_host)); then
+  "$repo_root/deploy/runner-host/apply-containment.sh" "${containment_args[@]}"
+fi
+
 printf 'agent-runner host hardening: applied\n'
 printf '  backup: %s\n' "$backup_root"
 printf '  groups: %s\n' "$groups_after"
@@ -184,5 +205,8 @@ printf '  config policy: %s\n' "$installed_policy"
 printf '  dependency validator: %s\n' "$installed_deps_validator"
 printf '  work-container launcher: %s via %s (%s)\n' "$installed_launcher" "$launcher_socket_unit" "$installed_launcher_config"
 printf '  review restart guard: %s\n' "$review_restart_guard"
+if ((shared_studio_host)); then
+  printf '  shared Studio host: agent-work.slice installed; restart the runner roles after draining work\n'
+fi
 printf '%s\n' \
   "Existing login sessions retain supplementary groups. End them, restart Coding, and run 'agent-runner-deploy drain' for Review before acceptance."

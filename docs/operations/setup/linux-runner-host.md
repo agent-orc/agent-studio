@@ -1293,6 +1293,49 @@ is advertised as unavailable and only blocks cards pinned to that provider.
 
 ### Per-worker resource envelope
 
+#### Shared Studio host CPU priority
+
+On a host that also runs the Studio API, web, and engine containers, run the
+host hardening install with `--shared-studio-host`, or run
+`sudo bash deploy/runner-host/apply-containment.sh` during the next host install.
+The setting is opt-in; omit it on a host that runs only agents. The install
+places Coding, Review, and the combined host-agent service in `agent-work.slice` with `CPUWeight=50` and
+`IOWeight=50`. The Studio containers use `studio.slice` at weight 100 for both.
+The weights are relative under contention; the existing role quotas and worker
+envelopes still apply. To set site-specific weights, pass
+`--agent-cpu-weight`, `--studio-cpu-weight`, `--agent-io-weight`, and
+`--studio-io-weight` to either install command. The agent CPU weight must be
+lower than the Studio CPU weight. For example:
+
+```bash
+sudo bash scripts/harden-agent-runner-host.sh --apply --shared-studio-host \
+  --agent-cpu-weight 50 --studio-cpu-weight 100
+```
+
+The installer writes service `Slice=` drop-ins and both slice units. It does
+not move running processes: drain Coding and Review, restart Coding, and replace
+Review through `agent-runner-deploy restart-review`. Recreate the Studio
+containers with `deploy/compose/monolith-networked/compose.runner-host.yaml`
+and the engine with its Compose file after the slices are installed. Docker
+must use its systemd cgroup driver. Detached workers, their CLIs, build tools,
+Node processes, and browsers inherit the service cgroup and stay under
+`agent-work.slice`, including across a daemon restart. Existing workers remain
+in their previous cgroup until they exit, so drain before switching.
+
+```bash
+sudo bash deploy/runner-host/apply-containment.sh --check
+systemctl show -p CPUWeight -p IOWeight studio.slice agent-work.slice
+systemctl show -p Slice -p ControlGroup agent-runner.service agent-runner-review.service
+systemd-cgls --unit agent-work.slice
+```
+
+The read-only `--check` probe reports weights and placement. Its tree should
+show the runner units and their `worker-*` descendants. Run
+`sudo bash deploy/runner-host/apply-containment.sh --remove` to disable the
+shared-host setup at the next drained restart. It removes the installed units
+and drop-ins; processes move only after the relevant services and containers
+are restarted or recreated.
+
 A role's `CPUQuota` bounds the whole plane; it cannot stop one run from eating
 that plane. On 17.09.2026 three coding runs on this host, all asked to reproduce
 a flaky test "under contention", started 24, 49 and 104 CPU busy loops and drove

@@ -987,7 +987,10 @@ occur. It is not a claim about tunnel transfer time.
   flat detail pane with facts, local and relative contact time, and independent
   identity, connection, capabilities, capacity, project access, work, and load
   disclosures. The same pane carries setup, link, capacity, provider sign-in,
-  drain, and lifecycle controls. Retired roles remain behind the Show retired
+  drain, and lifecycle controls. Fresh runner telemetry places claim load gate
+  status beside slot counts. The Environment flow shows the same status, and a
+  Ready card routed to that runner shows a pickup hold while its gate is closed.
+  Retired roles remain behind the Show retired
   filter. At narrow widths selection replaces the list and a Back control returns
   to it. The Topology view keeps Task Server as the hub, labels connection health
   in text as well as line style, and opens a selected machine in Hosts. The

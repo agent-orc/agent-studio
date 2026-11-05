@@ -67,6 +67,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Runtime prompt registry, review companions, call telemetry, and costs | [contracts/runtime-prompts.md](../system/contracts/runtime-prompts.md) |
 | Workspace repository lifecycle and backlog recovery | [operations/workspace-repository-lifecycle.md](../operations/workspace-repository-lifecycle.md) |
 | Board read model on the Task Server: `Board:Source` shadow and cutover, change feed, differences card and 7-day gate (pipeline delivery target M1 and M2, AGT-3317) | [operations/board-source-cutover.md](../operations/board-source-cutover.md) |
+| Board card window: generated 20, 830 and 3,000-card browser measurements and comparison limits (AGT-3534) | [operations/board-window-performance-2026-11-05.md](../operations/board-window-performance-2026-11-05.md) |
 | Temp and cache hygiene on a runner host: the suite temp root, the review executor's per-command purge, the bounded product-owned preparation cache, and how to reset each (AGT-2858) | [operations/temp-and-cache-hygiene.md](../operations/temp-and-cache-hygiene.md) |
 | API stalls on a real-size workspace: measured causes, numbers before and after, the `api-stall` warning and the Operations stall panel (AGT-3369) | [operations/api-stalls.md](../operations/api-stalls.md) |
 | Torn NuGet preparation cache: recognition, automatic eviction, and integration replay (AGT-2901) | [operations/common-problems/torn-preparation-cache/](../operations/common-problems/torn-preparation-cache/README.md) |
