@@ -983,8 +983,13 @@ public sealed partial class BatchGatePilotService
         IReadOnlyDictionary<string, BatchGatePendingRecord> pending,
         string repo, CancellationToken ct)
     {
+        // A successor has already gated against the predecessor's candidate.
+        // Keep later ordinary batches behind it until it publishes or retires.
+        lock (_runningStacks)
         lock (_runningBatches)
         {
+            if (_runningStacks.TryGetValue(manifest.Scope.Project, out var stack)
+                && !stack.IsCompleted) return;
             if (_runningBatches.TryGetValue(manifest.Scope.Project, out var existing)
                 && !existing.IsCompleted) return;
             var flight = Task.Run(() => ExecuteAsync(manifest, pending, repo, ct), ct);

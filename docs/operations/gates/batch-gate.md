@@ -9,7 +9,9 @@ Its immutable manifest names N and uses N's assembled candidate SHA as its
 base; replaying N+1's members produces candidate N+1 = candidate N plus those
 members. Each batch keeps its own candidate ref, membership digest, exact SHA
 gate receipt and coordinator fence. Only one stacked successor may run per
-project, and it uses no slot when the host reports every gate slot busy.
+project, and it uses no slot when the host reports every gate slot busy. While
+that successor runs, later ordinary batches stay formed behind it. Once it
+publishes or retires, they start against the real integration tip.
 
 The successor does not reserve the project during its gate. Before publication
 it takes the project reservation and ref mutation lease, checks that N's

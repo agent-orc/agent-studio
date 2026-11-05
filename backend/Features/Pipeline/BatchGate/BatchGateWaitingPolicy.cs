@@ -7,7 +7,8 @@ public static class BatchGateWaitingPolicy
 
     public static IReadOnlyList<BatchGateManifest> OrderForStart(
         IEnumerable<BatchGateManifest> formed)
-        => formed.OrderByDescending(manifest => manifest.Members.Count)
+        => formed.OrderByDescending(manifest => manifest.StackedOnBatchId is not null)
+            .ThenByDescending(manifest => manifest.Members.Count)
             .ThenBy(manifest => manifest.ClosedAtUtc)
             .ThenBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
 

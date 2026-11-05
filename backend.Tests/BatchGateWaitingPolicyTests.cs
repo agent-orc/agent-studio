@@ -46,4 +46,19 @@ public sealed class BatchGateWaitingPolicyTests
         Assert.Equal(["larger", "older"], BatchGateWaitingPolicy
             .OrderForStart([older, larger]).Select(manifest => manifest.BatchId));
     }
+
+    [Fact]
+    public void Stacked_successor_starts_before_an_ordinary_formed_batch()
+    {
+        var at = new DateTimeOffset(2026, 11, 4, 1, 0, 0, TimeSpan.Zero);
+        BatchGateManifest Manifest(string id, int size, string? predecessor = null)
+            => new(id, null!, "", "", at,
+                Enumerable.Repeat<BatchGateSubject>(null!, size).ToArray(), [], [],
+                StackedOnBatchId: predecessor);
+        var ordinary = Manifest("ordinary", 5);
+        var stacked = Manifest("stacked", 2, "predecessor");
+
+        Assert.Equal(["stacked", "ordinary"], BatchGateWaitingPolicy
+            .OrderForStart([ordinary, stacked]).Select(manifest => manifest.BatchId));
+    }
 }

@@ -72,6 +72,58 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     [Fact]
+    public async Task Active_stacked_successor_holds_a_later_ordinary_batch()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableStacking(factory);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = false;
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseStack = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.BatchAsync = async (request, ct) =>
+        {
+            var runNumber = _gate.BatchRuns;
+            if (runNumber == 1) await releaseFirst.Task.WaitAsync(ct);
+            if (runNumber == 2) await releaseStack.Task.WaitAsync(ct);
+            return Green(request.ExpectedSha);
+        };
+        try
+        {
+            SeedMember(factory, "DOC-ORDER-1", "docs/order-1.md");
+            SeedMember(factory, "DOC-ORDER-2", "docs/order-2.md");
+            await pilot.TickAsync(CancellationToken.None);
+            await _gate.FirstBatchStarted;
+            SeedMember(factory, "DOC-ORDER-3", "docs/order-3.md");
+            SeedMember(factory, "DOC-ORDER-4", "docs/order-4.md");
+            await pilot.TickAsync(CancellationToken.None);
+            await WaitForAsync(() => _gate.BatchRuns == 2);
+            var successor = Assert.Single(store.ListManifests(), item => item.StackedOnBatchId is not null);
+
+            releaseFirst.SetResult();
+            await WaitForAsync(() => store.ReadPublication(successor.StackedOnBatchId!) is not null);
+            SeedMember(factory, "DOC-ORDER-5", "docs/order-5.md");
+            SeedMember(factory, "DOC-ORDER-6", "docs/order-6.md");
+            await pilot.TickAsync(CancellationToken.None);
+
+            Assert.Equal(2, _gate.BatchRuns);
+            Assert.Contains(store.ListManifests(), item => item.StackedOnBatchId is null
+                && item.Members.Any(member => member.TaskKey == "DOC-ORDER-5")
+                && store.LatestState(item.BatchId).Phase == BatchPhase.Formed);
+            releaseStack.SetResult();
+            await pilot.WaitForFlightsAsync(true, CancellationToken.None);
+            AssertPhase(store, successor.BatchId, BatchPhase.Published);
+        }
+        finally
+        {
+            releaseFirst.TrySetResult();
+            releaseStack.TrySetResult();
+            await pilot.WaitForFlightsAsync(true, CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task Red_predecessor_cancels_the_stacked_gate_and_returns_its_members()
     {
         using var factory = BuildFactory();
