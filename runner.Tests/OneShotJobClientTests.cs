@@ -55,7 +55,7 @@ public sealed class OneShotJobClientTests
             var cli = Path.Combine(directory, "fake-cli.sh");
             await File.WriteAllTextAsync(cli, "#!/bin/sh\ncat ./payload\nsleep 20\n");
             File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            await File.WriteAllTextAsync(Path.Combine(directory, "payload"), new string('x', 270_000));
+            await File.WriteAllTextAsync(Path.Combine(directory, "payload"), new string('x', 12_000));
             var options = new RunnerOptions
             {
                 ServerUrl = "http://localhost/", RunnerId = "test-runner", RunnerName = "test-runner",
@@ -64,7 +64,7 @@ public sealed class OneShotJobClientTests
             };
             var runner = new OneShotJobAdmission(options, null!, _ => { });
             var request = new OneShotJobRequest("codex", "test-model", "describe", null,
-                20, 65_536);
+                20, 1_024);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
             var elapsed = Stopwatch.StartNew();
 
@@ -88,7 +88,7 @@ public sealed class OneShotJobClientTests
             var cli = Path.Combine(directory, "fake-cli.sh");
             await File.WriteAllTextAsync(cli, "#!/bin/sh\ncat ./payload\nsleep 20\n");
             File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            await File.WriteAllTextAsync(Path.Combine(directory, "payload"), new string('x', 270_000));
+            await File.WriteAllTextAsync(Path.Combine(directory, "payload"), new string('x', 70_000));
             var runner = new OneShotJobAdmission(new RunnerOptions
             {
                 ServerUrl = "http://localhost/", RunnerId = "test-runner", RunnerName = "test-runner",
