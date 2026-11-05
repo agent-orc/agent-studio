@@ -105,4 +105,65 @@ public sealed class BatchGateFailureRankingTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    [Fact]
+    public void Evidence_read_failure_after_persistence_does_not_fail_recording_and_retries_only_that_fact()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var failNextRead = false;
+        var reads = new Dictionary<string, int>(StringComparer.Ordinal);
+        try
+        {
+            var store = new BatchGateStore(root, fact =>
+            {
+                reads[fact.BatchId!] = reads.GetValueOrDefault(fact.BatchId!) + 1;
+                if (failNextRead)
+                {
+                    failNextRead = false;
+                    throw new IOException("Evidence is temporarily unavailable.");
+                }
+                return [new BatchTestFailure("Product.Tests.Unstable", fact.BatchId!, fact.BatchRunId!,
+                    fact.MemberKeys ?? [], fact.CompletedAtUtc, "Error Message: timed out", false)];
+            });
+            var first = new BatchGateExecutionFact("Project", "one", "one-run", "sha", "fail", "host",
+                Now.AddHours(-1), Now.AddHours(-1), 0, 0, "evidence", MemberKeys: ["AGT-1"]);
+            store.RecordExecution(first);
+            Assert.Equal(1, Assert.Single(store.FailedTestRanking("Project", Now).Tests).Batches);
+
+            failNextRead = true;
+            store.RecordExecution(first with { BatchId = "two", BatchRunId = "two-run",
+                StartedAtUtc = Now, CompletedAtUtc = Now, MemberKeys = ["AGT-2"] });
+
+            Assert.Equal(2, store.ListExecutions("Project").Count);
+            Assert.Equal(2, Assert.Single(store.FailedTestRanking("Project", Now).Tests).Batches);
+            Assert.Equal(1, reads["one"]);
+            Assert.Equal(2, reads["two"]);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Unreadable_evidence_during_initial_projection_is_retried()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var attempts = 0;
+        try
+        {
+            var store = new BatchGateStore(root, fact =>
+            {
+                if (++attempts == 1) throw new IOException("Evidence is temporarily unavailable.");
+                return [new BatchTestFailure("Product.Tests.Unstable", fact.BatchId!, fact.BatchRunId!,
+                    fact.MemberKeys ?? [], fact.CompletedAtUtc, "", false)];
+            });
+            store.RecordExecution(new BatchGateExecutionFact("Project", "one", "one-run", "sha", "fail", "host",
+                Now, Now, 0, 0, "evidence", MemberKeys: ["AGT-1"]));
+
+            Assert.Empty(store.FailedTestRanking("Project", Now).Tests);
+            Assert.Single(store.FailedTestRanking("Project", Now).Tests);
+            Assert.Equal(2, attempts);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }

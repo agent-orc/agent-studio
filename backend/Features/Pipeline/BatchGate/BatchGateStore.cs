@@ -145,7 +145,13 @@ public sealed partial class BatchGateStore
     };
     private readonly string _root;
     private readonly object _failureRankingLock = new();
-    private readonly Dictionary<string, List<BatchTestFailure>> _failureRanking = new(StringComparer.Ordinal);
+    private sealed class FailureRankingProjection
+    {
+        public List<BatchTestFailure> Failures { get; } = [];
+        public List<BatchGateExecutionFact> UnreadableFacts { get; } = [];
+    }
+    private readonly Dictionary<string, FailureRankingProjection> _failureRanking = new(StringComparer.Ordinal);
+    private readonly Func<BatchGateExecutionFact, IReadOnlyList<BatchTestFailure>> _readFailureEvidence;
 
     public void RecordFirstCandidate(BatchFirstCandidateFact fact)
     {
@@ -211,6 +217,13 @@ public sealed partial class BatchGateStore
     public BatchGateStore(string? root = null)
     {
         _root = root ?? LocalStateRoot.Combine("agentstudio", "batch-gates");
+        _readFailureEvidence = BatchGateFailureRanking.ReadEvidence;
+    }
+
+    internal BatchGateStore(string root,
+        Func<BatchGateExecutionFact, IReadOnlyList<BatchTestFailure>> readFailureEvidence) : this(root)
+    {
+        _readFailureEvidence = readFailureEvidence;
     }
 
     public string BatchDirectory(string batchId)
@@ -447,8 +460,8 @@ public sealed partial class BatchGateStore
         var path = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".json");
         WriteOnce(path, fact);
         lock (_failureRankingLock)
-            if (_failureRanking.TryGetValue(fact.Project, out var failures))
-                failures.AddRange(BatchGateFailureRanking.ReadEvidence(WithMembers(fact)));
+            if (_failureRanking.TryGetValue(fact.Project, out var projection))
+                AppendFailureEvidence(projection, fact);
     }
 
     public BatchTestFailureReport FailedTestRanking(string project, DateTimeOffset now, int windowDays = 7)
@@ -456,16 +469,32 @@ public sealed partial class BatchGateStore
         if (windowDays is < 1 or > 90) throw new ArgumentOutOfRangeException(nameof(windowDays));
         lock (_failureRankingLock)
         {
-            if (!_failureRanking.TryGetValue(project, out var failures))
+            if (!_failureRanking.TryGetValue(project, out var projection))
             {
-                failures = ListExecutions(project)
-                    .Where(fact => fact.BatchId is not null)
-                    .SelectMany(fact => BatchGateFailureRanking.ReadEvidence(WithMembers(fact))).ToList();
-                _failureRanking[project] = failures;
+                projection = new FailureRankingProjection();
+                foreach (var fact in ListExecutions(project).Where(fact => fact.BatchId is not null))
+                    AppendFailureEvidence(projection, fact);
+                _failureRanking[project] = projection;
             }
-            failures.RemoveAll(failure => failure.AtUtc < now.AddDays(-90));
+            else if (projection.UnreadableFacts.Count > 0)
+            {
+                var retry = projection.UnreadableFacts.ToArray();
+                projection.UnreadableFacts.Clear();
+                foreach (var fact in retry) AppendFailureEvidence(projection, fact);
+            }
+            projection.Failures.RemoveAll(failure => failure.AtUtc < now.AddDays(-90));
             return new BatchTestFailureReport(project, windowDays,
-                BatchGateFailureRanking.Rank(failures, now, windowDays));
+                BatchGateFailureRanking.Rank(projection.Failures, now, windowDays));
+        }
+    }
+
+    private void AppendFailureEvidence(FailureRankingProjection projection, BatchGateExecutionFact fact)
+    {
+        try { projection.Failures.AddRange(_readFailureEvidence(WithMembers(fact))); }
+        catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
+        {
+            projection.UnreadableFacts.Add(fact);
+            SilentCatch.Note(exception, "Batch gate failure ranking will retry unreadable evidence");
         }
     }
 
