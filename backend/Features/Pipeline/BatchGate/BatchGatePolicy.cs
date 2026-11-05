@@ -46,6 +46,11 @@ public enum BatchExclusionReason
     NextBatch,
     OverlapSeparate,
     MaximumSize,
+    NoLongerPending,
+    AlreadyIntegrated,
+    ReplayConflict,
+    UnattributableReplay,
+    PreCheckNotAdmitted,
 }
 
 public sealed record BatchGateScope(
@@ -212,6 +217,10 @@ public static class BatchGatePolicy
                 || AgentStudio.Runner.MonolithTransitionAdapter.BatchBacklogAgedOut(
                     eligible[0].ReviewCompletedAtUtc, now, options.DeadlineMinutes),
                 "oldest eligible card reached deadline without a batch partner");
+
+        if (eligible.Count < options.MinimumSize)
+            return new(null, exclusions, keys, false,
+                "eligible members below minimum batch size");
 
         var selected = eligible.Take(options.MaximumSize).ToArray();
         exclusions.AddRange(eligible.Skip(options.MaximumSize)

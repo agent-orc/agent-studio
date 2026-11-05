@@ -28,6 +28,8 @@ export class TaskTimelinePollService extends TaskBackgroundPoller<TaskTimelineEv
 
   /** Raw ledger rows in chronological (append) order. */
   readonly events = signal<TaskTimelineEvent[]>([]);
+  readonly loadState = signal<'idle' | 'ready' | 'error'>('idle');
+
 
   /**
    * Derived "where is the completion loop right now" summary the
@@ -44,10 +46,16 @@ export class TaskTimelinePollService extends TaskBackgroundPoller<TaskTimelineEv
 
   protected applyResponse(res: TaskTimelineEvent[]): void {
     this.events.set(sanitizeTimelineEvents(res));
+    this.loadState.set('ready');
+  }
+
+  protected override onError(): void {
+    this.loadState.set('error');
   }
 
   protected clearValue(): void {
     this.events.set([]);
+    this.loadState.set('idle');
   }
 }
 

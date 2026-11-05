@@ -728,12 +728,14 @@ baseline is accepted. OrchestratorPrep, MetaCycle and AutoIntervention remain
 on the monolith path while they have no engine occurrence.
 The review post-processing worker, startup recovery, evidence projection, and
 settlement reconciliation stay registered across profile changes. Each checks
-the current transition owner before acting on a card. Coding post-processing and recovery wait while either `CodingCompletion` or
+the current transition owner before acting on a card. Coding post-processing
+and the legacy queue recovery scan wait while either `CodingCompletion` or
 `ReviewReport` selects Engine; evidence projection and settlement wait while
 `ReviewReport` selects Engine. The delivery resume entry point also waits if
-either profile selects Engine. Recovery keeps waiting for a
-runtime rollback, and recurring settlement and review sweeps recover journaled
-work after ownership returns to Monolith.
+either profile selects Engine. Auto Review recovery continues to repair
+superseded canonical ReviewAttempts every 30 seconds in Engine mode. The legacy
+queue scan reruns after a runtime rollback, and recurring settlement and review
+sweeps recover journaled work after ownership returns to Monolith.
 Run-liveness receipt application remeasures log activity before a demotion, so
 activity added after submission restores the card's grace period.
 

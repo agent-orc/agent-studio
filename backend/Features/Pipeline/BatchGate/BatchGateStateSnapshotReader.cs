@@ -32,12 +32,45 @@ public static class BatchGateStateSnapshotReader
                     null, [], 0, []);
         if (pushWait is not null)
             plan = plan with { Reason = pushWait.Reason };
-        var manifests = store.ListManifests()
+        var projectManifests = store.ListManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var recoverable = store.ListRecoverableManifests()
+            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var fallbackCauses = store.ListFallbackCauses(project);
+        var overdue = pending.Where(item => item.Subject.ReviewCompletedAtUtc
+                .AddMinutes(settings.DeadlineMinutes) <= at
+                && !plan.ProposedMembers.Contains(item.Subject.TaskKey, StringComparer.Ordinal))
+            .Select(item =>
+            {
+                var formed = recoverable.FirstOrDefault(manifest => manifest.Members.Any(member =>
+                    member.TaskKey == item.Subject.TaskKey
+                    && member.RunAttempt == item.Subject.RunAttempt));
+                var cause = fallbackCauses.LastOrDefault(entry =>
+                    entry.ReviewAttemptId == item.ReviewAttemptId);
+                var reason = formed is not null
+                    ? $"batch {formed.BatchId} is {store.LatestState(formed.BatchId).Phase.ToString().ToLowerInvariant()}"
+                    : item.Subject.ActivePerTaskGate ? "per-task gate is in progress"
+                    : cause is not null ? $"per-task fallback: {cause.Rule}"
+                    : "pending member awaits the next planner tick";
+                return $"{item.Subject.TaskKey}: {reason}";
+            }).ToArray();
+        if (overdue.Length > 0)
+            plan = plan with
+            {
+                Decision = plan.Decision == "idle" ? "wait" : plan.Decision,
+                Reason = plan.Reason + "; overdue pending: " + string.Join("; ", overdue),
+                CloseAtUtc = plan.CloseAtUtc is { } deadline && deadline <= at
+                    ? null : plan.CloseAtUtc,
+            };
+        var manifests = projectManifests
             .OrderByDescending(item => item.ClosedAtUtc)
-            .Take(Math.Clamp(history, 0, 100)).ToArray();
-        var moved = store.ListManifests()
-            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
+            .Take(Math.Clamp(history, 0, 100))
+            .Concat(recoverable)
+            .DistinctBy(item => item.BatchId)
+            .OrderByDescending(item => item.ClosedAtUtc).ToArray();
+        var moved = projectManifests
             .Select(item => store.LatestState(item.BatchId))
             .Where(state => state.BaseMoveToSha is not null).ToArray();
         var stacked = store.ListManifests()

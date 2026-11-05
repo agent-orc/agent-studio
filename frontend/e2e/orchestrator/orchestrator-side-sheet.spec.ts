@@ -171,8 +171,7 @@ test.describe('Orchestrator side sheet', () => {
     await page.waitForTimeout(150);
     await page.screenshot({ path: `${SHOTS}/07-settings-rail-nav.png`, fullPage: false });
 
-    await page.getByRole('tab').filter({ hasText: 'Workspace settings' })
-      .getByRole('button', { name: 'Close tab' }).click();
+    await page.getByTestId('studio-tab-close-workspace-settings').click();
     await expect(settingsView).toHaveCount(0);
 
     // Final close.

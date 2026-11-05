@@ -75,6 +75,7 @@ import { TaskInspectorTabComponent } from '../task-inspector-tab/task-inspector-
 import { DecisionSurfaceComponent } from '../../decision-surface/decision-surface.component';
 import { TaskArtifactLinksDirective } from '../../task-artifact-links/task-artifact-links.directive';
 import { DetailKeyboardSurfaceDirective } from '../../detail-keyboard-surface/detail-keyboard-surface.directive';
+import { ConversationScrollFocusDirective } from '../../../../../directives/conversation-scroll-focus.directive';
 import { TaskPreviewComponent } from '../../../../../components/task-preview/task-preview.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -121,6 +122,7 @@ interface InterimSummaryState {
     ActivityLogViewComponent,
     PlanStripComponent,
     ConversationViewComponent,
+    ConversationScrollFocusDirective,
     RunTimelineComponent,
     RunGitViewerComponent,
     VerboseDebugOverlayComponent,
@@ -608,7 +610,6 @@ export class ProtocolPaneComponent implements OnDestroy {
   onInspectorTabChange(id: string): void {
     if (id === 'task' || id === 'activity' || id === 'protocol') {
       this.activeInspectorTab.set(id);
-      this.focusTabSurface();
     }
   }
 

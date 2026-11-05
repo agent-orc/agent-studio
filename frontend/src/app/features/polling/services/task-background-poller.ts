@@ -33,6 +33,9 @@ export abstract class TaskBackgroundPoller<TResponse> implements OnDestroy {
   /** Subclass clears its signals back to the "no job selected" state. */
   protected abstract clearValue(): void;
 
+  /** Surface a failed endpoint in pollers whose visible tab needs a retry. */
+  protected onError(): void { /* Existing pollers keep their last value on failure. */ }
+
   /**
    * Override to filter which jobs trigger polling. Default: any
    * non-null job. Used by `ClaudeSessionPollService` to skip
@@ -61,9 +64,18 @@ export abstract class TaskBackgroundPoller<TResponse> implements OnDestroy {
   private timer: VisibleIntervalHandle | null = null;
   private currentJob: { id: string; watchPath: string } | null = null;
   private currentKey = '';
+  private preparedTaskKey: string | null = null;
   private activeRequest: Subscription | null = null;
   private requestInFlight = false;
   private requestGeneration = 0;
+
+  /** Clear a previous task without starting a hidden tab's first request. */
+  prepareTask(key: string | null): void {
+    if (key === this.preparedTaskKey) return;
+    this.preparedTaskKey = key;
+    this.stop();
+    this.clearValue();
+  }
 
   /**
    * Sync polling state to a job. Pass `null` (or a job that fails
@@ -109,7 +121,10 @@ export abstract class TaskBackgroundPoller<TResponse> implements OnDestroy {
         next: (res) => {
           if (generation === this.requestGeneration) this.applyResponse(res);
         },
-        error: () => this.finishRequest(generation),
+        error: () => {
+          if (generation === this.requestGeneration) this.onError();
+          this.finishRequest(generation);
+        },
         complete: () => this.finishRequest(generation),
       });
       if (!request.closed && generation === this.requestGeneration) {

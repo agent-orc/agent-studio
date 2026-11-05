@@ -117,9 +117,11 @@ public sealed partial class TaskServerStore
             var jobRequest = JsonSerializer.Deserialize<OneShotJobRequest>(payload)!;
             await ExecuteAsync(connection, """
                 UPDATE one_shot_jobs SET status = 'claimed', runner_id = $runner,
-                    claim_token = $token, claim_expires_at = $expires WHERE id = $id;
+                    claim_token = $token, claim_expires_at = $expires,
+                    expires_at = $job_expires WHERE id = $id;
                 """, ct, transaction, ("$runner", request.RunnerId), ("$token", token),
-                ("$expires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 20))), ("$id", id));
+                ("$expires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 20))),
+                ("$job_expires", Iso(UtcNow.AddSeconds(jobRequest.TimeoutSeconds + 30))), ("$id", id));
             result = new(id, token, jobRequest);
         }, ct);
         return result;

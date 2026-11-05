@@ -70,6 +70,7 @@ public sealed class RemoteRunnerInvariantTests
         Assert.True(tripped.Throttle);
         Assert.True(tripped.EmitEvent);
         Assert.Equal(2, tripped.LoadPerCore);
+        Assert.Equal(started.AddMinutes(2).AddSeconds(1), tripped.Since);
         Assert.False(gate.Observe(
             sample,
             started.AddMinutes(3)).EmitEvent);
@@ -78,6 +79,9 @@ public sealed class RemoteRunnerInvariantTests
             sample with { Load1 = 4 },
             started.AddMinutes(4));
         Assert.False(cooled.Throttle);
+        Assert.True(cooled.EmitOpenEvent);
+        Assert.Equal(TimeSpan.FromMinutes(1).Add(TimeSpan.FromSeconds(59)), cooled.SustainedFor);
+        Assert.Equal(started.AddMinutes(4), cooled.Since);
     }
 
     [Fact]

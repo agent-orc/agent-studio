@@ -1,5 +1,5 @@
 ﻿import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, Injector, afterNextRender, effect, inject, input, output, signal } from '@angular/core';
 import { WorkspaceOverlaysService } from '../../state/workspace-overlays.service';
 import type { WorkspaceSettingsSection } from '../../state/workspace-overlays.service';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
@@ -112,6 +112,8 @@ export class WorkspaceOverlaysComponent {
 
   private readonly modalStack = inject(ModalStackService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
+  private previousFocus: HTMLElement | null = null;
   private modalDisposer: (() => void) | null = null;
   readonly collapsedGroups = signal<ReadonlySet<SettingsRailGroup>>(new Set());
 
@@ -176,10 +178,22 @@ export class WorkspaceOverlaysComponent {
         return;
       }
       if (open && !this.modalDisposer) {
-        this.modalDisposer = this.modalStack.push('workspace-settings', () => this.overlays.close());
+        this.previousFocus = document.activeElement as HTMLElement | null;
+        afterNextRender(() => {
+          if (!this.overlays.settingsOpen() || this.inline() || this.modalDisposer) return;
+          this.modalDisposer = this.modalStack.push('workspace-settings', () => this.overlays.close(), {
+            dialog: () => document.querySelector<HTMLElement>('[data-testid="workspace-settings-overlay"] [role="dialog"]'),
+            backgroundRoot: () => document.querySelector<HTMLElement>('[data-testid="workspace-settings-overlay"]'),
+          });
+          document.querySelector<HTMLElement>('[data-testid="workspace-settings-close"]')?.focus();
+          this.modalStack.refreshModalScope();
+        }, { injector: this.injector });
       } else if (!open && this.modalDisposer) {
         this.modalDisposer();
         this.modalDisposer = null;
+        const opener = this.previousFocus;
+        this.previousFocus = null;
+        queueMicrotask(() => { if (opener?.isConnected) opener.focus(); });
       }
     });
     this.destroyRef.onDestroy(() => {

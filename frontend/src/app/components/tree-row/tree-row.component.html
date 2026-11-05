@@ -1,3 +1,18 @@
+<div class="tree-row-wrap"
+     [class.tree-row-wrap--actions]="hasActions()"
+     [class.tree-row-wrap--chevron]="chevron() || reserveChevron()"
+     [class.tree-row-wrap--child]="level() === 'child'">
+@if (chevron(); as c) {
+  <button type="button" class="tree-row__chev-action"
+          [attr.data-testid]="chevronTestid()"
+          [attr.aria-label]="c === 'expanded' ? 'Collapse ' + label() : 'Expand ' + label()"
+          [disabled]="disabled()"
+          (click)="onChevronClick($event)">
+    <app-studio-icon [name]="c === 'expanded' ? 'chevronDown' : 'chevronRight'" [size]="10" />
+  </button>
+} @else if (reserveChevron()) {
+  <span class="tree-row__chev tree-row__chev--placeholder" aria-hidden="true"></span>
+}
 <button type="button"
         class="tree-row"
         [class.tree-row--active]="active()"
@@ -13,16 +28,6 @@
         [appTooltipTestId]="tooltipTestId()"
         (click)="onSelect($event)"
         (dblclick)="onSecondary($event)">
-  @if (chevron(); as c) {
-    <span class="tree-row__chev"
-          [attr.data-testid]="chevronTestid()"
-          [attr.aria-label]="c === 'expanded' ? 'Collapse' : 'Expand'"
-          (click)="onChevronClick($event)" tabindex="0" (keydown.enter)="onChevronClick($event)" (keydown.space)="onChevronClick($event); $event.preventDefault()">
-      <app-studio-icon [name]="c === 'expanded' ? 'chevronDown' : 'chevronRight'" [size]="10"></app-studio-icon>
-    </span>
-  } @else if (reserveChevron()) {
-    <span class="tree-row__chev tree-row__chev--placeholder" aria-hidden="true"></span>
-  }
   @if (glyph(); as g) {
     <span class="tree-row__glyph-icon" aria-hidden="true"
           [attr.data-testid]="testid() ? testid() + '-glyph' : null">
@@ -50,3 +55,5 @@
     <app-count-badge [value]="count()" [tone]="active() ? 'active' : 'default'" />
   }
 </button>
+<span class="tree-row__actions"><ng-content select="[rowActions]"></ng-content></span>
+</div>

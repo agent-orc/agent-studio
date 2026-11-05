@@ -63,6 +63,7 @@ public sealed partial class BatchGatePilotService
     internal TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(30);
     internal bool WaitForFlightsInTick { get; set; }
     internal Action? AfterAssemblyForTesting { get; set; }
+    internal Action? BeforeFormationAdmissionForTesting { get; set; }
 
     /// <summary>Per-task gate starts per review generation before GateInfra (D8).</summary>
     internal const int FallbackGateStartBudget = 2;
@@ -411,8 +412,11 @@ public sealed partial class BatchGatePilotService
     /// then runs its own pass, so an explicit tick never returns before the
     /// state it was asked to observe has been processed (AGT-3195).
     /// </summary>
-    public async Task TickAsync(CancellationToken ct)
+    public Task TickAsync(CancellationToken ct) => TickCoreAsync(ct, replanMovedBase: true);
+
+    private async Task TickCoreAsync(CancellationToken ct, bool replanMovedBase)
     {
+        var baseMovedDuringPlanning = false;
         await _tick.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -707,6 +711,26 @@ public sealed partial class BatchGatePilotService
                     continue;
                 }
                 if (formed.Manifest is null) continue;
+                BeforeFormationAdmissionForTesting?.Invoke();
+                var proposed = formed.Manifest;
+                formed = await AdmitFormationAsync(formed, current, options, ct)
+                    .ConfigureAwait(false);
+                if (formed.Manifest is null)
+                {
+                    if (formed.Reason == "integration base moved before formation")
+                        baseMovedDuringPlanning = true;
+                    _store.AppendPlanDecision(first.Subject.Project,
+                        new BatchPlanDecision("wait", formed.Reason ?? "formation admission changed",
+                            null, [], options.CloseSize, []));
+                    continue;
+                }
+                if (formed.Manifest.MembershipDigest != proposed.MembershipDigest)
+                    _store.AppendPlanDecision(first.Subject.Project,
+                        new BatchPlanDecision("close", "formation admission removed: "
+                            + string.Join("; ", formed.Exclusions.Except(proposed.Exclusions)
+                                .Select(item => item.TaskKey + " " + item.Reason)),
+                            null, formed.Manifest.Members.Select(item => item.TaskKey).ToArray(),
+                            options.CloseSize, []));
                 var formationRisks = _snapshots.Cached(first.Subject.Project, current);
                 formed = formed with { Manifest = formed.Manifest with
                 {
@@ -735,7 +759,7 @@ public sealed partial class BatchGatePilotService
                             formed.Manifest.BatchId));
                 }
             }
-            RepackFormedBatches();
+            await RepackFormedBatchesAsync(ct).ConfigureAwait(false);
             StartClosedBatches(ct);
             if (WaitForFlightsInTick)
                 await WaitForFlightsAsync(includeFallbacks: true, ct).ConfigureAwait(false);
@@ -744,6 +768,8 @@ public sealed partial class BatchGatePilotService
         {
             _tick.Release();
         }
+        if (baseMovedDuringPlanning && replanMovedBase)
+            await TickCoreAsync(ct, replanMovedBase: false).ConfigureAwait(false);
     }
 
     /// <summary>

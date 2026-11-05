@@ -7,9 +7,11 @@ public static class BatchGateWaitingPolicy
 
     public static IReadOnlyList<BatchGateManifest> OrderForStart(
         IEnumerable<BatchGateManifest> formed)
+        // A stacked successor has already claimed the next place in the train.
+        // For other batches, age wins so continuous formation cannot starve one.
         => formed.OrderByDescending(manifest => manifest.StackedOnBatchId is not null)
-            .ThenByDescending(manifest => manifest.Members.Count)
             .ThenBy(manifest => manifest.ClosedAtUtc)
+            .ThenByDescending(manifest => manifest.Members.Count)
             .ThenBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
 
     public static IReadOnlyList<Card> LargestCompatible(IReadOnlyList<Card> ordered,

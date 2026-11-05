@@ -31,6 +31,7 @@ Imports go via `from './features/board'` (the barrel). See [`index.ts`](./index.
 
 ## Notable patterns
 
+- **Large lanes** mount cards and drop slots around each lane's scroll viewport. Row heights are measured as cards render; totals, filters, search, and reorder use the complete task list. With a card focused, arrow keys, Page Up/Down, Home, and End move focus through the full lane. Drops on an offscreen spacer use its scroll position to select an insertion slot.
 - **Optimistic-snapshot** for moves and reorders: paint immediately, persist in background, revert on error. The lifecycle is owned by `BoardMutationsService`; the shell just forwards events.
 - **Filter URL contract**: `#filters=owner:X;projects:A,B;type:Y;tags:t1,t2` (current) + `#filter=type:Y,tag:t1` (legacy, still honoured). Active expressions render as removable chips; a board route without `filters=` clears the in-memory facets.
 - **Lane state on disk** = filesystem state on `info.state`; virtual sub-lanes (e.g. `2-ready-intake`) collapse to the parent for backend mutations.
