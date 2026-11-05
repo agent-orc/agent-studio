@@ -141,7 +141,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
     /// <summary>
     /// Default aspect runner ids when <c>ReviewDecisionOrchestrator:AspectRunners</c>
-    /// is not configured. ADR-0025 slice 1 ships these four; missing
+    /// is not configured. Missing
     /// config falls back to default-on rather than no-aspects.
     /// </summary>
     private static readonly string[] DefaultAspectRunners =
@@ -149,7 +149,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         "requirement-fit",
         "code-quality",
         "documentation-impact",
-        "tests-and-evidence"
+        "tests-and-evidence",
+        "visual-review"
     };
 
     private readonly Queue<DateTime> _callTimestamps = new();
@@ -2381,6 +2382,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ? LoadStatusSummary(current.FolderPath)
                 : string.Empty;
         var diffSummary = LoadDiffSummary(entry, current);
+        var visualChangedPaths = ResolveLocalVisualChangedPaths(entry, current);
         var resultsInventory = ResultsInventory.Render(current.FolderPath);
         var cardMode = ReviewCardMode.Describe(current.Mode);
         WritePostProcessingOutcome(current, PostProcessingOutcomes.FindingsAdded,
@@ -2400,6 +2402,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             StatusSummary: statusSummary)
         {
             ResultsInventory = resultsInventory,
+            VisualChangedPaths = visualChangedPaths,
             CardMode = cardMode,
             AcceptanceScope = RequirementAcceptanceScope.Describe(
                 current.AcceptanceScope,
@@ -2647,7 +2650,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Tags = current.Tags,
         };
         var enabledAspects = aspects
-            .Where(id => PipelineStepConfigResolver.ShouldRun(settings, $"aspect-{id}", conditionContext))
+            .Where(id => PipelineStepConfigResolver.ShouldRun(settings, $"aspect-{id}", conditionContext)
+                && (!string.Equals(id, "visual-review", StringComparison.OrdinalIgnoreCase)
+                    || visualChangedPaths is null
+                    || VisualReviewEvidence.IsFrontendVisualChange(visualChangedPaths)))
             .ToList();
         var scopedReview = PlanLocalScopedReview(current, entry, enabledAspects, projectSettings);
         enabledAspects = scopedReview.RunAspects.ToList();
@@ -3777,10 +3783,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 ledger.AspectIds.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase))).ToArray()));
         var run = decisions.Where(item => item.Run).Select(item => item.Aspect)
+            .Concat(enabledAspects.Where(aspect => aspect == "visual-review"))
             .Concat(enabledAspects.Where(aspect => !previous.ContainsKey(aspect)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var carried = decisions.Where(item => !item.Run)
+        var carried = decisions.Where(item => !item.Run && item.Aspect != "visual-review")
             .Select(item => previous[item.Aspect])
             .Select(verdict => new AspectVerdict(
                 verdict.Aspect,
@@ -7297,6 +7304,26 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "ReviewDecisionOrchestrator: full-range diff summary failed for {Project}/{JobId}; falling back to single-commit view",
                 project, job.Id);
             return AppendBranchDiffSummary(BuildDiffSummary(EmptyAggregate, job.Commit), entry, job);
+        }
+    }
+
+    private IReadOnlyList<string>? ResolveLocalVisualChangedPaths(WatchPathEntry entry, TaskInfo job)
+    {
+        if (_git is null) return null;
+        try
+        {
+            var repoRoot = _git.ResolveRepoRoot(job.Id, entry.Path);
+            var resultSha = ResolveBuildTestGateSubject(job, entry.Path).Sha;
+            if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(resultSha))
+                return null;
+            var configuredBase = _projectSettings?.Get(entry.Name)?.IntegrationBranch;
+            var baseBranch = _git.ResolveIntegrationBranch(repoRoot, configuredBase);
+            return _git.ChangedPathsAgainstMergeBase(repoRoot, baseBranch, resultSha);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Visual review changed paths could not be resolved for {JobId}", job.Id);
+            return null;
         }
     }
 

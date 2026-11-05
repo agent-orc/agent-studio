@@ -28,6 +28,7 @@ public sealed class RemoteReviewPlanBuilder
         "code-quality",
         "documentation-impact",
         "tests-and-evidence",
+        "visual-review",
     ];
 
     private static readonly AspectDefinition ConceptFitDefinition = new(
@@ -386,6 +387,12 @@ public sealed class RemoteReviewPlanBuilder
             var aspectId = step.Id.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
                 ? step.Id["aspect-".Length..]
                 : step.Id;
+            if (aspectId == "visual-review" && changedPaths is not null
+                && !Contract.VisualReviewEvidence.IsFrontendVisualChange(changedPaths))
+            {
+                skipped.Add(new(aspectId, "No frontend template or style changed."));
+                continue;
+            }
             if (!isConcept && !configured.Contains(aspectId))
             {
                 skipped.Add(new(aspectId, "Not selected by ReviewDecisionOrchestrator:AspectRunners."));
@@ -619,7 +626,7 @@ public sealed class RemoteReviewPlanBuilder
         if (!ordinaryEqual) return plan;
         var evidenceEqual = DiffForPaths(priorDiff, EvidencePath) == DiffForPaths(currentDiff, EvidencePath);
         var carryAspects = evidenceEqual
-            ? DefaultAspectIds
+            ? DefaultAspectIds.Where(id => id != "visual-review").ToArray()
             : ["code-quality", "documentation-impact"];
         var previousVerdicts = previous.Report.Verdicts
             .Where(verdict => string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
@@ -859,6 +866,7 @@ public sealed class RemoteReviewPlanBuilder
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 || !decisions.TryGetValue(command.Aspect, out var decision)
                 || decision.Run
+                || string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)
                 || noCarryOver
                 || !previous.TryGetValue(command.Aspect, out var priorVerdict))
             {

@@ -36,6 +36,7 @@ public sealed class RemoteReviewWorkspace
     private bool _baselineCachePruned;
     private bool _verifyCachePruned;
     private bool _dirtyBefore;
+    private string _visualScreenshotEvidence = "No delivered screenshots were attached to this run.";
 
     public RemoteReviewWorkspace(
         RunnerOptions options,
@@ -246,6 +247,10 @@ public sealed class RemoteReviewWorkspace
         _dirtyBefore = (await GitValueAsync("status", "--porcelain", "--untracked-files=all", ct)).Length > 0;
         if (_dirtyBefore)
             throw new ReviewInfrastructureException("DirtyBefore", "Fresh review workspace is dirty before review.");
+        if (client is not null && _subject.Plan.Commands.Any(command =>
+                string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)))
+            _visualScreenshotEvidence = await VisualReviewScreenshotBundle.CaptureAsync(
+                client, _subject.SourceRunId, AttemptRoot, _log, ct);
         _log($"review subject ready repository={repositoryId} head={head} tree={_initialTree} dirty=false");
         return Proof(repositoryId!, head, _initialTree, false);
     }
@@ -492,6 +497,9 @@ public sealed class RemoteReviewWorkspace
                         ReviewMaterialMaximumFiles,
                         ReviewMaterialMaximumLines,
                         ct));
+                if (string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase))
+                    prompt += VisualReviewScreenshotBundle.PromptSection(
+                        _visualScreenshotEvidence, RepositoryPath);
                 var budget = ReviewAspectBudgetPolicy.Derive(
                     command.CliType,
                     command.Model,
@@ -1007,6 +1015,12 @@ public sealed class RemoteReviewWorkspace
             var verdict = comparison is null
                 ? ParseVerdict(command, execution.Process)
                 : BaselineVerdict(command, comparison);
+            if (string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase))
+            {
+                verdict = VisualReviewEvidence.EnforceMissingScreenshots(verdict,
+                    await ChangedPathsAgainstBaselineAsync(ct),
+                    VisualReviewScreenshotBundle.HasReadableAfterScreenshot(AttemptRoot));
+            }
             verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
                 verdict,
                 ReviewCommandKinds.IsAgent(command.ExecutionKind)));
@@ -1240,6 +1254,7 @@ public sealed class RemoteReviewWorkspace
                 if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
                     || !decisions.TryGetValue(command.Aspect, out var decision)
                     || decision.Run
+                    || string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)
                     || !previous.TryGetValue(command.Aspect, out var prior))
                 {
                     if (ReviewCommandKinds.IsAgent(command.ExecutionKind)
