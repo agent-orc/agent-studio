@@ -383,7 +383,8 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
             References = new TaskReferences
             {
                 DependsOn = Enumerable.Range(0, 100)
-                    .Select(i => new TaskDependencyReference($"AGT-{i}", i == 1)).ToList(),
+                    .Select(i => new TaskDependencyReference($"AGT-{i}",
+                        releaseGate: i == 1, requiresCompletion: i == 2)).ToList(),
             },
         };
         var bytes = BoardCardSummary.Serialize(job);
@@ -395,6 +396,7 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         Assert.Equal(100, references.GetProperty("dependsOnKeys").GetArrayLength());
         Assert.Equal("AGT-99", references.GetProperty("dependsOnKeys")[99].GetString());
         Assert.True(references.GetProperty("dependsOn")[1].GetProperty("releaseGate").GetBoolean());
+        Assert.True(references.GetProperty("dependsOn")[2].GetProperty("requiresCompletion").GetBoolean());
     }
 
     [Fact]

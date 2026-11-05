@@ -371,8 +371,8 @@ internal static class BoardCardSummary
                 // Every key, so the count is its length.
                 dependsOnKeys = job.References.DependsOn.Select(dependency => dependency.Key).ToArray(),
                 // A plain edge serializes as its key, which dependsOnKeys
-                // already lists; the object form is sent only for release gates.
-                dependsOn = job.References.DependsOn.Take(3).Any(dependency => dependency.ReleaseGate)
+                // already lists; the object form is sent only for non-default rules.
+                dependsOn = job.References.DependsOn.Take(3).Any(dependency => dependency.ReleaseGate || dependency.RequiresCompletion)
                     ? job.References.DependsOn.Take(3).ToArray() : null,
                 raisedFollowUps = job.References.RaisedFollowUps.Count == 0
                     ? null : job.References.RaisedFollowUps.Take(1).ToArray(),
@@ -404,7 +404,7 @@ internal static class BoardCardSummary
                         resolved = item.Resolved || item.Fulfilled ? (bool?)null : false, pendingDecision = Flag(item.PendingDecision),
                         fulfilled = Flag(item.Fulfilled), releaseGate = Flag(item.ReleaseGate),
                         requiresCompletion = Flag(item.RequiresCompletion),
-                        fulfillmentRule = item.FulfillmentRule,
+                        fulfillmentRule = NullIfEmpty(item.FulfillmentRule),
                         targetReleased = Flag(item.TargetReleased && !item.Fulfilled),
                         waitingForRelease = Flag(item.WaitingForRelease),
                         unsatisfiable = Flag(item.Unsatisfiable),
