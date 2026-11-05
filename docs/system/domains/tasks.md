@@ -2265,8 +2265,10 @@ disk for runner state.
   limits from the snapshot's `TaskInfo.QuotaWait` and the displayed queue from
   one Ready-candidate order per generation and `ProjectSettingsService.Version`,
   shared by all runners. That order resolves waits-on against the published
-  fixture-free reference graph. Only the in-memory rapid-crash backoff is
-  applied per read. Pickup itself keeps its fresh read.
+  fixture-free reference graph and the same confirmed Git projection used by
+  pickup and remote claim. A changed predecessor delivery or a repository
+  refresh withholds the older integrated result. Only the in-memory rapid-crash
+  backoff is applied per read.
 - **Board-read trace.** `TaskOperationTimingFilter` traces board reads on
   `X-Task-Switch-Trace: 1` and otherwise one read in
   `BoardReadTrace:SampleEvery` (default every read, `0` disables). Each traced

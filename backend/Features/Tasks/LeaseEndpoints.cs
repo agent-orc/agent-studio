@@ -471,7 +471,7 @@ public static class LeaseEndpoints
             IModelEquivalenceCatalog equivalenceCatalog,
             TaskMutationService mutations,
             ModelRoutingPolicyRegistry modelRouting,
-            TaskIntegrationStatusService dependencyIntegration,
+            TaskListGitProjectionCache dependencyGitProjection,
             OrchestratorDecisionStore decisionReceipts,
             CancellationToken ct) =>
         {
@@ -892,7 +892,7 @@ public static class LeaseEndpoints
                 }
 
                 var dependencyTargets = waitsOn.DependencyTargets(liveSnapshot.Where(t => t.State == TaskStates.Ready));
-                var dependencyStatuses = dependencyIntegration.BuildLookup(dependencyTargets);
+                var dependencyStatuses = dependencyGitProjection.ReadDependencyIntegration(dependencyTargets);
                 var eligible = liveSnapshot
                     .Where(t => !t.Fixture && t.State == TaskStates.Ready
                         && !t.WaitingForEngineDecision)

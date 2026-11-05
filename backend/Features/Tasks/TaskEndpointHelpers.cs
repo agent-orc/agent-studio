@@ -421,7 +421,7 @@ internal static class TaskEndpointHelpers
         // Dependency targets come from the read-after-write core graph. A
         // target publish must be visible even while the board scan is pending.
         var index = scanner.GetCoreReferenceIndex();
-        var integration = gitProjection?.ReadCacheOnly(index.DependencyTargets(withDeps)).Integration;
+        var integration = gitProjection?.ReadDependencyIntegration(index.DependencyTargets(withDeps));
         var eligibleKeys = (eligibleWaiters ?? snapshot)
             .Where(j => !string.IsNullOrWhiteSpace(j.Key))
             .Select(j => j.Key!)

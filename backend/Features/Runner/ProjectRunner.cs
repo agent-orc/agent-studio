@@ -9120,7 +9120,9 @@ public class ProjectRunner
         if (job.References == null || job.References.DependsOn.Count == 0) return false;
 
         var targets = waitsOnIndex.DependencyTargets([job]);
-        var integration = _dependencyIntegration?.BuildLookup(targets);
+        var integration = _dependencyGitProjection is not null
+            ? _dependencyGitProjection.ReadDependencyIntegration(targets)
+            : _dependencyIntegration?.BuildLookup(targets);
         var status = waitsOnIndex.EvaluateWaitsOn(job, integration,
             _projectSettings.Get(job.ProjectName).IntegrationBranch);
         var cardKey = job.Key ?? job.Id;
@@ -9165,9 +9167,10 @@ public class ProjectRunner
 
         if (status.Blocked)
         {
-            var open = string.Join(", ", status.Items.Where(i => !i.Fulfilled).Select(i => i.Key));
+            var open = string.Join(", ", status.Items.Where(i => !i.Fulfilled)
+                .Select(i => $"{i.Key} ({i.FulfillmentRule})"));
             _logger.LogDebug(
-                "[taskboard] waits-on hold on {Job} ({Project}): waiting on {Open} to reach completed/archive before auto-pickup",
+                "[taskboard] waits-on hold on {Job} ({Project}): waiting on {Open} before auto-pickup",
                 cardKey, ProjectName, open);
             return true;
         }
@@ -10784,7 +10787,7 @@ public class ProjectRunner
     {
         var orders = new Dictionary<string, IReadOnlyList<TaskInfo>>(StringComparer.Ordinal);
         var targets = publication.AutomationReferences.DependencyTargets(publication.Live);
-        var integration = dependencyGitProjection?.ReadCacheOnly(targets).Integration;
+        var integration = dependencyGitProjection?.ReadDependencyIntegration(targets);
         foreach (var project in publication.Live
                      .Where(job => !job.Fixture && job.State == TaskStates.Ready)
                      .GroupBy(job => job.ProjectName ?? "", StringComparer.Ordinal))

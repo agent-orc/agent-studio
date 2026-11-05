@@ -38,7 +38,7 @@ public static class TaskDetailResources
                 task.CompletionClaim, task.ParkedBlocker, task.NeedsInput,
                 task.References, task.References.DependsOn.Count > 0
                     ? facts.References.EvaluateWaitsOn(task,
-                        snapshots.ReadCacheOnly(facts.References.DependencyTargets([task])).Integration,
+                        snapshots.ReadDependencyIntegration(facts.References.DependencyTargets([task])),
                         projectSettings.Get(task.ProjectName).IntegrationBranch) : null,
                 // AGT-3096: the core-first detail needs the same acceptance
                 // lineage gap the legacy full-detail read projects.

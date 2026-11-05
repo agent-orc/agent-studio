@@ -60,6 +60,38 @@ public class WaitsOnEvaluatorTests
     }
 
     [Fact]
+    public void RemoteClaim_UsesCurrentDeliveryVerdictForIntegratedPredecessor()
+    {
+        var predecessor = Task("lib", "LIB-1", TaskStates.HumanReview);
+        var successor = Task("app", "APP-1", TaskStates.Ready, deps: ["LIB-1"]);
+        var index = TaskReferenceIndex.Build([successor, predecessor]);
+        var settings = new ProjectSettings
+        {
+            PickupMode = PickupModes.Auto,
+            ExecutionLocation = "runner-1",
+        };
+        var verdicts = new Dictionary<string, TaskIntegrationStatus>
+        {
+            [predecessor.TaskKey] = new()
+            {
+                Status = IntegrationStatuses.Integrated,
+                IntegrationBranch = "develop",
+            },
+        };
+
+        Assert.True(RemoteDispatchEligibility.IsAssignedAndRoutable(
+            successor, settings, "runner-1", null, index, verdicts));
+
+        verdicts[predecessor.TaskKey] = new()
+        {
+            Status = IntegrationStatuses.Pending,
+            IntegrationBranch = "develop",
+        };
+        Assert.False(RemoteDispatchEligibility.IsAssignedAndRoutable(
+            successor, settings, "runner-1", null, index, verdicts));
+    }
+
+    [Fact]
     public void IntegrationOnAnotherBranch_DoesNotReleaseSuccessor()
     {
         var predecessor = Task("lib", "LIB-1", TaskStates.HumanReview);

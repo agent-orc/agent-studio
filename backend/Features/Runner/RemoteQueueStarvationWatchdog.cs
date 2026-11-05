@@ -254,7 +254,7 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
             24 * 60);
         var snapshot = _scanner.GetLiveSnapshotWithReferenceIndex();
         var targets = snapshot.References.DependencyTargets(snapshot.Live.Where(task => task.State == TaskStates.Ready));
-        var integration = _dependencyGitProjection?.ReadCacheOnly(targets).Integration;
+        var integration = _dependencyGitProjection?.ReadDependencyIntegration(targets);
         var next = RemoteQueueStarvationPolicy.Evaluate(
             now,
             TimeSpan.FromMinutes(thresholdMinutes),

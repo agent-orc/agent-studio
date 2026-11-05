@@ -71,7 +71,7 @@ public sealed class PickupHoldSweep
         var index = _scanner.GetReferenceIndex();
         var ready = _scanner.ScanAllAutomationJobs()
             .Where(task => PickupHoldPolicy.IsPickupLane(task.State)).ToList();
-        var integration = _dependencyGitProjection?.ReadCacheOnly(index.DependencyTargets(ready)).Integration;
+        var integration = _dependencyGitProjection?.ReadDependencyIntegration(index.DependencyTargets(ready));
         var held = new List<HeldPickupCard>();
 
         foreach (var task in ready)
