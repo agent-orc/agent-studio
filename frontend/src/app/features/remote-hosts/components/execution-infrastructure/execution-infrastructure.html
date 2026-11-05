@@ -30,6 +30,29 @@
         </p>
       }
     </div>
+    @if (draft(); as capacity) {
+      <form class="infrastructure__capacity" data-testid="gate-capacity-settings" (ngSubmit)="save()">
+        <h4>Gate capacity</h4>
+        <p class="infrastructure__capacity-use">{{ infrastructure.gate.busy }} of {{ capacity.slots }} slots in use ·
+          {{ infrastructure.gate.capacitySource === 'stored' ? 'saved setting' : 'configuration default' }}</p>
+        <div class="infrastructure__capacity-fields">
+          <label>Slots <input type="number" name="slots" min="1" max="64" required
+            [ngModel]="capacity.slots" (ngModelChange)="update('slots', +$event)"></label>
+          <label>Processors per gate <input type="number" name="processors" min="1" max="64" required
+            [ngModel]="capacity.processorsPerGate" (ngModelChange)="update('processorsPerGate', +$event)"></label>
+          <label>Gate host cores <input type="number" name="hostCores" min="1" max="4096"
+            [ngModel]="capacity.hostCores" (ngModelChange)="update('hostCores', $event === '' || $event === null ? null : +$event)"></label>
+          <label class="infrastructure__capacity-check"><input type="checkbox" name="oversubscription"
+            [ngModel]="capacity.allowOversubscription" (ngModelChange)="update('allowOversubscription', $event)"> Allow oversubscription</label>
+        </div>
+        <p>New gates use saved capacity. Running gates keep their grant.</p>
+        @if (saveError(); as message) { <p class="infrastructure__error" role="alert">{{ message }}</p> }
+        <div class="infrastructure__capacity-actions">
+          <button type="submit" class="studio-button studio-button--primary" [disabled]="saving()">{{ saving() ? 'Saving…' : 'Save gate capacity' }}</button>
+          @if (saved()) { <span role="status">Saved</span> }
+        </div>
+      </form>
+    }
   } @else if (error()) {
     <p class="infrastructure__error">Infrastructure status could not be read. Check the local API route and reload this page.</p>
   } @else { <p>Reading infrastructure status…</p> }

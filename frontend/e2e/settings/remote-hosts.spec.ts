@@ -604,6 +604,46 @@ test.describe('Execution Hosts settings section', () => {
     }
   });
 
+  test('gate capacity edit shows current use and saves without a restart', async ({ page }) => {
+    await stubGroupedHostApis(page);
+    await page.route('**/api/system/execution-infrastructure', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({
+        gate: { host: 'kori-gate', transport: 'pull', busy: 2, total: 5,
+          reachability: 'reachable', lastReachedAt: null, lastFailureAt: null,
+          capacity: { slots: 5, processorsPerGate: 6, hostCores: 30,
+            allowOversubscription: false }, capacitySource: 'configuration', workers: [] },
+        taskServer: 'local monolith', workstation: 'operator-workstation',
+        engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
+      }),
+    }));
+    let saved: Record<string, unknown> | null = null;
+    await page.route('**/api/system/gate-capacity', async route => {
+      saved = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ capacity: saved }) });
+    });
+    await page.goto('/#/workspace/settings/execution-hosts');
+    const panel = page.getByTestId('remote-hosts-panel');
+    await panel.getByTestId('environment-installation-toggle').click();
+    const form = page.getByTestId('gate-capacity-settings');
+    await expect(form).toContainText('2 of 5 slots in use');
+    await form.locator('input[name="slots"]').fill('4');
+    await form.getByRole('button', { name: 'Save gate capacity' }).click();
+    await expect(form).toContainText('Saved');
+    expect(saved).toMatchObject({ slots: 4, processorsPerGate: 6, hostCores: 30,
+      allowOversubscription: false });
+    const directory = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(directory, { recursive: true });
+    for (const width of [768, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await expect(form).toBeVisible();
+        await form.screenshot({ path: join(directory, `gate-capacity-${width}-${theme}--mocked.png`),
+          animations: 'disabled' });
+      }
+    }
+  });
+
   test('local profile avoids Task Server checkpoints and shows gate capacity at three widths in both themes', async ({ page }) => {
     const liveInfrastructure = await page.request.get('/api/system/execution-infrastructure');
     expect(liveInfrastructure.ok()).toBe(true);

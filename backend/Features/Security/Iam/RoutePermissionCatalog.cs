@@ -393,6 +393,7 @@ public static class RoutePermissionCatalog
             "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",
             "/api/system/execution-infrastructure", "/api/system/gate-slots", "/api/system/readiness", "/api/agent-rules", "/api/adhoc-usage/**");
         Add("POST", IamPermissions.WorkspaceOperate, "/api/system/readiness/refresh");
+        Add("PUT", IamPermissions.WorkspaceAdminister, "/api/system/gate-capacity");
         Add("W", IamPermissions.WorkspaceOperate,
             "/api/cli/quota/refresh/**", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",

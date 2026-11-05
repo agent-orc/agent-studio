@@ -37,6 +37,8 @@ export interface BatchGateState {
   preChecksRed?: number;
   preCheckMinutesSaved?: number;
   gateSlots?: { busy: number; total: number } | null;
+  gateCapacity?: { slots: number; processorsPerGate: number; hostCores: number | null;
+    allowOversubscription: boolean } | null;
   pushWait?: BatchGatePushWait | null;
   pushWaits?: BatchGatePushWait[];
   plan: {

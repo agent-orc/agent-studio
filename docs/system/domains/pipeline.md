@@ -921,6 +921,16 @@ worker is selected by convention; SSH remains as the transition fallback
 until the pull path passes a soak, then a follow-up removes SSH.
 No transport-selection setting is required.
 
+Installation gate capacity can be changed in Workspace Settings, Environment,
+without restarting the API. The stored override supplies slots and processors
+per gate to new pull claims and SSH dispatches. Existing claims retain their
+grant; reducing slots waits for occupied slots to finish. Optional gate host
+cores bound slots times processors per gate unless the operator explicitly
+allows oversubscription. Each change enters the control plane audit trail.
+Without a stored override, the configuration values above remain the defaults.
+`RemoteGate:HostCores` and `RemoteGate:AllowOversubscription` supply the
+optional host-core and oversubscription defaults.
+
 The temporary SSH fallback uses `RemoteGate:SshHost` and an absolute
 `RemoteGate:WorkerPath` pointing to a release-pinned `OrchestratorApi.dll` on
 the remote host. Environment variables use double underscores, for example

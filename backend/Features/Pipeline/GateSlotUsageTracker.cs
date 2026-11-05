@@ -25,6 +25,7 @@ public sealed class GateSlotUsageTracker
     private readonly HashSet<string> _dispatching = new(StringComparer.Ordinal);
     private bool _restartFenced;
     private readonly TimeProvider _clock;
+    private readonly GateCapacitySettings? _capacity;
     private readonly object _reachabilityLock = new();
     private int _total;
     private DateTimeOffset? _lastReachedAt;
@@ -37,18 +38,26 @@ public sealed class GateSlotUsageTracker
         DateTimeOffset QueuedAt, int? Slot = null, DateTimeOffset? AcquiredAt = null,
         DateTimeOffset? WaitingSince = null);
 
-    public GateSlotUsageTracker(IConfiguration? configuration = null, TimeProvider? clock = null)
+    public GateSlotUsageTracker(IConfiguration? configuration = null, TimeProvider? clock = null,
+        GateCapacitySettings? capacity = null)
     {
         _clock = clock ?? TimeProvider.System;
+        _capacity = capacity;
         var configured = configuration?.GetValue("RemoteGate:GateSlots", 1) ?? 1;
         _total = configured is >= 1 and <= 64 ? configured : 1;
     }
 
-    public GateSlotUsage Snapshot() => new(_active.Count, Volatile.Read(ref _total));
+    private int CurrentTotal => _capacity is { HasOverride: true }
+        ? _capacity.Current().Slots : Volatile.Read(ref _total);
+
+    public GateSlotUsage Snapshot() => new(_active.Count, CurrentTotal);
 
     /// <summary>Use the gate host's recent report when it has one; it includes workers from older server processes.</summary>
     public GateSlotUsage ReportedOrLocalSnapshot()
-        => RemoteSnapshot(TimeSpan.FromMinutes(10)) ?? Snapshot();
+    {
+        var remote = RemoteSnapshot(TimeSpan.FromMinutes(10));
+        return remote is null ? Snapshot() : remote with { Total = CurrentTotal };
+    }
 
     public int Dispatching { get { lock (_dispatchGate) return _dispatching.Count; } }
 
@@ -179,13 +188,15 @@ public sealed class GateSlotUsageTracker
 
     public GateSlotBoard Board()
     {
-        var total = Volatile.Read(ref _total);
+        var total = CurrentTotal;
         var now = _clock.GetUtcNow();
         var runs = _runs.Values.ToArray();
-        var holders = runs.Where(run => run.Slot is { } slot && slot < total)
+        var visibleSlots = Math.Max(total, runs.Where(run => run.Slot is >= 0)
+            .Select(run => run.Slot!.Value + 1).DefaultIfEmpty(0).Max());
+        var holders = runs.Where(run => run.Slot is { } slot && slot < visibleSlots)
             .GroupBy(run => run.Slot!.Value).ToDictionary(group => group.Key, group => group.First());
         var shortSlot = GateSlotFairnessPolicy.ReservedSlot(total);
-        var slots = Enumerable.Range(0, total).Select(slot => holders.TryGetValue(slot, out var run)
+        var slots = Enumerable.Range(0, visibleSlots).Select(slot => holders.TryGetValue(slot, out var run)
             ? new GateSlotBoardSlot(slot, slot == shortSlot, run.Project, run.GateId, run.DurationClass, run.AcquiredAt)
             : new GateSlotBoardSlot(slot, slot == shortSlot, null, null, null, null)).ToArray();
         var waiting = runs.Where(run => run.AcquiredAt is null).OrderBy(run => run.QueuedAt)

@@ -561,11 +561,18 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.OperatorCandidateAuditRepair>
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.OperatorCandidateAuditRepair>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateCapacitySettings(
+    sp.GetRequiredService<IConfiguration>(),
+    Path.Combine(AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "settings"),
+        "gate-capacity.json"),
+    sp.GetRequiredService<AgentStudio.Security.ControlPlaneAuditLog>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateDurationHistory>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.PullGateStore(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "pull-gates"),
-    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IConfiguration>()));
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IConfiguration>(),
+    sp.GetRequiredService<AgentStudio.Pipeline.GateCapacitySettings>()));
 builder.Services.AddSingleton<ProjectCycleTimeService>();
 builder.Services.AddSingleton<ProjectVisualEvidenceService>();
 builder.Services.AddSingleton<ProjectGraphDiscoveryService>();

@@ -337,6 +337,7 @@
 /api/supervisor/{project}/recent-events	free	-	-	-
 /api/system/about	free	-	-	-
 /api/system/execution-infrastructure	free	-	-	-
+/api/system/gate-capacity	free	-	-	-
 /api/system/gate-slots	free	-	-	-
 /api/system/readiness	free	-	-	-
 /api/system/version	free	-	-	-
