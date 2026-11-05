@@ -79,7 +79,8 @@ public sealed record BatchGateFormationOptions(
     IReadOnlyList<string>? UrgentTags = null, string RiskPolicy = "balanced",
     string Overlap = "adjacent", string ReviewTestLevel = "work-package",
     int GateTimeoutMinutes = 150, BatchGateAdvisorOptions? Advisor = null,
-    bool? PreCheckEnabled = null, string Calibration = "empirical")
+    bool? PreCheckEnabled = null, string Calibration = "empirical",
+    string Stacking = "off")
 {
     public bool PreCheckFor(string project) => PreCheckEnabled
         ?? string.Equals(project, "Agent Studio", StringComparison.OrdinalIgnoreCase);
@@ -97,6 +98,7 @@ public sealed record BatchGateFormationOptions(
         ReviewQueuePressure < 1 ? "reviewQueuePressure" :
         RiskPolicy is not ("conservative" or "balanced" or "aggressive") ? "riskPolicy" :
         Calibration is not ("legacy" or "empirical") ? "calibration" :
+        Stacking is not ("off" or "1") ? "stacking" :
         Overlap is not ("adjacent" or "separate") ? "overlap" :
         ReviewTestLevel is not ("work-package" or "build-only") ? "reviewTestLevel" :
         GateTimeoutMinutes is < 1 or > 360 ? "gateTimeoutMinutes" :
@@ -124,7 +126,8 @@ public sealed record BatchGateManifest(
     string? ParentBatchId = null, string? FormationReason = null,
     IReadOnlyList<BatchPlanCard>? PlanningCards = null,
     bool Diagnostic = false,
-    string? ReformedFromBatchId = null);
+    string? ReformedFromBatchId = null,
+    string? StackedOnBatchId = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,

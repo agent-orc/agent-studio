@@ -1,5 +1,6 @@
 @use '../../../styles/mixins' as m;
 @use '../../../styles/lane-tone';
+@use './studio-shell-mobile-tabbar' as mobile;
 @use './studio-tab';
 
 .studio {
@@ -404,6 +405,7 @@
 // -------------------------------------------------------------------------
 .studio-body {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   // min-width: 0 + explicit width tell the grid container to honour its
   // parent's flex/grid track instead of widening to its intrinsic
@@ -437,7 +439,7 @@
   .studio-body, .studio--sidebar-hidden .studio-body {
     grid-template-columns: var(--studio-activitybar-w) minmax(0, 1fr) auto !important;
   }
-  .studio-sidebar { display: none; }
+  .studio-body > .studio-sidebar { display: none; }
   .studio-body:has(> app-orchestrator-side-sheet.is-open) { grid-template-rows: minmax(0, 1fr); }
   .studio-body:has(> app-orchestrator-side-sheet.is-open) > app-studio-activity-bar > .studio-activitybar {
     grid-column: 1;
@@ -2064,3 +2066,5 @@ app-workspace-deployment-dashboard { flex: 1; min-height: 0; }
   }
   .studio-titlebar__actions [data-testid='studio-titlebar-settings'] span { display: none; }
 }
+
+@include mobile.tabbar;

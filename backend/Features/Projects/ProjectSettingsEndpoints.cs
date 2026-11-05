@@ -1691,6 +1691,7 @@ public static class ProjectSettingsEndpoints
             urgentTags = value.EffectiveUrgentTags,
             value.RiskPolicy,
             value.Calibration,
+            value.Stacking,
             value.Overlap,
             value.ReviewTestLevel,
             value.GateTimeoutMinutes,
