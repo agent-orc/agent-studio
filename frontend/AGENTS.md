@@ -168,7 +168,8 @@ option test IDs and tooltips in `SegmentedOption`. Pill `pane-tabs` keep tab
 semantics while sharing the same track and thumb mixins. The structure lint
 checks templates for hand-built selection buttons; each exception in
 [`scripts/segmented-baseline.json`](scripts/segmented-baseline.json) needs a
-written reason and a pinned button signature.
+written reason and a pinned control identity. The gate compares the number
+of matching buttons, so another control with the same class still fails.
 
 ## Side-sheet layout contract (`<app-orchestrator-side-sheet>`, `<app-kanban-filter-sidesheet>`)
 
