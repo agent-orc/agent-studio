@@ -126,6 +126,10 @@ internal static class PromptUsageCatalog
         {
             new PromptUsageRef("AspectRunnerService", "RenderAspectPrompt", "Tests-and-evidence review aspect."),
         },
+        ["review-aspect-visual-review.md"] = new[]
+        {
+            new PromptUsageRef("AspectRunnerService", "RenderAspectPrompt", "Screenshot-backed visual review aspect."),
+        },
         ["review-aspect-documentation-impact.md"] = new[]
         {
             new PromptUsageRef("AspectRunnerService", "RenderAspectPrompt", "Documentation-impact review aspect."),

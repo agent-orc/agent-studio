@@ -86,13 +86,13 @@ public class PipelineCatalogueTests
         Assert.False(p.Core[0].Idempotent); // Core agent runs are not safe to re-run blindly.
 
         // Post includes the closing Result summary assessment, the deterministic review/build gates, seven named
-        // Quality Studio analyses, four aspects,
+        // Quality Studio analyses, five aspects,
         // implemented tool steps (incl. the opt-in wiki-maintenance, wiki-learnings
         // distillation, and agents/wiki-sync steps), the deferred operator-triggered
         // "Merge into Develop" step and its integration-branch push twin, the
         // automatic code-review quality-grade step, the opt-in task-spawner step,
         // final orchestrator decision, and opt-in drift dimensions.
-        Assert.Equal(35, p.Post.Count);
+        Assert.Equal(36, p.Post.Count);
         var intervention = Assert.Single(p.Post.Where(step =>
             step.Id == PipelineCatalogue.FailureInterventionStepId));
         Assert.False(intervention.DefaultEnabled);
@@ -299,11 +299,11 @@ public class PipelineCatalogueTests
     }
 
     [Fact]
-    public void StandardPipeline_AllFourAspectStepsRunParallel()
+    public void StandardPipeline_AllAspectStepsRunParallel()
     {
         var p = PipelineCatalogue.Standard;
         var aspectSteps = p.Post.Where(s => s.Kind == StepKind.Aspect).ToList();
-        Assert.Equal(4, aspectSteps.Count);
+        Assert.Equal(5, aspectSteps.Count);
         foreach (var step in aspectSteps)
         {
             Assert.Equal(StepRunMode.Parallel, step.RunMode);
