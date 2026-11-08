@@ -39,9 +39,12 @@ public static class BatchGateStateSnapshotReader
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
             .ToArray();
         var fallbackCauses = store.ListFallbackCauses(project);
-        var overdue = pending.Where(item => item.Subject.ReviewCompletedAtUtc
-                .AddMinutes(settings.DeadlineMinutes) <= at
-                && !plan.ProposedMembers.Contains(item.Subject.TaskKey, StringComparer.Ordinal))
+        var planDeadlinePassed = plan.CloseAtUtc is { } closeAt && closeAt <= at;
+        var overduePending = pending.Where(item => (item.Subject.ReviewCompletedAtUtc
+                .AddMinutes(settings.DeadlineMinutes) <= at || planDeadlinePassed)
+            && !plan.ProposedMembers.Contains(item.Subject.TaskKey, StringComparer.Ordinal))
+            .ToArray();
+        var overdue = overduePending
             .Select(item =>
             {
                 var formed = recoverable.FirstOrDefault(manifest => manifest.Members.Any(member =>
@@ -61,6 +64,14 @@ public static class BatchGateStateSnapshotReader
             {
                 Decision = plan.Decision == "idle" ? "wait" : plan.Decision,
                 Reason = plan.Reason + "; overdue pending: " + string.Join("; ", overdue),
+                ProposedMembers = plan.ProposedMembers.Concat(overduePending
+                    .Where(item => !item.Subject.ActivePerTaskGate
+                        && !recoverable.Any(manifest => manifest.Members.Any(member =>
+                            member.TaskKey == item.Subject.TaskKey
+                            && member.RunAttempt == item.Subject.RunAttempt))
+                        && !fallbackCauses.Any(cause => cause.ReviewAttemptId == item.ReviewAttemptId))
+                    .Select(item => item.Subject.TaskKey))
+                    .Distinct(StringComparer.Ordinal).ToArray(),
                 CloseAtUtc = plan.CloseAtUtc is { } deadline && deadline <= at
                     ? null : plan.CloseAtUtc,
             };

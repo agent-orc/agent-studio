@@ -1314,6 +1314,17 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         return JsonSerializer.Deserialize<Contract.ArtifactContentDto>(detail, Json);
     }
 
+    public async Task<IReadOnlyList<Contract.ArtifactDto>> ListRunArtifactsAsync(
+        string runId, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/runs/{Uri.EscapeDataString(runId)}/artifacts", ct);
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Artifact list failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.ArtifactDto[]>(detail, Json) ?? [];
+    }
+
     /// <summary>
     /// AGT-3063: a shadow orchestrator decision call queued on the monolith
     /// authority. The runner runs it with its own provider credential.

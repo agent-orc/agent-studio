@@ -40,6 +40,18 @@ roughly one prefix plus four small suffixes. A later aspect that again creates
 about the full prefix, or a runner log line `review-aspect-cache-unconfirmed`,
 means the cache was not shared for that review.
 
+Remote coding plans freeze a bounded `results/` evidence view beside the brief
+and diff context. It lists up to 40 active files with sizes, quotes heads of
+small text and CSV/JSON summaries and tails of logs within 12 files, 4,000
+characters per file and 24,000 characters total, and names image files. A
+SHA-256 over every eligible file's path, size and content makes the sealed
+aspect digest change even when the changed file falls outside the excerpt
+budget. `results/history/` and filesystem links are excluded. Credential
+redaction applies to displayed names and excerpts. Requirement-fit and
+tests-and-evidence may cite `results/<file>`; a missing-evidence finding names
+the inspected diff and results inventory or files. Truncated excerpts do not
+establish absence from a full artifact.
+
 ## Review report transport budget
 
 The review host caps embedded evidence at 8 MiB per artifact and the serialized
@@ -453,6 +465,37 @@ be written only into a pending attempt or a new eligible attempt; a leased
 attempt keeps its plan through report retry and worker adoption.
 
 ## Review material contract
+
+### Screenshot-backed visual review
+
+The standard feature, bug, and task review plans include `aspect-visual-review`
+when the delivery changes a file under `frontend/` ending in `.html`, `.scss`,
+or `.css`. The aspect is recorded in the same pipeline catalogue and verdict
+ledger as requirement fit, code quality, documentation impact, and tests and
+evidence. Its catalogue route selects the Codex image-capable support model
+through the central pipeline model resolver; project step overrides remain
+subject to the normal CLI/model compatibility check.
+
+The executor fetches bounded image artifacts from the source run's `results/`
+delivery, preserves the screenshot names, and places read-only copies beside
+the exact-SHA review checkout. The visual prompt receives those paths, the
+authoritative diff, the hard visual rules, and the relevant admin design rules.
+After screenshots take priority over before screenshots at both the remote
+100-image cap and the local eight-image attachment cap. Both caps count only
+decoded images, so unavailable or invalid artifacts cannot crowd out a later
+valid after screenshot. Each artifact read and decode is isolated, so a failed
+remote artifact cannot stop later images from loading.
+The prompt lists readable image paths first, then up to eight artifact failure
+details and a count of further failures, so corrupt artifacts cannot bury a
+valid screenshot path in the review context.
+An artifact must decode as the image format named by its extension before it
+uses an image slot; matching size and digest alone do not prove readability.
+It opens each screenshot, compares matching before and after views, and checks
+layout, spacing, separation, alignment, clipping, and contrast across available
+themes and widths. A visual concern or block cites both the screenshot and the
+affected region. If a frontend template or style changed without a readable
+screenshot, or only before screenshots, the executor guarantees a `concerns`
+verdict naming the missing after evidence. Nonvisual changes skip this aspect.
 
 `runner/RemoteReviewWorkspace.cs` materializes the immutable delivery
 Result-SHA in a disposable candidate checkout. Before the first semantic aspect
