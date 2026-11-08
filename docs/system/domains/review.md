@@ -1080,6 +1080,20 @@ that verdict.
 | Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
 | Reviewer block without evidence against a changed path | `concern` | no |
 
+**Missing test reports.** A test-failures baseline must report at least one
+completed test, even when it exits zero. The review host retries a baseline
+with no parseable result once and records both attempts. If it still has no
+result, it settles as `ReviewInfra/BaselineUnavailable` and names the captured
+stdout artifact path. A delivery run that exits zero without a test result is
+also retried once. If its retry still has no result, it settles as
+`ReviewInfra/TestReportUnavailable`, unless the delivery changed test
+configuration, the runner or reporter, or added, removed, or renamed a spec. In
+that case the missing report is a product finding that cites the changed setup
+path. The result parser accepts Vitest's `Test Files N passed` summary as well
+as its `Tests N passed` summary. If Angular finished bundling but Vitest did not
+report a run, the infrastructure summary says so and points to the captured
+stdout artifact.
+
 **Red baseline on cached state (AGT-3430).** A baseline that ran on a
 dependency-cache hit, or a baseline result reused from the baseline result
 cache, does not prove the integration branch red while the candidate's clean
