@@ -470,6 +470,14 @@ details and a count of further failures, so corrupt artifacts cannot bury a
 valid screenshot path in the review context.
 An artifact must decode as the image format named by its extension before it
 uses an image slot; matching size and digest alone do not prove readability.
+Name delivered screenshots under `results/` by surface, stage, viewport width,
+and theme, for example `bars/before-1920-light.png` and
+`bars/after-1920-light.png`. Use the same suffix for matching before and after
+views. A `before` path segment or filename marker (`before-`, `-before`, or
+equivalent underscore or dot separators) marks baseline evidence. An unmarked
+image counts as an after view. At least one readable after image is required;
+include both light and dark themes and a narrow viewport when those surfaces
+change.
 It opens each screenshot, compares matching before and after views, and checks
 layout, spacing, separation, alignment, clipping, and contrast across available
 themes and widths. A visual concern or block cites both the screenshot and the
