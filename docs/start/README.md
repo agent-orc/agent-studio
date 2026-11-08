@@ -106,6 +106,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
 | Deployment regression scenario (one seeded fixture, three targets, the gate every deployment card and release proves itself against; AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
 | Candidate installation scenarios and evidence, including release and nightly gates | [operations/testing/installation-scenarios.md](../operations/testing/installation-scenarios.md) |
+| Application lifecycle scenario: a simulated user takes Click Counter from template to production inside a quota, with a run report (AGT-3178) | [operations/testing/lifecycle-scenario.md](../operations/testing/lifecycle-scenario.md) |
 | Deployment story: operator and administrator journeys from one box to many runner hosts, current availability, option C reconciliation and recovery gates (AGT-2906) | [decision dossier](../operations/deployment-story/index.html) |
 | Credentials and logins: host inventory, incident classification, guided renewal, rotation and typed recovery runbooks (AGT-2968) | [decision Dossier](../credentials-and-logins/index.html) |
 | Dynamic placement: work containers placed by load across hosts, one host agent and budget, pulled gates, per-work-item credentials (AGT-3171) | [decision Dossier](../dynamic-placement/index.html) |

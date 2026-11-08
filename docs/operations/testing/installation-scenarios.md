@@ -86,3 +86,7 @@ Windows-to-Linux-host scenario needs an operator endpoint and token. The
 operator simulated-user profile uses the host's existing login and its prompt
 limits reads to copied public docs. These gaps must be closed before
 the entire first-use journey can be called green.
+
+The [application lifecycle scenario](lifecycle-scenario.md) runs after an
+installation: a simulated user takes a new project from a template through
+stage to production inside a quota and writes its own run report.
