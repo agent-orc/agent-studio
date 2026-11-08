@@ -7,12 +7,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const checker = fileURLToPath(new URL('./check-segmented-controls.mjs', import.meta.url));
-function run(html) {
+function run(html, documented = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'segmented-gate-'));
   try {
     mkdirSync(join(dir, 'src'), { recursive: true });
     writeFileSync(join(dir, 'src', 'new.html'), html);
-    writeFileSync(join(dir, 'baseline.json'), JSON.stringify({ documented: {} }));
+    writeFileSync(join(dir, 'baseline.json'), JSON.stringify({ documented }));
     try {
       return { code: 0, out: execFileSync(process.execPath, [checker, '--baseline', 'baseline.json'], { cwd: dir, encoding: 'utf8' }) };
     } catch (error) {
@@ -38,4 +38,13 @@ test('rejects a new hand-built radio button', () => {
 });
 test('allows an independent switch', () => {
   assert.equal(run('<button role="switch" [attr.aria-checked]="on()">On</button>').code, 0);
+});
+test('documented control survives an unrelated attribute edit, but an added sibling fails', () => {
+  const documented = { 'src/new.html': {
+    reason: 'This existing button is an independent pane visibility toggle.',
+    controls: ['testid:pane-visibility:pressed'],
+  } };
+  const button = '<button data-testid="pane-visibility" [attr.aria-pressed]="visible()"';
+  assert.equal(run(`${button} title="Show pane">Pane</button>`, documented).code, 0);
+  assert.equal(run(`${button}>Pane</button>${button}>Pane</button>`, documented).code, 1);
 });

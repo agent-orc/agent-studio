@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /** Keep single-choice buttons on app-segmented-control. Documented exceptions
- * are pinned to their button signatures so adding another site fails lint. */
-import { createHash } from 'node:crypto';
+ * are pinned to their button identities so adding another site fails lint. */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
@@ -22,7 +21,14 @@ function files(dir) {
   });
 }
 function signature(tag) {
-  return createHash('sha256').update(tag.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 16);
+  // Anchor exceptions to a control's stable identity and selection attribute.
+  // Unrelated template edits must not require rehashing the baseline.
+  const id = tag.match(/(?:\[attr\.data-testid\]|data-testid)="([^"]+)"/);
+  const className = tag.match(/(?:\[class\.[^\]]+\]|class)="([^"]+)"/);
+  const aria = tag.includes('[attr.aria-pressed]') ? 'pressed'
+    : tag.includes('[attr.aria-checked]') ? 'checked' : 'class';
+  const identity = id ? `testid:${id[1]}` : className ? `class:${className[1]}` : 'anonymous';
+  return `${identity}:${aria}`;
 }
 function sites(source) {
   const clean = source.replace(/<!--[\s\S]*?-->/g, '');
@@ -38,8 +44,8 @@ function sites(source) {
   return found.sort();
 }
 for (const [file, entry] of Object.entries(documented)) {
-  if (typeof entry.reason !== 'string' || entry.reason.trim().length < 20 || !Array.isArray(entry.signatures)) {
-    failures.push(`${file}: exception needs a written reason and button signatures.`);
+  if (typeof entry.reason !== 'string' || entry.reason.trim().length < 20 || !Array.isArray(entry.controls)) {
+    failures.push(`${file}: exception needs a written reason and button identities.`);
   }
 }
 const templates = files(root);
@@ -47,7 +53,7 @@ for (const file of templates) {
   const rel = relative('.', file).split(sep).join('/');
   if (rel.endsWith('/segmented-control.component.html')) continue;
   const actual = sites(readFileSync(file, 'utf8'));
-  const expected = documented[rel]?.signatures?.slice().sort() ?? [];
+  const expected = documented[rel]?.controls?.slice().sort() ?? [];
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     failures.push(`${rel}: hand-built selection button changed or added; use <app-segmented-control> or document a specific exception.`);
   }
