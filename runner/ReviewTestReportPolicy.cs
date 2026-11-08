@@ -32,21 +32,26 @@ internal static partial class ReviewTestReportPolicy
             var fields = line.Split('\t', StringSplitOptions.RemoveEmptyEntries);
             if (fields.Length < 2) continue;
             var status = fields[0];
-            var path = fields[^1].Replace('\\', '/');
-            if (path is "frontend/angular.json" or "frontend/vitest.config.ts" or "frontend/vitest.release.config.ts"
-                or "frontend/package.json" or "frontend/package-lock.json" or "global.json"
-                || path.EndsWith(".runsettings", StringComparison.OrdinalIgnoreCase)
-                || path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
-                || path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
-                || path.StartsWith("frontend/scripts/", StringComparison.Ordinal)
-                   && (path.Contains("test", StringComparison.OrdinalIgnoreCase)
-                       || path.Contains("report", StringComparison.OrdinalIgnoreCase)))
-                return $"test configuration or runner changed: {path}";
-            if (status[0] is 'A' or 'D' or 'R'
-                && (path.EndsWith(".spec.ts", StringComparison.OrdinalIgnoreCase)
-                    || path.EndsWith(".test.ts", StringComparison.OrdinalIgnoreCase)
-                    || path.EndsWith("Tests.cs", StringComparison.OrdinalIgnoreCase)))
-                return $"spec file list changed: {path}";
+            // Git lists both paths for renames and copies. Either end can be
+            // the test setup or a spec, even when the other end is not.
+            foreach (var field in fields.Skip(1))
+            {
+                var path = field.Replace('\\', '/');
+                if (path is "frontend/angular.json" or "frontend/vitest.config.ts" or "frontend/vitest.release.config.ts"
+                    or "frontend/package.json" or "frontend/package-lock.json" or "global.json"
+                    || path.EndsWith(".runsettings", StringComparison.OrdinalIgnoreCase)
+                    || path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
+                    || path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("frontend/scripts/", StringComparison.Ordinal)
+                       && (path.Contains("test", StringComparison.OrdinalIgnoreCase)
+                           || path.Contains("report", StringComparison.OrdinalIgnoreCase)))
+                    return $"test configuration or runner changed: {path}";
+                if (status[0] is 'A' or 'D' or 'R' or 'C'
+                    && (path.EndsWith(".spec.ts", StringComparison.OrdinalIgnoreCase)
+                        || path.EndsWith(".test.ts", StringComparison.OrdinalIgnoreCase)
+                        || path.EndsWith("Tests.cs", StringComparison.OrdinalIgnoreCase)))
+                    return $"spec file list changed: {path}";
+            }
         }
         return null;
     }

@@ -25,6 +25,16 @@ public sealed class ReviewTestReportPolicyTests
     [InlineData("A\tfrontend/src/new.spec.ts", true)]
     [InlineData("M\tfrontend/src/existing.spec.ts", false)]
     [InlineData("M\tfrontend/src/component.ts", false)]
+    [InlineData("R100\tfrontend/src/old.spec.ts\tfrontend/src/helper.ts", true)]
+    [InlineData("R100\tfrontend/src/helper.ts\tfrontend/src/new.spec.ts", true)]
+    [InlineData("R100\tfrontend/vitest.config.ts\tfrontend/old-config.ts", true)]
+    [InlineData("R100\tfrontend/src/old.ts\tfrontend/src/new.ts", false)]
     public void Setup_change_requires_configuration_or_spec_list_change(string line, bool expected)
         => Assert.Equal(expected, ReviewTestReportPolicy.SetupChangeReason([line]) is not null);
+
+    [Fact]
+    public void Renaming_a_spec_to_a_non_spec_cites_the_removed_spec()
+        => Assert.Equal("spec file list changed: frontend/src/old.spec.ts",
+            ReviewTestReportPolicy.SetupChangeReason(
+                ["R100\tfrontend/src/old.spec.ts\tfrontend/src/helper.ts"]));
 }
