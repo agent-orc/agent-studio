@@ -451,8 +451,11 @@ authoritative diff, the hard visual rules, and the relevant admin design rules.
 After screenshots take priority over before screenshots at both the remote
 100-image cap and the local eight-image attachment cap. Both caps count only
 decoded images, so unavailable or invalid artifacts cannot crowd out a later
-valid after screenshot. Each artifact read and decode is isolated; a failed
-remote artifact is listed with its failure reason while later images are loaded.
+valid after screenshot. Each artifact read and decode is isolated, so a failed
+remote artifact cannot stop later images from loading.
+The prompt lists readable image paths first, then up to eight artifact failure
+details and a count of further failures, so corrupt artifacts cannot bury a
+valid screenshot path in the review context.
 An artifact must decode as the image format named by its extension before it
 uses an image slot; matching size and digest alone do not prove readability.
 It opens each screenshot, compares matching before and after views, and checks

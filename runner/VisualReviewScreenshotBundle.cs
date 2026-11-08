@@ -12,6 +12,7 @@ namespace AgentRunner;
 internal static class VisualReviewScreenshotBundle
 {
     private const int MaximumImages = 100;
+    private const int MaximumFailureDetails = 8;
     private const long MaximumImageBytes = 8L * 1024 * 1024;
     private const long MaximumTotalBytes = 100L * 1024 * 1024;
     private const long MaximumImagePixels = 80_000_000;
@@ -44,7 +45,14 @@ internal static class VisualReviewScreenshotBundle
         if (artifacts.Length == 0) return "No delivered screenshots were attached to this run.";
         var directory = Path.Combine(attemptRoot, "visual-evidence");
         Directory.CreateDirectory(directory);
-        var listed = new List<string>();
+        var copiedImages = new List<string>();
+        var failures = new List<string>();
+        var failedCount = 0;
+        void AddFailure(string detail)
+        {
+            failedCount++;
+            if (failures.Count < MaximumFailureDetails) failures.Add(detail);
+        }
         long total = 0;
         var copied = 0;
         var omittedByCount = 0;
@@ -57,7 +65,7 @@ internal static class VisualReviewScreenshotBundle
             }
             if (artifact.SizeBytes > MaximumImageBytes || total + artifact.SizeBytes > MaximumTotalBytes)
             {
-                listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: omitted because of image evidence size limit");
+                AddFailure($"- {JsonSerializer.Serialize(artifact.Name)}: omitted because of image evidence size limit");
                 continue;
             }
             string? temporaryPath = null;
@@ -66,7 +74,7 @@ internal static class VisualReviewScreenshotBundle
                 var content = await readContent(artifact, ct);
                 if (content is null)
                 {
-                    listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: unavailable");
+                    AddFailure($"- {JsonSerializer.Serialize(artifact.Name)}: unavailable");
                     continue;
                 }
                 var bytes = Convert.FromBase64String(content.ContentBase64);
@@ -74,28 +82,28 @@ internal static class VisualReviewScreenshotBundle
                 if (bytes.LongLength != artifact.SizeBytes
                     || !string.Equals(sha, artifact.Sha256, StringComparison.OrdinalIgnoreCase))
                 {
-                    listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: integrity check failed");
+                    AddFailure($"- {JsonSerializer.Serialize(artifact.Name)}: integrity check failed");
                     continue;
                 }
                 if (!IsReadableImage(bytes, artifact.Name))
                 {
-                    listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: invalid image");
+                    AddFailure($"- {JsonSerializer.Serialize(artifact.Name)}: invalid image");
                     continue;
                 }
                 var extension = Path.GetExtension(artifact.Name).ToLowerInvariant();
                 var stage = VisualReviewEvidence.IsAfterScreenshot(artifact.Name) ? "after" : "before";
-                var path = Path.Combine(directory, $"{stage}-image-{listed.Count + 1:D2}{extension}");
+                var path = Path.Combine(directory, $"{stage}-image-{copied + 1:D2}{extension}");
                 temporaryPath = Path.Combine(directory, $"capture-{Guid.NewGuid():N}.tmp");
                 await File.WriteAllBytesAsync(temporaryPath, bytes, ct);
                 File.Move(temporaryPath, path);
                 temporaryPath = null;
                 total += bytes.LongLength;
                 copied++;
-                listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: {JsonSerializer.Serialize(path)}");
+                copiedImages.Add($"- {JsonSerializer.Serialize(artifact.Name)}: {JsonSerializer.Serialize(path)}");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: unavailable ({ex.GetType().Name})");
+                AddFailure($"- {JsonSerializer.Serialize(artifact.Name)}: unavailable ({ex.GetType().Name})");
             }
             finally
             {
@@ -107,9 +115,11 @@ internal static class VisualReviewScreenshotBundle
                 }
             }
         }
+        if (failedCount > failures.Count)
+            failures.Add($"- {failedCount - failures.Count} more failed screenshots omitted from this list.");
         if (omittedByCount > 0)
-            listed.Add($"- {omittedByCount} more screenshots omitted by the 100-image review limit.");
-        return string.Join('\n', listed);
+            failures.Add($"- {omittedByCount} more screenshots omitted by the 100-image review limit.");
+        return string.Join('\n', copiedImages.Concat(failures));
     }
 
     private static bool IsReadableImage(byte[] bytes, string name)

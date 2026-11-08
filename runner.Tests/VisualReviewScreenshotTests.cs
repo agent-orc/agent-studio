@@ -195,6 +195,7 @@ public sealed class VisualReviewScreenshotTests
                 }, root, default);
 
             Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
+            Assert.StartsWith($"- \"{valid.Name}\"", evidence);
             Assert.Contains($"\"{failedRead.Name}\": unavailable", evidence);
             Assert.Contains($"\"{invalidContent.Name}\": unavailable", evidence);
             Assert.Contains($"\"{valid.Name}\":", evidence);
@@ -223,7 +224,9 @@ public sealed class VisualReviewScreenshotTests
                     Convert.ToBase64String(artifact.ArtifactId == "valid" ? validBytes : corruptBytes),
                     artifact.SizeBytes)), root, default);
 
-            Assert.Equal(100, evidence.Split("invalid image", StringSplitOptions.None).Length - 1);
+            Assert.Equal(8, evidence.Split("invalid image", StringSplitOptions.None).Length - 1);
+            Assert.Contains("92 more failed screenshots omitted from this list", evidence);
+            Assert.StartsWith($"- \"{valid.Name}\"", evidence);
             Assert.Contains($"\"{valid.Name}\":", evidence);
             Assert.DoesNotContain("omitted by the 100-image review limit", evidence);
             Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
