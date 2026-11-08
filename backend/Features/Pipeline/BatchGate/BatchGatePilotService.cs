@@ -519,6 +519,9 @@ public sealed partial class BatchGatePilotService
                              .Skip(1))
                          .ToArray())
                 ResolveSuperseded(stale, "superseded-by-newer-review");
+            // Recover durable formed snapshots before planning. A prior tick may
+            // have closed a manifest and exited before its final start sweep.
+            StartClosedBatches(ct);
             // Refresh before choosing the scope. A queued subject may have
             // outlived a project gate profile change or a platform upgrade.
             // Grouping on the stored values would exclude it from its own
@@ -687,7 +690,8 @@ public sealed partial class BatchGatePilotService
                         new BatchPlanDecision(
                             formed.Manifest is not null ? "close"
                                 : formed.UsePerTaskGate ? "per-task"
-                                : formed.EligibleKeys.Count == 0 && queuedPartners == 0 ? "idle" : "wait",
+                                : formed.EligibleKeys.Count == 0 && current.Length == 0
+                                    && queuedPartners == 0 ? "idle" : "wait",
                             planReason,
                             formed.Manifest is null && current.Length > 0
                                 ? current.Min(item => item.Subject.ReviewCompletedAtUtc)
@@ -976,15 +980,19 @@ public sealed partial class BatchGatePilotService
             var members = manifest.Members.Select(member => waiting.FirstOrDefault(item =>
                 item.Subject.TaskKey == member.TaskKey
                 && item.Subject.RunAttempt == member.RunAttempt)).ToArray();
-            if (members.All(item => item is null))
+            if (members.Any(item => item is null))
             {
-                var recovery = _leases.TryAcquire(LeaseScope(manifest), "formed-batch-recovery");
+                BatchCoordinatorLease? recovery;
+                try { recovery = _leases.TryAcquire(LeaseScope(manifest), "formed-batch-recovery"); }
+                catch (IOException) { continue; }
                 if (recovery is not null)
                 {
                     try
                     {
+                        if (_store.LatestState(manifest.BatchId).Phase != BatchPhase.Formed)
+                            continue;
                         State(manifest, BatchPhase.Abandoned, null,
-                            recovery.Fence, "closed member no longer pending");
+                            recovery.Fence, "formed-batch-recovery: member no longer pending");
                         ReturnToPending(manifest);
                     }
                     finally { _leases.Release(recovery); }
