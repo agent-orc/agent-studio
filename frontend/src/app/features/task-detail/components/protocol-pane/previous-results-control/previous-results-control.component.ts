@@ -22,11 +22,13 @@ export class PreviousResultsControlComponent {
   readonly entries = signal<ResultHistoryEntry[]>([]);
   readonly open = signal(false);
   readonly loading = signal(false);
+  readonly loaded = signal(false);
   readonly error = signal<string | null>(null);
   readonly selected = signal<ResultHistoryEntry | null>(null);
   /** Whether older, pre-snapshot Results from workspace git are known yet. */
   readonly legacy = signal<ResultHistoryLegacyState>('complete');
   private refetchedPending = false;
+  private loadSequence = 0;
 
   private readonly reset = effect(() => {
     this.jobId();
@@ -34,21 +36,31 @@ export class PreviousResultsControlComponent {
     this.entries.set([]);
     this.legacy.set('complete');
     this.refetchedPending = false;
+    this.loadSequence++;
     this.open.set(false);
+    this.loading.set(false);
+    this.loaded.set(false);
     this.error.set(null);
     this.selected.set(null);
     this.resultSelected.emit(null);
-    this.load();
   }, { allowSignalWrites: true });
 
   toggle(): void {
     this.open.update(value => !value);
+    if (this.open() && !this.loaded() && !this.loading()) {
+      this.load();
+      return;
+    }
     // The backfill runs in the background after the first open; look once
     // more when the menu opens so a finished backfill shows up.
     if (this.open() && this.legacy() === 'pending' && !this.refetchedPending) {
       this.refetchedPending = true;
       this.load({ quiet: true });
     }
+  }
+
+  retry(): void {
+    if (!this.loading()) this.load();
   }
 
   showCurrent(): void {
@@ -80,14 +92,19 @@ export class PreviousResultsControlComponent {
 
   /** `quiet` keeps the toggle usable while an open menu looks again. */
   private load({ quiet = false } = {}): void {
+    const sequence = ++this.loadSequence;
     if (!quiet) this.loading.set(true);
+    this.error.set(null);
     this.tasks.getResultHistory(this.jobId(), this.watchPath() ?? undefined).subscribe({
       next: list => {
+        if (sequence !== this.loadSequence) return;
         this.entries.set(list.entries);
         this.legacy.set(list.legacy);
+        this.loaded.set(true);
         this.loading.set(false);
       },
       error: err => {
+        if (sequence !== this.loadSequence) return;
         this.error.set(err?.error?.error || err?.message || 'Could not load previous results.');
         this.loading.set(false);
       },

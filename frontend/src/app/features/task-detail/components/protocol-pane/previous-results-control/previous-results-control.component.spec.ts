@@ -40,16 +40,20 @@ describe('PreviousResultsControlComponent', () => {
 
   it('says older results are still loading instead of claiming there are none, and looks once more on open', () => {
     const { fixture, http } = render();
+    http.expectNone(request => request.url === '/api/tasks/AGT-2738/result-history');
+    openMenu(fixture);
+    expect(fixture.nativeElement.textContent).toContain('Loading previous results');
     flushList(http, [], 'pending');
     fixture.detectChanges();
 
-    openMenu(fixture);
     const menu: HTMLElement = fixture.nativeElement.querySelector('[data-testid="previous-results-list"]');
     expect(menu.textContent).not.toContain('No previous results found.');
     expect(menu.querySelector('[data-testid="previous-results-legacy-hint"]')?.textContent)
       .toContain('Older results are still loading.');
 
-    // The re-fetch on open picks up the finished backfill.
+    // The re-fetch on return picks up the finished backfill.
+    openMenu(fixture);
+    openMenu(fixture);
     flushList(http, [{ ...localEntry, id: 'git-a411991f', source: 'workspace-history', version: null }], 'complete');
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="previous-result-git-a411991f"]')).not.toBeNull();
@@ -63,10 +67,10 @@ describe('PreviousResultsControlComponent', () => {
 
   it('keeps the local results and says older ones could not be loaded when the backfill failed', () => {
     const { fixture, http } = render();
+    openMenu(fixture);
     flushList(http, [localEntry], 'failed');
     fixture.detectChanges();
 
-    openMenu(fixture);
     expect(fixture.nativeElement.querySelector('[data-testid="previous-result-local-0001"]')).not.toBeNull();
     expect(fixture.nativeElement.querySelector('[data-testid="previous-results-legacy-hint"]')?.textContent)
       .toContain('Older results could not be loaded.');
@@ -76,10 +80,10 @@ describe('PreviousResultsControlComponent', () => {
 
   it('reports no previous results only once the backfill is complete', () => {
     const { fixture, http } = render();
+    openMenu(fixture);
     flushList(http, [], 'complete');
     fixture.detectChanges();
 
-    openMenu(fixture);
     expect(fixture.nativeElement.textContent).toContain('No previous results found.');
     expect(fixture.nativeElement.querySelector('[data-testid="previous-results-legacy-hint"]')).toBeNull();
     http.verify();
@@ -96,6 +100,9 @@ describe('PreviousResultsControlComponent', () => {
     fixture.detectChanges();
 
     const http = TestBed.inject(HttpTestingController);
+    const toggle: HTMLButtonElement = fixture.nativeElement.querySelector('[data-testid="previous-results-toggle"]');
+    expect(toggle.textContent).not.toContain('2');
+    toggle.click();
     http.expectOne(request =>
       request.url === '/api/tasks/AGT-2707/result-history'
       && request.params.get('watchPath') === '/workspace/demo')
@@ -125,10 +132,7 @@ describe('PreviousResultsControlComponent', () => {
       ]);
     fixture.detectChanges();
 
-    const toggle: HTMLButtonElement = fixture.nativeElement.querySelector('[data-testid="previous-results-toggle"]');
     expect(toggle.textContent).toContain('2');
-    toggle.click();
-    fixture.detectChanges();
     expect(fixture.nativeElement.querySelectorAll('[data-testid^="previous-result-local-"]').length).toBe(2);
     expect(fixture.nativeElement.textContent).toContain('review attempt #2');
     expect(fixture.nativeElement.textContent).toContain('Result: Success');
@@ -157,6 +161,22 @@ describe('PreviousResultsControlComponent', () => {
     expect(banner.textContent).toContain('Previous result from');
     expect(banner.textContent).toContain('run attempt #1');
     expect(banner.textContent).toContain('5e-escalated');
+    http.verify();
+  });
+
+  it('shows a retry when the first selected read fails and reuses the result on return', () => {
+    const { fixture, http } = render();
+    openMenu(fixture);
+    http.expectOne(request => request.url === '/api/tasks/AGT-2738/result-history')
+      .flush({ error: 'offline' }, { status: 503, statusText: 'Unavailable' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[role="alert"]')?.textContent).toContain('offline');
+    expect(fixture.nativeElement.textContent).not.toContain('No previous results found.');
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="previous-results-retry"]')!.click();
+    flushList(http, [localEntry]);
+    fixture.detectChanges();
+    openMenu(fixture);
+    openMenu(fixture);
     http.verify();
   });
 });
