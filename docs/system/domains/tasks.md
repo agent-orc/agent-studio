@@ -2004,7 +2004,7 @@ offline reducer protocol is in [measurement.md](../../task-switch-performance/me
 
 The full-detail route resolves its card and dependency targets from published
 resident core facts. Other cards' mutations cannot make it wait for `EnsureFresh`;
-a safety-TTL or watcher repair runs in the background. It emits
+a reconciliation or watcher repair runs in the background. It emits
 `X-Task-Detail-Freshness: ready|stale|warming`; a cold, unindexed lookup returns
 `202` while the first snapshot or that card's publication is pending; a card
 absent from an otherwise populated but dirty snapshot returns `404`.
@@ -2023,7 +2023,7 @@ during migration. The `project` handle is required and resolved against the
 registry before a scoped principal can see a core. An unknown project or a
 known, indexed-but-absent task returns `404` with `state=missing`; an identity
 whose index is still hydrating returns `202` with `state=warming`. A known
-record whose sidecar refresh or safety sweep is pending returns `state=stale`.
+record whose sidecar refresh or folder reconciliation is pending returns `state=stale`.
 Durable deletion tombstones known core aliases immediately, so a deleted task
 does not reappear or wait for hydration to return `missing`.
 Core identity fields retain their full values. Lookup accepts the full id, the
@@ -2216,13 +2216,21 @@ every byte of it is a byte the client already holds.
   stored fact, so a 15 s tick is folded in while any card sits in the Progress
   lane - the only lane those branches apply to. An idle board has no Progress
   card and does not pay that tick at all.
-- **A cached body never outlives the task index safety TTL.** The index
-  publishes a new generation on every snapshot publish, including the TTL rescan
-  that finds nothing changed (`TaskIndexCache:SafetyTtlSeconds`, default 30 s).
-  The board therefore rebuilds at most once per TTL window, and the same bound
-  backstops the signature if the filesystem watcher ever stops delivering
-  events. A rebuild that produces the same bytes keeps its tag, so an unchanged
+- **Folder-index publication follows task changes.** The first publication
+  scans every configured watch path. Later watcher events name one folder;
+  mutation invalidations enumerate folder names and compare the scanner's file
+  stamps, then reload only changed folders. A 15-minute background reconciliation
+  (`TaskIndexCache:ReconciliationSeconds`, default 900) repeats that stamp
+  comparison to repair missed watcher events. Board requests use the last
+  published generation while it runs. Git-state sweeps and index runs read the
+  same archive-inclusive publication and do not start raw task scans. Unchanged
+  polling and Git sweeps do not advance the task-index generation; an unchanged
   board still answers 304.
+  The 3,000-card AGT-3540 fixture measured one warm raw pass at 488 ms and
+  21.4 MB allocated on the shared host. Its simulated hour of 240 board polls,
+  80 Git sweep reads, and four background reconciliations made zero raw scans
+  after startup and took 3.12 s with 153 MB allocated. The previous 30 s TTL
+  plus 45 s Git sweep scheduled 200 raw passes per hour before task events.
 - **Legacy `review` lane alias is opt-out.** The grouped response still carries
   `review` as a second copy of the auto-review lane for pre-ADR-0025 clients. A
   client that knows the ADR-0025 lane names sends
@@ -2250,7 +2258,7 @@ disk for runner state.
   part of the board response signature. The
   shared body build pins the same generation itself, so the tag always names the
   generation the body came from.
-- **A dirty index refreshes in the background.** A dirty or TTL-expired index
+- **A dirty index refreshes in the background.** A dirty index
   starts one single-flight background refresh after a 200 ms coalescing window.
   It inherits neither the request trace nor the pin, and the read answers from
   the last snapshot. A cold start answers from the persisted board (below);
@@ -2297,7 +2305,7 @@ disk for runner state.
 - **The client learns about the newer snapshot by push.** When a background
   refresh publishes after an invalidation, the index sends one
   `jobsBulkChanged` after a 250 ms debounce. The board answers it with a
-  conditional read. A TTL-only rescan does not push.
+  conditional read. An unchanged reconciliation does not push.
 - **Runner status reads the snapshot.** `ProjectRunner.GetStatus` takes provider
   limits from the snapshot's `TaskInfo.QuotaWait` and the displayed queue from
   one Ready-candidate order per generation and `ProjectSettingsService.Version`,
