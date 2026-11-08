@@ -186,6 +186,13 @@ public class TaskScannerService : ITaskScanner
         _statsMetadataCache?.Invalidate();
     }
 
+    /// <summary>Reconcile one watch path when a caller reports a task change
+    /// without the changed card folder. The folder index probes stamps and
+    /// reloads only changed cards; it does not start a raw workspace scan.</summary>
+    internal void InvalidateIndexForExternalTaskChange(string watchPath)
+        => _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.External,
+            changedPath: watchPath);
+
     /// <summary>
     /// Takes one published index generation for a board read without running
     /// a disk walk on the caller's thread (AGT-3088). Null when no cache is
@@ -608,6 +615,18 @@ public class TaskScannerService : ITaskScanner
         // No cache (tests / recovery): the raw disk walk already slim-hydrates
         // the 7-archive lane, so it is archive-inclusive by construction.
         return ScanAllJobsRaw();
+    }
+
+    /// <summary>Archive-inclusive task facts for background indexers. Wait for
+    /// a pending folder refresh so a task event joins the newest publication.</summary>
+    internal List<TaskInfo> ScanAllJobsWithArchiveForBackgroundIndex()
+    {
+        if (_indexCache is null) return ScanAllJobsRaw();
+        var (live, archived) = _indexCache.GetCleanSnapshotPartitions();
+        var combined = new List<TaskInfo>(live.Count + archived.Count);
+        combined.AddRange(live);
+        combined.AddRange(archived);
+        return combined;
     }
 
     /// <summary>Archive-inclusive counterpart of <see cref="ScanAllAutomationJobs"/>.</summary>

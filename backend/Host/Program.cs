@@ -2227,7 +2227,9 @@ taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
 taskScanner.SetOrchestrationStore(app.Services.GetRequiredService<MonolithOrchestrationStore>());
 watcher.OnJobChanged += path =>
 {
-    if (!jobIndexCache.IsCurrentTaskJson(path))
+    var taskJson = string.Equals(Path.GetFileName(path), "task.json", StringComparison.OrdinalIgnoreCase)
+        ? path : Path.Combine(path, "task.json");
+    if (!jobIndexCache.IsCurrentTaskJson(taskJson))
         jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External,
             changedPath: path);
 };

@@ -5,7 +5,7 @@ using Xunit;
 namespace AgentStudio.Tests.Architecture;
 
 /// <summary>
-/// Raw workspace walks belong to index refresh and the three audited background
+/// Raw workspace walks belong to index refresh and the two audited background
 /// jobs. An HTTP route or route helper must consume a published snapshot.
 /// </summary>
 [Trait("Category", "Guard")]
@@ -18,7 +18,6 @@ public sealed class RequestRawScanBoundaryTests
         var backend = Path.Combine(root, "backend");
         var expected = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["Features/Git/GitStateIndexService.cs"] = 1,
             ["Features/Pipeline/AcceptedIntegrationBackstopHostedService.cs"] = 1,
             ["Features/Tasks/Acceptance/HistoricalIntegrationVerificationSweep.cs"] = 1,
         };

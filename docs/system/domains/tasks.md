@@ -2217,20 +2217,25 @@ every byte of it is a byte the client already holds.
   lane - the only lane those branches apply to. An idle board has no Progress
   card and does not pay that tick at all.
 - **Folder-index publication follows task changes.** The first publication
-  scans every configured watch path. Later watcher events name one folder;
+  scans every configured watch path. Later watcher events name one card folder,
+  including for `jobs/<bucket>/<key>/task.json` changes;
   mutation invalidations enumerate folder names and compare the scanner's file
   stamps, then reload only changed folders. A 15-minute background reconciliation
   (`TaskIndexCache:ReconciliationSeconds`, default 900) repeats that stamp
   comparison to repair missed watcher events. Board requests use the last
   published generation while it runs. Git-state sweeps and index runs read the
-  same archive-inclusive publication and do not start raw task scans. Unchanged
+  same archive-inclusive publication and wait for a pending folder refresh,
+  without starting raw task scans. Unchanged
   polling and Git sweeps do not advance the task-index generation; an unchanged
   board still answers 304.
-  The 3,000-card AGT-3540 fixture measured one warm raw pass at 488 ms and
+  A Git task-event request without a folder path schedules the same stamp
+  comparison before its integration view joins task facts.
+  The 3,000-card AGT-3540 fixture measured one warm raw pass at 206 ms and
   21.4 MB allocated on the shared host. Its simulated hour of 240 board polls,
   80 Git sweep reads, and four background reconciliations made zero raw scans
-  after startup and took 3.12 s with 153 MB allocated. The previous 30 s TTL
-  plus 45 s Git sweep scheduled 200 raw passes per hour before task events.
+  after startup and took 2.49 s with 153 MB allocated. The previous 30 s TTL
+  plus 45 s Git sweep scheduled 200 raw passes per hour before task events,
+  about 41 s of scan wall time and 4.28 GB allocated at that warm-pass cost.
 - **Legacy `review` lane alias is opt-out.** The grouped response still carries
   `review` as a second copy of the auto-review lane for pre-ADR-0025 clients. A
   client that knows the ADR-0025 lane names sends

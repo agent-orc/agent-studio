@@ -172,6 +172,52 @@ public sealed class TaskFolderIndexTests : IDisposable
         Assert.Equal(1, _cache.FullRawScans);
     }
 
+    [Fact]
+    public async Task FlatJobWatcherEvent_RefreshesOnlyItsCardFolder()
+    {
+        var folder = Path.Combine(_root, TaskStorageLayout.JobsDirName, "000", "FLAT-1");
+        Directory.CreateDirectory(folder);
+        var taskJson = Path.Combine(folder, "task.json");
+        void WriteTitle(string title) => File.WriteAllText(taskJson, JsonSerializer.Serialize(new
+        {
+            id = "flat-1", key = "FLAT-1", title, state = TaskStates.Ready, order = 1,
+            agent = "claude", ownerClientId = DefaultClientIdentity.Id,
+        }));
+        WriteTitle("Initial");
+        Assert.Equal("Initial", Assert.Single(_cache.GetSnapshot()).Title);
+
+        using var watcher = new TaskWatcherService(_scanner, NullLogger<TaskWatcherService>.Instance, _config);
+        var dispatched = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        watcher.OnJobChanged += path =>
+        {
+            _cache.Invalidate(TaskIndexCache.InvalidationSource.External, changedPath: path);
+            dispatched.TrySetResult(path);
+        };
+        WriteTitle("Updated");
+        watcher.HandleChange(_root, taskJson, WatcherChangeTypes.Changed);
+
+        Assert.Equal(folder, await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal("Updated", Assert.Single(_cache.GetSnapshot()).Title);
+        Assert.Equal(1, _cache.FullRawScans);
+        Assert.Equal(1, _cache.FolderReloads);
+    }
+
+    [Fact]
+    public async Task BackgroundIndexRead_WaitsForPendingFolderPublication()
+    {
+        var folder = Write(TaskStates.Ready, "one", "Initial");
+        Assert.Equal("Initial", Assert.Single(_cache.GetSnapshot()).Title);
+        Write(TaskStates.Ready, "one", "Updated");
+        _cache.Invalidate(TaskIndexCache.InvalidationSource.External,
+            changedPath: Path.Combine(folder, "task.json"));
+        Assert.NotNull(_cache.TryAcquireBoardRead());
+
+        var tasks = await Task.Run(_scanner.ScanAllJobsWithArchiveForBackgroundIndex);
+
+        Assert.Equal("Updated", Assert.Single(tasks).Title);
+        Assert.Equal(1, _cache.FullRawScans);
+    }
+
     private static async Task WaitForGeneration(TaskIndexCache cache, long generation)
     {
         var elapsed = Stopwatch.StartNew();

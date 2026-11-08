@@ -284,6 +284,14 @@ public sealed class TaskIndexCache
         return (publication.Live, publication.Archive);
     }
 
+    /// <summary>Background indexers wait for an in-flight folder refresh so
+    /// a task event cannot rejoin Git facts against the previous generation.</summary>
+    internal (ImmutableList<TaskInfo> Live, ImmutableList<TaskInfo> Archive) GetCleanSnapshotPartitions()
+    {
+        EnsureFresh(requireClean: true);
+        lock (_lock) return (_publication.Live, _publication.Archive);
+    }
+
 
     /// <summary>
     /// Returns a projection derived from one published generation, built at
