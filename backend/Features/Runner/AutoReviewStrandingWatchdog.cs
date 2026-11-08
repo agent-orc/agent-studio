@@ -21,6 +21,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
     private readonly StallInterventionStore _records;
     private readonly StallInterventionReceipts _receipts;
     private readonly IConfiguration _configuration;
+    private readonly RemoteDeliveryIntegrationCoordinator? _integration;
     private readonly ILogger<AutoReviewStrandingWatchdog> _logger;
 
     public AutoReviewStrandingWatchdog(TaskScannerService scanner, AttemptAuthorityService authority,
@@ -29,7 +30,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         PipelineExecutionLog pipeline, AutoReviewPostProcessingQueue queue, TaskTransitionService transitions,
         AutoReviewDeliveryResumeService resume, HumanReviewEscalation escalation,
         StallInterventionStore records, StallInterventionReceipts receipts, IConfiguration configuration,
-        ILogger<AutoReviewStrandingWatchdog> logger)
+        ILogger<AutoReviewStrandingWatchdog> logger,
+        RemoteDeliveryIntegrationCoordinator? integration = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -45,13 +47,15 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         _records = records;
         _receipts = receipts;
         _configuration = configuration;
+        _integration = integration;
         _logger = logger;
     }
 
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
     {
-        if (MonolithTransitionSwitch.For(_configuration, "ReviewReport") == OrchestrationExecutionMode.Engine
-            || !MonolithTransitionSwitch.OwnsAutoReview(_configuration)) return 0;
+        // The liveness floor applies in both modes. Record the active review
+        // profile so the intervention names the owner that lost the card.
+        var reviewMode = MonolithTransitionSwitch.For(_configuration, "ReviewReport");
         var threshold = TimeSpan.FromMinutes(Math.Clamp(
             _configuration.GetValue<int?>("AutoReviewStranding:ThresholdMinutes") ?? 30, 1, 1440));
         var now = DateTime.UtcNow;
@@ -119,7 +123,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     done = parked.Status == MoveJobStatus.Success;
                     escalated = done;
                 }
-                interventions.Add(Publish(card, writeKey, action, done, escalated, detail, now));
+                interventions.Add(Publish(card, writeKey, action, done, escalated, detail, now, reviewMode));
                 count++;
             }
             catch (Exception ex)
@@ -130,7 +134,37 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         return count;
     }
 
-    /// <summary>Immediate handoff after a stale acceptance or integration verdict.</summary>
+    /// <summary>Integrates the current run before exposing it to Remote Review.</summary>
+    public async Task<MergeIntoIntegrationResult?> IntegrateCurrentDeliveryAsync(TaskInfo card)
+    {
+        if (card.State != TaskStates.AutoReview || _integration is null) return null;
+        var run = _authority.GetTaskProjection(CardKey(card)).CurrentRunAttempt;
+        if (run is not { State: AttemptLifecycleState.Completed, ResultEnvelope: not null, ResultSha: not null })
+            return null;
+        var previous = ReviewSubjectStore.Read(card.FolderPath);
+        ReviewSubjectStore.Write(card.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = CardKey(card), RunAttemptId = run.AttemptId,
+            Project = card.ProjectName, Repository = run.ResultEnvelope.RepositoryUrl ?? string.Empty,
+            ResultSha = run.ResultSha, BaseSha = run.ResultEnvelope.BaseSha,
+            AttemptChainId = run.Lease?.LeaseId ?? run.AttemptId,
+            Executor = run.Lease?.ExecutorId ?? "authority-recovery",
+            LeaseId = run.Lease?.LeaseId ?? run.AttemptId, FencingToken = run.LastFence,
+            ImmutableResultRef = run.ResultEnvelope.ImmutableRemoteRef,
+            ResultRef = run.ResultEnvelope.ImmutableRemoteRef,
+            IntegrationBranch = previous?.IntegrationBranch,
+            CompletedAtUtc = run.TerminalAt ?? DateTimeOffset.UtcNow,
+        });
+        var project = _settings.Get(card.ProjectName);
+        return await _integration.EnqueueAsync(new RemoteDeliveryIntegrationRequest(
+            card.ProjectName, card.Id, card.FolderPath, card.WatchPath,
+            TaskIntegrationBranch.Resolve(card, project.IntegrationBranch),
+            project.IntegrationStrategy, PipelineTypes.Resolve(card),
+            run.TerminalAt ?? DateTimeOffset.UtcNow,
+            ReviewedResultSha: run.ResultSha), discardCompletedReplay: true);
+    }
+
+    /// <summary>Requests review after the current delivery has integrated.</summary>
     public bool RequestFreshReview(TaskInfo card)
     {
         if (card.State != TaskStates.AutoReview) return false;
@@ -231,7 +265,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         => prefix + interventions.Count(item => item.WriteKey.StartsWith(prefix, StringComparison.Ordinal));
 
     private StallInterventionRecord Publish(TaskInfo card, string writeKey, AutoReviewStrandingAction action,
-        bool succeeded, bool escalated, string detail, DateTime now)
+        bool succeeded, bool escalated, string detail, DateTime now, OrchestrationExecutionMode reviewMode)
     {
         var record = new StallInterventionRecord
         {
@@ -243,7 +277,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 : succeeded ? StallInterventionStatuses.Verified : StallInterventionStatuses.Failed,
             Project = card.ProjectName, AffectedCards = [card.Id],
             Observed = "Card had no active Auto Review owner beyond the configured threshold.",
-            Done = detail, Why = "No running step, review, batch gate entry, or queued round owned the card.",
+            Done = detail, Why = $"In {reviewMode} mode, no running step, review, batch gate entry, or queued round owned the card.",
             Before = TaskStates.AutoReview, After = escalated ? TaskStates.Escalated : action.ToString(),
             Receipt = detail, DecidedAtUtc = now, ResolvedAtUtc = now,
         };

@@ -17,6 +17,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using AgentStudio.TestSupport;
+using AgentStudio.Watcher;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 using Xunit;
@@ -642,10 +643,13 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.NotNull(previous);
         var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
             deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(deps.Merge, deps.Scanner,
+            deps.Provenance, deps.Pipeline, deps.Timeline, AgentRounds(deps),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance, deps.Authority);
         var stranding = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
             reviewLifecycle, null!, null!, deps.Settings, deps.Pipeline, null!,
             deps.Transitions, null!, null!, null!, null!, deps.Configuration,
-            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+            NullLogger<AutoReviewStrandingWatchdog>.Instance, coordinator);
         var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration,
             deps.Transitions, deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance,
             stranding: stranding, timeline: deps.Timeline);
@@ -658,8 +662,82 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.NotNull(requested);
         Assert.NotEqual(previous.AttemptId, requested.AttemptId);
         Assert.Equal(AttemptLifecycleState.Pending, requested.State);
+        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha,
+            GitService.IntegrationLaneRef("develop")).Code);
+        var timeline = deps.Timeline.ReadAll(returned.FolderPath).ToArray();
+        var integratedAt = Array.FindIndex(timeline, entry => entry.Kind == TimelineEventKinds.IntegrationSucceeded);
+        var reviewedAt = Array.FindIndex(timeline, entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+        Assert.True(integratedAt >= 0 && reviewedAt > integratedAt);
         Assert.Contains(deps.Timeline.ReadAll(returned.FolderPath),
             entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Stale_delivery_verdict_queues_a_merge_round_when_current_delivery_conflicts()
+    {
+        var deliverySha = PublishDelivery("shared.txt", "delivery version\n");
+        RunGit(_repo, "checkout", "-q", "-b", "develop", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "develop version\n");
+        RunGit(_repo, "add", "shared.txt");
+        RunGit(_repo, "commit", "-q", "-m", "develop edits shared");
+        RunGit(_repo, "push", "-q", "origin", "develop");
+        RunGit(_repo, "checkout", "-q", "main");
+        var deps = Build(deliverySha, guarded: true);
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(deps.Merge, deps.Scanner,
+            deps.Provenance, deps.Pipeline, deps.Timeline, AgentRounds(deps),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance, deps.Authority);
+        var stranding = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, null!, null!, deps.Settings, deps.Pipeline, null!,
+            deps.Transitions, null!, null!, null!, null!, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance, coordinator);
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration,
+            deps.Transitions, deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance,
+            stranding: stranding, timeline: deps.Timeline);
+
+        Assert.Equal(1, await reconciler.RunOnceAsync());
+
+        var queued = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, queued.State);
+        Assert.Equal(ContinueModes.Steer, queued.PendingIntent?.Mode);
+        Assert.Contains(deps.Timeline.ReadAll(queued.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+        Assert.DoesNotContain(deps.Timeline.ReadAll(queued.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Stranding_watchdog_starts_missing_review_in_both_transition_modes(bool engineMode)
+    {
+        var deliverySha = PublishDelivery("stranded-review.txt", "delivered work\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
+            seedContent: false, engineMode: engineMode);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            VerificationFixtureAtUtc, NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var batches = new BatchGateStore(_tempDir);
+        var records = new StallInterventionStore(() => _tempDir);
+        var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        var projector = new WatcherActivityProjector(log, deps.Scanner, deps.Configuration,
+            NullLogger<WatcherActivityProjector>.Instance);
+        var receipts = new StallInterventionReceipts(log, projector, deps.Scanner, deps.Timeline,
+            NullLogger<StallInterventionReceipts>.Instance);
+        var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, batches, null!, deps.Settings, deps.Pipeline,
+            new AutoReviewPostProcessingQueue(), deps.Transitions, null!, null!,
+            records, receipts, deps.Configuration, NullLogger<AutoReviewStrandingWatchdog>.Instance);
+
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        Assert.Equal(AttemptLifecycleState.Pending,
+            deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.State);
+        Assert.Contains(records.All(), record => record.Action == AutoReviewStrandingAction.StartStep.ToString());
     }
 
     /// <summary>
@@ -3844,7 +3922,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         string? briefVersion = null,
         bool seedContent = true,
         bool authorityRebuilt = false,
-        bool guarded = false)
+        bool guarded = false,
+        bool engineMode = false)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -3855,6 +3934,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 ["WatchPaths:0:RepositoryPath"] = _repo,
                 ["TaskRepository"] = _tempDir,
                 ["DeliveryChain:Guarded"] = guarded ? "true" : "false",
+                ["Orchestration:Transitions:CodingCompletion"] = engineMode ? "Engine" : "Monolith",
+                ["Orchestration:Transitions:ReviewReport"] = engineMode ? "Engine" : "Monolith",
             })
             .Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);

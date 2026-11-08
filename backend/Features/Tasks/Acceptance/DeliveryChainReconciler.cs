@@ -1,3 +1,5 @@
+using AgentStudio.Git;
+
 namespace AgentStudio.Tasks;
 
 /// <summary>
@@ -221,18 +223,43 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
                 if (decision.ReasonCode is DeliveryChainReasons.VerdictStale
                     or DeliveryChainReasons.AcceptedDeliveryStale)
                 {
-                    if (_stranding is null)
+                    var integration = _stranding is null
+                        ? null : await _stranding.IntegrateCurrentDeliveryAsync(returned);
+                    if (integration?.Outcome is MergeIntoIntegrationOutcome.Conflict
+                        or MergeIntoIntegrationOutcome.AgentRoundRequired)
                     {
-                        TaskJsonFile.UpdateField(returned.FolderPath, "phase",
-                            LifecyclePhases.Integrating, _logger);
-                        _scanner.InvalidateCache();
-                        _scanner.PublishCoreFromKnownFolder(returned.FolderPath);
+                        // The coordinator starts a merge round for conflicts. If
+                        // that handoff did not move the card, persist the same
+                        // recovery through the acceptance route.
+                        var current = _scanner.FindJob(returned.Id, returned.WatchPath);
+                        if (current?.State == TaskStates.AutoReview
+                            && current.PendingIntent is null)
+                        {
+                            var queued = _recovery is not null
+                                && _statuses.BuildLookup([current]).TryGetValue(current.TaskKey, out var freshStatus)
+                                && freshStatus is not null
+                                && _recovery.Queue(current, freshStatus, DeliveryChainReasons.MergeRoundQueued,
+                                    TaskIntegrationRecoveryService.AcceptanceRailSource).Queued;
+                            if (!queued)
+                            {
+                                var parked = await _transitions.MoveAsync(current.Id, TaskStates.Escalated,
+                                    current.WatchPath, ct, cause: TimelineActors.System,
+                                    reason: "The current delivery conflicts with develop, but a merge round could not be queued.",
+                                    expectedSourceState: TaskStates.AutoReview,
+                                    transitionCause: LaneChangeCauses.Escalated,
+                                    transitionDetail: DeliveryChainReasons.MergeRoundQueued);
+                                return parked.Status == MoveJobStatus.Success ? Applied.Moved : Applied.Failed;
+                            }
+                        }
+                        return Applied.Moved;
                     }
-                    else if (!_stranding.RequestFreshReview(returned))
+                    if (integration?.Outcome.IsSuccessfulIntegration() != true
+                        || !_stranding!.RequestFreshReview(returned))
                     {
                         var parked = await _transitions.MoveAsync(returned.Id, TaskStates.Escalated,
                             returned.WatchPath, ct, cause: TimelineActors.System,
-                            reason: "The delivery verdict became stale, but a fresh review could not be requested.",
+                            reason: "The delivery verdict became stale, but the current delivery could not be integrated and sent for review: "
+                                + (integration?.Error ?? integration?.Outcome.ToString() ?? "integration unavailable"),
                             expectedSourceState: TaskStates.AutoReview,
                             transitionCause: LaneChangeCauses.Escalated,
                             transitionDetail: DeliveryChainReasons.VerdictStale);
@@ -241,7 +268,7 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
                     else
                         _timeline?.Append(returned.FolderPath,
                             TimelineEventKinds.DeliveryReviewRequested, TimelineActors.System,
-                            "The delivery verdict became stale; a fresh review was requested.",
+                            "The current delivery was integrated after the stale verdict; a fresh review was requested.",
                             details: new Dictionary<string, string>
                             {
                                 ["reason"] = decision.ReasonCode,

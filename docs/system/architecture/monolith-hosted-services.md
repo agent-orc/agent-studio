@@ -107,7 +107,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | OperatorApprovalNotifier | always | report | Authority host. Sends the operator-feed notice and the optional push link for a new Owner approval request (security model SM-5). Carries no decision route; makes no transition decision. |
 | HostReleaseDriftWatchdog | !PD | report | Authority host |
 | AutoReviewQueueStagnationWatchdog | !PD | report | Authority host |
-| AutoReviewStrandingWatchdog | !PD | decide, switched | Per-card ownerless Auto Review recovery through the `ReviewReport` transition profile and `AutoReviewStrandingPolicy`. Starts the missing step, re-enters the batch gate, or escalates with a stall-intervention receipt. |
+| AutoReviewStrandingWatchdog | !PD | decide, switched | Per-card ownerless Auto Review recovery reads the `ReviewReport` transition profile, runs in both Monolith and Engine modes, and applies `AutoReviewStrandingPolicy`. Starts the missing step, re-enters the batch gate, or escalates with a stall-intervention receipt that names the active mode. |
 | AdaptiveReviewParallelismAdvisor | !PD | report | Authority host (advisory) |
 | CodingYieldAdvisor | !PD | report | Authority host (advisory) |
 | ReviewInfrastructureRetryScheduler | !PD | apply-recover | Authority. Mints the successor attempt for a retry the review decision already scheduled. |
