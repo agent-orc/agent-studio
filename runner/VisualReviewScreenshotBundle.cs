@@ -57,27 +57,46 @@ internal static class VisualReviewScreenshotBundle
                     listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: omitted because of image evidence size limit");
                     continue;
                 }
-                var content = await readContent(artifact, ct);
-                if (content is null)
+                try
                 {
-                    listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: unavailable");
-                    continue;
+                    var content = await readContent(artifact, ct);
+                    if (content is null)
+                    {
+                        listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: unavailable");
+                        continue;
+                    }
+                    var bytes = Convert.FromBase64String(content.ContentBase64);
+                    if (bytes.LongLength > MaximumImageBytes || total + bytes.LongLength > MaximumTotalBytes)
+                    {
+                        listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: omitted because of image evidence size limit");
+                        continue;
+                    }
+                    var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
+                    if (bytes.LongLength != artifact.SizeBytes
+                        || !string.Equals(sha, artifact.Sha256, StringComparison.OrdinalIgnoreCase))
+                    {
+                        listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: integrity check failed");
+                        continue;
+                    }
+                    var extension = Path.GetExtension(artifact.Name).ToLowerInvariant();
+                    if (!HasSupportedImageHeader(bytes, extension))
+                    {
+                        listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: unreadable image header");
+                        continue;
+                    }
+                    var stage = VisualReviewEvidence.IsAfterScreenshot(artifact.Name) ? "after" : "before";
+                    var path = Path.Combine(directory, $"{stage}-image-{listed.Count + 1:D2}{extension}");
+                    var pendingPath = Path.Combine(directory, $"pending-image-{listed.Count + 1:D2}{extension}");
+                    await File.WriteAllBytesAsync(pendingPath, bytes, ct);
+                    File.Move(pendingPath, path);
+                    total += bytes.LongLength;
+                    copied++;
+                    listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: {JsonSerializer.Serialize(path)}");
                 }
-                var bytes = Convert.FromBase64String(content.ContentBase64);
-                var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
-                if (bytes.LongLength != artifact.SizeBytes
-                    || !string.Equals(sha, artifact.Sha256, StringComparison.OrdinalIgnoreCase))
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
-                    listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: integrity check failed");
-                    continue;
+                    listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: unavailable or unreadable ({ex.GetType().Name})");
                 }
-                var extension = Path.GetExtension(artifact.Name).ToLowerInvariant();
-                var stage = VisualReviewEvidence.IsAfterScreenshot(artifact.Name) ? "after" : "before";
-                var path = Path.Combine(directory, $"{stage}-image-{listed.Count + 1:D2}{extension}");
-                await File.WriteAllBytesAsync(path, bytes, ct);
-                total += bytes.LongLength;
-                copied++;
-                listed.Add($"- {JsonSerializer.Serialize(artifact.Name)}: {JsonSerializer.Serialize(path)}");
             }
             if (omittedByCount > 0)
                 listed.Add($"- {omittedByCount} more screenshots omitted by the 100-image review limit.");
@@ -90,6 +109,21 @@ internal static class VisualReviewScreenshotBundle
         return Directory.Exists(directory)
             && Directory.EnumerateFiles(directory, "after-image-*", SearchOption.TopDirectoryOnly).Any();
     }
+
+    private static bool HasSupportedImageHeader(ReadOnlySpan<byte> bytes, string extension) =>
+        extension switch
+        {
+            ".png" => bytes.Length >= 24
+                && bytes[..8].SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })
+                && bytes.Slice(12, 4).SequenceEqual("IHDR"u8),
+            ".jpg" or ".jpeg" => bytes.Length >= 4
+                && bytes[0] == 0xFF && bytes[1] == 0xD8
+                && bytes[^2] == 0xFF && bytes[^1] == 0xD9,
+            ".webp" => bytes.Length >= 16
+                && bytes[..4].SequenceEqual("RIFF"u8)
+                && bytes.Slice(8, 4).SequenceEqual("WEBP"u8),
+            _ => false,
+        };
 
     internal static string PromptSection(string screenshotEvidence, string repositoryPath)
     {

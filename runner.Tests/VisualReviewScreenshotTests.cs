@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -32,12 +34,15 @@ public sealed class VisualReviewScreenshotTests
             Assert.Contains(image, prompt);
             Assert.Contains("image-viewing tool", prompt);
 
-            // The model is stubbed: this verifies the screenshot and its cited
-            // verdict survive the review boundary, not machine vision quality.
-            var modelVerdict = new ReviewVerdictDto("visual-review", modelStatus,
-                "RemoteAspectVerdict", modelStatus == "pass" ? "Footer is separated."
+            // Judge the pixels in the delivered fixture. The clean footer has
+            // four wide gaps between metric groups; the run-on footer has none.
+            // This also catches a swapped or accidentally edited fixture.
+            var visibleStatus = FooterSpacingVerdict(image);
+            Assert.Equal(modelStatus, visibleStatus);
+            var modelVerdict = new ReviewVerdictDto("visual-review", visibleStatus,
+                "RemoteAspectVerdict", visibleStatus == "pass" ? "Footer is separated."
                     : "Footer metrics run together and end with a separator.",
-                $"{artifact.Name}: footer", modelStatus == "pass" ? "none"
+                $"{artifact.Name}: footer", visibleStatus == "pass" ? "none"
                     : "Separate footer metrics and remove the dangling separator.");
             var actual = VisualReviewEvidence.EnforceMissingScreenshots(modelVerdict,
                 ["frontend/src/app/layout/footer.component.html"], hasReadableScreenshot: true);
@@ -170,6 +175,42 @@ public sealed class VisualReviewScreenshotTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public async Task Failed_and_unreadable_artifacts_do_not_hide_a_later_valid_after_screenshot()
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "visual-review", "clean-footer.png"));
+        byte[] malformed = [1, 2, 3, 4];
+        var failedFetch = Artifact("failed", "bars/after-001.png", bytes);
+        var invalidBase64 = Artifact("base64", "bars/after-002.png", bytes);
+        var invalidImage = Artifact("image", "bars/after-003.png", malformed);
+        var valid = Artifact("valid", "bars/after-004.png", bytes);
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync(
+                [failedFetch, invalidBase64, invalidImage, valid],
+                (artifact, _) => artifact.ArtifactId switch
+                {
+                    "failed" => Task.FromException<ArtifactContentDto?>(
+                        new IOException("artifact fetch failed")),
+                    "base64" => Task.FromResult<ArtifactContentDto?>(Content(artifact, "not base64")),
+                    "image" => Task.FromResult<ArtifactContentDto?>(Content(artifact,
+                        Convert.ToBase64String(malformed))),
+                    _ => Task.FromResult<ArtifactContentDto?>(Content(artifact,
+                        Convert.ToBase64String(bytes))),
+                }, root, default);
+
+            Assert.Contains($"\"{failedFetch.Name}\": unavailable or unreadable", evidence);
+            Assert.Contains($"\"{invalidBase64.Name}\": unavailable or unreadable", evidence);
+            Assert.Contains($"\"{invalidImage.Name}\": unreadable image header", evidence);
+            Assert.Contains($"\"{valid.Name}\":", evidence);
+            Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
+            Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
     [Theory]
     [InlineData("bars/before-1920-light.png", false)]
     [InlineData("before.png", false)]
@@ -187,6 +228,26 @@ public sealed class VisualReviewScreenshotTests
     private static ArtifactDto Artifact(string id, string name, byte[] bytes) => new(
         id, "run-1", name, "image/png", Convert.ToHexStringLower(SHA256.HashData(bytes)),
         bytes.Length, "key", 1, DateTime.UnixEpoch);
+
+    private static ArtifactContentDto Content(ArtifactDto artifact, string base64) => new(
+        artifact.ArtifactId, artifact.RunId, artifact.Name, artifact.MediaType,
+        artifact.Sha256, base64, artifact.SizeBytes);
+
+    private static string FooterSpacingVerdict(string path)
+    {
+        using var image = Image.Load<Rgba32>(path);
+        var inkColumns = Enumerable.Range(0, image.Width)
+            .Where(x => Enumerable.Range(145, 21).Any(y =>
+            {
+                var pixel = image[x, y];
+                return pixel.R < 150 && pixel.G < 150 && pixel.B < 150;
+            }))
+            .ToArray();
+        Assert.NotEmpty(inkColumns);
+        var wideGaps = inkColumns.Zip(inkColumns.Skip(1))
+            .Count(pair => pair.Second - pair.First > 20);
+        return wideGaps >= 3 ? "pass" : "concerns";
+    }
 
     [Fact]
     public void Visual_prompt_receives_product_and_admin_rules()
