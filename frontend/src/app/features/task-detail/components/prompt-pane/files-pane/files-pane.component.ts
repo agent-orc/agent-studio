@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, input, output, signal } from '@angular/core';
 import { DomSanitizer, type SafeHtml } from '@angular/platform-browser';
 import { TaskService } from '../../../../../services/task.service';
+import { FileBodyCache } from './file-body-cache';
 import { MarkdownRichEditorComponent } from '../../../../../components/markdown-rich-editor/markdown-rich-editor';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import { FileSourceHistoryComponent } from '../../../../../components/file-source-history/file-source-history.component';
@@ -51,13 +52,14 @@ import { ArchivedFilesManifestComponent } from '../../../../retention/components
   styleUrl: './files-pane.component.scss',
 })
 export class FilesPaneComponent {
-  private readonly jobs = inject(TaskService);
+  private readonly fileBodies = new FileBodyCache(inject(TaskService));
   private readonly sanitizer = inject(DomSanitizer);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly artifacts = input<TaskArtifact[]>([]);
   /** Prefilled body for `prompt.md` so we don't re-fetch what `TaskDetail` already loaded. */
   readonly promptContent = input<string>('');
   readonly jobId = input<string | null>(null);
+  readonly active = input(true);
   readonly archived = input(false);
   readonly watchPath = input<string | null>(null);
   readonly isRunning = input(false);
@@ -66,14 +68,9 @@ export class FilesPaneComponent {
   readonly documentRequested = output<string>();
   /** File names whose card is currently expanded. */
   private readonly expanded = signal<Set<string>>(new Set());
-  /** Cached file bodies. `null` marks a load error so the view can render a tidy fallback. */
-  private readonly content = signal<Map<string, string | null>>(new Map());
-  private readonly loading = signal<Set<string>>(new Set());
   private readonly rawVisible = signal<Set<string>>(new Set());
   private readonly historyVisible = signal<Set<string>>(new Set());
   private readonly editingPrompt = signal(false);
-  /** Tracks which file names we have already kicked off a fetch for, to avoid duplicate calls. */
-  private readonly fetched = new Set<string>();
   private readonly initialized = new Set<string>();
   /**
    * Memoised parse of structured `aspect-*.json` bodies, keyed by file name.
@@ -110,11 +107,9 @@ export class FilesPaneComponent {
       this.jobId();
       this.expanded.set(new Set());
       this.editingPrompt.set(false);
-      this.content.set(new Map());
-      this.loading.set(new Set());
+      this.fileBodies.reset();
       this.rawVisible.set(new Set());
       this.historyVisible.set(new Set());
-      this.fetched.clear();
       this.initialized.clear();
       this.aspectDocCache.clear();
       this.htmlDocCache.clear();
@@ -137,28 +132,18 @@ export class FilesPaneComponent {
       if (changed) this.expanded.set(nextExpanded);
     }, { allowSignalWrites: true });
 
-    // Prefetch content for every non-prompt artifact so previews / expansions
-    // are instant. Prompt body is supplied by the parent — no fetch needed.
+    // Only visible, expanded documents need their bodies. Prompt body is
+    // supplied by the parent; collapsed artifacts load when opened.
     effect(() => {
       const list = this.orderedArtifacts();
+      const expanded = this.expanded();
       const jobId = this.jobId();
       const watchPath = this.watchPath() ?? undefined;
-      if (!jobId) return;
-      for (const a of list) {
-        if (a.kind === 'prompt') continue;
-        if (this.fetched.has(a.name)) continue;
-        this.fetched.add(a.name);
-        this.markLoading(a.name, true);
-        this.jobs.readJobFile(jobId, a.name, watchPath).subscribe({
-          next: (text) => {
-            this.setContent(a.name, typeof text === 'string' ? text : '');
-            this.markLoading(a.name, false);
-          },
-          error: () => {
-            this.setContent(a.name, null);
-            this.markLoading(a.name, false);
-          },
-        });
+      if (!jobId || !this.active()) return;
+      for (const file of list) {
+        if (file.kind !== 'prompt' && expanded.has(file.name)) {
+          this.fileBodies.read(jobId, file.name, watchPath);
+        }
       }
     });
 
@@ -206,7 +191,7 @@ export class FilesPaneComponent {
   /** Resolves the body for a file. Prompt comes from the input; others come from the cache. */
   bodyFor(file: TaskArtifact): string | null | undefined {
     if (file.kind === 'prompt') return this.promptContent();
-    return this.content().get(file.name);
+    return this.fileBodies.content().get(file.name);
   }
 
   presentationFor(file: TaskArtifact): DocumentPresentation {
@@ -236,7 +221,12 @@ export class FilesPaneComponent {
   }
 
   isLoading(name: string): boolean {
-    return this.loading().has(name);
+    return this.fileBodies.loading().has(name);
+  }
+
+  retryFile(name: string): void {
+    const jobId = this.jobId();
+    if (jobId) this.fileBodies.read(jobId, name, this.watchPath() ?? undefined, true);
   }
 
   isRawVisible(name: string): boolean {
@@ -361,16 +351,4 @@ export class FilesPaneComponent {
     this.editingPrompt.set(false);
   }
 
-  private setContent(name: string, value: string | null): void {
-    const next = new Map(this.content());
-    next.set(name, value);
-    this.content.set(next);
-  }
-
-  private markLoading(name: string, on: boolean): void {
-    const next = new Set(this.loading());
-    if (on) next.add(name);
-    else next.delete(name);
-    this.loading.set(next);
-  }
 }

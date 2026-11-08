@@ -159,6 +159,7 @@ export class MenuComponent implements OnDestroy {
         return true;
       },
       this.destroyRef,
+      { interactiveRoot: () => this.host.nativeElement },
     );
   }
 
@@ -171,6 +172,7 @@ export class MenuComponent implements OnDestroy {
   private acquirePortal(): void {
     if (this.portalRef !== null) return;
     this.portalRef = this.overlayPortal.attachPanel(this.host.nativeElement);
+    this.modalStack.refreshModalScope();
     this.attachReposition();
   }
 

@@ -1711,6 +1711,91 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         Assert.Contains("results/report.html", record.Reason);
     }
 
+    [Theory]
+    [InlineData(true, TaskStates.HumanReview)]
+    [InlineData(false, TaskStates.Escalated)]
+    public async Task ResearchDone_FailedSummary_ContinuesWithAgentStatusOrEscalates(
+        bool hasAgentStatus, string expectedLane)
+    {
+        const string slug = "research-failed-summary";
+        SeedReviewJobWithDone(slug, mode: TaskModes.Research);
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, slug);
+        Directory.CreateDirectory(Path.Combine(folder, "results"));
+        File.WriteAllText(Path.Combine(folder, "results", "report.html"),
+            "<html><body>Agent research result</body></html>");
+        if (hasAgentStatus)
+            File.WriteAllText(Path.Combine(folder, "results", "status.md"),
+                "# Agent status\n\nResearch is complete.\n");
+        var pipelineLog = new PipelineExecutionLog(
+            TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
+        pipelineLog.Begin(folder, PipelineCatalogue.ForMode(TaskModes.Research), Project, slug);
+        pipelineLog.RecordStep(folder, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.SummaryAssessmentStepId,
+            Kind = StepKind.Orchestrator,
+            Status = PipelineStepStatus.Failed,
+            Reason = "one-shot exited with code 1",
+            CompletedAt = DateTime.UnixEpoch,
+        });
+        var orchestrator = BuildOrchestratorWithAspects(
+            _ => throw new InvalidOperationException("Research must skip aspects"),
+            pipelineLog: pipelineLog);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var moved = Path.Combine(_watchPath, expectedLane, slug);
+        Assert.True(Directory.Exists(moved));
+        if (hasAgentStatus)
+            Assert.Contains("Research is complete", File.ReadAllText(Path.Combine(moved, "status.md")));
+        var record = ReadOnlyDecisionRecord();
+        Assert.Equal(hasAgentStatus ? ReviewDecisionKind.AcceptAsDone : ReviewDecisionKind.Escalate,
+            record.Kind);
+        Assert.Contains(_timeline.ReadAll(moved), evt =>
+            evt.Kind == (hasAgentStatus ? TimelineEventKinds.ResultSummaryPending
+                : TimelineEventKinds.OrchestratorEscalated));
+        var steps = pipelineLog.Read(moved)!.Steps;
+        Assert.Equal(PipelineStepStatus.Failed,
+            steps.Single(step => step.StepId == PipelineCatalogue.SummaryAssessmentStepId).Status);
+        Assert.Equal(hasAgentStatus ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
+            steps.Single(step => step.StepId == PipelineCatalogue.OrchestratorDecisionStepId).Status);
+    }
+
+    [Fact]
+    public async Task NeedsInput_DecisionModelThrows_EscalatesWithReason()
+    {
+        const string slug = "decision-model-failed";
+        SeedReviewJobWithNeedsInput(slug, "Choose a report format");
+        var orchestrator = BuildOrchestrator("unused",
+            onCall: () => throw new InvalidOperationException("model process exited 1"));
+
+        await orchestrator.ProcessCardAsync(_workspace, Project, slug, _watchPath,
+            CancellationToken.None);
+
+        var moved = Path.Combine(_watchPath, TaskStates.Escalated, slug);
+        Assert.True(Directory.Exists(moved));
+        Assert.Contains("review-decision-model-threw", ReadOnlyDecisionRecord().Reason);
+        Assert.Contains(_timeline.ReadAll(moved), evt => evt.Kind == TimelineEventKinds.OrchestratorEscalated);
+    }
+
+    [Fact]
+    public async Task NeedsInput_DecisionModelThrows_AndEscalationMoveFails_RecordsTimelineReason()
+    {
+        const string slug = "decision-model-move-blocked";
+        SeedReviewJobWithNeedsInput(slug, "Choose a report format");
+        File.WriteAllText(Path.Combine(_watchPath, TaskStates.Escalated, slug), "occupied");
+        var orchestrator = BuildOrchestrator("unused",
+            onCall: () => throw new InvalidOperationException("model process exited 1"));
+
+        await orchestrator.ProcessCardAsync(_workspace, Project, slug, _watchPath,
+            CancellationToken.None);
+
+        var original = Path.Combine(_watchPath, TaskStates.AutoReview, slug);
+        Assert.True(Directory.Exists(original));
+        Assert.Contains(_timeline.ReadAll(original), evt =>
+            evt.Kind == TimelineEventKinds.PostStepFinished
+            && evt.Summary.Contains("escalation could not move", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task ResearchDone_WithInvalidPrimaryHtml_ReissuesWithoutRunningAspects()
     {
@@ -2642,7 +2727,8 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         Func<string, string> aspectStub,
         IReadOnlyList<string>? aspectRunners = null,
         AutoReviewStatusSnapshot? statusSnapshot = null,
-        bool withTaskMutations = false)
+        bool withTaskMutations = false,
+        PipelineExecutionLog? pipelineLog = null)
     {
         var dict = new Dictionary<string, string?>
         {
@@ -2686,6 +2772,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
             scanner, stateMachine, taskAccess, chatLog, prompts, aspectRunner, statusSnapshot ?? new AutoReviewStatusSnapshot(), config,
             NullLogger<ReviewDecisionOrchestrator>.Instance,
             timeline: _timeline,
+            pipelineLog: pipelineLog,
             taskMutations: withTaskMutations ? BuildTaskMutations(scanner, config) : null);
         return orchestrator;
     }

@@ -543,6 +543,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                                 _logger.LogWarning(ex,
                                     "ReviewDecisionOrchestrator failed to process lightweight report {Project}/{JobId}",
                                     entry.Name, pending.Job.Id);
+                                await EscalatePostProcessingFailureAsync(
+                                    workspace, entry, pending.Job,
+                                    "lightweight-review-threw:" + ex.GetType().Name + ": " + ex.Message,
+                                    CancellationToken.None);
                             }
                             finally
                             {
@@ -551,9 +555,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             continue;
                         }
 
-                        // Defer to the read-only parallel pool. The cheap
-                        // enabled-checks happen here so a disabled/no-aspect
-                        // project never occupies a slot.
+                        // The project can deliberately turn off the aspect
+                        // pipeline. That kill switch leaves DONE for an
+                        // operator instead of treating it as a failed step.
                         if (aspects.Count == 0 ||
                             !_configuration.GetValue("ReviewDecisionOrchestrator:AspectsEnabled", true))
                         {
@@ -635,6 +639,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         _logger.LogWarning(ex,
                             "ReviewDecisionOrchestrator failed to process {Project}/{JobId}",
                             entry.Name, pending.Job.Id);
+                        await EscalatePostProcessingFailureAsync(
+                            workspace, entry, pending.Job,
+                            "review-dispatch-threw:" + ex.GetType().Name + ": " + ex.Message,
+                            CancellationToken.None);
                     }
                     finally
                     {
@@ -796,6 +804,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     workspace, entry, pending, cliBinary, model, aspectModel,
                     TimeSpan.FromSeconds(aspectTimeoutSeconds), maxPerHour,
                     ConfiguredMaxReissues(entry.Name), ct);
+                if (result.Status == PostProcessingCardStatus.Blocked
+                    && result.Reason is not ("aspect-reviews-disabled" or "no-aspect-runners-resolved"))
+                    result = await EscalatePostProcessingFailureAsync(
+                        workspace, entry, pending.Job, result.Reason, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -811,7 +823,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 _logger.LogWarning(ex,
                     "ReviewDecisionOrchestrator failed to post-process {Project}/{JobId}",
                     entry.Name, pending.Job.Id);
-                result = PostProcessingCardResult.Blocked("dispatch-threw:" + ex.GetType().Name);
+                result = await EscalatePostProcessingFailureAsync(
+                    workspace, entry, pending.Job,
+                    "dispatch-threw:" + ex.GetType().Name + ": " + ex.Message,
+                    CancellationToken.None);
             }
             finally
             {
@@ -826,9 +841,73 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // 4-auto-review card at all - a lane move that already took it out, or
         // a sentinel that a previous tick resolved. Both are "nothing to do
         // here", not a fault of this card.
-        return skipReason is null
+        var skipped = skipReason is null
             ? PostProcessingCardResult.Deferred("card-not-pending-in-auto-review")
             : ClassifySkip(skipReason);
+        if (skipped.Status == PostProcessingCardStatus.Blocked
+            && _scanner.FindJob(jobId, entry.Path) is { } blocked)
+            return await EscalatePostProcessingFailureAsync(
+                workspace, entry, blocked, skipped.Reason, ct);
+        return skipped;
+    }
+
+    private async Task<PostProcessingCardResult> EscalatePostProcessingFailureAsync(
+        string workspace, WatchPathEntry entry, TaskInfo job, string failure, CancellationToken ct)
+    {
+        var current = _scanner.FindJob(job.Id, entry.Path) ?? job;
+        if (current.State != TaskStates.AutoReview)
+            return PostProcessingCardResult.Decided("post-processing-lane-already-changed");
+        var reason = "Post-processing could not reach a review decision: "
+            + ResultFinalizationPolicy.Limit(CredentialRedactor.Redact(failure));
+        MoveJobOutcome moved;
+        if (_humanReviewEscalation is not null)
+        {
+            moved = await _humanReviewEscalation.EscalateAsync(
+                current.Id, entry.Path, entry.Name,
+                HumanReviewEscalationCategories.AutoReviewEscalation,
+                reason, ct, expectedSourceState: TaskStates.AutoReview);
+        }
+        else
+        {
+            moved = GuardedMoveJob(current.Id, TaskStates.Escalated, entry.Path,
+                reason: reason, transitionCause: LaneChangeCauses.Escalated,
+                transitionDetail: "post-processing-failure");
+            if (moved.Status == MoveJobStatus.Success)
+                AppendReviewDecision(workspace, new ReviewDecisionRecord(
+                    DateTime.UtcNow, current.Id, entry.Name,
+                    ReviewDecisionKind.Escalate, reason,
+                    "(deterministic post-processing failure)", "(no model call)", string.Empty),
+                    current.FolderPath, moved.NewFolderPath);
+        }
+        if (moved.Status != MoveJobStatus.Success)
+        {
+            EmitVerdictTimeline(current.FolderPath, TimelineEventKinds.PostStepFinished,
+                TimelineActors.Orchestrator,
+                "Post-processing failed and escalation could not move the card: " + moved.Status + ". " + reason,
+                new Dictionary<string, string>
+                {
+                    ["stepId"] = PipelineCatalogue.OrchestratorDecisionStepId,
+                    ["status"] = "failed",
+                    ["moveStatus"] = moved.Status.ToString(),
+                });
+            return PostProcessingCardResult.Blocked("escalation-move-failed:" + moved.Status + ":" + failure);
+        }
+
+        var folder = moved.NewFolderPath ?? current.FolderPath;
+        try
+        {
+            RecordOrchestratorDecisionStep(folder, PipelineStepStatus.Failed,
+                DecisionVerdictEscalate, reason);
+            _pipelineLog?.Complete(folder, pendingStepReason: reason);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not close failed post-processing pipeline for {JobId}", current.Id);
+        }
+        EmitVerdictTimeline(folder, TimelineEventKinds.OrchestratorEscalated,
+            TimelineActors.Orchestrator, reason,
+            new Dictionary<string, string> { ["cause"] = "post-processing-failure" });
+        return PostProcessingCardResult.Decided("post-processing-failure-escalated");
     }
 
     /// <summary>
@@ -1006,6 +1085,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         _logger.LogWarning(ex,
                             "ReviewDecisionOrchestrator failed to process {Project}/{JobId}",
                             entry.Name, pending.Job.Id);
+                        await EscalatePostProcessingFailureAsync(
+                            workspace, entry, pending.Job,
+                            "aspect-review-threw:" + ex.GetType().Name + ": " + ex.Message,
+                            CancellationToken.None);
                     }
                     finally
                     {
@@ -1424,6 +1507,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _logger.LogWarning(ex,
                 "ReviewDecisionOrchestrator CLI invocation failed for {Project}/{JobId}",
                 entry.Name, pending.Job.Id);
+            await EscalatePostProcessingFailureAsync(workspace, entry, pending.Job,
+                "review-decision-model-threw:" + ex.GetType().Name + ": " + ex.Message,
+                CancellationToken.None);
             return;
         }
 
@@ -2293,6 +2379,22 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
+        var failedSummary = pipelineRecord?.Steps.FirstOrDefault(step =>
+            step.StepId == PipelineCatalogue.SummaryAssessmentStepId
+            && step.Status == PipelineStepStatus.Failed);
+        if (failedSummary is not null)
+        {
+            if (!SummaryGenerationService.TryRestoreAgentReportStatus(current, out var source))
+            {
+                await EscalatePostProcessingFailureAsync(workspace, entry, current,
+                    "post-summary-assessment failed (" + (failedSummary.Reason ?? "no reason recorded")
+                    + ") and no agent status or final message could be recovered.", ct);
+                return;
+            }
+            EmitVerdictTimeline(current.FolderPath, TimelineEventKinds.ResultSummaryPending,
+                TimelineActors.System,
+                "Summary assessment failed; review uses the agent's " + source + ".");
+        }
         var isResearch = TaskModes.Normalize(current.Mode) == TaskModes.Research;
         var primaryReport = Path.Combine(current.FolderPath, "results", "report.html");
         var hasPrimaryResult = isResearch

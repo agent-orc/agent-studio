@@ -3,8 +3,9 @@
 // localhost resolves to ::1 first, so an IPv4-only bind costs every new
 // connection a fallback delay (docs/operations/common-problems/localhost-ipv6-connect-delay).
 import http from 'node:http';
+import https from 'node:https';
 import path from 'node:path';
-import { createReadStream } from 'node:fs';
+import { createReadStream, readFileSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
@@ -13,8 +14,9 @@ const isProxy = url => /^\/(api|hubs)(?:[/?]|$)/.test(url);
 const proxyOptions = (backend, request) => ({
   hostname: backend.hostname.replace(/^\[|\]$/g, ''), port: backend.port || 80,
   path: request.url, method: request.method,
-  headers: { ...request.headers, host: backend.host,
-    ...(['networked-monolith', 'operator-cli'].includes(process.env.PW_E2E_PROFILE ?? '') ? { 'x-forwarded-proto': 'https' } : {}) },
+  headers: { ...request.headers,
+    host: process.env.PW_E2E_PROFILE === 'public-demo' ? request.headers.host : backend.host,
+    ...(['networked-monolith', 'operator-cli', 'public-demo'].includes(process.env.PW_E2E_PROFILE ?? '') ? { 'x-forwarded-proto': 'https' } : {}) },
 });
 
 async function createFrontendHandlers(directory, backendUrl) {
@@ -119,7 +121,10 @@ const ipv6Unavailable = new Set(['EADDRNOTAVAIL', 'EAFNOSUPPORT']);
 // stays IPv4-only on purpose: the connector owns [::1]:5031.
 export async function startFrontendServer(directory, port, backendUrl, { listen = listenOn } = {}) {
   const { handleRequest, handleUpgrade } = await createFrontendHandlers(directory, backendUrl);
-  const create = () => http.createServer(handleRequest).on('upgrade', handleUpgrade);
+  const tls = process.env.PW_E2E_PROFILE === 'public-demo';
+  const create = () => (tls
+    ? https.createServer({ key: readFileSync(process.env.PW_E2E_TLS_KEY), cert: readFileSync(process.env.PW_E2E_TLS_CERT) }, handleRequest)
+    : http.createServer(handleRequest)).on('upgrade', handleUpgrade);
   const ipv4 = create();
   await listen(ipv4, port, '127.0.0.1');
   const boundPort = ipv4.address().port;
@@ -145,6 +150,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const port = Number(portText);
   if (!directory || !backend || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Usage: node serve-prebuilt-frontend.mjs <directory> <port> <loopback-backend-url>');
   const server = await startFrontendServer(directory, port, backend);
-  console.log('Prebuilt frontend listening on ' + server.addresses.map(host => 'http://' + (host.includes(':') ? '[' + host + ']' : host) + ':' + server.port).join(' and '));
+  const scheme = process.env.PW_E2E_PROFILE === 'public-demo' ? 'https://' : 'http://';
+  console.log('Prebuilt frontend listening on ' + server.addresses.map(host => scheme + (host.includes(':') ? '[' + host + ']' : host) + ':' + server.port).join(' and '));
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close().finally(() => process.exit(0)));
 }

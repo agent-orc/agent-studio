@@ -320,7 +320,9 @@ public sealed class BoardConditionalReadTests : IClassFixture<BoardConditionalRe
         Seed("t-2", "Second task", TaskStates.Ready);
         // Stand in for the watcher event the FileSystemWatcher would deliver, so
         // the assertion is about the validator rather than about debounce timing.
-        _host.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        var scanner = _host.Services.GetRequiredService<TaskScannerService>();
+        Assert.Equal(2, _host.Services.GetRequiredService<TaskIndexCache>().ForceRefresh());
+        Assert.Contains(scanner.ScanAllJobs(), task => task.Id == "t-2");
 
         var after = await GetAsync(client, "/api/tasks/grouped", before.ETag);
 

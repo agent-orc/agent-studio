@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-test('open orchestrator sheet fills the phone body with the sidebar present', async ({ page }, testInfo) => {
+test('open orchestrator sheet fills the phone body with the sidebar hidden', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -25,8 +25,9 @@ test('open orchestrator sheet fills the phone body with the sidebar present', as
   await page.route('**/healthz', route => route.fulfill({ status: 200, body: 'Healthy' }));
 
   await page.goto('/');
-  await expect(page.getByTestId('studio-sidebar')).toBeVisible();
-  await page.getByTestId('orch-side-sheet-toggle').click();
+  await expect(page.getByTestId('studio-sidebar')).toBeHidden();
+  await page.getByRole('button', { name: 'More navigation' }).click();
+  await page.getByRole('menuitem', { name: 'Project chat' }).click();
 
   const sheetHost = page.locator('app-orchestrator-side-sheet');
   const sheet = page.getByTestId('orch-side-sheet');

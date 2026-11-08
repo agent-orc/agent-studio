@@ -52,20 +52,20 @@ def env_read(path):
 def env_set(path, changes):
     source = Path(path)
     lines = source.read_text().splitlines()
+    for value in changes.values():
+        if value is not None and (not isinstance(value, str) or "\n" in value or "\r" in value):
+            fail("invalid environment value")
     seen = set()
     output = []
     for line in lines:
         key = line.split("=", 1)[0] if "=" in line else ""
         if key in changes:
-            if key not in seen:
+            if key not in seen and changes[key] is not None:
                 output.append(f"{key}={changes[key]}")
-                seen.add(key)
+            seen.add(key)
         else:
             output.append(line)
-    output.extend(f"{key}={value}" for key, value in changes.items() if key not in seen)
-    for value in changes.values():
-        if not isinstance(value, str) or "\n" in value or "\r" in value:
-            fail("invalid environment value")
+    output.extend(f"{key}={value}" for key, value in changes.items() if key not in seen and value is not None)
     descriptor, temporary = tempfile.mkstemp(prefix=".networked-env-", dir=source.parent)
     try:
         with os.fdopen(descriptor, "w") as stream:
@@ -85,6 +85,18 @@ def compose_ps(directory, env_file, service):
     return run(["docker", "compose", "--env-file", env_file, "ps", "-q", service], cwd=directory)
 
 
+def running_compose_service(project, service):
+    # Snapshot the installed stack without rendering the release's newer Compose file.
+    # Its required variables may not exist until the first switch writes them.
+    containers = run(["docker", "ps", "--filter", f"label=com.docker.compose.project={project}",
+                      "--filter", f"label=com.docker.compose.service={service}",
+                      "--format", "{{.ID}}"])
+    matches = containers.splitlines()
+    if len(matches) != 1:
+        fail(f"expected one running {service} container in Compose project {project}, found {len(matches)}")
+    return matches[0]
+
+
 def installed_commit(path):
     return (Path(path).resolve() / "COMMIT").read_text().strip()
 
@@ -95,13 +107,22 @@ def install_archive(archive, expected, release_root, commit):
         fail("transferred release digest mismatch")
     destination = Path(release_root) / expected
     if destination.exists():
-        if (destination / "COMMIT").read_text().strip() != commit:
+        marker = destination / "COMMIT"
+        if not marker.is_file():
+            # Earlier versions extracted directly into the final directory.
+            # A failed extraction left that directory behind without a marker.
+            shutil.rmtree(destination)
+        elif marker.read_text().strip() != commit:
             fail("release digest has a different commit")
-    else:
-        destination.mkdir(parents=True)
-        with tarfile.open(source) as stream:
-            stream.extractall(destination, filter="data")
-        (destination / "COMMIT").write_text(commit + "\n")
+    if not destination.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".networked-release-", dir=destination.parent) as temporary:
+            staged = Path(temporary)
+            with tarfile.open(source) as stream:
+                stream.extractall(staged, filter="data")
+            (staged / "COMMIT").write_text(commit + "\n")
+            os.chmod(staged, destination.parent.stat().st_mode & 0o777)
+            os.replace(staged, destination)
     return destination
 
 
@@ -131,8 +152,17 @@ def running_image(container, repository):
     if re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", original):
         pinned = original
     else:
+        # A container from the prior Compose file may use a tag. Resolve the
+        # tag's repository digest while checking that the tag still names the
+        # image used by the running container.
+        lookup = original
+        try:
+            if run(["docker", "image", "inspect", "--format", "{{.Id}}", original]) != image_id:
+                lookup = image_id
+        except RuntimeError:
+            lookup = image_id
         refs = json.loads(run(["docker", "image", "inspect", "--format",
-                               "{{json .RepoDigests}}", image_id]))
+                               "{{json .RepoDigests}}", lookup]))
         if not isinstance(refs, list):
             fail("running image has no repository digests")
         matches = [ref for ref in refs if isinstance(ref, str) and
@@ -153,21 +183,18 @@ def main(request):
         role = host["role"]
         if role == "server":
             images = {}
+            containers = {}
             for service, repository in (("api", config["images"]["api"]),
                                         ("frontend", config["images"]["web"])):
-                container = compose_ps(host["composeDir"], host["envFile"], service)
-                if not container:
-                    fail(f"{service} is not running")
+                container = running_compose_service(host["composeProject"], service)
+                containers[service] = container
                 images[service] = running_image(container, repository)
-            api_container = compose_ps(host["composeDir"], host["envFile"], "api")
             running_env = run(["docker", "inspect", "--format", '{{range .Config.Env}}{{println .}}{{end}}',
-                               api_container]).splitlines()
+                               containers["api"]]).splitlines()
             worker = next((line.split("=", 1)[1] for line in running_env
                            if line.startswith("RemoteGate__WorkerPath=")), None)
             gate_host = next((line.split("=", 1)[1] for line in running_env
                               if line.startswith("RemoteGate__SshHost=")), None)
-            if not worker or not gate_host:
-                fail("running API has no remote gate host and worker path")
             return {"value": {"apiImage": images["api"]["image"],
                               "webImage": images["frontend"]["image"],
                               "apiDigest": images["api"]["digest"],
@@ -176,9 +203,7 @@ def main(request):
                               "webImageId": images["frontend"]["imageId"],
                               "gateSshHost": gate_host, "workerPath": worker}}
         if role == "engine":
-            container = compose_ps(host["engineComposeDir"], host["engineEnvFile"], "orchestrator-engine")
-            if not container:
-                fail("engine is not running")
+            container = running_compose_service(host["engineComposeProject"], "orchestrator-engine")
             return {"value": {"engineVersion": run(["docker", "inspect", "--format",
                                                      "{{.Config.Image}}", container])}}
         if role == "gate":
@@ -214,6 +239,8 @@ def main(request):
         web_digest = web.rsplit("@sha256:", 1)[1]
         if not all(re.fullmatch(r"[0-9a-f]{64}", x) for x in (api_digest, web_digest)):
             fail("server images must be pinned digests")
+        if not host.get("gateSshHost") or not os.path.isabs(worker):
+            fail("server switch needs a gate SSH host and absolute worker path")
         run(["docker", "pull", api])
         run(["docker", "pull", web])
         env_set(host["envFile"], {"STUDIO_API_DIGEST": api_digest, "STUDIO_WEB_DIGEST": web_digest,
@@ -250,14 +277,28 @@ def main(request):
     if action == "coding_install":
         archive, original, expected, commit = fields
         incoming = Path(host["runnerIncoming"])
-        if any(incoming.iterdir()):
-            fail("runner incoming directory is not empty")
-        if digest(archive) != expected:
+        if not re.fullmatch(r"[0-9a-f]{64}", expected) or digest(archive) != expected:
             fail("transferred coding release digest mismatch")
-        with tarfile.open(archive) as stream:
-            stream.extractall(incoming, filter="data")
-        (incoming / "COMMIT").write_text(commit + "\n")
-        (incoming / "release-id").write_text(f"{commit[:12]}-{expected[:12]}\n")
+        release_id = f"{commit[:12]}-{expected[:12]}"
+        if incoming.exists() and any(incoming.iterdir()):
+            marker = incoming / "COMMIT"
+            identity = incoming / "release-id"
+            if marker.is_file() and identity.is_file():
+                if marker.read_text().strip() != commit or identity.read_text().strip() != release_id:
+                    fail("runner incoming directory contains another release")
+            else:
+                # Recover an extraction interrupted by the previous direct-write flow.
+                for entry in incoming.iterdir():
+                    if entry.is_dir() and not entry.is_symlink():
+                        shutil.rmtree(entry)
+                    else:
+                        entry.unlink()
+        if not incoming.exists() or not any(incoming.iterdir()):
+            incoming.mkdir(exist_ok=True)
+            with tarfile.open(archive) as stream:
+                stream.extractall(incoming, filter="data")
+            (incoming / "COMMIT").write_text(commit + "\n")
+            (incoming / "release-id").write_text(release_id + "\n")
         run(["sudo", "/usr/local/sbin/agent-runner-deploy", "--restart-review-drain"])
         return {"installed": True}
     if action == "coding_health":

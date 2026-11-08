@@ -286,7 +286,9 @@ public sealed class ResultVersionStore
             var path = Path.Combine(folderPath, AgentStudio.GeneratedFiles.FileGenerationIndex.RelativePath);
             if (File.Exists(path))
             {
-                var entries = JsonSerializer.Deserialize<List<FileGenerationMeta>>(File.ReadAllText(path), Json) ?? [];
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                var entries = JsonSerializer.Deserialize<List<FileGenerationMeta>>(stream, Json) ?? [];
                 var status = entries.LastOrDefault(item =>
                     string.Equals(item.File.Replace('\\', '/'), "status.md", StringComparison.OrdinalIgnoreCase));
                 if (status?.RunIndex is int runIndex)

@@ -99,4 +99,45 @@ public sealed class FileGenerationIndexTests : IDisposable
 
         Assert.Equal(2, index.CurrentRunIndex(_jobFolder));
     }
+
+    [Fact]
+    public async Task ParallelReadsAndUpserts_PreserveCompleteIndexAcrossRebuilds()
+    {
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
+        pipelineLog.EnsureRun(_jobFolder, PipelineCatalogue.Standard, "demo", "job-1");
+        pipelineLog.RecordStep(_jobFolder, new PipelineStepExecution
+        {
+            StepId = "aspect-requirement-fit",
+            Kind = StepKind.Aspect,
+            Status = PipelineStepStatus.Passed,
+        });
+        var index = new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance, pipelineLog);
+        var path = Path.Combine(_jobFolder, FileGenerationIndex.RelativePath);
+
+        for (var wave = 0; wave < 3; wave++)
+        {
+            if (wave > 0) File.Delete(path);
+            using var gate = new ManualResetEventSlim();
+            var operations = Enumerable.Range(0, 96).Select(i => Task.Run(() =>
+            {
+                gate.Wait();
+                if (i % 8 == 0)
+                    index.Upsert(Path.Combine(_jobFolder, "."), new FileGenerationMeta
+                    {
+                        File = "results\\report.html",
+                        Kind = "result",
+                    });
+                else
+                    Assert.Contains("aspect-requirement-fit.md", index.ReadForJob(_jobFolder).Keys);
+            })).ToArray();
+            gate.Set();
+            await Task.WhenAll(operations);
+
+            var entries = index.ReadForJob(_jobFolder, cacheLegacy: false);
+            Assert.Contains("aspect-requirement-fit.md", entries.Keys);
+            Assert.Contains("results/report.html", entries.Keys);
+            Assert.Equal("result", entries["results/report.html"].Kind);
+            Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, "files.json*.tmp"));
+        }
+    }
 }

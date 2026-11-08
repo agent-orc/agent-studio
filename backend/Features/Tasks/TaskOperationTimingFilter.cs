@@ -66,9 +66,12 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
         }
         var traceRequested = http.Request.Headers["X-Task-Switch-Trace"] == "1";
         var boardRead = IsBoardRead(route, http.Request.Method);
+        var mutation = (http.Request.Method == "POST" && route == "/api/tasks/")
+            || (http.Request.Method == "PUT" && route is
+                "/api/tasks/{jobId}/model" or "/api/tasks/{jobId}/cli-type" or "/api/tasks/{jobId}/thinking-level");
         var traceEnabled = boardRead
             ? traceRequested || SampleBoardRead()
-            : traceRequested
+            : mutation || traceRequested
               && http.Request.Method == "GET"
               && (coreRequest || route?.EndsWith("/{jobId}", StringComparison.Ordinal) == true);
         var traceLabel = boardRead ? "board-read-trace" : "task-switch-trace";
@@ -82,7 +85,7 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
             http.Response.Headers["X-Task-Switch-Id"] = trace.SwitchId;
             // Board reads open their own Git telemetry scope in the endpoint.
             if (!boardRead)
-                gitScope = GitProcessTelemetry.BeginRequest(coreRequest ? "tasks/core" : "tasks/detail",
+                gitScope = GitProcessTelemetry.BeginRequest(mutation ? "tasks/mutation" : coreRequest ? "tasks/core" : "tasks/detail",
                     _logger, includeNested: true);
         }
         object? result = null;
@@ -99,7 +102,7 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
             if (trace != null && detailRequest)
                 http.Response.Headers["X-Task-Detail-Workspace-Scans"] =
                     trace.WorkspaceScans.ToString(CultureInfo.InvariantCulture);
-            return trace != null && result is IResult inner
+            return trace != null && !mutation && result is IResult inner
                 ? new TaskSwitchTracedResult(inner, trace, GitProcessTelemetry.CurrentTally(),
                     GitProcessTelemetry.CurrentTimeouts(), _logger, traceLabel)
                 : result;
@@ -116,6 +119,7 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
         }
         finally
         {
+            var tally = mutation ? GitProcessTelemetry.CurrentTally() : null;
             gitScope?.Dispose();
             trace?.Restore();
             sw.Stop();
@@ -124,6 +128,7 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
             // The returned IResult has not executed yet, so the response still
             // carries its default 200; a 304 or an error result names its own.
             var statusCode = StatusCodeOf(result) ?? http.Response.StatusCode;
+            var breakdown = mutation ? trace?.Summary("complete", statusCode, 0, tally) : null;
 
             if (!http.Response.HasStarted)
             {
@@ -136,24 +141,26 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
             if (exceeded)
             {
                 _logger.LogWarning(
-                    "task-operation-timing operation={Operation} method={Method} path={Path} elapsedMs={ElapsedMs:0.###} budgetMs={BudgetMs:0.###} exceeded=true statusCode={StatusCode}",
+                    "task-operation-timing operation={Operation} method={Method} path={Path} elapsedMs={ElapsedMs:0.###} budgetMs={BudgetMs:0.###} exceeded=true statusCode={StatusCode} breakdown={Breakdown}",
                     operation,
                     http.Request.Method,
                     http.Request.Path.Value,
                     elapsedMs,
                     BudgetMs,
-                    statusCode);
+                    statusCode,
+                    breakdown);
             }
             else
             {
                 _logger.LogDebug(
-                    "task-operation-timing operation={Operation} method={Method} path={Path} elapsedMs={ElapsedMs:0.###} budgetMs={BudgetMs:0.###} exceeded=false statusCode={StatusCode}",
+                    "task-operation-timing operation={Operation} method={Method} path={Path} elapsedMs={ElapsedMs:0.###} budgetMs={BudgetMs:0.###} exceeded=false statusCode={StatusCode} breakdown={Breakdown}",
                     operation,
                     http.Request.Method,
                     http.Request.Path.Value,
                     elapsedMs,
                     BudgetMs,
-                    statusCode);
+                    statusCode,
+                    breakdown);
             }
         }
     }

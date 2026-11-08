@@ -10,6 +10,7 @@ import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService, type CliFallbackState, type CliModelFallbackRoute, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
 import type { ActiveModelSwitch, EffectiveModelSelection } from '../../../quota/services/quota-api.service';
 import { ConsumerModelPolicyComponent } from '../consumer-model-policy/consumer-model-policy.component';
+import { scrollCliModelsTable } from './cli-models-table-keyboard';
 import { TaskService } from '../../../../services/task.service';
 import {
   WorkspaceOrchestratorSettingsService,
@@ -24,12 +25,9 @@ interface CliModelGroup {
 }
 
 /**
- * Per-CLI model catalog overview for the CLI Management page (rows since
- * AGT-2101): each known CLI is one compact, stacked row that answers "what's
- * present" at a glance - the primary model and the fallback-route state - and
- * expands to reveal the route editor (primary / fallback CLI + model + thinking)
- * and the full discovered model list. Data is the live `/api/cli/{type}/models`
- * catalog, read through the process-wide {@link CliCatalogStore} so the page
+ * CLI Management rows show each CLI's primary model and fallback route, then
+ * expand to the route editor and discovered models. Data comes from the live
+ * `/api/cli/{type}/models` catalog through {@link CliCatalogStore}; the page
  * reuses the boot-time hydration instead of issuing its own per-CLI requests.
  * The refresh button forces a re-probe of one CLI's catalog (bypasses the store
  * TTL).
@@ -168,6 +166,8 @@ export class CliModelsPanelComponent implements OnInit {
     else next.add(cliType);
     this.expanded.set(next);
   }
+
+  readonly onTableScrollKeydown = scrollCliModelsTable;
 
   isExpanded(cliType: CliType): boolean {
     return this.expanded().has(cliType);

@@ -92,6 +92,8 @@ public sealed class TaskIntegrationStatusService
     private readonly GenerationSingleFlightCache<RepoIntegration> _cache;
     private readonly GenerationSingleFlightCache<bool?> _contentCache;
     private readonly GenerationSingleFlightCache<IReadOnlyList<string>> _pathCache;
+    private readonly ConcurrentDictionary<string, (long Version, IntegrationVerificationRecord? Record)> _verificationRecords
+        = new(FileSystemPathComparer.Instance);
     private int _computationCount;
     private int _lookupCount;
 
@@ -150,9 +152,12 @@ public sealed class TaskIntegrationStatusService
     public Dictionary<string, TaskIntegrationStatus> BuildLookup(IReadOnlyCollection<TaskInfo> jobs)
         => BuildLookupCore(jobs, deliveredOnly: true);
 
+    internal Dictionary<string, TaskIntegrationStatus> BuildProjectionLookup(IReadOnlyCollection<TaskInfo> jobs)
+        => BuildLookupCore(jobs, deliveredOnly: true, memoizeVerification: true);
+
     /// <summary>
     /// Computes the completion verdict for one card regardless of its source lane.
-    /// Board projection continues to use <see cref="BuildLookup"/> and its lane filter.
+    /// Board projection uses the same lane filter through <see cref="BuildProjectionLookup"/>.
     /// </summary>
     public TaskIntegrationStatus BuildForCompletion(TaskInfo job)
         => BuildLookupCore([job], deliveredOnly: false)[job.TaskKey];
@@ -260,7 +265,7 @@ public sealed class TaskIntegrationStatusService
     };
 
     private Dictionary<string, TaskIntegrationStatus> BuildLookupCore(
-        IReadOnlyCollection<TaskInfo> jobs, bool deliveredOnly)
+        IReadOnlyCollection<TaskInfo> jobs, bool deliveredOnly, bool memoizeVerification = false)
     {
         Interlocked.Increment(ref _lookupCount);
         var result = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
@@ -357,7 +362,7 @@ public sealed class TaskIntegrationStatusService
                         CurrentIntegrationSha(classified, card, reaches),
                         classified.IntegrationBranch,
                         CurrentReviewSubject(job)?.ResultSha ?? classified.Sha,
-                        BranchHistory(classified, card, reaches))
+                        BranchHistory(classified, card, reaches), memoizeVerification)
                     : null,
             };
         }
@@ -601,12 +606,14 @@ public sealed class TaskIntegrationStatusService
         string? currentIntegrationSha,
         string currentIntegrationBranch,
         string? currentDeliverySha,
-        Func<string, bool>? branchHistory)
+        Func<string, bool>? branchHistory,
+        bool memoizeVerification)
     {
         try
         {
             var projected = IntegrationVerificationProjection.Resolve(
-                IntegrationVerificationStore.Read(job.FolderPath),
+                memoizeVerification ? ReadVerificationRecord(job.FolderPath)
+                    : IntegrationVerificationStore.Read(job.FolderPath),
                 ReadLatestMergeStep(job),
                 job.IntegrationRecords,
                 currentIntegrationSha,
@@ -652,6 +659,18 @@ public sealed class TaskIntegrationStatusService
                 Reason = "The integration verification evidence could not be read for the current tree.",
             };
         }
+    }
+
+    internal IntegrationVerificationRecord? ReadVerificationRecord(string folder)
+    {
+        var path = IntegrationVerificationStore.PathFor(folder);
+        var version = SidecarFileGeneration.Observe(path).Version;
+        if (_verificationRecords.TryGetValue(path, out var cached) && cached.Version == version)
+            return cached.Record;
+        var record = IntegrationVerificationStore.Read(folder);
+        if (_verificationRecords.Count >= 8192) _verificationRecords.Clear();
+        _verificationRecords[path] = (version, record);
+        return record;
     }
 
     /// <summary>
