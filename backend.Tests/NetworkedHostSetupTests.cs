@@ -73,6 +73,43 @@ public sealed class NetworkedHostSetupTests : IDisposable
     }
 
     [Fact]
+    public async Task The_claude_code_the_owner_pastes_reaches_only_the_claiming_host_once()
+    {
+        await using var factory = BuildFactory();
+        using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var host = store.EnrollRunner(store.CreateEnrollment(new RunnerEnrollmentRequest("host-a-coding", null, null, null)).Code);
+        var other = store.EnrollRunner(store.CreateEnrollment(new RunnerEnrollmentRequest("host-b-coding", null, null, null)).Code);
+        using var runnerHttp = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        using var runner = new RClient(runnerHttp, host.Runner.Id, authToken: host.Secret);
+        using var probe = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        factory.Services.GetRequiredService<V1ReviewExecutorRegistry>().Register(host.Runner.Id,
+            new RegisterRunnerRequest("host-a-coding", "host-a", "instance-1", "1.0.0", TaskServerProtocol.Current,
+                [ReviewCapabilities.CodingExecutor]));
+
+        using var started = await OwnerPostAsync(http, owner, "/api/v1/management/device-logins",
+            new StartDeviceLoginRequest("host-a", "claude"));
+        var session = (await started.Content.ReadFromJsonAsync<DeviceLoginSessionDto>())!;
+        var claim = (await runner.ClaimDeviceLoginAsync(CancellationToken.None))!;
+        await runner.ReportDeviceLoginInstructionsAsync(claim.Handle, new DeviceLoginInstructionsRequest(
+            "https://claude.com/cai/oauth/authorize?code=true&client_id=studio", null), CancellationToken.None);
+        Assert.Null(await runner.TakeDeviceLoginCodeAsync(claim.Handle, CancellationToken.None));
+
+        var code = Convert.ToHexString(Guid.NewGuid().ToByteArray()) + "#" + Guid.NewGuid().ToString("N");
+        using var submitted = await OwnerPostAsync(http, owner, $"/api/v1/management/device-logins/{session.Handle}/code",
+            new DeviceLoginCodeRequest(code), session.SessionKey);
+        Assert.Equal(HttpStatusCode.OK, submitted.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, await PostStatusAsync(probe,
+            $"/api/v1/runners/{host.Runner.Id}/device-login/{claim.Handle}/code", other.Secret));
+        Assert.Equal(code, await runner.TakeDeviceLoginCodeAsync(claim.Handle, CancellationToken.None));
+        Assert.Null(await runner.TakeDeviceLoginCodeAsync(claim.Handle, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task The_monolith_maps_the_task_server_device_login_route_family()
     {
         await using var factory = BuildFactory();
@@ -92,16 +129,20 @@ public sealed class NetworkedHostSetupTests : IDisposable
             "GET /api/v1/runners/{runnerId}/device-login/{handle}",
             "POST /api/v1/management/device-logins",
             "POST /api/v1/management/device-logins/{handle}/cancel",
+            "POST /api/v1/management/device-logins/{handle}/code",
             "POST /api/v1/runners/{runnerId}/device-login/claim",
+            "POST /api/v1/runners/{runnerId}/device-login/{handle}/code",
             "POST /api/v1/runners/{runnerId}/device-login/{handle}/completion",
             "POST /api/v1/runners/{runnerId}/device-login/{handle}/instructions",
         }.Order(StringComparer.Ordinal), routes);
     }
 
     private static async Task<HttpResponseMessage> OwnerPostAsync<T>(HttpClient http,
-        (StudioUser User, string SessionToken, string CsrfToken) owner, string path, T body)
+        (StudioUser User, string SessionToken, string CsrfToken) owner, string path, T body,
+        string? deviceLoginSession = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body) };
+        if (deviceLoginSession is not null) request.Headers.Add("X-Device-Login-Session", deviceLoginSession);
         request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={owner.SessionToken}");
         request.Headers.Add("Sec-Fetch-Site", "same-origin");
         request.Headers.Add("X-CSRF-Token", owner.CsrfToken);

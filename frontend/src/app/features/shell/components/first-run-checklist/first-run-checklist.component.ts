@@ -8,9 +8,7 @@ import type { TaskDetail } from '../../../../models/task.model';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { WorkspaceOverlaysService } from '../../state/workspace-overlays.service';
 import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
-import { ProviderAuthStatusService } from '../../../remote-hosts/services/provider-auth-status.service';
-import { CodexSignInDialogService } from '../../../remote-hosts/services/codex-sign-in-dialog.service';
-import { ClaudeSignInDialogService } from '../../../remote-hosts/services/claude-sign-in-dialog.service';
+import { ClaudeSignInDialogService, CodexSignInDialogService, DeviceLoginCodeEntryComponent, ProviderAuthStatusService } from '../../../remote-hosts';
 import { claudeSignInTarget, providerAuthTone, signInTarget, type ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
 import { latestRepositoryProbes, normalizeProjectRegistryEntries } from '../../../remote-hosts/models/deployment-checkpoints';
 import type { InstallationIdentity, ProjectRegistryEntry, ProjectRegistryRead, RepositoryStatus } from '../../../remote-hosts/models/deployment-checkpoints';
@@ -21,7 +19,7 @@ import { StatusIndicatorComponent } from '../../../../components/status-indicato
 @Component({
   selector: 'app-first-run-checklist',
   standalone: true,
-  imports: [StatusIndicatorComponent],
+  imports: [StatusIndicatorComponent, DeviceLoginCodeEntryComponent],
   templateUrl: './first-run-checklist.component.html',
   styleUrl: './first-run-checklist.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
