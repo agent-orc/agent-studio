@@ -749,6 +749,14 @@ is `logs/batch-gate-ownership.json`. Native member records carry the gate
 identity and evidence; the integration-record endpoint only records integration
 bookkeeping.
 
+Each pilot tick retries formed manifests from the store. The oldest formed
+manifest takes the next available project gate slot, so later larger batches
+cannot indefinitely pass it. The state response includes every recoverable
+manifest even when it falls outside the requested history count. For a pending
+member past its planning deadline and absent from the last proposed member list,
+the plan names its current batch or fallback, or says that it awaits the next
+planner tick. Such a member never appears under an idle plan.
+
 The backend worker sends the full gate through `RemoteBuildTestGateRunner` to
 the configured remote gate host. A red candidate is compared on the server
 with a durable base verdict keyed by exact base SHA and gate profile. The
@@ -2262,6 +2270,10 @@ move-error dialog.
   post-processing deferral pass, integrating only what is not already on the
   branch and never creating a second review attempt. See
   [review-plane contract](../contracts/review-plane.md).
+  The integration coordinator marks a delivery replay finished before it
+  completes the waiting caller. A resume that discards a completed owner
+  refusal can then enqueue a fresh integration after ownership returns,
+  instead of receiving the stale refusal again.
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so
