@@ -208,12 +208,14 @@ class HostAdapterTests(unittest.TestCase):
             request = {"host": host, "settings": settings, "fields": [], "action": "snapshot"}
             old = {"api": "repo/api:old-tag", "frontend": "repo/web:old-tag"}
             ids = {"api": "sha256:" + "c" * 64, "frontend": "sha256:" + "d" * 64}
+            running_env = "LEGACY_SETTING=1"
+
             def snapshot_run(argv, cwd=None):
                 if argv[:2] == ["docker", "ps"]:
                     self.assertIn("label=com.docker.compose.project=agent-studio-website", argv)
                     return "api" if "label=com.docker.compose.service=api" in argv else "frontend"
                 if "Config.Env" in argv[-2]:
-                    return "LEGACY_SETTING=1"
+                    return running_env
                 if argv[:3] == ["docker", "image", "inspect"]:
                     if argv[-2] == "{{.Id}}":
                         return ids["api"] if argv[-1] == old["api"] else ids["frontend"]
@@ -226,13 +228,15 @@ class HostAdapterTests(unittest.TestCase):
                 if ".Image" in argv[-2]:
                     return ids[argv[-1]]
                 raise AssertionError(argv)
-            with patch.object(remote, "run", side_effect=snapshot_run):
-                before = remote.main(request)["value"]
+            for running_env in ("LEGACY_SETTING=1",
+                                "LEGACY_SETTING=1\nRemoteGate__SshHost=\nRemoteGate__WorkerPath="):
+                with self.subTest(running_env=running_env), patch.object(remote, "run", side_effect=snapshot_run):
+                    before = remote.main(request)["value"]
+                self.assertIsNone(before["gateSshHost"])
+                self.assertIsNone(before["workerPath"])
             self.assertEqual(before["apiImage"], "repo/api:old-tag")
             self.assertEqual(before["apiDigest"], "a" * 64)
             self.assertEqual(before["apiImageId"], ids["api"])
-            self.assertIsNone(before["gateSshHost"])
-            self.assertIsNone(before["workerPath"])
             def fake_run(argv, cwd=None):
                 if argv[:2] == ["docker", "inspect"] and ".Image" in argv[-2]:
                     return ids[argv[-1]]

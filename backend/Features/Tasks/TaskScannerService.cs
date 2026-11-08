@@ -186,6 +186,13 @@ public class TaskScannerService : ITaskScanner
         _statsMetadataCache?.Invalidate();
     }
 
+    /// <summary>Reconcile one watch path when a caller reports a task change
+    /// without the changed card folder. The folder index probes stamps and
+    /// reloads only changed cards; it does not start a raw workspace scan.</summary>
+    internal void InvalidateIndexForExternalTaskChange(string watchPath)
+        => _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.External,
+            changedPath: watchPath);
+
     /// <summary>
     /// Takes one published index generation for a board read without running
     /// a disk walk on the caller's thread (AGT-3088). Null when no cache is
@@ -610,6 +617,18 @@ public class TaskScannerService : ITaskScanner
         return ScanAllJobsRaw();
     }
 
+    /// <summary>Archive-inclusive task facts for background indexers. Wait for
+    /// a pending folder refresh so a task event joins the newest publication.</summary>
+    internal List<TaskInfo> ScanAllJobsWithArchiveForBackgroundIndex()
+    {
+        if (_indexCache is null) return ScanAllJobsRaw();
+        var (live, archived) = _indexCache.GetCleanSnapshotPartitions();
+        var combined = new List<TaskInfo>(live.Count + archived.Count);
+        combined.AddRange(live);
+        combined.AddRange(archived);
+        return combined;
+    }
+
     /// <summary>Archive-inclusive counterpart of <see cref="ScanAllAutomationJobs"/>.</summary>
     public List<TaskInfo> ScanAllAutomationJobsWithArchive()
         => ScanAllJobsWithArchive().Where(task => !task.Fixture).ToList();
@@ -768,6 +787,20 @@ public class TaskScannerService : ITaskScanner
     public virtual TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
         bool bypassMemo = false)
         => ScanJobFolder(jobDir, entry, state, bypassMemo, rereadIfMoved: true);
+
+    /// <summary>The scanner's own file and directory stamp, without parsing a card.</summary>
+    internal object? CaptureFolderStamp(string folder)
+    {
+        var taskJson = new FileInfo(Path.Combine(folder, "task.json"));
+        return taskJson.Exists ? ComputeLiveFingerprint(folder, taskJson) : null;
+    }
+
+    internal bool FolderStampIsSettled(string folder)
+    {
+        var taskJson = new FileInfo(Path.Combine(folder, "task.json"));
+        return taskJson.Exists && TaskFolderMemoPolicy.IsMemoizable(
+            taskJson.LastWriteTimeUtc, DateTime.UtcNow, TaskFolderMemoPolicy.DefaultTimestampGranularity);
+    }
 
     private TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
         bool bypassMemo, bool rereadIfMoved)

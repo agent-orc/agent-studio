@@ -128,6 +128,14 @@ to stderr) and `--url`.
 | `log [--project <p>] [--after <cursor>]` | `GET /api/operator/log` | |
 | `log append --project <p> --kind observed\|decided\|did\|handoff (--text <t> \| --text-file <f>) [--card <key>]... [--audit <id>]...` | `POST /api/operator/log` | |
 
+For a networked installation, `studio-op deploy plan` supplies the OP-6 plan;
+the [networked deploy runbook](networked-deploy.md) drives the complete host
+release. From the operator checkout, run
+`bash deploy/networked/deploy.sh deploy <commit> --manifest <private-manifest> --journal <private-journal> --dry-run`,
+then repeat without `--dry-run` to deploy. To restore the captured versions,
+run `bash deploy/networked/deploy.sh rollback <commit> --manifest <private-manifest> --journal <private-journal>`.
+Keep the same journal and manifest for rollback.
+
 Card writes (`continue`, `move`, `accept`, `title`) first take or renew the
 card's attention lease and send its revision as `If-Match`, as the
 [attention contract](../operator-api.md#operator-log-and-card-attention)
