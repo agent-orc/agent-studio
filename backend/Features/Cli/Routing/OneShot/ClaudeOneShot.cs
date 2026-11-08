@@ -59,13 +59,10 @@ public sealed class ClaudeOneShot : ICliOneShot
     {
         ArgumentNullException.ThrowIfNull(request);
         var networked = !SecurityProfiles.IsLocal(_configuration);
-        if (networked && request.ExtraArgs?.Contains("-r", StringComparer.Ordinal) == true)
-        {
-            var now = DateTime.UtcNow;
+        if (networked)
             return CliOneShotResult.SpawnFailure(
-                "Host Claude session resume is disabled in the networked profile.", now, now);
-        }
-
+                "Remote runner required: API provider CLI execution is disabled in the networked profile.",
+                DateTime.UtcNow, DateTime.UtcNow);
         var cliPath = _configuration["ClaudeCli:Path"] ?? "claude";
         var executable = GenericCliExecutionService.ResolveExecutable(cliPath);
         var timeout = request.Timeout ?? DefaultTimeout;

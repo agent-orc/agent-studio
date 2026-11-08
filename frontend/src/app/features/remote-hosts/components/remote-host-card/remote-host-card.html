@@ -29,7 +29,13 @@
   <dl class="host-detail__facts">
     <div><dt>Machine</dt><dd>{{ h.capacityHostId || h.name }}</dd></div>
     <div><dt>Readiness</dt><dd><app-status-indicator [tone]="readinessTone(readiness().state)" [label]="readiness().state" [compact]="true" /> · {{ readiness().reason }}</dd></div>
-    <div><dt>Slots</dt><dd class="host__number" data-testid="remote-host-machine-slots">{{ totalActiveSlots() }} / {{ roleSlotCapacity() ?? 'Unknown' }}</dd></div>
+    <div><dt>Slots</dt><dd class="host__number" data-testid="remote-host-machine-slots">{{ totalActiveSlots() }} / {{ roleSlotCapacity() ?? 'Unknown' }}
+      @if (h.claimLoadGate; as gate) {
+        <app-status-indicator [tone]="gate.state === 'closed' ? 'warning' : 'success'"
+          [label]="claimLoadGateLabel(gate)" [compact]="true" [wrap]="true"
+          testId="remote-host-claim-load-gate" />
+      }
+    </dd></div>
     <div><dt>Last contact</dt><dd data-testid="remote-host-heartbeat" [attr.title]="h.lastHeartbeatAt || 'No heartbeat reported'">{{ h.lastHeartbeatAt ? (h.lastHeartbeatAt | date:'short') : 'Unknown' }} · {{ heartbeatLabel() }}</dd></div>
     @if (h.taskServerConnection?.lastError; as failed) { <div><dt>Failed request</dt><dd>{{ failed }}</dd></div> }
     @if (h.restartedAt) { <div><dt>Restarted</dt><dd data-testid="remote-host-role-restart" [title]="h.restartedAt">{{ h.restartedAt | date:'short' }} · {{ h.reviewsLost ?? 0 }} reviews lost</dd></div> }

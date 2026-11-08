@@ -2,6 +2,7 @@ import { test, expect, Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { dismissDevErrorDialog, setTheme, type Theme } from '../helpers/theme';
+import { auditModal } from '../helpers/audit-modal';
 
 /**
  * Global Workspace-settings home ("Dach") - ASS-695.
@@ -299,4 +300,32 @@ test.describe('Workspace settings home (Dach)', () => {
     await page.getByTestId('workspace-settings-close').click();
     await expect(page.getByTestId('workspace-settings-overlay')).toHaveCount(0);
   });
+
+  for (const width of [1280, 390]) {
+    test(`CLI management overlay contains focus and returns it on Escape at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await dismissDevErrorDialog(page);
+      const opener = page.getByTestId('studio-titlebar-settings');
+      await opener.click();
+      const dialog = page.getByTestId('workspace-settings-overlay').getByRole('dialog');
+      await expect(dialog).toBeVisible();
+      await page.getByTestId('workspace-settings-rail-caps').click();
+      await dismissDevErrorDialog(page);
+      await expect(page.getByTestId('cli-admin-panel')).toBeVisible();
+      await auditModal(page, '[data-testid="workspace-settings-overlay"] [role="dialog"]', `cli-management-${width}`);
+      if (process.env.JOB_RESULTS_DIR) {
+        await page.screenshot({ path: join(process.env.JOB_RESULTS_DIR, `cli-management-keyboard-${width}.png`) });
+      }
+      for (let index = 0; index < 12; index++) {
+        await page.keyboard.press('Tab');
+        await expect.poll(() => page.evaluate(() =>
+          !!document.querySelector('[data-testid="workspace-settings-overlay"] [role="dialog"]')?.contains(document.activeElement))).toBe(true);
+      }
+      await dismissDevErrorDialog(page);
+      await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('workspace-settings-overlay')).toHaveCount(0);
+      await expect(opener).toBeFocused();
+    });
+  }
 });

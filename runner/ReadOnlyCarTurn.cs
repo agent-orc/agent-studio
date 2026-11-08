@@ -33,7 +33,8 @@ internal static class ReadOnlyCarTurn
         CancellationToken timeoutToken,
         CancellationToken shutdown,
         int? maxOutputTokens = null,
-        int? maxInputTokens = null)
+        int? maxInputTokens = null,
+        int? maxRawOutputBytes = null)
     {
         var logDirectory = Path.Combine(Path.GetTempPath(), logFolder, runId);
         var runner = new CliRunner(
@@ -46,19 +47,17 @@ internal static class ReadOnlyCarTurn
             },
             logPaths: new TurnLogPathProvider(logDirectory));
         var driver = runner.Get(cliType);
-        var stdout = new System.Text.StringBuilder();
-        var stderr = new System.Text.StringBuilder();
+        var output = new BoundedTurnOutput(maxRawOutputBytes);
+        var outputExceeded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finished = new TaskCompletionSource<CliRunInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         void OnOutput(string id, CarOutputLine line)
         {
             if (!string.Equals(id, runId, StringComparison.Ordinal)) return;
-            if (line.Stream == "stdout") stdout.AppendLine(line.Text);
+            if (!output.TryAppend(line.Stream, line.Text))
+                outputExceeded.TrySetResult();
             else if (line.Stream == "stderr")
-            {
-                stderr.AppendLine(line.Text);
                 log($"{logPrefix}-{cliType} stderr: {line.Text}");
-            }
         }
 
         void OnFinished(string id, CliRunInfo info)
@@ -90,7 +89,13 @@ internal static class ReadOnlyCarTurn
 
             var deadline = Task.Delay(Timeout.InfiniteTimeSpan, timeoutToken)
                 .ContinueWith(_ => { }, TaskScheduler.Default);
-            var completed = await Task.WhenAny(finished.Task, deadline);
+            var completed = await Task.WhenAny(finished.Task, deadline, outputExceeded.Task);
+            if (ReferenceEquals(completed, outputExceeded.Task))
+            {
+                driver.Stop(runId, RunStopReason.Watchdog);
+                await Task.WhenAny(finished.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+                throw new InvalidDataException("one-shot raw output exceeds the byte cap");
+            }
             if (!ReferenceEquals(completed, finished.Task))
             {
                 driver.Stop(runId, RunStopReason.Watchdog);
@@ -101,7 +106,9 @@ internal static class ReadOnlyCarTurn
             }
 
             var info = await finished.Task;
-            return new ProcessResult(info.ExitCode ?? 1, stdout.ToString(), stderr.ToString());
+            if (output.Exceeded)
+                throw new InvalidDataException("one-shot raw output exceeds the byte cap");
+            return new ProcessResult(info.ExitCode ?? 1, output.Stdout, output.Stderr);
         }
         finally
         {
@@ -148,5 +155,38 @@ internal static class ReadOnlyCarTurn
     {
         public string GetRunLogDirectory(string runId) => directory;
         public string GetActiveJobsFile() => Path.Combine(directory, "active-runs.json");
+    }
+}
+
+/// <summary>Counts the UTF-8 bytes retained from both CLI streams, including line separators.</summary>
+internal sealed class BoundedTurnOutput(int? maxBytes)
+{
+    private readonly object _gate = new();
+    private readonly System.Text.StringBuilder _stdout = new();
+    private readonly System.Text.StringBuilder _stderr = new();
+    private long _bytes;
+    private bool _exceeded;
+
+    public bool Exceeded { get { lock (_gate) return _exceeded; } }
+    public string Stdout { get { lock (_gate) return _stdout.ToString(); } }
+    public string Stderr { get { lock (_gate) return _stderr.ToString(); } }
+
+    public bool TryAppend(string stream, string text)
+    {
+        if (stream is not ("stdout" or "stderr")) return true;
+        lock (_gate)
+        {
+            if (_exceeded) return false;
+            var added = (long)System.Text.Encoding.UTF8.GetByteCount(text)
+                + System.Text.Encoding.UTF8.GetByteCount(Environment.NewLine);
+            if (maxBytes is { } cap && _bytes + added > cap)
+            {
+                _exceeded = true;
+                return false;
+            }
+            (stream == "stdout" ? _stdout : _stderr).AppendLine(text);
+            _bytes += added;
+            return true;
+        }
     }
 }

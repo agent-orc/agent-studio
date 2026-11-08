@@ -345,6 +345,7 @@ public sealed partial class TaskServerStore
     private static async Task<IReadOnlyList<ConfiguredModelRouteDto>> ReadConfiguredModelRoutesAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
+        DateTime now,
         CancellationToken ct)
     {
         var routes = new List<ConfiguredModelRouteDto>();
@@ -360,6 +361,13 @@ public sealed partial class TaskServerStore
             while (await reader.ReadAsync(ct))
                 routes.Add(new ConfiguredModelRouteDto(reader.GetString(0), reader.GetString(1)));
         }
+        await using (var demand = Command(connection, """
+            SELECT cli, model FROM one_shot_model_demands
+             WHERE observed_at > $cutoff ORDER BY observed_at DESC LIMIT 32;
+            """, transaction, ("$cutoff", Iso(now.AddDays(-1)))))
+        await using (var reader = await demand.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct))
+                routes.Add(new ConfiguredModelRouteDto(reader.GetString(0), reader.GetString(1)));
         var routesJson = Convert.ToString(await ScalarAsync(connection,
             "SELECT quota_model_routes_json FROM studio_cli_settings WHERE id = 1;", ct, transaction),
             CultureInfo.InvariantCulture);

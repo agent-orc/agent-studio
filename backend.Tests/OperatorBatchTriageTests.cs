@@ -68,7 +68,9 @@ public sealed class OperatorBatchTriageTests : IDisposable
                 FetchedAt = now, Windows = [new QuotaWindow
                     { Label = "Weekly", UsedPct = 99, ResetAt = now.AddDays(1) }] }]);
         using var factory = BuildFactory();
+        factory.Services.GetRequiredService<AgentStudio.Tasks.TaskIndexCache>().GetSnapshot();
         var running = WriteCapacityCard("alpha", "ALPHA-1", TaskStates.Progress);
+        var scanner = factory.Services.GetRequiredService<AgentStudio.Tasks.TaskScannerService>();
         QuotaFallbackMarker.Write(running, new QuotaFallbackRecord
         {
             CliType = "codex", Model = "gpt-6-sol", Reason = "weekly cap",
@@ -81,14 +83,20 @@ public sealed class OperatorBatchTriageTests : IDisposable
             CliType = "claude", StartedAt = now, ResetAt = now.AddDays(1),
             ThresholdMinutes = 20, Reason = "hard pin",
         });
-        var scanned = factory.Services.GetRequiredService<AgentStudio.Tasks.TaskScannerService>().ScanAllJobsRaw();
-        var scannedFallback = Assert.Single(scanned, task => task.Key == "ALPHA-1");
+        // These cards are created after the host's first index publication.
+        // Publish each completed folder as the task creation path does.
+        scanner.PublishCreatedFromFolder(running, ProjectPath("alpha"), "alpha", TaskStates.Progress);
+        scanner.PublishCreatedFromFolder(waiting, ProjectPath("alpha"), "alpha", TaskStates.Ready);
+        var resident = scanner.GetResidentIdentityFacts();
+        var runningFact = Assert.Single(resident, task => task.Key == "ALPHA-1");
         Assert.Equal(("alpha", TaskStates.Progress, "gpt-6-sol"),
-            (scannedFallback.ProjectName, scannedFallback.State, scannedFallback.QuotaFallback?.Model));
-        Assert.Contains(scanned, task => task.Key == "ALPHA-2" && task.QuotaWait?.ThresholdMinutes == 20);
+            (runningFact.ProjectName, runningFact.State, runningFact.QuotaFallback?.Model));
+        Assert.Contains(resident, task => task.Key == "ALPHA-2" && task.QuotaWait?.ThresholdMinutes == 20);
+        var scans = scanner.RawScanCalls;
         using var client = BearerClient(factory, CreateToken(factory, StudioRoles.Operator, ["alpha"]));
         using var response = await client.GetAsync("/api/operator/capacity");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(scans, scanner.RawScanCalls);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Contains(body.RootElement.GetProperty("quota").EnumerateArray(), row =>
             row.GetProperty("cliType").GetString() == "claude" && row.GetProperty("exhausted").GetBoolean());

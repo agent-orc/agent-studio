@@ -170,7 +170,17 @@ public sealed record HostTelemetrySnapshotDto(
     int? StaleBuildNodes = null,
     long? StaleBuildNodesReaped = null,
     DateTime? BuildNodeSweepAt = null,
-    IReadOnlyList<HostContainerSummaryDto>? Containers = null);
+    IReadOnlyList<HostContainerSummaryDto>? Containers = null,
+    ClaimLoadGateDto? ClaimLoadGate = null);
+
+/// <summary>Current coding claim admission, observed by the runner process.</summary>
+public sealed record ClaimLoadGateDto(
+    string State,
+    double LoadPerCore,
+    double Threshold,
+    long SustainedSeconds,
+    DateTime? Since,
+    int ActiveSlots);
 
 public sealed record HostContainerSummaryDto(string Name, string? ImageDigest, string State);
 

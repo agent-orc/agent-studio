@@ -1,14 +1,13 @@
 import { ApplicationConfig, ENVIRONMENT_INITIALIZER, ErrorHandler, inject, provideBrowserGlobalErrorListeners, isDevMode } from '@angular/core';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { provideServiceWorker } from '@angular/service-worker';
-import { provideCodingAgentChat } from 'coding-agent-chat';
+import { CHAT_MEDIA_LIGHTBOX } from 'coding-agent-chat/shared';
 import { ModalErrorHandler } from './services/error-dialog.service';
 import { clientIdInterceptor } from './services/client-id.interceptor';
 import { offlineGuardInterceptor } from './services/offline-guard.interceptor';
 import { publicDemoGuardInterceptor } from './services/public-demo-guard.interceptor';
 import { sessionSecurityInterceptor } from './services/session-security.interceptor';
 import { buildIdentityInterceptor } from './services/build-identity.interceptor';
-import { TaskReferenceNavigationService } from './services/task-reference-navigation.service';
 import { MediaLightboxService } from './services/media-lightbox.service';
 import { TaskReferenceMicrocardHydratorService } from './services/task-reference-microcard-hydrator.service';
 import { DossierReferenceHydratorService } from './services/dossier-reference-hydrator.service';
@@ -25,12 +24,9 @@ export const appConfig: ApplicationConfig = {
       buildIdentityInterceptor,
     ])),
     { provide: ErrorHandler, useClass: ModalErrorHandler },
-    // coding-agent-chat host seams: markdown task-reference auto-linking and
-    // click-to-enlarge images route into the app's existing root services.
-    provideCodingAgentChat({
-      taskReferences: TaskReferenceNavigationService,
-      mediaLightbox: MediaLightboxService,
-    }),
+    // Click-to-enlarge images route into the app's existing root service.
+    // Markdown task-key links are provided by the views that render Markdown.
+    { provide: CHAT_MEDIA_LIGHTBOX, useExisting: MediaLightboxService },
     {
       provide: ENVIRONMENT_INITIALIZER,
       multi: true,

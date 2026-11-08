@@ -13,8 +13,34 @@ import { studioTabKey } from './features/studio-shell';
 import { TaskSelectionService, TriageController } from './features/task-detail/runtime';
 import { ensureBrowserStorage } from '../testing/browser-storage';
 import { OrchestratorFeedStore } from './features/orchestrator/state/orchestrator-feed.store';
+import { PageContextService } from './services/page-context.service';
 
 ensureBrowserStorage();
+
+describe('App page chat request', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  it('consumes only the handled request, so a later sheet mount cannot replay an old project', () => {
+    TestBed.configureTestingModule({
+      providers: [App, provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    });
+    const app = TestBed.inject(App);
+    const pages = TestBed.inject(PageContextService);
+    const page = (projectName: string) => ({
+      projectName, pageType: 'doc' as const, relPath: 'index.md', title: 'Page', excerpt: '',
+    });
+
+    pages.openChat(page('Alpha'));
+    const first = app.chatProjectRequest()!;
+    pages.openChat(page('Beta'));
+    const second = app.chatProjectRequest()!;
+    app.onChatProjectRequestHandled(first);
+    expect(app.chatProjectRequest()).toBe(second);
+    app.onChatProjectRequestHandled(second);
+    expect(app.chatProjectRequest()).toBeNull();
+    app.ngOnDestroy();
+  });
+});
 
 describe('App workspace Feed navigation', () => {
   afterEach(() => TestBed.resetTestingModule());

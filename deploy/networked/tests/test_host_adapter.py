@@ -1,10 +1,12 @@
 """Fake-host checks for the repository-owned networked adapter."""
 
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -24,6 +26,75 @@ remote = module("remote_host")
 
 
 class HostAdapterTests(unittest.TestCase):
+    def test_example_requires_running_compose_project_labels(self):
+        example = json.loads((ROOT / "manifest.example.json").read_text())
+        hosts = {host["role"]: host for host in example["hosts"]}
+        self.assertEqual(hosts["server"]["composeProject"], "SET_RUNNING_SERVER_COMPOSE_PROJECT")
+        self.assertEqual(hosts["engine"]["engineComposeProject"], "SET_RUNNING_ENGINE_COMPOSE_PROJECT")
+
+    @staticmethod
+    def release_archive(path):
+        with tarfile.open(path, "w:gz") as stream:
+            payload = b"release contents"
+            info = tarfile.TarInfo("agent-host")
+            info.size = len(payload)
+            stream.addfile(info, io.BytesIO(payload))
+        return adapter.sha(path)
+
+    def test_interrupted_release_extraction_can_retry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            archive = root / "release.tar.gz"
+            checksum = self.release_archive(archive)
+            releases = root / "releases"
+            original = tarfile.TarFile.extractall
+
+            def interrupted(stream, destination, **kwargs):
+                (Path(destination) / "partial").write_text("unfinished")
+                raise OSError("interrupted extraction")
+
+            with patch.object(tarfile.TarFile, "extractall", interrupted):
+                with self.assertRaisesRegex(OSError, "interrupted extraction"):
+                    remote.install_archive(archive, checksum, releases, "a" * 40)
+            self.assertFalse((releases / checksum).exists())
+            with patch.object(tarfile.TarFile, "extractall", original):
+                installed = remote.install_archive(archive, checksum, releases, "a" * 40)
+            self.assertEqual((installed / "agent-host").read_bytes(), b"release contents")
+            self.assertEqual((installed / "COMMIT").read_text().strip(), "a" * 40)
+
+            # Recover a partial directory left by the previous direct extraction flow.
+            (installed / "COMMIT").unlink()
+            (installed / "agent-host").unlink()
+            (installed / "partial").write_text("unfinished")
+            restored = remote.install_archive(archive, checksum, releases, "a" * 40)
+            self.assertEqual((restored / "agent-host").read_bytes(), b"release contents")
+            self.assertFalse((restored / "partial").exists())
+
+    def test_interrupted_coding_extraction_can_retry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            archive = root / "release.tar.gz"
+            checksum = self.release_archive(archive)
+            incoming = root / "incoming"
+            incoming.mkdir()
+            request = {"action": "coding_install", "host": {"runnerIncoming": str(incoming)},
+                       "settings": {}, "fields": [str(archive), "original", checksum, "a" * 40]}
+            original = tarfile.TarFile.extractall
+
+            def interrupted(stream, destination, **kwargs):
+                (Path(destination) / "partial").write_text("unfinished")
+                raise OSError("interrupted extraction")
+
+            with patch.object(tarfile.TarFile, "extractall", interrupted):
+                with self.assertRaisesRegex(OSError, "interrupted extraction"):
+                    remote.main(request)
+            with patch.object(tarfile.TarFile, "extractall", original), \
+                 patch.object(remote, "run", return_value="") as command:
+                self.assertTrue(remote.main(request)["installed"])
+                command.assert_called_once()
+            self.assertEqual((incoming / "agent-host").read_bytes(), b"release contents")
+            self.assertFalse((incoming / "partial").exists())
+
     def test_example_manifest_uses_repository_adapter_for_every_host_action(self):
         example = json.loads((ROOT / "manifest.example.json").read_text())
         commands = example["commands"]
@@ -69,6 +140,48 @@ class HostAdapterTests(unittest.TestCase):
             result = adapter.build({"artifactDirectory": folder}, "build-agent-host", commit)
             self.assertEqual(result, {"commit": commit, "ref": str(release), "sha256": checksum})
 
+    def test_interrupted_archive_build_can_retry(self):
+        commit = "a" * 40
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder) / commit
+            release = base / "agent_host.tar.gz"
+            checksum = base / "agent_host.sha256"
+
+            def publish(argv, **kwargs):
+                output = Path(argv[argv.index("-o") + 1])
+                output.mkdir()
+                (output / "agent-host").write_bytes(b"release contents")
+
+            original_add = tarfile.TarFile.add
+
+            def interrupted(stream, *args, **kwargs):
+                original_add(stream, *args, **kwargs)
+                raise OSError("interrupted archive build")
+
+            config = {"artifactDirectory": folder, "repository": "/unused"}
+            with patch.object(adapter, "exact_source"), patch.object(adapter, "run", side_effect=publish):
+                with patch.object(tarfile.TarFile, "add", interrupted):
+                    with self.assertRaisesRegex(OSError, "interrupted archive build"):
+                        adapter.build(config, "build-agent-host", commit)
+                self.assertFalse(release.exists())
+                self.assertFalse(checksum.exists())
+                self.assertEqual(list(base.iterdir()), [])
+
+                # Recover an unfinished archive left by the previous direct-write flow.
+                release.write_bytes(b"incomplete")
+                result = adapter.build(config, "build-agent-host", commit)
+                release.write_bytes(b"incomplete again")
+                checksum.write_text("partial")
+                result = adapter.build(config, "build-agent-host", commit)
+            self.assertEqual(result["sha256"], adapter.sha(release))
+            self.assertEqual(checksum.read_text().strip(), result["sha256"])
+            with tarfile.open(release) as stream:
+                self.assertEqual(stream.extractfile("agent-host").read(), b"release contents")
+
+            release.write_bytes(b"changed after completion")
+            with self.assertRaisesRegex(adapter.AdapterError, "no matching checksum"):
+                adapter.build(config, "build-agent-host", commit)
+
     def test_transfer_refuses_a_changed_release_archive(self):
         with tempfile.TemporaryDirectory() as folder:
             archive = Path(folder) / "release.tar.gz"
@@ -85,32 +198,41 @@ class HostAdapterTests(unittest.TestCase):
             root = Path(folder)
             env = root / "server.env"
             engine = root / "engine.env"
-            env.write_text("STUDIO_API_DIGEST=" + "a" * 64 + "\nSTUDIO_WEB_DIGEST=" + "a" * 64 + "\nSTUDIO_GATE_WORKER_PATH=/old/worker\n")
+            # The installed stack predates the new digest and gate variables.
+            env.write_text("LEGACY_SETTING=1\n")
             engine.write_text("ORCHESTRATOR_ENGINE_IMAGE_REF=repo/engine@sha256:" + "a" * 64 + "\n")
             host = {"role": "server", "envFile": str(env), "engineEnvFile": str(engine),
                     "composeDir": str(root), "engineComposeDir": str(root), "healthUrl": "http://fake/health",
-                    "gateSshHost": "new-gate"}
+                    "gateSshHost": "new-gate", "composeProject": "agent-studio-website"}
             settings = {"images": {"api": "repo/api", "web": "repo/web"}}
             request = {"host": host, "settings": settings, "fields": [], "action": "snapshot"}
             old = {"api": "repo/api:old-tag", "frontend": "repo/web:old-tag"}
             ids = {"api": "sha256:" + "c" * 64, "frontend": "sha256:" + "d" * 64}
             def snapshot_run(argv, cwd=None):
+                if argv[:2] == ["docker", "ps"]:
+                    self.assertIn("label=com.docker.compose.project=agent-studio-website", argv)
+                    return "api" if "label=com.docker.compose.service=api" in argv else "frontend"
                 if "Config.Env" in argv[-2]:
-                    return "RemoteGate__WorkerPath=/old/worker\nRemoteGate__SshHost=old-gate"
+                    return "LEGACY_SETTING=1"
                 if argv[:3] == ["docker", "image", "inspect"]:
+                    if argv[-2] == "{{.Id}}":
+                        return ids["api"] if argv[-1] == old["api"] else ids["frontend"]
                     repository = "repo/api" if argv[-1] == ids["api"] else "repo/web"
+                    if argv[-1] in old.values():
+                        repository = "repo/api" if argv[-1] == old["api"] else "repo/web"
                     return json.dumps([repository + "@sha256:" + "a" * 64])
                 if ".Config.Image" in argv[-2]:
                     return old[argv[-1]]
                 if ".Image" in argv[-2]:
                     return ids[argv[-1]]
                 raise AssertionError(argv)
-            with patch.object(remote, "run", side_effect=snapshot_run), \
-                 patch.object(remote, "compose_ps", side_effect=lambda _dir, _env, service: service):
+            with patch.object(remote, "run", side_effect=snapshot_run):
                 before = remote.main(request)["value"]
             self.assertEqual(before["apiImage"], "repo/api:old-tag")
             self.assertEqual(before["apiDigest"], "a" * 64)
             self.assertEqual(before["apiImageId"], ids["api"])
+            self.assertIsNone(before["gateSshHost"])
+            self.assertIsNone(before["workerPath"])
             def fake_run(argv, cwd=None):
                 if argv[:2] == ["docker", "inspect"] and ".Image" in argv[-2]:
                     return ids[argv[-1]]
@@ -128,8 +250,8 @@ class HostAdapterTests(unittest.TestCase):
             self.assertIn("repo/api@sha256:" + "a" * 64, pulls)
             self.assertIn("repo/web@sha256:" + "a" * 64, pulls)
             self.assertEqual(remote.env_read(env)["STUDIO_API_DIGEST"], "a" * 64)
-            self.assertEqual(remote.env_read(env)["STUDIO_GATE_SSH_HOST"], "old-gate")
-            self.assertEqual(remote.env_read(env)["STUDIO_GATE_WORKER_PATH"], "/old/worker")
+            self.assertNotIn("STUDIO_GATE_SSH_HOST", remote.env_read(env))
+            self.assertNotIn("STUDIO_GATE_WORKER_PATH", remote.env_read(env))
 
     def test_engine_switch_and_rollback_restore_previous_image(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -137,11 +259,11 @@ class HostAdapterTests(unittest.TestCase):
             old = "repo/engine@sha256:" + "a" * 64
             new = "repo/engine@sha256:" + "b" * 64
             env.write_text("ORCHESTRATOR_ENGINE_IMAGE_REF=" + old + "\n")
-            host = {"role": "engine", "engineEnvFile": str(env), "engineComposeDir": folder}
+            host = {"role": "engine", "engineEnvFile": str(env), "engineComposeDir": folder,
+                    "engineComposeProject": "agent-studio-monolith-engine"}
             request = {"action": "snapshot", "host": host, "settings": {}, "fields": []}
             with patch.object(remote, "run", side_effect=lambda argv, cwd=None:
-                              "healthy" if "State.Health.Status" in argv[-2] else old), \
-                 patch.object(remote, "compose_ps", return_value="engine-container"):
+                              "engine-container" if argv[:2] == ["docker", "ps"] else old):
                 previous = remote.main(request)["value"]
             with patch.object(remote, "run", side_effect=lambda argv, cwd=None:
                               "healthy" if "State.Health.Status" in argv[-2] else old), \
@@ -155,9 +277,34 @@ class HostAdapterTests(unittest.TestCase):
 
     def test_tagged_server_snapshot_refuses_unresolved_running_digest(self):
         with patch.object(remote, "run", side_effect=["repo/api:old-tag", "sha256:" + "c" * 64,
+                                                        "sha256:" + "c" * 64,
                                                         json.dumps(["other/api@sha256:" + "a" * 64])]):
             with self.assertRaisesRegex(RuntimeError, "needs one digest for repo/api"):
                 remote.running_image("api-container", "repo/api")
+
+    def test_tagged_server_snapshot_resolves_the_original_tag_before_the_image_id(self):
+        image_id = "sha256:" + "c" * 64
+        digest = "a" * 64
+
+        def observed(argv, cwd=None):
+            if argv[-2] == "{{.Config.Image}}":
+                return "repo/api:prior"
+            if argv[-2] in ("{{.Image}}", "{{.Id}}"):
+                return image_id
+            if argv[-2] == "{{json .RepoDigests}}":
+                self.assertEqual(argv[-1], "repo/api:prior")
+                return json.dumps([f"repo/api@sha256:{digest}"])
+            raise AssertionError(argv)
+
+        with patch.object(remote, "run", side_effect=observed):
+            self.assertEqual(remote.running_image("api", "repo/api")["digest"], digest)
+
+    def test_snapshot_refuses_missing_or_ambiguous_running_compose_service(self):
+        for containers in ("", "first\nsecond"):
+            with self.subTest(containers=containers), patch.object(remote, "run", return_value=containers) as command:
+                with self.assertRaisesRegex(RuntimeError, "expected one running api container"):
+                    remote.running_compose_service("agent-studio-website", "api")
+                self.assertEqual(command.call_args.args[0][:2], ["docker", "ps"])
 
     def test_review_recreate_refuses_busy_host_before_changing_image(self):
         with tempfile.TemporaryDirectory() as folder:

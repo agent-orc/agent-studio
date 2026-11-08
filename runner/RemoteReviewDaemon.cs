@@ -65,6 +65,7 @@ public sealed class RemoteReviewDaemon
             idleWatchdog.AbortToken);
         shutdown = daemonStop.Token;
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
+        var oneShotPoll = new OneShotJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
         var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log)
             .PollAsync(auxiliaryStop.Token);
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
@@ -804,6 +805,7 @@ public sealed class RemoteReviewDaemon
 
         state.Flush();
         auxiliaryStop.Cancel();
+        await oneShotPoll;
         await gitSetupPoll;
         await repositoryProbePoll;
         await quotaPoll;

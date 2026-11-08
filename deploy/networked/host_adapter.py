@@ -51,9 +51,12 @@ def build(config, action, commit):
         existing = base / f"{name}.tar.gz"
         checksum = base / f"{name}.sha256"
         if existing.exists():
-            if not checksum.is_file() or checksum.read_text().strip() != sha(existing):
-                raise AdapterError(f"existing release has no matching checksum: {existing}")
-            return {"commit": commit, "ref": str(existing), "sha256": sha(existing)}
+            if checksum.is_file():
+                recorded = checksum.read_text().strip()
+                if re.fullmatch(r"[0-9a-f]{64}", recorded):
+                    if recorded != sha(existing):
+                        raise AdapterError(f"existing release has no matching checksum: {existing}")
+                    return {"commit": commit, "ref": str(existing), "sha256": recorded}
     with tempfile.TemporaryDirectory(prefix="networked-build-") as scratch:
         source = Path(scratch) / "source"
         source.mkdir()
@@ -78,15 +81,27 @@ def build(config, action, commit):
             publish.append("/p:UseAppHost=false")
         run(publish, cwd=source)
         destination = base / f"{name}.tar.gz"
-        with tarfile.open(destination, "w:gz") as archive:
-            for path in sorted(output.rglob("*")):
-                archive.add(path, path.relative_to(output))
-        os.chmod(destination, 0o600)
-        checksum = sha(destination)
         checksum_path = base / f"{name}.sha256"
-        checksum_path.write_text(checksum + "\n")
-        os.chmod(checksum_path, 0o600)
-        return {"commit": commit, "ref": str(destination), "sha256": checksum}
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{name}-", suffix=".tar.gz", dir=base)
+        os.close(descriptor)
+        checksum_temporary = None
+        try:
+            with tarfile.open(temporary, "w:gz") as archive:
+                for path in sorted(output.rglob("*")):
+                    archive.add(path, path.relative_to(output))
+            checksum = sha(temporary)
+            os.replace(temporary, destination)
+            # The checksum is the completion marker. A crash before it is written
+            # leaves an archive that the next build can replace from the commit.
+            descriptor, checksum_temporary = tempfile.mkstemp(prefix=f".{name}-", suffix=".sha256", dir=base)
+            with os.fdopen(descriptor, "w") as stream:
+                stream.write(checksum + "\n")
+            os.replace(checksum_temporary, checksum_path)
+            return {"commit": commit, "ref": str(destination), "sha256": checksum}
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+            if checksum_temporary is not None:
+                Path(checksum_temporary).unlink(missing_ok=True)
 
 
 def remote(config, host, action, fields):

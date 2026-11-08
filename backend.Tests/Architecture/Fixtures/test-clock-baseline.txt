@@ -165,7 +165,6 @@ wall-clock backend.Tests/StaleProgressArchiverTests.cs 5
 wall-clock backend.Tests/SteerTimeoutMonitorTests.cs 3
 wall-clock backend.Tests/SteeringDocsSummaryDriftServiceTests.cs 2
 wall-clock backend.Tests/StepPromptLogTests.cs 9
-wall-clock backend.Tests/SummaryGenerationFinalizationTests.cs 1
 wall-clock backend.Tests/SummaryGenerationValidationTests.cs 1
 wall-clock backend.Tests/SupersededCommitSweepTests.cs 1
 wall-clock backend.Tests/SupervisorContractTests.cs 1

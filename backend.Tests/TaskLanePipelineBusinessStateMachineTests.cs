@@ -774,7 +774,7 @@ public sealed class TaskLanePipelineEdgeCaseTests : IDisposable
     }
 
     [Fact]
-    public void AutoReview_SupersededCurrentReviewWithCompletedEnvelope_RecoveryReissuesAttempt()
+    public void AutoReview_EngineWatchdogReissuesSupersededReviewWithoutLegacyQueueWork()
     {
         const string id = "superseded-review-recovery";
         const string key = "AGT-SUPERSEDED-REVIEW-RECOVERY";
@@ -797,13 +797,25 @@ public sealed class TaskLanePipelineEdgeCaseTests : IDisposable
             key, "PROJ-002", resultSha, run.AttemptId, "requirements", "policy", [], "original")).ReviewAttempt!;
         authority.SupersedeOpenReviewAttempts(taskKey => taskKey == key ? "old claim guard race" : null);
         var lifecycle = _fixture.CreateReviewAttemptLifecycle(authority);
+        var queue = new AutoReviewPostProcessingQueue();
+        var transitions = _fixture.CreateTransitions(autoReviewQueue: queue);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            { ["Orchestration:Transitions:ReviewReport"] = "Engine" }).Build();
 
-        Assert.Equal(1, lifecycle.SweepSupersededAutoReviewAttempts());
+        var recovered = AutoReviewPostProcessingRecoveryService.RunRecoveryScan(
+            _fixture.Scanner, transitions, lifecycle, NullLogger.Instance,
+            configuration: configuration);
+        Assert.Equal(1, recovered.ReviewAttemptsReissued);
+        Assert.Equal(0, recovered.ReEnqueued);
+        Assert.False(queue.Reader.TryRead(out _));
         var replacement = authority.GetTaskProjection(key).CurrentReviewAttempt!;
         Assert.NotEqual(original.AttemptId, replacement.AttemptId);
         Assert.Equal(AttemptLifecycleState.Pending, replacement.State);
         Assert.Equal(run.AttemptId, replacement.SourceRunAttemptId);
-        Assert.Equal(0, lifecycle.SweepSupersededAutoReviewAttempts());
+        Assert.Equal(0, AutoReviewPostProcessingRecoveryService.RunRecoveryScan(
+            _fixture.Scanner, transitions, lifecycle, NullLogger.Instance,
+            configuration: configuration).ReviewAttemptsReissued);
     }
 
     [Fact]

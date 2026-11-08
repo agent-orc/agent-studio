@@ -24,6 +24,8 @@ namespace AgentStudio.Tasks;
 public class TaskScannerService : ITaskScanner
 {
     private readonly object _fullScanGate = new();
+    private long _rawScanCalls;
+    internal long RawScanCalls => Interlocked.Read(ref _rawScanCalls);
     private const int ScanParallelism = 4;
     private readonly IConfiguration _config;
     private readonly ILogger<TaskScannerService> _logger;
@@ -262,6 +264,30 @@ public class TaskScannerService : ITaskScanner
         if (_indexCache is null) return;
         var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
         _indexCache.PublishCoreFromFolder(folder, () => ScanJobFolder(folder, entry, state, bypassMemo: true));
+    }
+
+    /// <summary>Publish a routing edit to both resident projections after its durable write.</summary>
+    public void PublishRoutingFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        var info = ScanJobFolder(folder, entry, state, bypassMemo: true);
+        if (info is not null) _indexCache.PublishRoutingMutation(info);
+        else _indexCache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+    }
+
+    /// <summary>Publish a newly created card into the resident board and core indexes.</summary>
+    public void PublishCreatedFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        // The stats index has its own archived-inclusive snapshot. The old
+        // InvalidateCache call dirtied it as well as the board index; keep that
+        // contract when publishing a new card directly into the board.
+        _statsMetadataCache?.Invalidate();
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        var info = ScanJobFolder(folder, entry, state, bypassMemo: true);
+        if (info is not null) _indexCache.PublishCreatedMutation(info);
+        else _indexCache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
     }
 
     public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
@@ -628,6 +654,7 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public List<TaskInfo> ScanAllJobsRaw()
     {
+        Interlocked.Increment(ref _rawScanCalls);
         // A full walk is expensive on a busy shared filesystem. Serialize it so
         // concurrent cache refreshes and background sweeps cannot each occupy
         // their own group of worker threads.

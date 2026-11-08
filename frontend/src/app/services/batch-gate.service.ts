@@ -6,6 +6,7 @@ import type {
   BatchGateReport,
   BatchGateSettings,
   BatchGateState,
+  BatchTestFailureReport,
   GateQueueStallRelease,
   GateQueueStallReport,
 } from '../models/batch-gate.model';
@@ -130,6 +131,12 @@ export class BatchGateService {
   /** Lifetime pilot figures; read-only and served from the batch store without Git. */
   report(project: string): Observable<BatchGateReport> {
     return this.http.get<BatchGateReport>(`${this.url(project)}/report`);
+  }
+  failedTests(project: string, windowDays = 7): Observable<BatchTestFailureReport> {
+    return this.http.get<BatchTestFailureReport>(`${this.url(project)}/failed-tests?windowDays=${windowDays}`);
+  }
+  history(project: string, count: number): Observable<BatchGateState> {
+    return this.http.get<BatchGateState>(`${this.url(project)}/state?history=${count}`);
   }
   queueStalls(project: string): Observable<GateQueueStallReport> {
     return this.http.get<GateQueueStallReport>(`${this.url(project)}/queue-stalls`);

@@ -134,6 +134,19 @@ public class PickupHoldPolicyTests
     }
 
     [Fact]
+    public void ReadyHold_NamesTheSelectedDependencyRule()
+    {
+        var delivery = Evaluate(Card(), waitsOn: WaitsOn(Item(
+            key: "LIB-1", fulfilled: false, targetState: TaskStates.HumanReview)));
+        var completion = Evaluate(Card(), waitsOn: WaitsOn(Item(
+            key: "LIB-2", fulfilled: false, targetState: TaskStates.HumanReview,
+            requiresCompletion: true)));
+
+        Assert.Contains("current delivery is integrated", delivery!.Reason, StringComparison.Ordinal);
+        Assert.Contains("requires predecessor completion", completion!.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void UnknownTarget_SaysTheKeyDoesNotExist()
     {
         var hold = Evaluate(Card(), waitsOn: WaitsOn(Item(key: "GHOST-9", fulfilled: false, resolved: false)));
@@ -495,12 +508,14 @@ public class PickupHoldPolicyTests
         string unsatisfiableReason = "",
         string? targetState = null,
         DateTime? targetEnteredLaneAt = null,
-        bool targetHasActiveReviewAttempt = false) => new()
+        bool targetHasActiveReviewAttempt = false,
+        bool requiresCompletion = false) => new()
     {
         Key = key,
         Resolved = resolved,
         Fulfilled = fulfilled,
         ReleaseGate = releaseGate,
+        RequiresCompletion = requiresCompletion,
         WaitingForRelease = waitingForRelease,
         Unsatisfiable = unsatisfiable,
         UnsatisfiableReason = unsatisfiableReason,

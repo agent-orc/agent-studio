@@ -561,11 +561,18 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.OperatorCandidateAuditRepair>
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.OperatorCandidateAuditRepair>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateCapacitySettings(
+    sp.GetRequiredService<IConfiguration>(),
+    Path.Combine(AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "settings"),
+        "gate-capacity.json"),
+    sp.GetRequiredService<AgentStudio.Security.ControlPlaneAuditLog>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateDurationHistory>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.PullGateStore(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "pull-gates"),
-    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IConfiguration>()));
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IConfiguration>(),
+    sp.GetRequiredService<AgentStudio.Pipeline.GateCapacitySettings>()));
 builder.Services.AddSingleton<ProjectCycleTimeService>();
 builder.Services.AddSingleton<ProjectVisualEvidenceService>();
 builder.Services.AddSingleton<ProjectGraphDiscoveryService>();
@@ -593,6 +600,7 @@ builder.Services.AddSingleton<OrchestratorChatService>();
 builder.Services.AddSingleton<ProjectChatStore>();
 builder.Services.AddSingleton<ProjectChatIndex>();
 builder.Services.AddSingleton<ProjectChatMigration>();
+builder.Services.AddHostedService<ProjectChatStartupService>();
 builder.Services.AddSingleton<OrchestratorRunner>(sp => new OrchestratorRunner(
     sp.GetRequiredService<ILogger<OrchestratorRunner>>(),
     sp.GetService<CliUsageParserRegistry>(),
@@ -910,6 +918,7 @@ builder.Services.AddSingleton<ProviderRejectionContinuationService>();
 builder.Services.AddSingleton<AgentStudio.Management.ProviderRejectionFleetService>();
 builder.Services.AddSingleton<AgentMessageBusStore>();
 builder.Services.AddSingleton<AgentMessageBusBridge>();
+builder.Services.AddHostedService<AgentMessageBusSeedHostedService>();
 builder.Services.AddSingleton<ICliModelRegistry, CliModelRegistry>();
 builder.Services.AddSingleton<ICliUsageParser, ClaudeUsageParser>();
 builder.Services.AddSingleton<ICliUsageParser, CodexUsageParser>();
@@ -932,6 +941,11 @@ builder.Services.AddSingleton<AgentStudio.Cli.ClaudeOneShot>();
 builder.Services.AddSingleton<AgentStudio.Cli.CodexOneShot>();
 builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
     new AgentStudio.Cli.PromptLoggingCliOneShot(
+        !SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
+        ? new AgentStudio.Cli.RemoteCliOneShot(CliTypes.Claude,
+            sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<IConfiguration>(),
+            sp.GetService<AdHocUsageRecorder>())
+        :
         new AgentStudio.Cli.LoadAwareCliOneShot(
             sp.GetRequiredService<AgentStudio.Cli.ClaudeOneShot>(),
             sp.GetRequiredService<AgentStudio.Runner.ILoadThrottleGate>(),
@@ -939,6 +953,11 @@ builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
         sp.GetRequiredService<AgentStudio.Cli.StepPromptLog>()));
 builder.Services.AddSingleton<AgentStudio.Cli.ICliOneShot>(sp =>
     new AgentStudio.Cli.PromptLoggingCliOneShot(
+        !SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
+        ? new AgentStudio.Cli.RemoteCliOneShot(CliTypes.Codex,
+            sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<IConfiguration>(),
+            sp.GetService<AdHocUsageRecorder>())
+        :
         new AgentStudio.Cli.LoadAwareCliOneShot(
             sp.GetRequiredService<AgentStudio.Cli.CodexOneShot>(),
             sp.GetRequiredService<AgentStudio.Runner.ILoadThrottleGate>(),
@@ -2132,15 +2151,6 @@ catch (Exception ex)
 }
 hostTimeline.Checkpoint("bootSweeps");
 
-// Seed the Agent Message Bus participant registry. Workspace-scoped, idempotent
-// across boots; safe to fire-and-forget. See docs/system/architecture/bus/agent-message-bus.md section 2.
-try
-{
-    var bus = app.Services.GetRequiredService<AgentMessageBusBridge>();
-    _ = bus.SeedBuiltInParticipantsAsync();
-}
-catch (Exception ex) { crashRecorder.Record("AgentMessageBusBridge.Seed", ex); }
-
 // Wire the aggregation cache onto the bus store. Every successful append
 // updates the per-project tallies in O(1), so /token-aggregate requests
 // do not scan messages. The cache backfills lazily on first use.
@@ -2175,40 +2185,6 @@ try
     };
 }
 catch (Exception ex) { crashRecorder.Record("BusAggregationCache.Wire", ex); }
-
-// Slice D project-chat: migrate the legacy `orchestrator-chat.jsonl`
-// per-project file into the new per-month markdown tree, then ensure
-// the per-project FTS5 index is fresh. Idempotent; cheap when the
-// migration has already run. Fire-and-forget so a slow disk does not
-// hold up boot.
-_ = Task.Run(() =>
-{
-    var migrationState = app.Services.GetRequiredService<MigrationStateStore>();
-    const string migrationId = "project-chat-v1";
-    try { migrationState.Begin(migrationId, "Migrating legacy project chat and refreshing indexes."); }
-    catch (Exception ex) { crashRecorder.Record("MigrationState.Begin:ProjectChatMigration", ex); }
-    try
-    {
-        var migration = app.Services.GetRequiredService<ProjectChatMigration>();
-        migration.MigrateAll();
-
-        var scanner = app.Services.GetRequiredService<TaskScannerService>();
-        var index = app.Services.GetRequiredService<ProjectChatIndex>();
-        foreach (var entry in scanner.GetWatchPaths())
-        {
-            try { index.EnsureFresh(entry.Path); }
-            catch (Exception ex) { crashRecorder.Record($"ProjectChatIndex.EnsureFresh:{entry.Name}", ex); }
-        }
-        try { migrationState.Complete(migrationId); }
-        catch (Exception ex) { crashRecorder.Record("MigrationState.Complete:ProjectChatMigration", ex); }
-    }
-    catch (Exception ex)
-    {
-        try { migrationState.Fail(migrationId, ex.Message); }
-        catch (Exception stateEx) { crashRecorder.Record("MigrationState.Fail:ProjectChatMigration", stateEx); }
-        crashRecorder.Record("ProjectChatMigration", ex);
-    }
-});
 
 // Wire up FileSystemWatcher → SignalR push
 var watcher = app.Services.GetRequiredService<TaskWatcherService>();
@@ -2249,7 +2225,11 @@ var taskScanner = app.Services.GetRequiredService<TaskScannerService>();
 taskScanner.SetIndexCache(jobIndexCache);
 taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
 taskScanner.SetOrchestrationStore(app.Services.GetRequiredService<MonolithOrchestrationStore>());
-watcher.OnJobChanged += _ => jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+watcher.OnJobChanged += path =>
+{
+    if (!jobIndexCache.IsCurrentTaskJson(path))
+        jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+};
 // AGT-3088: board reads serve the last published snapshot and refresh it in
 // the background; once that refresh catches up with an invalidation a board
 // read was served stale against, one debounced jobsBulkChanged tells every

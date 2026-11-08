@@ -118,7 +118,7 @@ public sealed class HostCliSecurityGuardTests
     }
 
     [Fact]
-    public void Networked_spawn_boundary_accepts_only_isolated_tool_free_claude()
+    public void Networked_spawn_boundary_refuses_every_provider_cli()
     {
         using var workspace = new HostOneShotIsolation.Workspace();
         var start = new ProcessStartInfo("claude")
@@ -129,7 +129,7 @@ public sealed class HostCliSecurityGuardTests
         HostOneShotIsolation.AddClaudeArguments(start.ArgumentList, "claude-test");
         Assert.Throws<InvalidOperationException>(() => HostCliSpawnGuard.Validate(start, networked: true));
         start.Environment["CLAUDE_CODE_DISABLE_ATTACHMENTS"] = "1";
-        HostCliSpawnGuard.Validate(start, networked: true);
+        Assert.Throws<InvalidOperationException>(() => HostCliSpawnGuard.Validate(start, networked: true));
         start.Environment["CLAUDE_CODE_DISABLE_ATTACHMENTS"] = "0";
         Assert.Throws<InvalidOperationException>(() => HostCliSpawnGuard.Validate(start, networked: true));
         start.Environment["CLAUDE_CODE_DISABLE_ATTACHMENTS"] = "1";
@@ -161,9 +161,8 @@ public sealed class HostCliSecurityGuardTests
             CreateNoWindow = true,
         };
         HostOneShotIsolation.AddClaudeArguments(start.ArgumentList, "claude-test");
-        Assert.Throws<System.ComponentModel.Win32Exception>(() =>
+        Assert.Throws<InvalidOperationException>(() =>
             HostCliSpawnGuard.Start(start, networked: true, provider: CliTypes.Claude));
-        Assert.Equal("1", start.Environment["CLAUDE_CODE_DISABLE_ATTACHMENTS"]);
     }
 
     [Fact]
@@ -253,7 +252,7 @@ public sealed class HostCliSecurityGuardTests
     }
 
     [Fact]
-    public async Task Nonlocal_host_claude_does_not_resume_owner_session()
+    public async Task Nonlocal_host_claude_never_starts_a_provider_cli()
     {
         foreach (var profile in new[] { SecurityProfiles.Networked, SecurityProfiles.PublicDemo })
         {
@@ -268,7 +267,7 @@ public sealed class HostCliSecurityGuardTests
             });
 
             Assert.False(result.Ok);
-            Assert.Contains("session resume is disabled", result.Error);
+            Assert.Contains("API provider CLI execution is disabled", result.Error);
         }
     }
 }

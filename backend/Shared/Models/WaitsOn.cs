@@ -7,8 +7,8 @@ namespace AgentStudio.Shared;
 ///
 /// <para>"Waits-on" is the operator-facing name for the existing F34
 /// <c>dependsOn</c> relation: a task waits on the tasks it depends on, and a
-/// dependency is <b>fulfilled</b> once its target task reaches
-/// <c>6-completed</c> or <c>7-archive</c>. This is the field the operator asked
+/// dependency is <b>fulfilled</b> once its target completes or its current
+/// delivery is integrated into the successor's target branch. This is the field the operator asked
 /// for in AGT-2029 ("an jedem Task eine Information, auf die ich warte -
 /// cross-project - auf der Karte sichtbar"); rather than duplicate the
 /// dependsOn list, model, endpoint, validator and cross-project index that
@@ -87,13 +87,18 @@ public record WaitsOnItem
     public bool PendingDecision { get; init; }
 
     /// <summary>
-    /// True when the target is terminal and, for a release-gated edge, also
-    /// carries its explicit release flag.
+    /// True when the selected edge rule is met.
     /// </summary>
     public bool Fulfilled { get; init; }
 
     /// <summary>True when this edge requires explicit release after terminal completion.</summary>
     public bool ReleaseGate { get; init; }
+
+    /// <summary>True when this edge requires completion even if code is already integrated.</summary>
+    public bool RequiresCompletion { get; init; }
+
+    /// <summary>The rule that fulfilled this edge, or the rule the edge is waiting on.</summary>
+    public string FulfillmentRule { get; init; } = "";
 
     /// <summary>The target's explicit release flag; false for legacy targets.</summary>
     public bool TargetReleased { get; init; }
@@ -195,7 +200,9 @@ public static class WaitsOnEvaluator
     public static WaitsOnStatus Evaluate(
         TaskInfo job,
         IReadOnlyDictionary<string, TaskInfo> byKey,
-        IReadOnlyDictionary<string, IReadOnlyCollection<string>> dependsOnGraph)
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> dependsOnGraph,
+        IReadOnlyDictionary<string, TaskIntegrationStatus>? integrationByTaskKey = null,
+        string? targetBranch = null)
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(byKey);
@@ -223,8 +230,26 @@ public static class WaitsOnEvaluator
             var terminal = resolved && IsFulfilledState(target!.State)
                 && (!TaskKinds.IsDecision(target.Kind)
                     || DecisionStatuses.Normalize(target.Decision?.Status) == DecisionStatuses.Decided);
+            var requiresCompletion = dependency?.RequiresCompletion == true
+                || target is not null && (TaskKinds.IsDecision(target.Kind)
+                    || (TaskModes.Normalize(target.Mode) is TaskModes.Concept or TaskModes.Research));
+            TaskIntegrationStatus? integration = null;
+            if (target is not null && integrationByTaskKey is not null)
+                integrationByTaskKey.TryGetValue(target.TaskKey, out integration);
+            var sameBranch = integration is not null
+                && string.Equals(integration.IntegrationBranch,
+                    !string.IsNullOrWhiteSpace(targetBranch) ? targetBranch
+                        : string.IsNullOrWhiteSpace(job.IntegrationBranch) ? "develop" : job.IntegrationBranch,
+                    StringComparison.OrdinalIgnoreCase);
+            var integrated = sameBranch && integration!.Status == IntegrationStatuses.Integrated;
             var waitingForRelease = terminal && releaseGate && !target!.Released;
-            var fulfilled = terminal && (!releaseGate || target!.Released);
+            var fulfilled = releaseGate
+                ? terminal && target!.Released
+                : terminal || !requiresCompletion && integrated;
+            var rule = releaseGate ? "explicit-release"
+                : requiresCompletion ? "completion"
+                : terminal ? "completion"
+                : integrated ? "integrated-delivery" : "delivery-integration";
             if (!fulfilled) blocked = true;
             var unsatisfiable = waitingForRelease && IsArchivedState(target?.State);
             if (unsatisfiable) unsatisfiableGate = true;
@@ -237,6 +262,8 @@ public static class WaitsOnEvaluator
                     && DecisionStatuses.IsOpen(target.Decision?.Status),
                 Fulfilled = fulfilled,
                 ReleaseGate = releaseGate,
+                RequiresCompletion = requiresCompletion,
+                FulfillmentRule = rule,
                 TargetReleased = target?.Released == true,
                 WaitingForRelease = waitingForRelease,
                 Unsatisfiable = unsatisfiable,

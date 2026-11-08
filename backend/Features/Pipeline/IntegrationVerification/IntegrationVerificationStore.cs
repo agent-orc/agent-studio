@@ -73,6 +73,26 @@ public sealed record IntegrationVerificationRecord
 public static class IntegrationVerificationStore
 {
     public const string FileName = "integration-verification.json";
+    private static readonly object PublicationGate = new();
+    private static readonly Dictionary<string, PublishedVerification> Publications = new(StringComparer.Ordinal);
+    private static long _generation;
+
+    public sealed record PublishedVerification(string Folder, bool Verified, long Generation);
+
+    /// <summary>Process-local changes published after the durable file mutation.</summary>
+    public static (long Generation, PublishedVerification[] Changes) ChangesSince(long generation)
+    {
+        lock (PublicationGate)
+            return generation == _generation
+                ? (_generation, [])
+                : (_generation, Publications.Values.Where(item => item.Generation > generation).ToArray());
+    }
+
+    private static void Publish(string taskFolder, bool verified)
+    {
+        lock (PublicationGate)
+            Publications[taskFolder] = new(taskFolder, verified, ++_generation);
+    }
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -93,6 +113,8 @@ public static class IntegrationVerificationStore
         {
             File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json));
             File.Move(temporary, path, overwrite: true);
+            AgentStudio.Tasks.SidecarFileGeneration.Changed(path);
+            Publish(taskFolder, record.State == IntegrationVerificationStates.Verified);
         }
         finally
         {
@@ -105,6 +127,15 @@ public static class IntegrationVerificationStore
                 SilentCatch.Note(ex, "IntegrationVerificationStore: temporary file cleanup");
             }
         }
+    }
+
+    public static void Delete(string taskFolder)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(taskFolder);
+        var path = PathFor(taskFolder);
+        File.Delete(path);
+        AgentStudio.Tasks.SidecarFileGeneration.Changed(path);
+        Publish(taskFolder, false);
     }
 
     public static IntegrationVerificationRecord? Read(string taskFolder)

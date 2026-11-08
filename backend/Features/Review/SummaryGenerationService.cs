@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.Pipeline;
+using AgentStudio.Shared;
+using AgentStudio.Runner;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Review;
@@ -156,6 +158,7 @@ public sealed class SummaryGenerationService
             }
 
             error = state?.ErrorMessage ?? "Generated status.md is missing.";
+            if (error.StartsWith("waiting for a host with ", StringComparison.Ordinal)) break;
             // Structural failures have already consumed their one retry with
             // identical inputs. Do not multiply that budget in finalization.
             if (error.StartsWith(SummaryProtocolValidation.ErrorPrefix, StringComparison.Ordinal)) break;
@@ -171,6 +174,22 @@ public sealed class SummaryGenerationService
         }
 
         var previous = GetState(info.TaskKey) ?? new TaskSummaryState();
+        if (TaskModes.IsReportOnly(info.Mode)
+            && TryUseAgentReportStatus(info, error, out var fallback))
+        {
+            _states[info.TaskKey] = previous with
+            {
+                Status = TaskSummaryStatus.Ready,
+                FinishedAt = DateTime.UtcNow,
+                ErrorMessage = error,
+                Attempt = attempts,
+                MaxAttempts = maxAttempts,
+            };
+            _logger.LogWarning(
+                "Result finalization used agent-authored {Source} for {JobId} after summary failure: {Error}",
+                fallback, info.Id, error);
+            return new ResultFinalizationOutcome(TaskSummaryStatus.Ready, attempts, maxAttempts, error);
+        }
         _states[info.TaskKey] = previous with
         {
             Status = TaskSummaryStatus.Degraded,
@@ -194,6 +213,73 @@ public sealed class SummaryGenerationService
             attempts,
             maxAttempts,
             error);
+    }
+
+    private bool TryUseAgentReportStatus(TaskInfo info, string? error, out string source)
+    {
+        var restored = TryRestoreAgentReportStatus(info, out source, _resultVersions);
+        if (restored)
+        {
+            try
+            {
+                _timeline?.Append(info.FolderPath, TimelineEventKinds.ResultSummaryPending,
+                    TimelineActors.System,
+                    $"Summary assessment failed ({ResultFinalizationPolicy.Limit(error) ?? "unknown error"}); using {source} for review.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not record report summary fallback event for {JobId}", info.Id);
+            }
+        }
+        return restored;
+    }
+
+    /// <summary>Restore agent-authored report evidence after a failed summary, including on a later recovery pass.</summary>
+    public static bool TryRestoreAgentReportStatus(
+        TaskInfo info, out string source, ResultVersionStore? resultVersions = null)
+    {
+        source = string.Empty;
+        try
+        {
+            var target = Path.Combine(info.FolderPath, "status.md");
+            var candidate = Path.Combine(info.FolderPath, "results", "status.md");
+            string? markdown = null;
+            if (File.Exists(candidate)
+                && BoundedFileRead.TryReadAllText(candidate, BoundedFileRead.EvidenceTextBytes, out var agentStatus)
+                && !string.IsNullOrWhiteSpace(agentStatus))
+            {
+                markdown = agentStatus;
+                source = "results/status.md";
+            }
+            if (markdown is null)
+            {
+                var logPath = TaskPaths.CliOutputLog(info.FolderPath);
+                if (File.Exists(logPath))
+                {
+                    var lines = BoundedFileRead.ReadTailLines(logPath, ReviewDecisionEvidenceReader.SourceWindowBytes);
+                    markdown = SummaryPromptFit.LatestAgentMessage(lines);
+                    if (!string.IsNullOrWhiteSpace(markdown)) source = "final agent message";
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(markdown)) return false;
+            markdown = SummaryPromptFit.ClipHead(markdown.Trim(), BoundedFileRead.EvidenceTextBytes);
+            if (!File.Exists(target)
+                || !BoundedFileRead.TryReadAllText(target, BoundedFileRead.EvidenceTextBytes, out var current)
+                || !string.Equals(current, markdown, StringComparison.Ordinal))
+            {
+                if (resultVersions is not null)
+                    resultVersions.Replace(info.FolderPath, markdown, ResultProducer.RunAttempt(),
+                        info.State, DateTime.UtcNow, TimelineActors.Agent);
+                else
+                    File.WriteAllText(target, markdown);
+            }
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     public async Task GenerateAsync(TaskInfo info, TerminalRunOutcome? runOutcome,

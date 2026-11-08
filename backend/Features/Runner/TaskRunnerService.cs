@@ -17,6 +17,8 @@ public class TaskRunnerService : BackgroundService
     private readonly IConfiguration _config;
     private readonly ILogger<TaskRunnerService> _logger;
     private readonly TaskScannerService _scanner;
+    private readonly TaskIntegrationStatusService? _dependencyIntegration;
+    private readonly TaskListGitProjectionCache? _dependencyGitProjection;
     private readonly TaskStateMachine _states;
     private readonly TaskMutationService _mutations;
     private readonly TaskSessionLog _sessions;
@@ -182,11 +184,15 @@ public class TaskRunnerService : BackgroundService
         ReviewInputDecisionGateway? reviewInputDecisions = null,
         AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
         RemoteRunStopRequestStore? runStops = null,
-        ModelSelectionLedger? selectionLedger = null)
+        ModelSelectionLedger? selectionLedger = null,
+        TaskIntegrationStatusService? dependencyIntegration = null,
+        TaskListGitProjectionCache? dependencyGitProjection = null)
     {
         _config = config;
         _logger = logger;
         _scanner = scanner;
+        _dependencyIntegration = dependencyIntegration;
+        _dependencyGitProjection = dependencyGitProjection;
         _states = states;
         _mutations = mutations;
         _sessions = sessions;
@@ -452,6 +458,8 @@ public class TaskRunnerService : BackgroundService
                 visualQa: _visualQa,
                 providerLimits: _providerLimits,
                 quotaAdmission: _quotaAdmission,
+                dependencyIntegration: _dependencyIntegration,
+                dependencyGitProjection: _dependencyGitProjection,
                 failureInterventions: _failureInterventions,
                 projectUrls: registryProject?.Urls,
                 projectUrlPortInspector: _projectUrlPortInspector,
@@ -1914,6 +1922,8 @@ public class TaskRunnerService : BackgroundService
             orchestratorDefaults: _orchestratorDefaults,
             quotaFallback: _quotaFallback,
             quotaWaitPolicy: _quotaWaitPolicy,
+            dependencyIntegration: _dependencyIntegration,
+            dependencyGitProjection: _dependencyGitProjection,
             loadThrottle: _loadThrottle,
             modelMigrationCatalog: _modelMigrationCatalog,
             conceptWorkbenchPublisher: _conceptWorkbenchPublisher,

@@ -385,6 +385,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-report-summary-stalled-review">
+          <td>2026-11-05</td>
+          <td><code>AGT-3496</code>, <code>AGT-3506</code>, <code>AGT-3511</code>, <code>AGT-3512</code>, <code>AGT-3515</code><br><span class="small">report-summary-stalled-review (fix <code>AGT-3547</code>)</span></td>
+          <td>The summary assessment one-shot exited 1 in the API container. Research cards stayed in Auto Review without a review or decision event until an operator moved them, for up to 26 hours. No core CLI crash occurred. Terminal at discovery: Auto Review without a decision.</td>
+          <td>The read-only pipeline did not recover the agent's own status when summary assessment failed. Post-processing errors and blocked preconditions could close the worker pass without a lane transition.</td>
+          <td>A failed summary keeps its failed step row. The report path uses the agent's status or final message and continues through the lightweight review and decision. If recovery or post-processing fails, it moves the card to Escalated with the concrete reason and a timeline event.</td>
+        </tr>
         <tr id="case-refused-salvage-push-retained">
           <td>2026-11-01</td>
           <td>four finished deliveries<br><span class="small">refused-salvage-push-retained (fix <code>AGT-3406</code>)</span></td>
@@ -3141,6 +3148,13 @@
           <td>Three Codex turns failed with "Selected model is at capacity" and <code>turn.failed</code>. The runner classified them as <code>QuotaExceeded</code>, held <code>provider-auth:codex</code> limited, and stopped claiming Codex cards. The cards ended Unknown or escalated; an operator restarted the runner and salvaged the work.</td>
           <td>The shared provider-access classifier listed "at capacity" among rate-limit signals. The typed outcome therefore selected <code>WaitForCapabilityRecovery</code>, and the provider-auth probe applied a host-wide hold. The completion planes had no distinct transient capacity terminal.</td>
           <td>The observed terminal was Unknown or Escalated. Model capacity now has its own typed outcome and three bounded same-session retries at 30 seconds, 2 minutes, and 5 minutes. Exhaustion returns the card to Ready with its salvage as the next starting point. The provider login stays available; explicit usage limits and HTTP 429 reset refusals retain their existing hold.</td>
+        </tr>
+        <tr id="case-networked-api-one-shot-login-gap">
+          <td>2026-11-01</td>
+          <td><code>AGT-3505</code><br><span class="small">networked-api-one-shot-login-gap</span></td>
+          <td>After the Linux server move, Result summaries, post-summary assessments, and tag calls launched a provider CLI in the API container. The CLI exited 1 with "Not logged in". Summary finalization tried three times and cards displayed <code>Summary pending (degraded: exitCode=1)</code>.</td>
+          <td>The control plane had no provider login by design. Its short completion paths still used local process execution instead of the accepted coding or review host.</td>
+          <td>The observed terminal was a degraded Result summary; other short completions failed. Networked one-shots now travel as bounded Task Server jobs. A host claims only with fresh <code>model-acceptance:&lt;cli&gt;:&lt;model&gt;</code> evidence. With no host, the Result reports <code>waiting for a host with &lt;capability&gt;</code> and defers without spending the summary retry budget. A later accepted host lets the retry complete.</td>
         </tr>
       </tbody>
     </table>
