@@ -2032,6 +2032,36 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan).Outcome);
     }
 
+    [Fact]
+    public async Task Candidate_missing_report_after_spec_renamed_to_non_spec_is_product_finding()
+    {
+        await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["frontend/src/existing.spec.ts"] = "test('existing', () => {})",
+        });
+        var seed = Path.Combine(_root, "seed");
+        await GitAsync(seed, "checkout", "-b", "task/removed-spec");
+        await GitAsync(seed, "mv", "frontend/src/existing.spec.ts", "frontend/src/helper.ts");
+        await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-m", "rename spec to helper");
+        await GitAsync(seed, "push", "origin", "task/removed-spec");
+        var subjectSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
+        var command = BaselineCommand("exit 0", reportPassingTest: false);
+        var (workspace, subject) = Workspace("attempt-candidate-removed-spec-no-report", subjectSha,
+            [command], 26225, resultRef: "refs/heads/task/removed-spec", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Contains("spec file list changed: frontend/src/existing.spec.ts",
+            Assert.Single(evidence.Verdicts).Summary, StringComparison.Ordinal);
+        Assert.Equal("ProductFailure",
+            ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan).Outcome);
+        Assert.Equal(2, evidence.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("candidate", StringComparison.Ordinal)));
+    }
+
     /// <summary>
     /// AGT-3089: entries written before this change (parser version 3) and an
     /// unrun test-failures result (exit 1, no failure name) are both cache
