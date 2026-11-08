@@ -65,8 +65,10 @@
 }
 .cli-models__fallback-head > div { display: grid; gap: var(--studio-spacing-1); }
 .cli-models__table-wrap { overflow-x: auto; }
+.cli-models__table-wrap:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 .cli-models__fallback-table {
   width: 100%;
+  min-width: 560px;
   border-collapse: collapse;
   font-size: 10px;
 }

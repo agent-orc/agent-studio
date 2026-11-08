@@ -284,6 +284,12 @@
   padding: 6px 0;
 }
 
+.file-card__state--error {
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+}
+
 .files-pane__hint {
   display: flex;
   align-items: flex-start;

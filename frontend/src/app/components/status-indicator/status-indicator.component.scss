@@ -23,11 +23,8 @@
   padding: 0 var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--status-tone) 40%, transparent);
   border-radius: var(--studio-card-pill-radius);
-  background: color-mix(in srgb, var(--status-tone) 12%, transparent);
-  /* The label leans 30% toward the strongest foreground so it clears WCAG AA
-     on its own tint and on tinted surfaces in both themes (AGT-3403); the
-     icon keeps the pure tone. */
-  color: color-mix(in srgb, var(--status-tone) 70%, var(--studio-fg-strong));
+  background: color-mix(in srgb, var(--status-tone) 4%, var(--studio-status-chip-surface));
+  color: var(--status-tone);
   font-size: 12px;
   font-weight: 600;
   line-height: 1.2;
@@ -39,10 +36,22 @@
   }
 }
 
-.status-indicator[data-tone='success'] { --status-tone: var(--studio-status-success); }
-.status-indicator[data-tone='warning'] { --status-tone: var(--studio-status-warning); }
-.status-indicator[data-tone='danger'] { --status-tone: var(--studio-status-danger); }
-.status-indicator[data-tone='info'] { --status-tone: var(--studio-status-info); }
+.status-indicator[data-tone='success'] {
+  --status-tone: var(--studio-status-success);
+  --status-compact-tone: var(--studio-status-compact-success);
+}
+.status-indicator[data-tone='warning'] {
+  --status-tone: var(--studio-status-warning);
+  --status-compact-tone: var(--studio-status-compact-warning);
+}
+.status-indicator[data-tone='danger'] {
+  --status-tone: var(--studio-status-danger);
+  --status-compact-tone: var(--studio-status-compact-danger);
+}
+.status-indicator[data-tone='info'] {
+  --status-tone: var(--studio-status-info);
+  --status-compact-tone: var(--studio-status-compact-info);
+}
 .status-indicator[data-tone='running'] { --status-tone: var(--studio-status-running); }
 
 /* Neutral stays calm: dim text on no tint, so an empty state never competes
@@ -55,7 +64,6 @@
 .status-indicator__icon {
   display: inline-flex;
   flex: 0 0 auto;
-  color: var(--status-tone);
 }
 
 .status-indicator__label {
@@ -64,12 +72,20 @@
   text-overflow: ellipsis;
 }
 
+.status-indicator--wrap { white-space: normal; align-items: flex-start; }
+.status-indicator--wrap .status-indicator__label {
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
 /* Compact: icon plus text without the chip, for dense rows and tables. */
 .status-indicator--compact {
   min-height: 0;
   padding: 0;
   border: 0;
   background: transparent;
+  color: var(--status-compact-tone, var(--status-tone));
   font-weight: 500;
 }
 

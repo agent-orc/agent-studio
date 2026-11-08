@@ -53,7 +53,12 @@
           <article class="environment-flow__host" [class.environment-flow__host--alert]="host.status === 'offline' || host.status === 'degraded'" [attr.data-host-id]="host.id">
             <div class="environment-flow__host-head"><h3>{{ host.name }} @if (hostMarkers(host)) { <app-status-indicator tone="warning" [label]="hostMarkers(host) + ' open'" [compact]="true" testId="environment-flow-marker" /> }</h3><span class="environment-flow__host-role">{{ host.serviceRole ?? host.role }}<app-status-indicator [tone]="hostTone(host.status)" [label]="host.status" testId="environment-host-status" /></span></div>
             <dl><div><dt>Load / core</dt><dd>{{ loadPerCore(host) }}</dd></div><div><dt>Memory used</dt><dd>{{ memory(host) }}</dd></div>
-              <div><dt>Slots used / total</dt><dd>{{ usedSlots(host) ?? '—' }} / {{ totalSlots(host) ?? '—' }}</dd></div>
+              <div><dt>Slots used / total</dt><dd>{{ usedSlots(host) ?? '—' }} / {{ totalSlots(host) ?? '—' }}
+                @if (host.claimLoadGate; as gate) {
+                  <app-status-indicator [tone]="gate.state === 'closed' ? 'warning' : 'success'"
+                    [label]="claimLoadGateLabel(gate)" [compact]="true" [wrap]="true" />
+                }
+              </dd></div>
               <div><dt>Free slots</dt><dd>{{ freeSlots(host) ?? '—' }}</dd></div></dl>
             <div class="environment-flow__host-detail"><strong>Provider auth</strong>
               @for (provider of auth(host); track provider.name) { <app-status-indicator [tone]="providerTone(provider.status)" [label]="provider.name + ': ' + provider.status" [compact]="true" testId="environment-host-provider-auth" /> }

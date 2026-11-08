@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { QuotaApiService } from '../../../quota';
 import type { ConsumerModelPolicy, ConsumerPolicyRoute, EffectiveModelSelection, ModelSelectionPolicy } from '../../../quota/services/quota-api.service';
+import { scrollCliModelsTable } from '../cli-models-panel/cli-models-table-keyboard';
 
 @Component({
   selector: 'app-consumer-model-policy',
@@ -10,6 +11,7 @@ import type { ConsumerModelPolicy, ConsumerPolicyRoute, EffectiveModelSelection,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ConsumerModelPolicyComponent implements OnInit {
+  readonly onTableScrollKeydown = scrollCliModelsTable;
   private readonly api = inject(QuotaApiService);
   readonly policy = signal<ModelSelectionPolicy | null>(null);
   readonly effectiveRoutes = signal<EffectiveModelSelection[]>([]);

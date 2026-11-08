@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
+import { auditModal } from '../helpers/audit-modal';
 
 test.use({ serviceWorkers: 'block' });
 
@@ -77,6 +78,15 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
   await page.route('**/api/v1/management/credential-inventory', route => json(route, { items: [] }));
   await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: { [project]: { projectName: project, mode: 'manual', activeJobId: null, queuedJobIds: [] } } }));
   await page.route('**/api/projects/*/batch-gate/state?history=10', route => json(route, batchState));
+  await page.route('**/api/projects/*/batch-gate/failed-tests?windowDays=7', route => json(route, {
+    project, windowDays: 7, tests: [{ testName: 'Product.Tests.Unstable', batches: 4, runs: 5,
+      distinctMemberSets: 4, firstFailureUtc: '2026-10-09T12:00:00Z', lastFailureUtc: '2026-10-11T13:00:00Z',
+      latestErrorExcerpt: 'Error Message: timed out while opening card', flakyRerunPassed: true,
+      flakySuspect: true, batchIds: ['batch-7', 'batch-5', 'batch-3', 'batch-1'],
+      failures: [{ testName: 'Product.Tests.Unstable', batchId: 'batch-7', runId: 'run-7',
+        members: ['AGT-2'], atUtc: '2026-10-11T13:00:00Z',
+        errorExcerpt: 'Error Message: timed out while opening card', flakyRerunPassed: true }] }],
+  }));
   await page.route('**/api/projects/*/snapshot**', route => json(route, {
     settings: { autoCommit: false, crashRecoveryEnabled: false, autoPushStrategy: 'off', runnerMode: 'manual' },
     runnerStatus: null, orchestratorLogTail: [], orchestratorSession: null, paths: null,
@@ -87,6 +97,41 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
   await page.route('**/api/projects/*/batch-gate', route => {
     if (route.request().method() === 'PUT') { onSave(); expect(route.request().headers()['x-client-id']).toBeTruthy(); return json(route, { settings: route.request().postDataJSON(), limits: { hardMaximumSize: 8 } }); }
     return json(route, { settings, limits: { hardMaximumSize: 8 } });
+  });
+}
+
+for (const width of [1280, 390]) {
+  test(`batch panel contains keyboard focus and restores it on Escape at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await routeBoard(page, state);
+    await page.goto('/?includeFixtures=true');
+    await page.getByRole('tab', { name: 'All projects · Board' }).click();
+    const opener = page.getByTestId('batch-lane-indicator').first();
+    await opener.click();
+    const dialog = page.getByTestId('batch-panel');
+    await expect(dialog).toBeVisible();
+    await auditModal(page, '[data-testid="batch-panel"]', `batch-panel-${width}`);
+    if (process.env.JOB_RESULTS_DIR) {
+      await page.screenshot({ path: nodePath.join(process.env.JOB_RESULTS_DIR, `batch-panel-keyboard-${width}.png`) });
+    }
+    await expect(dialog.getByRole('button', { name: 'Close batch panel' })).toBeFocused();
+    await expect.poll(() => page.evaluate(() => {
+      const host = document.querySelector('[data-testid="batch-panel"]')?.closest('app-batch-panel');
+      return !!host && [...document.body.children].filter(child => child !== host).every(child => (child as HTMLElement).inert);
+    })).toBe(true);
+    for (let index = 0; index < 12; index++) {
+      await page.keyboard.press('Tab');
+      await expect.poll(() => page.evaluate(() =>
+        !!document.querySelector('[data-testid="batch-panel"]')?.contains(document.activeElement))).toBe(true);
+    }
+    for (let index = 0; index < 12; index++) {
+      await page.keyboard.press('Shift+Tab');
+      await expect.poll(() => page.evaluate(() =>
+        !!document.querySelector('[data-testid="batch-panel"]')?.contains(document.activeElement))).toBe(true);
+    }
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
   });
 }
 
@@ -117,6 +162,7 @@ test('board badge, batch panel and project settings save use batch contract', as
   await page.getByTestId('batch-lane-indicator').first().click();
   await expect.poll(async () => (await page.getByTestId('batch-panel').boundingBox())?.x ?? 0).toBeGreaterThan(700);
   await expect(page.getByTestId('batch-panel')).toContainText('Advisor veto');
+  await expect(page.getByTestId('batch-failed-tests')).toContainText('Flaky suspect');
   await expect(page.getByTestId('batch-integration-push-wait'))
     .toContainText('Approved integration push awaits the worker or restart recovery.');
   await expect(page.getByTestId('batch-gate-slot-usage')).toHaveText('Gate slots: 2/3 busy');
@@ -142,6 +188,39 @@ test('board badge, batch panel and project settings save use batch contract', as
   await expect(page.getByTestId('batch-settings')).toContainText('Saved');
   await page.locator('#batch-settings-title').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings');
+});
+
+test('failed-test ranking stays readable at wide and mobile widths in both themes', async ({ page }) => {
+  await routeBoard(page, state);
+  await page.route('**/api/projects/*/batch-gate/state?history=500', route => json(route, {
+    ...state, batches: [...state.batches, {
+      batchId: 'batch-1', phase: 'red', baseSha: 'b'.repeat(40), candidateSha: 'c'.repeat(40),
+      members: [{ taskKey: 'AGT-4', replay: 'applied', released: false }], runs: [],
+    }],
+  }));
+  await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  await page.getByTestId('batch-lane-indicator').first().click();
+  await expect(page.getByTestId('batch-failed-tests')).toContainText('Product.Tests.Unstable');
+  const evidence = process.env.JOB_RESULTS_DIR;
+  if (!evidence) return;
+  fs.mkdirSync(evidence, { recursive: true });
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(page.getByTestId('batch-panel')).toBeVisible();
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      await page.screenshot({
+        path: nodePath.join(evidence, `failed-tests-${width}-${theme}.png`),
+      });
+    }
+  }
+  await page.getByRole('link', { name: 'batch-1' }).click();
+  await expect(page.locator('#batch-batch-1')).toBeVisible();
+  await page.getByRole('button', { name: 'Create fix card for Product.Tests.Unstable' }).click();
+  await expect(page.getByTestId('create-title')).toHaveValue('Fix flaky test: Product.Tests.Unstable');
+  await expect(page.getByTestId('create-prompt')).toHaveValue(/Batches: batch-7, batch-5, batch-3, batch-1/);
+  await expect(page.getByTestId('create-task-type-bug')).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('ejected batch member badge names why it went to the per-task gate', async ({ page }) => {

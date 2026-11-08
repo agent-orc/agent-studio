@@ -301,6 +301,11 @@
   overflow-y: auto;
 }
 
+:host ::ng-deep .sheet__conversation .conv:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: -2px;
+}
+
 :host ::ng-deep .sheet__conversation .conv__jump {
   display: none;
 }

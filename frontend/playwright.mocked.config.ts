@@ -16,6 +16,9 @@ export default defineConfig({
     testMatch: [
       '**/board/card-state-pill-matches-lane.spec.ts',
       '**/board/failed-pickup-lane.spec.ts',
+      '**/board/stalled-progress-card.spec.ts',
+      '**/task-detail/pipeline-column-headers.spec.ts',
+      '**/system/semantic-contrast.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',
       '**/workspace/structure-view.spec.ts',
@@ -23,6 +26,8 @@ export default defineConfig({
       '**/studio-shell/activity-bar-single-active.spec.ts',
       '**/visual-evidence/status-indicator-surfaces.spec.ts',
       '**/cli/consumer-model-policy.spec.ts',
+      '**/task-detail/task-detail-instant-navigation.spec.ts',
+      '**/perf/board-bundle-lazy.spec.ts',
     ],
     use: { ...devices['Desktop Chrome'], channel: undefined, serviceWorkers: 'block' },
   }],

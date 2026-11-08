@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using AgentStudio.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -263,13 +264,29 @@ public sealed class GitStaleLockGuard
         }
     }
 
-    /// <summary>Whether a killed command left this exact lock file (same path and identity).</summary>
+    /// <summary>Whether a killed command left this file, including later writes to it.</summary>
     private static bool LeftByKilledCommand(string lockPath, LockIdentity identity)
     {
-        if (!KilledCommandLocks.TryGetValue(lockPath, out var recorded)) return false;
-        if (recorded == identity) return true;
-        // Replaced by a new writer: the ordinary age rule applies again.
-        KilledCommandLocks.TryRemove(new KeyValuePair<string, LockIdentity>(lockPath, recorded));
+        while (KilledCommandLocks.TryGetValue(lockPath, out var recorded))
+        {
+            if (recorded == identity) return true;
+            // Git can write more bytes to a lock while its owner is alive.
+            // Linux file creation time can track write time on some filesystems,
+            // so use the device and inode to distinguish that write from a
+            // replacement. Sweep still checks all metadata after probing and
+            // before deleting. Other platforms use their creation timestamp.
+            var sameFile = recorded.FileId is { } fileId
+                ? identity.FileId == fileId
+                : !OperatingSystem.IsLinux()
+                  && identity.CreationTimeUtc == recorded.CreationTimeUtc;
+            if (sameFile)
+            {
+                if (KilledCommandLocks.TryUpdate(lockPath, identity, recorded)) return true;
+                continue;
+            }
+            if (KilledCommandLocks.TryRemove(new KeyValuePair<string, LockIdentity>(lockPath, recorded)))
+                return false;
+        }
         return false;
     }
 
@@ -359,15 +376,58 @@ public sealed class GitStaleLockGuard
         }
     }
 
-    private readonly record struct LockIdentity(DateTime CreationTimeUtc, DateTime LastWriteTimeUtc, long Length)
+    private readonly record struct LockIdentity(
+        DateTime CreationTimeUtc, DateTime LastWriteTimeUtc, long Length, LinuxFileId? FileId)
     {
         public static LockIdentity Read(string path)
         {
+            var before = LinuxFileId.Read(path);
             var file = new FileInfo(path);
             if (!file.Exists) throw new FileNotFoundException("Git lock disappeared during inspection", path);
-            return new LockIdentity(file.CreationTimeUtc, file.LastWriteTimeUtc, file.Length);
+            var identity = new LockIdentity(file.CreationTimeUtc, file.LastWriteTimeUtc, file.Length, before);
+            if (LinuxFileId.Read(path) != before)
+                throw new IOException("Git lock changed during inspection");
+            return identity;
         }
     }
+
+    private readonly record struct LinuxFileId(
+        uint DeviceMajor, uint DeviceMinor, ulong Inode, long BirthSeconds, uint BirthNanoseconds)
+    {
+        public static LinuxFileId? Read(string path)
+        {
+            if (!OperatingSystem.IsLinux()) return null;
+            try
+            {
+                if (statx(-100, path, 0, 0x7ff | 0x800, out var info) != 0
+                    || (info.Mask & 0x100) == 0)
+                    return null;
+                return new LinuxFileId(info.DeviceMajor, info.DeviceMinor, info.Inode,
+                    (info.Mask & 0x800) != 0 ? info.BirthSeconds : 0,
+                    (info.Mask & 0x800) != 0 ? info.BirthNanoseconds : 0);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                return null;
+            }
+        }
+    }
+
+    // statx has a fixed 256-byte layout across Linux architectures. The file
+    // ID fields are enough to pin a lock even when its timestamps and size move.
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct LinuxStatx
+    {
+        [FieldOffset(0)] public uint Mask;
+        [FieldOffset(32)] public ulong Inode;
+        [FieldOffset(80)] public long BirthSeconds;
+        [FieldOffset(88)] public uint BirthNanoseconds;
+        [FieldOffset(136)] public uint DeviceMajor;
+        [FieldOffset(140)] public uint DeviceMinor;
+    }
+
+    [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+    private static extern int statx(int directory, string path, int flags, uint mask, out LinuxStatx info);
 
     /// <summary>
     /// The repository a git command ran in: the nearest directory at or above

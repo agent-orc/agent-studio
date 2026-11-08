@@ -1,10 +1,11 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
-import type { PickupHoldResolution, PickupHoldStatus, TaskInfo } from '../../models/task.model';
+import { TaskState, type PickupHoldResolution, type PickupHoldStatus, type TaskInfo } from '../../models/task.model';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
 import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
 import { NowTickService } from '../../services/now-tick.service';
 import { TaskService } from '../../services/task.service';
 import type { Observable } from 'rxjs';
+import { RemoteHostsService, claimLoadGateLabel } from '../../features/remote-hosts';
 
 export type PickupHoldVariant = 'card' | 'detail';
 
@@ -33,6 +34,7 @@ const MECHANISM_LABELS: Record<string, string> = {
   'crash-backoff': 'Crash cooldown',
   'pickup-policy': 'Pickup policy',
   'execution-placement': 'Execution placement',
+  'claim-load-gate': 'Host load',
 };
 
 export const PICKUP_HOLD_RESOLUTION_KINDS = {
@@ -103,11 +105,30 @@ export const PICKUP_HOLD_RESOLUTION_ACTIONABILITY: Readonly<
 })
 export class PickupHoldComponent {
   private readonly tasks = inject(TaskService, { optional: true });
+  private readonly remoteHosts = inject(RemoteHostsService, { optional: true });
   private readonly now = inject(NowTickService).now;
   readonly task = input.required<TaskInfo>();
   readonly variant = input<PickupHoldVariant>('card');
 
-  readonly hold = computed<PickupHoldStatus | null>(() => this.task().pickupHold ?? null);
+  readonly hold = computed<PickupHoldStatus | null>(() => {
+    const task = this.task();
+    if (task.pickupHold) return task.pickupHold;
+    if (task.state !== TaskState.Ready) return null;
+    const runnerId = task.executionLocation?.configuredRunnerId;
+    if (!runnerId) return null;
+    const host = this.remoteHosts?.hosts().find(item =>
+      item.clientId === runnerId || item.id === runnerId || item.capacityHostId === runnerId);
+    const gate = host?.claimLoadGate;
+    if (!gate || gate.state !== 'closed' || !gate.since) return null;
+    return {
+      classification: 'satisfiable-soon',
+      mechanism: 'claim-load-gate',
+      reason: `${host.name} is ${claimLoadGateLabel(gate).toLowerCase()}. Running work continues; new claims resume when load falls.`,
+      sinceUtc: gate.since,
+      unsatisfiable: false,
+      resolutions: [],
+    };
+  });
 
   /** `open` for an honest wait, `blocked` for a gate that can never open. */
   readonly tone = computed<PickupHoldTone>(() => ((this.hold()?.classification === 'unsatisfiable' || this.hold()?.unsatisfiable) ? 'blocked'

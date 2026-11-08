@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-29
+Version: 2026-11-05
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -38,6 +38,25 @@ The service token is `secret://workspace/quality-studio-api-token` by default;
 the matching GET supplies the Deck status panel.
 
 ## Board read contract
+
+### Routing mutation publication
+
+`PUT /api/tasks/{id}/model`, `/cli-type`, and `/thinking-level` replace
+`task.json` once with all related fields, then publish that card into the
+resident core and board generations. `POST /api/tasks` publishes the new card
+after its task file, derived layout index, and timeline have been written.
+These paths do not invalidate the whole task index for a routine API write.
+The watcher ignores a `task.json` event when its file stamp matches the
+version already published by the API; an external edit still invalidates the
+index. Creation retains separate writes for the task, project key
+counter, and derived layout index.
+
+The `task-operation-timing` line for these four routes carries a `breakdown`
+JSON object. It reports request wall time, `mutation.lookup`,
+`mutation.write`, `mutation.publish`, and the creation-only `mutation.lock`, `mutation.key`,
+`mutation.index`, and `mutation.timeline` spans, plus workspace scans and Git
+process count. The spans are stage costs; their sum can be below wall time
+because validation and response coordination are outside them.
 
 `GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.
 They include identity, lane, sort and filter fields, card badges, a commit
@@ -818,6 +837,9 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   `POST /api/tasks/{address}/integration-records?watchPath=...`. The address may
   be a stable task key or the task folder name within the selected project. A
   duplicated legacy `id` returns `409` rather than selecting an arbitrary card.
+  Address resolution reads the published archive-inclusive identity facts;
+  after selecting an unambiguous card, the write reads only that card folder
+  again for current state and persisted records.
   The request uses the historical classes owned by
   `HistoricalIntegrationVerificationSweep` or `curated-mapping`, a stable caller-supplied record id,
   and explicit evidence. The server owns
@@ -1858,6 +1880,21 @@ their authoritative checks; display state never grants permission to mutate.
   than a fixed TTL after the last refresh queued a whole-board recompute -
   structurally proportional to request traffic rather than to actual repo
   change.
+- **Card sidecar generations (AGT-3541).** The review round ledger and
+  integration verification record have a remembered file generation per card.
+  Their writers and task watcher invalidate that card immediately. A ref-only
+  projection reuses the parsed review view and verification record, so it does
+  not probe every card's round file. Each index pass inspects at most 32
+  sidecars from a rotating queue to repair a missed watcher event. The 45 s
+  safety sweep checks up to 256 sidecars; a repaired
+  file changes the task input signature and queues a new board generation.
+  A second rotating pass re-reads at most 32 review views older than five
+  minutes to repair missed events for other review artifacts.
+  The first observation after a restart records file metadata and content hash
+  in the durable input signature, so a restored generation is confirmed only
+  against the current sidecars. The five synchronous projection lookups
+  execute on one outer pool worker instead of reserving five workers during
+  file and Git reads.
 - **Single-flight per repository, bounded concurrency across repositories.** A
   trigger that arrives while a repository's run is already in flight does not
   start a second one; it marks exactly one rerun for after the current run

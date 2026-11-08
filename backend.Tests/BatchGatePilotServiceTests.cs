@@ -116,6 +116,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         using (var body = JsonDocument.Parse(await valid.Content.ReadAsStringAsync()))
         {
             Assert.Equal("code", body.RootElement.GetProperty("settings").GetProperty("scope").GetString());
+            Assert.Equal("off", body.RootElement.GetProperty("settings").GetProperty("stacking").GetString());
             Assert.Equal(8, body.RootElement.GetProperty("limits").GetProperty("hardMaximumSize").GetInt32());
         }
 
@@ -1002,9 +1003,9 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
 
+        var manifest = ClosePendingBatch(factory);
         await pilot.TickAsync(CancellationToken.None);
 
-        var manifest = Assert.Single(store.ListManifests().Where(item => item.Members.Count == 6));
         AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
         Assert.Equal(0, _gate.FallbackRuns);
         Assert.Equal(2, members.Count(member =>
@@ -1066,13 +1067,15 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         _gate.Fallback = _ => throw new InvalidOperationException("A deferred member ran a per-task gate.");
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+        settings.SetBatchGate(ProjectName, settings.Get(ProjectName).BatchGate with { MinimumSize = 1 });
+        var manifest = ClosePendingBatch(factory);
 
         await pilot.TickAsync(CancellationToken.None);
         await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
         await pilot.TickAsync(CancellationToken.None);
         await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
 
-        var manifest = Assert.Single(store.ListManifests(), item => item.Members.Count == 2);
         Assert.Equal("conflict", store.ReadReplay(manifest.BatchId, conflicted.Key).Outcome);
         Assert.Equal("cascade-deferred", store.ReadReplay(manifest.BatchId, deferred.Key).Outcome);
         var next = Assert.Single(store.ListManifests(), item => item.BatchId != manifest.BatchId);
@@ -1085,13 +1088,14 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     // AGT-3414: a documentation-only delivery runs what a documentation batch
     // runs, the build and lint commands without a test, on either path.
     [Fact]
-    public async Task Documentation_card_closes_at_once_and_its_batch_runs_no_test()
+    public async Task Documentation_batch_at_minimum_closes_at_once_and_runs_no_test()
     {
         using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         WithBuildStep();
         var member = SeedMember(factory, "DOC-AT-ONCE", "docs/at-once.md");
+        var partner = SeedMember(factory, "DOC-AT-ONCE-PARTNER", "docs/at-once-partner.md");
         string? level = null;
         _gate.Batch = request => { level = request.RequiredTestLevel; return Green(request.ExpectedSha); };
         var store = factory.Services.GetRequiredService<BatchGateStore>();
@@ -1099,11 +1103,12 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
 
         var manifest = Assert.Single(store.ListManifests());
-        Assert.Equal(member.Key, Assert.Single(manifest.Members).TaskKey);
+        Assert.Equal([member.Key, partner.Key], manifest.Members.Select(item => item.TaskKey));
         AssertPhase(store, manifest.BatchId, BatchPhase.Published);
         Assert.Equal(TestExecutionLevels.BuildOnly, level);
         Assert.Equal(0, _gate.FallbackRuns);
         AssertLane(member.Key, TaskStates.HumanReview);
+        AssertLane(partner.Key, TaskStates.HumanReview);
     }
 
     [Fact]
@@ -1572,6 +1577,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         pilot.WaitForFlightsInTick = false;
         var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var closed = ClosePendingBatch(factory);
         await pilot.TickAsync(CancellationToken.None);
         await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
         Assert.Contains(store.ListManifests(), manifest =>
@@ -1584,6 +1590,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         AssertLane(ejected.Key, TaskStates.Ready);
         var fact = Assert.Single(store.ListExecutions(ProjectName).Where(f => f.BatchRunId is not null));
         Assert.Equal([admitted.Key], fact.MemberKeys);
+        Assert.Equal(closed.BatchId, fact.BatchId);
         Assert.Equal(2, store.ReadManifest(fact.BatchId!).Members.Count);
         var row = GateEconomicsEndpoints.ProjectRow(ProjectName, [],
             since: fact.StartedAtUtc.AddDays(-1), now: fact.CompletedAtUtc,
@@ -2467,9 +2474,9 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
 
         // With an interrupted publication, the process stops after the remote
         // push and before it schedules the ejected member's fallback.
+        var closed = ClosePendingBatch(factory);
         await pilot.TickAsync(CancellationToken.None);
 
-        var closed = Assert.Single(store.ListManifests());
         Assert.Equal(2, closed.Members.Count);
         Assert.Equal("unattributable", store.ReadReplay(closed.BatchId, contained.Key).Outcome);
         if (interruptedPublication)
@@ -3622,7 +3629,8 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
         settings.SetIntegrationBranch(ProjectName, "develop");
         settings.SetBatchGate(ProjectName, new BatchGateFormationOptions(
-            Enabled: true, Scope: scope, CloseSize: closeSize, PressureSize: 1));
+            Enabled: true, Scope: scope, CloseSize: closeSize,
+            MinimumSize: Math.Min(2, closeSize), PressureSize: 1));
     }
 
     private static BatchGateSnapshotBuilder Builder(WebApplicationFactory<Program> factory,

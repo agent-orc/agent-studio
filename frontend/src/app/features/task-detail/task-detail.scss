@@ -25,13 +25,12 @@
     .activity-metrics__label { color: var(--studio-fg-dim); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.65rem; }
     .activity-metrics__value { color: var(--studio-fg); font-family: var(--font-mono, monospace); font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .chat-compose {
-      margin-top: var(--studio-spacing-2);
+      flex: 0 0 auto;
       padding: var(--studio-spacing-2);
       border-radius: 10px;
       background: var(--studio-bg-hover);
       border: 1px solid var(--studio-border);
-      position: sticky;
-      bottom: 0;
+      position: relative;
       z-index: 2;
     }
     .chat-compose__row {
@@ -1174,14 +1173,18 @@
     }
     @media (max-width: 720px) {
       .detail {
-        padding: 18px;
+        padding: var(--studio-spacing-3);
+        padding-bottom: 0;
+        overflow: hidden;
       }
       .detail__panes {
         flex-direction: column;
-        overflow-y: auto;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
       }
       .detail__panes .pane {
-        flex: 0 0 min(44vh, 352px);
+        flex: 1 1 0;
         min-height: 0;
       }
       .detail__panes--maximized .pane { flex: 1 1 auto; }
@@ -1193,6 +1196,14 @@
       }
       .detail__header {
         flex-direction: column;
+        align-items: stretch;
+        min-width: 0;
+      }
+      .detail__header-main {
+        flex-wrap: wrap;
+      }
+      .detail__headline {
+        flex: 1 1 calc(100% - 40px);
       }
       .detail__title {
         font-size: 17px;

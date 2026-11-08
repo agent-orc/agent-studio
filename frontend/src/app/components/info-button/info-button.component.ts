@@ -11,7 +11,7 @@ import {
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
+import { InfoButtonMarkdownBodyComponent } from './info-button-markdown-body/info-button-markdown-body.component';
 import { DialogComponent } from '../dialog/dialog.component';
 import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
 import { ModalStackService } from '../../services/modal-stack.service';
@@ -26,7 +26,7 @@ interface ConceptDocPayload {
  * Subtle "i" trigger that opens a centered modal with the rendered
  * concept doc for the given topic. The doc body is fetched on first open
  * from <c>GET /api/concept-docs/{topic}</c>; the FE never duplicates the
- * prose. Body is rendered through the canonical {@link MarkdownViewComponent},
+ * prose. Body is rendered through the canonical Markdown view,
  * and the modal shell is the app-wide {@link DialogComponent} so the
  * surface flips light/dark from studio tokens with no per-host colours.
  *
@@ -37,7 +37,7 @@ interface ConceptDocPayload {
 @Component({
   selector: 'app-info-button',
   standalone: true,
-  imports: [TooltipDirective, MarkdownViewComponent, DialogComponent, StatusIndicatorComponent],
+  imports: [TooltipDirective, InfoButtonMarkdownBodyComponent, DialogComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './info-button.component.html',
   styleUrl: './info-button.component.scss'

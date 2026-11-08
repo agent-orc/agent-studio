@@ -867,10 +867,6 @@
       }
     }
     
-    :host {
-      --resizing-cursor: col-resize;
-    }
-
     /* VS-Code-layout shell wrapper. Hosts the persistent right-edge
        sheets (CLI usage, orchestrator chat) and the studio-shell side by
        side. The wrapper is flex row so each sheet's :host
@@ -889,7 +885,7 @@
       display: flex;
       flex-direction: row-reverse;
       align-items: stretch;
-      height: 100%;
+      flex: 1 1 auto;
       min-height: 0;
       overflow: hidden;
     }
@@ -904,6 +900,7 @@
       display: block;
       flex: 1 1 auto;
       min-width: 0;
+      min-height: 0;
       // Belt-and-braces: clip anything that still wants to overflow.
       // The grid inside (.studio) already has overflow:hidden but a
       // mis-sized grandchild can still spill horizontally.

@@ -13,6 +13,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
+import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import type { WatchPathEntry } from '../../../../models/task.model';
 import type {
@@ -69,6 +70,7 @@ import { UiPreferencesService } from '../../../shell/state/ui-preferences.servic
 import { PlanStripComponent } from '../../../plan-strip';
 import { OrchestratorTaskPlanStore } from '../../state/orchestrator-task-plan.store';
 import { StudioPanelStateService } from '../../../studio-shell/services/studio-panel-state.service';
+import { ConversationScrollFocusDirective } from '../../../../directives/conversation-scroll-focus.directive';
 
 /**
  * Push-layout side sheet hosting automatic context-keyed orchestrator chats.
@@ -81,6 +83,7 @@ import { StudioPanelStateService } from '../../../studio-shell/services/studio-p
   imports: [
     ChatComponent,
     ConversationViewComponent,
+    ConversationScrollFocusDirective,
     SidesheetComponent,
     OrchestratorContextHeaderComponent,
     OrchestratorContextReceiptComponent,
@@ -95,13 +98,10 @@ import { StudioPanelStateService } from '../../../studio-shell/services/studio-p
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-side-sheet.component.html',
   styleUrl: './orchestrator-side-sheet.component.scss',
-  providers: [OrchestratorContextDigestService, OrchestratorTaskPlanStore],
+  providers: [TASK_REFERENCE_CHAT_PROVIDER, OrchestratorContextDigestService, OrchestratorTaskPlanStore],
   host: {
     '[class.is-open]': 'open()',
-    // When open, drive the host width from the persisted user choice so
-    // the resize handle can grow / shrink the panel live. When closed the
-    // binding evaluates to null and the static `:host { width: 0 }` rule
-    // from the .scss wins, so the close transition still works.
+    // Use the saved width while open; the host style sets the closed width.
     '[style.width.px]': 'open() ? panelWidth() : null'
   }
 })
@@ -110,6 +110,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   readonly composerModel = inject(OrchestratorComposerModelService);
   readonly projects = input<string[]>([]);
   readonly preferredProject = input<string | null>(null);
+  readonly requestedProject = input<{ projectName: string } | null>(null);
+  readonly projectRequestHandled = output<{ projectName: string }>();
   /** One-shot shell event for an explicit project entry from an empty editor. */
   readonly projectEntryRevision = input(0);
   readonly watchPaths = input<WatchPathEntry[]>([]);
@@ -183,12 +185,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   /** Overlay with pin, debug, settings, refresh, and the context include toggle. */
   readonly contextActionsOpen = signal(false);
   readonly contextDigestState = inject(OrchestratorContextDigestService);
-  readonly contextFreshnessTone = computed(() => contextFreshnessTone({
-    refreshing: this.contextDigestState.refreshing(),
-    error: this.contextDigestState.error() !== null,
-    loading: this.contextDigestState.loading(),
-    hasDigest: this.contextDigestState.activeDigest() !== null,
-  }));
+  readonly contextFreshnessTone = computed(() => { const d = this.contextDigestState; return contextFreshnessTone(
+    { refreshing: d.refreshing(), error: d.error() !== null, loading: d.loading(), hasDigest: d.activeDigest() !== null }); });
   readonly taskPlanState = inject(OrchestratorTaskPlanStore);
 
   private readonly selectedSession = computed(() => {
@@ -554,6 +552,13 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         if (projects.includes(preferred) && preferred !== this.activeProject()) {
           this.activeProject.set(preferred);
         }
+      });
+    });
+    effect(() => {
+      const request = this.requestedProject();
+      if (request) untracked(() => {
+        this.setActiveProject(request.projectName);
+        this.projectRequestHandled.emit(request);
       });
     });
 

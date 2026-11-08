@@ -56,16 +56,33 @@ The six `--studio-status-*` tokens are declared in both theme blocks of
 `frontend/src/styles/_tokens-semantic.scss` and alias the existing semantic
 pigments (`--studio-success`, `--studio-warn`, `--studio-error`,
 `--studio-accent-teal`, `--studio-accent-3-strong`, `--studio-fg-dim`). The
-component mixes its tint and border from the tone token, so both themes flip
-through the token alone. The icon uses the pure tone; the label mixes 70% tone
-with 30% `--studio-fg-strong`, which keeps every tone at or above 6:1 on its
-own tint in both themes and at AA on tinted banners (AGT-3403 measured the
-pure pigment at 4.25:1 for warning and success in the light theme). The running spinner stops under
+component mixes a quiet tint from the tone over
+`--studio-status-chip-surface`, keeping the chip canvas opaque inside tinted
+cards. Compact labels use stronger foregrounds in each theme where an
+elevated or tinted parent needs them. The running spinner stops under
 `prefers-reduced-motion: reduce`; the static spinner icon still differs from
 every other tone.
 
 Neutral is deliberately quiet: no tint, a muted border. An empty or settled
 state must never compete with a real outcome (R4).
+
+### Contrast on rendered token surfaces
+
+Ratios below are computed from the theme tokens in the rendered page by
+`frontend/e2e/system/semantic-contrast.spec.ts`. Normal text must clear 4.5:1;
+meaningful dots and icons must clear 3:1.
+
+| Foreground token | Surface token | Light ratio | Dark ratio |
+|---|---|---:|---:|
+| `--studio-fg-muted` | `--studio-bg-surface` | 6.10:1 | 6.72:1 |
+| `--studio-fg-muted` | `--studio-bg-elevated` | 5.16:1 | 5.79:1 |
+| `--studio-fg-muted` | `--studio-bg-running` | 4.75:1 | 4.65:1 |
+| `--studio-live-stalled-fg` | `--studio-live-stalled-bg` | 4.69:1 | 5.09:1 |
+| `--studio-hold-muted-fg` | `--studio-hold-blocked-bg` | 4.65:1 | 4.93:1 |
+| `--studio-fg-dim` | pickup hold mechanism tint | 4.96:1 | 4.59:1 |
+| `--studio-status-success` | status chip tint | 4.76:1 | 12.66:1 |
+| `--studio-status-compact-warning` | `--studio-bg-elevated` | 5.16:1 | 11.37:1 |
+| `--studio-accent-warn` dot | `--studio-live-stalled-bg` | 3.79:1 | 6.24:1 |
 
 ## Mapping states to tones
 
@@ -115,6 +132,10 @@ fall back to `neutral`.
   `<a>` or `<button>`; the control keeps its role.
 - **Free-length messages stay messages.** The indicator truncates its label,
   so a sentence that must wrap stays a message with its own container.
+- **Label colour follows the contrast tokens.** An earlier round of this card
+  mixed the label 30% toward `--studio-fg-strong`. The opaque
+  `--studio-status-chip-surface` and the `--studio-status-compact-*` tokens
+  from develop replaced that mix, so the component keeps develop's colour rules.
 
 ## Enforcement
 

@@ -22,7 +22,9 @@
       } @else if (errorMessage(); as msg) {
         <app-status-indicator tone="danger" [label]="msg" testId="info-button-error" />
       } @else if (body(); as md) {
-        <cac-markdown [source]="md" />
+        @defer (on immediate) {
+        <app-info-button-markdown-body [source]="md" />
+        }
       }
     </div>
   </app-dialog>

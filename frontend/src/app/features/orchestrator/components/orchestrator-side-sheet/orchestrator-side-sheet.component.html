@@ -121,11 +121,8 @@
             <span class="sheet__scope sheet__scope--active"
                   aria-current="true"
                   data-testid="orch-context-scope">{{ contextDigestState.scopeLabel() }}</span>
-            <app-status-indicator class="sheet__memory"
-                                  [tone]="contextFreshnessTone()"
-                                  [label]="contextDigestState.statusText()"
-                                  [detail]="contextDigestState.statusTitle()"
-                                  [compact]="true"
+            <app-status-indicator class="sheet__memory" [tone]="contextFreshnessTone()" [compact]="true"
+                                  [label]="contextDigestState.statusText()" [detail]="contextDigestState.statusTitle()"
                                   testId="orch-context-freshness" />
           </nav>
         </div>
@@ -154,7 +151,7 @@
             }
           }
           <div #conversationHost class="sheet__conversation" data-testid="orchestrator-conversation">
-            <cac-conversation-view
+            <cac-conversation-view appConversationScrollFocus
               variant="embedded"
               [events]="conversationEvents()"
               [isRunning]="sending() || loading()"

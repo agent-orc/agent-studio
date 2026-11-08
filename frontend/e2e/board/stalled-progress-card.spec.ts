@@ -1,4 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTheme } from '../helpers/theme';
+import { captureLocalAxeContrast } from '../helpers/local-axe-contrast';
+
+const EVIDENCE_DIR = process.env.JOB_RESULTS_DIR ?? 'test-results';
+const EVIDENCE_PHASE = process.env.CONTRAST_EVIDENCE_PHASE ?? 'after';
 
 const PROJECT = 'fixture-stalled-progress';
 const WATCH_PATH = 'C:/fixtures/stalled-progress';
@@ -71,6 +78,12 @@ function groupedPayload() {
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined));
+  await page.route('**/api/usage/cockpit**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      snapshotVersion: 1, workspaceId: '', timeZone: 'Europe/Berlin', weekStart: 1,
+      generatedAt: new Date().toISOString(), calendar: {}, clis: [], cost: null,
+      runs: [], slots: [], sources: {},
+    }) }));
   await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
@@ -121,7 +134,8 @@ async function installRoutes(page: Page): Promise<void> {
 }
 
 test('stalled Progress cards and lane subset are visible at a glance', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1440, height: 1200 });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  mkdirSync(EVIDENCE_DIR, { recursive: true });
   await page.addInitScript(() => {
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
       v: 1,
@@ -130,7 +144,10 @@ test('stalled Progress cards and lane subset are visible at a glance', async ({ 
     }));
   });
   await installRoutes(page);
-  await page.goto('/?includeFixtures=true');
+  await page.goto('/#/board');
+  await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
+  await page.getByTestId('error-dialog-overlay').evaluateAll((nodes) => nodes.forEach((node) => node.remove()));
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
 
   const lane = page.locator('[data-testid="lane-3-progress"]');
   await expect(lane).toBeVisible();
@@ -151,16 +168,51 @@ test('stalled Progress cards and lane subset are visible at a glance', async ({ 
   await mockHarnessDialogs.evaluateAll((nodes) => nodes.forEach((node) => node.parentElement?.remove()));
   await expect(stalled).toHaveCount(2);
   for (const theme of ['dark', 'light'] as const) {
-    await page.evaluate((value) => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+    await setTheme(page, theme);
     const [healthyBackground, stalledBackground] = await Promise.all([
       lane.locator('[data-testid="task-card"]', { hasText: 'Healthy live run' })
         .evaluate((node) => getComputedStyle(node).backgroundColor),
       stalled.first().evaluate((node) => getComputedStyle(node).backgroundColor),
     ]);
     expect(stalledBackground).not.toBe(healthyBackground);
+    await page.screenshot({ path: join(EVIDENCE_DIR, `${EVIDENCE_PHASE}-board-stalled-${theme}-1280.png`), animations: 'disabled' });
+    await captureLocalAxeContrast(page, 'board-stalled', theme);
     await testInfo.attach(`stalled-progress-board-${theme}.png`, {
       body: await lane.screenshot(),
       contentType: 'image/png',
     });
+  }
+});
+
+test('captures contrast audit admin and pipeline surfaces at 1280', async ({ page }) => {
+  test.setTimeout(120_000);
+  mkdirSync(EVIDENCE_DIR, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await installRoutes(page);
+  await page.goto('/');
+  const routes = [
+    ['settings', '/#/workspace/settings'],
+    ['environment', '/#/workspace/settings/environment'],
+  ] as const;
+  for (const [name, route] of routes) {
+    await page.goto(route);
+    await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
+    await page.getByTestId('error-dialog-overlay').evaluateAll((nodes) => nodes.forEach((node) => node.remove()));
+    await expect(page.locator('body')).toBeVisible();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: join(EVIDENCE_DIR, `${EVIDENCE_PHASE}-${name}-${theme}-1280.png`), animations: 'disabled' });
+      await captureLocalAxeContrast(page, name, theme);
+    }
+  }
+  await page.goto('/#/workspace/settings');
+  await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
+  await page.getByTestId('error-dialog-overlay').evaluateAll((nodes) => nodes.forEach((node) => node.remove()));
+  await page.getByTestId('workspace-settings-rail-caps').click({ force: true });
+  await expect(page.getByTestId('cli-admin-overlay')).toBeVisible();
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(EVIDENCE_DIR, `${EVIDENCE_PHASE}-cli-management-${theme}-1280.png`), animations: 'disabled' });
+    await captureLocalAxeContrast(page, 'cli-management', theme);
   }
 });

@@ -44,14 +44,16 @@
   </header>
 
   @if (error(); as e) {
-    <p class="cr-error" data-testid="code-review-error">{{ e }}</p>
+    <p class="cr-error" role="alert" data-testid="code-review-error">
+      {{ e }} <button type="button" data-testid="code-review-retry" (click)="refresh()">Retry</button>
+    </p>
   }
 
   @if (loading() && !hasEntries()) {
     <p class="cr-empty">Loading...</p>
   }
 
-  @if (!loading() && !hasEntries() && !running()) {
+  @if (!loading() && !hasEntries() && !running() && !error()) {
     <p class="cr-empty" data-testid="code-review-empty">
       No reviews yet. Click <em>Run Code Review</em> to review the most recent commit.
     </p>

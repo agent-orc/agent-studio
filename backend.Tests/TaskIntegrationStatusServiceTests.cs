@@ -57,6 +57,43 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void VerificationRecordMemo_ReusesUnchangedCardAndRefreshesOneWrite()
+    {
+        var repo = SeedDevelopMainRepo();
+        var service = BuildService(repo, out _, out _);
+        var first = Path.Combine(_tempDir, "verification-a");
+        var second = Path.Combine(_tempDir, "verification-b");
+        Directory.CreateDirectory(first);
+        Directory.CreateDirectory(second);
+        Assert.Null(service.ReadVerificationRecord(first));
+        Assert.Null(service.ReadVerificationRecord(second));
+
+        IntegrationVerificationStore.Write(first, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = new string('a', 40),
+        });
+        var changed = Assert.IsType<IntegrationVerificationRecord>(service.ReadVerificationRecord(first));
+        Assert.Equal(IntegrationVerificationStates.Verified, changed.State);
+        Assert.Same(changed, service.ReadVerificationRecord(first));
+        Assert.Null(service.ReadVerificationRecord(second));
+
+        // Bypass the store and watcher to exercise the bounded repair path.
+        File.WriteAllText(IntegrationVerificationStore.PathFor(second),
+            JsonSerializer.Serialize(new IntegrationVerificationRecord
+            {
+                State = IntegrationVerificationStates.Unverified,
+                Reason = "missed write",
+            }));
+        var old = SidecarFileGeneration.Observe(IntegrationVerificationStore.PathFor(second)).Version;
+        for (var i = 0; i < 1024
+             && SidecarFileGeneration.Observe(IntegrationVerificationStore.PathFor(second)).Version == old; i++)
+            SidecarFileGeneration.Repair();
+        Assert.NotEqual(old, SidecarFileGeneration.Observe(IntegrationVerificationStore.PathFor(second)).Version);
+        Assert.Equal("missed write", service.ReadVerificationRecord(second)?.Reason);
+    }
+
+    [Fact]
     public void ParseIntegrationMergeKey_MatchesCuratedMergeSubjects()
     {
         Assert.Equal("AGT-2202", GitService.ParseIntegrationMergeKey("merge(AGT-2202): integrations-sicht"));

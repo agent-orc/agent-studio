@@ -1,22 +1,22 @@
 ﻿import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, Injector, afterNextRender, effect, inject, input, output, signal } from '@angular/core';
 import { WorkspaceOverlaysService } from '../../state/workspace-overlays.service';
 import type { WorkspaceSettingsSection } from '../../state/workspace-overlays.service';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
-import { TokenUsageSectionComponent } from '../../../tokens';
-import { CliAdminPanelComponent } from '../../../cli';
-import { RemoteHostsPanelComponent } from '../../../remote-hosts';
+import { TokenUsageSectionComponent } from '../../../tokens/lazy';
+import { CliAdminPanelComponent } from '../../../cli/lazy';
+import { RemoteHostsPanelComponent } from '../../../remote-hosts/lazy';
 import { CredentialInventoryComponent } from '../../../credentials/credential-inventory/credential-inventory.component';
 import { SecretsPanelComponent } from '../../../secrets/secrets-panel/secrets-panel.component';
 import { TaskServerPanelComponent } from '../../../task-server';
-import { DecisionRulesPanelComponent, OrchestratorLogicPanelComponent, PromptAdminPanelComponent, TransitionRolloutPanelComponent } from '../../../orchestrator';
+import { DecisionRulesPanelComponent, OrchestratorLogicPanelComponent, PromptAdminPanelComponent, TransitionRolloutPanelComponent } from '../../../orchestrator/lazy';
 // Direct path (not the studio-shell barrel) so we don't pull StudioShellComponent
 // and re-form the shell <-> studio-shell import cycle (AGT-2035).
 import { AppearanceSettingsComponent } from '../../../studio-shell/components/appearance-settings/appearance-settings.component';
 import { UpdatesSettingsComponent } from '../../../update';
 import { WorkspaceManagementComponent } from '../workspace-management/workspace-management.component';
 import { RetentionAdminComponent } from '../../../retention';
-import { AccessAreaComponent } from '../../../access';
+import { AccessAreaComponent } from '../../../access/lazy';
 import { FirstRunChecklistComponent } from '../first-run-checklist/first-run-checklist.component';
 import { GitHubAppPanelComponent } from '../../../github-app/github-app-panel/github-app-panel.component';
 import type { TaskScreenshot } from '../../../../features/screenshots';
@@ -112,6 +112,8 @@ export class WorkspaceOverlaysComponent {
 
   private readonly modalStack = inject(ModalStackService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
+  private previousFocus: HTMLElement | null = null;
   private modalDisposer: (() => void) | null = null;
   readonly collapsedGroups = signal<ReadonlySet<SettingsRailGroup>>(new Set());
 
@@ -176,10 +178,22 @@ export class WorkspaceOverlaysComponent {
         return;
       }
       if (open && !this.modalDisposer) {
-        this.modalDisposer = this.modalStack.push('workspace-settings', () => this.overlays.close());
+        this.previousFocus = document.activeElement as HTMLElement | null;
+        afterNextRender(() => {
+          if (!this.overlays.settingsOpen() || this.inline() || this.modalDisposer) return;
+          this.modalDisposer = this.modalStack.push('workspace-settings', () => this.overlays.close(), {
+            dialog: () => document.querySelector<HTMLElement>('[data-testid="workspace-settings-overlay"] [role="dialog"]'),
+            backgroundRoot: () => document.querySelector<HTMLElement>('[data-testid="workspace-settings-overlay"]'),
+          });
+          document.querySelector<HTMLElement>('[data-testid="workspace-settings-close"]')?.focus();
+          this.modalStack.refreshModalScope();
+        }, { injector: this.injector });
       } else if (!open && this.modalDisposer) {
         this.modalDisposer();
         this.modalDisposer = null;
+        const opener = this.previousFocus;
+        this.previousFocus = null;
+        queueMicrotask(() => { if (opener?.isConnected) opener.focus(); });
       }
     });
     this.destroyRef.onDestroy(() => {

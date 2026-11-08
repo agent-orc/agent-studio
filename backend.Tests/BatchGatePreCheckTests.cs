@@ -72,6 +72,33 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     [Fact]
+    public async Task Red_pre_check_arriving_during_planning_prevents_formation()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnablePreCheck(factory, closeSize: 2);
+        var red = SeedMember(factory, "DOC-PRE-LATE-RED", "backend/late-red.cs");
+        SeedMember(factory, "DOC-PRE-LATE-GREEN", "backend/late-green.cs");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending(), item => item.Subject.TaskKey == red.Key);
+        _clock = _clock.AddMinutes(21);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = true;
+        pilot.BeforeFormationAdmissionForTesting = () => store.RecordPreCheck(
+            new BatchGatePreCheckVerdict(ProjectName, red.Key, red.ReviewAttemptId,
+                red.ResultSha, RemoteTip(), pending.Subject.GateProfileDigest,
+                "red", "late pre-check failed", ["LatePreCheckTests"],
+                _clock, _clock));
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Empty(store.ListManifests());
+        AssertLane(red.Key, TaskStates.Ready);
+        Assert.Contains("PreCheckNotAdmitted", store.LatestPlanDecision(ProjectName)!.Reason);
+        Assert.Equal(0, _gate.BatchRuns);
+    }
+
+    [Fact]
     public async Task Unchecked_members_still_close_at_deadline_when_slots_are_busy()
     {
         using var factory = BuildFactory();

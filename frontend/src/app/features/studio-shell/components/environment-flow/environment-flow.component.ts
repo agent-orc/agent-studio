@@ -11,6 +11,7 @@ import { attemptCleanupTone, attemptOccupancyDisplay, minutes, providerStatusTon
   type EnvironmentFlowSnapshot } from './environment-flow.model';
 import { EnvironmentHealthOverviewComponent } from '../../../environment-health';
 import { ServerReadinessPanelComponent } from '../../../server-readiness';
+import { claimLoadGateLabel } from '../../../remote-hosts/models/claim-load-gate';
 
 interface DecisionReceipt {
   receiptId: string; taskId: string | null; chosenAction: string; callStatus: string; endedAt: string;
@@ -82,6 +83,7 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
   }
 
   readonly minutes = minutes;
+  readonly claimLoadGateLabel = claimLoadGateLabel;
   hostAttempts(host: RemoteHost): readonly AttemptVisibility[] {
     const hostId = host.hostAdmission?.hostId ?? host.id;
     return this.attempts().filter(item => item.hostId === hostId);

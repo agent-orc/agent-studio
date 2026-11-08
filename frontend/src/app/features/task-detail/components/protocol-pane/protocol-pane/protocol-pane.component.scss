@@ -795,7 +795,7 @@
  * directive resolves that ancestor and leaves its scrollTop unchanged after
  * a manual up-scroll.
  */
-cac-conversation-view {
+app-protocol-conversation {
   display: block;
   flex: 0 0 auto;
   min-height: 0;
@@ -810,6 +810,11 @@ cac-conversation-view {
  * information.
  */
 :host ::ng-deep cac-conversation-view {
+  .conv:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: -2px;
+  }
+
   .conv__row--decision {
     padding-inline: 0;
   }

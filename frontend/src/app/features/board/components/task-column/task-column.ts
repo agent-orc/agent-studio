@@ -10,6 +10,8 @@ import {
   input,
   output,
   signal,
+  ElementRef,
+  viewChild,
 } from '@angular/core';
 import type { Subscription } from 'rxjs';
 import {
@@ -38,6 +40,8 @@ import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indi
 import { OrchestratorFeedStore } from '../../../orchestrator';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { formatLaneElapsed } from './task-column-format';
+import { LaneCardWindow } from './lane-card-window';
+import { LaneCardWindowComponent } from '../lane-card-window/lane-card-window.component';
 /** ASS-1727: Archive pagination and typed-filter debounce. */
 const ARCHIVE_PAGE_SIZE = 50;
 const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
@@ -47,6 +51,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
   standalone: true,
   imports: [
     TaskCardComponent,
+    LaneCardWindowComponent,
     DecisionBacklogHintComponent,
     TooltipDirective,
     InfoButtonComponent,
@@ -87,6 +92,14 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
    * change detection is OnPush-friendly.
    */
   readonly nowMs = input<number>(0);
+  private readonly laneBody = viewChild<ElementRef<HTMLElement>>('laneBody');
+  readonly cardWindowState = new LaneCardWindow(
+    () => this.jobs(), () => this.compact(), () => this.state(),
+    () => this.isReview(), () => this.reviewGroups(),
+    () => this.laneBody()?.nativeElement ?? null, () => this.highlightJobId(),
+  );
+  readonly windowed = this.cardWindowState.enabled;
+  readonly cardWindow = this.cardWindowState.window;
   private readonly unpullableDependencyCount = computed(() => this.jobs().filter(isUnpullableDependencyHold).length);
   readonly stalledCount = computed(() => this.state() === TaskState.Progress
     ? this.jobs().filter((job) => deriveStalledTaskState(job, this.nowMs() || Date.now()) !== null).length
@@ -439,6 +452,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.cardWindowState.destroy();
     if (this.archiveSearchTimer !== null) clearTimeout(this.archiveSearchTimer);
     this.archiveSub?.unsubscribe();
     this.stopAutoScroll();
@@ -773,25 +787,11 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
     });
   }
 
-  /**
-   * Find the insertion slot (0..jobs.length) that corresponds to the
-   * cursor's vertical position. Slot `i` means "insert before card i"; slot
-   * `jobs.length` means "append after the last card". Cards are queried
-   * from the column root so the result reflects the actual rendered
-   * positions (gap, padding, scroll offset all baked into the rect).
-   */
+  /** Find the insertion slot from the lane scroll position or mounted card midpoints. */
   private computeDropSlotFromCursor(event: DragEvent): number {
     const columnEl = event.currentTarget as HTMLElement | null;
     if (!columnEl) return this.jobs().length;
-    const cards = Array.from(columnEl.querySelectorAll('app-job-card')) as HTMLElement[];
-    if (cards.length === 0) return 0;
-    const cursorY = event.clientY;
-    for (let i = 0; i < cards.length; i++) {
-      const rect = cards[i].getBoundingClientRect();
-      const mid = rect.top + rect.height / 2;
-      if (cursorY < mid) return i;
-    }
-    return cards.length;
+    return this.cardWindowState.dropSlotAt(event.clientY, columnEl);
   }
 
   /**

@@ -66,9 +66,10 @@ public sealed partial class BatchGatePilotServiceTests
     {
         using var factory = BuildFactory();
         _ = factory.CreateClient();
-        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        EnableBatchGate(factory, closeSize: 3, scope: "code");
         var conflicting = SeedMember(factory, "CODE-MOVE-CONFLICT", "src/shared.cs", content: "ours\n");
         var surviving = SeedMember(factory, "CODE-MOVE-SURVIVE", "src/other.cs");
+        var secondSurvivor = SeedMember(factory, "CODE-MOVE-SURVIVE-2", "src/other-2.cs");
         var original = ClosePendingBatch(factory);
         AdvanceOriginDevelop("src/shared.cs");
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
@@ -82,7 +83,7 @@ public sealed partial class BatchGatePilotServiceTests
         var retired = AssertPhase(store, original.BatchId, BatchPhase.Abandoned);
         Assert.Equal("merge-conflict", retired.BaseMoveMemberReasons![conflicting.Key]);
         var successor = Assert.Single(store.ListManifests(), item => item.ReformedFromBatchId == original.BatchId);
-        Assert.Equal([surviving.Key], successor.Members.Select(member => member.TaskKey));
+        Assert.Equal([surviving.Key, secondSurvivor.Key], successor.Members.Select(member => member.TaskKey));
         using var state = JsonDocument.Parse(JsonSerializer.Serialize(pilot.State(ProjectName)));
         var batch = state.RootElement.GetProperty("batches").EnumerateArray()
             .Single(item => item.GetProperty("BatchId").GetString() == original.BatchId);
@@ -94,7 +95,34 @@ public sealed partial class BatchGatePilotServiceTests
         await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
         AssertPhase(store, successor.BatchId, BatchPhase.Published);
         AssertLane(surviving.Key, TaskStates.HumanReview);
+        AssertLane(secondSurvivor.Key, TaskStates.HumanReview);
         Assert.Equal(1, _gate.BatchRuns);
+    }
+
+    [Fact]
+    public async Task Base_move_does_not_close_a_successor_below_minimum_size()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        var conflicting = SeedMember(factory, "CODE-MOVE-MIN-CONFLICT", "src/min-shared.cs",
+            content: "ours\n");
+        var survivor = SeedMember(factory, "CODE-MOVE-MIN-SURVIVOR", "src/min-other.cs");
+        var original = ClosePendingBatch(factory);
+        AdvanceOriginDevelop("src/min-shared.cs");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+
+        AssertPhase(store, original.BatchId, BatchPhase.Abandoned);
+        Assert.DoesNotContain(store.ListManifests(), item =>
+            item.ReformedFromBatchId == original.BatchId);
+        Assert.Contains(store.ListPending(), item => item.Subject.TaskKey == survivor.Key);
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal("merge-conflict", store.LatestState(original.BatchId)
+            .BaseMoveMemberReasons![conflicting.Key]);
     }
 
     [Fact]

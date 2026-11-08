@@ -165,7 +165,7 @@ test.describe('wait on nearby quota reset', () => {
     }
 
     const settingsTab = page.getByRole('tab', { name: /Workspace settings/ });
-    await settingsTab.getByRole('button', { name: 'Close tab' }).click();
+    await page.getByTestId('studio-tab-close-workspace-settings').click();
     await expect(settingsTab).not.toBeVisible();
 
     const [project] = await api<WatchPath[]>(devBackend.baseUrl, '/api/watch-paths');

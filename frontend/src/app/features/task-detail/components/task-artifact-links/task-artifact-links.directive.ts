@@ -50,6 +50,15 @@ export class TaskArtifactLinksDirective implements AfterViewInit {
   }
 
   private rewriteLinks(): void {
+    // Markdown renderers emit disabled task-list checkboxes beside their text.
+    // Give each control the adjacent item's name when the rendered DOM changes.
+    for (const checkbox of this.host.nativeElement.querySelectorAll<HTMLInputElement>(
+      'li input[type="checkbox"][disabled]:not([aria-label])',
+    )) {
+      const label = checkbox.closest('li')?.textContent?.replace(/\s+/g, ' ').trim();
+      checkbox.setAttribute('aria-label', label || 'Checklist item');
+    }
+
     const context = this.appTaskArtifactLinks();
     if (!context) return;
 

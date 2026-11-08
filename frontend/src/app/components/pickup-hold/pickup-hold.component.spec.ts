@@ -5,6 +5,7 @@ import { of } from 'rxjs';
 import type { PickupHoldStatus, TaskInfo } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
 import { TaskService } from '../../services/task.service';
+import { RemoteHostsService, type RemoteHost } from '../../features/remote-hosts';
 import {
   PICKUP_HOLD_RESOLUTION_ACTIONABILITY,
   PICKUP_HOLD_RESOLUTION_KINDS,
@@ -88,6 +89,7 @@ const REFUSED_DISPATCH: PickupHoldStatus = {
 
 describe('PickupHoldComponent', () => {
   let fixture: ComponentFixture<PickupHoldComponent>;
+  const hosts = signal<RemoteHost[]>([]);
   const taskService = {
     editTaskWaitsOn: vi.fn(),
     moveJob: vi.fn(),
@@ -106,9 +108,11 @@ describe('PickupHoldComponent', () => {
         provideZonelessChangeDetection(),
         { provide: TaskService, useValue: taskService },
         { provide: NowTickService, useValue: { now } },
+        { provide: RemoteHostsService, useValue: { hosts } },
       ],
     }).compileComponents();
     now.set(NOW);
+    hosts.set([]);
     fixture = TestBed.createComponent(PickupHoldComponent);
   });
 
@@ -121,6 +125,19 @@ describe('PickupHoldComponent', () => {
 
   it('renders nothing for a card that is genuinely pickable', () => {
     expect(render(null).querySelector('[data-testid="pickup-hold"]')).toBeNull();
+  });
+
+  it('explains a closed claim gate for a Ready card routed to that runner', () => {
+    hosts.set([{ id: 'runner-a', clientId: 'runner-a', name: 'Coding host',
+      claimLoadGate: { state: 'closed', loadPerCore: 5.51, threshold: 4,
+        sustainedSeconds: 702, since: '2026-09-14T08:48:00Z', activeSlots: 7 },
+    } as RemoteHost]);
+    fixture.componentRef.setInput('task', {
+      ...task(null), executionLocation: { configuredRunnerId: 'runner-a' },
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="pickup-hold-reason"]')?.textContent)
+      .toContain('not claiming: load 5.5 per core above 4.0 for 12 min');
   });
 
   it('names a local execution placement hold and its remote routing resolution', () => {
