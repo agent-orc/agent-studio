@@ -2227,8 +2227,11 @@ taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
 taskScanner.SetOrchestrationStore(app.Services.GetRequiredService<MonolithOrchestrationStore>());
 watcher.OnJobChanged += path =>
 {
-    if (!jobIndexCache.IsCurrentTaskJson(path))
-        jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+    var taskJson = string.Equals(Path.GetFileName(path), "task.json", StringComparison.OrdinalIgnoreCase)
+        ? path : Path.Combine(path, "task.json");
+    if (!jobIndexCache.IsCurrentTaskJson(taskJson))
+        jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External,
+            changedPath: path);
 };
 // AGT-3088: board reads serve the last published snapshot and refresh it in
 // the background; once that refresh catches up with an invalidation a board
