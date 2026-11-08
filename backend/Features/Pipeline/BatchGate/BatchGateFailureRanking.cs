@@ -62,13 +62,21 @@ public static class BatchGateFailureRanking
         var selected = lines.Select((line, index) => (line, index, distance: Distance(line, fact)))
             .OrderBy(item => item.distance).ThenByDescending(item => item.index).FirstOrDefault();
         if (selected.line is null || selected.distance == double.MaxValue)
-            throw new InvalidDataException("Batch gate failure ranking evidence has no readable line for this execution.");
+            throw new InvalidDataException("Batch gate failure ranking evidence has no matching completed record.");
         foreach (var line in new[] { selected.line })
         {
             try
             {
                 using var document = JsonDocument.Parse(line);
                 var root = document.RootElement;
+                // A partial result must stay pending. In particular, an empty inventory
+                // before completion cannot be cached as a green execution.
+                if (!DateTimeOffset.TryParse(String(root, "gateCompletedAtUtc"), out _)
+                    || String(root, "testedSha") is not { Length: > 0 })
+                    throw new InvalidDataException("Batch gate failure ranking evidence is incomplete.");
+                if (!TryGet(root, "recordedFailedTests", out var inventory)
+                    || inventory.ValueKind != JsonValueKind.Array)
+                    throw new InvalidDataException("Batch gate failure ranking evidence has no failure inventory.");
                 var names = new HashSet<string>(StringComparer.Ordinal);
                 AddStrings(root, "recordedFailedTests", names);
                 AddStrings(root, "flakyQuarantinedFailures", names);
@@ -93,18 +101,20 @@ public static class BatchGateFailureRanking
                         foreach (var name in GateFlakyRerunPolicy.ParseFailedTests(
                                      (String(process, "standardOutput") ?? "") + "\n" +
                                      (String(process, "standardError") ?? ""))) names.Add(name);
-                var processOutput = ProcessOutput(root);
+                var processOutputs = ProcessOutputs(root).ToArray();
                 foreach (var name in names)
                 {
-                    var excerpt = Excerpt(output, name);
-                    if (excerpt.Length == 0) excerpt = Excerpt(processOutput, name);
+                    var excerpt = Excerpt(output, name, names);
+                    if (excerpt.Length == 0)
+                        excerpt = processOutputs.Select(process => Excerpt(process, name, names))
+                            .FirstOrDefault(value => value.Length > 0) ?? "";
                     found.Add(new BatchTestFailure(name, fact.BatchId, fact.BatchRunId,
                         fact.MemberKeys ?? [], fact.CompletedAtUtc, excerpt, cleared.Contains(name)));
                 }
             }
             catch (JsonException exception)
             {
-                throw new InvalidDataException("Batch gate failure ranking selected an invalid evidence line.", exception);
+                throw new InvalidDataException("Batch gate failure ranking evidence is incomplete.", exception);
             }
         }
         return found;
@@ -130,31 +140,41 @@ public static class BatchGateFailureRanking
                 target.Add(text);
     }
 
-    private static string Excerpt(string output, string test)
+    private static string Excerpt(string output, string test, IReadOnlySet<string> names)
     {
         var lines = output.Split('\n');
-        var first = -1;
+        bool IsFailureHeader(string line)
+        {
+            var header = line.Trim();
+            return names.Contains(header)
+                || GateFlakyRerunPolicy.ParseFailedTests(header).Any(names.Contains);
+        }
         for (var index = lines.Length - 1; index >= 0; index--)
         {
-            if (!lines[index].Contains(test, StringComparison.Ordinal)) continue;
-            first = Array.FindIndex(lines, index, Math.Min(12, lines.Length - index),
-                line => line.Contains("Error Message:", StringComparison.OrdinalIgnoreCase));
-            if (first >= 0) break;
+            var header = lines[index].Trim();
+            if (header != test && !GateFlakyRerunPolicy.ParseFailedTests(header).Contains(test)) continue;
+            for (var next = index + 1; next < Math.Min(index + 12, lines.Length); next++)
+            {
+                // A subsequent failed test owns its own error block.
+                if (IsFailureHeader(lines[next])) break;
+                if (!lines[next].Contains("Error Message:", StringComparison.OrdinalIgnoreCase)) continue;
+                var end = next + 1;
+                while (end < Math.Min(next + 4, lines.Length)
+                    && !IsFailureHeader(lines[end])) end++;
+                var excerpt = string.Join("\n", lines.Skip(next).Take(end - next)).Trim();
+                return excerpt[..Math.Min(500, excerpt.Length)];
+            }
         }
-        if (first < 0) first = Array.FindLastIndex(lines,
-            line => line.Contains("Error Message:", StringComparison.OrdinalIgnoreCase));
-        if (first < 0) return "";
-        var excerpt = string.Join("\n", lines.Skip(first).Take(4)).Trim();
-        return excerpt[..Math.Min(500, excerpt.Length)];
+        return "";
     }
 
-    private static string ProcessOutput(JsonElement root)
+    private static IEnumerable<string> ProcessOutputs(JsonElement root)
     {
         if (!TryGet(root, "processes", out var processes) || processes.ValueKind != JsonValueKind.Array)
-            return "";
-        return string.Join("\n", processes.EnumerateArray().Select(process =>
+            return [];
+        return processes.EnumerateArray().Select(process =>
             (String(process, "standardOutput") ?? "") + "\n" +
-            (String(process, "standardError") ?? "")));
+            (String(process, "standardError") ?? "")).ToArray();
     }
 
     private static double Distance(string line, BatchGateExecutionFact fact)
@@ -163,9 +183,14 @@ public static class BatchGateFailureRanking
         {
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
-            if (String(root, "gateRunId") == fact.BatchRunId) return -1;
-            if (DateTimeOffset.TryParse(String(root, "gateCompletedAtUtc"), out var completed))
-                return Math.Abs((completed - fact.CompletedAtUtc).TotalSeconds);
+            if (String(root, "testedSha") is not { Length: > 0 } sha
+                || !string.Equals(sha, fact.TestedSha, StringComparison.OrdinalIgnoreCase))
+                return double.MaxValue;
+            var gateRunId = String(root, "gateRunId");
+            if (fact.EvidenceGateRunId is { Length: > 0 } expected)
+                return gateRunId == expected ? -1 : double.MaxValue;
+            return gateRunId is { Length: > 0 } && gateRunId == fact.BatchRunId
+                ? -1 : double.MaxValue;
         }
         catch (JsonException exception)
         {
