@@ -140,6 +140,25 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(["DEMO-2"], deploy.DeliveryColumns("demo")!.Columns[0].Landed.Select(card => card.Key));
     }
 
+    [Fact]
+    public void Verification_publications_remain_bounded_and_a_lagging_project_reconciles()
+    {
+        var (_, environments, store) = Build();
+        Card("DEMO-1", Head());
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null);
+        Assert.Single(deploy.DeliveryColumns("demo")!.Columns[0].Landed);
+
+        var cardFolder = Path.Combine(_watch, "6-completed", "demo-1");
+        File.Delete(IntegrationVerificationStore.PathFor(cardFolder));
+        var record = new IntegrationVerificationRecord { State = IntegrationVerificationStates.Unverified };
+        for (var index = 0; index < 5000; index++)
+            IntegrationVerificationStore.Write(Path.Combine(_root, "unrelated-verifications", $"card-{index:0000}"), record);
+
+        Assert.Equal(4096, IntegrationVerificationStore.PublicationCount);
+        Assert.Empty(deploy.DeliveryColumns("demo")!.Columns[0].Landed);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -184,7 +203,7 @@ public sealed class DeployServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "MachineBound")]
-    public void Delivery_columns_three_thousand_card_fixture_measurement()
+    public async Task Delivery_columns_three_thousand_card_fixture_measurement()
     {
         var (_, environments, store) = Build();
         var sha = Head();
@@ -194,24 +213,22 @@ public sealed class DeployServiceTests : IDisposable
             NullLogger<DeployService>.Instance, null,
             deliveryLockHoldObserved: elapsed => lockHolds.Add(elapsed.TotalMilliseconds));
         Assert.NotNull(deploy.DeliveryColumns("demo"));
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(deploy);
+        await using var app = builder.Build();
+        app.MapDeployEndpoints();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
         lockHolds.Clear();
 
-        var oldScanAndStamps = new List<double>();
         var newRequests = new List<double>();
         var newLockHolds = new List<double>();
         for (var iteration = 0; iteration < 20; iteration++)
         {
             var watch = Stopwatch.StartNew();
-            foreach (var task in _scanner!.ScanAllJobsWithArchive().Where(task => task.ProjectName == "demo"))
-            {
-                var path = IntegrationVerificationStore.PathFor(task.FolderPath);
-                if (File.Exists(path)) _ = File.GetLastWriteTimeUtc(path).Ticks;
-            }
-            watch.Stop();
-            oldScanAndStamps.Add(watch.Elapsed.TotalMilliseconds);
-
-            watch.Restart();
-            Assert.NotNull(deploy.DeliveryColumns("demo"));
+            using var response = await client.GetAsync("/api/projects/demo/deploy/lanes");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             watch.Stop();
             newRequests.Add(watch.Elapsed.TotalMilliseconds);
             newLockHolds.Add(lockHolds[^1]);
@@ -222,7 +239,6 @@ public sealed class DeployServiceTests : IDisposable
             var ordered = values.Order().ToArray();
             return (ordered[ordered.Length / 2 - 1] + ordered[ordered.Length / 2]) / 2;
         }
-        var oldWork = Median(oldScanAndStamps);
         var newRequest = Median(newRequests);
         var newHold = Median(newLockHolds);
         var report = $"""
@@ -232,13 +248,10 @@ public sealed class DeployServiceTests : IDisposable
 
             | Path | Request | Deploy lock hold |
             | --- | ---: | ---: |
-            | Before, reconstructed | {oldWork + newHold:F2} | {oldWork + newHold:F2} |
             | After, measured | {newRequest:F2} | {newHold:F2} |
 
-            The before row measures the previous archive scan and per-card Exists/mtime
-            work and adds the measured cached response lock hold. It estimates the old
-            assembly rather than running it. The after row measures the current service.
-            AGT-3512 independently measured 19.4 ms for 3,000 file stamps alone.
+            The row measures the current service. The repository documentation records
+            a separate measured baseline on the same generated fixture and host.
             """;
         var results = Environment.GetEnvironmentVariable("JOB_RESULTS_DIR");
         if (!string.IsNullOrWhiteSpace(results))
