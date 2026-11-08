@@ -299,6 +299,15 @@ in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infr
 
 ## Key Code
 
+The coding runner samples load per core before each claim. Once load stays above
+`RUNNER_CLAIM_MAX_LOAD_PER_CORE` for the configured sustained interval, it stops
+new claims while active slots continue. The capability telemetry snapshot carries
+the gate state, measured load, threshold, duration, close time, and active slots.
+Task Server retains that snapshot and records one stream event on each close and
+open transition, including the elapsed closed interval on recovery. A transition
+forces the runner's next capability advertisement rather than waiting for its
+normal minute cadence.
+
 Coding claims carry the effective emergency process limit and its source from
 project setting, workspace default, or the 24-hour platform constant. The
 runner logs both before launch. Watchdog expiry stops the CLI process and

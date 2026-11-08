@@ -22,7 +22,8 @@
 }
 <div class="column__spacer" [style.height.px]="window().bottom" data-testid="lane-window-after"></div>
 @if (!review() && !reorderDisabled() && !mutationsBlocked() && window().end === count()) {
-  <div class="column__drop-zone column__drop-zone--last" [class.column__drop-zone--active]="dropIndex() === count()"
+  <div class="column__drop-zone column__drop-zone--last" data-testid="lane-drop-slot-end"
+       [class.column__drop-zone--active]="dropIndex() === count()"
        (dragover)="slotDragOver.emit({ event: $event, index: count() })"
        (dragleave)="slotDragLeave.emit()"
        (drop)="slotDrop.emit({ event: $event, index: count() })"></div>

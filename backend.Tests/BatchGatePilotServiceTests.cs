@@ -116,6 +116,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         using (var body = JsonDocument.Parse(await valid.Content.ReadAsStringAsync()))
         {
             Assert.Equal("code", body.RootElement.GetProperty("settings").GetProperty("scope").GetString());
+            Assert.Equal("off", body.RootElement.GetProperty("settings").GetProperty("stacking").GetString());
             Assert.Equal(8, body.RootElement.GetProperty("limits").GetProperty("hardMaximumSize").GetInt32());
         }
 

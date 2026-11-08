@@ -1,0 +1,8 @@
+@defer (when open()) {
+  <app-workspace-overlays
+    [inline]="inline()"
+    [watchPaths]="watchPaths()"
+    (openTask)="openTask.emit($event)"
+    (openProjectSettings)="openProjectSettings.emit($event)"
+    (openJobDetail)="openJobDetail.emit($event)" />
+}

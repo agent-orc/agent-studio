@@ -385,6 +385,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-report-summary-stalled-review">
+          <td>2026-11-05</td>
+          <td><code>AGT-3496</code>, <code>AGT-3506</code>, <code>AGT-3511</code>, <code>AGT-3512</code>, <code>AGT-3515</code><br><span class="small">report-summary-stalled-review (fix <code>AGT-3547</code>)</span></td>
+          <td>The summary assessment one-shot exited 1 in the API container. Research cards stayed in Auto Review without a review or decision event until an operator moved them, for up to 26 hours. No core CLI crash occurred. Terminal at discovery: Auto Review without a decision.</td>
+          <td>The read-only pipeline did not recover the agent's own status when summary assessment failed. Post-processing errors and blocked preconditions could close the worker pass without a lane transition.</td>
+          <td>A failed summary keeps its failed step row. The report path uses the agent's status or final message and continues through the lightweight review and decision. If recovery or post-processing fails, it moves the card to Escalated with the concrete reason and a timeline event.</td>
+        </tr>
         <tr id="case-refused-salvage-push-retained">
           <td>2026-11-01</td>
           <td>four finished deliveries<br><span class="small">refused-salvage-push-retained (fix <code>AGT-3406</code>)</span></td>

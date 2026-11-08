@@ -73,6 +73,23 @@ public sealed class TaskListGitProjectionCacheTests
     }
 
     [Fact]
+    public async Task BuildProjectionAsync_SynchronousLookupsShareOneWorker()
+    {
+        var task = Job("worker", "watch-a");
+        var threads = new System.Collections.Concurrent.ConcurrentBag<int>();
+        void Record() => threads.Add(Environment.CurrentManagedThreadId);
+        await TaskListGitProjectionCache.BuildProjectionAsync(
+            [task],
+            _ => { Record(); return new Dictionary<string, TaskMergeSignal>(); },
+            _ => { Record(); return new Dictionary<string, TaskIntegrationStatus>(); },
+            _ => { Record(); return new Dictionary<string, TaskPublishSignal>(); },
+            _ => { Record(); return new Dictionary<string, TaskTestRunEvidence>(); },
+            _ => { Record(); return new Dictionary<string, AgentStudio.Review.ReviewProjectionView>(); });
+        Assert.Equal(5, threads.Count);
+        Assert.Single(threads.Distinct());
+    }
+
+    [Fact]
     public async Task BuildProjectionAsync_RepositoryWideLookupFailure_ReportsATypedRepositoryFailureInsteadOfThrowing()
     {
         var jobs = Enumerable.Range(0, 10).Select(i => Job($"card-{i}", "watch-a")).ToArray();

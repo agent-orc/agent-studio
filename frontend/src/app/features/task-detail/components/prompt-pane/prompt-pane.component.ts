@@ -35,17 +35,7 @@ interface EvidenceSection {
   entries: ReviewEvidenceEntry[];
 }
 
-/**
- * Prompt pane of the job-detail view. Per the reference layout
- * (.reference-layout/detail.jsx) the left detail pane carries a small
- * Description / Evidence tab strip — Description renders prompt.md (via
- * the shared markdown rich editor), Evidence renders the same
- * review-evidence entries the protocol pane consumes, grouped by
- * source (Code Review / Security / Task Checks / Human Notes / Other)
- * with status pills per section. This matches the user's direction
- * that Code Review belongs in the Evidence tab rather than in the
- * Protocol pane.
- */
+/** The task detail's Overview, Timeline, Evidence, Code Review and Docs tabs. */
 @Component({
   selector: 'app-prompt-pane',
   standalone: true,
@@ -105,6 +95,10 @@ export class PromptPaneComponent {
   readonly titleSaved = output<void>();
   readonly activeTabChange = output<PromptPaneTabId>();
   readonly retryResource = output<ResourceName>();
+  readonly retryScreenshots = output<void>();
+  readonly retryArtifacts = output<void>();
+  readonly screenshotsLoadError = input(false);
+  readonly artifactsLoadError = input(false);
   readonly resourceStates = input<ResourceStates>(idleResources());
   readonly reviewAttemptRequested = output<string>();
 

@@ -1,8 +1,4 @@
 /** CLI feature public API. Cycle 9h / ADR-0034. */
-export { CliAdminPanelComponent } from './components/cli-admin-panel/cli-admin-panel';
-export { CliConsoleComponent } from './components/cli-console/cli-console';
-export { CliModelsPanelComponent } from './components/cli-models-panel/cli-models-panel';
-export { CliContractsPanelComponent } from './components/cli-contracts-panel/cli-contracts-panel';
 export type {
   CliModelInfo,
   CliModelCatalog,

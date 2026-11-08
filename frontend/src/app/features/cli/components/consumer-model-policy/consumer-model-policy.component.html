@@ -4,7 +4,10 @@
       <strong>Model selection by consumer</strong>
       <small>Workspace defaults · migration: {{ selection.migration.inheritedSteps }} inherited, {{ selection.migration.explicitSteps }} explicit</small>
     </header>
-    <div class="consumer-policy__scroll">
+    <div class="consumer-policy__scroll" tabindex="0"
+         data-testid="consumer-policy-table-scroll"
+         aria-label="Model selection by consumer table"
+         (keydown)="onTableScrollKeydown($event)">
       <table>
         <thead><tr><th>Consumer</th><th>Primary (CLI:model:thinking)</th><th>Ordered fallbacks or catalogue</th><th>Effective route</th></tr></thead>
         <tbody>
