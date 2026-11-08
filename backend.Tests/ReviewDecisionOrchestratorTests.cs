@@ -2434,7 +2434,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
 
-        Assert.Equal(4, calls);
+        Assert.Equal(5, calls);
         Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, "marker-job")));
         Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, "marker-job")));
     }
@@ -2452,7 +2452,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
 
         var status = statusSnapshot.Read();
         Assert.Equal(1, status.Pending);
-        Assert.Equal(4, status.AspectsRun);
+        Assert.Equal(5, status.AspectsRun);
     }
 
     [Fact]
@@ -2490,7 +2490,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
         var firstCalls = calls;
-        Assert.Equal(4, firstCalls);
+        Assert.Equal(5, firstCalls);
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
         Assert.Equal(firstCalls, calls);
@@ -2564,7 +2564,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
 
-        Assert.Equal(4, calls);
+        Assert.Equal(5, calls);
         var reviewedFolder = Path.Combine(_watchPath, TaskStates.HumanReview, slug);
         Assert.True(Directory.Exists(reviewedFolder));
         Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, slug)));

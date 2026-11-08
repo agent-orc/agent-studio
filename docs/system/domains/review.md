@@ -434,6 +434,37 @@ attempt keeps its plan through report retry and worker adoption.
 
 ## Review material contract
 
+### Screenshot-backed visual review
+
+The standard feature, bug, and task review plans include `aspect-visual-review`
+when the delivery changes a file under `frontend/` ending in `.html`, `.scss`,
+or `.css`. The aspect is recorded in the same pipeline catalogue and verdict
+ledger as requirement fit, code quality, documentation impact, and tests and
+evidence. Its catalogue route selects the Codex image-capable support model
+through the central pipeline model resolver; project step overrides remain
+subject to the normal CLI/model compatibility check.
+
+The executor fetches bounded image artifacts from the source run's `results/`
+delivery, preserves the screenshot names, and places read-only copies beside
+the exact-SHA review checkout. The visual prompt receives those paths, the
+authoritative diff, the hard visual rules, and the relevant admin design rules.
+After screenshots take priority over before screenshots at both the remote
+100-image cap and the local eight-image attachment cap. Both caps count only
+decoded images, so unavailable or invalid artifacts cannot crowd out a later
+valid after screenshot. Each artifact read and decode is isolated, so a failed
+remote artifact cannot stop later images from loading.
+The prompt lists readable image paths first, then up to eight artifact failure
+details and a count of further failures, so corrupt artifacts cannot bury a
+valid screenshot path in the review context.
+An artifact must decode as the image format named by its extension before it
+uses an image slot; matching size and digest alone do not prove readability.
+It opens each screenshot, compares matching before and after views, and checks
+layout, spacing, separation, alignment, clipping, and contrast across available
+themes and widths. A visual concern or block cites both the screenshot and the
+affected region. If a frontend template or style changed without a readable
+screenshot, or only before screenshots, the executor guarantees a `concerns`
+verdict naming the missing after evidence. Nonvisual changes skip this aspect.
+
 `runner/RemoteReviewWorkspace.cs` materializes the immutable delivery
 Result-SHA in a disposable candidate checkout. Before the first semantic aspect
 runs, it freshly fetches the frozen plan's integration ref and resolves the Git
