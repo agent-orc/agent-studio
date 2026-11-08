@@ -34,9 +34,9 @@ public sealed class VisualReviewScreenshotTests
             Assert.Contains(image, prompt);
             Assert.Contains("image-viewing tool", prompt);
 
-            // Judge the pixels in the delivered fixture. The clean footer has
-            // four wide gaps between metric groups; the run-on footer has none.
-            // This also catches a swapped or accidentally edited fixture.
+            // Judge the delivered fixture pixels before passing a verdict through
+            // the review boundary. The clean footer has separated metric groups;
+            // the run-on footer does not.
             var visibleStatus = FooterSpacingVerdict(image);
             Assert.Equal(modelStatus, visibleStatus);
             var modelVerdict = new ReviewVerdictDto("visual-review", visibleStatus,
@@ -176,35 +176,64 @@ public sealed class VisualReviewScreenshotTests
     }
 
     [Fact]
-    public async Task Failed_and_unreadable_artifacts_do_not_hide_a_later_valid_after_screenshot()
+    public async Task Failed_artifacts_do_not_hide_a_later_valid_after_screenshot()
     {
         var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
             "Fixtures", "visual-review", "clean-footer.png"));
-        byte[] malformed = [1, 2, 3, 4];
-        var failedFetch = Artifact("failed", "bars/after-001.png", bytes);
-        var invalidBase64 = Artifact("base64", "bars/after-002.png", bytes);
-        var invalidImage = Artifact("image", "bars/after-003.png", malformed);
-        var valid = Artifact("valid", "bars/after-004.png", bytes);
+        var failedRead = Artifact("failed-read", "bars/after-001.png", bytes);
+        var invalidContent = Artifact("invalid-content", "bars/after-002.png", bytes);
+        var valid = Artifact("valid", "bars/after-003.png", bytes);
         var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
         try
         {
             var evidence = await VisualReviewScreenshotBundle.CaptureAsync(
-                [failedFetch, invalidBase64, invalidImage, valid],
+                [failedRead, invalidContent, valid],
                 (artifact, _) => artifact.ArtifactId switch
                 {
-                    "failed" => Task.FromException<ArtifactContentDto?>(
-                        new IOException("artifact fetch failed")),
-                    "base64" => Task.FromResult<ArtifactContentDto?>(Content(artifact, "not base64")),
-                    "image" => Task.FromResult<ArtifactContentDto?>(Content(artifact,
-                        Convert.ToBase64String(malformed))),
-                    _ => Task.FromResult<ArtifactContentDto?>(Content(artifact,
-                        Convert.ToBase64String(bytes))),
+                    "failed-read" => throw new IOException("Artifact read failed."),
+                    "invalid-content" => Task.FromResult<ArtifactContentDto?>(new ArtifactContentDto(
+                        artifact.ArtifactId, artifact.RunId, artifact.Name, artifact.MediaType,
+                        artifact.Sha256, "invalid base64", artifact.SizeBytes)),
+                    _ => Task.FromResult<ArtifactContentDto?>(new ArtifactContentDto(
+                        artifact.ArtifactId, artifact.RunId, artifact.Name, artifact.MediaType,
+                        artifact.Sha256, Convert.ToBase64String(bytes), artifact.SizeBytes)),
                 }, root, default);
 
-            Assert.Contains($"\"{failedFetch.Name}\": unavailable or unreadable", evidence);
-            Assert.Contains($"\"{invalidBase64.Name}\": unavailable or unreadable", evidence);
-            Assert.Contains($"\"{invalidImage.Name}\": unreadable image header", evidence);
+            Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
+            Assert.StartsWith($"- \"{valid.Name}\"", evidence);
+            Assert.Contains($"\"{failedRead.Name}\": unavailable", evidence);
+            Assert.Contains($"\"{invalidContent.Name}\": unavailable", evidence);
             Assert.Contains($"\"{valid.Name}\":", evidence);
+            Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task Corrupt_images_do_not_use_the_limit_before_a_valid_after_screenshot()
+    {
+        var validBytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "visual-review", "clean-footer.png"));
+        var corruptBytes = validBytes[..(validBytes.Length / 2)];
+        var corrupt = Enumerable.Range(0, 100)
+            .Select(index => Artifact($"corrupt-{index}", $"bars/after-{index:D3}.png", corruptBytes));
+        var valid = Artifact("valid", "bars/after-999.png", validBytes);
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync(
+                [.. corrupt, valid],
+                (artifact, _) => Task.FromResult<ArtifactContentDto?>(new ArtifactContentDto(
+                    artifact.ArtifactId, artifact.RunId, artifact.Name, artifact.MediaType,
+                    artifact.Sha256,
+                    Convert.ToBase64String(artifact.ArtifactId == "valid" ? validBytes : corruptBytes),
+                    artifact.SizeBytes)), root, default);
+
+            Assert.Equal(8, evidence.Split("invalid image", StringSplitOptions.None).Length - 1);
+            Assert.Contains("92 more failed screenshots omitted from this list", evidence);
+            Assert.StartsWith($"- \"{valid.Name}\"", evidence);
+            Assert.Contains($"\"{valid.Name}\":", evidence);
+            Assert.DoesNotContain("omitted by the 100-image review limit", evidence);
             Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
             Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
         }
@@ -228,10 +257,6 @@ public sealed class VisualReviewScreenshotTests
     private static ArtifactDto Artifact(string id, string name, byte[] bytes) => new(
         id, "run-1", name, "image/png", Convert.ToHexStringLower(SHA256.HashData(bytes)),
         bytes.Length, "key", 1, DateTime.UnixEpoch);
-
-    private static ArtifactContentDto Content(ArtifactDto artifact, string base64) => new(
-        artifact.ArtifactId, artifact.RunId, artifact.Name, artifact.MediaType,
-        artifact.Sha256, base64, artifact.SizeBytes);
 
     private static string FooterSpacingVerdict(string path)
     {

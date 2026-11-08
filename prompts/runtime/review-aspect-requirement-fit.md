@@ -104,6 +104,14 @@ concept / research card legitimately ships no code diff; its deliverable is the
 results/ artefact or doc. Do not `block` "deliverables missing" when a branch
 diff or a results/ artefact is present.
 
+Measurements and reports quoted from `results/` are delivery evidence. Use
+their content when judging a requirement, even when no copy appears in the
+repository diff. A listed image proves an image was delivered; this aspect
+does not inspect its pixels. If required evidence is still missing, name the
+specific diff sections and `results/` files or inventory you checked in
+`evidence_checked`, and name the missing item in `missing`. A truncated excerpt
+alone does not prove an item absent from the full artifact.
+
 ## What you must emit
 
 A brief paragraph (under 150 words) explaining your reasoning. Name the files

@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-11-03
+Version: 2026-11-05
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Aspect prompt cache
@@ -39,6 +39,18 @@ the first aspect's creation size with only a small creation count of its own
 roughly one prefix plus four small suffixes. A later aspect that again creates
 about the full prefix, or a runner log line `review-aspect-cache-unconfirmed`,
 means the cache was not shared for that review.
+
+Remote coding plans freeze a bounded `results/` evidence view beside the brief
+and diff context. It lists up to 40 active files with sizes, quotes heads of
+small text and CSV/JSON summaries and tails of logs within 12 files, 4,000
+characters per file and 24,000 characters total, and names image files. A
+SHA-256 over every eligible file's path, size and content makes the sealed
+aspect digest change even when the changed file falls outside the excerpt
+budget. `results/history/` and filesystem links are excluded. Credential
+redaction applies to displayed names and excerpts. Requirement-fit and
+tests-and-evidence may cite `results/<file>`; a missing-evidence finding names
+the inspected diff and results inventory or files. Truncated excerpts do not
+establish absence from a full artifact.
 
 ## Review report transport budget
 
@@ -449,9 +461,15 @@ delivery, preserves the screenshot names, and places read-only copies beside
 the exact-SHA review checkout. The visual prompt receives those paths, the
 authoritative diff, the hard visual rules, and the relevant admin design rules.
 After screenshots take priority over before screenshots at both the remote
-100-image cap and the local eight-image attachment cap. The remote cap counts
-successfully loaded images, so unavailable or invalid artifacts cannot crowd
-out a later valid after screenshot.
+100-image cap and the local eight-image attachment cap. Both caps count only
+decoded images, so unavailable or invalid artifacts cannot crowd out a later
+valid after screenshot. Each artifact read and decode is isolated, so a failed
+remote artifact cannot stop later images from loading.
+The prompt lists readable image paths first, then up to eight artifact failure
+details and a count of further failures, so corrupt artifacts cannot bury a
+valid screenshot path in the review context.
+An artifact must decode as the image format named by its extension before it
+uses an image slot; matching size and digest alone do not prove readability.
 Name delivered screenshots under `results/` by surface, stage, viewport width,
 and theme, for example `bars/before-1920-light.png` and
 `bars/after-1920-light.png`. Use the same suffix for matching before and after

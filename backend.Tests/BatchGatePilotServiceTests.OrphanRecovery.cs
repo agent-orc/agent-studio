@@ -10,6 +10,55 @@ namespace AgentStudio.Tests;
 public sealed partial class BatchGatePilotServiceTests
 {
     [Fact]
+    public async Task Tick_recovers_a_formed_manifest_missing_from_the_pilots_flights()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        var members = new[]
+        {
+            SeedMember(factory, "CODE-LOST-A", "src/lost-a.cs"),
+            SeedMember(factory, "CODE-LOST-B", "src/lost-b.cs"),
+        };
+        var formed = ClosePendingBatch(factory);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        AssertPhase(store, formed.BatchId, BatchPhase.Formed);
+        Assert.Empty(store.ListRuns(formed.BatchId));
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+
+        AssertPhase(store, formed.BatchId, BatchPhase.Published);
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.All(members, member => AssertLane(member.Key, TaskStates.HumanReview));
+    }
+
+    [Fact]
+    public async Task Formed_manifest_starts_even_when_later_planning_fails()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        SeedMember(factory, "CODE-RECOVER-A", "src/recover-a.cs");
+        SeedMember(factory, "CODE-RECOVER-B", "src/recover-b.cs");
+        var formed = ClosePendingBatch(factory);
+        SeedMember(factory, "CODE-NEXT-A", "src/next-a.cs");
+        SeedMember(factory, "CODE-NEXT-B", "src/next-b.cs");
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.BeforeFormationAdmissionForTesting = () => throw new InvalidOperationException("planner interrupted");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => pilot.TickAsync(CancellationToken.None));
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        AssertPhase(store, formed.BatchId, BatchPhase.Published);
+        Assert.Equal(1, _gate.BatchRuns);
+    }
+
+    [Fact]
     public async Task Tick_starts_an_older_formed_batch_before_a_later_larger_batch()
     {
         using var factory = BuildFactory();
@@ -127,5 +176,7 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal("wait", plan.GetProperty("decision").GetString());
         Assert.Contains(member.Key + ": pending member awaits the next planner tick",
             plan.GetProperty("reason").GetString());
+        Assert.Contains(plan.GetProperty("proposedMembers").EnumerateArray(), key =>
+            key.GetString() == member.Key);
     }
 }

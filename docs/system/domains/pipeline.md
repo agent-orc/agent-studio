@@ -568,7 +568,11 @@ replacement snapshot with the largest compatible membership up to
 formed snapshot. A lone card past its deadline waits for a partner while the
 project gate is busy. If a formed batch cannot accept it because of size or
 file overlap, it takes the per-task fallback. When the lease frees, the pilot
-starts the largest formed batch.
+starts the largest formed batch. Each tick revisits durable formed manifests
+before planning. A manifest without an in-memory flight starts, re-forms on a
+moved base, or retires with a recorded reason if a member is no longer pending.
+Overdue pending members appear in the state plan or its exclusion reason; an
+expired plan cannot remain `idle` while they wait.
 With `overlap: separate`, cards touching a selected member's file wait for a
 different batch. The state response includes each batch's `exclusions` with
 the rule and conflicting file paths, and `formationReason` explains why a

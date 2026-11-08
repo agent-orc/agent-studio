@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 
 using Xunit;
 
@@ -112,7 +114,7 @@ public class AspectRunnerTests : IDisposable
     {
         var results = Path.Combine(_jobFolder, "results", "bars");
         Directory.CreateDirectory(results);
-        File.WriteAllBytes(Path.Combine(results, "before-1920-light.png"), [1, 2, 3]);
+        File.WriteAllBytes(Path.Combine(results, "before-1920-light.png"), ValidPng());
         var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
         var inputs = BuildInputs() with
         {
@@ -133,8 +135,8 @@ public class AspectRunnerTests : IDisposable
         var results = Path.Combine(_jobFolder, "results", "bars");
         Directory.CreateDirectory(results);
         for (var i = 0; i < 8; i++)
-            File.WriteAllBytes(Path.Combine(results, $"before-{i:D2}.png"), [1, 2, 3]);
-        File.WriteAllBytes(Path.Combine(results, "after-1920-light.png"), [4, 5, 6]);
+            File.WriteAllBytes(Path.Combine(results, $"before-{i:D2}.png"), ValidPng());
+        File.WriteAllBytes(Path.Combine(results, "after-1920-light.png"), ValidPng());
         var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
         var inputs = BuildInputs() with
         {
@@ -146,6 +148,28 @@ public class AspectRunnerTests : IDisposable
 
         Assert.Equal(AspectStatus.Pass, Assert.Single(report.Verdicts).Status);
         Assert.Contains("after-1920-light.png", LocalVisualScreenshotEvidence.PromptSection(_jobFolder));
+    }
+
+    [Fact]
+    public void Corrupt_local_images_do_not_hide_a_later_valid_after_screenshot()
+    {
+        var results = Path.Combine(_jobFolder, "results", "bars");
+        Directory.CreateDirectory(results);
+        for (var i = 0; i < 8; i++)
+            File.WriteAllBytes(Path.Combine(results, $"after-{i:D2}.png"), [1, 2, 3]);
+        File.WriteAllBytes(Path.Combine(results, "after-99.png"), ValidPng());
+
+        Assert.True(LocalVisualScreenshotEvidence.HasAfterScreenshot(_jobFolder));
+        Assert.Contains("after-99.png", LocalVisualScreenshotEvidence.PromptSection(_jobFolder));
+        Assert.Single(LocalVisualScreenshotEvidence.Images(_jobFolder));
+    }
+
+    private static byte[] ValidPng()
+    {
+        using var image = new Image<Rgba32>(1, 1);
+        using var output = new MemoryStream();
+        image.SaveAsPng(output);
+        return output.ToArray();
     }
 
     [Fact]

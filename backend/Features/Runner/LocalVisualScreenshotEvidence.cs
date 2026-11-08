@@ -2,6 +2,8 @@ using System.Text;
 using AgentStudio.Cli;
 using AgentStudio.Prompts;
 using AgentStudio.TaskServer.Contracts;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
 
 namespace AgentStudio.Runner;
 
@@ -17,12 +19,39 @@ internal static class LocalVisualScreenshotEvidence
                 || path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase))
-            .Where(path => new FileInfo(path).Length <= 8L * 1024 * 1024)
             .OrderBy(path => VisualReviewEvidence.IsAfterScreenshot(
                 Path.GetRelativePath(results, path)) ? 0 : 1)
             .ThenBy(path => path, StringComparer.Ordinal)
+            .Where(IsReadableImage)
             .Take(8)
             .ToArray();
+    }
+
+    private static bool IsReadableImage(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.Length is < 1 or > 8L * 1024 * 1024) return false;
+            var bytes = File.ReadAllBytes(path);
+            var identified = Image.Identify(bytes);
+            if (identified is null || identified.Width < 1 || identified.Height < 1
+                || (long)identified.Width * identified.Height > 80_000_000)
+                return false;
+            var format = Image.DetectFormat(bytes);
+            using var image = Image.Load(new DecoderOptions { MaxFrames = 1 }, bytes);
+            return Path.GetExtension(path).ToLowerInvariant() switch
+            {
+                ".png" => format.Name.Equals("PNG", StringComparison.OrdinalIgnoreCase),
+                ".jpg" or ".jpeg" => format.Name.Equals("JPEG", StringComparison.OrdinalIgnoreCase),
+                ".webp" => format.Name.Equals("WEBP", StringComparison.OrdinalIgnoreCase),
+                _ => false,
+            };
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return false;
+        }
     }
 
     internal static string PromptSection(string jobFolderPath)
