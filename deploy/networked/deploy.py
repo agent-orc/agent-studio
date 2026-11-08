@@ -288,8 +288,12 @@ def deploy(args, manifest):
                              "manifest": state["manifest"],
                              "adapter": str(Path(__file__).resolve().parent / "host_adapter.py")})
             value = result.get("value") if isinstance(result, dict) else None
+            optional = {"gateSshHost", "workerPath"} if host["role"] == "server" else set()
             if not isinstance(value, dict) or not required[host["role"]].issubset(value) \
-                    or any(not isinstance(value[key], str) or not value[key] for key in required[host["role"]]):
+                    or any(not isinstance(value[key], str) or not value[key]
+                           for key in required[host["role"]] - optional) \
+                    or any(value[key] is not None and (not isinstance(value[key], str) or not value[key])
+                           for key in optional):
                 raise DeployError(f"snapshot for {host['id']} needs {sorted(required[host['role']])}")
             if host["role"] == "server" and (any(
                     not re.fullmatch(r"[0-9a-f]{64}", value[key])

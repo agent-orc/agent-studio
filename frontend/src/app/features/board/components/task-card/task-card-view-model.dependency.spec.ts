@@ -83,6 +83,30 @@ describe('buildDependencyChip', () => {
     expect(chip!.label).toBe('DEP-1');
   });
 
+  it('names the delivery rule when an integrated predecessor releases the edge', () => {
+    const chip = buildDependencyChip(status({
+      blocked: false,
+      items: [item({ fulfilled: true, fulfillmentRule: 'integrated-delivery', targetState: '5-human-review' })],
+    }));
+    expect(chip?.label).toBe('delivery integrated: DEP-1');
+    expect(chip?.tooltip).toContain('current delivery integrated');
+  });
+
+  it('names the delivery rule when a newer delivery is pending', () => {
+    const chip = buildDependencyChip(status({
+      items: [item({ fulfillmentRule: 'delivery-integration', targetState: '5-human-review' })],
+    }));
+    expect(chip?.label).toBe('waits for delivery integration: DEP-1');
+    expect(chip?.tooltip).toContain('current delivery integration or completion pending');
+  });
+
+  it('keeps the completion rule for an explicit edge', () => {
+    const chip = buildDependencyChip(status({
+      items: [item({ requiresCompletion: true, fulfillmentRule: 'completion' })],
+    }));
+    expect(chip?.label).toBe('waits for completion: DEP-1');
+  });
+
   it('distinguishes a terminal dependency that still waits for explicit release', () => {
     const chip = buildDependencyChip(
       status({

@@ -120,6 +120,18 @@ public sealed class BatchGatePolicyTests
     }
 
     [Fact]
+    public void Threshold_does_not_form_below_configured_minimum_even_for_documentation()
+    {
+        var options = Enabled with { MinimumSize = 3, CloseSize = 2 };
+        var result = BatchGatePolicy.Form([Subject("a"), Subject("b")],
+            Scope, Sha, options, Now);
+
+        Assert.Null(result.Manifest);
+        Assert.False(result.UsePerTaskGate);
+        Assert.Equal("eligible members below minimum batch size", result.Reason);
+    }
+
+    [Fact]
     public void Due_single_card_waits_for_a_partner_while_the_project_gate_is_busy()
     {
         var options = Enabled with { Scope = "code", DeadlineMinutes = 45 };
@@ -151,7 +163,7 @@ public sealed class BatchGatePolicyTests
     public void DocumentationOnlyCardClosesAtOnceInsteadOfWaitingForItsDeadline(string scope)
     {
         // AGT-3414: its gate runs no test, so a partner saves no suite.
-        var options = Enabled with { Scope = scope };
+        var options = Enabled with { Scope = scope, MinimumSize = 1 };
         var lone = BatchGatePolicy.Form([Subject("a")], Scope, Sha, options, Now);
         Assert.Equal(["a"], lone.Manifest!.Members.Select(member => member.TaskKey));
         Assert.False(lone.UsePerTaskGate);

@@ -32,6 +32,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+app-root {
+  --resizing-cursor: col-resize;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
 :root {
   --studio-z-overlay-root: 2147483647;
   --studio-z-overlay-backdrop: 2147483000;
@@ -152,7 +160,7 @@ html[data-studio-theme='light'] {
   }
   .task-card__subtle, .task-card__age, .task-card__client,
   .task-card__cli-name, .task-card__owner-name {
-    color: #6e6e6e;
+    color: var(--studio-fg-dim);
   }
   // Pills and small chips on the card. The component-side SCSS was
   // migrated to var(--studio-*) tokens in Wave A.2 — these overrides

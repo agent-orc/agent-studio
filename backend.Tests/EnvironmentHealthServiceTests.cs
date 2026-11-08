@@ -281,6 +281,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var closed = new ClosedLoopbackPort();
         var connects = new List<IPEndPoint>();
         // app.example resolves to a public address; the test socket reaches the local listener instead.
         var connector = new HealthCheckConnector((_, _) => Task.FromResult(new[] { IPAddress.Parse("203.0.113.7") }),
@@ -290,7 +291,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
                 var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 try
                 {
-                    await socket.ConnectAsync(new IPEndPoint(IPAddress.Loopback, port), token);
+                    await socket.ConnectAsync(new IPEndPoint(IPAddress.Loopback, endpoint.Port), token);
                     return socket;
                 }
                 catch
@@ -304,9 +305,9 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
 
         Assert.True((await probe.ProbeAsync(check, CancellationToken.None)).Ok);
         Assert.Equal(new IPEndPoint(IPAddress.Parse("203.0.113.7"), port), Assert.Single(connects));
-        listener.Stop();
-        var refused = await probe.ProbeAsync(check, CancellationToken.None);
+        var refused = await probe.ProbeAsync(check with { Port = closed.Port }, CancellationToken.None);
         Assert.Equal((false, "connection-failed"), (refused.Ok, refused.Error));
+        Assert.Equal(new IPEndPoint(IPAddress.Parse("203.0.113.7"), closed.Port), connects[1]);
     }
 
     [Fact]

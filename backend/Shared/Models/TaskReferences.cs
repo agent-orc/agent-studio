@@ -7,28 +7,28 @@ using System.Text.Json.Serialization;
 namespace AgentStudio.Shared;
 
 /// <summary>
-/// One scheduler-load-bearing <c>dependsOn</c> edge. Legacy edges are stored as
-/// plain strings. An edge that also requires an explicit content release is
-/// stored as <c>{ "key": "ATP-19", "releaseGate": true }</c>.
+/// One scheduler-bearing <c>dependsOn</c> edge. Plain strings use the current
+/// delivery rule. Object edges can require completion or explicit release.
 /// </summary>
 [JsonConverter(typeof(TaskDependencyReferenceJsonConverter))]
 public sealed record TaskDependencyReference
 {
-    public TaskDependencyReference(string key, bool releaseGate = false)
+    public TaskDependencyReference(string key, bool releaseGate = false, bool requiresCompletion = false)
     {
         Key = key;
         ReleaseGate = releaseGate;
+        RequiresCompletion = requiresCompletion;
     }
 
     public string Key { get; init; }
     public bool ReleaseGate { get; init; }
+    public bool RequiresCompletion { get; init; }
 
     public static implicit operator TaskDependencyReference(string key) => new(key);
 }
 
 /// <summary>
-/// Preserves the legacy string wire shape while allowing release-gated edges
-/// to opt into the richer object shape.
+/// Preserves the string wire shape while allowing gated edges to use objects.
 /// </summary>
 public sealed class TaskDependencyReferenceJsonConverter : JsonConverter<TaskDependencyReference>
 {
@@ -47,12 +47,14 @@ public sealed class TaskDependencyReferenceJsonConverter : JsonConverter<TaskDep
             : "";
         var releaseGate = root.TryGetProperty("releaseGate", out var gateElement)
             && gateElement.ValueKind == JsonValueKind.True;
-        return new TaskDependencyReference(key, releaseGate);
+        var requiresCompletion = root.TryGetProperty("requiresCompletion", out var completionElement)
+            && completionElement.ValueKind == JsonValueKind.True;
+        return new TaskDependencyReference(key, releaseGate, requiresCompletion);
     }
 
     public override void Write(Utf8JsonWriter writer, TaskDependencyReference value, JsonSerializerOptions options)
     {
-        if (!value.ReleaseGate)
+        if (!value.ReleaseGate && !value.RequiresCompletion)
         {
             writer.WriteStringValue(value.Key);
             return;
@@ -60,7 +62,8 @@ public sealed class TaskDependencyReferenceJsonConverter : JsonConverter<TaskDep
 
         writer.WriteStartObject();
         writer.WriteString("key", value.Key);
-        writer.WriteBoolean("releaseGate", true);
+        if (value.ReleaseGate) writer.WriteBoolean("releaseGate", true);
+        if (value.RequiresCompletion) writer.WriteBoolean("requiresCompletion", true);
         writer.WriteEndObject();
     }
 }
@@ -75,9 +78,11 @@ public sealed class TaskDependencyReferenceJsonConverter : JsonConverter<TaskDep
 /// <para>Task relations plus one typed document-reference namespace (see
 /// <see cref="TaskReferenceKinds"/>):</para>
 /// <list type="bullet">
-/// <item><b>dependsOn</b>: the target must reach <c>6-completed</c> before this
-/// task is workable. An edge with <c>releaseGate=true</c> additionally requires
-/// the target's explicit <c>released</c> flag. These edges form a DAG; cycles
+/// <item><b>dependsOn</b>: the target must complete or have its current delivery
+/// integrated into this task's target branch. Concept and research targets, or
+/// edges with <c>requiresCompletion=true</c>, require completion. An edge with
+/// <c>releaseGate=true</c> also requires terminal state and explicit release.
+/// These edges form a DAG; cycles
 /// are rejected on write.</item>
 /// <item><b>relatedTo</b>: thematic link, non-blocking.</item>
 /// <item><b>blockedBy</b>: this task is currently blocked by the target.</item>
@@ -268,7 +273,7 @@ public static class TaskReferenceValidator
 
     /// <summary>
     /// Normalises dependency keys and de-duplicates case-insensitively. If the
-    /// same key appears more than once, <c>releaseGate=true</c> wins so
+    /// same key appears more than once, the stricter gate flags win so
     /// normalisation can never silently weaken a gate.
     /// </summary>
     public static List<TaskDependencyReference> NormalizeDependencies(
@@ -285,12 +290,14 @@ public static class TaskReferenceValidator
             if (!indexes.TryGetValue(key, out var index))
             {
                 indexes[key] = result.Count;
-                result.Add(new TaskDependencyReference(key, dependency.ReleaseGate));
+                result.Add(new TaskDependencyReference(key, dependency.ReleaseGate, dependency.RequiresCompletion));
             }
             else if (dependency.ReleaseGate && !result[index].ReleaseGate)
             {
                 result[index] = result[index] with { ReleaseGate = true };
             }
+            if (dependency.RequiresCompletion && !result[indexes[key]].RequiresCompletion)
+                result[indexes[key]] = result[indexes[key]] with { RequiresCompletion = true };
         }
         return result;
     }

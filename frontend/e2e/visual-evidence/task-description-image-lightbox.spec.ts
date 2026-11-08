@@ -1,21 +1,16 @@
 import { test, expect, type Page } from '@playwright/test';
-import { api, BACKEND } from '../helpers/api';
+import { api, BACKEND, DEFAULT_CLIENT_ID } from '../helpers/api';
 import { createJob } from '../helpers/jobs';
 
 /**
- * Task description image-lightbox: clicking (or double-clicking) an image
- * inside the task description renders it in the shared `app-media-lightbox`.
+ * A task document image opens in the shared `app-media-lightbox`.
  *
  * The acceptance scenario from the feature task:
- *   1. A task description contains a markdown image.
- *   2. The user clicks the image.
+ *   1. A task document contains a markdown image.
+ *   2. The user opens the image from its rendered preview.
  *   3. An enlarged preview opens, closable via Escape / close button.
  *
- * The task description editor is the TipTap-based prompt editor. In the
- * normal editable mode a single click selects the image (ProseMirror
- * default) and double-click opens the lightbox; in read-only mode (CLI
- * running) a single click opens it. We exercise the double-click path
- * here since it does not require driving the runner.
+ * The Docs preview is available without opening the editor or driving a runner.
  */
 
 interface WatchPath { path: string; name?: string }
@@ -36,7 +31,7 @@ async function uploadAttachment(jobId: string, watchPath: string, fileName: stri
   const res = await fetch(`${BACKEND}${url}`, {
     method: 'POST',
     body: formData,
-    headers: { 'X-Client-Id': 'e2e-image-lightbox' }
+    headers: { 'X-Client-Id': DEFAULT_CLIENT_ID }
   });
   if (!res.ok) throw new Error(`upload failed: ${res.status} ${await res.text()}`);
   const payload = (await res.json()) as { relativePath: string };
@@ -60,13 +55,15 @@ async function deleteJob(id: string, watchPath: string): Promise<void> {
 
 async function openDetail(page: Page, id: string, watchPath: string): Promise<void> {
   await page.goto(`/?job=${encodeURIComponent(id)}&watchPath=${encodeURIComponent(watchPath)}`);
-  // F48: prompt is rendered in a Files-tab card; open the editor on demand.
-  await page.getByTestId('file-card-prompt-edit').click();
-  await expect(page.getByTestId('prompt-editor')).toBeVisible({ timeout: 10_000 });
+  // Task entry opens Overview; at this viewport Docs is in the tab overflow.
+  const promptTabs = page.getByRole('tablist', { name: 'Prompt pane tabs' });
+  await promptTabs.locator('..').getByTestId('pane-tabs-overflow').click();
+  await page.getByTestId('pane-tabs-overflow-item-description').click();
+  await expect(page.getByRole('tabpanel', { name: 'Docs' })).toBeVisible();
 }
 
 test.describe('Task description image lightbox', () => {
-  test('double-clicking a markdown image in the description opens the shared lightbox', async ({ page }, testInfo) => {
+  test('opening a markdown image in Docs keeps arrow keys in the shared lightbox', async ({ page }, testInfo) => {
     const watchPath = await pickWatchPath();
     const created = await createJob({
       title: `e2e-md-image-lightbox-${Date.now()}`,
@@ -87,26 +84,27 @@ test.describe('Task description image lightbox', () => {
       await page.setViewportSize({ width: 1400, height: 900 });
       await openDetail(page, jobId, watchPath);
 
-      // Wait for TipTap to render the image inside the editable surface.
-      const img = page.locator('[data-testid="prompt-editor"] .ProseMirror img').first();
+      const img = page.getByRole('button', { name: 'Open image: demo screenshot' });
       await expect(img).toBeVisible({ timeout: 10_000 });
 
-      // Before-shot of the description with the inline image.
-      const promptShot = await page.getByTestId('prompt-editor').screenshot();
+      const promptShot = await page.getByRole('tabpanel', { name: 'Docs' }).screenshot();
       await testInfo.attach('task-description-with-image', { body: promptShot, contentType: 'image/png' });
 
       // Lightbox should not be in the DOM yet.
       await expect(page.getByTestId('media-lightbox')).toHaveCount(0);
 
-      await img.dblclick();
+      const detailUrl = page.url();
+      await img.click();
+      await page.keyboard.press('ArrowRight');
 
       const lightbox = page.getByTestId('media-lightbox');
       await expect(lightbox).toBeVisible({ timeout: 5_000 });
+      await expect(page).toHaveURL(detailUrl);
       const lbImg = page.getByTestId('media-lightbox-image');
       await expect(lbImg).toBeVisible();
       // The lightbox image src should resolve to the same attachment URL.
       const lbSrc = await lbImg.getAttribute('src');
-      expect(lbSrc, 'lightbox src should reference the uploaded attachment').toMatch(/attachments\/demo\.png/);
+      expect(lbSrc, 'lightbox src should reference the uploaded attachment').toContain(rel);
 
       const openShot = await page.screenshot({ fullPage: false });
       await testInfo.attach('lightbox-open', { body: openShot, contentType: 'image/png' });
@@ -119,7 +117,7 @@ test.describe('Task description image lightbox', () => {
       await testInfo.attach('lightbox-closed', { body: closedShot, contentType: 'image/png' });
 
       // Click-on-image again, then click the explicit close button.
-      await img.dblclick();
+      await img.click();
       await expect(lightbox).toBeVisible();
       await page.getByTestId('media-lightbox-close').click();
       await expect(lightbox).toBeHidden();

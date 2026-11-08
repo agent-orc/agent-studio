@@ -231,7 +231,7 @@ test.describe('AGT-2692 All-projects board keeps its scope when a task opens', (
     // Open a task that belongs to Beta from the cross-project board.
     await card(page, 'Beta scope task').click();
 
-    await expect(page.getByTestId(`studio-tab-task:${BETA_TASK_KEY}`))
+    await expect(page.getByTestId(`studio-tab-task:${BETA_TASK_KEY}`).getByRole('tab'))
       .toHaveAttribute('aria-selected', 'true');
     // The detail is open and loaded its own project's data, but the app-wide
     // scope did not move into Beta.
@@ -252,11 +252,11 @@ test.describe('AGT-2692 All-projects board keeps its scope when a task opens', (
 
     await card(page, 'Beta scope task').click();
     const taskTab = page.getByTestId(`studio-tab-task:${BETA_TASK_KEY}`);
-    await expect(taskTab).toHaveAttribute('aria-selected', 'true');
+    await expect(taskTab.getByRole('tab')).toHaveAttribute('aria-selected', 'true');
 
-    await taskTab.getByRole('button', { name: 'Close tab' }).click();
+    await taskTab.getByRole('button', { name: /^Close / }).click();
 
-    await expect(page.getByTestId('studio-tab-board:__all__'))
+    await expect(page.getByTestId('studio-tab-board:__all__').getByRole('tab'))
       .toHaveAttribute('aria-selected', 'true');
     await expect(picker(page)).toContainText('All projects');
     // Both projects are back on the board — the operator was not stranded.
@@ -280,7 +280,7 @@ test.describe('AGT-2692 All-projects board keeps its scope when a task opens', (
 
     await card(page, 'Alpha scope task').click();
 
-    await expect(page.getByTestId(`studio-tab-task:${ALPHA_TASK_KEY}`))
+    await expect(page.getByTestId(`studio-tab-task:${ALPHA_TASK_KEY}`).getByRole('tab'))
       .toHaveAttribute('aria-selected', 'true');
     await expect(picker(page)).toContainText(ALPHA);
     await expect.poll(() => activeProjectScope(page)).toEqual([ALPHA]);

@@ -11,6 +11,8 @@ public sealed class TaskDetailLatencyMetrics
     private int _next;
     private int _count;
 
+    internal event Action? ObservationRecorded;
+
     public TaskDetailLatencyMetrics(TimeProvider clock) => _clock = clock;
 
     public void Observe(double milliseconds)
@@ -21,6 +23,7 @@ public sealed class TaskDetailLatencyMetrics
             _next = (_next + 1) % Capacity;
             _count = Math.Min(_count + 1, Capacity);
         }
+        ObservationRecorded?.Invoke();
     }
 
     public TaskDetailLatencySnapshot Snapshot()

@@ -167,6 +167,7 @@
 /api/projects/{projectName}/areas/{areaId}/glossary	free	-	-	-
 /api/projects/{projectName}/autonomy	free	-	-	-
 /api/projects/{projectName}/batch-gate	free	-	-	-
+/api/projects/{projectName}/batch-gate/failed-tests	free	-	-	-
 /api/projects/{projectName}/batch-gate/ledger	free	-	-	-
 /api/projects/{projectName}/batch-gate/queue-stalls	free	-	-	-
 /api/projects/{projectName}/batch-gate/report	free	-	-	-
@@ -337,6 +338,7 @@
 /api/supervisor/{project}/recent-events	free	-	-	-
 /api/system/about	free	-	-	-
 /api/system/execution-infrastructure	free	-	-	-
+/api/system/gate-capacity	free	-	-	-
 /api/system/gate-slots	free	-	-	-
 /api/system/readiness	free	-	-	-
 /api/system/version	free	-	-	-

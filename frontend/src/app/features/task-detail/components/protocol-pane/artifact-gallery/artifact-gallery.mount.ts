@@ -44,7 +44,7 @@ export class ArtifactGalleryMountController {
       activeIds.add(block.id);
       blockRows.slice(1).forEach((row) => {
         row.hidden = true;
-        row.setAttribute('aria-hidden', 'true');
+        row.inert = true;
       });
       this.mount(block, blockRows[0]);
     }
@@ -93,7 +93,7 @@ export class ArtifactGalleryMountController {
       const element = child as HTMLElement;
       element.dataset['artifactGalleryOriginal'] = 'true';
       element.hidden = true;
-      element.setAttribute('aria-hidden', 'true');
+      element.inert = true;
     }
     firstRow.append(mount.host);
     if (mount.signature !== signature) {
@@ -115,12 +115,12 @@ export class ArtifactGalleryMountController {
     );
     rows.forEach((row) => {
       row.hidden = false;
-      row.removeAttribute('aria-hidden');
+      row.inert = false;
       row.removeAttribute('data-artifact-gallery-anchor');
       row.querySelectorAll<HTMLElement>('[data-artifact-gallery-original="true"]')
         .forEach((element) => {
           element.hidden = false;
-          element.removeAttribute('aria-hidden');
+          element.inert = false;
           element.removeAttribute('data-artifact-gallery-original');
         });
     });

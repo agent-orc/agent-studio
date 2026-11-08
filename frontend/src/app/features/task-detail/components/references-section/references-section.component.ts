@@ -263,12 +263,19 @@ export class ReferencesSectionComponent {
       return title ? `${key}: ${title}` : key;
     }
     const releaseGate = this.releaseGateFor(key) ? ' · explicit release required' : '';
-    return title ? `${key}: ${title}${releaseGate}` : `${key} (not loaded in this workspace view)${releaseGate}`;
+    const rule = this.info().waitsOn?.items.find(item => item.key.toUpperCase() === key.trim().toUpperCase())?.fulfillmentRule;
+    const ruleText = rule === 'completion' ? ' · completion required'
+      : rule === 'integrated-delivery' ? ' · released by integrated delivery'
+      : rule === 'delivery-integration' ? ' · waiting for current delivery integration or completion' : '';
+    return title ? `${key}: ${title}${releaseGate}${ruleText}`
+      : `${key} (not loaded in this workspace view)${releaseGate}${ruleText}`;
   }
 
-  /** A dependsOn target is satisfied once it reaches completed/archive. */
+  /** Whether the selected dependsOn rule still holds this task. */
   isWaiting(kind: TaskReferenceKind, key: string): boolean {
     if (kind !== 'dependsOn') return false;
+    const item = this.info().waitsOn?.items.find(edge => edge.key.toUpperCase() === key.trim().toUpperCase());
+    if (item) return !item.fulfilled;
     const target = this.keyIndex().get(key.trim().toUpperCase());
     if (!target) return false;
     return !isTerminalState(target.state) || (this.releaseGateFor(key) && target.released !== true);

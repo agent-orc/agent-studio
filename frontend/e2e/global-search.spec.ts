@@ -1,4 +1,6 @@
 import { test, expect } from './fixtures/dev-backend';
+import { join } from 'node:path';
+import { auditModal } from './helpers/audit-modal';
 
 /**
  * How long the stubbed repository fan-out is held open. Long enough that the
@@ -37,6 +39,50 @@ const BOARD_TASK = {
   commits: [], tags: [], sessionChain: [], integrationRecords: [], relatedWikiPages: [],
   postProcessingChecks: [], references: {},
 };
+
+for (const width of [1280, 390]) {
+  test(`Ctrl+K search closes once and restores focus at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
+    }));
+    await page.route('**/api/v1/studio/board**', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+        failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
+        escalated: [], review: [], completed: [], archive: [],
+      }),
+    }));
+    await page.route('**/api/tasks/archive**', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], total: 0 }),
+    }));
+    await page.route('**/api/v1/studio/runner/status**', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }),
+    }));
+    await page.goto('/');
+    const opener = page.locator('button:visible').first();
+    await opener.focus();
+    await page.keyboard.press('Control+k');
+    const input = page.getByTestId('global-search-input');
+    await expect(input).toBeFocused();
+    await auditModal(page, '[data-testid="global-search-backdrop"] [role="dialog"]', `global-search-${width}`);
+    if (process.env.JOB_RESULTS_DIR) {
+      await page.screenshot({ path: join(process.env.JOB_RESULTS_DIR, `global-search-keyboard-${width}.png`) });
+    }
+    await page.keyboard.press('Tab');
+    await expect.poll(() => page.evaluate(() =>
+      !!document.querySelector('[data-testid="global-search-backdrop"] [role="dialog"]')?.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(input).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await page.waitForTimeout(400);
+    await expect(input).toHaveCount(0);
+    await expect(opener).toBeFocused();
+  });
+}
 
 test('palette shows task results and repository progress before repository results land', async ({ page }) => {
   // The board snapshot is what the task group matches against with no round

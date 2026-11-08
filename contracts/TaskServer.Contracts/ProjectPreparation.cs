@@ -1495,22 +1495,26 @@ public static partial class ProjectPreparationExecutor
         CancellationToken cancellationToken)
     {
         var bindings = new List<CacheBinding>();
+        // Input discovery must never enter the executor-owned cache. Its staging
+        // directories are renamed during publication, and only the final entry
+        // path is a readable cache source (under the per-key entry lock).
+        IReadOnlyList<string> Inputs(string pattern) => Files(workspace, pattern, cacheRoot);
         if (definition.Stack.Contains("node", StringComparer.OrdinalIgnoreCase)
-            || Files(workspace, "package-lock.json").Count > 0)
+            || Inputs("package-lock.json").Count > 0)
             bindings.Add(Binding("npm", "NPM_CONFIG_CACHE", workspace, cacheRoot, runRoot,
-                Files(workspace, "package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log,
+                Inputs("package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log,
                 entryLockWait, cancellationToken));
         if (definition.Stack.Contains("dotnet", StringComparer.OrdinalIgnoreCase)
-            || Files(workspace, "*.csproj").Count > 0)
+            || Inputs("*.csproj").Count > 0)
             bindings.Add(Binding("nuget", "NUGET_PACKAGES", workspace, cacheRoot, runRoot,
-                Files(workspace, "packages.lock.json").Count > 0
-                    ? Files(workspace, "packages.lock.json")
-                    : Files(workspace, "*.csproj"), ToolInputs(definition.ToolVersions, "dotnet", "dotnetSdk"), log,
+                Inputs("packages.lock.json").Count > 0
+                    ? Inputs("packages.lock.json")
+                    : Inputs("*.csproj"), ToolInputs(definition.ToolVersions, "dotnet", "dotnetSdk"), log,
                 entryLockWait, cancellationToken));
         if (definition.Stack.Contains("playwright", StringComparer.OrdinalIgnoreCase)
-            || Files(workspace, "playwright.config.*").Count > 0)
+            || Inputs("playwright.config.*").Count > 0)
             bindings.Add(Binding("playwright", "PLAYWRIGHT_BROWSERS_PATH", workspace, cacheRoot, runRoot,
-                Files(workspace, "package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log,
+                Inputs("package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log,
                 entryLockWait, cancellationToken));
         return bindings;
     }
@@ -1726,13 +1730,17 @@ public static partial class ProjectPreparationExecutor
         return Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
     }
 
-    private static IReadOnlyList<string> Files(string root, string pattern)
+    private static IReadOnlyList<string> Files(string root, string pattern, string cacheRoot)
     {
         var result = new List<string>();
         var pending = new Queue<string>();
+        var cachePath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cacheRoot));
+        var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         pending.Enqueue(root);
         while (pending.TryDequeue(out var directory))
         {
+            if (string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)), cachePath, pathComparison))
+                continue;
             try
             {
                 result.AddRange(Directory.EnumerateFiles(directory, pattern, SearchOption.TopDirectoryOnly));
@@ -1743,9 +1751,9 @@ public static partial class ProjectPreparationExecutor
                     pending.Enqueue(child);
                 }
             }
-            catch (UnauthorizedAccessException)
+            catch (Exception exception) when (exception is UnauthorizedAccessException or DirectoryNotFoundException)
             {
-                // A bounded block may ignore an inaccessible generated subtree.
+                // A generated subtree may be inaccessible or disappear during discovery.
             }
         }
         return result.OrderBy(path => path, StringComparer.Ordinal).ToArray();
@@ -1899,32 +1907,42 @@ public static partial class ProjectPreparationExecutor
             var parent = Path.GetDirectoryName(binding.EntryPath)!;
             Directory.CreateDirectory(parent);
             var staging = binding.EntryPath + ".staging-" + Guid.NewGuid().ToString("N");
-            Directory.CreateDirectory(staging);
-            var content = Path.Combine(staging, "content");
-            CopyDirectory(binding.WorkingPath, content);
-            File.WriteAllText(Path.Combine(staging, "manifest.json"), JsonSerializer.Serialize(new
-            {
-                schemaVersion = 2,
-                block = binding.Block,
-                key = binding.Key,
-                createdAtUtc = DateTimeOffset.UtcNow,
-                inputs = binding.Inputs,
-                writeOnce = true,
-                // AGT-2858: recorded at publication so the retention sweep can
-                // apply its size bound without walking every cached file tree.
-                sizeBytes = ProjectPreparationCacheSweep.Measure(content),
-            }, Json));
+            // Invariant: only this writer touches staging. Readers copy only the
+            // published entry under its key lock; rename publishes it atomically.
+            // The losing writer retains its private run copy and removes only its
+            // own staging path before recording the canonical published entry.
             try
             {
-                Directory.Move(staging, binding.EntryPath);
-                binding.PublicationState = "published";
-                log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=published");
+                Directory.CreateDirectory(staging);
+                var content = Path.Combine(staging, "content");
+                CopyDirectory(binding.WorkingPath, content);
+                File.WriteAllText(Path.Combine(staging, "manifest.json"), JsonSerializer.Serialize(new
+                {
+                    schemaVersion = 2,
+                    block = binding.Block,
+                    key = binding.Key,
+                    createdAtUtc = DateTimeOffset.UtcNow,
+                    inputs = binding.Inputs,
+                    writeOnce = true,
+                    // AGT-2858: recorded at publication so the retention sweep can
+                    // apply its size bound without walking every cached file tree.
+                    sizeBytes = ProjectPreparationCacheSweep.Measure(content),
+                }, Json));
+                try
+                {
+                    Directory.Move(staging, binding.EntryPath);
+                    binding.PublicationState = "published";
+                    log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=published");
+                }
+                catch (IOException) when (InspectEntry(binding.EntryPath, binding.Block, binding.Key) == CacheEntryInspection.Hit)
+                {
+                    binding.PublicationState = "already-published";
+                    log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=already-published");
+                }
             }
-            catch (IOException) when (Directory.Exists(binding.EntryPath))
+            finally
             {
                 DeleteBestEffort(staging);
-                binding.PublicationState = "already-published";
-                log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=already-published");
             }
         }
     }

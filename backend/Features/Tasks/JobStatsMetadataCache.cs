@@ -106,8 +106,9 @@ public sealed class JobStatsMetadataCache
 
         try
         {
-            var raw = File.ReadAllText(_path);
-            var persisted = JsonSerializer.Deserialize<PersistedJobStatsMetadataCache>(raw, ReadOpts);
+            using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            var persisted = JsonSerializer.Deserialize<PersistedJobStatsMetadataCache>(stream, ReadOpts);
             if (persisted?.Version != CacheVersion) return;
 
             _byFolder = persisted.Entries
@@ -277,9 +278,16 @@ public sealed class JobStatsMetadataCache
                     .ToList()
             };
             var json = JsonSerializer.Serialize(payload, WriteOpts);
-            var tmp = _path + ".tmp";
-            File.WriteAllText(tmp, json, Encoding.UTF8);
-            File.Move(tmp, _path, overwrite: true);
+            var tmp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(tmp, json, Encoding.UTF8);
+                File.Move(tmp, _path, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(tmp)) File.Delete(tmp);
+            }
         }
         catch (Exception ex)
         {

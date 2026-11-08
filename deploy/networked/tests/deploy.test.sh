@@ -9,6 +9,7 @@ export FAKE_BLOCKED=0
 export FAKE_BAD_PLAN=0
 export FAKE_BUSY_REVIEW=0
 export FAKE_RUNNING_GATE=0
+export FAKE_LEGACY_SNAPSHOT=0
 commit="$(printf 'a%.0s' {1..40})"
 
 cat >"$scratch/fake-host.sh" <<'FAKE'
@@ -24,7 +25,12 @@ case "$action" in
     printf '{"commit":"%s","ref":"example/%s@sha256:%s","sha256":"%s"}\n' "$1" "$name" "$digest" "$digest" ;;
   build:agent_host|build:gate_worker)
     printf '{"commit":"%s","ref":"/release/%s-%s","sha256":"%s"}\n' "$1" "${action#build:}" "$1" "$digest" ;;
-  snapshot:server) printf '{"value":{"apiImage":"old-api:tag","webImage":"old-web:tag","apiDigest":"%s","webDigest":"%s","apiImageId":"sha256:%s","webImageId":"sha256:%s","gateSshHost":"old-gate","workerPath":"old-worker"}}\n' "$digest" "$digest" "$digest" "$digest" ;;
+  snapshot:server)
+    if [[ "$FAKE_LEGACY_SNAPSHOT" == 1 ]]; then
+      printf '{"value":{"apiImage":"old-api:tag","webImage":"old-web:tag","apiDigest":"%s","webDigest":"%s","apiImageId":"sha256:%s","webImageId":"sha256:%s","gateSshHost":null,"workerPath":null}}\n' "$digest" "$digest" "$digest" "$digest"
+    else
+      printf '{"value":{"apiImage":"old-api:tag","webImage":"old-web:tag","apiDigest":"%s","webDigest":"%s","apiImageId":"sha256:%s","webImageId":"sha256:%s","gateSshHost":"old-gate","workerPath":"old-worker"}}\n' "$digest" "$digest" "$digest" "$digest"
+    fi ;;
   snapshot:gate) printf '{"value":{"workerPath":"old-worker"}}\n' ;;
   snapshot:engine) printf '{"value":{"engineVersion":"old-engine"}}\n' ;;
   snapshot:coding) printf '{"value":{"agentHostRelease":"old-agent"}}\n' ;;
@@ -61,7 +67,11 @@ case "$action" in
     if [[ "$FAKE_BUSY_REVIEW" == 1 ]]; then printf '{"idle":false}\n'; else printf '{"idle":true}\n'; fi ;;
   review_verify) printf '{"commit":"%s","planDigest":"plan-123","imageRef":"example/review@sha256:%s"}\n' "$1" "$digest" ;;
   rollback:server)
-    [[ "$2" == *'"apiImage":"old-api:tag"'* && "$2" == *'"workerPath":"old-worker"'* ]]
+    if [[ "$FAKE_LEGACY_SNAPSHOT" == 1 ]]; then
+      [[ "$2" == *'"apiImage":"old-api:tag"'* && "$2" == *'"workerPath":null'* ]]
+    else
+      [[ "$2" == *'"apiImage":"old-api:tag"'* && "$2" == *'"workerPath":"old-worker"'* ]]
+    fi
     printf '{"restored":true}\n' ;;
   rollback:*) printf '{"restored":true}\n' ;;
   *) printf '{}\n' ;;
@@ -172,4 +182,14 @@ assert record['status'] == 'rolled-back'
 assert [step['step'] for step in record['steps'] if step['step'].startswith('rollback:')] == [
     'rollback:review', 'rollback:coding', 'rollback:engine', 'rollback:server', 'rollback:gate']
 PY
+export FAKE_LEGACY_SNAPSHOT=1
+bash "$root/deploy.sh" deploy "$commit" --manifest "$MANIFEST" --journal "$scratch/legacy.json" >"$scratch/legacy.out"
+python3 - "$scratch/legacy.json" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1]))
+assert record['status'] == 'passed'
+assert record['previous']['server']['value']['gateSshHost'] is None
+assert record['previous']['server']['value']['workerPath'] is None
+PY
+bash "$root/deploy.sh" rollback "$commit" --manifest "$MANIFEST" --journal "$scratch/legacy.json" >"$scratch/legacy-rollback.out"
 echo 'networked deploy shell tests passed'

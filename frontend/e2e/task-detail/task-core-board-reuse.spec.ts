@@ -262,7 +262,7 @@ async function backToBoard(page: Page): Promise<void> {
 async function closeTaskTabs(page: Page): Promise<void> {
   const tabs = page.getByTestId('studio-tab-list').locator('[data-tab-kind="task"]');
   for (const tab of await tabs.all()) {
-    await tab.getByRole('button', { name: 'Close tab' }).click();
+    await tab.getByRole('button', { name: /^Close / }).click();
   }
 }
 

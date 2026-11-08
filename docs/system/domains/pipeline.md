@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-03
+Version: 2026-11-05
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -392,6 +392,16 @@ the batch. Infrastructure failures are retried while time remains and do not
 become code-red verdicts. The project option `preCheckEnabled` defaults on for
 Agent Studio and off elsewhere when unset.
 
+Before closing a batch manifest, the planner refreshes each proposed member's
+pending review, ownership, and pre-check verdict, checks integration
+containment, and probes replay in the proposed order. Conflicts start an agent
+merge round; unattributable replays take the per-task route. It closes only if
+at least `minimumSize` members remain. A fresh integration tip check prevents
+closing on a base that moved during planning and triggers one immediate replan.
+The plan decision records why a proposed close was deferred or which members
+were removed. Assembly repeats replay under its lease because a later change
+can still invalidate the preview.
+
 The state route exposes each verdict on pending members and cards, plus
 `preChecksRun`, `preChecksRed`, and `preCheckMinutesSaved`. Saved minutes are an
 estimate for red pre-checks: the median of the last 20 batch gate executions
@@ -413,6 +423,22 @@ worktree. Non-linear members still use a detached worktree for their merge.
 Temporary worktree removal is retried, and cleanup leftovers do not discard
 a successful replay. Candidate refs use
 `refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
+
+The batch panel reads `GET /api/projects/{projectName}/batch-gate/failed-tests`
+to rank failed test names over a seven-day sliding window (`windowDays` may be
+1 through 90). The store reads historical execution evidence once per project
+and updates the in-memory projection when it records a new execution. Later
+requests rank the cached observations without rescanning evidence. The
+response counts batches, runs, distinct member sets, first and latest failure,
+the latest error excerpt, per-run failure facts, and whether a flaky rerun
+passed. Missing evidence is queued for retry without interrupting execution
+recording; the response counts pending evidence runs so the panel marks its
+ranking incomplete until those files become readable. A test is a flaky suspect
+only when it failed in three batches with pairwise disjoint member sets. The
+operator can open a prefilled bug card in the normal creation dialog. The dialog
+applies central model routing and requires submission to create it.
+Batch links request up to 500 historical manifests on demand; normal state
+polling stays at ten.
 
 Member replay routes (AGT-3104, chosen by the pure `BatchReplayPolicy`):
 
@@ -680,8 +706,8 @@ interrupted starts the card escalates as `GateInfra`. Across all review
 generations of the process, at most one gate slot fewer than the gate host has
 runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
 slot before they choose their merged candidate, so the batch slot stays free. A
-formed batch whose base moved before replay closes again with the same members
-on the new base, and its members do not reach a per-task gate. A batch that pauses (a second
+formed batch whose base moved before replay closes again with compatible members
+on the new base only when at least `minimumSize` remain. A batch that pauses (a second
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
 unexpected fault) keeps `Paused` in its state history; on the next tick the
 worker returns every member it still owns to that per-card gate and records the
@@ -718,6 +744,14 @@ lease lives in `ref-mutation-leases` beside it. The card-local admission marker
 is `logs/batch-gate-ownership.json`. Native member records carry the gate
 identity and evidence; the integration-record endpoint only records integration
 bookkeeping.
+
+Each pilot tick retries formed manifests from the store. The oldest formed
+manifest takes the next available project gate slot, so later larger batches
+cannot indefinitely pass it. The state response includes every recoverable
+manifest even when it falls outside the requested history count. For a pending
+member past its planning deadline and absent from the last proposed member list,
+the plan names its current batch or fallback, or says that it awaits the next
+planner tick. Such a member never appears under an idle plan.
 
 The backend worker sends the full gate through `RemoteBuildTestGateRunner` to
 the configured remote gate host. A red candidate is compared on the server
@@ -920,6 +954,51 @@ The server's `RemoteGate:HostCapacity:{runnerId}:Slots` and
 worker is selected by convention; SSH remains as the transition fallback
 until the pull path passes a soak, then a follow-up removes SSH.
 No transport-selection setting is required.
+
+Installation gate capacity can be changed in Workspace Settings, Environment,
+without restarting the API. The stored override supplies slots and processors
+per gate to new pull claims and SSH dispatches. Existing claims retain their
+grant; reducing slots waits for occupied slots to finish. Optional gate host
+cores bound slots times processors per gate unless the operator explicitly
+allows oversubscription. Each change enters the control plane audit trail.
+Without a stored override, the configuration values above remain the defaults.
+`RemoteGate:HostCores` and `RemoteGate:AllowOversubscription` supply the
+optional host-core and oversubscription defaults.
+
+### Gate capacity API contract
+
+`GET /api/system/gate-capacity` requires `workspace.operate` and returns the
+effective installation capacity, its source, and current slot use. `PUT` on the
+same route requires `workspace.administer` and the Studio Owner role. Send the
+complete JSON capacity object, for example:
+
+```json
+{"slots":4,"processorsPerGate":6,"hostCores":24,"allowOversubscription":false}
+```
+
+`slots` and `processorsPerGate` must each be integers from 1 through 64.
+`hostCores` is either `null` or an integer from 1 through 4096. When host cores
+are supplied, `slots * processorsPerGate` must not exceed `hostCores` unless
+`allowOversubscription` is `true`. Invalid capacity returns HTTP 400 with an
+`error` string. A successful read or write returns HTTP 200 in this shape:
+
+```json
+{"capacity":{"slots":4,"processorsPerGate":6,"hostCores":24,"allowOversubscription":false},"source":"stored","use":{"busy":2,"total":4}}
+```
+
+`source` is `configuration` until the first saved override, then `stored`.
+`use` counts busy and total slots on healthy pull hosts when present; otherwise
+it uses an SSH host report from the past ten minutes or this API process's
+local slot count. A recent SSH report retains the host's reported total even
+when it differs from the saved capacity. This can happen while gates with an
+older grant finish after a capacity change. A report from a newly dispatched
+gate reflects its new grant.
+The response has `Cache-Control: no-store`. Each changed value is persisted as
+an installation-wide override and recorded in the operator audit stream as
+`gate-capacity.change`, with the actor and previous and current capacity.
+Repeating an identical stored value makes no new audit entry. New gates take
+the current value without an API restart. Running gates keep their grant, and
+reducing slots waits for those gates to finish.
 
 The temporary SSH fallback uses `RemoteGate:SshHost` and an absolute
 `RemoteGate:WorkerPath` pointing to a release-pinned `OrchestratorApi.dll` on
@@ -2041,6 +2120,12 @@ move-error dialog.
   restore never wrote to (NETSDK1064, TE-52). The folder is released when the
   gate finishes or the run's slot is freed; an unreleased folder is reclaimed by
   age after 24 hours.
+- Dependency input discovery excludes the entire product cache when that cache
+  sits inside the repository workspace. Each writer owns its staging folder;
+  a complete entry becomes readable only after an atomic rename to its
+  published path. Readers inspect and copy that path under the entry's key
+  lock. A writer that finds an existing entry keeps its private run copy and
+  uses the published path for the shared cache binding.
 - Empty preparation blocks remain misses and are never published. Lookup and
   publication share one validity rule for non-empty entries: manifest and
   content exist, identity matches, recorded size equals content size, and NuGet
@@ -2181,6 +2266,10 @@ move-error dialog.
   post-processing deferral pass, integrating only what is not already on the
   branch and never creating a second review attempt. See
   [review-plane contract](../contracts/review-plane.md).
+  The integration coordinator marks a delivery replay finished before it
+  completes the waiting caller. A resume that discards a completed owner
+  refusal can then enqueue a fresh integration after ownership returns,
+  instead of receiving the stale refusal again.
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so
@@ -2730,6 +2819,16 @@ operator changes cause the step to fail before its writer runs.
   the first post-step in every catalogue pipeline. `SummaryGenerationService`
   runs it from Result finalization (and the Regenerate action). It writes
   `status.md` and `summary-assessment.json`. It cannot be disabled, and its
+  failure is nonterminal for a completed report run. Planning and research use
+  the agent's `results/status.md` or the latest final agent message as the
+  Result when the model step fails. The
+  failed summary row stays visible. The lightweight review then validates the
+  primary artifact and records its review and decision. If no agent status can
+  be recovered, the card moves to Escalated with the failed step and reason on
+  the timeline. Other post-processing failures also escalate with their reason
+  rather than leaving an undecided Auto Review card. An intentionally disabled
+  aspect pipeline keeps its operator-controlled hold.
+  The step's
   free-text prompt override is hidden, because it owns the Result document and
   renders `summary-protocol.md` with typed slots. CLI, model and thinking level
   resolve like any model-backed step: step override, then the project

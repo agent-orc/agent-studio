@@ -1,6 +1,7 @@
 using System.Text;
 using System.Security.Cryptography;
 using AgentStudio.Pipeline;
+using AgentStudio.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -13,6 +14,44 @@ public sealed class PullGateStoreTests : IDisposable
     private const string Digest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private readonly string _root = Path.Combine(Path.GetTempPath(), "pull-gate-test-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 16, 8, 0, 0, TimeSpan.Zero));
+
+    [Fact]
+    public void Capacity_change_applies_to_next_claim_without_interrupting_running_claim()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteGate:GateSlots"] = "2", ["RemoteGate:ProcessorCount"] = "3",
+        }).Build();
+        var capacity = new GateCapacitySettings(config, Path.Combine(_root, "capacity.json"),
+            new ControlPlaneAuditLog(Path.Combine(_root, "audit")));
+        var store = new PullGateStore(Path.Combine(_root, "pull"), _clock, config, capacity);
+        store.Register("gate-1", "KORI");
+        var firstRun = Enqueue(store);
+        var first = store.Claim("gate-1")!;
+        var firstPath = store.FileForLease("gate-1", firstRun, first.Lease, "request.json");
+        var granted = System.Text.Json.JsonSerializer.Deserialize<RemoteGateInvocation>(
+            File.ReadAllText(firstPath), RemoteBuildTestGateRunner.Json)!;
+        Assert.Equal((2, 3), (granted.GateSlots, granted.ProcessorCount));
+        var otherRun = Enqueue(store);
+        var other = store.Claim("gate-1")!;
+        Assert.Equal(otherRun, other.RunId);
+
+        capacity.Set(new GateCapacity(1, 4, 24, false), "operator-1");
+        var secondRun = Enqueue(store);
+        Assert.Null(store.Claim("gate-1"));
+        Assert.Equal((2, 1), store.Workload("gate-1")!.Value);
+        Assert.Equal(2, System.Text.Json.JsonSerializer.Deserialize<RemoteGateInvocation>(
+            File.ReadAllText(firstPath), RemoteBuildTestGateRunner.Json)!.GateSlots);
+        store.Complete("gate-1", firstRun, first.Lease, Result(firstRun));
+        Assert.Null(store.Claim("gate-1"));
+        store.Complete("gate-1", otherRun, other.Lease, Result(otherRun));
+        var second = store.Claim("gate-1")!;
+        Assert.Equal(secondRun, second.RunId);
+        var next = System.Text.Json.JsonSerializer.Deserialize<RemoteGateInvocation>(
+            File.ReadAllText(store.FileForLease("gate-1", secondRun, second.Lease, "request.json")),
+            RemoteBuildTestGateRunner.Json)!;
+        Assert.Equal((1, 4), (next.GateSlots, next.ProcessorCount));
+    }
 
     [Fact]
     public void Claim_heartbeat_expiry_and_late_upload_are_fenced()

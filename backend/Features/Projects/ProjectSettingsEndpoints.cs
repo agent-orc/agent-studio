@@ -1320,6 +1320,17 @@ public static class ProjectSettingsEndpoints
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
                 ? Results.Ok(pilot.Report(projectName))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
+        app.MapGet("/api/projects/{projectName}/batch-gate/failed-tests", (string projectName,
+            int? windowDays, BatchGateStore store, TaskScannerService scanner, TimeProvider clock) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (windowDays is < 1 or > 90)
+                return Results.BadRequest(new { error = "windowDays must be between 1 and 90." });
+            return Results.Ok(store.FailedTestRanking(project.Name, clock.GetUtcNow(), windowDays ?? 7));
+        });
         app.MapGet("/api/projects/{projectName}/batch-gate/ledger", (string projectName,
             DateOnly? day, string? type, int? page, int? pageSize,
             GateRunLedger ledger, TaskScannerService scanner) =>
@@ -1680,6 +1691,7 @@ public static class ProjectSettingsEndpoints
             urgentTags = value.EffectiveUrgentTags,
             value.RiskPolicy,
             value.Calibration,
+            value.Stacking,
             value.Overlap,
             value.ReviewTestLevel,
             value.GateTimeoutMinutes,

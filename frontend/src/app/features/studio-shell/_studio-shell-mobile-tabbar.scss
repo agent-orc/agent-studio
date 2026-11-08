@@ -1,0 +1,30 @@
+// Keep the task action strip inside the phone viewport, including its
+// primary action. The document tabs and actions use separate rows.
+@mixin tabbar {
+@media (max-width: 720px) {
+  .studio-tabbar:has(.studio-tab-action__pane-toggles) {
+    height: auto;
+    flex-wrap: wrap;
+
+    .studio-tabbar__list {
+      flex: 0 0 100%;
+      height: var(--studio-tabbar-h);
+    }
+
+    .studio-tabbar__actions {
+      flex: 1 1 100%;
+      min-width: 0;
+      min-height: var(--studio-tabbar-h);
+      flex-wrap: wrap;
+      white-space: normal;
+      border-left: 0;
+      border-top: 1px solid var(--studio-border);
+      padding-block: var(--studio-spacing-1);
+
+      .studio-tab-actions-sep {
+        display: none;
+      }
+    }
+  }
+}
+}

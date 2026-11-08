@@ -8,6 +8,8 @@
             class="studio-ab__btn"
             [class.studio-ab__btn--active]="activeKey() === item.key"
             [cacTooltip]="item.label"
+            [attr.aria-label]="item.label"
+            [attr.aria-current]="activeKey() === item.key ? 'page' : null"
             [attr.data-panel]="item.key"
             [attr.data-testid]="'studio-ab-' + item.key"
             (click)="panelToggle.emit(item.key)">
@@ -36,7 +38,7 @@
               [class.studio-ab__badge--alerts]="item.key === 'activity'"
               [cacTooltip]="badgeLabel(item, count)"
               [attr.data-testid]="'studio-ab-badge-' + item.key"
-              [attr.aria-label]="item.key === 'activity' ? badgeLabel(item, count) : null">
+              aria-hidden="true">
           {{ count > 99 ? '99+' : count }}
         </span>
       }
@@ -47,17 +49,20 @@
           [class.studio-ab__btn--active]="activeKey() === 'chats'"
           cacTooltip="Chats"
           aria-label="Chats"
+          [attr.aria-current]="activeKey() === 'chats' ? 'page' : null"
           data-testid="studio-ab-chats"
           (click)="panelToggle.emit('chats')">
-    <app-studio-icon name="bot" [size]="22"></app-studio-icon>
+    <app-studio-icon name="bot" [size]="22" aria-hidden="true"></app-studio-icon>
   </button>
   <button type="button"
           class="studio-ab__btn"
           [class.studio-ab__btn--active]="activeKey() === 'workbenches'"
           cacTooltip="Dossiers"
+          aria-label="Dossiers"
+          [attr.aria-current]="activeKey() === 'workbenches' ? 'page' : null"
           data-testid="studio-ab-workbenches"
           (click)="openWorkbenchesRequest.emit()">
-    <app-studio-icon name="eye" [size]="22"></app-studio-icon>
+    <app-studio-icon name="eye" [size]="22" aria-hidden="true"></app-studio-icon>
   </button>
   <span class="studio-ab__spacer"></span>
 </aside>

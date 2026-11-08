@@ -420,7 +420,7 @@ public static class TaskCrudEndpoints
                     .Where(job => !job.Fixture)
                 : Enumerable.Empty<TaskInfo>();
             var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(
-                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
+                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority, gitProjection, projectSettings));
             var withRuntime = WithRuntime(pricing, detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {
@@ -1252,10 +1252,8 @@ public static class TaskCrudEndpoints
                 return Results.BadRequest(new { error = $"cliType must be one of {string.Join(", ", CliTypes.All)}" });
             if (req.PinMode is not ("preference" or "hard")) return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var ok = mutations.SetJobCliType(jobId, req.CliType, watchPath, req.PinMode);
+            var ok = mutations.SetJobCliType(jobId, req.CliType, watchPath, req.PinMode, req.UseOwnSession);
             if (!ok) return Results.NotFound();
-            if (req.UseOwnSession.HasValue)
-                mutations.SetJobUseOwnSession(jobId, req.UseOwnSession.Value, watchPath);
             return Results.Ok();
         });
 

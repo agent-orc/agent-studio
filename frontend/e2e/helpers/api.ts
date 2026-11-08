@@ -18,7 +18,7 @@ export const BACKEND =
  * The bootstrap "local-default" identity exists on every backend boot,
  * so signing in as it lets specs perform mutations without registering
  * a per-test identity. Override with PW_CLIENT_ID for multi-client specs. */
-const DEFAULT_CLIENT_ID = process.env.PW_CLIENT_ID?.trim() || 'local-default';
+export const DEFAULT_CLIENT_ID = process.env.PW_CLIENT_ID?.trim() || 'local-default';
 
 export async function api<T = unknown>(
   path: string,

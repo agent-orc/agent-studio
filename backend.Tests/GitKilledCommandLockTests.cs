@@ -7,9 +7,10 @@ namespace AgentStudio.Tests;
 /// AGT-3409: on 2026-11-01 an evidence flush's <c>git add</c> hit the 30-second
 /// limit, the runner killed it, and the <c>index.lock</c> it left blocked every
 /// workspace write for 70 minutes. These tests kill real git processes in real
-/// repositories. A clean filter that sleeps keeps git busy at a known point:
-/// <c>git add</c> holds <c>index.lock</c> while it runs, <c>git hash-object</c>
-/// runs the filter without taking any lock.
+/// repositories. A clean filter keeps git busy at a known point: a FIFO pins
+/// the live-writer test, and a timeout pins the killed-add test. <c>git add</c>
+/// holds <c>index.lock</c> while it runs, while <c>git hash-object</c> runs the
+/// filter without taking any lock.
 /// </summary>
 public sealed class GitKilledCommandLockTests : IDisposable
 {
@@ -50,22 +51,35 @@ public sealed class GitKilledCommandLockTests : IDisposable
         var repo = SeedSlowFilterRepo("live-owner");
         var lockPath = Path.Combine(repo, ".git", "index.lock");
 
-        // The server's command runs (and is killed) while another git writes.
+        // Each filter announces that git reached it, then waits on a FIFO.
+        // Cancellation begins only after the external writer owns index.lock.
+        using var killedReady = new ManualResetEventSlim();
+        using var liveReady = new ManualResetEventSlim();
+        using var watcher = new FileSystemWatcher(_root) { Filter = "*.ready" };
+        watcher.Created += (_, change) =>
+        {
+            if (change.Name == "killed.ready") killedReady.Set();
+            if (change.Name == "live.ready") liveReady.Set();
+        };
+        watcher.EnableRaisingEvents = true;
+        var killedCommand = BlockedFilterGit(repo, "killed", "hash-object", "a.slow");
+        var liveCommand = BlockedFilterGit(repo, "live", "add", "-A");
+        using var cancel = new CancellationTokenSource();
         var killedTask = Task.Run(() => GitProcessBoundary.Run(
-            Git(repo, "-c", "filter.slow.clean=sleep 30; cat", "hash-object", "a.slow"),
-            timeout: TimeSpan.FromSeconds(4)));
-        Assert.True(WaitUntil(() => GitChildProcessRegistry.WorkingDirectories().Contains(repo)),
-            "the server command did not start");
-
-        // Started outside the boundary: only the OS inventory can see it.
-        using var liveWriter = Process.Start(Git(repo, "-c", "filter.slow.clean=sleep 60; cat", "add", "-A"))!;
+            killedCommand, timeout: TimeSpan.FromMinutes(1), cancellationToken: cancel.Token));
+        Process? liveWriter = null;
         try
         {
-            Assert.True(WaitUntil(() => File.Exists(lockPath)), "the live writer did not take index.lock");
+            Assert.True(killedReady.Wait(TimeSpan.FromSeconds(10)), "the server git filter did not start");
+            // Started outside the boundary: only the OS inventory can see it.
+            liveWriter = Process.Start(liveCommand)!;
+            Assert.True(liveReady.Wait(TimeSpan.FromSeconds(10)), "the live writer filter did not start");
+            Assert.True(File.Exists(lockPath), "the live writer did not take index.lock");
+            cancel.Cancel();
 
             var killed = await killedTask;
 
-            Assert.Equal(GitProcessFailureKind.TimedOut, killed.FailureKind);
+            Assert.Equal(GitProcessFailureKind.Cancelled, killed.FailureKind);
             Assert.True(File.Exists(lockPath), "a lock a live git process holds must stay");
             var guard = new GitStaleLockGuard();
             var whileAlive = guard.Sweep(repo);
@@ -73,19 +87,36 @@ public sealed class GitKilledCommandLockTests : IDisposable
             Assert.Contains(whileAlive.Remaining, finding =>
                 finding.Path == lockPath && finding.Verdict == GitLockVerdict.KeepOwned);
 
-            liveWriter.Kill(entireProcessTree: true);
-            liveWriter.WaitForExit(10_000);
+            // Kill git itself so a filter child cannot finish first and let
+            // git change or release the lock during process-tree teardown.
+            liveWriter.Kill();
+            Assert.True(liveWriter.WaitForExit(10_000));
             Assert.True(File.Exists(lockPath), "SIGKILL leaves the writer's lock behind");
 
-            // The lock is seconds old, far below the 10-minute threshold, yet
+            // The lock is seconds old, below the one-minute threshold, yet
             // the next write clears it: its writer died during a killed command.
-            var afterExit = guard.Sweep(repo);
+            // WaitForExit established that this writer is gone. A host-wide
+            // /proc scan can still be inconclusive when unrelated git
+            // processes churn, so pin the no-owner fact for this decision.
+            var afterExit = new GitStaleLockGuard(probe: new NoGitOwnerProbe()).Sweep(repo);
             Assert.Contains(afterExit.Cleared, finding => finding.Path == lockPath);
             Assert.False(File.Exists(lockPath));
         }
         finally
         {
-            if (!liveWriter.HasExited) liveWriter.Kill(entireProcessTree: true);
+            cancel.Cancel();
+            if (liveWriter is not null)
+            {
+                if (!liveWriter.HasExited) liveWriter.Kill();
+                liveWriter.WaitForExit(10_000);
+                // The orphaned filter has a FIFO reader. Opening read/write
+                // releases it without waiting for a separate writer process.
+                using var release = new FileStream(Path.Combine(_root, "live.fifo"),
+                    FileMode.Open, FileAccess.ReadWrite);
+                release.WriteByte(0);
+                liveWriter.Dispose();
+            }
+            await killedTask;
         }
     }
 
@@ -153,14 +184,27 @@ public sealed class GitKilledCommandLockTests : IDisposable
         Assert.Equal(0, process.ExitCode);
     }
 
-    private static bool WaitUntil(Func<bool> condition)
+    private ProcessStartInfo BlockedFilterGit(string repo, string signal, params string[] command)
     {
-        var clock = Stopwatch.StartNew();
-        while (!condition())
+        var fifo = new ProcessStartInfo("mkfifo")
         {
-            if (clock.Elapsed > TimeSpan.FromSeconds(5)) return false;
-            Thread.Sleep(20);
-        }
-        return true;
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        fifo.ArgumentList.Add(Path.Combine(_root, signal + ".fifo"));
+        RunToEnd(fifo);
+        var filter = $"filter.slow.clean=printf ready > \"$FILTER_SIGNAL_DIR/{signal}.ready\"; "
+            + $"exec cat < \"$FILTER_SIGNAL_DIR/{signal}.fifo\"";
+        var psi = Git(repo, ["-c", filter, .. command]);
+        psi.Environment["FILTER_SIGNAL_DIR"] = _root;
+        return psi;
     }
+
+    private sealed class NoGitOwnerProbe : IGitLockOwnerProbe
+    {
+        public GitLockOwnership Probe(GitLockScope scope, DateTime lockLastWriteTimeUtc)
+            => GitLockOwnership.None;
+    }
+
 }

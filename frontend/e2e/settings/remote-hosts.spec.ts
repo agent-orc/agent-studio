@@ -116,7 +116,7 @@ async function stubOnlineJobsHub(page: Page) {
   });
 }
 
-async function stubGroupedHostApis(page: Page) {
+async function stubGroupedHostApis(page: Page, claimGate = false) {
   const now = new Date();
   const observed = now.toISOString();
   const codingObserved = new Date(now.getTime() - 1_000).toISOString();
@@ -157,7 +157,8 @@ async function stubGroupedHostApis(page: Page) {
       {
         id: 'agent-runner-01', displayName: 'agent-runner-01', kind: 'service',
         registeredAt: observed, lastSeenAt: observed, runnerGitStatus: 'ready',
-        runnerDaemonState: 'running', runnerActiveSlots: 0, runnerAvailableSlots: 2,
+        runnerDaemonState: 'running', runnerActiveSlots: claimGate ? 7 : 0,
+        runnerAvailableSlots: claimGate ? 3 : 2,
         runnerProjectPreflights: [{
           projectId: 'PROJ-016', projectName: 'Quality Studio',
           registrationFingerprint: 'a'.repeat(64), repositoryUrl: null,
@@ -228,9 +229,13 @@ async function stubGroupedHostApis(page: Page) {
           memoryUsedBytes: 8_000_000_000,
           memoryTotalBytes: 16_000_000_000,
           cpuCores: 8,
+          ...(claimGate ? { activeSlots: 7, claimLoadGate: {
+            state: 'closed', loadPerCore: 5.51, threshold: 4,
+            sustainedSeconds: 702, since: new Date(now.getTime() - 702_000).toISOString(), activeSlots: 7,
+          } } : {}),
         },
-        roleMaxParallelism: 2,
-        effectiveMaxParallelism: 2,
+        roleMaxParallelism: claimGate ? 10 : 2,
+        effectiveMaxParallelism: claimGate ? 10 : 2,
         installedClis: [
           {
             name: 'codex', version: '0.144.1', installPath: '/usr/local/bin/codex',
@@ -604,6 +609,49 @@ test.describe('Execution Hosts settings section', () => {
     }
   });
 
+  test('gate capacity edit shows current use and saves without a restart', async ({ page }) => {
+    await stubGroupedHostApis(page);
+    await page.route('**/api/system/execution-infrastructure', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({
+        gate: { host: 'kori-gate', transport: 'ssh', busy: 2, total: 5,
+          reachability: 'reachable', lastReachedAt: null, lastFailureAt: null,
+          capacity: { slots: 5, processorsPerGate: 6, hostCores: 30,
+            allowOversubscription: false }, capacitySource: 'configuration', workers: [] },
+        taskServer: 'local monolith', workstation: 'operator-workstation',
+        engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
+      }),
+    }));
+    let saved: Record<string, unknown> | null = null;
+    await page.route('**/api/system/gate-capacity', async route => {
+      saved = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ capacity: saved }) });
+    });
+    await page.goto('/#/workspace/settings/execution-hosts');
+    const panel = page.getByTestId('remote-hosts-panel');
+    await panel.getByTestId('environment-installation-toggle').click();
+    const form = page.getByTestId('gate-capacity-settings');
+    await expect(form).toContainText('2 of 5 reported host slots in use');
+    await form.locator('input[name="slots"]').fill('4');
+    await expect(form).toContainText('2 of 5 reported host slots in use');
+    await form.getByRole('button', { name: 'Save gate capacity' }).click();
+    await expect(form).toContainText('Saved');
+    await expect(form).toContainText('2 of 5 reported host slots in use');
+    await expect(page.getByTestId('remote-gate-host')).toContainText('2 / 5 slots');
+    expect(saved).toMatchObject({ slots: 4, processorsPerGate: 6, hostCores: 30,
+      allowOversubscription: false });
+    const directory = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(directory, { recursive: true });
+    for (const width of [768, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await expect(form).toBeVisible();
+        await form.screenshot({ path: join(directory, `gate-capacity-${width}-${theme}--mocked.png`),
+          animations: 'disabled' });
+      }
+    }
+  });
+
   test('local profile avoids Task Server checkpoints and shows gate capacity at three widths in both themes', async ({ page }) => {
     const liveInfrastructure = await page.request.get('/api/system/execution-infrastructure');
     expect(liveInfrastructure.ok()).toBe(true);
@@ -777,6 +825,44 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-${EVIDENCE_PHASE}-light--mocked.png`), fullPage: false });
     await setTheme(page, 'dark');
     await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-${EVIDENCE_PHASE}-dark--mocked.png`), fullPage: false });
+  });
+
+  test('shows claim load gate beside slots at desktop and mobile widths', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
+    await stubGroupedHostApis(page, true);
+    const progress = Array.from({ length: 7 }, (_, index) => ({
+      id: `AGT-90${index}`, taskKey: `demo::AGT-90${index}`, title: `Running card ${index + 1}`,
+      state: '3-progress', order: index, agent: 'codex',
+      createdAt: new Date().toISOString(), lastActivity: new Date().toISOString(),
+      watchPath: '/workspace', projectName: 'Demo', folderPath: `/workspace/3-progress/AGT-90${index}`,
+      sessionName: null, model: null, cliType: 'codex', useOwnSession: null,
+      lastUsage: null, execution: null, commit: null,
+      executionLocation: { state: 'remote-running', executionKind: 'remote',
+        runnerId: 'agent-runner-01', connectionState: 'connected', leaseState: 'active' },
+    }));
+    await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, route => route.fulfill({ json: {
+      backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress,
+      failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
+      escalated: [], review: [], completed: [], archive: [], gitStateAt: null, stale: false,
+    } }));
+    mkdirSync(SHOT_DIR, { recursive: true });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/#/workspace/settings/execution-hosts');
+      const row = page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first();
+      if (await row.isVisible()) await row.click();
+      else await expect(page.getByTestId('remote-host-detail-row')).toBeVisible();
+      const gate = page.getByTestId('remote-host-claim-load-gate');
+      await expect(page.getByTestId('remote-host-detail-row').getByTestId('remote-host-machine-slots'))
+        .toContainText('7 / 12');
+      await expect(gate).toContainText('Not claiming: load 5.5 per core above 4.0 for 12 min');
+      await gate.scrollIntoViewIfNeeded();
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.screenshot({ path: join(SHOT_DIR, `claim-load-gate-hosts-${width}-${theme}.png`),
+          animations: 'disabled' });
+      }
+    }
   });
 
   test('groups roles by physical machine, preserves role capacity, release, and retired filtering', async ({ page, devBackend: _devBackend }) => {

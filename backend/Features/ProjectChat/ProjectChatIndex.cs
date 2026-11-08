@@ -95,13 +95,14 @@ public sealed class ProjectChatIndex
     /// well under 200 ms, which we amortise across the lifetime of the
     /// search session.
     /// </summary>
-    public void EnsureFresh(string projectFolder)
+    public void EnsureFresh(string projectFolder, CancellationToken ct = default)
     {
         try
         {
+            ct.ThrowIfCancellationRequested();
             using var conn = Open(projectFolder);
             var (lastBuilt, indexedCount) = ReadMeta(conn);
-            var (latestMtime, fileCount) = ScanCorpus(projectFolder);
+            var (latestMtime, fileCount) = ScanCorpus(projectFolder, ct);
 
             if (fileCount == 0 && indexedCount > 0)
             {
@@ -113,7 +114,11 @@ public sealed class ProjectChatIndex
 
             if (indexedCount == fileCount && lastBuilt.HasValue && latestMtime <= lastBuilt.Value) return;
 
-            Rebuild(conn, projectFolder);
+            Rebuild(conn, projectFolder, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -121,7 +126,8 @@ public sealed class ProjectChatIndex
         }
     }
 
-    private (DateTime LatestMtime, int FileCount) ScanCorpus(string projectFolder)
+    private (DateTime LatestMtime, int FileCount) ScanCorpus(
+        string projectFolder, CancellationToken ct)
     {
         var chatRoot = ProjectChatPaths.ChatRoot(projectFolder);
         if (!Directory.Exists(chatRoot)) return (DateTime.MinValue, 0);
@@ -129,8 +135,10 @@ public sealed class ProjectChatIndex
         DateTime latest = DateTime.MinValue;
         foreach (var month in ProjectChatPaths.EnumerateMonthFolders(chatRoot))
         {
+            ct.ThrowIfCancellationRequested();
             foreach (var f in Directory.EnumerateFiles(month, "*.md"))
             {
+                ct.ThrowIfCancellationRequested();
                 count++;
                 var m = File.GetLastWriteTimeUtc(f);
                 if (m > latest) latest = m;
@@ -146,7 +154,7 @@ public sealed class ProjectChatIndex
         cmd.ExecuteNonQuery();
     }
 
-    private void Rebuild(SqliteConnection conn, string projectFolder)
+    private void Rebuild(SqliteConnection conn, string projectFolder, CancellationToken ct)
     {
         using var tx = conn.BeginTransaction();
         Truncate(conn);
@@ -167,6 +175,7 @@ public sealed class ProjectChatIndex
 
             foreach (var (path, turn) in _store.EnumerateAll(projectFolder))
             {
+                ct.ThrowIfCancellationRequested();
                 pTurn.Value = turn.TurnId;
                 pAuthor.Value = turn.Author;
                 pKind.Value = turn.Kind;
@@ -177,9 +186,10 @@ public sealed class ProjectChatIndex
             }
         }
 
+        ct.ThrowIfCancellationRequested();
         tx.Commit();
 
-        var (_, fileCount) = ScanCorpus(projectFolder);
+        var (_, fileCount) = ScanCorpus(projectFolder, ct);
         WriteMeta(conn, DateTime.UtcNow, fileCount);
     }
 

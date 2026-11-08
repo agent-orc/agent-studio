@@ -1,9 +1,11 @@
 import { expect, Page, test } from '@playwright/test';
 import * as path from 'path';
+import * as fs from 'fs';
 
 const SHOTS_DIR = process.env['JOB_RESULTS_DIR']
   ?? path.resolve(__dirname, '../../results/AGT-2437');
 const EVIDENCE_VARIANT = process.env['EVIDENCE_VARIANT'] === 'before' ? 'before' : 'after';
+const LAYOUT_STAGE = process.env['AGT_3545_STAGE'] === 'before' ? 'before' : 'after';
 const TARGET = {
   id: 'activity-structured-content-fixture',
   watchPath: 'C:/fixtures/activity-structured-content',
@@ -151,14 +153,14 @@ function outputBuffer(): OutLine[] {
   ];
 }
 
-function detail() {
+function detail(state = '5-human-review') {
   return {
     info: {
       id: TARGET.id,
       taskKey: 'ASS-4242',
       displayKey: 'ASS-4242',
       title: 'Activity structured content fixture',
-      state: '5-human-review',
+      state,
       order: 1,
       agent: 'codex',
       cliType: 'codex',
@@ -221,7 +223,7 @@ function detail() {
   };
 }
 
-async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Promise<void> {
+async function installRoutes(page: Page, output: OutLine[] = outputBuffer(), state = '5-human-review'): Promise<void> {
   await page.route('**/hubs/v1/studio/negotiate**', (route) => route.fulfill({
     json: {
       connectionId: 'activity-gallery-e2e',
@@ -242,6 +244,13 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
   // The header usage cockpit expects an object, not the catch-all array.
   await context.route('**/api/usage/cockpit**', (route) =>
     route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
+  await context.route('**/api/workspaces/*/quota/admission**', (route) =>
+    route.fulfill({ json: {
+      workspaceId: 'workspace-fixture',
+      workspace: { projectId: null, project: null, status: 'ok', message: null,
+        overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+      projects: [],
+    } }));
   await context.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
@@ -261,12 +270,12 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
         backlog: [],
         preparation: [],
         orchestratorPrep: [],
-        ready: [],
+        ready: state === '2-ready' ? [detail(state).info] : [],
         progress: [],
         failedPickup: [],
         codeNotComplete: [],
         autoReview: [],
-        humanReview: [detail().info],
+        humanReview: state === '5-human-review' ? [detail(state).info] : [],
         review: [],
         completed: [],
         archive: [],
@@ -421,7 +430,7 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(detail()),
+      body: JSON.stringify(detail(state)),
     }));
   await context.route(`**/api/tasks/${encodedId}/results/report.html**`, (route) =>
     route.fulfill({
@@ -465,6 +474,108 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
     return route.fulfill({ status: 200, contentType: 'text/plain', body: 'capture light: ok\ncapture dark: ok' });
   });
 }
+
+test.describe('task detail mobile layout', () => {
+  test.use({ hasTouch: true });
+  for (const { width, height } of [
+    { width: 390, height: 900 },
+    { width: 375, height: 667 },
+    { width: 430, height: 932 },
+    { width: 1280, height: 900 },
+  ]) {
+    for (const theme of ['light', 'dark'] as const) {
+      test(`task detail mobile layout ${width}x${height} ${theme}`, async ({ page }) => {
+        await page.addInitScript((selectedTheme) => {
+          localStorage.setItem('atp.studio.theme', selectedTheme);
+          localStorage.setItem('atp.flag.nextGenChat', '1');
+        }, theme);
+        await installRoutes(page, outputBuffer(), '2-ready');
+        await page.setViewportSize({ width, height });
+        await page.goto(`/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`);
+
+        const pane = page.getByTestId('pane-protocol');
+        await expect(pane).toBeVisible();
+        await page.getByTestId('prompt-tab-overview').tap();
+        await expect(page.getByTestId('prompt-tab-overview')).toHaveAttribute('aria-selected', 'true');
+        for (const [id, testid] of [
+          ['task', 'inspector-tab-task'],
+          ['protocol', 'inspector-tab-protocol'],
+          ['activity', 'inspector-tab-activity'],
+        ] as const) {
+          const tab = page.getByTestId(testid);
+          if (await tab.isVisible().catch(() => false)) {
+            await tab.tap();
+            await expect(tab).toHaveAttribute('aria-selected', 'true');
+          } else {
+            await pane.getByTestId('pane-tabs-overflow').tap();
+            await page.getByTestId(`pane-tabs-overflow-item-${id}`).tap();
+            await expect(pane.getByRole('tabpanel')).toHaveAttribute('data-active-tab', id);
+          }
+        }
+        await expect(page.getByTestId('activity-chat-compose')).toBeVisible();
+        await page.getByTestId('pane-protocol-body').evaluate(el => { el.scrollTop = el.scrollHeight; });
+        const geometry = await page.evaluate(() => {
+          const rect = (testid: string) => {
+            const r = document.querySelector(`[data-testid="${testid}"]`)?.getBoundingClientRect();
+            if (!r) return { left: 0, right: 0, top: 0, bottom: 0 };
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+          };
+          return {
+            pane: rect('pane-protocol'),
+            statusbar: rect('studio-statusbar'),
+            composer: rect('activity-chat-compose'),
+            body: rect('pane-protocol-body'),
+            gallery: rect('conversation-artifact-gallery'),
+            lastContent: rect('conversation-view'),
+            toolbar: rect('studio-triage-panel'),
+            runNow: rect('studio-triage-action-run-now'),
+            actionStrip: rect('studio-tab-actions'),
+            actionStripOverflow: (() => {
+              const strip = document.querySelector('[data-testid="studio-tab-actions"]');
+              return strip ? strip.scrollWidth - strip.clientWidth : 0;
+            })(),
+            detail: rect('detail-panes'),
+            viewport: { width: innerWidth, height: innerHeight },
+          };
+        });
+        fs.mkdirSync(SHOTS_DIR, { recursive: true });
+        fs.writeFileSync(path.join(SHOTS_DIR, `AGT-3545-${LAYOUT_STAGE}-${width}x${height}-${theme}.json`), JSON.stringify(geometry, null, 2));
+        await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3545-${LAYOUT_STAGE}-${width}x${height}-${theme}.png`) });
+
+        if (LAYOUT_STAGE === 'before') return;
+
+        if (width < 720) expect(Math.abs(geometry.pane.bottom - geometry.statusbar.top)).toBeLessThanOrEqual(2);
+        else expect(geometry.pane.bottom).toBeGreaterThanOrEqual(geometry.statusbar.top - 16);
+        expect(geometry.toolbar.right).toBeLessThanOrEqual(Math.min(width, geometry.pane.right) + 1);
+        expect(geometry.toolbar.left).toBeGreaterThanOrEqual(0);
+        expect(geometry.runNow.right).toBeLessThanOrEqual(width + 1);
+        expect(geometry.runNow.left).toBeGreaterThanOrEqual(0);
+        expect(geometry.actionStrip.right).toBeLessThanOrEqual(width + 1);
+        expect(geometry.actionStripOverflow).toBeLessThanOrEqual(1);
+        expect(geometry.body.bottom).toBeLessThanOrEqual(geometry.composer.top + 1);
+        // The conversation holds the final outcome row. At scroll bottom its
+        // trailing edge must be visible immediately above the docked composer.
+        expect(geometry.lastContent.bottom).toBeGreaterThan(geometry.body.bottom - 32);
+        expect(geometry.lastContent.bottom).toBeLessThanOrEqual(geometry.composer.top + 1);
+        expect(geometry.composer.bottom).toBeLessThanOrEqual(geometry.pane.bottom + 1);
+        expect(geometry.composer.top).toBeGreaterThan(geometry.pane.top);
+        expect(geometry.composer.bottom).toBeGreaterThan(geometry.pane.bottom - 180);
+        await page.getByTestId('pane-protocol-body').evaluate(el => {
+          el.scrollTop = 0;
+          el.dispatchEvent(new Event('scroll', { bubbles: true }));
+        });
+        const jump = page.getByTestId('conversation-jump-latest');
+        await expect(jump).toBeVisible();
+        const jumpBox = await jump.boundingBox();
+        const paneBox = await pane.boundingBox();
+        expect(jumpBox!.x).toBeGreaterThanOrEqual(paneBox!.x);
+        expect(jumpBox!.x + jumpBox!.width).toBeLessThanOrEqual(paneBox!.x + paneBox!.width + 1);
+        expect(jumpBox!.y).toBeGreaterThanOrEqual(paneBox!.y);
+        expect(jumpBox!.y + jumpBox!.height).toBeLessThanOrEqual(paneBox!.y + paneBox!.height + 1);
+      });
+    }
+  }
+});
 
 for (const theme of ['light', 'dark'] as const) {
 test(`AGT-3543 gallery uses original images and large placeholders in ${theme}`, async ({ page }) => {
@@ -519,6 +630,7 @@ test(`Activity renders structured tool payloads and runner events quietly in ${t
   await page.goto(
     `/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`,
   );
+  await expect(page.getByTestId('pane-protocol')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('inspector-tab-activity').click();
 
   const panel = page.getByTestId('activity-panel');
@@ -650,9 +762,12 @@ test(`Activity renders structured tool payloads and runner events quietly in ${t
   await panel.screenshot({
     path: path.join(SHOTS_DIR, 'activity-html-after.png'),
   });
-  const runnerRows = panel.locator('[data-testid="conversation-system-status"][data-category="runner"]');
-  await expect(runnerRows).toHaveCount(2);
-  await expect(runnerRows.first()).not.toContainText('[runner]');
+  const runnerGroup = panel.locator('[data-testid="conversation-system-status"][data-category="runner-group"]');
+  await expect(runnerGroup).toHaveCount(1);
+  await runnerGroup.getByTestId('runner-group-detail').locator('summary').click();
+  await expect(runnerGroup.getByTestId('runner-group-rows').locator('dt')).toHaveCount(2);
+  await expect(runnerGroup.getByTestId('runner-group-row-trace')).toHaveCount(2);
+  await expect(runnerGroup).not.toContainText('[runner]');
   const completion = panel.locator('[data-testid="conversation-system-status"][data-category="result"]');
   await expect(completion).toHaveCount(1);
   await expect(completion).toContainText('Task complete');
@@ -717,15 +832,18 @@ test('Activity, Task, and Result links bind task artifacts to the open card', as
   await expect(resultPopup.getByRole('heading', { name: 'Artifact opened' })).toBeVisible();
   await resultPopup.close();
 
-  await card.click();
-  await expect(page).toHaveURL(/#\/tasks\/ASS-4242/);
-
   await result.getByRole('link', { name: 'Open quality/angular-components.md in project Wiki' }).click();
   await expect(page).toHaveURL(/#\/projects\/fixture\/wiki/i);
   await expect.poll(() => page.evaluate(() => {
     const value = localStorage.getItem('atp.projectWiki.v1.fixture');
     return value ? JSON.parse(value).openedRel : null;
   })).toBe('quality/angular-components.md');
+
+  await page.goto(`/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`);
+  await expect(page.getByTestId('pane-protocol')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('inspector-tab-protocol').click();
+  await page.getByTestId('protocol-beautiful-results').getByRole('link', { name: 'Open task ASS-4242' }).click();
+  await expect(page).toHaveURL(/#\/tasks\/ASS-4242/);
 });
 
 function runnerFactsBuffer(): OutLine[] {

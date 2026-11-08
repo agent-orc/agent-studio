@@ -68,6 +68,11 @@ test('one footer entry per subscription, honest age, host problem, account and r
   await expect(footer.getByTestId('footer-usage-claude')).toHaveAttribute('title', /Refresh the usage source or check the provider connection in Execution Hosts/);
   await expect(footer.getByTestId('footer-usage-claude')).not.toContainText('Session');
   await expect(footer.getByTestId('footer-usage-cost')).toContainText('$12.48');
+  const usageEntries = footer.locator('[data-usage-trigger]');
+  await expect(usageEntries).toHaveCount(3);
+  for (const entry of await usageEntries.all()) {
+    await expect(entry).toHaveJSProperty('tagName', 'BUTTON');
+  }
   await expect(footer.locator('[data-testid^="footer-usage-claude"]')).toHaveCount(1);
   await expect(footer.locator('[data-testid^="footer-usage-codex"]')).toHaveCount(1);
   await expect(footer).not.toContainText('kori-review');
@@ -92,6 +97,30 @@ test('one footer entry per subscription, honest age, host problem, account and r
 
   for (const width of [1920, 1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
+    const layout = await footer.evaluate(bar => {
+      const visible = (element: Element) => {
+        const box = element.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && getComputedStyle(element).visibility !== 'hidden';
+      };
+      const children = [...bar.children].filter(visible);
+      const separator = bar.querySelector('[data-testid="status-bar-separator"]');
+      const entries = [...bar.querySelectorAll('[data-usage-trigger]')].filter(visible);
+      const right = bar.querySelector('[data-testid="status-bar-usage-entries"]')!.getBoundingClientRect();
+      const barBox = bar.getBoundingClientRect();
+      return {
+        separatorBetweenGroups: !separator || !visible(separator)
+          || (children.indexOf(separator) > 0 && children.indexOf(separator) < children.length - 1),
+        entryGaps: entries.slice(1).map((entry, index) =>
+          entry.getBoundingClientRect().left - entries[index].getBoundingClientRect().right),
+        rightEdgeGap: barBox.right - right.right,
+        leftBeforeRight: bar.querySelector('[data-testid="status-bar-running"]')!
+          .getBoundingClientRect().left < right.left,
+      };
+    });
+    expect(layout.separatorBetweenGroups).toBe(true);
+    expect(layout.entryGaps.every(gap => gap >= 7)).toBe(true);
+    expect(layout.leftBeforeRight).toBe(true);
+    if (width >= 1280) expect(layout.rightEdgeGap).toBeLessThanOrEqual(16);
     const titlebar = await page.getByTestId('studio-titlebar').boundingBox();
     const body = await page.getByTestId('studio-body').boundingBox();
     expect(titlebar && body && body.y - titlebar.y - titlebar.height).toBeLessThanOrEqual(48);
@@ -129,6 +158,16 @@ test('one footer entry per subscription, honest age, host problem, account and r
   await expect(footer.locator('[data-testid^="footer-host-problem-"]')).toHaveCount(1);
   await problem.click();
   await expect(page).toHaveURL(/workspace\/settings\/environment/);
+});
+
+test('footer omits the separator when usage has no visible entries', async ({ page }) => {
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({ json: {
+    ...cockpit(), clis: [], cost: null, runs: [],
+  } }));
+  await page.goto('/');
+  await dismissDevErrorDialog(page);
+  await expect(page.getByTestId('status-bar-running')).toBeVisible();
+  await expect(page.getByTestId('status-bar-separator')).toHaveCount(0);
 });
 
 test('local profile shows Settings without an account control', async ({ page }) => {

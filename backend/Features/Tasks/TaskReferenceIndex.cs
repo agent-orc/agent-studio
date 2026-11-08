@@ -62,8 +62,19 @@ public sealed class TaskReferenceIndex
     /// Delegates to the pure <see cref="WaitsOnEvaluator"/> so the runner pickup
     /// gate and the endpoint read overlay share one implementation.
     /// </summary>
-    public WaitsOnStatus EvaluateWaitsOn(TaskInfo job) =>
-        WaitsOnEvaluator.Evaluate(job, _byKey, _dependsOn);
+    public WaitsOnStatus EvaluateWaitsOn(TaskInfo job,
+        IReadOnlyDictionary<string, TaskIntegrationStatus>? integrationByTaskKey = null,
+        string? targetBranch = null) =>
+        WaitsOnEvaluator.Evaluate(job, _byKey, _dependsOn, integrationByTaskKey, targetBranch);
+
+    /// <summary>Resolved predecessors whose current delivery may satisfy an edge.</summary>
+    public IReadOnlyList<TaskInfo> DependencyTargets(IEnumerable<TaskInfo> jobs) =>
+        jobs.SelectMany(job => job.References?.DependsOn ?? [])
+            .Select(edge => Resolve(edge.Key))
+            .Where(target => target is not null)
+            .DistinctBy(target => target!.TaskKey)
+            .Select(target => target!)
+            .ToList();
 
     /// <summary>
     /// Finds every active keyed task that transitively waits on

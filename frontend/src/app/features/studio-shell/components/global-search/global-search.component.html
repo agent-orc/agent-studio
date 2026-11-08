@@ -19,7 +19,8 @@
         }
       </div>
 
-      <div class="search-results" role="listbox" aria-label="Search results">
+      <div class="search-results" [attr.role]="flatResults().length ? 'listbox' : null"
+           [attr.aria-label]="flatResults().length ? 'Search results' : null">
         @if (query().trim().length < 2) {
           <p class="search-hint">Type at least 2 characters to search all projects.</p>
         } @else {

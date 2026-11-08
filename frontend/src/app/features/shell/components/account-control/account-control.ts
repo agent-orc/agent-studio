@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { MenuComponent } from '../../../../components/menu/menu.component';
 import type { MenuItem, MenuItemClickEvent } from '../../../../components/menu/menu.types';
 import { AuthService } from '../../../../services/auth.service';
-import { SessionManagerComponent } from '../../../access';
+import { SessionManagerComponent } from '../../../access/lazy';
 
 /** The signed-in account menu shared by both shell layouts. */
 @Component({

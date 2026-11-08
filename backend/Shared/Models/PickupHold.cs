@@ -357,17 +357,27 @@ public static class PickupHoldPolicy
             };
 
         var stalled = deciding.Classification == PickupHoldClassifications.Stalled;
+        var completionRule = open.RequiresCompletion || open.ReleaseGate;
+        var ruleDescription = open.ReleaseGate
+            ? "This edge requires predecessor completion and explicit release"
+            : completionRule
+            ? "This edge requires predecessor completion"
+            : "This edge opens when the predecessor completes or its current delivery is integrated into the target branch";
         var hold = HoldClassified(
                 PickupHoldMechanisms.DependencyGate,
-                $"{open.Key} has not reached a terminal lane yet (currently {Describe(open.TargetState)}).{reasonSuffix}",
+                $"{open.Key} is still in {Describe(open.TargetState)}. {ruleDescription}; the rule is not met yet.{reasonSuffix}",
                 laneEntry, facts.NowUtc, unsatisfiable: false,
                 deciding.Classification,
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.AwaitTarget,
-                    stalled ? $"Resolve {open.Key}'s blocker" : $"Finish {open.Key}",
+                    stalled ? $"Resolve {open.Key}'s blocker" : completionRule ? $"Finish {open.Key}" : $"Integrate {open.Key}'s delivery",
                     stalled
                         ? $"Open {open.Key} and resolve its parked or timed-out prerequisite state."
-                        : "The gate opens on its own once the target reaches 6-completed or 7-archive.",
+                        : open.ReleaseGate
+                            ? "The gate opens when the predecessor reaches a terminal lane and carries explicit release."
+                        : completionRule
+                            ? "The gate opens when the predecessor reaches 6-completed or 7-archive."
+                            : "The gate opens when the current delivery reaches the target branch or the predecessor completes.",
                     open.Key));
         return hold with
         {

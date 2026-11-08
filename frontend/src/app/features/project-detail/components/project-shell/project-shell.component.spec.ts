@@ -303,7 +303,7 @@ describe('ProjectShellComponent rail IA', () => {
     expect(railEl(host, 'overview')?.querySelector('app-studio-icon')).toBeTruthy();
     expect(railEl(host, 'security')?.querySelector('app-studio-icon')).toBeTruthy();
     expect(railEl(host, 'architecture')?.querySelector('app-studio-icon')).toBeTruthy();
-    expect(railEl(host, 'overview')?.querySelector('.tree-row__chev--placeholder')).toBeTruthy();
+    expect(railEl(host, 'overview')?.closest('.tree-row-wrap')?.querySelector('.tree-row__chev--placeholder')).toBeTruthy();
   });
 
   it('keeps Deploy, Operations, Pipeline, and Observability outside the Deck groups', () => {
