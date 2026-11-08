@@ -1019,7 +1019,12 @@ public sealed class RemoteReviewPlanBuilder
             diff,
             status)
         {
-            ResultsInventory = ResultsInventory.Render(task.FolderPath),
+            // Concept review uses the generated status summary as its authority.
+            // Its compact inventory must not reintroduce the agent report after
+            // ReadStatus has selected that summary.
+            ResultsInventory = TaskModes.IsConcept(task.Mode)
+                ? ResultsInventory.Render(task.FolderPath)
+                : ResultsInventory.RenderForReview(task.FolderPath),
             CardMode = ReviewCardMode.Describe(task.Mode),
             AcceptanceScope = RequirementAcceptanceScope.Describe(
                 task.AcceptanceScope,

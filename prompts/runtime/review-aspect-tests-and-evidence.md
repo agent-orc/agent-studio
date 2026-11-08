@@ -56,6 +56,12 @@ is low-risk. When in doubt, `pass`.
 Screenshots, logs, and reports under results/ ARE evidence - check this
 inventory before flagging "no evidence". A read-only / concept card legitimately
 ships no code diff; its deliverable is the results/ artefact or a `docs/` commit.
+Use the quoted `results/` text as evidence, including measurements and test
+summaries that do not appear in the repository diff. Image names prove delivery
+of an image; this aspect does not inspect its pixels. When flagging missing
+evidence, put the diff sections and `results/` files or inventory actually
+checked in `evidence_checked`, and state the exact missing item in `missing`.
+Do not infer absence from a truncated excerpt alone.
 
 ## Status summary (the agent's own report)
 

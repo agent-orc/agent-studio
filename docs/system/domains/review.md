@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-11-03
+Version: 2026-11-05
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Aspect prompt cache
@@ -39,6 +39,18 @@ the first aspect's creation size with only a small creation count of its own
 roughly one prefix plus four small suffixes. A later aspect that again creates
 about the full prefix, or a runner log line `review-aspect-cache-unconfirmed`,
 means the cache was not shared for that review.
+
+Remote coding plans freeze a bounded `results/` evidence view beside the brief
+and diff context. It lists up to 40 active files with sizes, quotes heads of
+small text and CSV/JSON summaries and tails of logs within 12 files, 4,000
+characters per file and 24,000 characters total, and names image files. A
+SHA-256 over every eligible file's path, size and content makes the sealed
+aspect digest change even when the changed file falls outside the excerpt
+budget. `results/history/` and filesystem links are excluded. Credential
+redaction applies to displayed names and excerpts. Requirement-fit and
+tests-and-evidence may cite `results/<file>`; a missing-evidence finding names
+the inspected diff and results inventory or files. Truncated excerpts do not
+establish absence from a full artifact.
 
 ## Review report transport budget
 

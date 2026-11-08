@@ -102,6 +102,26 @@ public sealed class PerCardReviewPlanTests : IDisposable
     }
 
     [Fact]
+    public void ResultsEvidenceChangeChangesSealedAspectDigest()
+    {
+        var resultSha = Commit("backend/FooService.cs");
+        var results = Path.Combine(_folder, "results");
+        Directory.CreateDirectory(results);
+        var report = Path.Combine(results, "duration-comparison.md");
+        File.WriteAllText(report, "Before 120 seconds, after 80 seconds.\n");
+        var first = Contract.ReviewLibraryStepPolicy.Seal(
+            Build(new ProjectSettings(), resultSha, "backend/FooService.cs"), resultSha);
+        File.WriteAllText(report, "Before 120 seconds, after 60 seconds.\n");
+        var second = Contract.ReviewLibraryStepPolicy.Seal(
+            Build(new ProjectSettings(), resultSha, "backend/FooService.cs"), resultSha);
+
+        var firstAspect = Assert.Single(first.Commands, command => command.Aspect == "requirement-fit");
+        var secondAspect = Assert.Single(second.Commands, command => command.Aspect == "requirement-fit");
+        Assert.Contains("Before 120 seconds, after 80 seconds", firstAspect.Prompt);
+        Assert.NotEqual(firstAspect.LibraryStep!.Digest, secondAspect.LibraryStep!.Digest);
+    }
+
+    [Fact]
     public void BackendReviewRunsGuardsWhenThePlanBuilderResolvesTheDiff()
     {
         var resultSha = Commit("backend/FooService.cs");
