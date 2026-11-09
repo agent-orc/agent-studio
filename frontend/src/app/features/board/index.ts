@@ -17,6 +17,7 @@ export { ActiveBoardFiltersComponent } from './components/active-board-filters/a
 export { TagFiltersComponent } from '../../components/tag-filters/tag-filters.component';
 export { TagChipsComponent } from '../../components/tag-chips/tag-chips.component';
 export type { PendingAttachment } from './components/create-task-dialog/create-task-dialog.component';
+export { BulkLaneActionsComponent } from './components/bulk-lane-actions/bulk-lane-actions.component';
 export { DecisionBacklogHintComponent } from './components/decision-backlog-hint/decision-backlog-hint.component';
 export { FiltersDropdownComponent, type TypeFilterOption } from './components/filters-dropdown/filters-dropdown.component';
 export { KanbanFilterSidesheetComponent } from './components/kanban-filter-sidesheet/kanban-filter-sidesheet.component';

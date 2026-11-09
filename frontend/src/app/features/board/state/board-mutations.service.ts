@@ -1,4 +1,4 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, inject, signal, type WritableSignal } from '@angular/core';
 import { switchMap, takeWhile, timer } from 'rxjs';
 import { BatchMoveJobResponse, TaskInfo, TaskState } from '../../../models/task.model';
 import { laneName } from '../../../models/lane-presentation';
@@ -236,7 +236,7 @@ export class BoardMutationsService {
     });
   }
 
-  // ---------- bulk archive ----------
+  // ---------- bulk moves (archive all, group actions) ----------
 
   /**
    * Live flag for the Archive-all button: true while a bulk archive is
@@ -246,85 +246,137 @@ export class BoardMutationsService {
    */
   readonly archiving = signal(false);
   readonly archiveProgress = signal<BatchMoveJobResponse | null>(null);
+  /** Same guard for a group's bulk action (AGT-3585). */
+  readonly bulkMoving = signal(false);
 
   /**
    * Queue every completed task as one server-side job. Progress polling
    * applies successful cards to the board as each bounded move finishes.
    */
   archiveAllCompleted(completed: readonly TaskInfo[]): void {
-    if (completed.length === 0) return;
-    if (this.archiving()) return;
-    this.archiving.set(true);
+    if (completed.length === 0 || this.archiving()) return;
+    this.runBatchMove(completed, TaskState.Archive, this.archiving, {
+      source: 'Archive all',
+      startTitle: 'Archive in progress',
+      progress: (done, total) => `Archiving ${done} of ${total} tasks...`,
+      startFailedTitle: 'Archive could not start',
+      startFailedMessage: 'The archive job could not be queued.',
+      doneTitle: 'Archive complete',
+      doneMessage: (moved) => `Archived ${moved} tasks.`,
+      issuesTitle: 'Archive completed with issues',
+      issuesMessage: (moved, total) => `Archived ${moved} of ${total} tasks.`,
+      pollFailedTitle: 'Archive progress unavailable',
+    });
+  }
+
+  /**
+   * AGT-3585: run one lane action on every card of a group. The confirmation
+   * lists the cards; cancelling leaves them where they are. The moves run as
+   * one server-side batch, so each card still passes the lane guards and a
+   * refused card is reported by name instead of failing the whole group.
+   */
+  async bulkMove(tasks: readonly TaskInfo[], targetState: string, actionLabel: string): Promise<boolean> {
+    if (tasks.length === 0 || this.bulkMoving()) return false;
+    const count = `${tasks.length} card${tasks.length === 1 ? '' : 's'}`;
+    const confirmed = await this.confirmDialog.confirm({
+      title: `${actionLabel} for ${count}?`,
+      message: `Each card moves to ${laneName(targetState)}. Cards the lane guard refuses stay where they are and are listed afterwards.`,
+      items: tasks.map((task) => `${task.key || task.displayKey || task.id} · ${task.title || task.id}`),
+      confirmLabel: `${actionLabel} (${count})`,
+      cancelLabel: 'Leave as is',
+      kind: 'primary',
+    });
+    if (!confirmed) return false;
+    this.runBatchMove(tasks, targetState, this.bulkMoving, {
+      source: actionLabel,
+      startTitle: `${actionLabel} in progress`,
+      progress: (done, total) => `Moved ${done} of ${total} cards...`,
+      startFailedTitle: `${actionLabel} could not start`,
+      startFailedMessage: 'The bulk move could not be queued.',
+      doneTitle: `${actionLabel} complete`,
+      doneMessage: (moved) => `Moved ${moved} cards to ${laneName(targetState)}.`,
+      issuesTitle: `${actionLabel} completed with issues`,
+      issuesMessage: (moved, total) => `Moved ${moved} of ${total} cards to ${laneName(targetState)}.`,
+      pollFailedTitle: `${actionLabel} progress unavailable`,
+    });
+    return true;
+  }
+
+  private runBatchMove(
+    tasks: readonly TaskInfo[],
+    targetState: string,
+    busy: WritableSignal<boolean>,
+    copy: BatchMoveCopy,
+  ): void {
+    busy.set(true);
     this.archiveProgress.set(null);
     const progressToastId = this.notifications.notify({
       kind: 'info',
-      title: 'Archive in progress',
-      message: `Archiving 0 of ${completed.length} tasks...`,
-      source: 'Archive all',
+      title: copy.startTitle,
+      message: copy.progress(0, tasks.length),
+      source: copy.source,
       durationMs: 0,
     });
     const applied = new Set<number>();
-    const items = completed.map((job) => ({
-      jobId: job.id,
-      watchPath: job.watchPath,
-      targetState: TaskState.Archive,
-    }));
+    const items = tasks.map((job) => ({ jobId: job.id, watchPath: job.watchPath, targetState }));
+    const progress = (job: BatchMoveJobResponse) =>
+      this.applyBatchProgress(job, tasks, targetState, applied, progressToastId, copy);
 
     this.jobService.startBatchMove(items).subscribe({
       next: (accepted) => {
-        this.applyArchiveProgress(accepted, completed, applied, progressToastId);
+        progress(accepted);
         timer(0, 250).pipe(
           switchMap(() => this.jobService.getBatchMove(accepted.id)),
           takeWhile((job) => !this.isBatchTerminal(job), true),
         ).subscribe({
           next: (job) => {
-            this.applyArchiveProgress(job, completed, applied, progressToastId);
-            if (this.isBatchTerminal(job)) this.finishArchive(job, progressToastId);
+            progress(job);
+            if (this.isBatchTerminal(job)) this.finishBatch(job, progressToastId, busy, copy);
           },
-          error: (err) => this.failArchivePolling(err, progressToastId),
+          error: (err) => this.failBatchPolling(err, progressToastId, busy, copy),
         });
       },
       error: (err) => {
-        this.archiving.set(false);
+        busy.set(false);
         this.notifications.dismiss(progressToastId);
         this.notifications.notify({
           kind: 'error',
-          title: 'Archive could not start',
-          message: err?.message || 'The archive job could not be queued.',
-          source: 'Archive all',
+          title: copy.startFailedTitle,
+          message: err?.message || copy.startFailedMessage,
+          source: copy.source,
           durationMs: 0,
         });
       },
     });
   }
 
-  private applyArchiveProgress(
+  private applyBatchProgress(
     job: BatchMoveJobResponse,
-    completed: readonly TaskInfo[],
+    tasks: readonly TaskInfo[],
+    targetState: string,
     applied: Set<number>,
     notificationId: number,
+    copy: BatchMoveCopy,
   ): void {
     this.archiveProgress.set(job);
     for (const result of job.results) {
       if (result.status !== 'moved' || applied.has(result.index)) continue;
-      const task = completed[result.index];
-      if (task) this.jobService.applyOptimisticMove(task.id, task.watchPath, TaskState.Archive);
+      const task = tasks[result.index];
+      if (task) this.jobService.applyOptimisticMove(task.id, task.watchPath, targetState);
       applied.add(result.index);
     }
-    this.notifications.update(notificationId, {
-      message: `Archiving ${job.completed} of ${job.total} tasks...`,
-    });
+    this.notifications.update(notificationId, { message: copy.progress(job.completed, job.total) });
   }
 
-  private finishArchive(job: BatchMoveJobResponse, notificationId: number): void {
-    this.archiving.set(false);
+  private finishBatch(job: BatchMoveJobResponse, notificationId: number, busy: WritableSignal<boolean>, copy: BatchMoveCopy): void {
+    busy.set(false);
     this.notifications.dismiss(notificationId);
     this.jobService.refresh(true);
 
     const failures = job.results.filter((result) => result.status !== 'moved');
     const unprocessed = Math.max(job.total - job.completed, 0);
     if (failures.length === 0 && unprocessed === 0 && job.status === 'completed') {
-      this.notifications.success(`Archived ${job.succeeded} tasks.`, 'Archive complete');
+      this.notifications.success(copy.doneMessage(job.succeeded), copy.doneTitle);
       return;
     }
 
@@ -337,24 +389,24 @@ export class BoardMutationsService {
     const issueCount = failures.length + unprocessed;
     this.notifications.notify({
       kind: 'warning',
-      title: 'Archive completed with issues',
-      message: `Archived ${job.succeeded} of ${job.total} tasks. ${issueCount} ${issueCount === 1 ? 'needs' : 'need'} attention.`,
-      source: 'Archive all',
+      title: copy.issuesTitle,
+      message: `${copy.issuesMessage(job.succeeded, job.total)} ${issueCount} ${issueCount === 1 ? 'needs' : 'need'} attention.`,
+      source: copy.source,
       details,
       durationMs: 0,
     });
   }
 
-  private failArchivePolling(err: unknown, notificationId: number): void {
-    this.archiving.set(false);
+  private failBatchPolling(err: unknown, notificationId: number, busy: WritableSignal<boolean>, copy: BatchMoveCopy): void {
+    busy.set(false);
     this.notifications.dismiss(notificationId);
     this.jobService.refresh(true);
     const message = err instanceof Error ? err.message : 'Progress could not be loaded.';
     this.notifications.notify({
       kind: 'error',
-      title: 'Archive progress unavailable',
+      title: copy.pollFailedTitle,
       message,
-      source: 'Archive all',
+      source: copy.source,
       durationMs: 0,
     });
   }
@@ -405,4 +457,18 @@ export class BoardMutationsService {
       }, 500);
     }
   }
+}
+
+/** Toast wording for one kind of server-side batch move. */
+interface BatchMoveCopy {
+  source: string;
+  startTitle: string;
+  progress: (done: number, total: number) => string;
+  startFailedTitle: string;
+  startFailedMessage: string;
+  doneTitle: string;
+  doneMessage: (moved: number) => string;
+  issuesTitle: string;
+  issuesMessage: (moved: number, total: number) => string;
+  pollFailedTitle: string;
 }
