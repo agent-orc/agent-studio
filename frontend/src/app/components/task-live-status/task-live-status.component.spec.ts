@@ -429,4 +429,39 @@ describe('TaskLiveStatusComponent', () => {
     // last activity still surfaced, live-ticking via NowTickService
     expect(root.textContent).toMatch(/Last activity (?:92h59m|93h00m) ago/);
   });
+
+  // AGT-3589 (walkthrough F14): idle Post Processing cards read "Between steps
+  // · Last activity 0s ago" while nothing ran. They name the wait instead.
+  it.each([
+    { state: '4-auto-review', headline: 'Waiting for review' },
+    { state: '3-progress', headline: 'Waiting for the next step' },
+    { state: '2-ready', headline: 'Waiting for a runner' },
+  ])('names what an idle $state card waits for', ({ state, headline }) => {
+    const recent = new Date(Date.now() - 5 * 60_000).toISOString();
+    fixture.componentRef.setInput('task', task({
+      state,
+      lastActivity: recent,
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], queue: null, latestEventAt: recent },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.textContent).toContain(headline);
+    expect(root.textContent).not.toContain('Between steps');
+    expect(root.textContent).toMatch(/Last activity (?:4m59s|5m00s) ago/);
+  });
+
+  it('shows the real activity stamp instead of "0s ago" when it lies ahead of the clock', () => {
+    const ahead = new Date(Date.now() + 3 * 60 * 60_000);
+    fixture.componentRef.setInput('task', task({
+      lastActivity: ahead.toISOString(),
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], queue: null, latestEventAt: ahead.toISOString() },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    const clock = ahead.toLocaleString('en-US', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    expect(root.textContent).toContain(`Last activity ${clock}`);
+    expect(root.textContent).not.toContain('0s ago');
+  });
 });
