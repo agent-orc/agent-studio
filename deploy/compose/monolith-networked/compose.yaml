@@ -75,6 +75,42 @@ services:
       Operations__Agents__local: container-agent
       HostCertificates__CaPrivateKeyFile: /run/host-ca/ca
       HostCertificates__StateDirectory: /data/host-certificates
+      # Scheduled encrypted backups (AGT-3574, docs/operations/setup/studio-backup-restore.md).
+      # The backup key lives outside the data directory and is never archived.
+      Backup__KeyFile: /run/secrets/studio-backup/backup.key
+      Backup__Directory: /data/backups
+      Backup__IntervalHours: ${STUDIO_BACKUP_INTERVAL_HOURS:-6}
+      Backup__StaleAfterHours: ${STUDIO_BACKUP_STALE_AFTER_HOURS:-12}
+      Backup__RetentionCount: ${STUDIO_BACKUP_RETENTION:-12}
+      Backup__Sources__workspace__Path: /data/workspace
+      Backup__Sources__home__Path: /data/home
+      Backup__Sources__home__Exclude__0: cache
+      Backup__Sources__projects__Path: /data/projects
+      Backup__Sources__projects__Projects: 'true'
+      Backup__Sources__host-certificates__Path: /data/host-certificates
+      # Stack configuration (.env, Caddyfiles, target credentials) without the keys directory.
+      Backup__Sources__stack__Path: /run/backup-sources/stack
+      Backup__Sources__stack__Exclude__0: keys
+      Backup__Sources__stack__Exclude__1: restored-stack
+      Backup__Sources__caddy-data__Path: /run/backup-sources/caddy-data
+      Backup__Sources__origin-pull__Path: /run/backup-sources/origin-pull
+      Backup__Sources__origin-pull__Optional: 'true'
+      # Off-host copy: none, sftp, s3 or directory (with compose.backup-mount.yaml).
+      Backup__Target__Kind: ${STUDIO_BACKUP_TARGET:-none}
+      Backup__Target__Host: ${STUDIO_BACKUP_SFTP_HOST:-}
+      Backup__Target__Port: ${STUDIO_BACKUP_SFTP_PORT:-22}
+      Backup__Target__User: ${STUDIO_BACKUP_SFTP_USER:-}
+      Backup__Target__Path: ${STUDIO_BACKUP_REMOTE_PATH:-}
+      Backup__Target__IdentityFile: /run/backup-target/ssh.key
+      Backup__Target__KnownHostsFile: /run/backup-target/known_hosts
+      Backup__Target__Endpoint: ${STUDIO_BACKUP_S3_ENDPOINT:-}
+      Backup__Target__Region: ${STUDIO_BACKUP_S3_REGION:-us-east-1}
+      Backup__Target__Bucket: ${STUDIO_BACKUP_S3_BUCKET:-}
+      Backup__Target__Prefix: ${STUDIO_BACKUP_S3_PREFIX:-}
+      Backup__Target__PathStyle: ${STUDIO_BACKUP_S3_PATH_STYLE:-true}
+      Backup__Target__AccessKeyIdFile: /run/backup-target/s3-access-key-id
+      Backup__Target__SecretAccessKeyFile: /run/backup-target/s3-secret-access-key
+      Backup__Target__Directory: /mnt/studio-backup-target
     volumes:
       - ${STUDIO_SECRETS_KEY_FILE:?Run setup.sh or set STUDIO_SECRETS_KEY_FILE}:/run/secrets/studio-secrets.kek:ro
       - ${STUDIO_DATA_DIR:?Run setup.sh}/workspace:/data/workspace
@@ -84,6 +120,12 @@ services:
       - operations-client-secret:/run/operations/client:ro
       - ${STUDIO_HOST_CA_DIR:?Run setup.sh or set STUDIO_HOST_CA_DIR}:/run/host-ca:ro
       - ${STUDIO_DATA_DIR}/host-certificates:/data/host-certificates
+      - ${STUDIO_DATA_DIR}/backups:/data/backups
+      - ${STUDIO_BACKUP_KEY_DIR:-./keys/backup}:/run/secrets/studio-backup:ro
+      - ${STUDIO_BACKUP_TARGET_DIR:-./backup-target}:/run/backup-target:ro
+      - .:/run/backup-sources/stack:ro
+      - ${STUDIO_DATA_DIR}/caddy-data:/run/backup-sources/caddy-data:ro
+      - ${STUDIO_DATA_DIR}/origin-pull:/run/backup-sources/origin-pull:ro
     depends_on:
       operations-bootstrap: {condition: service_completed_successfully}
     networks:

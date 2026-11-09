@@ -131,6 +131,21 @@ public sealed record ParkedBlockerRecord
     [JsonPropertyName("reason")]
     public string Reason { get; init; } = "";
 
+    /// <summary>
+    /// The lane-change cause that parked the card (<see cref="AgentStudio.Shared.LaneChangeCauses"/>),
+    /// for example <c>acceptance-integration-failed</c> when the acceptance audit
+    /// parked it. AGT-3586: the park copy is chosen from this cause; the reason
+    /// alone could not tell an audit park from a run that parked itself. Null on
+    /// markers written before the field existed.
+    /// </summary>
+    [JsonPropertyName("cause")]
+    public string? Cause { get; init; }
+
+    /// <summary>Short qualifier of <see cref="Cause"/> (escalation category,
+    /// integration outcome), as on the lane-change ledger row.</summary>
+    [JsonPropertyName("causeDetail")]
+    public string? CauseDetail { get; init; }
+
     /// <summary>Task-relative artifact containing the full agent question.</summary>
     [JsonPropertyName("needsInputFile")]
     public string? NeedsInputFile { get; init; }

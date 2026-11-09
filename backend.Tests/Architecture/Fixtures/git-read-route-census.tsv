@@ -118,6 +118,7 @@
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
 /api/operator/attention	free	-	-	-
+/api/operator/backups	free	-	-	-
 /api/operator/batch-triage	free	-	-	-
 /api/operator/capacity	free	-	-	-
 /api/operator/decisions	free	-	-	-
@@ -415,6 +416,7 @@
 /api/token-pricing/unpriced-models	free	-	-	-
 /api/usage/cockpit	free	-	-	-
 /api/v1/gates/subjects/{subjectId}	free	-	-	-
+/api/v1/management/backups	free	-	-	-
 /api/v1/management/credential-inventory	free	-	-	-
 /api/v1/management/device-logins/{handle}	free	-	-	-
 /api/v1/management/diagnostics	free	-	-	-

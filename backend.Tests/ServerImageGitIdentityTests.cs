@@ -86,7 +86,7 @@ public sealed partial class ServerImageGitIdentityTests : IDisposable
         Assert.Equal(ReadinessStates.Fail, ServerReadinessPolicy.GitIdentity(bare.Identity).State);
         var refused = ServerReadinessPolicy.CommitterIdentity(bare.Commit);
         Assert.Equal(ReadinessStates.Fail, refused.State);
-        Assert.Contains("git config --global user.name", refused.Remedy);
+        Assert.Contains("git config --global user.name", refused.Command);
 
         foreach (var (key, value) in ImageSystemConfig())
             ReadinessGitFactsTests.Git(_root, "config", "--file", system, key, value);

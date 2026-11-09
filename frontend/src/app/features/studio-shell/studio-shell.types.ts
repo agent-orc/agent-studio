@@ -79,6 +79,8 @@ export interface HubTab {
   wikiTarget?: WikiTabTarget;
   /** Optional exact row target when a task post-step links into Project Pipeline. */
   pipelineStepId?: string;
+  /** AGT-3580: the `data-setting-key` field a remedy link focuses on the Settings rail. */
+  settingKey?: string;
   /** Present only while this tab belongs to the Wiki/Dossier family. */
   documentHistory?: DocumentTabHistory;
   /** Stable identity of an explicitly reusable Wiki/Dossier editor tab. */

@@ -86,6 +86,7 @@ export interface BatchMoveJobResponse {
 // live under their own `features/X/models/` and are accessed via the
 // feature barrel. The two `import type` lines below let TaskInfo's
 // own field types reference feature-owned shapes without copying them.
+import type { RemedyAction } from './remedy-action.model';
 import type { TaskCommitInfo, TaskProvenanceRecord, TaskMergeSignal, TaskIntegrationStatus } from '../features/git';
 import type { TaskTokenSummary } from '../features/tokens';
 import type { OrchestratorLogEntry, OrchestratorSession } from '../features/orchestrator';
@@ -458,8 +459,8 @@ export interface WaitsOnStatus {
 
 /**
  * AGT-2818: one way an operator can clear a pickup hold. Mirrors backend
- * `PickupHoldResolution`. The UI renders a control only for kinds with an
- * implemented handler; all other kinds remain explanatory text.
+ * `PickupHoldResolution`. AGT-3580: every kind carries a typed `action` that
+ * the detail view renders as a button or a link; `detail` stays prose.
  */
 export interface PickupHoldResolution {
   /** Machine-readable kind, e.g. `release-target` / `drop-release-gate`. */
@@ -472,6 +473,8 @@ export interface PickupHoldResolution {
   targetKey?: string | null;
   /** The stable source key for an edge decision; null means the waiting card. */
   sourceKey?: string | null;
+  /** AGT-3580: route, owning project setting, or API action behind this way out. */
+  action?: RemedyAction | null;
 }
 
 /**
@@ -2605,6 +2608,14 @@ export interface ParkedBlockerStatus {
   parkedForSeconds?: number;
   /** The original freetext park reason, verbatim. */
   reason: string;
+  /**
+   * Lane-change cause that parked the card (`acceptance-integration-failed`,
+   * `escalated`, ...). AGT-3586: the park copy is chosen from it. Absent on
+   * markers written before the field existed.
+   */
+  cause?: string | null;
+  /** Short qualifier of `cause`, e.g. `missing-delivery` or an escalation category. */
+  causeDetail?: string | null;
   /**
    * Latest sweep verdict: `blocked`, `recallable`, or `undeterminable`.
    * Absent on board cards; /details/overview carries it.

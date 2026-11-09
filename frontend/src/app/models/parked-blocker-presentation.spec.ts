@@ -2,11 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import {
   UNSTATED_QUESTION,
+  UNSTATED_REASON,
   buildParkedBadge,
   buildParkedBlockerView,
+  parkCauseFromTimeline,
+  parkCauseView,
+  parkNextStepSentence,
+  parkReasonSentence,
   parkedBlockerLabel,
   parkedForLabel,
   parkedOpenItems,
+  type ParkTimelineEvent,
 } from './parked-blocker-presentation';
 import type { ParkedBlockerStatus, TaskInfo } from './task.model';
 
@@ -183,5 +189,151 @@ describe('parked-blocker presentation', () => {
     expect(parkedForLabel(3 * 3600)).toBe('3 hours');
     expect(parkedForLabel(47 * 3600)).toBe('1 day');
     expect(parkedForLabel(-5)).toBe('less than a minute');
+  });
+});
+
+/**
+ * AGT-3586 (walkthrough AGT-3561, F11). DEMO-6 was parked by the acceptance
+ * audit and read "The parking run stated no question", badge "Operator
+ * decision", reason "missing-delivery: ... rerun the gate" although no button
+ * reruns a gate. The copy now follows the recorded cause.
+ */
+describe('park copy from the recorded cause', () => {
+  const escalatedButtons = [
+    { id: 'reissue-escalated', label: 'Continue (reissue)' },
+    { id: 'accept-escalated', label: 'Accept as-is' },
+    { id: 'manual-resolve-escalated', label: 'Resolve manually' },
+    { id: 'discard-escalated', label: 'Abort' },
+  ];
+  const humanReviewButtons = [
+    { id: 'mark-done', label: 'Accept' },
+    { id: 'send-back-to-ready', label: 'Send back to Ready (re-do)' },
+  ];
+  const auditPark: ParkedBlockerStatus = {
+    blockerType: 'operator-decision',
+    conditionKind: 'manual',
+    conditionDescription: 'Only a person can clear this park; no automatic precondition is recorded.',
+    parkedAt: '2026-11-09T08:23:00.000Z',
+    reason: 'missing-delivery: Recover the delivery, resolve the integration failure and rerun the gate.',
+    cause: 'acceptance-integration-failed',
+    causeDetail: 'missing-delivery',
+    recallStatus: 'blocked',
+    lastEvaluatedAt: null,
+    detail: 'No recall sweep has evaluated this blocker yet.',
+    lane: '5e-escalated',
+    decision: null,
+    needsInputFile: null,
+    evaluationAgeSeconds: null,
+    evaluationStale: true,
+    requiresDecisionCard: true,
+  };
+
+  it('names the acceptance audit and replaces its legacy slug-and-instruction reason with the fact', () => {
+    const view = buildParkedBlockerView({ parkedBlocker: auditPark }, NOW)!;
+
+    expect(view.cause.origin).toBe('acceptance-audit');
+    expect(view.blockerLabel).toBe('Acceptance audit');
+    expect(view.reason).toBe('No delivery branch was found for this card, so its work cannot be integrated.');
+    expect(view.chipTooltip).not.toContain('missing-delivery');
+    expect(view.chipTooltip).not.toContain('rerun the gate');
+  });
+
+  it('keeps a fact sentence the audit recorded and drops only its slug prefix', () => {
+    const cause = parkCauseView('acceptance-integration-failed', 'Conflict');
+    expect(parkReasonSentence('Acceptance integration ended with Conflict: develop moved', cause))
+      .toBe('Acceptance integration ended with Conflict: develop moved.');
+    expect(parkReasonSentence('[verify-definition-missing] No verify command is defined. Then use Retry integration.',
+      parkCauseView('acceptance-integration-failed', 'verify-definition-missing')))
+      .toBe('No verify command is defined. Then use Retry integration.');
+  });
+
+  it('keeps the recorded integration failure after a category prefix', () => {
+    const conflict = parkCauseView('acceptance-integration-failed', 'merge-conflict');
+    expect(parkReasonSentence('merge-conflict: Merge conflict in src/app.ts', conflict))
+      .toBe('Merge conflict in src/app.ts.');
+    expect(parkReasonSentence('integration-failed: verify exited 1 in backend.Tests',
+      parkCauseView('acceptance-integration-failed', 'integration-failed')))
+      .toBe('Verify exited 1 in backend.Tests.');
+    expect(parkReasonSentence('The delivery could not be integrated: Merge conflict in src/app.ts.', conflict))
+      .toBe('The delivery could not be integrated: Merge conflict in src/app.ts.');
+  });
+
+  it('replaces only the detail-free legacy audit instruction, and fills an unstated audit reason', () => {
+    const failed = parkCauseView('acceptance-integration-failed', 'integration-failed');
+    expect(parkReasonSentence(
+      'integration-failed: Recover the delivery, resolve the integration failure and rerun the gate.', failed,
+    )).toBe('The delivery could not be integrated.');
+    expect(parkReasonSentence('missing-delivery', parkCauseView('acceptance-integration-failed', 'missing-delivery')))
+      .toBe('No delivery branch was found for this card, so its work cannot be integrated.');
+    expect(parkReasonSentence('', failed)).toBe('The delivery could not be integrated.');
+  });
+
+  it('replaces the legacy stale-verdict instruction of a nonfatal acceptance park with its fact', () => {
+    const stale = parkCauseView('acceptance-integration-failed', 'delivery-verdict-stale');
+    const fact = 'The review verdict no longer matches the current delivery, so it cannot be accepted.';
+    expect(parkReasonSentence('delivery-verdict-stale: Integrate the current delivery and repeat review.', stale))
+      .toBe(fact);
+    expect(parkReasonSentence(fact, stale)).toBe(fact);
+    expect(parkReasonSentence('', stale)).toBe(fact);
+  });
+
+  it('states a reason once, as a sentence, never as a bare slug', () => {
+    const unknown = parkCauseView(null, null);
+    expect(parkReasonSentence('[agent-blocked] the agent stopped', unknown)).toBe('The agent stopped.');
+    expect(parkReasonSentence('escalated: no-completion-signal', unknown)).toBe(UNSTATED_REASON);
+    expect(parkReasonSentence('no-completion-signal', unknown)).toBe(UNSTATED_REASON);
+    expect(parkReasonSentence('', unknown)).toBe(UNSTATED_REASON);
+    expect(parkReasonSentence('Note: keep this prefix', unknown)).toBe('Note: keep this prefix.');
+  });
+
+  it('chooses the copy from the cause: audit, review loop budget, stall, review gate, run, operator', () => {
+    expect(parkCauseView('acceptance-integration-failed', 'missing-delivery').label).toBe('Acceptance audit');
+    expect(parkCauseView('escalated', 'card-round-budget')).toMatchObject({
+      origin: 'review-loop-budget', label: 'Review loop budget',
+    });
+    expect(parkCauseView('escalated', 'reissue-budget-exhausted').origin).toBe('review-loop-budget');
+    expect(parkCauseView('escalated', 'gate-capacity')).toMatchObject({
+      origin: 'stall-intervention', label: 'Gate queue stall',
+    });
+    expect(parkCauseView('escalated', 'aspect-verdict-infra-crash').origin).toBe('review-gate');
+    expect(parkCauseView('escalated', 'completion-gate').origin).toBe('review-gate');
+    expect(parkCauseView('escalated', 'agent-blocked').origin).toBe('run');
+    expect(parkCauseView('operator-decision', null).origin).toBe('operator');
+    expect(parkCauseView('escalated', null)).toMatchObject({ origin: 'unknown', parkedBy: null });
+    expect(parkCauseView(undefined, undefined).origin).toBe('unknown');
+  });
+
+  it('suggests only buttons the lane offers', () => {
+    const audit = parkCauseView('acceptance-integration-failed', 'missing-delivery');
+    expect(parkNextStepSentence(audit.nextSteps, escalatedButtons)).toBe(
+      'Use Continue (reissue) to build and deliver the work again, or Abort if the work is no longer needed.',
+    );
+    expect(parkNextStepSentence(audit.nextSteps, humanReviewButtons)).toBe(
+      'Use Send back to Ready (re-do) to build and deliver the work again.',
+    );
+    const budget = parkCauseView('escalated', 'card-round-budget');
+    expect(parkNextStepSentence(budget.nextSteps, escalatedButtons)).toBe(
+      'Use Continue (reissue) to allow another round, or Accept as-is to take the current delivery.',
+    );
+    expect(parkNextStepSentence(audit.nextSteps, [])).toBeNull();
+    expect(parkNextStepSentence(parkCauseView('escalated', 'agent-blocked').nextSteps, escalatedButtons)).toBeNull();
+  });
+
+  it('takes the cause from the lane-change row when the marker predates it', () => {
+    const legacy = { ...auditPark, cause: undefined, causeDetail: undefined };
+    const events: ParkTimelineEvent[] = [
+      { ts: '2026-08-09T12:20:00Z', kind: 'lane_changed', details: { to: '3-in-progress', cause: 'claimed' } },
+      {
+        ts: '2026-11-09T08:23:00Z', kind: 'lane_changed',
+        details: { to: '5e-escalated', cause: 'acceptance-integration-failed', causeDetail: 'missing-delivery' },
+      },
+      { ts: '2026-11-09T09:00:00Z', kind: 'lane_changed', details: { to: '5e-escalated', cause: 'escalated' } },
+    ];
+
+    expect(parkCauseFromTimeline(legacy, events)).toEqual({
+      cause: 'acceptance-integration-failed', causeDetail: 'missing-delivery',
+    });
+    expect(buildParkedBlockerView({ parkedBlocker: legacy }, NOW, events)!.blockerLabel).toBe('Acceptance audit');
+    expect(buildParkedBlockerView({ parkedBlocker: legacy }, NOW)!.blockerLabel).toBe('Operator decision');
   });
 });
