@@ -1,5 +1,13 @@
 # Review Domain Map
 
+Acceptance checks the first-parent line after a delivery's verified tree. A
+server-authored document-key discovery commit is gate-neutral only when its
+first-parent diff changes existing `docs/**/workbench.json` descriptors solely
+by adding `key`. New managed commits carry an operation trailer; legacy
+commits require the Agent Studio author and committer identity. Acceptance
+records the inspected commit SHA in the card's
+completion evidence. Every other later commit still needs a passed gate.
+
 Version: 2026-11-05
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
