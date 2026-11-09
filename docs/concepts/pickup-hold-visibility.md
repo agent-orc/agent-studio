@@ -101,8 +101,12 @@ Execution Hosts, or project setting. The kind-to-action map is pinned by
 `PickupHoldPolicyTests.EveryResolutionKind_CarriesItsTypedAction_AndNoHttpDetail`.
 The server readiness report uses the same record: each line has a prose
 `remedy`, an optional `action` (repository visibility and integration branch
-open their project setting), and an optional `command`, shown only as a
-copyable detail.
+open their project setting), an optional `command` with shell steps only,
+shown only as a copyable detail, and an optional `configEntry` (`file`,
+`section`, `text`) for a line the remedy adds to a configuration file, such as
+the `data-volume` compose volume line, shown as a labelled config entry and
+never as a command. The field contract is in
+[Move Studio to a server](../operations/setup/move-studio-to-server.md#readiness-report).
 
 ### 4. A one-off sweep for the existing backlog
 
