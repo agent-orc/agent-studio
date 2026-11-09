@@ -1,0 +1,6 @@
+<div class="copyable-command" [attr.data-testid]="testId()">
+  <span class="copyable-command__label">Command</span>
+  <pre class="copyable-command__text"><code [attr.data-testid]="testId() + '-text'">{{ command() }}</code></pre>
+  <button type="button" class="copyable-command__copy" [attr.data-testid]="testId() + '-copy'"
+          [attr.aria-label]="'Copy command'" (click)="copy()">{{ copied() ? 'Copied' : 'Copy' }}</button>
+</div>

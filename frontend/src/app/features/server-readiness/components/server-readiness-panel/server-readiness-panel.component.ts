@@ -1,24 +1,32 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, output, signal } from '@angular/core';
+import { CopyableCommandComponent } from '../../../../components/copyable-command/copyable-command.component';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { remedyLinkLabel } from '../../../../models/remedy-action.model';
+import { RemedyNavigationService } from '../../../../services/remedy-navigation.service';
 import { ServerReadinessService } from '../../services/server-readiness.service';
 import {
-  READINESS_STATE_LABEL, groupReadiness, readinessKey, type ServerReadinessReport,
+  READINESS_STATE_LABEL, groupReadiness, readinessKey, type ReadinessCheck, type ServerReadinessReport,
 } from '../../models/server-readiness.model';
 
 /**
  * The readiness report the server computes about itself (AGT-3412): one line
  * per check with its state, what it means, and the exact remedy.
+ * AGT-3580: the remedy is prose; a fix Studio owns opens its setting or
+ * surface through a link, and a shell command is a copyable detail only.
  */
 @Component({
   selector: 'app-server-readiness-panel',
   standalone: true,
-  imports: [DisclosureMarkerComponent],
+  imports: [CopyableCommandComponent, DisclosureMarkerComponent],
   templateUrl: './server-readiness-panel.component.html',
   styleUrl: './server-readiness-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ServerReadinessPanelComponent implements OnInit, OnDestroy {
   private readonly readiness = inject(ServerReadinessService);
+  private readonly remedies = inject(RemedyNavigationService);
+  /** Emitted after a remedy link navigated away, so a hosting dialog can close. */
+  readonly navigated = output<void>();
   readonly report = signal<ServerReadinessReport | null>(null);
   readonly error = signal<string | null>(null);
   readonly checking = signal(false);
@@ -46,6 +54,14 @@ export class ServerReadinessPanelComponent implements OnInit, OnDestroy {
     this.timer = setInterval(() => {
       if (!document.hidden) this.refresh();
     }, 60_000);
+  }
+
+  linkLabel(check: ReadinessCheck): string | null {
+    return this.remedies.canOpen(check.action) ? remedyLinkLabel(check.action!) : null;
+  }
+
+  openAction(check: ReadinessCheck): void {
+    if (this.remedies.open(check.action)) this.navigated.emit();
   }
 
   ngOnDestroy(): void {

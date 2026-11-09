@@ -436,7 +436,7 @@ public static class RoutePermissionCatalog
 
         // --- Runs, pipeline, integration, and project actions --------------
         Under("W", IamPermissions.ProjectRunsOperate, "/api/tasks/{}",
-            "start", "stop", "continue", "failure/continue", "re-evaluate", "restore-from-failed-pickup",
+            "start", "stop", "continue", "failure/continue", "re-evaluate", "restore-from-failed-pickup", "dispatch-rejection",
             "pipeline/**", "integration/**", "integration-records", "commits/integration", "git/**", "code-review",
             "external-completion", "summary/**", "context-usage/refresh", "conversation/invalidate",
             "older-brief-delivery/decision", "open-in-vscode", "review-evidence/**", "preview-feedback",

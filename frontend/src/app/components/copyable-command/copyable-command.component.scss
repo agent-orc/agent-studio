@@ -1,0 +1,51 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.copyable-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+  min-width: 0;
+}
+
+.copyable-command__label {
+  grid-column: 1 / -1;
+  color: var(--studio-fg-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.copyable-command__text {
+  min-width: 0;
+  margin: 0;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-button-radius);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.copyable-command__copy {
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-button-radius);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.copyable-command__copy:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 1px;
+}

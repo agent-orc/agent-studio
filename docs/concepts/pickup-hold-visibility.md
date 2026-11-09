@@ -89,6 +89,21 @@ neither is applied. Releasing a validation gate states that the validation no
 longer has to happen, which is an operator decision, so no sweep, projection or
 background service in this feature performs a write.
 
+**Typed actions (AGT-3580).** Every resolution carries an `action`
+(`RemedyAction`: `kind` `route` | `setting` | `api`, a `target`, and the
+`project` or `taskKey` it acts on); `detail` is prose and never an HTTP line.
+The detail view renders the action as a control the operator clicks: a button
+that calls the existing route (waits-on edit, archive, release with a confirm,
+start, intake, cli-type, escalate, `DELETE /api/tasks/{id}/dispatch-rejection`
+for "Re-offer the card"), a runner picker for `route-to-remote-runner` that calls
+`PUT /api/projects/{name}/execution-runner`, or a link to the owning task,
+Execution Hosts, or project setting. The kind-to-action map is pinned by
+`PickupHoldPolicyTests.EveryResolutionKind_CarriesItsTypedAction_AndNoHttpDetail`.
+The server readiness report uses the same record: each line has a prose
+`remedy`, an optional `action` (repository visibility and integration branch
+open their project setting), and an optional `command`, shown only as a
+copyable detail.
+
 ### 4. A one-off sweep for the existing backlog
 
 `PickupHoldSweep.RunOnce()` runs at boot and reports every card currently held in

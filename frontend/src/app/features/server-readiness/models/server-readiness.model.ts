@@ -1,3 +1,5 @@
+import type { RemedyAction } from '../../../models/remedy-action.model';
+
 /** Server readiness report (AGT-3412): `GET /api/system/readiness`. */
 export type ReadinessState = 'pass' | 'unknown' | 'warn' | 'fail';
 export type ReadinessScope = 'server' | 'project' | 'host';
@@ -9,7 +11,12 @@ export interface ReadinessCheck {
   subject: string | null;
   state: ReadinessState;
   meaning: string;
+  /** The fix, as prose. */
   remedy: string | null;
+  /** AGT-3580: the shell command behind the remedy, shown only as a copyable detail. */
+  command?: string | null;
+  /** AGT-3580: the owning setting or surface, rendered as a link. */
+  action?: RemedyAction | null;
 }
 
 export interface ServerReadinessReport {

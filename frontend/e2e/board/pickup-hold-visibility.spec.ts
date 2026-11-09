@@ -81,18 +81,21 @@ const ARCHIVED_GATE_CARD = {
         label: 'Drop the dependency',
         detail: 'Remove this waits-on edge. The platform never takes this decision automatically.',
         targetKey: 'AGT-2372',
+        action: { kind: 'api', target: 'edit-waits-on', project: PROJECT },
       },
       {
         kind: 'repoint-dependency',
         label: 'Point to a successor card',
         detail: 'Replace the edge with the stable key of the card that now owns the prerequisite.',
         targetKey: 'AGT-2372',
+        action: { kind: 'api', target: 'edit-waits-on', project: PROJECT },
       },
       {
         kind: 'archive-waiting-card',
         label: 'Archive this waiting card',
         detail: 'Close the waiting card without changing the prerequisite.',
         targetKey: 'AGT-2372',
+        action: { kind: 'api', target: 'archive-task', project: PROJECT },
       },
     ],
   },
@@ -142,11 +145,13 @@ const REFUSED_DISPATCH_CARD = {
         kind: 'restore-runner-capability',
         label: 'Restore the runner capability',
         detail: 'Give agent-runner-01 what it reported missing, or route this project at a runner that has it.',
+        action: { kind: 'route', target: 'execution-hosts', project: PROJECT },
       },
       {
         kind: 'retry-dispatch',
         label: 'Re-offer the card',
-        detail: 'The refusal stays visible until a later dispatch succeeds or an operator clears it.',
+        detail: 'Clears the recorded refusal so the next dispatch tick offers the card again.',
+        action: { kind: 'api', target: 'clear-dispatch-rejection', project: PROJECT },
       },
     ],
   },
@@ -174,6 +179,52 @@ const PICKABLE_CARD = {
 
 const CARDS = [ARCHIVED_GATE_CARD, REFUSED_DISPATCH_CARD, PICKABLE_CARD];
 
+/** Minimal bounded task core (AGT-2953): the detail opens from `/core`, the hold from the board's TaskInfo. */
+function core(card: { id: string; key: string; taskKey: string; title: string; folderPath: string }) {
+  return {
+    state: 'ready', projectId: PROJECT, projectName: PROJECT,
+    id: card.id, taskKey: card.taskKey, key: card.key,
+    watchPath: WATCH_PATH, folderPath: card.folderPath,
+    title: card.title, kind: 'task', taskType: 'feature',
+    lane: '2-ready', archiveState: null, enteredLaneAt: '2026-08-11T09:00:00Z',
+    order: 1, mode: 'coding', released: false, pendingIntent: false, coreVersion: '1',
+    pins: { model: null, modelExplicit: false, thinkingLevel: null, thinkingLevelExplicit: false,
+      cliType: 'codex', contextMode: null, useOwnSession: null, allowWebAccess: false, noBranchExpected: false },
+    actions: { canEdit: true, canMove: true, canDelete: true, canContinue: true },
+    blocking: { blockerType: null, blockerCondition: null, blockerStatus: null, blockerDescription: null,
+      needsInput: null, dependencyBlocked: false, dependencyState: 'ready', dependencies: [] },
+    runtime: { attemptId: null, runnerId: null, runnerName: null, hostname: null,
+      executionStatus: null, location: 'none', heartbeatAt: null, leaseState: 'none', leaseId: null },
+    runtimeVersion: 'v1',
+    statusSummary: { state: 'ready', text: '', originalBytes: 0, hash: 'status', cursor: null },
+    prompt: { state: 'ready', text: 'Implement the change.', originalBytes: 21, hash: 'prompt', cursor: null, continuationUrl: null },
+    timeline: { state: 'ready', events: [], cursor: null, continuationUrl: null },
+  };
+}
+
+/** One `/details/<name>` resource envelope for the core-first detail. */
+function resource(card: { id: string; taskKey: string }, name: string, data: unknown) {
+  return { id: card.id, taskKey: card.taskKey, projectId: PROJECT, attemptId: null, coreVersion: '1',
+    resource: name, version: 'v1', computedAt: '2026-08-11T09:00:00Z', state: 'ready', data, reason: null };
+}
+
+async function routeDetailResources(page: Page, card: { id: string; taskKey: string }): Promise<void> {
+  await page.route(`**/api/tasks/${card.id}/details/documents**`, route => json(route, resource(card, 'documents', {
+    name: new URL(route.request().url()).searchParams.get('name'), markdown: 'Implement the change.', summaryState: null,
+  })));
+  await page.route(`**/api/tasks/${card.id}/details/usage**`, route => json(route, resource(card, 'usage', null)));
+  await page.route(`**/api/tasks/${card.id}/details/review**`, route =>
+    json(route, resource(card, 'review', { reviewProjection: null, evidence: null })));
+  await page.route(`**/api/tasks/${card.id}/details/git**`, route => json(route, resource(card, 'git', {
+    mergeSignal: null, integration: null, publishSignal: null, testEvidence: null, commit: null, commits: [], provenance: null,
+  })));
+  await page.route(`**/api/tasks/${card.id}/details/overview**`, route => json(route, resource(card, 'overview', {
+    decision: null, planningSpawn: null, conceptDossier: null, olderBriefDelivery: null, relatedWikiPages: [],
+    creationSource: 'operator', completionClaim: null, parkedBlocker: null, needsInput: null,
+    references: { dependsOn: [], relatedTo: [], blockedBy: [], supersedes: [] }, waitsOn: null, acceptanceAttemptGap: null,
+  })));
+}
+
 function json(route: Route, body: unknown): Promise<void> {
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 }
@@ -195,6 +246,20 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
   for (const card of CARDS) {
     await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${card.id}(\\?|$)`), route => json(route, detail(card)));
+  }
+  // A registered project keeps FirstRunLaunchService from opening the first-run checklist over the board.
+  const registered = {
+    id: PROJECT, displayName: PROJECT, shortCode: 'DEM', workspaceId: 'ws-demo',
+    storageLocation: WATCH_PATH, sortOrder: 0, archived: false, createdAt: '2026-08-01T09:00:00Z',
+  };
+  await page.route(/\/api\/v1\/projects(\?|$)/, route => json(route, [registered]));
+  await page.route('**/api/v1/workspaces**', route => json(route, [{
+    id: 'ws-demo', displayName: 'Demo Workspace', sortOrder: 0, isDefault: true,
+    createdAt: '2026-08-01T09:00:00Z', projects: [registered],
+  }]));
+  for (const card of CARDS) {
+    await page.route(new RegExp(`/api/tasks/${card.id}/core(\\?|$)`), route => json(route, core(card)));
+    await routeDetailResources(page, card);
   }
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,

@@ -30,6 +30,15 @@ public static class ReadinessScopes
 /// for the installation, and the exact step that fixes it. A passing line has
 /// no remedy.
 /// </summary>
+/// <param name="Remedy">The step that fixes it, as prose. Never starts with a command.</param>
+/// <param name="Command">
+/// AGT-3580 - the shell command behind the remedy, when the fix has no UI
+/// equivalent. The operations page shows it as a copyable detail only.
+/// </param>
+/// <param name="Action">
+/// AGT-3580 - the typed action the UI renders as a button or a link to the
+/// owning setting or surface, when Studio itself can make the fix.
+/// </param>
 public sealed record ReadinessCheck(
     string Id,
     string Title,
@@ -37,7 +46,9 @@ public sealed record ReadinessCheck(
     string? Subject,
     string State,
     string Meaning,
-    string? Remedy);
+    string? Remedy,
+    string? Command = null,
+    AgentStudio.Shared.RemedyAction? Action = null);
 
 /// <summary>
 /// The readiness report the server computes about itself (AGT-3412). The

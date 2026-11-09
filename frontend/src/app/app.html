@@ -237,7 +237,7 @@
                     <app-project-hub-view
                       [projectName]="tab.projectName" [projectId]="projectHubUrls.projectIdForName(tab.projectName)"
                       [initialSection]="tab.section ?? 'overview'" [wikiTarget]="tab.wikiTarget"
-                      [pipelineStepId]="tab.pipelineStepId"
+                      [pipelineStepId]="tab.pipelineStepId" [settingKey]="tab.settingKey"
                       (openTask)="onOpenTaskFromReel($event)" />
                   }
                 }

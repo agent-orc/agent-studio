@@ -1,6 +1,9 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
+import { startsWithHttpVerb } from '../../../../models/remedy-action.model';
+import { RemedyNavigationService } from '../../../../services/remedy-navigation.service';
 import { ServerReadinessPanelComponent } from './server-readiness-panel.component';
 import { groupReadiness, type ReadinessCheck, type ServerReadinessReport } from '../../models/server-readiness.model';
 
@@ -15,9 +18,12 @@ const report: ServerReadinessReport = {
     check({}),
     check({ id: 'committer-identity', title: 'Committer identity (git commit-tree probe)', state: 'fail',
       meaning: 'git commit-tree failed in a scratch repository (Committer identity unknown).',
-      remedy: 'In the stack directory run: docker compose exec api git config --global user.name "Agent Studio"' }),
+      remedy: 'Set the Git identity of the service user in the API container, from the stack directory.',
+      command: 'docker compose exec api git config --global user.name "Agent Studio"' }),
     check({ id: 'repository-visibility', title: 'Repository visibility known', scope: 'project', subject: 'Demo',
-      state: 'warn', meaning: 'Not recorded.', remedy: 'Record it: PUT /api/projects/Demo/repository-visibility' }),
+      state: 'warn', meaning: 'Not recorded.',
+      remedy: "Record it as private or public in the project's repository visibility setting.",
+      action: { kind: 'setting', target: 'repository-visibility', project: 'Demo' } }),
     check({ id: 'execution-host', title: 'Execution host enrolled and seen', scope: 'host', subject: 'kori-review-1',
       meaning: 'Enrolled and last seen 1 min ago.' }),
   ],
@@ -44,7 +50,12 @@ describe('ServerReadinessPanelComponent', () => {
     expect(failing.getAttribute('data-state')).toBe('fail');
     expect(failing.textContent).toContain('Failing');
     expect(failing.textContent).toContain('Committer identity unknown');
-    expect(failing.querySelector('code')!.textContent).toContain('git config --global user.name "Agent Studio"');
+    expect(failing.querySelector('[data-testid="readiness-command-text"]')!.textContent)
+      .toContain('git config --global user.name "Agent Studio"');
+    expect(failing.querySelector('[data-testid="readiness-remedy-action"]')).toBeNull();
+    for (const remedy of Array.from(element.querySelectorAll('[data-testid="readiness-remedy"]'))) {
+      expect(startsWithHttpVerb(remedy.textContent)).toBe(false);
+    }
     expect(element.querySelector('[data-testid="readiness-project:repository-visibility:Demo"]')!.textContent)
       .toContain('Attention');
     expect(element.textContent).toContain('Project Demo');
@@ -57,6 +68,27 @@ describe('ServerReadinessPanelComponent', () => {
     expect(passing.textContent).toContain('None needed');
     expect(element.querySelector('[data-testid="readiness-host:execution-host:kori-review-1"]')!.textContent)
       .toContain('kori-review-1');
+    fixture.destroy();
+    http.verify();
+  });
+
+  it('opens the owning project setting from a typed remedy and tells the host dialog', async () => {
+    const { fixture, http, element } = await render();
+    const navigation = TestBed.inject(RemedyNavigationService);
+    const open = vi.spyOn(navigation, 'openProjectSetting').mockImplementation(() => undefined);
+    let navigated = 0;
+    fixture.componentInstance.navigated.subscribe(() => navigated++);
+    http.expectOne('/api/system/readiness').flush(report);
+    fixture.detectChanges();
+
+    const row = element.querySelector('[data-testid="readiness-project:repository-visibility:Demo"]')!;
+    const link = row.querySelector<HTMLButtonElement>('[data-testid="readiness-remedy-action"]')!;
+    expect(link.textContent).toContain('Open repository visibility');
+    expect(row.querySelector('[data-testid="readiness-command"]')).toBeNull();
+    link.click();
+
+    expect(open).toHaveBeenCalledWith('Demo', 'repository-visibility');
+    expect(navigated).toBe(1);
     fixture.destroy();
     http.verify();
   });

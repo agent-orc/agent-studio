@@ -7,7 +7,8 @@ import { setTheme } from '../helpers/theme';
 // section of the Environment view, in both themes. The lines use the server's
 // wording for a server shortly after a move.
 const line = (id: string, title: string, scope: string, subject: string | null, state: string,
-  meaning: string, remedy: string | null = null) => ({ id, title, scope, subject, state, meaning, remedy });
+  meaning: string, remedy: string | null = null, command: string | null = null,
+  action: Record<string, string> | null = null) => ({ id, title, scope, subject, state, meaning, remedy, command, action });
 
 const checks = [
   line('git-identity', 'Git identity of the service user', 'server', null, 'pass',
@@ -18,31 +19,37 @@ const checks = [
     '/data/workspace is on the mount /data/workspace (ext4), outside the container layer.'),
   line('data-volume', 'Data folder on the data volume', 'server', 'home', 'fail',
     '/data/home is inside the container layer: whatever Studio writes there is lost when the container is recreated.',
-    'Mount it from the data directory: add "- ${STUDIO_DATA_DIR}/home:/data/home" under services.api.volumes in compose.override.yaml and run docker compose up -d.'),
+    'Mount it from the data directory: add the volume line below under services.api.volumes in compose.override.yaml and recreate the stack.',
+    '- ${STUDIO_DATA_DIR}/home:/data/home\ndocker compose up -d'),
   line('state-writable', 'State folder writable', 'server', 'workspace', 'pass',
     'Studio created and removed a probe file in /data/workspace.'),
   line('git-locks', 'No stale Git locks', 'server', 'workspace', 'warn',
     '1 Git lock file(s) older than 10 minutes, the oldest 1 h: /data/workspace/.git/index.lock. Git writes in this repository fail while they exist.',
-    'Make sure no git process runs in the repository (ps -ef | grep git), then remove them: rm -f /data/workspace/.git/index.lock'),
+    'Make sure no git process runs in the repository, then remove the stale lock files.',
+    'ps -ef | grep git\nrm -f /data/workspace/.git/index.lock'),
   line('gate-worker', 'Gate worker reachable', 'server', 'kori-gate', 'pass',
     'Pull gate worker kori-gate sent a heartbeat less than a minute ago (3 slot(s)).'),
   line('execution-host', 'Execution host enrolled and seen', 'host', 'kori-review-1', 'pass', 'Enrolled and last seen 1 min ago.'),
   line('execution-host', 'Execution host enrolled and seen', 'host', 'agent-runner-02', 'fail',
     'Enrolled, but not seen for 5 h: it claims no cards.',
-    'On agent-runner-02, check that the runner service runs and its RUNNER_SERVER_URL points at this server, then restart it; re-enrol it if its credential was revoked.'),
+    'On agent-runner-02, check that the runner service runs and its RUNNER_SERVER_URL points at this server, then restart it; re-enrol it if its credential was revoked.',
+    null, { kind: 'route', target: 'execution-hosts' }),
   line('data-volume', 'Data folder on the data volume', 'project', 'Demo', 'pass',
     '/data/projects/demo is on the mount /data/projects (ext4), outside the container layer.'),
   line('repository-visibility', 'Repository visibility known', 'project', 'Demo', 'warn',
     'Not recorded. Remote Review then treats the repository as public and clones it without credentials, which fails for a private repository.',
-    'Record it: PUT /api/projects/Demo/repository-visibility with {"visibility":"private"} or {"visibility":"public"}.'),
+    "Record it as private or public in the project's repository visibility setting.",
+    null, { kind: 'setting', target: 'repository-visibility', project: 'Demo' }),
   line('app-coverage', 'GitHub App coverage', 'project', 'Demo', 'fail',
     'The App is not installed on https://github.com/acme/demo, so hosts get no token for it and clones and pushes fail.',
-    'Install the App on this repository: https://github.com/apps/agent-studio/installations/new, then Recheck.'),
+    'Install the App on this repository: https://github.com/apps/agent-studio/installations/new, then Recheck.',
+    null, { kind: 'route', target: 'github-settings' }),
   line('integration-branch', 'Integration branch set', 'project', 'Demo', 'pass',
     'Integrates into main (from origin/HEAD); origin/main is present.'),
   line('integration-lane', 'Integration lane present', 'project', 'Demo', 'warn',
     'The integration lane refs/agent-studio/integration/main is missing, as in a fresh clone. The first integration has to seed it, and fails the card when origin/main is not available at that moment.',
-    'Seed it from the published branch: git -C /data/projects/demo update-ref refs/agent-studio/integration/main origin/main'),
+    'Seed it from the published branch.',
+    'git -C /data/projects/demo update-ref refs/agent-studio/integration/main origin/main'),
   line('git-locks', 'No stale Git locks', 'project', 'Demo', 'pass', 'No Git lock file older than 10 minutes.'),
 ];
 
@@ -80,7 +87,7 @@ test('the environment view lists each readiness check with state, meaning and re
     // The operator mounted /data/home and seeded the lane; the rest is unchanged.
     await route.fulfill({ json: report('2026-11-01T12:09:00+00:00', checks.map(item =>
       item.subject === 'home' || item.id === 'integration-lane'
-        ? { ...item, state: 'pass', remedy: null, meaning: item.id === 'integration-lane'
+        ? { ...item, state: 'pass', remedy: null, command: null, meaning: item.id === 'integration-lane'
           ? 'refs/agent-studio/integration/main is present.' : '/data/home is on the mount /data/home (ext4), outside the container layer.' }
         : item)) });
   });
@@ -97,7 +104,7 @@ test('the environment view lists each readiness check with state, meaning and re
   await expect(home).toHaveAttribute('data-state', 'fail');
   await expect(home).toContainText('Failing');
   await expect(home).toContainText('/data/home is inside the container layer');
-  await expect(home.locator('code')).toContainText('"- ${STUDIO_DATA_DIR}/home:/data/home"');
+  await expect(home.getByTestId('readiness-command-text')).toContainText('- ${STUDIO_DATA_DIR}/home:/data/home');
   await expect(panel.getByTestId('readiness-project:app-coverage:Demo')).toContainText('Install the App on this repository');
   await expect(panel.getByTestId('readiness-host:execution-host:agent-runner-02')).toContainText('not seen for 5 h');
   await expect(panel.getByTestId('readiness-server:git-identity:')).toHaveCount(0);

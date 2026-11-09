@@ -1,4 +1,5 @@
 using AgentStudio.Readiness;
+using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts.GitHubApp;
 using Xunit;
 
@@ -13,6 +14,8 @@ namespace AgentStudio.Tests;
 public sealed class ServerReadinessPolicyTests
 {
     private static readonly DateTimeOffset Now = new(2026, 11, 1, 12, 0, 0, TimeSpan.Zero);
+    private static readonly RemedyAction IntegrationBranchSetting =
+        new(RemedyActionKinds.Setting, ProjectSettingKeys.IntegrationBranch, "Demo");
 
     private static ProjectReadinessFact Project(
         RepositoryRefsFact? refs = null, string? visibility = "private", string? branch = null,
@@ -105,10 +108,12 @@ public sealed class ServerReadinessPolicyTests
         Assert.Equal(ReadinessStates.Fail, check.State);
         Assert.Contains("Git has no user.name and no user.email for the service user", check.Meaning);
         Assert.Contains("\"Committer identity unknown\"", check.Meaning);
+        Assert.Equal("Set the Git identity of the service user in the API container, from the stack directory.", check.Remedy);
         Assert.Equal(
-            "In the stack directory run: docker compose exec api git config --global user.name \"Agent Studio\" "
+            "docker compose exec api git config --global user.name \"Agent Studio\" "
             + "&& docker compose exec api git config --global user.email \"studio@agent-studio.invalid\"",
-            check.Remedy);
+            check.Command);
+        Assert.Null(check.Action);
     }
 
     [Fact]
@@ -127,7 +132,8 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Equal(ReadinessStates.Unknown, check.State);
         Assert.Contains("git: not found", check.Meaning);
-        Assert.Equal("Check that Git runs in the API container: docker compose exec api git --version", check.Remedy);
+        Assert.Equal("Check that Git runs in the API container.", check.Remedy);
+        Assert.Equal("docker compose exec api git --version", check.Command);
     }
 
     [Fact]
@@ -148,7 +154,8 @@ public sealed class ServerReadinessPolicyTests
         Assert.Equal(ReadinessStates.Fail, check.State);
         Assert.Equal("git commit-tree failed in a scratch repository (Committer identity unknown). "
             + "Direct merges and artifact commits fail the same way.", check.Meaning);
-        Assert.Contains("git config --global user.name \"Agent Studio\"", check.Remedy);
+        Assert.StartsWith("Set the Git identity", check.Remedy);
+        Assert.Contains("git config --global user.name \"Agent Studio\"", check.Command);
     }
 
     [Fact]
@@ -157,9 +164,10 @@ public sealed class ServerReadinessPolicyTests
         var check = ServerReadinessPolicy.CommitterIdentity(new CommitProbeFact(true, false, "fatal: disk quota exceeded"));
 
         Assert.Equal(ReadinessStates.Fail, check.State);
-        Assert.Equal("Run the probe by hand and fix what it prints: docker compose exec api sh -c "
+        Assert.Equal("Run the probe by hand in the API container and fix what it prints.", check.Remedy);
+        Assert.Equal("docker compose exec api sh -c "
             + "'cd \"$(mktemp -d)\" && git init -q && git commit-tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -m probe'",
-            check.Remedy);
+            check.Command);
     }
 
     [Fact]
@@ -191,8 +199,9 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Equal(ReadinessStates.Fail, check.State);
         Assert.Equal("/data/home is inside the container layer: whatever Studio writes there is lost when the container is recreated.", check.Meaning);
-        Assert.Equal("Mount it from the data directory: add \"- ${STUDIO_DATA_DIR}/home:/data/home\" under services.api.volumes "
-            + "in compose.override.yaml and run docker compose up -d.", check.Remedy);
+        Assert.Equal("Mount it from the data directory: add the volume line below under services.api.volumes "
+            + "in compose.override.yaml and recreate the stack.", check.Remedy);
+        Assert.Equal("- ${STUDIO_DATA_DIR}/home:/data/home\ndocker compose up -d", check.Command);
     }
 
     [Fact]
@@ -204,7 +213,7 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Equal(ReadinessStates.Fail, check.State);
         Assert.Equal(ReadinessScopes.Project, check.Scope);
-        Assert.Contains("\"- ${STUDIO_DATA_DIR}/projects/demo:/data/projects/demo\"", check.Remedy);
+        Assert.StartsWith("- ${STUDIO_DATA_DIR}/projects/demo:/data/projects/demo", check.Command);
     }
 
     [Fact]
@@ -215,7 +224,7 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Equal(ReadinessStates.Fail, check.State);
         Assert.Equal("/data/workspace does not exist, so Studio cannot keep its workspace data.", check.Meaning);
-        Assert.EndsWith("create that folder owned by UID 10001, and run docker compose up -d.", check.Remedy);
+        Assert.EndsWith("create that folder owned by UID 10001, and recreate the stack.", check.Remedy);
     }
 
     [Fact]
@@ -235,7 +244,8 @@ public sealed class ServerReadinessPolicyTests
             new DataFolderFact("workspace", "/data/workspace", "workspace", true, null, null, "permission denied"), runsInContainer: true);
 
         Assert.Equal(ReadinessStates.Unknown, check.State);
-        Assert.Equal("Check the mounts by hand: docker compose exec api cat /proc/self/mountinfo", check.Remedy);
+        Assert.Equal("Check the mounts of the API container by hand.", check.Remedy);
+        Assert.Equal("docker compose exec api cat /proc/self/mountinfo", check.Command);
     }
 
     [Fact]
@@ -249,8 +259,10 @@ public sealed class ServerReadinessPolicyTests
         Assert.Equal("Studio created and removed a probe file in /data/workspace.", pass.Meaning);
         Assert.Equal(ReadinessStates.Fail, fail.State);
         Assert.Contains("(Access to the path is denied.)", fail.Meaning);
-        Assert.Equal("Give the host folder behind /data/workspace to the service user: "
-            + "sudo chown -R 10001:10001 \"$STUDIO_DATA_DIR/workspace\", then docker compose restart api.", fail.Remedy);
+        Assert.Equal("Give the host folder behind /data/workspace to the service user (UID 10001), then restart the API container.",
+            fail.Remedy);
+        Assert.Equal("sudo chown -R 10001:10001 \"$STUDIO_DATA_DIR/workspace\" && docker compose restart api", fail.Command);
+        Assert.Null(pass.Command);
     }
 
     [Fact]
@@ -265,8 +277,9 @@ public sealed class ServerReadinessPolicyTests
         Assert.Equal(ReadinessStates.Pass, young.State);
         Assert.Equal(ReadinessStates.Warn, stale.State);
         Assert.StartsWith("2 Git lock file(s) older than 10 minutes, the oldest 1 h:", stale.Meaning);
-        Assert.Equal("Make sure no git process runs in the repository (ps -ef | grep git), then remove them: "
-            + "rm -f /data/workspace/.git/index.lock /data/workspace/.git/refs/heads/main.lock", stale.Remedy);
+        Assert.Equal("Make sure no git process runs in the repository, then remove the stale lock files.", stale.Remedy);
+        Assert.Equal("ps -ef | grep git\n"
+            + "rm -f /data/workspace/.git/index.lock /data/workspace/.git/refs/heads/main.lock", stale.Command);
     }
 
     [Fact]
@@ -303,7 +316,7 @@ public sealed class ServerReadinessPolicyTests
         Assert.Equal(expected, check.State);
         Assert.Equal("kori-gate", check.Subject);
         if (expected != ReadinessStates.Pass)
-            Assert.Contains("docker compose exec api ssh -o BatchMode=yes kori-gate true", check.Remedy);
+            Assert.Equal("docker compose exec api ssh -o BatchMode=yes kori-gate true", check.Command);
     }
 
     [Fact]
@@ -313,7 +326,7 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Equal(ReadinessStates.Warn, check.State);
         Assert.Equal("Start a pull gate worker against this server, or set RemoteGate__SshHost and RemoteGate__WorkerPath "
-            + "for the api service and run docker compose up -d.", check.Remedy);
+            + "for the api service and recreate the stack.", check.Remedy);
     }
 
     [Fact]
@@ -334,6 +347,8 @@ public sealed class ServerReadinessPolicyTests
         Assert.Equal("Enrolled, but not seen for 5 h: it claims no cards.", checks[2].Meaning);
         Assert.Equal("On charlie, check that the runner service runs and its RUNNER_SERVER_URL points at this server, "
             + "then restart it; re-enrol it if its credential was revoked.", checks[2].Remedy);
+        Assert.Equal(RemedyAction.Route(RemedyRoutes.ExecutionHosts), checks[2].Action);
+        Assert.Null(checks[0].Action);
     }
 
     [Fact]
@@ -345,6 +360,7 @@ public sealed class ServerReadinessPolicyTests
         Assert.Null(check.Subject);
         Assert.Contains("2 enrolment code(s) are issued but not redeemed", check.Meaning);
         Assert.Equal("Create an enrolment under Execution Hosts and run the enrolment command it shows on the host.", check.Remedy);
+        Assert.Equal(RemedyAction.Route(RemedyRoutes.ExecutionHosts), check.Action);
     }
 
     [Theory]
@@ -359,8 +375,13 @@ public sealed class ServerReadinessPolicyTests
         if (visibility is null)
         {
             Assert.Contains("which fails for a private repository", check.Meaning);
-            Assert.Equal("Record it: PUT /api/projects/Demo/repository-visibility with {\"visibility\":\"private\"} "
-                + "or {\"visibility\":\"public\"}.", check.Remedy);
+            Assert.Equal("Record it as private or public in the project's repository visibility setting.", check.Remedy);
+            Assert.Null(check.Command);
+            Assert.Equal(new RemedyAction(RemedyActionKinds.Setting, ProjectSettingKeys.RepositoryVisibility, "Demo"), check.Action);
+        }
+        else
+        {
+            Assert.Null(check.Action);
         }
     }
 
@@ -386,6 +407,9 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Equal(expected, check.State);
         Assert.Equal(remedy, check.Remedy);
+        Assert.Null(check.Command);
+        if (remedy is null || coverage == GitHubAppCoverageStates.NoRepositoryUrl) Assert.Null(check.Action);
+        else Assert.Equal(RemedyAction.Route(RemedyRoutes.GitHubSettings), check.Action);
     }
 
     [Fact]
@@ -428,8 +452,10 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Null(result.Branch);
         Assert.Equal(ReadinessStates.Fail, result.Check.State);
-        Assert.Equal("Run git -C /data/projects/demo remote set-head origin --auto, or set it: "
-            + "PUT /api/projects/Demo/integration-branch with {\"branch\":\"<branch>\"}.", result.Check.Remedy);
+        Assert.Equal("Set the integration branch in the project setting, or let Git record origin/HEAD in the checkout.",
+            result.Check.Remedy);
+        Assert.Equal("git -C /data/projects/demo remote set-head origin --auto", result.Check.Command);
+        Assert.Equal(IntegrationBranchSetting, result.Check.Action);
     }
 
     [Fact]
@@ -441,7 +467,10 @@ public sealed class ServerReadinessPolicyTests
         Assert.Equal(ReadinessStates.Fail, result.Check.State);
         Assert.Equal("The integration branch develop (set for the project) has no origin/develop in this checkout, so every integration fails.",
             result.Check.Meaning);
-        Assert.StartsWith("Run git -C /data/projects/demo fetch origin develop;", result.Check.Remedy);
+        Assert.Equal("Fetch the branch into the checkout; if the branch has another name, set it in the project setting.",
+            result.Check.Remedy);
+        Assert.Equal("git -C /data/projects/demo fetch origin develop", result.Check.Command);
+        Assert.Equal(IntegrationBranchSetting, result.Check.Action);
     }
 
     [Fact]
@@ -453,9 +482,13 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Equal(ReadinessStates.Pass, present.Check.State);
         Assert.Equal(ReadinessStates.Fail, absent.Check.State);
-        Assert.Equal("Create it (git -C /data/projects/demo branch main) or set the right one: "
-            + "PUT /api/projects/Demo/integration-branch with {\"branch\":\"<branch>\"}.", absent.Check.Remedy);
-        Assert.Equal("Set it: PUT /api/projects/Demo/integration-branch with {\"branch\":\"<branch>\"}.", unset.Check.Remedy);
+        Assert.Equal("Create the branch in the checkout, or set the right one in the project setting.", absent.Check.Remedy);
+        Assert.Equal("git -C /data/projects/demo branch main", absent.Check.Command);
+        Assert.Equal(IntegrationBranchSetting, absent.Check.Action);
+        Assert.Equal("Set the integration branch in the project setting.", unset.Check.Remedy);
+        Assert.Null(unset.Check.Command);
+        Assert.Equal(IntegrationBranchSetting, unset.Check.Action);
+        Assert.Null(present.Check.Action);
     }
 
     [Fact]
@@ -467,11 +500,55 @@ public sealed class ServerReadinessPolicyTests
             new RepositoryRefsFact(true, true, new HashSet<string>(), null, "fatal: bad object"))).Check;
 
         Assert.Equal(ReadinessStates.Fail, missing.State);
-        Assert.Equal("Clone the repository there: git clone <repository URL> /data/projects/demo, then Recheck.", missing.Remedy);
+        Assert.Equal("Clone the repository there, then Recheck.", missing.Remedy);
+        Assert.Equal("git clone <repository URL> /data/projects/demo", missing.Command);
         Assert.Equal(ReadinessStates.Fail, notGit.State);
         Assert.Equal("/data/projects/demo is not a Git checkout.", notGit.Meaning);
         Assert.Equal(ReadinessStates.Unknown, broken.State);
         Assert.Contains("fatal: bad object", broken.Meaning);
+    }
+
+    /// <summary>
+    /// AGT-3580: on a server where every line fails, each remedy is prose an
+    /// operator reads, never an HTTP request or a command line; commands only
+    /// travel in <see cref="ReadinessCheck.Command"/>.
+    /// </summary>
+    [Fact]
+    public void No_remedy_is_an_http_request_or_a_command_line()
+    {
+        var broken = new ProjectReadinessFact("Demo", "/data/projects/demo", null, "develop",
+            RefsWithHead(null, "refs/remotes/origin/main"),
+            new DataFolderFact("Demo", "/data/projects/demo", "projects/demo", true, "/", "overlay"),
+            [new GitLockFact("/data/projects/demo/.git/index.lock", TimeSpan.FromHours(2))]);
+        var unset = broken with { Name = "Other", ConfiguredIntegrationBranch = null };
+        var facts = Facts(broken, unset) with
+        {
+            Identity = new GitIdentityFact(null, null, null, null),
+            CommitProbe = new CommitProbeFact(true, false, "fatal: disk quota exceeded"),
+            DataFolders = [new DataFolderFact("home", "/data/home", "home", false, null, null)],
+            StateFolders = [new StateFolderFact("workspace", "/data/workspace", false, "denied")],
+            Gate = new GateWorkerFact([], "kori-gate", "unreachable", null, Now.AddMinutes(-1)),
+            Hosts = new ExecutionHostsFact([new ExecutionHostFact("runner_b", "bravo", Now.UtcDateTime.AddDays(-3), null)], 0),
+            App = new GitHubAppFact(false, null, null, new Dictionary<string, GitHubAppCoverageFact>()),
+        };
+
+        var remedies = ServerReadinessPolicy.Evaluate(facts).Checks.Where(check => check.Remedy is not null).ToArray();
+
+        Assert.True(remedies.Length >= 12, $"expected a remedy on most lines, got {remedies.Length}");
+        Assert.All(remedies, check =>
+        {
+            Assert.DoesNotMatch(@"^(GET|PUT|POST|PATCH|DELETE|HEAD|OPTIONS)\b", check.Remedy!);
+            Assert.DoesNotContain("/api/", check.Remedy!);
+            Assert.DoesNotContain("docker compose exec", check.Remedy!);
+            Assert.DoesNotContain("git -C", check.Remedy!);
+            if (check.Command is { } command) Assert.DoesNotContain("/api/", command);
+        });
+        Assert.Contains(remedies, check => check.Id == "repository-visibility"
+            && check.Action == new RemedyAction(RemedyActionKinds.Setting, ProjectSettingKeys.RepositoryVisibility, "Demo"));
+        Assert.Contains(remedies, check => check.Id == "integration-branch" && check.Subject == "Demo"
+            && check.Action == IntegrationBranchSetting);
+        Assert.Contains(remedies, check => check.Id == "integration-branch" && check.Subject == "Other"
+            && check.Action == new RemedyAction(RemedyActionKinds.Setting, ProjectSettingKeys.IntegrationBranch, "Other"));
     }
 
     [Fact]
@@ -483,9 +560,9 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Equal(ReadinessStates.Warn, withOrigin.State);
         Assert.StartsWith("The integration lane refs/agent-studio/integration/main is missing, as in a fresh clone.", withOrigin.Meaning);
-        Assert.Equal("Seed it from the published branch: git -C /data/projects/demo update-ref "
-            + "refs/agent-studio/integration/main origin/main", withOrigin.Remedy);
-        Assert.EndsWith("update-ref refs/agent-studio/integration/main main", local.Remedy);
+        Assert.Equal("Seed it from the published branch.", withOrigin.Remedy);
+        Assert.Equal("git -C /data/projects/demo update-ref refs/agent-studio/integration/main origin/main", withOrigin.Command);
+        Assert.EndsWith("update-ref refs/agent-studio/integration/main main", local.Command);
         Assert.Equal(ReadinessStates.Pass, present.State);
     }
 

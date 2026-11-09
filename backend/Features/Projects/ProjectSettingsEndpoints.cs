@@ -295,6 +295,8 @@ public static class ProjectSettingsEndpoints
                     // pair only matters once it is raised above 1.
                     maxParallelism = kv.Value.MaxParallelism < 1 ? 1 : kv.Value.MaxParallelism,
                     integrationBranch = kv.Value.IntegrationBranch,
+                    // AGT-3580: the readiness remedy opens this setting, so the page has to show it.
+                    repositoryVisibility = kv.Value.RepositoryVisibility,
                     integrationStrategy = IntegrationStrategies.Normalize(kv.Value.IntegrationStrategy),
                     // AGT-2839: raw override (null = inherit) plus the resolved
                     // value the merge gate actually applies.
