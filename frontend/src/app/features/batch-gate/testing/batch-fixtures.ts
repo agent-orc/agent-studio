@@ -3,7 +3,7 @@ import type { BatchGateConfiguration, BatchGateState } from '../../../models/bat
 export const batchSettings: BatchGateConfiguration = {
   settings: {
     enabled: true, scope: 'code', planner: 'look-ahead', minimumSize: 2, maximumSize: 4,
-    deadlineMinutes: 30, lookAheadMinutes: 15, urgentTags: ['urgent'], riskPolicy: 'balanced',
+    deadlineMinutes: 30, lookAheadMinutes: 15, urgentTags: ['urgent'], riskPolicy: 'balanced', calibration: 'empirical', stacking: 'off',
     overlap: 'separate', reviewTestLevel: 'work-package', gateTimeoutMinutes: 90, preCheckEnabled: true,
     advisor: { mode: 'enforce', cliType: 'codex', model: 'test-model', timeoutSeconds: 45 },
   },

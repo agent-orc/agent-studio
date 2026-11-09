@@ -35,8 +35,9 @@ for cancelled stacked batches; if the cancelled gate has no completion fact,
 the run start to cancellation interval is the estimate. These are spent host
 minutes, not a projected delay saved.
 
-To pilot, set the project's batch gate `stacking` field to `"1"` through the
-batch gate settings API and keep at least two gate slots. During the first
+To pilot, set the project's batch gate `stacking` field to `"1"` (Project
+settings, Batch verification, Stacked batches: One successor, or the batch gate
+settings API) and keep at least two gate slots. During the first
 hours, watch those four counters, the batch predecessor links, slot occupancy,
 stale-base cancellations, and published cards per hour. Set `stacking` back
 to `"off"` to stop forming speculative successors; already formed or running

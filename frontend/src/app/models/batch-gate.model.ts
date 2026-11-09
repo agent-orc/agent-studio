@@ -11,6 +11,10 @@ export interface BatchGateSettings {
   lookAheadMinutes: number;
   urgentTags: string[];
   riskPolicy: 'conservative' | 'balanced' | 'aggressive';
+  /** Look-ahead risk rule: `empirical` learns from recorded batch verdicts, `legacy` keeps the fixed rule. */
+  calibration: 'legacy' | 'empirical';
+  /** `1` lets one formed batch gate on the previous batch's candidate (AGT-3546). */
+  stacking: 'off' | '1';
   overlap: 'adjacent' | 'separate';
   reviewTestLevel: 'work-package' | 'build-only';
   gateTimeoutMinutes: number;
