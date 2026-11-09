@@ -1,6 +1,7 @@
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
+using AgentStudio.Shared;
 using AgentStudio.Watcher;
 using Xunit;
 
@@ -11,6 +12,44 @@ public sealed class AutoReviewStrandingPolicyTests
     private static AutoReviewStrandingFacts Stranded() => new(
         TimeSpan.FromMinutes(31), TimeSpan.FromMinutes(30), false, false,
         false, false, false, false, true, false, false);
+
+    [Fact]
+    public void Older_run_review_cannot_reenter_batch_for_a_new_delivery()
+    {
+        const string oldSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const string newSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        var now = new DateTime(2026, 11, 5, 12, 0, 0, DateTimeKind.Utc);
+        var run = new RunAttemptDto("run-new", "AGT-1", "project", null,
+            AttemptLifecycleState.Completed, null, 1, 1, now, now,
+            newSha, "done", null, [],
+            new AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope(
+                "project", "run-new", oldSha, newSha, "refs/results/new", null, "digest"));
+        var subject = new ReviewSubjectDto("subject", "project", oldSha, "run-old",
+            "requirements", "policy", [], now);
+        var review = new ReviewAttemptDto("review-old", "AGT-1", "project", "run-old",
+            null, subject, AttemptLifecycleState.Completed, null, 1, 1, now,
+            now, ReviewTerminalOutcome.Pass, null, oldSha, null, []);
+
+        var currentReview = AutoReviewStrandingWatchdog.ReviewForCurrentDelivery(review, run);
+
+        Assert.Null(currentReview);
+        Assert.Equal(AutoReviewStrandingAction.StartStep,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                HasReview = currentReview is not null,
+                PassedReview = currentReview?.Outcome == ReviewTerminalOutcome.Pass,
+            }));
+        Assert.NotNull(AutoReviewStrandingWatchdog.ReviewForCurrentDelivery(
+            review with { SourceRunAttemptId = run.AttemptId,
+                Subject = subject with { SourceRunAttemptId = run.AttemptId, ExpectedResultSha = newSha },
+                TestedResultSha = newSha }, run));
+        Assert.Null(AutoReviewStrandingWatchdog.ReviewForCurrentDelivery(
+            review with { SourceRunAttemptId = run.AttemptId,
+                Subject = subject with { SourceRunAttemptId = run.AttemptId } }, run));
+        Assert.Null(AutoReviewStrandingWatchdog.ReviewForCurrentDelivery(
+            review with { SourceRunAttemptId = run.AttemptId,
+                Subject = subject with { SourceRunAttemptId = run.AttemptId, ExpectedResultSha = newSha } }, run));
+    }
 
     [Fact]
     public void Missing_review_step_is_started_after_threshold()
@@ -132,13 +171,21 @@ public sealed class AutoReviewStrandingPolicyTests
             var now = new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
             const string sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
             var scope = new BatchGateScope("project", "repo", "develop", "full", "digest", "v1");
+            var run = new RunAttemptDto("run-1", "card-1", "repo", null,
+                AttemptLifecycleState.Completed, null, 1, 1, now.UtcDateTime, now.UtcDateTime,
+                sha, "done", null, []);
             BatchGateSubject Subject(string key) => new(
                 key, "project", "repo", "develop", "full", "digest", "v1",
                 "refs/heads/agent-studio/results/one", sha, "run-1", 1, 1, sha,
                 true, true, true, true, false, null, true, now, 0);
             var pending = store.Enqueue(new BatchGatePendingRecord("review-1", Subject("card-1"),
                 root, root, root, "direct-merge", "task", now));
-            Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", "review-1"));
+            Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
+                run with { AttemptId = "run-2" }, "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
+                run with { ResultSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-2"));
 
             var manifest = BatchGatePolicy.Form([pending.Subject,
                     Subject("card-2") with { EnqueueSequence = 2 },
@@ -149,11 +196,15 @@ public sealed class AutoReviewStrandingPolicyTests
             store.ResolvePending("review-1", "formed");
 
             Assert.Empty(store.ListPending());
-            Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", "review-1"));
-            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "other-project", "card-1", "review-1"));
+            Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
+                run with { AttemptId = "run-2" }, "review-2"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
+                run with { ResultSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "other-project", "card-1", run, "review-1"));
             store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
                 BatchPhase.Published, null, 0, now.AddMinutes(21)));
-            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
         }
         finally
         {

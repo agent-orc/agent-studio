@@ -377,7 +377,12 @@ batch, a queued round, and a queued post-processing step. A card with none gets
 a durable intervention receipt in the existing stall-intervention feed and
 its timeline. Report-only cards restart post-processing; coding cards with a
 completed run request a fresh ReviewAttempt; a passed review resumes delivery
-integration or re-enters the batch gate. If no safe step can be started, the
+integration or re-enters the batch gate only when its source RunAttempt and
+result SHA match the current completed delivery and the completed review tested
+that SHA. Pending and active formed batches own a card only when their run and
+result SHA match the current delivery; a pending entry must also match its
+current review attempt. An older review starts a fresh review for the new
+delivery. If no safe step can be started, the
 card moves to Escalated with the reason. Each intervention in a lane visit has
 its own receipt. After a successful intervention, the watchdog waits another
 threshold interval before intervening again. It can advance from review recovery

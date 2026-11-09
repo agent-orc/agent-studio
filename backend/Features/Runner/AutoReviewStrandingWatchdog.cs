@@ -63,7 +63,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         var activeBatchMembers = _batches.ListManifests()
             .Where(manifest => IsActiveManifest(_batches, manifest))
             .SelectMany(manifest => manifest.Members.Select(member =>
-                manifest.Scope.Project + "\u001f" + member.TaskKey))
+                BatchMemberKey(member)))
             .ToHashSet(StringComparer.Ordinal);
         var interventions = _records.All().ToList();
         var count = 0;
@@ -76,8 +76,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 var key = CardKey(card);
                 var projection = _authority.GetTaskProjection(key);
                 var run = projection.CurrentRunAttempt;
-                var review = ReviewMatchesCurrentRun(projection.CurrentReviewAttempt, run)
-                    ? projection.CurrentReviewAttempt : null;
+                var currentReview = ReviewForCurrentDelivery(projection.CurrentReviewAttempt, run);
                 var writePrefix = $"auto-review-stranding:{card.ProjectName}:{key}:{card.EnteredLaneAt.Ticks}:";
                 var previous = interventions.Where(item => item.WriteKey.StartsWith(writePrefix, StringComparison.Ordinal)
                     && item.Status == StallInterventionStatuses.Verified).ToArray();
@@ -85,16 +84,17 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 var facts = new AutoReviewStrandingFacts(now - card.EnteredLaneAt, threshold,
                     _pipeline.Read(card.FolderPath)?.Steps.Any(step => step.Status == PipelineStepStatus.Running) == true
                         || IntegrationGateJournal.Read(card.FolderPath) is not null,
-                    review?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased,
-                    pending.Any(item => item.Subject.Project == card.ProjectName
-                        && item.Subject.TaskKey == key)
-                        || activeBatchMembers.Contains(card.ProjectName + "\u001f" + key),
+                    currentReview?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased,
+                    pending.Any(item => IsPendingForDelivery(item, card.ProjectName, key,
+                        run, currentReview?.AttemptId))
+                        || run is not null && activeBatchMembers.Contains(
+                            BatchMemberKey(card.ProjectName, key, run.AttemptId, run.ResultSha)),
                     card.PendingIntent is not null,
                     _queue.PositionOf(card.ProjectName, card.Id) is not null,
                     TaskModes.IsReportOnly(card.Mode),
                     run is { State: AttemptLifecycleState.Completed, ResultEnvelope: not null },
-                    review is not null,
-                    review is { Outcome: ReviewTerminalOutcome.Pass },
+                    currentReview is not null,
+                    currentReview is { Outcome: ReviewTerminalOutcome.Pass },
                     latest is null ? null : now - latest.DecidedAtUtc,
                     previous.Any(item => item.Action == AutoReviewStrandingAction.StartStep.ToString()),
                     previous.Any(item => item.Action == AutoReviewStrandingAction.ReenterBatch.ToString()));
@@ -102,13 +102,13 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 if (action == AutoReviewStrandingAction.Leave) continue;
                 // A batch can form after the pass snapshot. Recheck before any
                 // side effect so formation never races a recovery intervention.
-                if (IsBatchMember(_batches, card.ProjectName, key, review?.AttemptId)) continue;
+                if (IsBatchMember(_batches, card.ProjectName, key, run, currentReview?.AttemptId)) continue;
                 var writeKey = NextWriteKey(writePrefix, interventions);
                 var repeated = action == AutoReviewStrandingAction.Escalate
                     && (facts.StartedStepBefore || facts.ReenteredBatchBefore);
                 var (done, deferred, detail) = repeated
                     ? (false, false, "The previous automatic recovery did not keep an owner for this card.")
-                    : await InterveneAsync(card, action, review, run, ct);
+                    : await InterveneAsync(card, action, currentReview, run, ct);
                 if (deferred) continue;
                 var escalated = false;
                 if (!done)
@@ -116,7 +116,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     // Formation can consume the pending entry while recovery is
                     // running. A closed batch now owns the card, even if the
                     // recovery call did not observe a pending entry itself.
-                    if (IsBatchMember(_batches, card.ProjectName, key, review?.AttemptId)) continue;
+                    if (IsBatchMember(_batches, card.ProjectName, key, run, currentReview?.AttemptId)) continue;
                     var parked = await _escalation.EscalateAsync(card.Id, card.WatchPath,
                         card.ProjectName, HumanReviewEscalationCategories.Environmental,
                         $"Auto Review had no active owner for {facts.InLane.TotalMinutes:0} minutes. {detail}",
@@ -174,6 +174,17 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             "delivery-verdict-stale");
     }
 
+    /// <summary>A verdict can recover only the immutable result it reviewed.</summary>
+    internal static ReviewAttemptDto? ReviewForCurrentDelivery(ReviewAttemptDto? review, RunAttemptDto? run)
+        => run is { State: AttemptLifecycleState.Completed, ResultEnvelope: not null, ResultSha: not null }
+            && review is not null
+            && string.Equals(review.SourceRunAttemptId, run.AttemptId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(review.Subject.SourceRunAttemptId, run.AttemptId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(review.Subject.ExpectedResultSha, run.ResultSha, StringComparison.OrdinalIgnoreCase)
+            && (review.State != AttemptLifecycleState.Completed
+                || string.Equals(review.TestedResultSha, run.ResultSha, StringComparison.OrdinalIgnoreCase))
+            ? review : null;
+
     private async Task<(bool Done, bool Deferred, string Detail)> InterveneAsync(TaskInfo card,
         AutoReviewStrandingAction action, ReviewAttemptDto? review, RunAttemptDto? run,
         CancellationToken ct)
@@ -191,8 +202,9 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             // passed review for an older delivery resume or enqueue this one.
             var current = _authority.GetTaskProjection(CardKey(card));
             if (current.CurrentReviewAttempt?.AttemptId != review.AttemptId
-                || !ReviewMatchesCurrentRun(current.CurrentReviewAttempt, current.CurrentRunAttempt)
-                || current.CurrentRunAttempt?.AttemptId != run.AttemptId)
+                || ReviewForCurrentDelivery(current.CurrentReviewAttempt, current.CurrentRunAttempt) is null
+                || current.CurrentRunAttempt?.AttemptId != run.AttemptId
+                || !_authority.IsReviewedDeliveryCurrent(review.AttemptId))
                 return (false, true, "The review no longer covers the current delivery.");
             var resumed = await _resume.ResumeAsync(card, "auto-review-stranding", ct);
             if (resumed.Resumed) return (true, false, "Resumed delivery integration: " + resumed.Reason + ".");
@@ -202,16 +214,19 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 return (false, true, "Delivery integration is owned: " + resumed.Reason + ".");
             try
             {
+                if (!_authority.IsReviewedDeliveryCurrent(review.AttemptId))
+                    return (false, true, "The reviewed delivery was superseded before batch admission.");
                 if (_settings.Get(card.ProjectName).BatchGate.Enabled
                     && review.TerminalAt is { } reviewedAt)
                 {
                     current = _authority.GetTaskProjection(CardKey(card));
                     if (current.CurrentReviewAttempt?.AttemptId != review.AttemptId
-                        || !ReviewMatchesCurrentRun(current.CurrentReviewAttempt, current.CurrentRunAttempt)
-                        || current.CurrentRunAttempt?.AttemptId != run.AttemptId)
+                        || ReviewForCurrentDelivery(current.CurrentReviewAttempt, current.CurrentRunAttempt) is null
+                        || current.CurrentRunAttempt?.AttemptId != run.AttemptId
+                        || !_authority.IsReviewedDeliveryCurrent(review.AttemptId))
                         return (false, true, "The review no longer covers the current delivery.");
                     await _batchPilot.EnqueueAsync(card, review, run, new DateTimeOffset(reviewedAt), ct);
-                    if (IsBatchMember(_batches, card.ProjectName, CardKey(card), review.AttemptId))
+                    if (IsBatchMember(_batches, card.ProjectName, CardKey(card), run, review.AttemptId))
                         return (true, false, "Re-entered the batch gate for the passed review.");
                     return (false, false,
                         "The batch gate retained only a resolved record for this review attempt.");
@@ -263,16 +278,35 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
     }
 
     internal static bool IsBatchMember(BatchGateStore batches, string project, string taskKey,
-        string? reviewAttemptId)
+        RunAttemptDto? run, string? reviewAttemptId)
     {
-        if (batches.ListPending().Any(item => item.Subject.Project == project
-            && (item.Subject.TaskKey == taskKey
-                || reviewAttemptId is not null && item.ReviewAttemptId == reviewAttemptId))) return true;
+        if (run is null || run.ResultSha is null) return false;
+        if (batches.ListPending().Any(item => IsPendingForDelivery(item, project, taskKey,
+            run, reviewAttemptId))) return true;
         return batches.ListManifests().Any(manifest =>
             manifest.Scope.Project == project
-            && manifest.Members.Any(member => member.TaskKey == taskKey)
+            && manifest.Members.Any(member => IsSubjectForDelivery(member, project, taskKey, run))
             && IsActiveManifest(batches, manifest));
     }
+
+    private static bool IsPendingForDelivery(BatchGatePendingRecord pending, string project,
+        string taskKey, RunAttemptDto? run, string? reviewAttemptId)
+        => reviewAttemptId is not null
+            && string.Equals(pending.ReviewAttemptId, reviewAttemptId, StringComparison.Ordinal)
+            && run is not null && IsSubjectForDelivery(pending.Subject, project, taskKey, run);
+
+    private static bool IsSubjectForDelivery(BatchGateSubject subject, string project,
+        string taskKey, RunAttemptDto run)
+        => string.Equals(subject.Project, project, StringComparison.Ordinal)
+            && string.Equals(subject.TaskKey, taskKey, StringComparison.Ordinal)
+            && string.Equals(subject.RunAttempt, run.AttemptId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(subject.ResultSha, run.ResultSha, StringComparison.OrdinalIgnoreCase);
+
+    private static string BatchMemberKey(BatchGateSubject subject)
+        => BatchMemberKey(subject.Project, subject.TaskKey, subject.RunAttempt, subject.ResultSha);
+
+    private static string BatchMemberKey(string project, string taskKey, string runAttempt, string? resultSha)
+        => string.Join('\u001f', project, taskKey, runAttempt.ToUpperInvariant(), resultSha?.ToUpperInvariant());
 
     private static bool IsActiveManifest(BatchGateStore batches, BatchGateManifest manifest)
     {
