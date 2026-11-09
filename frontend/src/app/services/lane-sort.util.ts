@@ -4,7 +4,7 @@
  * the backend `LaneSortStrategies` constants exactly; keep them in sync.
  */
 
-import { TaskState } from '../models/task.model';
+import { TaskState, type TaskInfo } from '../models/task.model';
 import { lanePresentation } from '../models/lane-presentation';
 
 export interface LaneSortStrategyMeta {
@@ -23,13 +23,13 @@ const META: Record<string, LaneSortStrategyMeta> = {
     value: 'lane-entry',
     label: 'Lane entry',
     icon: '⤓',
-    hint: 'Most recently entered on top; drag a card to pin it.',
+    hint: 'Cards placed by hand first, then the most recently entered on top. Drag a card to place it.',
   },
   manual: {
     value: 'manual',
     label: 'Manual',
     icon: '≡',
-    hint: 'Manual order — drag cards to reorder.',
+    hint: 'Manual order. Drag cards to reorder.',
   },
   'newest-first': {
     value: 'newest-first',
@@ -126,4 +126,127 @@ export const SORTABLE_LANES: readonly SortableLaneMeta[] = SORTABLE_LANE_STATES.
 export function displayStateToLaneKey(state: string): string {
   if (state === '2-ready-intake') return TaskState.Ready;
   return state;
+}
+
+/**
+ * AGT-3587: one sentence for how the runners read Ready. Shared by the lane
+ * sort tooltip and mirrored by `docs/app/help/lane-guides/lane-2-ready.md`, so
+ * the tooltip and the lane help describe the same rule.
+ */
+export const READY_PICKUP_RULE =
+  'Each project runs its own Ready queue from the top: the card marked Next runs when that project has a free slot.';
+
+/**
+ * F35 / AGT-3587: lane-header sort indicator. Returns the glyph and tooltip
+ * for the resolved strategy, or null when no strategy data is loaded. `mixed`
+ * means the visible projects disagree. The Ready lane appends the pickup rule.
+ */
+export function laneSortIndicator(
+  strategy: string,
+  state: string,
+): { icon: string; label: string; tooltip: string } | null {
+  if (!strategy) return null;
+  const pickup = displayStateToLaneKey(state) === TaskState.Ready ? ` ${READY_PICKUP_RULE}` : '';
+  if (strategy === 'mixed') {
+    return {
+      icon: '⇅',
+      label: 'mixed',
+      tooltip: 'Sorted per project: the projects shown in this lane use different sort orders. '
+        + `Filter to a single project, or set that lane to Manual, to reorder by hand.${pickup}`,
+    };
+  }
+  const meta = laneSortStrategyMeta(strategy);
+  const order = allowsDragReorder(strategy)
+    ? meta.hint
+    : `Auto-sorted by ${meta.label.toLowerCase()}; switch this lane to Manual to reorder.`;
+  return { icon: meta.icon, label: meta.label, tooltip: `${order}${pickup}` };
+}
+
+/**
+ * AGT-3587: quiet note above a Ready lane that mixes projects. The lane is a
+ * run of per-project queues (alphabetical by project), not one global queue,
+ * so the board says so instead of implying a cross-project order.
+ */
+export function perProjectOrderNote(state: string, jobs: readonly TaskInfo[]): string | null {
+  if (displayStateToLaneKey(state) !== TaskState.Ready) return null;
+  const projects = new Set(jobs.map((job) => job.projectName));
+  return projects.size > 1 ? 'Grouped by project. Each project keeps its own order.' : null;
+}
+
+const UNPINNED_ORDER = 999;
+
+function time(value: string | null | undefined): number {
+  const parsed = value ? Date.parse(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** Mirrors backend `LaneSortStrategies.KeyComparer`: prefix, then numeric suffix. */
+function compareKeys(a: string, b: string): number {
+  const dashA = a.lastIndexOf('-');
+  const dashB = b.lastIndexOf('-');
+  if (dashA > 0 && dashB > 0) {
+    const byPrefix = compareIgnoreCase(a.slice(0, dashA), b.slice(0, dashB));
+    if (byPrefix !== 0) return byPrefix;
+    const nA = Number(a.slice(dashA + 1));
+    const nB = Number(b.slice(dashB + 1));
+    if (Number.isInteger(nA) && Number.isInteger(nB)) return Math.sign(nA - nB);
+  }
+  return compareIgnoreCase(a, b);
+}
+
+function compareIgnoreCase(a: string, b: string): number {
+  const ua = a.toUpperCase();
+  const ub = b.toUpperCase();
+  return ua < ub ? -1 : ua > ub ? 1 : 0;
+}
+
+/** Null keys sort last in both directions, as on the backend. */
+function compareKey(a: TaskInfo, b: TaskInfo, direction: 1 | -1): number {
+  if (!a.key && !b.key) return 0;
+  if (!a.key) return 1;
+  if (!b.key) return -1;
+  return direction * compareKeys(a.key, b.key);
+}
+
+const COMPARERS: Record<string, (a: TaskInfo, b: TaskInfo) => number> = {
+  manual: (a, b) => (a.order - b.order) || compareKey(a, b, -1),
+  'lane-entry': (a, b) => {
+    const aPinned = a.order !== UNPINNED_ORDER;
+    const bPinned = b.order !== UNPINNED_ORDER;
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+    if (aPinned) return (a.order - b.order) || compareKey(a, b, -1);
+    return Math.sign(time(b.enteredLaneAt) - time(a.enteredLaneAt)) || compareKey(a, b, -1);
+  },
+  'newest-first': (a, b) => compareKey(a, b, -1) || Math.sign(time(b.createdAt) - time(a.createdAt)),
+  'oldest-first': (a, b) => compareKey(a, b, 1) || Math.sign(time(a.createdAt) - time(b.createdAt)),
+  'last-activity': (a, b) => Math.sign(time(b.lastActivity) - time(a.lastActivity)) || (a.order - b.order),
+  'pickup-priority': (a, b) => (a.order - b.order) || Math.sign(time(a.lastActivity) - time(b.lastActivity)),
+};
+
+/**
+ * AGT-3587: client mirror of backend `LaneSortApplier.Sort`. Groups a lane by
+ * project in alphabetical order and sorts each group with that project's lane
+ * strategy (default `lane-entry`). A pushed card is re-inserted with this, so
+ * the board keeps the order `/api/tasks/grouped` returns instead of sorting
+ * the whole lane by `order` across projects.
+ */
+export function sortLaneLikeBoard(
+  jobs: readonly TaskInfo[],
+  state: string,
+  strategies: Record<string, Record<string, string>>,
+): TaskInfo[] {
+  const laneKey = displayStateToLaneKey(state);
+  const byProject = new Map<string, TaskInfo[]>();
+  for (const job of jobs) {
+    const project = (job.projectName ?? '').toUpperCase();
+    const group = byProject.get(project);
+    if (group) group.push(job);
+    else byProject.set(project, [job]);
+  }
+  return [...byProject.keys()].sort(compareIgnoreCase).flatMap((project) => {
+    const group = byProject.get(project)!;
+    const strategy = strategies[group[0].projectName]?.[laneKey];
+    const comparer = COMPARERS[strategy ?? ''] ?? COMPARERS['lane-entry'];
+    return [...group].sort(comparer);
+  });
 }

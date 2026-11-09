@@ -8,6 +8,7 @@
       Edit this project's onboarding values and execution behavior, then review
       the workspace defaults it inherits.
     </p>
+    <app-settings-jump-links [links]="[{ target: 'batch-settings', label: 'Batch verification', testId: 'project-settings-jump-batch' }]" />
   </header>
   <section class="ps-settings__section" aria-label="Project basics">
     <app-project-basics-card [projectName]="projectName()" />

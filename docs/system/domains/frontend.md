@@ -299,7 +299,10 @@ the suite is independent of the workstation's operating-system locale.
 ### Batch verification
 
 Project settings expose the batch gate's scope, planner, bounds, risk policy,
-review test level, timeout, and advisor mode. Review lane headers summarize
+calibration, stacking, review test level, timeout, and advisor mode. Enabling
+the gate while the scope is Documentation switches the scope to Code and says
+so; the operator can switch it back before saving. A link at the top of the
+project settings page jumps to the section (AGT-3592). Review lane headers summarize
 waiting and running batches; card badges and task detail read membership from
 `GET /api/projects/{project}/batch-gate/state?history=10`, not from board cards.
 The project batch panel shows the planner, look ahead, advisor verdict, pending

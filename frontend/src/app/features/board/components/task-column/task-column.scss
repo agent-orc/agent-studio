@@ -156,6 +156,13 @@
       font-size: 13px;
       padding: 24px 0;
     }
+    /* AGT-3587: names the per-project Ready order; quiet, not a banner. */
+    .column__order-note {
+      margin: 0;
+      padding: var(--studio-spacing-1) var(--studio-spacing-3);
+      font-size: var(--studio-lane-header-secondary-size);
+      color: var(--studio-fg-muted);
+    }
     .column__empty--subsection {
       padding: 8px 0;
       font-size: 12px;

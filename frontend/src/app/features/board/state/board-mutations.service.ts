@@ -10,6 +10,7 @@ import { TaskSelectionService } from '../../task-detail/state/task-selection.ser
 import { laneLabelFor } from '../../task-detail/state/triage-actions.model';
 import { NotificationService } from '../../../services/notification.service';
 import { decisionMoveRefusal } from '../../../models/decision-card-presentation';
+import { readyQueueReorder, type QueueEdge } from './ready-queue-order';
 
 /**
  * Cycle 10b board-feature service: orchestrates the board's mutation
@@ -101,6 +102,41 @@ export class BoardMutationsService {
           title: 'Failed to reorder tasks',
           fallbackMessage: 'Failed to reorder tasks',
           source: `Column ${event.state}`,
+        });
+      },
+    });
+  }
+
+  /**
+   * AGT-3588: board-menu Move to top / Move to bottom for a Ready card.
+   * Paints the lane first, persists the card's project queue, then offers
+   * Undo, which replays the captured queue.
+   */
+  moveToQueueEdge(job: TaskInfo, edge: QueueEdge): void {
+    const reorder = readyQueueReorder(this.jobService.laneJobs(TaskState.Ready), job, edge);
+    if (!reorder) return;
+    const before = this.jobService.applyOptimisticReorder(TaskState.Ready, reorder.nextLane);
+    this.jobService.beginOptimisticPersist();
+    this.jobService.reorderJobs(reorder.nextQueue).subscribe({
+      next: () => {
+        this.jobService.endOptimisticPersist();
+        this.undo.offerReorderRevert({
+          jobId: job.id,
+          jobLabel: job.title || job.id,
+          actionLabel: 'Moved',
+          targetLaneLabel: `${edge} of ${laneLabelFor(TaskState.Ready)}`,
+          laneState: TaskState.Ready,
+          prevOrder: reorder.prevQueue,
+          paintOrder: reorder.prevLane,
+        });
+      },
+      error: (err) => {
+        this.jobService.endOptimisticPersist();
+        if (before) this.jobService.revertOptimisticReorder(TaskState.Ready, before);
+        this.errorDialog.show(err, {
+          title: `Failed to move task to the ${edge}`,
+          fallbackMessage: `Failed to move task to the ${edge} of the ${laneName(TaskState.Ready)} queue`,
+          source: `Task ${job.id}`,
         });
       },
     });
