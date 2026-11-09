@@ -22,7 +22,7 @@ namespace AgentStudio.Tests;
 /// Each real gate outcome now records exactly one shadow observation, and the
 /// real engine handler decides it.
 /// </summary>
-public sealed partial class BatchGatePilotServiceTests
+public sealed class GateResultShadowObservationTests : BatchGatePilotServiceTests
 {
     public static TheoryData<string> GateResultOutcomes() => new()
     {
@@ -345,8 +345,11 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal((1, 0), (rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak,
             rollout.GetProfiles().Single(item => item.Profile == "GateResult").MismatchCount));
     }
+}
 
-    private string AdvancePublishedTip(string firstTip)
+public abstract partial class BatchGatePilotServiceTests
+{
+    private protected string AdvancePublishedTip(string firstTip)
     {
         Git(_repo, "checkout", "-q", "--detach", firstTip);
         File.WriteAllText(Path.Combine(_repo, "newer-publication.txt"), "newer published work\n");
@@ -358,7 +361,7 @@ public sealed partial class BatchGatePilotServiceTests
         return tip;
     }
 
-    private static OrchestrationRolloutStore ShadowGateResult(WebApplicationFactory<Program> factory)
+    private protected static OrchestrationRolloutStore ShadowGateResult(WebApplicationFactory<Program> factory)
     {
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
         rollout.Switch("GateResult", "shadow", "operator", "compare every gate outcome");
@@ -366,7 +369,7 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>The cards an outcome settles, with the lane, occurrence key and monolith action each must show.</summary>
-    private async Task<(string Key, string Lane, string KeyPrefix, string Action)[]> ArrangeGateOutcomeAsync(
+    private protected async Task<(string Key, string Lane, string KeyPrefix, string Action)[]> ArrangeGateOutcomeAsync(
         WebApplicationFactory<Program> factory, string outcome)
     {
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
@@ -447,7 +450,7 @@ public sealed partial class BatchGatePilotServiceTests
     /// its admission, and the per-task emergency gate settles it, as
     /// <see cref="EngineBatchAdmission"/> does for an engine DeferToBatch.
     /// </summary>
-    private async Task<SeededMember> RunEmergencyFallbackAsync(WebApplicationFactory<Program> factory,
+    private protected async Task<SeededMember> RunEmergencyFallbackAsync(WebApplicationFactory<Program> factory,
         string key, bool red)
     {
         var member = SeedMember(factory, key, $"src/{key}.cs", settleReview: false);
@@ -459,7 +462,7 @@ public sealed partial class BatchGatePilotServiceTests
         return member;
     }
 
-    private static IReadOnlyList<MonolithOrchestrationOccurrence> GateResultOccurrences(
+    private protected static IReadOnlyList<MonolithOrchestrationOccurrence> GateResultOccurrences(
         MonolithOrchestrationStore orchestration, string taskId)
         => orchestration.List(ProjectName, null)
             .Select(run => orchestration.GetOccurrence(run.RunId)!)
@@ -471,7 +474,7 @@ public sealed partial class BatchGatePilotServiceTests
     /// handler, or with <paramref name="forced"/> for a decision the handler
     /// does not reach from these facts.
     /// </summary>
-    private static async Task<MonolithOrchestrationOccurrence> DecideGateResultAsEngineAsync(
+    private protected static async Task<MonolithOrchestrationOccurrence> DecideGateResultAsEngineAsync(
         WebApplicationFactory<Program> factory, string runId, TransitionAction? forced = null)
     {
         var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
@@ -479,10 +482,10 @@ public sealed partial class BatchGatePilotServiceTests
         return orchestration.GetOccurrence(runId)!;
     }
 
-    private static Contract.OrchestrationClaimResponse Claim(MonolithOrchestrationStore orchestration)
+    private protected static Contract.OrchestrationClaimResponse Claim(MonolithOrchestrationStore orchestration)
         => orchestration.Claim(new("engine", "shadow", [Contract.OrchestrationStage.GateDispatch]));
 
-    private static async Task CompleteAsEngineAsync(MonolithOrchestrationStore orchestration,
+    private protected static async Task CompleteAsEngineAsync(MonolithOrchestrationStore orchestration,
         Contract.OrchestrationClaimResponse claim, TransitionAction? forced)
     {
         var occurrence = orchestration.GetOccurrence(claim.Run!.RunId)!;

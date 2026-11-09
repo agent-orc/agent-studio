@@ -7,7 +7,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePilotOrphanRecoveryTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Tick_recovers_a_formed_manifest_missing_from_the_pilots_flights()
