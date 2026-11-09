@@ -28,7 +28,9 @@ import { DecisionBacklogHintComponent } from '../decision-backlog-hint/decision-
 import { projectIdentity } from '../../../../services/project-identity.util';
 import { cliTypeIcon } from '../../../../services/format.util';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { groupReviewJobs } from '../review-grouping.util';
+import { groupReviewJobs, type LaneCardGroup } from '../review-grouping.util';
+import { groupEscalatedJobs } from '../escalation-grouping.util';
+import { LaneGroupHeadComponent } from '../lane-group-head/lane-group-head.component';
 import { InfoButtonComponent } from '../../../../components/info-button/info-button.component';
 import { lanePresentation } from '../../../../models/lane-presentation';
 import { laneSortIndicator, perProjectOrderNote } from '../../../../services/lane-sort.util';
@@ -52,6 +54,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
   imports: [
     TaskCardComponent,
     LaneCardWindowComponent,
+    LaneGroupHeadComponent,
     DecisionBacklogHintComponent,
     TooltipDirective,
     InfoButtonComponent,
@@ -97,7 +100,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   private readonly laneBody = viewChild<ElementRef<HTMLElement>>('laneBody');
   readonly cardWindowState = new LaneCardWindow(
     () => this.jobs(), () => this.compact(), () => this.state(),
-    () => this.isReview(), () => this.reviewGroups(),
+    () => this.isGrouped(), () => this.laneGroups() ?? [],
     () => this.laneBody()?.nativeElement ?? null, () => this.highlightJobId(),
   );
   readonly windowed = this.cardWindowState.enabled;
@@ -364,35 +367,24 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly infoTopic = computed<string | null>(() => this.lane().docTopic);
   readonly laneTone = computed(() => this.lane().tone);
 
-  /**
-   * The ADR-0025 swim-lanes are now real columns; the in-column
-   * subdivision only triggers for the legacy `4-review` payload (older
-   * backend, newer frontend, or until the migration runs). The new
-   * `4-auto-review` lane is itself the "machine" pass and the new
-   * `5-human-review` lane is itself the "you" pass; they don't need an
-   * extra in-column split.
-   */
-  isReview(): boolean {
-    return this.state() === '4-review' || this.readinessGroups() !== null;
-  }
-
   /** AGT-3564: once a readiness check answered, Human Review groups its cards by acceptance readiness. */
   private readonly readinessGroups = computed(() =>
     this.state() === TaskState.HumanReview ? this.readiness.groupsFor(this.jobs()) : null);
 
   /**
-   * Splits 4-review cards into two visually distinct sub-sections:
-   *   - "Orchestrator review" holds cards with a non-null
-   *     orchestratorVerdict (the orchestrator picked them up from a
-   *     NEEDS_INPUT / NOOP / BLOCKED sentinel and decided reissue,
-   *     escalate, or accept).
-   *   - "Human review" holds the rest (clean DONE awaiting the user's
-   *     accept).
-   * The split is presentation-only; cards keep their underlying state
-   * lane and drag-drop semantics. Reorder within the column is disabled
-   * while subdivided so the swim-lanes stay coherent.
+   * In-column subsections, presentation only (cards keep their lane and drag
+   * semantics; reorder is off while a lane is grouped). The legacy `4-review`
+   * payload splits into orchestrator and human review (ADR-0025 made both real
+   * lanes); Escalated groups bursts that share a cause (AGT-3585); Human Review
+   * groups by acceptance readiness (AGT-3564); else null.
    */
-  readonly reviewGroups = computed(() => this.readinessGroups() ?? groupReviewJobs(this.jobs()));
+  readonly laneGroups = computed<readonly LaneCardGroup[] | null>(() =>
+    this.state() === '4-review' ? groupReviewJobs(this.jobs())
+      : this.state() === TaskState.Escalated ? groupEscalatedJobs(this.jobs()) : this.readinessGroups());
+
+  isGrouped(): boolean {
+    return this.laneGroups() !== null;
+  }
 
   canArchiveAll(): boolean {
     return this.state() === TaskState.Completed || this.state() === '5-completed';
@@ -421,7 +413,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
 
   /** Count the children currently rendered in the lane, including held Ready cards. */
   readonly headerCount = computed(() => (this.isArchive() ? this.archiveItems().length
-    : this.isReview() ? this.reviewGroups().reduce((sum, group) => sum + group.jobs.length, 0) : this.jobs().length));
+    : this.laneGroups()?.reduce((sum, group) => sum + group.jobs.length, 0) ?? this.jobs().length));
 
   ngOnInit(): void {
     if (this.isArchive()) {
@@ -751,7 +743,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
       // Reorder stays suppressed when reorder is disabled or when the lane
       // renders the legacy 4-review subdivision (which intentionally
       // disables reorder so the orchestrator/human swim-lanes stay coherent).
-      if (this.reorderDisabled() || this.isReview()) return;
+      if (this.reorderDisabled() || this.isGrouped()) return;
       const slot = this.computeDropSlotFromCursor(event);
       this.performSameLaneReorder(payload.taskKey, slot);
       return;
@@ -762,7 +754,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
     // moved card lands where the user released, not at a position derived
     // from its stale source-lane order. Lanes that disable reorder (review
     // subdivision) still get a deterministic slot via the trailing index.
-    const targetIndex = (this.reorderDisabled() || this.isReview())
+    const targetIndex = (this.reorderDisabled() || this.isGrouped())
       ? this.jobs().length
       : this.computeDropSlotFromCursor(event);
     this.jobDrop.emit({

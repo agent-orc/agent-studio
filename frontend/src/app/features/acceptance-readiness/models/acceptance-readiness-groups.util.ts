@@ -1,4 +1,5 @@
 import type { TaskInfo } from '../../../models/task.model';
+import type { LaneCardGroup } from '../../board/components/review-grouping.util';
 import {
   AcceptanceReadinessClass,
   AcceptanceReadinessFilter,
@@ -7,12 +8,9 @@ import {
   READINESS_PRESENTATION,
 } from './acceptance-readiness.model';
 
-/** One readiness group of the Human Review lane, shaped like a review sub-section. */
-export interface ReadinessGroup {
+/** One readiness group of the Human Review lane, rendered like any other lane group. */
+export interface ReadinessGroup extends LaneCardGroup {
   readonly kind: AcceptanceReadinessClass | 'unchecked';
-  readonly label: string;
-  readonly icon: string;
-  readonly jobs: TaskInfo[];
 }
 
 /** Lookup key of a card in a readiness report: its task key, or its id. */
@@ -43,7 +41,9 @@ export function groupByReadiness(
   return kinds
     .filter(kind => (buckets.get(kind)?.length ?? 0) > 0)
     .map(kind => ({
+      key: kind,
       kind,
+      testid: `review-subsection-${kind}`,
       label: kind === 'unchecked' ? 'Not checked yet' : READINESS_PRESENTATION[kind].label,
       icon: '',
       jobs: buckets.get(kind)!,
