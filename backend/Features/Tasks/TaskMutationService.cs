@@ -117,18 +117,23 @@ public class TaskMutationService
         TaskInfo? info;
         using (TaskSwitchTrace.Span("mutation.lookup")) info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        var previousModel = ModelMetadataRegistry.NormalizeForCli(info.CliType, info.Model);
-        var normalizedModel = ModelMetadataRegistry.NormalizeForCli(info.CliType, model);
-        using (TaskSwitchTrace.Span("mutation.write"))
-            if (!TaskJsonFile.UpdateFields(info.FolderPath, new Dictionary<string, object>
-                {
-                    ["model"] = normalizedModel ?? "",
-                    ["modelExplicit"] = !string.IsNullOrWhiteSpace(model),
-                    ["pinMode"] = pinMode,
-                    ["thinkingLevel"] = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, normalizedModel, info.ThinkingLevel) ?? "",
-                }, _logger, _keyFileWriter)) return false;
-        AppendModelChangeMarker(info, previousModel, normalizedModel);
-        return RoutingUpdated(info);
+        using (AcquireRoutingLock(info.FolderPath))
+        {
+            info = ReadCurrentRoutingCard(info);
+            if (info is null) return false;
+            var previousModel = ModelMetadataRegistry.NormalizeForCli(info.CliType, info.Model);
+            var normalizedModel = ModelMetadataRegistry.NormalizeForCli(info.CliType, model);
+            using (TaskSwitchTrace.Span("mutation.write"))
+                if (!TaskJsonFile.UpdateFields(info.FolderPath, new Dictionary<string, object>
+                    {
+                        ["model"] = normalizedModel ?? "",
+                        ["modelExplicit"] = !string.IsNullOrWhiteSpace(model),
+                        ["pinMode"] = pinMode,
+                        ["thinkingLevel"] = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, normalizedModel, info.ThinkingLevel) ?? "",
+                    }, _logger, _keyFileWriter)) return false;
+            AppendModelChangeMarker(info, previousModel, normalizedModel);
+            return RoutingUpdated(info);
+        }
     }
 
     /// <summary>
@@ -175,15 +180,20 @@ public class TaskMutationService
         TaskInfo? info;
         using (TaskSwitchTrace.Span("mutation.lookup")) info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        var normalized = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, info.Model, thinkingLevel);
-        using (TaskSwitchTrace.Span("mutation.write"))
-            if (!TaskJsonFile.UpdateFields(info.FolderPath, new Dictionary<string, object>
-                {
-                    ["thinkingLevel"] = normalized ?? "",
-                    ["thinkingLevelExplicit"] = !string.IsNullOrWhiteSpace(thinkingLevel),
-                    ["pinMode"] = pinMode,
-                }, _logger, _keyFileWriter)) return false;
-        return RoutingUpdated(info);
+        using (AcquireRoutingLock(info.FolderPath))
+        {
+            info = ReadCurrentRoutingCard(info);
+            if (info is null) return false;
+            var normalized = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, info.Model, thinkingLevel);
+            using (TaskSwitchTrace.Span("mutation.write"))
+                if (!TaskJsonFile.UpdateFields(info.FolderPath, new Dictionary<string, object>
+                    {
+                        ["thinkingLevel"] = normalized ?? "",
+                        ["thinkingLevelExplicit"] = !string.IsNullOrWhiteSpace(thinkingLevel),
+                        ["pinMode"] = pinMode,
+                    }, _logger, _keyFileWriter)) return false;
+            return RoutingUpdated(info);
+        }
     }
 
     public bool SetJobCliType(string jobId, string cliType, string? watchPath = null, string pinMode = "preference", bool? useOwnSession = null)
@@ -191,32 +201,61 @@ public class TaskMutationService
         TaskInfo? info;
         using (TaskSwitchTrace.Span("mutation.lookup")) info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        var normalized = CliTypes.Normalize(cliType);
-        var normalizedModel = ModelMetadataRegistry.NormalizeForCli(normalized, info.Model);
-        var fields = new Dictionary<string, object>
+        using (AcquireRoutingLock(info.FolderPath))
         {
-            ["cliType"] = normalized,
-            ["pinMode"] = pinMode,
-            ["model"] = normalizedModel ?? "",
-            ["thinkingLevel"] = ModelMetadataRegistry.ResolveThinkingLevel(normalized, normalizedModel, info.ThinkingLevel) ?? "",
-            ["agent"] = normalized,
-        };
-        // Keep the parallel `agent` field in lockstep with `cliType`. The two
-        // were originally meant to address different layers (which CLI vs.
-        // which logical agent) but every supported CLI maps 1:1 to one agent
-        // value, and the kanban card's text label reads `agent` while the
-        // icon reads `cliType`. A mass-flip of cliType without syncing agent
-        // produced cards showing "claude" with the Codex icon on 2026-05-12
-        // (see job bug-clitype-and-agent-fields-drift-on-mass-flip).
-        // Switching CLI invalidates the previous session - clear it so the next run mints a new one.
-        if (!string.Equals(normalized, info.CliType, StringComparison.OrdinalIgnoreCase))
-        {
-            fields["sessionName"] = "";
+            info = ReadCurrentRoutingCard(info);
+            if (info is null) return false;
+            var normalized = CliTypes.Normalize(cliType);
+            var normalizedModel = ModelMetadataRegistry.NormalizeForCli(normalized, info.Model);
+            var fields = new Dictionary<string, object>
+            {
+                ["cliType"] = normalized,
+                ["pinMode"] = pinMode,
+                ["model"] = normalizedModel ?? "",
+                ["thinkingLevel"] = ModelMetadataRegistry.ResolveThinkingLevel(normalized, normalizedModel, info.ThinkingLevel) ?? "",
+                ["agent"] = normalized,
+            };
+            // Keep the parallel `agent` field in lockstep with `cliType`. The two
+            // were originally meant to address different layers (which CLI vs.
+            // which logical agent) but every supported CLI maps 1:1 to one agent
+            // value, and the kanban card's text label reads `agent` while the
+            // icon reads `cliType`. A mass-flip of cliType without syncing agent
+            // produced cards showing "claude" with the Codex icon on 2026-05-12
+            // (see job bug-clitype-and-agent-fields-drift-on-mass-flip).
+            // Switching CLI invalidates the previous session - clear it so the next run mints a new one.
+            if (!string.Equals(normalized, info.CliType, StringComparison.OrdinalIgnoreCase))
+                fields["sessionName"] = "";
+            if (useOwnSession.HasValue) fields["useOwnSession"] = useOwnSession.Value;
+            using (TaskSwitchTrace.Span("mutation.write"))
+                if (!TaskJsonFile.UpdateFields(info.FolderPath, fields, _logger, _keyFileWriter)) return false;
+            return RoutingUpdated(info);
         }
-        if (useOwnSession.HasValue) fields["useOwnSession"] = useOwnSession.Value;
-        using (TaskSwitchTrace.Span("mutation.write"))
-            if (!TaskJsonFile.UpdateFields(info.FolderPath, fields, _logger, _keyFileWriter)) return false;
-        return RoutingUpdated(info);
+    }
+
+    private TaskInfo? ReadCurrentRoutingCard(TaskInfo known)
+    {
+        using var span = TaskSwitchTrace.Span("mutation.read-current");
+        // The preceding routing writer publishes before releasing this same
+        // file lock. Its resident fact is therefore the newest routing input
+        // without a second folder scan on the common path.
+        var published = _scanner.FindPublishedJob(known.Id, known.WatchPath);
+        if (published is not null && FileSystemPathComparer.Instance.Equals(
+                published.FolderPath, known.FolderPath)) return published;
+        return _scanner.ScanJobFolder(known.FolderPath,
+            new WatchPathEntry { Name = known.ProjectName, Path = known.WatchPath },
+            known.State, bypassMemo: true);
+    }
+
+    private static IDisposable AcquireRoutingLock(string folder)
+    {
+        var gate = TaskJsonFile.SyncRoot(folder);
+        using (TaskSwitchTrace.Span("mutation.lock")) Monitor.Enter(gate);
+        return new RoutingLockLease(gate);
+    }
+
+    private sealed class RoutingLockLease(object gate) : IDisposable
+    {
+        public void Dispose() => Monitor.Exit(gate);
     }
 
     public bool SetJobUseOwnSession(string jobId, bool useOwn, string? watchPath = null)
