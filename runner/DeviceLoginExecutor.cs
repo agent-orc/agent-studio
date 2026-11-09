@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -75,11 +76,22 @@ public sealed partial class DeviceLoginExecutor(
         using var limit = new CancellationTokenSource(TimeSpan.FromMinutes(15), _clock);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, limit.Token);
         using var codeWait = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        // The launch spec stays in this launcher; the child only drives the I/O of the process.
+        var info = new ProcessStartInfo(binary)
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
         string[] arguments = claude ? ["setup-token"] : ["login", "--device-auth"];
-        var environment = new Dictionary<string, string> { ["NO_BROWSER"] = "1", ["BROWSER"] = "false" };
+        foreach (var argument in arguments) info.ArgumentList.Add(argument);
+        info.Environment["NO_BROWSER"] = "1";
+        info.Environment["BROWSER"] = "false";
         using IDeviceLoginChild child = awaitsCode
-            ? new TerminalDeviceLoginChild(binary, arguments, environment, _clock, log)
-            : new PipedDeviceLoginChild(binary, arguments, environment, log);
+            ? new TerminalDeviceLoginChild(info, _clock, log)
+            : new PipedDeviceLoginChild(info, log);
         var started = false;
         var gate = new object();
         string? url = null;

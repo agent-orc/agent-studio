@@ -26,26 +26,16 @@ internal interface IDeviceLoginChild : IDisposable
 
 /// <summary>
 /// Redirected pipes for a CLI that needs no input. Stdin is closed at start, so the CLI never
-/// reads the daemon's stdin.
+/// reads the daemon's stdin. <paramref name="info"/> comes from <see cref="DeviceLoginExecutor"/>,
+/// the only device-login launcher, with every stream redirected.
 /// </summary>
-internal sealed class PipedDeviceLoginChild(string binary, IReadOnlyList<string> arguments,
-    IReadOnlyDictionary<string, string> environment, Action<string>? log) : IDeviceLoginChild
+internal sealed class PipedDeviceLoginChild(ProcessStartInfo info, Action<string>? log) : IDeviceLoginChild
 {
     private readonly Process _process = new();
     private bool _started;
 
     public Task<bool> StartAsync(Action<string> onLine, CancellationToken ct)
     {
-        var info = new ProcessStartInfo(binary)
-        {
-            CreateNoWindow = true,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (var argument in arguments) info.ArgumentList.Add(argument);
-        foreach (var (key, value) in environment) info.Environment[key] = value;
         _process.StartInfo = info;
         if (!_process.Start()) return Task.FromResult(false);
         _started = true;
@@ -80,10 +70,12 @@ internal sealed class PipedDeviceLoginChild(string binary, IReadOnlyList<string>
 /// A pseudo-terminal for <c>claude setup-token</c> (AGT-3243). The CLI renders its code prompt
 /// with Ink, which puts stdin into raw mode and refuses a stdin that is not a terminal, so a plain
 /// pipe cannot deliver the pasted code. The terminal is wide enough that the long authorize URL and
-/// the setup token stay on one line each. Terminal output merges stdout and stderr.
+/// the setup token stay on one line each. Terminal output merges stdout and stderr. The terminal
+/// takes the file name, arguments and environment of <paramref name="info"/>, which comes from
+/// <see cref="DeviceLoginExecutor"/>, the only device-login launcher.
 /// </summary>
-internal sealed class TerminalDeviceLoginChild(string binary, IReadOnlyList<string> arguments,
-    IReadOnlyDictionary<string, string> environment, TimeProvider clock, Action<string>? log) : IDeviceLoginChild
+internal sealed class TerminalDeviceLoginChild(ProcessStartInfo info, TimeProvider clock, Action<string>? log)
+    : IDeviceLoginChild
 {
     internal const int Columns = 4000;
     internal const int Rows = 50;
@@ -105,18 +97,19 @@ internal sealed class TerminalDeviceLoginChild(string binary, IReadOnlyList<stri
 
     public async Task<bool> StartAsync(Action<string> onLine, CancellationToken ct)
     {
+        // info.Environment starts as a copy of the daemon's environment plus the launcher's variables.
         var variables = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
-            if (entry.Key is string key && entry.Value is string value) variables[key] = value;
+        foreach (var (key, value) in info.Environment)
+            if (value is not null) variables[key] = value;
         variables["TERM"] = "xterm-256color";
         variables["NO_COLOR"] = "1";
         variables["CLAUDE_CODE_DISABLE_AUTOUPDATER"] = "1";
         variables["DISABLE_AUTOUPDATER"] = "1";
-        foreach (var (key, value) in environment) variables[key] = value;
         var connection = await PtyProvider.SpawnAsync(new PtyOptions
         {
-            Name = "xterm-256color", Cols = Columns, Rows = Rows, Cwd = Environment.CurrentDirectory,
-            App = binary, CommandLine = [.. arguments], Environment = variables,
+            Name = "xterm-256color", Cols = Columns, Rows = Rows,
+            Cwd = info.WorkingDirectory is { Length: > 0 } directory ? directory : Environment.CurrentDirectory,
+            App = info.FileName, CommandLine = [.. info.ArgumentList], Environment = variables,
         }, ct);
         _connection = connection;
         connection.ProcessExited += (_, e) => _exited.TrySetResult(e.ExitCode);
