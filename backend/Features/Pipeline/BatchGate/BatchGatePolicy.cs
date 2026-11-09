@@ -80,7 +80,9 @@ public sealed record BatchGateFormationOptions(
     string Overlap = "adjacent", string ReviewTestLevel = "work-package",
     int GateTimeoutMinutes = 150, BatchGateAdvisorOptions? Advisor = null,
     bool? PreCheckEnabled = null, string Calibration = "empirical",
-    string Stacking = "off")
+    string Stacking = "off",
+    int MaximumWaitMinutes = AgentStudio.OrchestrationDecisions.BatchGateStartPolicy.DefaultMaximumWaitMinutes,
+    int FlightLeaseDeadlineMinutes = AgentStudio.OrchestrationDecisions.BatchGateStartPolicy.DefaultFlightLeaseDeadlineMinutes)
 {
     public bool PreCheckFor(string project) => PreCheckEnabled
         ?? string.Equals(project, "Agent Studio", StringComparison.OrdinalIgnoreCase);
@@ -102,6 +104,8 @@ public sealed record BatchGateFormationOptions(
         Overlap is not ("adjacent" or "separate") ? "overlap" :
         ReviewTestLevel is not ("work-package" or "build-only") ? "reviewTestLevel" :
         GateTimeoutMinutes is < 1 or > 360 ? "gateTimeoutMinutes" :
+        MaximumWaitMinutes is < 1 or > 1440 ? "maximumWaitMinutes" :
+        FlightLeaseDeadlineMinutes is < 1 or > 1440 ? "flightLeaseDeadlineMinutes" :
         UrgentTags is { Count: > 32 } || UrgentTags?.Any(tag => string.IsNullOrWhiteSpace(tag) || tag.Length > 64) == true ? "urgentTags" :
         (Advisor ?? new()).InvalidField;
     public bool IsValid => InvalidField is null;

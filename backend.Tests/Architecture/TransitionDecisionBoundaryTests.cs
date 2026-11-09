@@ -34,6 +34,8 @@ public sealed class TransitionDecisionBoundaryTests
         "RedDevelopRepairPolicy",
         // AGT-3563: batch phase changes and the batch claim invariants.
         "BatchPhaseTransitionPolicy", "BatchGateInvariantPolicy",
+        // AGT-3562: batch flight start order and pre-lease deadline.
+        "BatchGateStartPolicy",
     ];
 
     [Fact]

@@ -422,6 +422,7 @@ public sealed partial class BatchGatePilotService
         {
             // AGT-3563: every later step reads each manifest's phase record.
             ReconcilePhaseRecords();
+            CancelFlightsPastLeaseDeadline();
             var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
             if (_reservations is not null)
                 foreach (var project in _reservations.ProjectsWithPending())
@@ -795,7 +796,8 @@ public sealed partial class BatchGatePilotService
             Task[] stacks;
             Task[] fallbacks = [];
             Task[] preChecks;
-            lock (_runningBatches) batches = _runningBatches.Values.ToArray();
+            lock (_runningBatches)
+                batches = _runningBatches.Values.Concat(_flightExits.Values).ToArray();
             lock (_runningStacks) stacks = _runningStacks.Values.ToArray();
             lock (_runningPreChecks) preChecks = _runningPreChecks.Values.ToArray();
             if (includeFallbacks)
@@ -803,7 +805,8 @@ public sealed partial class BatchGatePilotService
             if (batches.Length == 0 && stacks.Length == 0 && fallbacks.Length == 0 && preChecks.Length == 0) return;
             await Task.WhenAll(batches.Concat(stacks).Concat(fallbacks).Concat(preChecks)).WaitAsync(ct).ConfigureAwait(false);
             lock (_runningBatches)
-                if (_runningBatches.Values.Any(task => !task.IsCompleted)) continue;
+                if (_runningBatches.Values.Concat(_flightExits.Values)
+                        .Any(task => !task.IsCompleted)) continue;
             lock (_runningStacks)
                 if (_runningStacks.Values.Any(task => !task.IsCompleted)) continue;
             lock (_runningPreChecks)
@@ -977,11 +980,24 @@ public sealed partial class BatchGatePilotService
             return reason is null ? null : $"{member.TaskKey}: {reason}";
         }).OfType<string>().ToArray();
 
-    private void StartClosedBatches(CancellationToken ct)
+    /// <summary>
+    /// Starts formed batches in start-policy order, optionally for one project.
+    /// The hosted tick and a finished flight both run this pass, one at a time.
+    /// </summary>
+    private void StartClosedBatches(CancellationToken ct, string? project = null,
+        bool followsCompletedFlight = false)
+    {
+        lock (_startPass) StartClosedBatchesCore(ct, project, followsCompletedFlight);
+    }
+
+    private void StartClosedBatchesCore(CancellationToken ct, string? project,
+        bool followsCompletedFlight)
     {
         var waiting = _store.ListPending();
-        foreach (var manifest in BatchGateWaitingPolicy.OrderForStart(_store.ListRecoverableManifests()
-                     .Where(manifest => _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
+        foreach (var manifest in OrderForStart(_store.ListRecoverableManifests()
+                     .Where(manifest => (project is null || string.Equals(manifest.Scope.Project,
+                             project, StringComparison.OrdinalIgnoreCase))
+                         && _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
                      .ToArray()))
         {
             var members = manifest.Members.Select(member => waiting.FirstOrDefault(item =>
@@ -1016,13 +1032,14 @@ public sealed partial class BatchGatePilotService
             }
             if (TryStartStack(manifest, membersByKey, current[0].RepositoryPath, ct))
                 continue;
-            StartBatch(manifest, membersByKey, current[0].RepositoryPath, ct);
+            StartBatch(manifest, membersByKey, current[0].RepositoryPath, ct,
+                followsCompletedFlight);
         }
     }
 
     private void StartBatch(BatchGateManifest manifest,
         IReadOnlyDictionary<string, BatchGatePendingRecord> pending,
-        string repo, CancellationToken ct)
+        string repo, CancellationToken ct, bool followsCompletedFlight = false)
     {
         // A successor has already gated against the predecessor's candidate.
         // Keep later ordinary batches behind it until it publishes or retires.
@@ -1033,24 +1050,22 @@ public sealed partial class BatchGatePilotService
                 && !stack.IsCompleted) return;
             if (_runningBatches.TryGetValue(manifest.Scope.Project, out var existing)
                 && !existing.IsCompleted) return;
-            var flight = Task.Run(() => ExecuteAsync(manifest, pending, repo, ct), ct);
-            _runningBatches[manifest.Scope.Project] = flight;
+            // A flight cancelled at its lease deadline may still be unwinding.
+            if (_detachedFlights.TryGetValue(manifest.BatchId, out var cancelled)
+                && !cancelled.IsCompleted) return;
+            var flight = new BatchFlight(manifest, _time.GetUtcNow(),
+                CancellationTokenSource.CreateLinkedTokenSource(ct), followsCompletedFlight);
+            flight.Task = Task.Run(() => ExecuteAsync(manifest, pending, repo, ct, flight), ct);
+            _runningBatches[manifest.Scope.Project] = flight.Task;
+            _batchFlights[manifest.Scope.Project] = flight;
             _startedBatchIds.Add(manifest.BatchId);
-            _ = flight.ContinueWith(done =>
-            {
-                if (done.Exception is { } error)
-                    _logger.LogError(error, "batch-gate-flight-failed batch={BatchId}", manifest.BatchId);
-                lock (_runningBatches)
-                {
-                    _startedBatchIds.Remove(manifest.BatchId);
-                    if (_runningBatches.TryGetValue(manifest.Scope.Project, out var current)
-                        && ReferenceEquals(current, done))
-                        _runningBatches.Remove(manifest.Scope.Project);
-                }
-                if (_replanAfterBatch.TryRemove(manifest.BatchId, out _))
-                    _ = Task.Run(() => TickAsync(CancellationToken.None));
-            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
+            if (_leaseDeadlineDeferred.TryGetValue(manifest.Scope.Project, out var deferred)
+                && deferred != manifest.BatchId)
+                _leaseDeadlineDeferred.Remove(manifest.Scope.Project);
+            // Not inline: the exit runs after this lock and may start the next batch.
+            _flightExits[flight] = flight.Task.ContinueWith(
+                done => FinishBatchFlight(flight, done, ct), CancellationToken.None,
+                TaskContinuationOptions.None, TaskScheduler.Default);
         }
     }
 
@@ -1579,18 +1594,31 @@ public sealed partial class BatchGatePilotService
 
     private async Task ExecuteAsync(BatchGateManifest manifest,
         IReadOnlyDictionary<string, BatchGatePendingRecord> pending,
-        string repo, CancellationToken ct)
+        string repo, CancellationToken ct, BatchFlight? flight = null)
     {
         var leaseRequestedAtUtc = _time.GetUtcNow();
         var fallbackKeys = new HashSet<string>(StringComparer.Ordinal);
         var conflictKeys = new HashSet<string>(StringComparer.Ordinal);
         var deferredKeys = new HashSet<string>(StringComparer.Ordinal);
         var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
-        using var reservation = _reservations is null || manifest.StackedOnBatchId is not null ? null
-            : await _reservations.AcquireBatchAsync(manifest.Scope.Project,
-                marker => IsStalePush(manifest.Scope.Project, marker, fetchedBases, ct),
-                ct, fetchedBases.Clear)
-                .ConfigureAwait(false);
+        // AGT-3562: the lease deadline cancels only the wait before the lease.
+        var beforeLease = flight?.BeforeLease.Token ?? ct;
+        IDisposable? acquired;
+        try
+        {
+            acquired = _reservations is null || manifest.StackedOnBatchId is not null ? null
+                : await _reservations.AcquireBatchAsync(manifest.Scope.Project,
+                    marker => IsStalePush(manifest.Scope.Project, marker, fetchedBases, beforeLease),
+                    beforeLease, fetchedBases.Clear)
+                    .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested
+            && beforeLease.IsCancellationRequested)
+        {
+            return;
+        }
+        using var reservation = acquired;
+        if (!ClaimLease(flight)) return;
         BatchCoordinatorLease? lease;
         try { lease = _leases.TryAcquire(LeaseScope(manifest), Environment.MachineName); }
         catch (IOException) { return; }
