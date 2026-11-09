@@ -1,0 +1,48 @@
+:host { display: block; }
+.lane-group-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+}
+.lane-group-head--burst {
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-bg-hover);
+}
+.lane-group-head__title {
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  margin: 0;
+  color: var(--studio-fg-dim);
+  font-size: var(--studio-lane-header-secondary-size);
+  font-weight: 600;
+}
+.lane-group-head--burst .lane-group-head__title { color: var(--studio-fg); }
+.lane-group-head__icon { font-size: 13px; line-height: 1; }
+.lane-group-head__label { min-width: 0; overflow-wrap: anywhere; }
+/* Same count treatment as the lane total (HUC-S6 --studio-count-* tokens). */
+.lane-group-head__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  height: var(--studio-count-height);
+  min-width: var(--studio-count-min-width);
+  margin-left: auto;
+  padding-inline: var(--studio-count-padding-inline);
+  border-radius: var(--studio-count-radius);
+  background: var(--studio-count-bg);
+  color: var(--studio-count-fg);
+  font-size: var(--studio-count-size);
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.lane-group-head__since {
+  margin: 0;
+  color: var(--studio-fg-dim);
+  font-size: 12px;
+}

@@ -124,6 +124,77 @@ describe('BoardMutationsService archive job', () => {
   });
 });
 
+describe('BoardMutationsService bulk move (AGT-3585)', () => {
+  const tasks = [
+    { id: 'alpha', taskKey: 'w::alpha', key: 'DEMO-1', title: 'Alpha', state: '5e-escalated', watchPath: '/workspace' },
+    { id: 'beta', taskKey: 'w::beta', displayKey: 'DEMO-2', title: 'Beta', state: '5e-escalated', watchPath: '/workspace' },
+  ] as TaskInfo[];
+
+  function setup(confirmed: boolean) {
+    const done = { ...batch('completed', [
+      { index: 0, jobId: 'alpha', status: 'moved', message: null, durationMs: 1 },
+      { index: 1, jobId: 'beta', status: 'moved', message: null, durationMs: 1 },
+    ]), total: 2 };
+    const taskService = {
+      startBatchMove: vi.fn(() => of(done)),
+      getBatchMove: vi.fn(() => of(done)),
+      applyOptimisticMove: vi.fn(),
+      refresh: vi.fn(),
+    };
+    const confirm = vi.fn(async () => confirmed);
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        BoardMutationsService,
+        NotificationService,
+        { provide: TaskService, useValue: taskService },
+        { provide: ErrorDialogService, useValue: { show: vi.fn() } },
+        { provide: ConfirmDialogService, useValue: { confirm } },
+        { provide: TaskSelectionService, useValue: { selected: signal(null) } },
+        { provide: UndoController, useValue: { offerLaneRevert: vi.fn(), cancelActive: vi.fn() } },
+      ],
+    });
+    return {
+      service: TestBed.inject(BoardMutationsService),
+      notifications: TestBed.inject(NotificationService),
+      taskService,
+      confirm,
+    };
+  }
+
+  it('lists every card in the confirmation and leaves them in place on cancel', async () => {
+    const { service, taskService, confirm } = setup(false);
+    expect(await service.bulkMove(tasks, '2-ready', 'Continue (reissue)')).toBe(false);
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Continue (reissue) for 2 cards?',
+      items: ['DEMO-1 · Alpha', 'DEMO-2 · Beta'],
+      confirmLabel: 'Continue (reissue) (2 cards)',
+      cancelLabel: 'Leave as is',
+      kind: 'primary',
+    }));
+    expect(taskService.startBatchMove).not.toHaveBeenCalled();
+  });
+
+  it('moves every card through one batch after confirmation', async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, notifications, taskService } = setup(true);
+      expect(await service.bulkMove(tasks, '2-ready', 'Continue (reissue)')).toBe(true);
+      expect(taskService.startBatchMove).toHaveBeenCalledWith([
+        { jobId: 'alpha', watchPath: '/workspace', targetState: '2-ready' },
+        { jobId: 'beta', watchPath: '/workspace', targetState: '2-ready' },
+      ]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(taskService.applyOptimisticMove).toHaveBeenCalledWith('beta', '/workspace', '2-ready');
+      expect(service.bulkMoving()).toBe(false);
+      expect(service.archiving()).toBe(false);
+      expect(notifications.notifications()[0].message).toBe('Moved 2 cards to Ready.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('BoardMutationsService Ready queue edge (AGT-3588)', () => {
   const card = (id: string, watchPath = '/p/a') => ({ id, watchPath, title: id, state: '2-ready' }) as TaskInfo;
   const lane = [card('a1'), card('b1', '/p/b'), card('a2')];
