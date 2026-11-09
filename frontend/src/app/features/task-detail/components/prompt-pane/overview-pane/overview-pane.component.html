@@ -465,11 +465,11 @@
           </button>
         </div>
       }
-      <app-pipeline-decision-chain [execution]="selectedPipelineExecution()" [response]="pipelinePoll.pipeline()" [current]="selectedPipelineIsCurrent()" [taskId]="job().id" [projectId]="job().projectName" [askActive]="job().state === escalatedState" (documentRequested)="documentRequested.emit($event)" />
+      @defer (on viewport) { <app-pipeline-decision-chain [execution]="selectedPipelineExecution()" [response]="pipelinePoll.pipeline()" [current]="selectedPipelineIsCurrent()" [taskId]="job().id" [projectId]="job().projectName" [askActive]="job().state === escalatedState" (documentRequested)="documentRequested.emit($event)" /> }
+      @placeholder { <div class="ov-decision-chain-placeholder" data-testid="overview-decision-chain-placeholder" aria-hidden="true"></div> }
       }
     </section>
   }
-
   <app-pipeline-token-usage [summary]="pipelinePoll.pipeline()?.tokensByModel ?? null"
     [showTaskTotal]="showAllRunsTaskTotal()" [analysisProject]="job().projectName" [analysisJobId]="job().id" />
 

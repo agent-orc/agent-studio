@@ -134,6 +134,12 @@ async function mockApplication(page: Page, includePeer = false, benchmark = fals
       createdAt: '2026-08-11T08:00:00Z',
     }],
   }]));
+  await page.route('**/api/workspaces/*/quota/admission**', route => json(route, {
+    workspaceId: 'workspace',
+    workspace: { projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+    projects: [],
+  }));
   await page.route('**/api/cli/usage**', route => json(route, { items: [] }));
   // The usage cockpit is not under test; a failed read keeps it inert
   // instead of feeding it the catch-all array.
