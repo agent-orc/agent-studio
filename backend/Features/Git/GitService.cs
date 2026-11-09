@@ -3670,7 +3670,17 @@ public partial class GitService
         var (pushOut, pushErr, pushCode) = RunGitArgs(
             repoRoot, ct, "push", "origin", $"{sha}:refs/heads/{branch}");
         if (pushCode == 0)
+        {
+            // A push by object ID does not advance origin/<branch> in every Git
+            // configuration (notably when origin uses url.insteadOf). The
+            // integration verdict reads that ref, so publish the exact SHA
+            // locally before the caller resumes the card.
+            if (!RecordPushedIntegrationTip(repoRoot, branch, sha))
+                _logger.LogWarning(
+                    "Integration push reached origin, but the local tracking ref for {Branch} could not be advanced to {Sha}.",
+                    branch, AbbreviateSha(sha));
             return Task.FromResult(new GitPushResult(true, sha, "pushed", null));
+        }
         if (ct.IsCancellationRequested)
             return Task.FromResult(new GitPushResult(false, sha, "cancelled", pushErr.Trim()));
 
@@ -3681,6 +3691,25 @@ public partial class GitService
                 ? "remote-rejected"
                 : "failed";
         return Task.FromResult(new GitPushResult(false, sha, status, err));
+    }
+
+    private bool RecordPushedIntegrationTip(string repoRoot, string branch, string pushedSha)
+    {
+        var trackingRef = $"refs/remotes/origin/{branch}";
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var current = GetRefShaFresh(repoRoot, trackingRef);
+            if (string.Equals(current, pushedSha, StringComparison.OrdinalIgnoreCase)
+                || current is not null && IsAncestor(repoRoot, pushedSha, current))
+                return true;
+            var (_, _, code) = RunGitArgs(repoRoot, "update-ref", trackingRef, pushedSha, current ?? string.Empty);
+            if (code == 0)
+            {
+                GetRefShaFresh(repoRoot, trackingRef);
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>

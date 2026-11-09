@@ -3156,6 +3156,13 @@
           <td>The control plane had no provider login by design. Its short completion paths still used local process execution instead of the accepted coding or review host.</td>
           <td>The observed terminal was a degraded Result summary; other short completions failed. Networked one-shots now travel as bounded Task Server jobs. A host claims only with fresh <code>model-acceptance:&lt;cli&gt;:&lt;model&gt;</code> evidence. With no host, the Result reports <code>waiting for a host with &lt;capability&gt;</code> and defers without spending the summary retry budget. A later accepted host lets the retry complete.</td>
         </tr>
+        <tr id="case-integration-push-stale-tracking-ref">
+          <td>2026-11-09</td>
+          <td><code>AGT-3620 / DEMO-3</code><br><span class="small">integration-push-stale-tracking-ref</span></td>
+          <td>No CLI crashed. DEMO-3's integration push reported <code>pushed</code> and its timeline recorded <code>integrated-verified</code>, but the card showed <code>merged-locally</code> and stayed in Auto Review for 9.5 minutes. Opening Project Settings caused a fetch, and the card moved to Human Review three seconds later.</td>
+          <td>The push did not advance the checkout's <code>origin/main</code> tracking ref under the playthrough's URL rewrite. Integration status read that stale ref. The integration-owned resume wait stored no next attempt time.</td>
+          <td>The observed terminal was Human Review after the incidental fetch. A successful push now records its exact SHA in the tracking ref, and every deferred resume stores a next attempt time. The normal post-processing backstop can advance the card without a read-route fetch.</td>
+        </tr>
       </tbody>
     </table>
 
