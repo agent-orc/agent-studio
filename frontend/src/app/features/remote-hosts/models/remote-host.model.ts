@@ -238,6 +238,7 @@ export interface TaskServerTelemetrySnapshot {
   cpuCores: number;
   /** Live occupied slots reported by this runner process. */
   activeSlots?: number;
+  claimLoadGate?: ClaimLoadGate | null;
   diskFreeBytes?: number | null;
   diskTotalBytes?: number | null;
   taskServerConnectionStatus?: 'unknown' | 'reachable' | 'unreachable';
@@ -248,6 +249,15 @@ export interface TaskServerTelemetrySnapshot {
   taskServerConnectionLastError?: string | null;
   taskServerConnectionLastRecoveredAt?: string | null;
   reviewPlane?: ReviewPlaneBudget | null;
+}
+
+export interface ClaimLoadGate {
+  state: 'open' | 'closed';
+  loadPerCore: number;
+  threshold: number;
+  sustainedSeconds: number;
+  since: string | null;
+  activeSlots: number;
 }
 
 export interface ReviewPlaneBudget {
@@ -434,6 +444,7 @@ export interface RemoteHost {
   daemonState?: 'running' | 'read-only' | 'stopped';
   lastClaimAt?: string | null;
   activeTaskCount?: number;
+  claimLoadGate?: ClaimLoadGate | null;
   availableSlots?: number;
   retireRequestedAt?: string | null;
   capabilityHealth?: readonly RemoteHostCapabilityHealth[];

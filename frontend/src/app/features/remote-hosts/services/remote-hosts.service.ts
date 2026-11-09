@@ -371,6 +371,7 @@ export class RemoteHostsService {
                 ? taskServerConnection(snapshot.telemetry)
                 : current.taskServerConnection ?? null,
               activeTaskCount: snapshot.telemetry?.activeSlots ?? current.activeTaskCount,
+              claimLoadGate: telemetryFresh ? snapshot.telemetry?.claimLoadGate ?? null : null,
               stats,
             };
             if (index >= 0) projected[index] = next;

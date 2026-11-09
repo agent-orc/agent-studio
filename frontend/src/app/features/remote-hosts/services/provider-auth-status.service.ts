@@ -153,6 +153,19 @@ export class ProviderAuthStatusService implements OnDestroy {
     );
   }
 
+  /**
+   * Sends the authorization code the Owner pasted after the Claude browser sign-in. The Task Server
+   * accepts one code per session and hands it once to the claiming runner; the reply never echoes it.
+   */
+  submitDeviceLoginCode(handle: string, sessionKey: string, code: string): Observable<void> {
+    if (!this.http) throw new Error('Device sign-in requires the Studio HTTP client.');
+    return this.http.post<void>(
+      `/api/v1/management/device-logins/${encodeURIComponent(handle)}/code`,
+      { code },
+      { headers: { 'X-Device-Login-Session': sessionKey } },
+    );
+  }
+
   /** Cancels a queued or running session for a surface that is going away; nobody waits for the answer. */
   cancelActiveDeviceLogin(session: { handle: string; sessionKey: string; state: string } | null): void {
     if (!session || (session.state !== 'queued' && session.state !== 'running')) return;

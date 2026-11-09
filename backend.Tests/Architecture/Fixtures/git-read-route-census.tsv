@@ -167,6 +167,7 @@
 /api/projects/{projectName}/areas/{areaId}/glossary	free	-	-	-
 /api/projects/{projectName}/autonomy	free	-	-	-
 /api/projects/{projectName}/batch-gate	free	-	-	-
+/api/projects/{projectName}/batch-gate/failed-tests	free	-	-	-
 /api/projects/{projectName}/batch-gate/ledger	free	-	-	-
 /api/projects/{projectName}/batch-gate/queue-stalls	free	-	-	-
 /api/projects/{projectName}/batch-gate/report	free	-	-	-
@@ -404,7 +405,6 @@
 /api/tasks/{jobId}/steering-feedback	free	-	-	-
 /api/tasks/{jobId}/step-prompts	free	-	-	-
 /api/tasks/{jobId}/stop/{commandId}	free	-	-	-
-/api/tasks/{jobId}/thumbnail	free	-	-	-
 /api/tasks/{jobId}/timeline	free	-	-	-
 /api/tasks/{primaryId}/merge/candidates	free	-	-	-
 /api/token-pricing/unpriced-models	free	-	-	-

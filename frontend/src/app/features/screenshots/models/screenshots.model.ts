@@ -16,6 +16,10 @@ export interface TaskScreenshot {
   relativePath: string;
   /** Routable URL that serves this file (sub-path aware). */
   url: string;
+  /** Original file metadata from bounded header inspection. */
+  sizeBytes?: number;
+  width?: number | null;
+  height?: number | null;
   caption: string;
   /** `passed` | `failed` | `skipped` | `unknown` | null. */
   status: string | null;

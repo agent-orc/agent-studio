@@ -86,11 +86,13 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | QualityStudioRevokeOutbox | always | infra | Authority host. Delivers persisted Quality Studio session revocations with bounded retries; makes no task transition decision. |
 | QualityChangeReviewOutbox | always | infra | Authority host. Delivers persisted Review Plane verdicts to Quality Studio with a seven-day retry bound; makes no task transition decision. |
 | OrchestratorChatLegacyMigrationHostedService | !PD | infra | Authority host |
+| ProjectChatStartupService | always | infra | Authority host. Migrates legacy project chat and refreshes indexes; shutdown cancels the scan and awaits the active file or SQLite operation. |
 | DecisionReminderSweepHostedService | always | report | Authority host |
 | DeliveryChainReconciler | always | decide, operator | AI Operator decider `delivery-chain` (`DeliveryChainPolicy`). Effect: `DeliveryChainReconciler` moves the card; a red merge gate is still routed by `GateFailureRouter` before it may park (gate triage, a host rule in the baseline). |
 | BatchMoveJobCoordinator | !PD | apply-recover | Authority (applies an operator command) |
 | TaskIndexCacheDiagnosticsService | always | infra | Authority host |
 | LastSeenPersistenceService | always | infra | Authority host. Flushes coalesced client and runner last-seen updates outside request paths. |
+| AgentMessageBusSeedHostedService | always | infra | Authority host. Seeds built-in bus participants and awaits the active JSON write on shutdown. |
 | BoardSummaryPersister | always | infra | Authority host. Single writer of the persisted slim board (`board-summaries.db`, Git facts S5): after each task index publication it writes the changed projects' board cards, which a cold board read serves as `restored`. Makes no transition decision. |
 | BoardShadowWorker | always | infra | Authority host. Idle unless `Board:Source` is `task-server-shadow` or `task-server`; then it mirrors the published task index generation into the Task Server board read model and records shadow differences by card and field (AGT-3317). Makes no transition decision. |
 | TaskFileMirrorWorker | always | infra | Authority host. Idle unless `TaskArtifacts:Source` is `task-server-shadow` or `task-server`; then it copies task folder files into the Task Server's `task_files` by content hash, off the request path, until the write cutover (AGT-3320). Makes no transition decision. |
@@ -105,6 +107,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | OperatorApprovalNotifier | always | report | Authority host. Sends the operator-feed notice and the optional push link for a new Owner approval request (security model SM-5). Carries no decision route; makes no transition decision. |
 | HostReleaseDriftWatchdog | !PD | report | Authority host |
 | AutoReviewQueueStagnationWatchdog | !PD | report | Authority host |
+| AutoReviewStrandingWatchdog | !PD | decide, switched | Per-card ownerless Auto Review recovery reads the `ReviewReport` transition profile, runs in both Monolith and Engine modes, and applies `AutoReviewStrandingPolicy`. Starts the missing step, re-enters the batch gate, or escalates with a stall-intervention receipt that names the active mode. |
 | AdaptiveReviewParallelismAdvisor | !PD | report | Authority host (advisory) |
 | CodingYieldAdvisor | !PD | report | Authority host (advisory) |
 | ReviewInfrastructureRetryScheduler | !PD | apply-recover | Authority. Mints the successor attempt for a retry the review decision already scheduled. |

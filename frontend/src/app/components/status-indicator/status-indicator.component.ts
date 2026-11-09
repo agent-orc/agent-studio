@@ -40,6 +40,7 @@ export class StatusIndicatorComponent {
   /** Longer explanation shown as a tooltip; `null` or empty shows none. */
   readonly detail = input<string | null | undefined>(null);
   readonly compact = input(false);
+  readonly wrap = input(false);
   readonly testId = input('status-indicator');
 
   readonly icon = computed(() => STATUS_TONE_ICONS[this.tone()]);

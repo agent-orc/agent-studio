@@ -1,6 +1,8 @@
 import { test, expect, Page } from '@playwright/test';
 import * as path from 'path';
+import { mkdirSync } from 'node:fs';
 import { setTheme } from '../helpers/theme';
+import { captureLocalAxeContrast } from '../helpers/local-axe-contrast';
 
 /**
  * Pipeline column headers (Time / Duration / Tokens / Cost) and phase headers.
@@ -256,6 +258,12 @@ async function installRoutes(page: Page, state: string, pipelineBody: () => unkn
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
       .catch(() => { /* a more specific route already handled the request */ });
   });
+  await page.route('**/api/usage/cockpit**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      snapshotVersion: 1, workspaceId: '', timeZone: 'Europe/Berlin', weekStart: 1,
+      generatedAt: new Date().toISOString(), calendar: {}, clis: [], cost: null,
+      runs: [], slots: [], sources: {},
+    }) }));
   await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
@@ -387,6 +395,23 @@ async function expandAllPipelineSections(page: Page): Promise<void> {
 }
 
 test.describe('Pipeline: per-step metric column headers', () => {
+  test('captures contrast audit pipeline overview at 1280', async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await installRoutes(page, '4-auto-review', pipelineWithMetrics);
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+    await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
+    await dismissErrorDialog(page);
+    await expect(page.getByTestId('overview-pipeline')).toBeVisible({ timeout: 40_000 });
+    const dir = process.env.JOB_RESULTS_DIR ?? 'test-results';
+    const phase = process.env.CONTRAST_EVIDENCE_PHASE ?? 'after';
+    mkdirSync(dir, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: path.join(dir, `${phase}-pipeline-${theme}-1280.png`), animations: 'disabled' });
+      await captureLocalAxeContrast(page, 'pipeline', theme);
+    }
+  });
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       try {

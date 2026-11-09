@@ -73,6 +73,36 @@ public sealed record IntegrationVerificationRecord
 public static class IntegrationVerificationStore
 {
     public const string FileName = "integration-verification.json";
+    private static readonly object PublicationGate = new();
+    private const int PublicationLimit = 4096;
+    private static readonly Queue<PublishedVerification> Publications = new();
+    private static long _generation;
+
+    public sealed record PublishedVerification(string Folder, bool Verified, long Generation);
+
+    /// <summary>Process-local changes published after the durable file mutation.</summary>
+    public static (long Generation, PublishedVerification[] Changes, bool Gap) ChangesSince(long generation)
+    {
+        lock (PublicationGate)
+            return generation == _generation
+                ? (_generation, [], false)
+                : (_generation, Publications.Where(item => item.Generation > generation).ToArray(),
+                    Publications.Count > 0 && generation < Publications.Peek().Generation - 1);
+    }
+
+    internal static int PublicationCount
+    {
+        get { lock (PublicationGate) return Publications.Count; }
+    }
+
+    private static void Publish(string taskFolder, bool verified)
+    {
+        lock (PublicationGate)
+        {
+            Publications.Enqueue(new(taskFolder, verified, ++_generation));
+            if (Publications.Count > PublicationLimit) Publications.Dequeue();
+        }
+    }
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -93,6 +123,8 @@ public static class IntegrationVerificationStore
         {
             File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json));
             File.Move(temporary, path, overwrite: true);
+            AgentStudio.Tasks.SidecarFileGeneration.Changed(path);
+            Publish(taskFolder, record.State == IntegrationVerificationStates.Verified);
         }
         finally
         {
@@ -105,6 +137,15 @@ public static class IntegrationVerificationStore
                 SilentCatch.Note(ex, "IntegrationVerificationStore: temporary file cleanup");
             }
         }
+    }
+
+    public static void Delete(string taskFolder)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(taskFolder);
+        var path = PathFor(taskFolder);
+        File.Delete(path);
+        AgentStudio.Tasks.SidecarFileGeneration.Changed(path);
+        Publish(taskFolder, false);
     }
 
     public static IntegrationVerificationRecord? Read(string taskFolder)

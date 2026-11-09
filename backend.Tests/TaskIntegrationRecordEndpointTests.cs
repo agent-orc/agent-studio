@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 using Xunit;
 
@@ -192,6 +193,62 @@ public sealed class TaskIntegrationRecordEndpointTests : IDisposable
         Assert.False(first.RootElement.TryGetProperty("integrationRecords", out _));
         using var second = JsonDocument.Parse(File.ReadAllText(Path.Combine(secondFolder, "task.json")));
         Assert.Single(second.RootElement.GetProperty("integrationRecords").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task CapacityAndUnscopedAppend_UseResidentFactsOnThreeThousandCards()
+    {
+        const string duplicateId = "shared-archive-identity";
+        for (var i = 0; i < 2998; i++)
+            WriteFlatTask(TaskStates.Archive, $"ASS-{10000 + i}", $"archive-{i}");
+        var firstFolder = WriteFlatTask(TaskStates.Archive, "ASS-13001", duplicateId);
+        var secondFolder = WriteFlatTask(TaskStates.Archive, "ASS-13002", duplicateId);
+
+        await using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        index.GetSnapshot();
+        Assert.Equal(3000, scanner.GetResidentIdentityFacts().Count);
+        var scans = scanner.RawScanCalls;
+
+        using (var capacity = await client.GetAsync("/api/operator/capacity"))
+            capacity.EnsureSuccessStatusCode();
+        Assert.Equal(scans, scanner.RawScanCalls);
+
+        using (var ambiguous = await client.PostAsJsonAsync(
+            $"/api/tasks/{duplicateId}/integration-records", Request()))
+            Assert.Equal(HttpStatusCode.Conflict, ambiguous.StatusCode);
+        Assert.Equal(scans, scanner.RawScanCalls);
+
+        using (var addressed = await client.PostAsJsonAsync(
+            "/api/tasks/ASS-13002/integration-records", Request()))
+            addressed.EnsureSuccessStatusCode();
+        Assert.Equal(scans, scanner.RawScanCalls);
+        using var first = JsonDocument.Parse(File.ReadAllText(Path.Combine(firstFolder, "task.json")));
+        Assert.False(first.RootElement.TryGetProperty("integrationRecords", out _));
+        using var second = JsonDocument.Parse(File.ReadAllText(Path.Combine(secondFolder, "task.json")));
+        Assert.Single(second.RootElement.GetProperty("integrationRecords").EnumerateArray());
+    }
+
+    [Fact]
+    public void Resolver_PreservesArchiveAmbiguityAndWatchPathScope()
+    {
+        var tasks = new[]
+        {
+            new TaskInfo { Id = "same", Key = "ASS-1", State = TaskStates.Archive,
+                WatchPath = "/a", FolderPath = "/a/ASS-1" },
+            new TaskInfo { Id = "same", Key = "ASS-2", State = TaskStates.Archive,
+                WatchPath = "/a", FolderPath = "/a/ASS-2" },
+            new TaskInfo { Id = "same", Key = "ASS-3", State = TaskStates.Archive,
+                WatchPath = "/b", FolderPath = "/b/ASS-3" },
+        };
+        Assert.True(TaskIntegrationRecordAddressResolver.Resolve(tasks, "same", "/a").Ambiguous);
+        Assert.True(TaskIntegrationRecordAddressResolver.Resolve(tasks, "same", null).Ambiguous);
+        Assert.Equal("ASS-3", TaskIntegrationRecordAddressResolver.Resolve(tasks, "same", "/b").Task?.Key);
+        Assert.Equal("ASS-2", TaskIntegrationRecordAddressResolver.Resolve(tasks, "ASS-2", "/a").Task?.Key);
+        Assert.Null(TaskIntegrationRecordAddressResolver.Resolve(tasks, "ASS-2", "/b").Task);
     }
 
     [Fact]

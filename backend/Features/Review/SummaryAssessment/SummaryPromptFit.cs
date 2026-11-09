@@ -222,6 +222,23 @@ public static partial class SummaryPromptFit
         return string.Join(MessageSeparator, kept);
     }
 
+    /// <summary>The newest agent-authored message in a bounded run-log tail.</summary>
+    public static string? LatestAgentMessage(IReadOnlyList<string> lines)
+    {
+        for (var i = lines.Count - 1; i >= 0; i--)
+        {
+            if (AgentMessage(lines[i]) is { } message)
+                return OrchestratorPromptBoundary.Redact(message.Trim());
+            var marker = lines[i].IndexOf("[assistant/final]", StringComparison.Ordinal);
+            if (marker >= 0)
+            {
+                var text = lines[i][(marker + "[assistant/final]".Length)..].Trim();
+                if (text.Length > 0) return OrchestratorPromptBoundary.Redact(text);
+            }
+        }
+        return null;
+    }
+
     private static string RunLog(string[] lines, Func<string, string> clean, int budget, List<string> omissions)
     {
         var kept = new List<string>();

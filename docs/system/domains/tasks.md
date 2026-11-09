@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-29
+Version: 2026-11-05
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -38,6 +38,25 @@ The service token is `secret://workspace/quality-studio-api-token` by default;
 the matching GET supplies the Deck status panel.
 
 ## Board read contract
+
+### Routing mutation publication
+
+`PUT /api/tasks/{id}/model`, `/cli-type`, and `/thinking-level` replace
+`task.json` once with all related fields, then publish that card into the
+resident core and board generations. `POST /api/tasks` publishes the new card
+after its task file, derived layout index, and timeline have been written.
+These paths do not invalidate the whole task index for a routine API write.
+The watcher ignores a `task.json` event when its file stamp matches the
+version already published by the API; an external edit still invalidates the
+index. Creation retains separate writes for the task, project key
+counter, and derived layout index.
+
+The `task-operation-timing` line for these four routes carries a `breakdown`
+JSON object. It reports request wall time, `mutation.lookup`,
+`mutation.write`, `mutation.publish`, and the creation-only `mutation.lock`, `mutation.key`,
+`mutation.index`, and `mutation.timeline` spans, plus workspace scans and Git
+process count. The spans are stage costs; their sum can be below wall time
+because validation and response coordination are outside them.
 
 `GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.
 They include identity, lane, sort and filter fields, card badges, a commit
@@ -818,6 +837,9 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   `POST /api/tasks/{address}/integration-records?watchPath=...`. The address may
   be a stable task key or the task folder name within the selected project. A
   duplicated legacy `id` returns `409` rather than selecting an arbitrary card.
+  Address resolution reads the published archive-inclusive identity facts;
+  after selecting an unambiguous card, the write reads only that card folder
+  again for current state and persisted records.
   The request uses the historical classes owned by
   `HistoricalIntegrationVerificationSweep` or `curated-mapping`, a stable caller-supplied record id,
   and explicit evidence. The server owns
@@ -1858,6 +1880,21 @@ their authoritative checks; display state never grants permission to mutate.
   than a fixed TTL after the last refresh queued a whole-board recompute -
   structurally proportional to request traffic rather than to actual repo
   change.
+- **Card sidecar generations (AGT-3541).** The review round ledger and
+  integration verification record have a remembered file generation per card.
+  Their writers and task watcher invalidate that card immediately. A ref-only
+  projection reuses the parsed review view and verification record, so it does
+  not probe every card's round file. Each index pass inspects at most 32
+  sidecars from a rotating queue to repair a missed watcher event. The 45 s
+  safety sweep checks up to 256 sidecars; a repaired
+  file changes the task input signature and queues a new board generation.
+  A second rotating pass re-reads at most 32 review views older than five
+  minutes to repair missed events for other review artifacts.
+  The first observation after a restart records file metadata and content hash
+  in the durable input signature, so a restored generation is confirmed only
+  against the current sidecars. The five synchronous projection lookups
+  execute on one outer pool worker instead of reserving five workers during
+  file and Git reads.
 - **Single-flight per repository, bounded concurrency across repositories.** A
   trigger that arrives while a repository's run is already in flight does not
   start a second one; it marks exactly one rerun for after the current run
@@ -1967,7 +2004,7 @@ offline reducer protocol is in [measurement.md](../../task-switch-performance/me
 
 The full-detail route resolves its card and dependency targets from published
 resident core facts. Other cards' mutations cannot make it wait for `EnsureFresh`;
-a safety-TTL or watcher repair runs in the background. It emits
+a reconciliation or watcher repair runs in the background. It emits
 `X-Task-Detail-Freshness: ready|stale|warming`; a cold, unindexed lookup returns
 `202` while the first snapshot or that card's publication is pending; a card
 absent from an otherwise populated but dirty snapshot returns `404`.
@@ -1986,7 +2023,7 @@ during migration. The `project` handle is required and resolved against the
 registry before a scoped principal can see a core. An unknown project or a
 known, indexed-but-absent task returns `404` with `state=missing`; an identity
 whose index is still hydrating returns `202` with `state=warming`. A known
-record whose sidecar refresh or safety sweep is pending returns `state=stale`.
+record whose sidecar refresh or folder reconciliation is pending returns `state=stale`.
 Durable deletion tombstones known core aliases immediately, so a deleted task
 does not reappear or wait for hydration to return `missing`.
 Core identity fields retain their full values. Lookup accepts the full id, the
@@ -2179,13 +2216,26 @@ every byte of it is a byte the client already holds.
   stored fact, so a 15 s tick is folded in while any card sits in the Progress
   lane - the only lane those branches apply to. An idle board has no Progress
   card and does not pay that tick at all.
-- **A cached body never outlives the task index safety TTL.** The index
-  publishes a new generation on every snapshot publish, including the TTL rescan
-  that finds nothing changed (`TaskIndexCache:SafetyTtlSeconds`, default 30 s).
-  The board therefore rebuilds at most once per TTL window, and the same bound
-  backstops the signature if the filesystem watcher ever stops delivering
-  events. A rebuild that produces the same bytes keeps its tag, so an unchanged
+- **Folder-index publication follows task changes.** The first publication
+  scans every configured watch path. Later watcher events name one card folder,
+  including for `jobs/<bucket>/<key>/task.json` changes;
+  mutation invalidations enumerate folder names and compare the scanner's file
+  stamps, then reload only changed folders. A 15-minute background reconciliation
+  (`TaskIndexCache:ReconciliationSeconds`, default 900) repeats that stamp
+  comparison to repair missed watcher events. Board requests use the last
+  published generation while it runs. Git-state sweeps and index runs read the
+  same archive-inclusive publication and wait for a pending folder refresh,
+  without starting raw task scans. Unchanged
+  polling and Git sweeps do not advance the task-index generation; an unchanged
   board still answers 304.
+  A Git task-event request without a folder path schedules the same stamp
+  comparison before its integration view joins task facts.
+  The 3,000-card AGT-3540 fixture measured one warm raw pass at 206 ms and
+  21.4 MB allocated on the shared host. Its simulated hour of 240 board polls,
+  80 Git sweep reads, and four background reconciliations made zero raw scans
+  after startup and took 2.49 s with 153 MB allocated. The previous 30 s TTL
+  plus 45 s Git sweep scheduled 200 raw passes per hour before task events,
+  about 41 s of scan wall time and 4.28 GB allocated at that warm-pass cost.
 - **Legacy `review` lane alias is opt-out.** The grouped response still carries
   `review` as a second copy of the auto-review lane for pre-ADR-0025 clients. A
   client that knows the ADR-0025 lane names sends
@@ -2213,7 +2263,7 @@ disk for runner state.
   part of the board response signature. The
   shared body build pins the same generation itself, so the tag always names the
   generation the body came from.
-- **A dirty index refreshes in the background.** A dirty or TTL-expired index
+- **A dirty index refreshes in the background.** A dirty index
   starts one single-flight background refresh after a 200 ms coalescing window.
   It inherits neither the request trace nor the pin, and the read answers from
   the last snapshot. A cold start answers from the persisted board (below);
@@ -2260,7 +2310,7 @@ disk for runner state.
 - **The client learns about the newer snapshot by push.** When a background
   refresh publishes after an invalidation, the index sends one
   `jobsBulkChanged` after a 250 ms debounce. The board answers it with a
-  conditional read. A TTL-only rescan does not push.
+  conditional read. An unchanged reconciliation does not push.
 - **Runner status reads the snapshot.** `ProjectRunner.GetStatus` takes provider
   limits from the snapshot's `TaskInfo.QuotaWait` and the displayed queue from
   one Ready-candidate order per generation and `ProjectSettingsService.Version`,

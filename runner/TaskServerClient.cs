@@ -1314,6 +1314,17 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         return JsonSerializer.Deserialize<Contract.ArtifactContentDto>(detail, Json);
     }
 
+    public async Task<IReadOnlyList<Contract.ArtifactDto>> ListRunArtifactsAsync(
+        string runId, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/runs/{Uri.EscapeDataString(runId)}/artifacts", ct);
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Artifact list failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.ArtifactDto[]>(detail, Json) ?? [];
+    }
+
     /// <summary>
     /// AGT-3063: a shadow orchestrator decision call queued on the monolith
     /// authority. The runner runs it with its own provider credential.
@@ -1399,6 +1410,21 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<Contract.DeviceLoginRunnerStateDto>(Json, ct))?.State;
+    }
+
+    /// <summary>
+    /// The Owner's pasted Claude authorization code. The server hands it out once; null until the
+    /// Owner submits it. The caller writes it to the CLI and never logs it.
+    /// </summary>
+    public async Task<string?> TakeDeviceLoginCodeAsync(string handle, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}/code",
+            new { }, Json, ct);
+        if (response.StatusCode == HttpStatusCode.NoContent) return null;
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength == 0) return null;
+        return (await response.Content.ReadFromJsonAsync<Contract.DeviceLoginCodeDto>(Json, ct))?.Code;
     }
 
     public async Task CompleteDeviceLoginAsync(string handle,

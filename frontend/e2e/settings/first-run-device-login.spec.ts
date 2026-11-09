@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { Route } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import { test, expect } from '../fixtures/dev-backend';
 import { setTheme } from '../helpers/theme';
 
@@ -9,11 +9,8 @@ const json = (body: unknown) => (route: Route) => route.fulfill({
   status: 200, contentType: 'application/json', body: JSON.stringify(body),
 });
 
-// AGT-3225: the first-run checklist starts provider sign-in through the same Task Server
-// device-login API as the Access and Execution Hosts actions.
-test('networked first-run provider sign-in uses the shared device-login API', async ({ page }) => {
-  mkdirSync(shots, { recursive: true });
-  await page.setViewportSize({ width: 1440, height: 900 });
+/** The networked Owner, installation and one host whose Claude probe reports signed out. */
+async function mockSignedOutClaudeHost(page: Page): Promise<void> {
   const now = new Date().toISOString();
   const owner = {
     profile: 'networked', bootstrapRequired: false, authenticated: true,
@@ -22,6 +19,8 @@ test('networked first-run provider sign-in uses the shared device-login API', as
   };
   await page.route('**/api/auth/status', json(owner));
   await page.route('**/api/v1/studio/auth/status', json(owner));
+  // The Owner's session list answers 401 from the isolated backend, which would end the mocked session.
+  await page.route('**/api/auth/sessions', json([]));
   await page.route('**/api/v1/installation', json({ installationId: 'install-a', ownerBootstrapped: true }));
   await page.route('**/api/v1/projects', json([]));
   await page.route('**/api/v1/management/links', json([]));
@@ -44,6 +43,14 @@ test('networked first-run provider sign-in uses the shared device-login API', as
       consecutiveFailures: 2, signal: 'signed-out', detail: 'Claude is signed out.',
     }],
   }]));
+}
+
+// AGT-3225: the first-run checklist starts provider sign-in through the same Task Server
+// device-login API as the Access and Execution Hosts actions.
+test('networked first-run provider sign-in uses the shared device-login API', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockSignedOutClaudeHost(page);
   const started: unknown[] = [];
   await page.route('**/api/v1/management/device-logins', route => {
     started.push(route.request().postDataJSON());
@@ -91,4 +98,77 @@ test('networked first-run provider sign-in uses the shared device-login API', as
   await page.getByRole('complementary', { name: 'Settings sections' }).getByRole('button', { name: 'Overview' }).click();
   await expect(page.getByTestId('first-run-device-login')).toHaveCount(0);
   await expect.poll(() => cancelKeys).toEqual(['browser-session']);
+});
+
+// AGT-3243: headless `claude setup-token` waits for the authorization code of its callback page.
+// The Owner pastes it into the checklist; a wrong code ends the session with a clear message.
+test('networked first-run Claude sign-in takes the authorization code back once', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockSignedOutClaudeHost(page);
+  const signInUrl = 'https://claude.com/cai/oauth/authorize?code=true&client_id=studio&response_type=code&state=s1';
+  const expiresAt = new Date(Date.now() + 900_000).toISOString();
+  const rightCode = `code-${Date.now()}#state-${Date.now()}`;
+  let attempt = 0;
+  let phase: 'awaiting' | 'submitted' | 'failed' | 'completed' = 'awaiting';
+  const submissions: { key: string | undefined; body: unknown; handle: string }[] = [];
+  await page.route('**/api/v1/management/device-logins', route => {
+    attempt += 1;
+    phase = 'awaiting';
+    return json({ handle: `dlogin_claude_${attempt}`, state: 'queued', sessionKey: `browser-session-${attempt}`,
+      verificationUrl: null, userCode: null, expiresAt })(route);
+  });
+  await page.route('**/api/v1/management/device-logins/*', route => {
+    const handle = `dlogin_claude_${attempt}`;
+    // The host reports the outcome on the poll after it wrote the code to the CLI.
+    if (phase === 'submitted') phase = submissions.at(-1)?.body === JSON.stringify({ code: rightCode })
+      ? 'completed' : 'failed';
+    if (phase === 'awaiting') return json({ handle, state: 'running', detail: null, sessionKey: null,
+      verificationUrl: signInUrl, userCode: null, expiresAt, codeState: 'awaiting' })(route);
+    return json({ handle, state: phase, sessionKey: null, verificationUrl: null, userCode: null, expiresAt,
+      codeState: null, detail: phase === 'failed' ? 'Claude did not accept the authorization code.'
+        : 'Claude login and a real provider request succeeded.' })(route);
+  });
+  await page.route('**/api/v1/management/device-logins/*/code', route => {
+    submissions.push({ key: route.request().headers()['x-device-login-session'],
+      body: route.request().postData(), handle: new URL(route.request().url()).pathname.split('/').at(-2)! });
+    phase = 'submitted';
+    return route.fulfill({ status: 200 });
+  });
+  await page.route('**/api/v1/management/device-logins/*/cancel', route => route.fulfill({ status: 200 }));
+
+  await page.goto('/#/workspace/settings/first-run', { waitUntil: 'domcontentloaded' });
+  const row = page.getByTestId('first-run-provider-coding-a:claude');
+  const login = page.getByTestId('first-run-device-login');
+  const code = page.getByTestId('device-login-auth-code');
+  const send = page.getByTestId('device-login-auth-code-submit');
+
+  await row.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByTestId('first-run-device-url')).toHaveAttribute('href', signInUrl);
+  await expect(code).toBeVisible();
+  await expect(send).toBeDisabled();
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.getByTestId('first-run-providers').screenshot({ path: join(shots, `first-run-claude-code-awaiting-${theme}--mocked.png`) });
+  }
+  await code.fill('wrong-code#state');
+  await send.click();
+  await expect(login).toContainText('Claude did not accept the authorization code. Start it again on this host.');
+  await expect(code).toHaveCount(0);
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.getByTestId('first-run-providers').screenshot({ path: join(shots, `first-run-claude-code-rejected-${theme}--mocked.png`) });
+  }
+
+  await row.getByRole('button', { name: 'Sign in' }).click();
+  await expect(code).toBeVisible();
+  await expect(code).toHaveValue('');
+  await code.fill(rightCode);
+  await code.press('Enter');
+  await expect(login).toContainText('Claude on Coding host A: completed');
+  await expect(code).toHaveCount(0);
+  expect(submissions).toEqual([
+    { key: 'browser-session-1', body: JSON.stringify({ code: 'wrong-code#state' }), handle: 'dlogin_claude_1' },
+    { key: 'browser-session-2', body: JSON.stringify({ code: rightCode }), handle: 'dlogin_claude_2' },
+  ]);
 });

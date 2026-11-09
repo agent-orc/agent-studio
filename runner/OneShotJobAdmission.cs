@@ -47,14 +47,14 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
                 throw new InvalidDataException("one-shot job exceeds its bounded request envelope");
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
             timeout.CancelAfter(TimeSpan.FromSeconds(request.TimeoutSeconds));
-            var process = await RunProviderTurnAsync(request, directory, timeout.Token);
+            var process = await RunBoundedTurnAsync(request, directory, timeout.Token);
             var parsed = request.Cli == "claude"
                 ? RemoteProjectChatRunner.ParseClaude(process, request.Model)
                 : RemoteProjectChatRunner.ParseCodex(process, request.Model);
             var text = parsed.ReplyText;
             var tooLarge = Encoding.UTF8.GetByteCount(text ?? string.Empty) > request.MaxOutputBytes;
             var usage = parsed.TokenUsage;
-            completion = new(options.RunnerId, work.JobId, work.ClaimToken,
+            completion = new(options.RunnerId, client.RunnerInstanceId, work.JobId, work.ClaimToken,
                 parsed.Success && !tooLarge, tooLarge ? null : text,
                 tooLarge ? "one-shot output exceeds the byte cap" : parsed.ErrorMessage,
                 usage is null ? null : new(usage.InputTokens, usage.OutputTokens,
@@ -63,12 +63,12 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { throw; }
         catch (OperationCanceledException)
         {
-            completion = new(options.RunnerId, work.JobId, work.ClaimToken, false, null,
+            completion = new(options.RunnerId, client.RunnerInstanceId, work.JobId, work.ClaimToken, false, null,
                 $"one-shot job timed out after {request.TimeoutSeconds} seconds", null);
         }
         catch (Exception ex)
         {
-            completion = new(options.RunnerId, work.JobId, work.ClaimToken, false, null, ex.Message, null);
+            completion = new(options.RunnerId, client.RunnerInstanceId, work.JobId, work.ClaimToken, false, null, ex.Message, null);
         }
         finally
         {
@@ -80,7 +80,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             log($"one-shot-job-completion-rejected job={work.JobId}");
     }
 
-    internal async Task<ProcessResult> RunProviderTurnAsync(OneShotJobRequest request, string directory,
+    internal async Task<ProcessResult> RunBoundedTurnAsync(OneShotJobRequest request, string directory,
         CancellationToken ct)
     {
         var start = new ProcessStartInfo
@@ -93,6 +93,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        WorkerEdgeCredentialBoundary.RemoveFrom(start.Environment);
         if (request.Cli == "claude")
         {
             foreach (var arg in new[] { "-p", "--output-format", "stream-json", "--input-format",
@@ -122,18 +123,20 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
                      request.Cli, request.Model, request.ThinkingLevel))
             start.ArgumentList.Add(flag);
         if (request.Cli == "codex") start.ArgumentList.Add("-");
-        WorkerEdgeCredentialBoundary.RemoveFrom(start.Environment);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Provider CLI did not start.");
         try
         {
             var outputExceeded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            // The requested cap also bounds raw CLI output, including JSON framing.
-            // Reject it while reading so a provider that keeps running cannot turn
-            // an over-cap result into a timeout.
-            var stdout = ReadBoundedAsync(process.StandardOutput, request.MaxOutputBytes, process, outputExceeded, ct);
-            var stderr = ReadBoundedAsync(process.StandardError, 8_192, process, outputExceeded, ct);
+            var rawBudget = new RawOutputBudget(Math.Min(262_144, request.MaxOutputBytes * 4));
+            var stdout = ReadBoundedAsync(process.StandardOutput.BaseStream,
+                rawBudget, process, outputExceeded, ct);
+            var stderr = ReadBoundedAsync(process.StandardError.BaseStream,
+                rawBudget, process, outputExceeded, ct, 8_192);
             var input = request.Cli == "claude" ? ClaudeImageEnvelope(request) : request.Prompt;
-            var write = WriteInputAsync(process.StandardInput, input, ct);
+            // A large prompt can fill the child's stdin pipe while it writes
+            // its response. Schedule the writer independently so the output
+            // cap remains observable even if writing blocks synchronously.
+            var write = Task.Run(() => WriteInputAsync(process.StandardInput, input, ct), ct);
             var all = Task.WhenAll(write, process.WaitForExitAsync(ct), stdout, stderr);
             if (ReferenceEquals(await Task.WhenAny(all, outputExceeded.Task), outputExceeded.Task))
                 throw new InvalidDataException("one-shot raw output exceeds the byte cap");
@@ -166,26 +169,30 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
         return JsonSerializer.Serialize(new { type = "user", message = new { role = "user", content } }) + "\n";
     }
 
-    private static async Task<string> ReadBoundedAsync(StreamReader reader, int maxBytes,
-        Process process, TaskCompletionSource outputExceeded, CancellationToken ct)
+    private sealed class RawOutputBudget(int maxBytes)
     {
-        var buffer = new char[4096];
-        var result = new StringBuilder();
-        var bytes = 0;
+        private long _bytes;
+        public bool TryAdd(int count) => Interlocked.Add(ref _bytes, count) <= maxBytes;
+    }
+
+    private static async Task<string> ReadBoundedAsync(Stream stream, RawOutputBudget budget,
+        Process process, TaskCompletionSource outputExceeded, CancellationToken ct, int? streamCap = null)
+    {
+        var buffer = new byte[4096];
+        using var result = new MemoryStream();
         while (true)
         {
-            var count = await reader.ReadAsync(buffer.AsMemory(), ct);
+            var count = await stream.ReadAsync(buffer.AsMemory(), ct);
             if (count == 0) break;
-            bytes += Encoding.UTF8.GetByteCount(buffer, 0, count);
-            if (bytes > maxBytes)
+            if (!budget.TryAdd(count) || streamCap is { } cap && result.Length + count > cap)
             {
                 outputExceeded.TrySetResult();
                 try { process.Kill(entireProcessTree: true); }
                 catch (InvalidOperationException) { }
                 throw new InvalidDataException("one-shot raw output exceeds the byte cap");
             }
-            result.Append(buffer, 0, count);
+            result.Write(buffer, 0, count);
         }
-        return result.ToString();
+        return Encoding.UTF8.GetString(result.GetBuffer(), 0, (int)result.Length);
     }
 }

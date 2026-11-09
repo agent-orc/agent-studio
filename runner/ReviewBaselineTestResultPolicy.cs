@@ -17,7 +17,8 @@ internal static partial class ReviewBaselineTestResultPolicy
         return DotNetTotal().IsMatch(output)
                || DotNetPassed().IsMatch(output)
                || NodeTotal().IsMatch(output)
-               || JestOrVitestPassed().IsMatch(output);
+               || JestOrVitestPassed().IsMatch(output)
+               || VitestFilesPassed().IsMatch(output);
     }
 
     [GeneratedRegex(@"\bTotal(?: tests)?:\s*[1-9]\d*\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -31,4 +32,7 @@ internal static partial class ReviewBaselineTestResultPolicy
 
     [GeneratedRegex(@"\bTests:?\s+[1-9]\d*\s+passed\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex JestOrVitestPassed();
+
+    [GeneratedRegex(@"\bTest Files\s+[1-9]\d*\s+passed\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex VitestFilesPassed();
 }

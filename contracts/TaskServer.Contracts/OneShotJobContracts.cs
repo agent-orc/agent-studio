@@ -13,7 +13,7 @@ public sealed record OneShotJobDto(string JobId, string Status, string Capabilit
 public sealed record OneShotJobUsage(long InputTokens, long OutputTokens,
     long CacheReadTokens, long CacheCreationTokens, string? Model);
 
-public sealed record OneShotJobClaimRequest(string RunnerId, string? InstanceId);
+public sealed record OneShotJobClaimRequest(string RunnerId, string InstanceId);
 public sealed record OneShotJobWork(string JobId, string ClaimToken, OneShotJobRequest Request);
-public sealed record OneShotJobCompletion(string RunnerId, string JobId, string ClaimToken,
+public sealed record OneShotJobCompletion(string RunnerId, string InstanceId, string JobId, string ClaimToken,
     bool Success, string? Text, string? Error, OneShotJobUsage? Usage);

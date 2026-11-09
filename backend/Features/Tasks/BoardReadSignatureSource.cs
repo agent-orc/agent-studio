@@ -67,13 +67,10 @@ namespace AgentStudio.Tasks;
 /// lane, which is the only lane those branches apply to. An idle board has no
 /// Progress card and so does not pay that tick at all.</para>
 ///
-/// <para><b>Upper bound on how long a tag holds.</b> The task index publishes a
-/// new generation on every snapshot publish, including the safety-TTL rescan
-/// that finds nothing changed (<c>TaskIndexCache:SafetyTtlSeconds</c>, default 30 s).
-/// A validator therefore never outlives that window, which is the same bound
-/// every other reader of the index already lives with: it caps the board poll
-/// at one full response per TTL instead of one per poll, and it doubles as a
-/// backstop should the filesystem watcher ever stop delivering events.</para>
+/// <para><b>Upper bound on missed changes.</b> Folder events publish a new
+/// generation; a 15-minute background reconciliation repairs missed events.
+/// If a new generation produces identical bytes, the ETag remains stable and
+/// the next conditional board read still answers 304.</para>
 /// </summary>
 public sealed class BoardReadSignatureSource(
     TaskScannerService scanner,

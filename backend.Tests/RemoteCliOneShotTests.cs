@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using AgentStudio.Cli;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -42,6 +43,29 @@ public sealed class RemoteCliOneShotTests
         Assert.Equal(12, result.Usage?.InputTokens);
         Assert.Equal(3, result.Usage?.OutputTokens);
         Assert.Equal("/api/v1/one-shot-jobs/job-1", handler.Path);
+    }
+
+    [Fact]
+    public async Task Claim_observed_after_the_queue_deadline_keeps_the_claimed_run_budget()
+    {
+        var clock = new FakeTimeProvider();
+        var handler = new LateClaimHandler(clock);
+        var client = new HttpClient(handler) { BaseAddress = new Uri("http://task-server/") };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskServer:BaseUrl"] = "http://task-server/",
+        }).Build();
+        var oneShot = new RemoteCliOneShot("codex", new ClientFactory(client), config,
+            timeProvider: clock, pollInterval: TimeSpan.Zero);
+
+        var result = await oneShot.RunAsync(new("codex", "gpt-6-sol", "Summarize this card.")
+        {
+            Timeout = TimeSpan.FromSeconds(1),
+        });
+
+        Assert.True(result.Ok);
+        Assert.Equal("Late summary", result.ParsedText);
+        Assert.Equal(3, handler.Polls);
     }
 
     [Fact]
@@ -86,6 +110,44 @@ public sealed class RemoteCliOneShotTests
             {
                 Content = new StringContent(responseBody, Encoding.UTF8, "application/json"),
             };
+        }
+    }
+
+    private sealed class LateClaimHandler(FakeTimeProvider clock) : HttpMessageHandler
+    {
+        public int Polls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            string body;
+            if (request.Method == HttpMethod.Post)
+            {
+                body = """{"jobId":"job-1","status":"pending","capability":"model-acceptance:codex:gpt-6-sol"}""";
+            }
+            else
+            {
+                Polls++;
+                body = Polls switch
+                {
+                    1 => """{"jobId":"job-1","status":"pending","capability":"model-acceptance:codex:gpt-6-sol"}""",
+                    2 => """{"jobId":"job-1","status":"claimed","capability":"model-acceptance:codex:gpt-6-sol"}""",
+                    3 => """{"jobId":"job-1","status":"completed","capability":"model-acceptance:codex:gpt-6-sol","text":"Late summary"}""",
+                    _ => throw new InvalidOperationException("Unexpected extra poll."),
+                };
+                // The claim occurs just before the queue deadline, but its
+                // response arrives just after it. Completion uses the run budget.
+                clock.Advance(Polls switch
+                {
+                    1 => TimeSpan.FromMilliseconds(30_500),
+                    2 => TimeSpan.FromMilliseconds(600),
+                    _ => TimeSpan.FromMilliseconds(30_500),
+                });
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            });
         }
     }
 }

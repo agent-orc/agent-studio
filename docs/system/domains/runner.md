@@ -181,8 +181,23 @@ checklist cancels a queued or running session. A runner on that host claims the
 command through its outbound Task Server channel, holds a local provider login
 lock and starts `codex login --device-auth` or `claude setup-token` in its own
 service account through `DeviceLoginExecutor`, the only device-login launcher.
-The child gets a closed stdin pipe. The runner reports the URL and code without
-logging child output. While the CLI runs, the runner reads the session state
+Codex gets a closed stdin pipe. The runner reports the URL and code without
+logging child output. The URL must come from the provider's sign-in origin:
+`auth.openai.com` or `login.openai.com` for Codex; `claude.com` and
+`platform.claude.com` (Claude Code 2.x) or `claude.ai` and
+`console.anthropic.com` (earlier releases) for Claude. One list,
+`DeviceLoginSessions.ProviderOrigin`, serves the runner and the server.
+Headless `claude setup-token` waits for the authorization code its callback
+page shows (AGT-3243). After the runner publishes a Claude URL, the session
+reports `codeState: awaiting`. The Owner signs in, pastes the code into the
+first-run checklist, and the browser posts it once with its session key
+(`POST /api/v1/management/device-logins/{handle}/code`). The server keeps it
+only in memory and hands it once to the claiming runner
+(`POST /api/v1/runners/{runnerId}/device-login/{handle}/code`), which writes it
+to the CLI's stdin and then closes stdin. The code is never logged, audited,
+echoed in a response or written to disk; cancel, timeout and completion drop a
+code no runner took. A code the CLI refuses ends the session with
+"Claude did not accept the authorization code." While the CLI runs, the runner reads the session state
 every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
 only). A Studio cancel, a Task Server timeout or a failed instruction publish
 stops the process tree, accepts no credential and reports `failed`; on runner
@@ -298,6 +313,15 @@ in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infr
   and runner decision rationale.
 
 ## Key Code
+
+The coding runner samples load per core before each claim. Once load stays above
+`RUNNER_CLAIM_MAX_LOAD_PER_CORE` for the configured sustained interval, it stops
+new claims while active slots continue. The capability telemetry snapshot carries
+the gate state, measured load, threshold, duration, close time, and active slots.
+Task Server retains that snapshot and records one stream event on each close and
+open transition, including the elapsed closed interval on recovery. A transition
+forces the runner's next capability advertisement rather than waiting for its
+normal minute cadence.
 
 Coding claims carry the effective emergency process limit and its source from
 project setting, workspace default, or the 24-hour platform constant. The
@@ -1388,6 +1412,12 @@ unreported claim expires with its lease and is queued again.
   boundary: the Task Server never substitutes its checkout or local
   `session-events.jsonl` for the ReviewSubject. Legacy tasks without attempt
   authority continue through the established local compatibility path.
+- The Auto Review stranding watchdog runs in both Monolith and Engine modes.
+  After the configured threshold it recovers a card without a running step,
+  active review, batch entry, or queued round, and records an intervention on
+  the card timeline and stall feed. A stale delivery verdict refreshes the
+  subject from the current completed run, integrates that delivery, and only
+  then requests another review. A merge conflict starts a merge round.
 - ReviewAttempt claimability is also bound to the current task lane. A
   successful transition into `6-completed` or `7-archive` supersedes every open
   ReviewAttempt for that task before another claim can cross the lifecycle

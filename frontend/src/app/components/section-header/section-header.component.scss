@@ -23,6 +23,28 @@
   text-align: left;
   user-select: none;
 
+  &__toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-2);
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: var(--studio-row-min-h-interactive);
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    text-align: left;
+  }
+
+  &__actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--studio-spacing-1);
+    flex: 0 0 auto;
+  }
+
   // Collapsible mode renders as a <button>; give it the flat-toggle
   // affordance (hover wash + pointer) the static heading must not have.
   &--btn {

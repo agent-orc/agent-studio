@@ -40,6 +40,16 @@ public static class DeviceLoginEndpoints
             var key = context.Request.Headers["X-Device-Login-Session"].ToString();
             return await sessions.CancelAsync(handle, key, ct) ? Results.Ok() : Results.NotFound();
         }).RequireStudioRole(StudioUserRoles.Owner);
+        // The Owner pastes the Claude authorization code back; only the claiming runner receives it (AGT-3243).
+        management.MapPost("/{handle}/code", (HttpContext context, string handle,
+            DeviceLoginCodeRequest request, DeviceLoginSessions sessions) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var key = context.Request.Headers["X-Device-Login-Session"].ToString();
+            try { return sessions.SubmitCode(handle, key, request) ? Results.Ok() : Results.NotFound(); }
+            catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-code", ex.Message)); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new ApiError("code-not-expected", ex.Message)); }
+        }).RequireStudioRole(StudioUserRoles.Owner);
 
         var runner = app.MapGroup("/api/v1/runners/{runnerId}/device-login")
             .RequireTaskServerScope(TaskServerScopes.RunsClaim);
@@ -67,6 +77,13 @@ public static class DeviceLoginEndpoints
         {
             try { return sessions.Instructions(handle, runnerId, request) ? Results.Ok() : Results.Conflict(); }
             catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-instructions", ex.Message)); }
+        });
+        runner.MapPost("/{handle}/code", (HttpContext context, string runnerId, string handle,
+            DeviceLoginSessions sessions) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!sessions.TakeCode(handle, runnerId, out var code)) return Results.NotFound();
+            return code is null ? Results.NoContent() : Results.Ok(new DeviceLoginCodeDto(code));
         });
         runner.MapPost("/{handle}/completion", async (string runnerId, string handle,
             DeviceLoginCompletionRequest request, DeviceLoginSessions sessions, CancellationToken ct) =>

@@ -372,6 +372,33 @@ entry has `key`, `releaseId`, `releaseVersion` and `rolledBack`; a rollback
 moves the withdrawn release's cards back to `waiting` and marks them rolled
 back. Membership follows release creation order, as the status projection
 does, so the read runs no git. Card lane states never change.
+The integrated column uses a project-local verification map. Writes and
+deletions through `IntegrationVerificationStore` update the next response;
+changes made directly to verification files are reconciled no later than the
+first Delivery read after the five-minute interval elapses. Warm reads do not probe
+every verification file. The process retains at most 4,096 recent store
+publications. A project that falls behind that window scans its current cards
+once on its next read, so pruning cannot hide a verification change.
+
+AGT-3538 measured the route on this runner host on 8 November 2026. Both
+versions used the same generated 3,000-card fixture and `TestServer` request to
+`/api/projects/demo/deploy/lanes`: one warmup, then 20 sequential warm reads.
+Each row is the median in milliseconds. A callback timed the code inside
+`DeployService._gate`; HTTP timing includes the handler and response body.
+The baseline was `433f34c6b` (parent of the original delivery), with only a
+timing hook added to its service. The after row used this change on top of
+`f947f2b51`.
+
+| Version | Request | Deploy lock hold |
+| --- | ---: | ---: |
+| Before, measured | 211.83 ms | 208.83 ms |
+| After, measured | 178.40 ms | 1.36 ms |
+
+The request median fell by 33.43 ms and the lock hold median by 207.47 ms.
+Other jobs were active on the shared host, so these are host measurements, not
+an isolated latency guarantee. The repository benchmark test writes the after
+sample to `JOB_RESULTS_DIR/delivery-columns-benchmark.md`; the matching
+baseline run wrote `delivery-columns-baseline.md` there.
 
 The board renders it as the Delivery group after "Done & Decide" (AGT-3316,
 `<app-delivery-section>`): one column per read-model column, landed cards, a

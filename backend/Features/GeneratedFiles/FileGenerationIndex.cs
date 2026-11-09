@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -24,6 +25,9 @@ public sealed class FileGenerationIndex
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    private static readonly ConcurrentDictionary<string, object> PathLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
     private readonly PipelineExecutionLog? _pipelineLog;
     private readonly ILogger<FileGenerationIndex> _logger;
 
@@ -38,11 +42,14 @@ public sealed class FileGenerationIndex
         if (string.IsNullOrWhiteSpace(jobFolderPath) || string.IsNullOrWhiteSpace(meta.File)) return;
         try
         {
-            var entries = ReadRaw(jobFolderPath);
-            var normalized = Normalize(meta.File);
-            entries.RemoveAll(e => string.Equals(Normalize(e.File), normalized, StringComparison.OrdinalIgnoreCase));
-            entries.Add(NormalizeTotals(meta));
-            WriteAtomic(jobFolderPath, entries);
+            lock (LockFor(jobFolderPath))
+            {
+                var entries = ReadRaw(jobFolderPath);
+                var normalized = Normalize(meta.File);
+                entries.RemoveAll(e => string.Equals(Normalize(e.File), normalized, StringComparison.OrdinalIgnoreCase));
+                entries.Add(NormalizeTotals(meta));
+                WriteAtomic(jobFolderPath, entries);
+            }
         }
         catch (Exception ex)
         {
@@ -55,24 +62,27 @@ public sealed class FileGenerationIndex
 
     public IReadOnlyDictionary<string, FileGenerationMeta> ReadForJob(string jobFolderPath, bool cacheLegacy = true)
     {
-        var entries = ReadRaw(jobFolderPath);
-        var changed = false;
-
-        if (cacheLegacy)
+        lock (LockFor(jobFolderPath))
         {
-            foreach (var legacy in LegacyFromPipeline(jobFolderPath))
-            {
-                var normalized = Normalize(legacy.File);
-                if (entries.Any(e => string.Equals(Normalize(e.File), normalized, StringComparison.OrdinalIgnoreCase))) continue;
-                entries.Add(legacy);
-                changed = true;
-            }
-            if (changed) WriteAtomic(jobFolderPath, entries);
-        }
+            var entries = ReadRaw(jobFolderPath);
+            var changed = false;
 
-        return entries
-            .GroupBy(e => Normalize(e.File), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => NormalizeTotals(g.Last()), StringComparer.OrdinalIgnoreCase);
+            if (cacheLegacy)
+            {
+                foreach (var legacy in LegacyFromPipeline(jobFolderPath))
+                {
+                    var normalized = Normalize(legacy.File);
+                    if (entries.Any(e => string.Equals(Normalize(e.File), normalized, StringComparison.OrdinalIgnoreCase))) continue;
+                    entries.Add(legacy);
+                    changed = true;
+                }
+                if (changed) WriteAtomic(jobFolderPath, entries);
+            }
+
+            return entries
+                .GroupBy(e => Normalize(e.File), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => NormalizeTotals(g.Last()), StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     public static FileGenerationMeta FromStep(
@@ -138,8 +148,9 @@ public sealed class FileGenerationIndex
         if (!File.Exists(path)) return [];
         try
         {
-            var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<List<FileGenerationMeta>>(json, ReadOpts) ?? [];
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            return JsonSerializer.Deserialize<List<FileGenerationMeta>>(stream, ReadOpts) ?? [];
         }
         catch (Exception ex)
         {
@@ -153,17 +164,20 @@ public sealed class FileGenerationIndex
         var path = Path.Combine(jobFolderPath, RelativePath);
         var dir = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(dir);
-        var tmp = path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(entries.Select(NormalizeTotals).ToList(), WriteOpts));
-        if (File.Exists(path))
+        var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
         {
-            File.Replace(tmp, path, destinationBackupFileName: null);
+            File.WriteAllText(tmp, JsonSerializer.Serialize(entries.Select(NormalizeTotals).ToList(), WriteOpts));
+            File.Move(tmp, path, overwrite: true);
         }
-        else
+        finally
         {
-            File.Move(tmp, path);
+            if (File.Exists(tmp)) File.Delete(tmp);
         }
     }
+
+    private static object LockFor(string jobFolderPath)
+        => PathLocks.GetOrAdd(Path.GetFullPath(Path.Combine(jobFolderPath, RelativePath)), static _ => new object());
 
     private static string Normalize(string file) => file.Replace('\\', '/').TrimStart('/');
 

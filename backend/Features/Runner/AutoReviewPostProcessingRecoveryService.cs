@@ -3,8 +3,8 @@ using System.Text.Json;
 namespace AgentStudio.Runner;
 
 /// <summary>
-/// One-shot startup-recovery scan for the volatile auto-review post-processing
-/// queue. The queue (<see cref="AutoReviewPostProcessingQueue"/>) is an in-memory
+/// Recovery for the volatile auto-review post-processing queue and canonical
+/// review attempts. The queue (<see cref="AutoReviewPostProcessingQueue"/>) is an in-memory
 /// channel, so any entry that was enqueued on the normal
 /// <c>3-progress -&gt; 4-auto-review</c> transition but not yet drained is lost
 /// when the backend restarts. The affected card then sits in <c>4-auto-review</c>
@@ -20,10 +20,9 @@ namespace AgentStudio.Runner;
 /// lane, and re-drives it through
 /// <see cref="TaskTransitionService.RequeueAutoReviewPostProcessing"/> (the same
 /// queue path the live transition uses). It touches <b>only</b> 4-auto-review;
-/// 5-human-review / 5e-escalated are never re-enqueued. The scan runs once and
-/// exits; it is fully idempotent (the downstream worker re-scans the lane and
-/// self-gates on each card's real state), so re-running it can never double a
-/// card's post-processing.
+/// 5-human-review / 5e-escalated are never re-enqueued. The legacy scan runs
+/// once per period of Monolith ownership; fenced review-attempt repair stays
+/// active in Engine mode. Both paths are idempotent.
 /// </para>
 /// </summary>
 public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
@@ -79,24 +78,37 @@ public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
         {
             using var scope = _services.CreateScope();
             var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
-            // Stay registered through Engine mode so a live rollback can run the lost-queue scan.
-            while (!MonolithTransitionSwitch.OwnsAutoReview(configuration))
-                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken).ConfigureAwait(false);
             var scanner = scope.ServiceProvider.GetRequiredService<TaskScannerService>();
             await scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
             var transitions = scope.ServiceProvider.GetRequiredService<TaskTransitionService>();
             var reviewAttempts = scope.ServiceProvider.GetRequiredService<ReviewAttemptTaskLifecycleService>();
-
-            // AGT-2860: before anything is re-enqueued, finish what the killed
-            // process had already earned. A card whose review passed and whose
-            // integration or lane move died with the request needs the rest of
-            // that sequence, not another post-processing pass - and certainly
-            // not the new review an operator had to create by hand for AGT-2855.
             var resume = scope.ServiceProvider.GetService<AutoReviewDeliveryResumeService>();
-            if (resume is not null)
-                await resume.RunOnceAsync("startup-recovery", stoppingToken).ConfigureAwait(false);
+            var legacyRecoveryDone = false;
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                var monolithOwnsReview = MonolithTransitionSwitch.OwnsAutoReview(configuration);
+                if (!monolithOwnsReview) legacyRecoveryDone = false;
 
-            RunRecoveryScan(scanner, transitions, reviewAttempts, _logger, configuration: configuration);
+                // Attempt repair has its own fenced authority and remains owed in
+                // Engine mode. The volatile legacy queue and delivery resume are
+                // run only while the monolith owns both transitions.
+                if (!legacyRecoveryDone || !monolithOwnsReview)
+                {
+                    try
+                    {
+                        if (monolithOwnsReview && resume is not null)
+                            await resume.RunOnceAsync("startup-recovery", stoppingToken).ConfigureAwait(false);
+                        RunRecoveryScan(scanner, transitions, reviewAttempts, _logger,
+                            configuration: configuration);
+                        legacyRecoveryDone = monolithOwnsReview;
+                    }
+                    catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+                    {
+                        _logger.LogWarning(ex, "post-processing recovery scan failed; retrying");
+                    }
+                }
+                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException __ex)
         {
@@ -129,10 +141,16 @@ public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
         DateTime? restartedAtUtc = null,
         IConfiguration? configuration = null)
     {
-        if (configuration is not null && !MonolithTransitionSwitch.OwnsAutoReview(configuration))
-            return new RecoverySummary(0, 0, 0, 0);
         var recoveryStartedAt = (restartedAtUtc ?? DateTime.UtcNow).ToUniversalTime();
         var reviewAttemptsReissued = reviewAttempts?.SweepSupersededAutoReviewAttempts() ?? 0;
+        if (configuration is not null && !MonolithTransitionSwitch.OwnsAutoReview(configuration))
+        {
+            if (reviewAttemptsReissued > 0)
+                logger.LogInformation(
+                    "auto-review attempt watchdog reissued {ReviewAttemptsReissued} attempts in Engine mode",
+                    reviewAttemptsReissued);
+            return new RecoverySummary(0, 0, 0, 0, reviewAttemptsReissued);
+        }
         var candidates = scanner.ScanAllAutomationJobs()
             .Where(j => string.Equals(j.State, TaskStates.AutoReview, StringComparison.Ordinal))
             .ToList();
@@ -179,7 +197,7 @@ public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
             else failed++;
         }
 
-        var summary = new RecoverySummary(candidates.Count, reEnqueued, skipped, failed);
+        var summary = new RecoverySummary(candidates.Count, reEnqueued, skipped, failed, reviewAttemptsReissued);
         logger.LogInformation(
             "post-processing startup-recovery: {ReEnqueued} cards re-enqueued and {ReviewAttemptsReissued} review attempts reissued (scanned={Scanned} already-complete={Skipped} failed={Failed})",
             summary.ReEnqueued, reviewAttemptsReissued, summary.Scanned, summary.Skipped, summary.Failed);
@@ -261,5 +279,6 @@ public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
         return records;
     }
 
-    internal sealed record RecoverySummary(int Scanned, int ReEnqueued, int Skipped, int Failed);
+    internal sealed record RecoverySummary(int Scanned, int ReEnqueued, int Skipped, int Failed,
+        int ReviewAttemptsReissued = 0);
 }
