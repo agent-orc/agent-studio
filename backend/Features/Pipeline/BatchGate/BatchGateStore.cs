@@ -60,7 +60,8 @@ public sealed record BatchGateMemberRecord(
     IReadOnlyList<string> ReplacementShas, string BatchId, string MembershipDigest,
     string BaseSha, string TestedCandidateSha, string GateProfileDigest,
     string BatchRunId, string Verdict, string EvidencePath,
-    DateTimeOffset RecordedAtUtc);
+    DateTimeOffset RecordedAtUtc,
+    BatchMemberTimeline? Timeline = null);
 
 public sealed record BatchGateReleaseResult(bool Allowed, string? FailureCode);
 
@@ -673,6 +674,14 @@ public sealed partial class BatchGateStore
         if (!File.Exists(path)) throw new FileNotFoundException("Pending batch member is missing.", path);
         var resolved = path + ".resolved";
         if (!File.Exists(resolved)) WriteOnce(resolved, new { outcome, atUtc = DateTimeOffset.UtcNow });
+    }
+
+    public string? ReadPendingOutcome(string reviewAttemptId)
+    {
+        var path = Path.Combine(_root, "pending", SafeName(reviewAttemptId) + ".json.resolved");
+        if (!File.Exists(path)) return null;
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        return document.RootElement.TryGetProperty("outcome", out var outcome) ? outcome.GetString() : null;
     }
 
     public void CloseManifest(BatchGateManifest manifest)

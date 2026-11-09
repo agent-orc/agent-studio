@@ -17,6 +17,13 @@ const settings = {
 const state = {
   gateSlots: { busy: 2, total: 3 },
   preChecksRun: 3, preChecksRed: 1, preCheckMinutesSaved: 42,
+  dailySummary: { phaseMinutes: {
+    reviewToPreCheck: { p50: 8, p90: 12, cards: 4 },
+    formationWait: { p50: 22, p90: 34, cards: 4 },
+    batchRun: { p50: 10, p90: 20, cards: 4 },
+    publish: { p50: 5, p90: 7, cards: 4 },
+  }, diagnosticRerunShare: .25,
+  preCheckYield: { runs: 3, red: 0, cardsKeptOut: 0, costMinutes: 158 } },
   plan: { decision: 'wait', reason: 'Advisor veto', targetSize: 2, closeAtUtc: '2026-10-11T14:05:00Z',
     proposedMembers: [key], upcoming: [], advisor: { mode: 'enforce', verdict: 'veto', reasons: ['Risk too high'], model: 'test-model', atUtc: '2026-10-11T13:00:00Z' } },
   pending: [{ taskKey: key, reviewAttemptId: 'review-1', resultSha: 'a'.repeat(40), waitMinutes: 12, risk: 'high',
@@ -175,12 +182,16 @@ test('board badge, batch panel and project settings save use batch contract', as
     .toContainText('Approved integration push awaits the worker or restart recovery.');
   await expect(page.getByTestId('batch-gate-slot-usage')).toHaveText('Gate slots: 2/3 busy');
   await expect(page.getByTestId('batch-pre-check-counters')).toContainText('3 run · 1 red · 42 estimated gate minutes saved');
+  await expect(page.getByTestId('batch-phase-metrics')).toContainText('22.0 min');
   await expect(page.getByTestId('batch-panel')).toContainText('pre-check green');
   await expect(page.getByTestId('batch-panel')).toContainText('from batch-7');
   await expect(page.getByTestId('batch-panel')).toContainText('test-failure');
   await expect(page.getByTestId('batch-panel')).toContainText('AGT-3 · overlap separate: src/shared.cs');
   await expect(page.getByTestId('batch-panel')).toContainText('new batch: overlap separate from waiting batch batch-7, files src/shared.cs');
   await captureThemes(page, evidence, 'batch-panel');
+  await page.setViewportSize({ width: 390, height: 900 });
+  await captureThemes(page, evidence, 'batch-panel-390');
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.locator('.batch-panel__body').evaluate(element => { element.scrollTop = element.scrollHeight; });
   await captureThemes(page, evidence, 'batch-panel-history');
   await page.getByRole('button', { name: 'Close batch panel' }).click();
@@ -209,8 +220,16 @@ test('board badge, batch panel and project settings save use batch contract', as
   await expect.poll(() => saved).toBe(true);
   await expect(page.getByTestId('batch-settings')).toContainText('Saved');
   await expect(page.getByTestId('batch-settings-stacking')).toHaveValue('1');
+  await expect(page.getByTestId('batch-pre-check-yield')).toContainText('Pre-check yield is 0 today.');
+  await expect(page.getByTestId('batch-pre-check-yield')).toContainText('158.0 gate minutes');
   await page.locator('#batch-settings-title').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings');
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.getByTestId('studio-ab-explorer').click();
+  await page.getByTestId('batch-phase-metrics').scrollIntoViewIfNeeded();
+  await captureThemes(page, evidence, 'batch-settings-390');
+  await page.getByTestId('batch-pre-check-yield').scrollIntoViewIfNeeded();
+  await captureThemes(page, evidence, 'batch-settings-yield-390');
 });
 
 test('failed-test ranking stays readable at wide and mobile widths in both themes', async ({ page }) => {

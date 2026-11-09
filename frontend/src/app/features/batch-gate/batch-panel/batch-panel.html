@@ -23,6 +23,7 @@
         </p>
       }
       <p class="batch-panel__pre-check-counters" data-testid="batch-pre-check-counters">Pre-checks: {{ data.preChecksRun ?? 0 }} run · {{ data.preChecksRed ?? 0 }} red · {{ data.preCheckMinutesSaved ?? 0 }} estimated gate minutes saved</p>
+      <app-batch-phase-metrics [summary]="data.dailySummary" />
       <section aria-labelledby="batch-failures-title" data-testid="batch-failed-tests">
         <h3 id="batch-failures-title">Recurring failed tests</h3>
         @if (actionError() && !confirm()) { <p class="batch-panel__error" role="alert">{{ actionError() }}</p> }
