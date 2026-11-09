@@ -4,6 +4,7 @@ import { RemoteDispatchRejectionComponent } from '../../../../components/remote-
 import { GitSummaryService } from '../../../../services/git-summary.service';
 import { TaskService } from '../../../../services/task.service';
 import { BoardMutationsService } from '../../state/board-mutations.service';
+import { readyQueueReorder } from '../../state/ready-queue-order';
 import { LaneCollapseService } from '../../state/lane-collapse.service';
 import { focusVisibleLaneStates } from '../board-lane-layout.util';
 import { ClientService } from '../../../../services/client.service';
@@ -15,6 +16,9 @@ import { TagProposalsComponent } from '../../../../components/tag-proposals/tag-
 import {
   buildCardCtxMenuItems,
   cardMoveTarget,
+  MOVE_BOTTOM_ID,
+  MOVE_TOP_ID,
+  type ReadyQueueEdge,
   buildCodeReviewGradeBadge,
   buildVisibleDependencyChip,
   buildCommitChainTooltip,
@@ -403,9 +407,21 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly selection = inject(TaskSelectionService);
   private readonly boardFilters = inject(BoardFiltersService);
   readonly cardContextMenu = signal<{ x: number; y: number } | null>(null);
+  /** Disables Move to top / bottom when the card already sits at that edge. */
+  private readonly readyQueueEdge = computed<ReadyQueueEdge | null>(() => {
+    const job = this.job();
+    if (job.state !== TaskState.Ready) return null;
+    const lane = this.jobs.laneJobs(TaskState.Ready);
+    if (!lane.some((j) => j.id === job.id && j.watchPath === job.watchPath)) return null;
+    return {
+      first: readyQueueReorder(lane, job, 'top') === null,
+      last: readyQueueReorder(lane, job, 'bottom') === null,
+    };
+  });
+
   readonly cardCtxMenuItems = computed(() => buildCardCtxMenuItems(
     this.job(), this.mutationsBlocked(),
-    focusVisibleLaneStates(this.laneFocus())));
+    focusVisibleLaneStates(this.laneFocus()), this.readyQueueEdge()));
 
   /** AGT-2029: open the dependency this card is waiting on (see resolveDependencyTarget). */
   navigateToDependency(chip: DependencyChip, event: MouseEvent): void {
@@ -457,6 +473,13 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     const job = this.job();
 
     if (handleReviewPriorityAction(ev.id, job, this.mutationsBlocked(), this.jobs, this.notifications)) return;
+    if (ev.id === MOVE_TOP_ID || ev.id === MOVE_BOTTOM_ID) {
+      if (this.mutationsBlocked() || !this.cardCtxMenuItems().some(
+        (item) => item.kind === 'row' && item.id === ev.id && !item.disabled,
+      )) return;
+      this.boardMutations.moveToQueueEdge(job, ev.id === MOVE_TOP_ID ? 'top' : 'bottom');
+      return;
+    }
     const moveTarget = cardMoveTarget(ev.id);
     if (moveTarget) {
       if (this.mutationsBlocked() || !this.cardCtxMenuItems().some(
