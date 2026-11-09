@@ -30,8 +30,7 @@ async function settle(page: Page): Promise<void> {
 
 async function hideDevChrome(page: Page): Promise<void> {
   await page.addStyleTag({
-    content: `body::before, .dev-banner, [data-testid="dev-banner"] { display: none !important; }
-      [data-testid="status-bar"] .statusbar__quota { visibility: hidden !important; }`,
+    content: 'body::before, .dev-banner, [data-testid="dev-banner"] { display: none !important; }',
   });
 }
 

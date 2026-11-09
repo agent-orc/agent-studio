@@ -20,9 +20,6 @@ async function applyVisualCaptureMode(page: Page): Promise<void> {
       [data-testid="dev-banner"] {
         display: none !important;
       }
-      [data-testid="status-bar"] .statusbar__quota {
-        visibility: hidden !important;
-      }
     `,
   });
 }

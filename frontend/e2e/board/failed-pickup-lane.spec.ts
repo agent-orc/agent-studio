@@ -55,12 +55,18 @@ function fixtureGrouped(failedCount: number, reviewCount = 0): Record<string, un
     }));
   }
   return {
+    backlog: [jobInfo({ id: 'fx-backlog-1', title: 'Captured idea', state: '0-backlog' })],
     preparation: [jobInfo({ id: 'fx-prep-1', title: 'Drafting', state: '1-preparation' })],
     orchestratorPrep: [],
-    ready: [jobInfo({ id: 'fx-ready-1', title: 'Ready', state: '2-ready' })],
+    ready: [
+      jobInfo({ id: 'fx-ready-1', title: 'Queued first', state: '2-ready', order: 1 }),
+      jobInfo({ id: 'fx-ready-2', title: 'Queued second', state: '2-ready', order: 2 }),
+    ],
     progress: [jobInfo({ id: 'fx-progress-1', title: 'Live', state: '3-progress' })],
     failedPickup,
+    codeNotComplete: [],
     autoReview: [],
+    escalated: [],
     humanReview: Array.from({ length: reviewCount }, (_, i) => jobInfo({
       id: `fx-review-${i + 1}`, title: 'Review fixture', state: '5-human-review',
     })),
@@ -70,9 +76,14 @@ function fixtureGrouped(failedCount: number, reviewCount = 0): Record<string, un
   };
 }
 
-async function installBoardMocks(page: Page, failedCount: number, reviewCount = 0): Promise<void> {
-  const grouped = fixtureGrouped(failedCount, reviewCount);
+async function installBoardMocks(
+  page: Page,
+  failedCount: number,
+  reviewCount = 0,
+  grouped: Record<string, unknown[]> = fixtureGrouped(failedCount, reviewCount),
+): Promise<void> {
   const allJobs = [
+    ...(grouped.backlog as unknown[]),
     ...(grouped.preparation as unknown[]),
     ...(grouped.ready as unknown[]),
     ...(grouped.progress as unknown[]),
@@ -95,6 +106,22 @@ async function installBoardMocks(page: Page, failedCount: number, reviewCount = 
   await page.route('**/api/usage/cockpit**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ workspaceId: 'fixture', clis: [], cost: null }) });
+  });
+  await page.route('**/api/tasks/archive**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], total: 0 }) });
+  });
+  await page.route('**/api/v1/management/credential-inventory', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) });
+  });
+  // A registered project keeps the first-run checklist from replacing the board.
+  await page.route('**/api/v1/projects', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify([{
+        sourceType: 'local', id: 'PROJ-001', displayName: FIXTURE_PROJECT, shortCode: 'FP', workspaceId: 'ws-fp',
+        color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: FIXTURE_WATCH,
+        repositoryPath: FIXTURE_WATCH, rootPath: FIXTURE_WATCH, repositoryUrl: null, urls: [],
+        archived: false, createdAt: '2026-05-05T08:00:00Z',
+      }]) });
   });
   await page.route('**/api/watch-paths', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json',
@@ -187,20 +214,77 @@ test.describe('ADR-0051 failed-pickup lane is eliminated', () => {
   });
 });
 
-test.describe('Board card move menu', () => {
-  test('Human review offers Ready, Delivered, and Archive without duplicate rows', async ({ page }) => {
+test.describe('Board card move menu (AGT-3588)', () => {
+  const resultsDir = process.env.JOB_RESULTS_DIR ?? 'test-results';
+  const openMenu = async (page: Page, lane: string, title: string) => {
+    const card = page.getByTestId(lane).getByTestId('task-card').filter({ hasText: title });
+    await expect(card).toBeVisible();
+    await card.dispatchEvent('contextmenu', { button: 2, clientX: 400, clientY: 300 });
+    return page.getByRole('menu', { name: 'Task actions' });
+  };
+  const noOrchestratorLanes = /In Progress|Post Processing|Failed pickup|Code not complete/;
+
+  test('Human review lists every manual target lane by name', async ({ page }) => {
     await installBoardMocks(page, 0, 1);
     await page.goto('/');
-    const reviewCard = page.getByTestId('lane-5-human-review').getByTestId('task-card');
-    await expect(reviewCard).toBeVisible();
-    await reviewCard.dispatchEvent('contextmenu', { button: 2, clientX: 400, clientY: 300 });
+    const menu = await openMenu(page, 'lane-5-human-review', 'Review fixture');
+    for (const name of ['Move to Backlog', 'Move to Preparation', 'Move to Ready', 'Move to Accepted', 'Move to Archive']) {
+      await expect(menu.getByRole('menuitem', { name })).toBeVisible();
+    }
+    await expect(menu.getByRole('menuitem', { name: 'Move to Human review' })).toHaveCount(0);
+    await expect(menu.getByRole('menuitem', { name: noOrchestratorLanes })).toHaveCount(0);
+    await menu.screenshot({ path: join(resultsDir, 'card-move-menu.png') });
+  });
 
-    const menu = page.getByRole('menu', { name: 'Task actions' });
-    await expect(menu.getByRole('menuitem', { name: 'Move back: Ready' })).toBeVisible();
-    await expect(menu.getByRole('menuitem', { name: 'Move forward: Delivered' })).toBeVisible();
-    await expect(menu.getByRole('menuitem', { name: 'Move to Archive' })).toBeVisible();
-    await expect(menu.getByRole('menuitem', { name: 'Move to Delivered' })).toHaveCount(0);
-    await expect(menu.getByRole('menuitem', { name: /In Progress|Post Processing|Failed pickup|Code not complete/ })).toHaveCount(0);
-    await menu.screenshot({ path: join(process.env.JOB_RESULTS_DIR ?? 'test-results', 'card-move-menu.png') });
+  test('Backlog reaches Ready in one move and never offers targets that skip execution', async ({ page }) => {
+    await installBoardMocks(page, 0, 1);
+    await page.goto('/');
+    const menu = await openMenu(page, 'lane-0-backlog', 'Captured idea');
+    await expect(menu.getByRole('menuitem', { name: 'Move to Ready' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Move to Preparation' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: /Human review|Accepted/ })).toHaveCount(0);
+    await expect(menu.getByRole('menuitem', { name: /Move to top|Move to bottom/ })).toHaveCount(0);
+    await menu.screenshot({ path: join(resultsDir, 'card-move-menu-backlog.png') });
+  });
+
+  test('Ready offers Move to top and Move to bottom with Undo', async ({ page }) => {
+    const grouped = fixtureGrouped(0, 1);
+    const reorders: string[][] = [];
+    await installBoardMocks(page, 0, 1, grouped);
+    // The board mock follows each reorder so polls paint the persisted order.
+    await page.route('**/api/tasks/reorder', async (route) => {
+      const body = route.request().postDataJSON() as { jobs: { jobId: string }[] };
+      const ids = body.jobs.map((job) => job.jobId);
+      reorders.push(ids);
+      const ready = grouped['ready'] as { id: string }[];
+      grouped['ready'] = ids.map((id) => ready.find((job) => job.id === id)!);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.goto('/');
+    const readyTitles = () => page.getByTestId('lane-2-ready').getByTestId('task-card').allInnerTexts()
+      .then((texts) => texts.map((text) => (text.includes('Queued second') ? 'second' : 'first')));
+    await expect.poll(readyTitles).toEqual(['first', 'second']);
+
+    const menu = await openMenu(page, 'lane-2-ready', 'Queued second');
+    await expect(menu.getByRole('menuitem', { name: 'Move to top' })).toBeEnabled();
+    await expect(menu.getByRole('menuitem', { name: 'Move to bottom' })).toBeDisabled();
+    await expect(menu.getByRole('menuitem', { name: /Human review|Accepted/ })).toHaveCount(0);
+    await menu.screenshot({ path: join(resultsDir, 'card-move-menu-ready.png') });
+    await menu.getByRole('menuitem', { name: 'Move to top' }).click();
+
+    await expect.poll(readyTitles).toEqual(['second', 'first']);
+    expect(reorders).toEqual([['fx-ready-2', 'fx-ready-1']]);
+    const undo = page.getByTestId('undo-action');
+    await expect(undo).toBeVisible();
+    await page.screenshot({ path: join(resultsDir, 'card-move-to-top-undo.png') });
+    await undo.click();
+    await expect.poll(readyTitles).toEqual(['first', 'second']);
+    expect(reorders).toEqual([['fx-ready-2', 'fx-ready-1'], ['fx-ready-1', 'fx-ready-2']]);
+
+    const again = await openMenu(page, 'lane-2-ready', 'Queued first');
+    await expect(again.getByRole('menuitem', { name: 'Move to top' })).toBeDisabled();
+    await again.getByRole('menuitem', { name: 'Move to bottom' }).click();
+    await expect.poll(readyTitles).toEqual(['second', 'first']);
+    await expect(page.getByTestId('undo-action')).toBeVisible();
   });
 });
